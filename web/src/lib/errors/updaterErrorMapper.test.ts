@@ -196,7 +196,7 @@ describe('mapUpdateError — backend error 분류', () => {
   // ─── 401 unauthorized (status 우선) ─────────────────────────────
   describe('unauthorized', () => {
     it('APIError status=401 은 본문 무관하게 unauthorized 로 분류한다', () => {
-      const err = new APIError('UNAUTHORIZED', 'invalid metric_type', 401);
+      const err = new APIError('UNAUTHORIZED', 'invalid field', 401);
       const result = mapUpdateError(err, t);
       expect(result.kind).toBe('unauthorized');
       expect(result.userMessage).toContain('권한');

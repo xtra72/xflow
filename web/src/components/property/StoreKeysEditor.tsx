@@ -1,13 +1,13 @@
-// Store 에이전트의 정적 키 + data_type + metric_type + 태그 목록 에디터.
+// Store 에이전트의 정적 키 + data_type + field + 태그 목록 에디터.
 //
-// 각 행은 `{ key, data_type?, metric_type?, tags }` 형상이며, 백엔드 SPEC-STORE-003
+// 각 행은 `{ key, data_type?, field?, tags }` 형상이며, 백엔드 SPEC-STORE-003
 // v0.3.0 의 `StoreKeyObject` 와 1:1 매핑된다 (registration 필드 제외 — 이는 폼이 아닌
 // 런타임 상태이므로 yaml 에는 저장되지 않는다).
 //
 // v0.7.0 진화 (M13):
 //   - `data_type` 셀렉트 컬럼 (6종 enum). manual 모드에서 필수, auto 모드에서 선택.
-//   - `metric_type` 텍스트 컬럼 (정규식 `^[a-zA-Z0-9_-]+$`, 기본 placeholder `"unknown"`).
-//   - 컬럼 너비 비율 키:data_type:metric_type:태그 = `4:1.5:1.5:3`.
+//   - `field` 텍스트 컬럼 (정규식 `^[a-zA-Z0-9_-]+$`, 기본 placeholder `"unknown"`).
+//   - 컬럼 너비 비율 키:data_type:field:태그 = `4:1.5:1.5:3`.
 //   - 부모 (StoreConfigEditor) 가 `registrationType` prop 을 전달하여 검증 정책을 제어.
 //   - `onValidityChange` 콜백으로 부모의 저장 버튼을 게이팅한다.
 //
@@ -50,7 +50,7 @@ import {
  *
  * v0.7.0 (M13) BREAKING:
  *   - `data_type?: DataType` 필드 추가 (manual 모드 필수, auto 모드 선택).
- *   - `metric_type?: string` 필드 추가 (정규식 검증, 기본값 `"unknown"`).
+ *   - `field?: string` 필드 추가 (정규식 검증, 기본값 `"unknown"`).
  *
  * @spec SPEC-WEB-005 v0.7.0 (M13)
  * @spec SPEC-STORE-003 v0.3.0
@@ -58,7 +58,7 @@ import {
 export interface StoreKeyEntry {
   key: string;
   data_type?: DataType;
-  metric_type?: string;
+  field?: string;
   tags: Record<string, string>;
 }
 
@@ -96,7 +96,7 @@ interface InternalRow {
   id: string;
   key: string;
   data_type: string; // 빈 문자열 = unset
-  metric_type: string; // 빈 문자열 = default unknown 적용
+  field: string; // 빈 문자열 = default unknown 적용
   tags: { tagId: string; k: string; v: string }[];
 }
 
@@ -122,8 +122,8 @@ function toRows(value: unknown): InternalRow[] {
     const key = typeof rec.key === 'string' ? rec.key : '';
     const dataType =
       typeof rec.data_type === 'string' ? rec.data_type : '';
-    const metricType =
-      typeof rec.metric_type === 'string' ? rec.metric_type : '';
+    const fieldName =
+      typeof rec.field === 'string' ? rec.field : '';
     const rawTags =
       rec.tags && typeof rec.tags === 'object' && !Array.isArray(rec.tags)
         ? (rec.tags as Record<string, unknown>)
@@ -137,7 +137,7 @@ function toRows(value: unknown): InternalRow[] {
       id: nextRowId(),
       key,
       data_type: dataType,
-      metric_type: metricType,
+      field: fieldName,
       tags,
     });
   }
@@ -154,13 +154,13 @@ function toEntries(rows: InternalRow[]): StoreKeyEntry[] {
       tagsObj[t.k] = t.v;
     }
     const entry: StoreKeyEntry = { key: row.key, tags: tagsObj };
-    // data_type / metric_type 은 비어있을 때만 yaml 에서 생략한다.
+    // data_type / field 은 비어있을 때만 yaml 에서 생략한다.
     // 빈 문자열을 그대로 보내면 백엔드가 default 적용을 못할 수 있다.
     if (row.data_type !== '') {
       entry.data_type = row.data_type as DataType;
     }
-    if (row.metric_type !== '') {
-      entry.metric_type = row.metric_type;
+    if (row.field !== '') {
+      entry.field = row.field;
     }
     return entry;
   });
@@ -246,7 +246,7 @@ export function StoreKeysEditor({
           .map((e) => ({
             key: e.key,
             data_type: e.data_type ?? '',
-            metric_type: e.metric_type ?? '',
+            field: e.field ?? '',
             tags: { ...e.tags },
           }))
           .sort((a, b) => a.key.localeCompare(b.key)),
@@ -281,7 +281,7 @@ export function StoreKeysEditor({
         id: nextRowId(),
         key: '',
         data_type: '',
-        metric_type: '',
+        field: '',
         tags: [],
       },
     ]);
@@ -294,7 +294,7 @@ export function StoreKeysEditor({
     [rows, emit],
   );
 
-  // --- 키 / data_type / metric_type 편집 ---
+  // --- 키 / data_type / field 편집 ---
 
   const handleKeyChange = useCallback(
     (rowId: string, nextKey: string) => {
@@ -316,7 +316,7 @@ export function StoreKeysEditor({
     (rowId: string, nextValue: string) => {
       emit(
         rows.map((r) =>
-          r.id === rowId ? { ...r, metric_type: nextValue } : r,
+          r.id === rowId ? { ...r, field: nextValue } : r,
         ),
       );
     },
@@ -361,21 +361,21 @@ export function StoreKeysEditor({
 
   const duplicateKeys = useMemo(() => findDuplicateKeys(rows), [rows]);
 
-  // 행별 data_type / metric_type 검증 결과 (memoized).
+  // 행별 data_type / field 검증 결과 (memoized).
   const rowValidations = useMemo(() => {
     return rows.map((row) => ({
       id: row.id,
       dataType: validateDataType(row.data_type, registrationType),
-      metricType: validateMetricType(row.metric_type),
+      fieldName: validateMetricType(row.field),
     }));
   }, [rows, registrationType]);
 
-  // 전체 폼 유효성 — 모든 행의 data_type 과 metric_type 이 통과해야 한다.
+  // 전체 폼 유효성 — 모든 행의 data_type 과 field 이 통과해야 한다.
   // (중복 키는 soft warning 이므로 저장 차단에 포함하지 않는다 — 기존 동작 유지.)
   const allValid = useMemo(
     () =>
       rowValidations.every(
-        (v) => v.dataType.valid && v.metricType.valid,
+        (v) => v.dataType.valid && v.fieldName.valid,
       ),
     [rowValidations],
   );
@@ -385,7 +385,7 @@ export function StoreKeysEditor({
     onValidityChange?.(allValid);
   }, [allValid, onValidityChange]);
 
-  // 컬럼 너비 비율 키:data_type:metric_type:태그 = 4:1.5:1.5:3 (M13).
+  // 컬럼 너비 비율 키:data_type:field:태그 = 4:1.5:1.5:3 (M13).
   // readOnly 모드에서는 행 삭제 컬럼 제거.
   return (
     <div className="space-y-2">
@@ -407,7 +407,7 @@ export function StoreKeysEditor({
                 {t('property.store.dataType')}
               </th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
-                {t('property.store.metricType')}
+                {t('property.store.fieldName')}
               </th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-(--color-text-muted)">
                 {t('property.store.tags')}
@@ -430,7 +430,7 @@ export function StoreKeysEditor({
               const isDuplicate = duplicateKeys.has(row.key);
               const validation = rowValidations[idx];
               const dataTypeError = validation?.dataType.error;
-              const metricTypeError = validation?.metricType.error;
+              const fieldNameError = validation?.fieldName.error;
               return (
                 <tr
                   key={row.id}
@@ -504,11 +504,11 @@ export function StoreKeysEditor({
                     )}
                   </td>
 
-                  {/* 메트릭 타입 입력 (col 폭 15%) */}
+                  {/* 필드 입력 (col 폭 15%) */}
                   <td className="px-2 py-1.5 align-top">
                     <input
                       type="text"
-                      value={row.metric_type}
+                      value={row.field}
                       readOnly={readOnly}
                       onChange={(e) =>
                         handleMetricTypeChange(row.id, e.target.value)
@@ -516,15 +516,15 @@ export function StoreKeysEditor({
                       className={cn(
                         inputCls,
                         readOnly && readOnlyCls,
-                        metricTypeError && errorInputCls,
+                        fieldNameError && errorInputCls,
                       )}
-                      placeholder={t('property.store.metricTypePlaceholder')}
-                      aria-invalid={Boolean(metricTypeError) || undefined}
-                      aria-label={t('property.store.metricType')}
+                      placeholder={t('property.store.fieldNamePlaceholder')}
+                      aria-invalid={Boolean(fieldNameError) || undefined}
+                      aria-label={t('property.store.fieldName')}
                     />
-                    {metricTypeError && (
+                    {fieldNameError && (
                       <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
-                        {metricTypeError}
+                        {fieldNameError}
                       </p>
                     )}
                   </td>

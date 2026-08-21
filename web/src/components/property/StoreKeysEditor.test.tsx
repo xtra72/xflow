@@ -1,7 +1,7 @@
 // StoreKeysEditor 컴포넌트 테스트.
 //
 // 검증 대상:
-//   - 초기 value 를 행으로 렌더링 (data_type / metric_type 컬럼 포함)
+//   - 초기 value 를 행으로 렌더링 (data_type / field 컬럼 포함)
 //   - "행 추가" 버튼 → 빈 행 추가 + onChange 호출
 //   - 행 삭제 버튼 → 행 제거 + onChange 호출
 //   - 태그 추가 → key/value 입력 + "태그 추가" 버튼 → onChange 호출
@@ -10,7 +10,7 @@
 //   - readOnly 모드: 입력 비활성, 추가/삭제 버튼 숨김
 //   - 잘못된 형식(비-JSON 배열 등) 은 빈 목록으로 폴백
 //   - v0.7.0 (M13): data_type 셀렉트 컬럼 (6종 enum, manual 모드 필수)
-//   - v0.7.0 (M13): metric_type 텍스트 컬럼 (정규식 검증)
+//   - v0.7.0 (M13): field 텍스트 컬럼 (정규식 검증)
 //   - v0.7.0 (M13): registrationType prop + onValidityChange 콜백
 //
 // @spec SPEC-WEB-005 v0.7.0 (M13)
@@ -54,7 +54,7 @@ describe('StoreKeysEditor', () => {
       {
         key: 'indoor/1/temp',
         data_type: 'float',
-        metric_type: 'temperature',
+        field: 'temperature',
         tags: { room: '1', type: 'temperature' },
       },
       { key: 'indoor/2/temp', data_type: 'float', tags: { room: '2' } },
@@ -66,7 +66,7 @@ describe('StoreKeysEditor', () => {
     expect(screen.getByText('room=1')).toBeInTheDocument();
     expect(screen.getByText('type=temperature')).toBeInTheDocument();
     expect(screen.getByText('room=2')).toBeInTheDocument();
-    // metric_type 입력값 — 첫 번째 행만 명시적으로 설정됨
+    // field 입력값 — 첫 번째 행만 명시적으로 설정됨
     expect(screen.getByDisplayValue('temperature')).toBeInTheDocument();
   });
 
@@ -75,7 +75,7 @@ describe('StoreKeysEditor', () => {
     const value: StoreKeyEntry[] = [{ key: 'a', tags: {} }];
     render(<StoreKeysEditor value={value} onChange={onChange} />);
     fireEvent.click(screen.getByRole('button', { name: /행 추가/ }));
-    // 새 행은 data_type / metric_type 모두 빈 문자열 → entry 에서 생략됨.
+    // 새 행은 data_type / field 모두 빈 문자열 → entry 에서 생략됨.
     expect(onChange).toHaveBeenCalledWith([
       { key: 'a', tags: {} },
       { key: '', tags: {} },
@@ -322,7 +322,7 @@ describe('StoreKeysEditor', () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────
-  // v0.7.0 (M13) 신규 테스트 — data_type / metric_type 컬럼
+  // v0.7.0 (M13) 신규 테스트 — data_type / field 컬럼
   // ─────────────────────────────────────────────────────────────────────
 
   describe('data_type 셀렉트 컬럼 (M13)', () => {
@@ -425,34 +425,34 @@ describe('StoreKeysEditor', () => {
     });
   });
 
-  describe('metric_type 텍스트 컬럼 (M13)', () => {
-    it('헤더에 "메트릭 타입" 컬럼이 표시된다', () => {
+  describe('field 텍스트 컬럼 (M13)', () => {
+    it('헤더에 "필드" 컬럼이 표시된다', () => {
       render(<StoreKeysEditor value={[{ key: 'k1', tags: {} }]} onChange={vi.fn()} />);
-      expect(screen.getByText('메트릭 타입')).toBeInTheDocument();
+      expect(screen.getByText('필드')).toBeInTheDocument();
     });
 
-    it('각 행에 metric_type 입력란과 "unknown" placeholder 가 렌더된다', () => {
+    it('각 행에 field 입력란과 "unknown" placeholder 가 렌더된다', () => {
       render(<StoreKeysEditor value={[{ key: 'k1', tags: {} }]} onChange={vi.fn()} />);
-      const input = screen.getByLabelText('메트릭 타입') as HTMLInputElement;
+      const input = screen.getByLabelText('필드') as HTMLInputElement;
       expect(input.placeholder).toBe('unknown');
     });
 
-    it('metric_type 입력 시 onChange 가 호출되고 entry 에 포함된다', () => {
+    it('field 입력 시 onChange 가 호출되고 entry 에 포함된다', () => {
       const onChange = vi.fn();
       render(
         <StoreKeysEditor value={[{ key: 'k1', tags: {} }]} onChange={onChange} />,
       );
-      const input = screen.getByLabelText('메트릭 타입') as HTMLInputElement;
+      const input = screen.getByLabelText('필드') as HTMLInputElement;
       fireEvent.change(input, { target: { value: 'temperature' } });
       expect(onChange).toHaveBeenCalledWith([
-        { key: 'k1', metric_type: 'temperature', tags: {} },
+        { key: 'k1', field: 'temperature', tags: {} },
       ]);
     });
 
     it('정규식 위반(점 포함) 입력 시 인라인 에러 표시', () => {
       render(
         <StoreKeysEditor
-          value={[{ key: 'k1', metric_type: 'room.temp', tags: {} }]}
+          value={[{ key: 'k1', field: 'room.temp', tags: {} }]}
           onChange={vi.fn()}
         />,
       );
@@ -461,7 +461,7 @@ describe('StoreKeysEditor', () => {
       ).toBeInTheDocument();
     });
 
-    it('빈 metric_type 은 통과 (백엔드 default unknown 적용)', () => {
+    it('빈 field 은 통과 (백엔드 default unknown 적용)', () => {
       render(
         <StoreKeysEditor value={[{ key: 'k1', tags: {} }]} onChange={vi.fn()} />,
       );
@@ -473,7 +473,7 @@ describe('StoreKeysEditor', () => {
     it('영문/숫자/하이픈/언더스코어는 통과', () => {
       render(
         <StoreKeysEditor
-          value={[{ key: 'k1', metric_type: 'room-temp_2', tags: {} }]}
+          value={[{ key: 'k1', field: 'room-temp_2', tags: {} }]}
           onChange={vi.fn()}
         />,
       );
@@ -527,11 +527,11 @@ describe('StoreKeysEditor', () => {
       expect(lastCall?.[0]).toBe(true);
     });
 
-    it('metric_type 정규식 위반 시 valid=false', () => {
+    it('field 정규식 위반 시 valid=false', () => {
       const onValidityChange = vi.fn();
       render(
         <StoreKeysEditor
-          value={[{ key: 'k1', metric_type: 'room.temp', tags: {} }]}
+          value={[{ key: 'k1', field: 'room.temp', tags: {} }]}
           onChange={vi.fn()}
           registrationType="auto"
           onValidityChange={onValidityChange}
@@ -543,11 +543,11 @@ describe('StoreKeysEditor', () => {
   });
 
   describe('컬럼 너비 (M13)', () => {
-    it('5컬럼(키:데이터 타입:메트릭 타입:태그:삭제) 헤더가 모두 렌더된다', () => {
+    it('5컬럼(키:데이터 타입:필드:태그:삭제) 헤더가 모두 렌더된다', () => {
       render(<StoreKeysEditor value={[{ key: 'k1', tags: {} }]} onChange={vi.fn()} />);
       expect(screen.getByText('키')).toBeInTheDocument();
       expect(screen.getByText('데이터 타입')).toBeInTheDocument();
-      expect(screen.getByText('메트릭 타입')).toBeInTheDocument();
+      expect(screen.getByText('필드')).toBeInTheDocument();
       expect(screen.getByText('태그')).toBeInTheDocument();
     });
   });

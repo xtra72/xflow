@@ -33,7 +33,7 @@ export type ConfigSection = 'transport' | 'protocol' | 'operation' | 'logging';
  */
 export interface ConfigField {
   name: string;
-  type: 'string' | 'multiline' | 'number' | 'boolean' | 'select' | 'object' | 'object_fields' | 'string_list' | 'agent_select' | 'flow_picker' | 'register_map' | 'modbus_devices' | 'modbus_server_devices' | 'modbus_write_ops' | 'modbus_read_ops' | 'modbus_control_ops' | 'modbus_remap' | 'transform_pipeline' | 'key_value_map' | 'typed_key_value_map' | 'trigger_schedules' | 'compare_fields' | 'routes_editor' | 'metrics_editor';
+  type: 'string' | 'multiline' | 'number' | 'boolean' | 'select' | 'object' | 'object_fields' | 'string_list' | 'agent_select' | 'flow_picker' | 'register_map' | 'modbus_devices' | 'modbus_server_devices' | 'modbus_write_ops' | 'modbus_read_ops' | 'modbus_control_ops' | 'modbus_remap' | 'transform_pipeline' | 'key_value_map' | 'typed_key_value_map' | 'trigger_schedules' | 'compare_fields' | 'routes_editor';
   label: string;
   required?: boolean;
   default?: unknown;
@@ -76,7 +76,7 @@ export interface ConfigField {
   /** key_value_map 값 입력의 placeholder 오버라이드. 미지정 시 "값". */
   valuePlaceholder?: string;
   /** true 이면 key_value_map 의 값 입력 위에 `$.` JSONPath 빠른 삽입 칩을 표시한다.
-   *  influxdb-write 등 값에 JSONPath 를 받는 노드에서 opt-in 으로 사용한다.
+   *  storage-write 등 값에 JSONPath 를 받는 노드에서 opt-in 으로 사용한다.
    *  미지정/false 면 칩을 표시하지 않아 다른 노드의 동작은 변하지 않는다. */
   pathHelper?: boolean;
 }

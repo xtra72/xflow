@@ -1,11 +1,11 @@
-// 임의 엔트리(정적 + 동적)의 메트릭 타입(metric_type) 과 태그(tags) 를 편집하는 모달.
+// 임의 엔트리(정적 + 동적)의 필드(field) 과 태그(tags) 를 편집하는 모달.
 //
 // Store 에이전트 저장소 탭의 각 행에서 호출되며, `PUT /store/{name}/keys/{key}/meta`
 // (useSetStoreKeyMeta) 로 적용한다.
 //
 // 동작 규칙:
 //   - tags 는 **전체 교체** 이므로 기존 태그를 행으로 미리 채워 편집 후 전체를 전송한다.
-//   - metric_type 은 선택 (정규식 `^[a-zA-Z0-9_-]+$`). 비워두면 백엔드가 "unknown" 적용.
+//   - field 은 선택 (정규식 `^[a-zA-Z0-9_-]+$`). 비워두면 백엔드가 "unknown" 적용.
 //   - data_type 은 이 엔드포인트로 변경할 수 없으므로 노출하지 않는다 (정적 키는 보존,
 //     동적 키는 string/auto 보존).
 //
@@ -25,13 +25,13 @@ import { validateMetricType } from './storeKeysValidation';
 /**
  * 편집 확인 시 부모에 전달되는 페이로드.
  *
- * - metric_type: 선택. 빈 문자열은 부모/백엔드에서 default `"unknown"` 적용으로 처리된다.
+ * - field: 선택. 빈 문자열은 부모/백엔드에서 default `"unknown"` 적용으로 처리된다.
  * - tags: 전체 교체할 태그 맵. 비어있으면 빈 객체 `{}`.
  *
  * @spec SPEC-STORE-003 v0.4.0
  */
 export interface EditKeyMetaPayload {
-  metric_type?: string;
+  field?: string;
   tags: Record<string, string>;
 }
 
@@ -42,12 +42,12 @@ interface EditKeyMetaDialogProps {
   onClose: () => void;
   /** 편집 대상 키 이름 (읽기 전용 표시). */
   keyName: string;
-  /** 현재 metric_type (사전 채움). 빈 문자열이면 unset 상태. */
-  initialMetricType?: string;
+  /** 현재 field (사전 채움). 빈 문자열이면 unset 상태. */
+  initialField?: string;
   /** 현재 태그 맵 (사전 채움). tags 전체 교체를 위해 기존 값을 모두 불러온다. */
   initialTags?: Record<string, string>;
   /**
-   * 편집 확인 핸들러. metric_type / tags 페이로드를 받아 부모에서
+   * 편집 확인 핸들러. field / tags 페이로드를 받아 부모에서
    * PUT .../keys/{key}/meta 호출을 처리한다.
    */
   onConfirm: (payload: EditKeyMetaPayload) => void | Promise<void>;
@@ -123,22 +123,22 @@ export function EditKeyMetaDialog({
   isOpen,
   onClose,
   keyName,
-  initialMetricType,
+  initialField,
   initialTags,
   onConfirm,
   isSubmitting = false,
 }: EditKeyMetaDialogProps) {
   const { t } = useTranslation();
   const [rows, setRows] = useState<TagRow[]>([]);
-  const [metricType, setMetricType] = useState<string>('');
+  const [fieldName, setField] = useState<string>('');
 
-  // 모달이 열릴 때 현재 metric_type / tags 로 상태를 초기화 (사전 채움).
+  // 모달이 열릴 때 현재 field / tags 로 상태를 초기화 (사전 채움).
   useEffect(() => {
     if (isOpen) {
-      setMetricType(initialMetricType ?? '');
+      setField(initialField ?? '');
       setRows(tagsToRows(initialTags));
     }
-  }, [isOpen, initialMetricType, initialTags]);
+  }, [isOpen, initialField, initialTags]);
 
   // Esc 키로 닫기 (제출 중에는 무시).
   useEffect(() => {
@@ -177,10 +177,10 @@ export function EditKeyMetaDialog({
   // 모든 행이 유효한지 (빈 행 허용, 부분 입력은 disable).
   const allRowsValid = useMemo(() => rows.every(isRowValid), [rows]);
 
-  // metric_type 검증 — 빈 값 허용, 정규식 위반 시 에러.
-  const metricTypeValidation = useMemo(
-    () => validateMetricType(metricType),
-    [metricType],
+  // field 검증 — 빈 값 허용, 정규식 위반 시 에러.
+  const fieldNameValidation = useMemo(
+    () => validateMetricType(fieldName),
+    [fieldName],
   );
 
   // 중복 태그 키 검출 (마지막 값이 이긴다 — 안내만, 저장은 허용).
@@ -198,14 +198,14 @@ export function EditKeyMetaDialog({
     return dupes;
   }, [rows]);
 
-  const canConfirm = allRowsValid && metricTypeValidation.valid && !isSubmitting;
+  const canConfirm = allRowsValid && fieldNameValidation.valid && !isSubmitting;
 
   const disabledReason = useMemo(() => {
-    if (!metricTypeValidation.valid)
-      return metricTypeValidation.error ?? t('property.meta.metricTypeFormatCheck');
+    if (!fieldNameValidation.valid)
+      return fieldNameValidation.error ?? t('property.meta.fieldNameFormatCheck');
     if (!allRowsValid) return t('property.meta.tagInputCheck');
     return undefined;
-  }, [metricTypeValidation, allRowsValid, t]);
+  }, [fieldNameValidation, allRowsValid, t]);
 
   // 저장 실행 — 비어있지 않은 행만 모아 태그 맵을 구성하고 부모에 전체 전달.
   const handleConfirm = useCallback(async () => {
@@ -217,13 +217,13 @@ export function EditKeyMetaDialog({
       if (k === '' && v === '') continue;
       tags[k] = v;
     }
-    const trimmedMetric = metricType.trim();
+    const trimmedMetric = fieldName.trim();
     const payload: EditKeyMetaPayload = { tags };
     if (trimmedMetric !== '') {
-      payload.metric_type = trimmedMetric;
+      payload.field = trimmedMetric;
     }
     await onConfirm(payload);
-  }, [canConfirm, rows, metricType, onConfirm]);
+  }, [canConfirm, rows, fieldName, onConfirm]);
 
   const handleInputKeyDown = useCallback(
     (e: KeyboardEvent<HTMLInputElement>) => {
@@ -278,42 +278,42 @@ export function EditKeyMetaDialog({
             </p>
           </div>
 
-          {/* metric_type 입력 (선택) */}
+          {/* field 입력 (선택) */}
           <div>
             <label
               htmlFor="edit-metric-type"
               className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
             >
-              {t('property.meta.metricTypeOptional')}
+              {t('property.meta.fieldNameOptional')}
             </label>
             <p className="mb-1.5 text-[11px] text-(--color-text-muted)">
-              {t('property.editMeta.metricTypeHelp')}
+              {t('property.editMeta.fieldNameHelp')}
             </p>
             <input
               id="edit-metric-type"
               type="text"
-              value={metricType}
-              onChange={(e) => setMetricType(e.target.value)}
+              value={fieldName}
+              onChange={(e) => setField(e.target.value)}
               onKeyDown={handleInputKeyDown}
               disabled={isSubmitting}
               placeholder="unknown"
-              aria-invalid={!metricTypeValidation.valid || undefined}
+              aria-invalid={!fieldNameValidation.valid || undefined}
               aria-describedby={
-                !metricTypeValidation.valid ? 'edit-metric-type-error' : undefined
+                !fieldNameValidation.valid ? 'edit-metric-type-error' : undefined
               }
               className={cn(
                 inputCls,
                 'w-full',
-                !metricTypeValidation.valid && errorInputCls,
+                !fieldNameValidation.valid && errorInputCls,
                 isSubmitting && 'cursor-not-allowed opacity-60',
               )}
             />
-            {!metricTypeValidation.valid && (
+            {!fieldNameValidation.valid && (
               <p
                 id="edit-metric-type-error"
                 className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400"
               >
-                {metricTypeValidation.error}
+                {fieldNameValidation.error}
               </p>
             )}
           </div>

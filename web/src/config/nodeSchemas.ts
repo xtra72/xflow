@@ -2197,48 +2197,78 @@ export const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     ],
   },
   // --- IO: InfluxDB ---
-  'influxdb-write': {
-    description: 'InfluxDB에 시계열 데이터를 기록합니다. measurement, tags, fields를 payload에서 추출하여 기록합니다.',
-    inputDesc: '기록할 데이터. measurement, tags, fields를 payload에서 추출',
-    outputDesc: '원본 메시지 pass-through',
+  'storage-write': {
+    description:
+      '메시지를 스토리지에 기록합니다. payload 는 측정값, metadata 는 태그, 메시지 타임스탬프는 기록 시각으로 자동 매핑됩니다. 백엔드(키-값 저장소 / InfluxDB)는 선택한 에이전트로 결정되므로, 설정을 그대로 둔 채 에이전트만 바꾸면 저장 대상이 바뀝니다.',
+    inputDesc: 'payload: 측정값 (키 = 측정 종류, 값 = 측정값) 1개 이상 / metadata: 태그 / timestamp: 기록 시각',
+    outputDesc: '원본 메시지 패스스루',
     configSchema: {
       fields: [
-        { name: 'agent_ref', type: 'agent_select', label: '에이전트', required: true, options: ['influxdb'] },
-        { name: 'measurement', type: 'string', label: 'Measurement', description: '고정 measurement 이름. 비어있으면 measurement_key 사용' },
         {
-          name: 'measurement_key',
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: '에이전트',
+          required: true,
+          options: ['store', 'influxdb'],
+          description:
+            '기록 대상 에이전트. 선택한 에이전트의 타입이 백엔드를 결정합니다 (store → 키-값 저장소, influxdb → 시계열 DB).',
+        },
+        {
+          name: 'payload_mode',
+          type: 'select',
+          label: 'payload 키 처리',
+          options: ['fields', 'split'],
+          default: 'fields',
+          description:
+            'payload 의 키/값을 어떻게 배치할지 고릅니다.\n· fields — 모든 키/값을 measurement 하나 아래 여러 측정값으로 기록합니다.\n· split — 키마다 별도 시리즈로 분리하고 값을 그 시리즈의 값으로 기록합니다. 시리즈 이름이 곧 payload 키이므로 measurement 를 쓰지 않으며, 디바이스 구분은 metadata 태그가 담당합니다.',
+        },
+        {
+          name: 'measurement',
           type: 'string',
-          label: 'Measurement 키',
-          description: 'measurement 를 추출할 키. JSONPath 지원 ($.payload.X / $.metadata.X / $.type). measurement 가 비어있을 때 사용.',
-          placeholder: '$.payload.metric_name',
+          label: 'Measurement',
+          required: true,
+          // payload_mode 미설정(신규 노드)은 기본값 fields 와 같으므로 함께 표시한다.
+          visibleWhen: { field: 'payload_mode', value: ['fields', '', undefined] },
+          description:
+            '기록할 시리즈 이름. {…} 안의 경로를 메시지 값으로 치환합니다 (예: {$.metadata.device.id}). store 는 저장 키, influxdb 는 measurement 가 됩니다.',
+          placeholder: '{$.metadata.device.id}',
         },
         {
-          name: 'tag_mappings',
-          type: 'key_value_map',
-          label: '태그 매핑',
-          description: 'InfluxDB 태그 이름 → 값. 값은 $. JSONPath 로 메시지 내 임의 키 참조 ($.payload.X / $.metadata.X / $.type). $. 없으면 metadata 키로 해석(하위 호환). 오브젝트 값은 JSON 문자열로 변환. 비워두면 모든 metadata 를 동일 이름의 tag 로 매핑.',
-          keyLabel: '태그 이름',
-          valueLabel: '값 ($. JSONPath / metadata 키)',
-          valuePlaceholder: '$.payload.region 또는 metadata 키',
-          pathHelper: true,
+          name: 'exclude_keys',
+          type: 'string_list',
+          label: '제외 키',
+          description: '측정값으로 쓰지 않을 payload 키 목록. 식별자나 라벨처럼 값이 아닌 키를 걸러냅니다.',
+          advanced: true,
         },
         {
-          name: 'field_mappings',
-          type: 'key_value_map',
-          label: '필드 매핑',
-          description: '필드 이름 → 값. 값은 $. JSONPath 로 임의 키 참조 ($.payload.X / $.metadata.X / $.type / $.timestamp). 오브젝트 값은 JSON 문자열로 변환. 비워두면 전체 payload 를 필드로 사용.',
-          keyLabel: '필드 이름',
-          valueLabel: '값 ($. JSONPath)',
-          valuePlaceholder: '$.payload.temperature',
-          pathHelper: true,
+          name: 'namespace',
+          type: 'string',
+          label: '네임스페이스 (store 전용)',
+          default: 'default',
+          description: 'Store 네임스페이스. influxdb 백엔드에서는 무시됩니다.',
+          advanced: true,
         },
-        { name: 'timestamp_key', type: 'string', label: '타임스탬프 키', description: 'payload에서 Unix 밀리초 타임스탬프를 추출할 키' },
-        { name: 'bool_to_int', type: 'boolean', label: 'Boolean → 정수 변환', default: false, description: 'true/false 값을 1/0 정수로 변환하여 기록' },
+        {
+          name: 'ttl',
+          type: 'string',
+          label: 'TTL (store 전용)',
+          description: '만료 시간 (예: 5m, 1h, 24h). 비우면 만료 없음. influxdb 백엔드에서는 무시됩니다.',
+          advanced: true,
+        },
+        {
+          name: 'bool_to_int',
+          type: 'boolean',
+          label: 'Boolean → 정수 (influxdb 전용)',
+          default: false,
+          description: 'true/false 값을 1/0 정수로 변환하여 기록합니다. store 백엔드에서는 무시됩니다.',
+          advanced: true,
+        },
       ],
     },
     defaultPorts: [
-      { name: 'in', direction: 'input' },
-      { name: 'out', direction: 'output' },
+      { name: 'in', direction: 'input' as const },
+      { name: 'out', direction: 'output' as const },
+      { name: 'error', direction: 'error' as const },
     ],
   },
 
@@ -2276,79 +2306,6 @@ export const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
     defaultPorts: [
       { name: 'in', direction: 'input' },
       { name: 'out', direction: 'output' },
-    ],
-  },
-
-  'store-write': {
-    description: '메시지 데이터를 키-값 저장소에 기록합니다. 키 템플릿으로 동적 키를 생성합니다.',
-    inputDesc: 'payload: key_template의 {field} 플레이스홀더 값 + value_key로 저장할 값',
-    outputDesc: '원본 메시지 패스스루',
-    configSchema: {
-      fields: [
-        {
-          name: 'agent_ref',
-          type: 'agent_select',
-          label: '에이전트',
-          required: true,
-          options: ['store'],
-          description: '연결할 Store 에이전트를 선택합니다',
-        },
-        {
-          name: 'namespace',
-          type: 'string',
-          label: '네임스페이스',
-          default: 'default',
-          description: 'Store 네임스페이스',
-        },
-        {
-          name: 'key_template',
-          type: 'string',
-          label: '키 템플릿',
-          description: '저장 키. {field} 형식 플레이스홀더를 메시지 값으로 치환 (예: {$.metadata.device_id}:{$.payload.sensor}). 이 키에 아래 "메트릭"별로 측정값이 기록됩니다. 키 템플릿 또는 키 매핑 중 하나 이상 필요.',
-        },
-        {
-          name: 'key_mappings',
-          type: 'key_value_map',
-          label: '키 매핑 (다중 키)',
-          description:
-            '한 메시지에서 서로 다른 키에 값을 기록합니다. 키(왼쪽)는 키 템플릿({...} 보간 또는 리터럴), 값(오른쪽)은 저장할 값의 $. 경로(비우면 전체 payload). 네임스페이스·TTL·태그는 모든 키에 동일 적용됩니다. (메트릭별 분류가 필요하면 아래 "메트릭"을 사용하세요.)',
-          keyLabel: '키 템플릿',
-          valueLabel: '값 경로 ($.)',
-          keyPlaceholder: '{$.metadata.device_id}:power',
-          valuePlaceholder: '$.payload.power',
-          pathHelper: true,
-        },
-        {
-          name: 'tags',
-          type: 'key_value_map',
-          label: '태그',
-          description:
-            '기록되는 키에 부여할 태그(키=값). 모든 메트릭/키에 공유 적용됩니다. 태그 키는 영문/숫자/밑줄/하이픈. 값은 직접 입력(리터럴) 또는 $. 경로로 메시지 필드 선택($.payload.room / $.metadata.x). Store 탭에서 태그로 검색·필터됩니다.',
-          keyLabel: '태그 키',
-          valueLabel: '값 (리터럴 또는 $. 경로)',
-          valuePlaceholder: '값 또는 $.payload.room',
-          pathHelper: true,
-        },
-        {
-          name: 'metrics',
-          type: 'metrics_editor',
-          label: '메트릭 (다중 값)',
-          description:
-            '키 템플릿의 키에 여러 측정값을 metric_type 별 시리즈로 저장합니다. metric_type(종류)은 리터럴(예: temperature) 또는 $. 경로(예: $.metadata.measurement)로 지정 가능 — $. 경로면 메시지마다 종류를 동적으로 해석합니다. 각 메트릭은 자체 값 키(기본 $.payload.value)·데이터 타입·미세변화 억제(억제 간격/절대 변화/퍼센트 변화)를 가집니다. 같은 키라도 metric_type·태그가 다르면 독립 시리즈로 분류됩니다. 미세변화 억제(dead-band)는 억제 간격이 설정된 메트릭에만 적용되며, 간격 경과 시 변화가 없어도 1건 저장(heartbeat)합니다.',
-        },
-        {
-          name: 'ttl',
-          type: 'string',
-          label: 'TTL',
-          description: '만료 시간 (예: 5m, 1h, 24h). 모든 메트릭/키에 공유 적용. 비워두면 만료 없음',
-          advanced: true,
-        },
-      ],
-    },
-    defaultPorts: [
-      { name: 'in', direction: 'input' as const },
-      { name: 'out', direction: 'output' as const },
-      { name: 'error', direction: 'error' as const },
     ],
   },
 

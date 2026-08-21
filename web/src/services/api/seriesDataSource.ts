@@ -31,12 +31,12 @@ export interface SeriesKeysPage {
 
 /** 매트릭스 쿼리 파라미터. 시간은 UTC epoch milliseconds(int64). */
 /**
- * 시리즈별 조회 필터(저장소 기준 분류 — key + metric_type + tags).
+ * 시리즈별 조회 필터(저장소 기준 분류 — key + field + tags).
  * `keys[i]` 와 같은 인덱스로 짝지어, 해당 key 의 조회를 특정 metric/tags 시리즈로 좁힌다.
  * 미지정(undefined)이면 그 key 의 모든 시리즈를 조회한다(기존 동작).
  */
 export interface SeriesSelectorFilter {
-  metricType?: string;
+  fieldName?: string;
   tags?: Record<string, string>;
 }
 

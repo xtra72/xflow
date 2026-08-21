@@ -33,8 +33,8 @@ import { StoreEntryTable } from './StoreEntryTable';
 import { defaultVisibleColumns, renderedColumns } from './storeColumns';
 
 const entries: Record<string, unknown>[] = [
-  { key: 'k-static', value: 10, namespace: 'default', metric_type: 'temperature', updated_at: new Date().toISOString() },
-  { key: 'k-dynamic', value: 20, namespace: 'default', metric_type: 'unknown', updated_at: new Date().toISOString() },
+  { key: 'k-static', value: 10, namespace: 'default', field: 'temperature', updated_at: new Date().toISOString() },
+  { key: 'k-dynamic', value: 20, namespace: 'default', field: 'unknown', updated_at: new Date().toISOString() },
 ];
 
 const columns = renderedColumns(
@@ -61,8 +61,6 @@ function renderTable(overrides: Partial<React.ComponentProps<typeof StoreEntryTa
       columnFilters={{}}
       onColumnFilterChange={() => {}}
       uniqueValuesByColumn={new Map()}
-      keyColumnExpanded={false}
-      onToggleKeyExpanded={() => {}}
       maxHistorySize={5}
       staticKeyNames={new Set(['k-static'])}
       rowActions={baseRowActions}
@@ -139,15 +137,13 @@ describe('StoreEntryTable — 긴 값 셀 확장', () => {
     const longVal = 'x'.repeat(80);
     render(
       <StoreEntryTable
-        entries={[{ key: 'k1', value: longVal, namespace: 'default', metric_type: 'm', updated_at: new Date().toISOString() }]}
+        entries={[{ key: 'k1', value: longVal, namespace: 'default', field: 'm', updated_at: new Date().toISOString() }]}
         columns={columns}
         sort={{ column: null, direction: 'asc' }}
         onSort={() => {}}
         columnFilters={{}}
         onColumnFilterChange={() => {}}
         uniqueValuesByColumn={new Map()}
-        keyColumnExpanded={false}
-        onToggleKeyExpanded={() => {}}
         maxHistorySize={0}
         staticKeyNames={new Set()}
         rowActions={baseRowActions}

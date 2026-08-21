@@ -9,8 +9,8 @@
 //   - 컨테이너 크기 확대 (95vw × 95vh).
 //
 // SPEC-WEB-005 v0.7.0 (M16, Task 11/13) 메타데이터 + 필터 커버리지:
-//   - 시리즈 행에 data_type / metric_type / auto 배지 칩 표시.
-//   - data_type / metric_type / registration 필터 UI 동작.
+//   - 시리즈 행에 data_type / field / auto 배지 칩 표시.
+//   - data_type / field / registration 필터 UI 동작.
 //   - 신규 필터와 검색/태그 필터의 AND 결합.
 //
 // @spec SPEC-WEB-005
@@ -197,7 +197,7 @@ function storeDataSource(): SeriesDataSource {
 }
 
 /**
- * 표준 keyObjects fixture — 4개 키 (혼합 data_type / metric_type / registration).
+ * 표준 keyObjects fixture — 4개 키 (혼합 data_type / field / registration).
  */
 function makeKeyObjects(): StoreKeyObject[] {
   return [
@@ -205,28 +205,28 @@ function makeKeyObjects(): StoreKeyObject[] {
       key: 'indoor:1:temp',
       registration: 'manual',
       data_type: 'float',
-      metric_type: 'temperature',
+      field: 'temperature',
       tags: { room: '1', metric: 'temperature' },
     },
     {
       key: 'indoor:2:temp',
       registration: 'manual',
       data_type: 'float',
-      metric_type: 'temperature',
+      field: 'temperature',
       tags: { room: '2', metric: 'temperature' },
     },
     {
       key: 'indoor:1:hum',
       registration: 'auto',
       data_type: 'int',
-      metric_type: 'humidity',
+      field: 'humidity',
       tags: { room: '1', metric: 'humidity' },
     },
     {
       key: 'misc:status',
       registration: 'auto',
       data_type: 'string',
-      metric_type: 'unknown',
+      field: 'unknown',
       tags: {},
     },
   ];
@@ -791,9 +791,9 @@ describe('SeriesDataViewerModal', () => {
       expect(dataTypeChips.some((el) => el.textContent === 'string')).toBe(true);
     });
 
-    it('metric_type 이 설정된 키는 일반 칩, unknown 은 muted 칩으로 노출된다', () => {
+    it('field 이 설정된 키는 일반 칩, unknown 은 muted 칩으로 노출된다', () => {
       renderStoreModal();
-      // 'temperature' / 'humidity' 등 일반 metric_type 칩.
+      // 'temperature' / 'humidity' 등 일반 field 칩.
       const metricChips = screen.getAllByTestId('metadata-metric-type');
       expect(metricChips.length).toBeGreaterThan(0);
       expect(metricChips.some((el) => el.textContent === 'temperature')).toBe(true);
@@ -821,21 +821,21 @@ describe('SeriesDataViewerModal', () => {
           key: 'sensor',
           registration: 'manual',
           data_type: 'float',
-          metric_type: 'temp',
+          field: 'temp',
           tags: { room: '1' },
         },
         {
           key: 'sensor',
           registration: 'manual',
           data_type: 'float',
-          metric_type: 'temp',
+          field: 'temp',
           tags: { room: '2' },
         },
         {
           key: 'sensor',
           registration: 'auto',
           data_type: 'int',
-          metric_type: 'humid',
+          field: 'humid',
           tags: { room: '1' },
         },
         // 단일 시리즈 key (구분 행 미표시 대조군).
@@ -843,7 +843,7 @@ describe('SeriesDataViewerModal', () => {
           key: 'lonely',
           registration: 'manual',
           data_type: 'string',
-          metric_type: 'status',
+          field: 'status',
           tags: {},
         },
       ];
@@ -901,7 +901,7 @@ describe('SeriesDataViewerModal', () => {
       // 다중 시리즈 key 이므로 key 1개 + 시리즈 필터로 정확히 한 시리즈만 좁힌다.
       expect(arg.keys).toEqual(['sensor']);
       expect(arg.seriesFilters).toEqual([
-        { metricType: 'temp', tags: { room: '1' } },
+        { fieldName: 'temp', tags: { room: '1' } },
       ]);
     });
 
@@ -915,8 +915,8 @@ describe('SeriesDataViewerModal', () => {
       const arg = mutationState.current.mutate.mock.calls[0]![0] as SeriesMatrixQuery;
       expect(arg.keys).toEqual(['sensor', 'sensor']);
       expect(arg.seriesFilters).toEqual([
-        { metricType: 'temp', tags: { room: '1' } },
-        { metricType: 'humid', tags: { room: '1' } },
+        { fieldName: 'temp', tags: { room: '1' } },
+        { fieldName: 'humid', tags: { room: '1' } },
       ]);
     });
 

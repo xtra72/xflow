@@ -14,7 +14,6 @@ import {
   ArrowUp,
   ArrowUpDown,
   Check,
-  ChevronDown,
   Columns3,
   ListFilter,
   X,
@@ -35,7 +34,7 @@ import {
 /** 렌더 가능한 모든 컬럼 식별자(논리 순서 정의는 STORE_COLUMNS). */
 export type StoreColumnId =
   | 'key'
-  | 'metric'
+  | 'field'
   | 'value'
   | 'namespace'
   | 'tags'
@@ -76,11 +75,11 @@ export interface StoreColumn {
 
 /**
  * 논리적 기본 컬럼 순서(단일 출처).
- * 키 → 메트릭 → 값 → 네임스페이스 → 태그 → 바인딩 → TTL → 히스토리 → 갱신 → 액션.
+ * 키 → 필드 → 값 → 네임스페이스 → 태그 → 바인딩 → TTL → 히스토리 → 갱신 → 액션.
  */
 export const STORE_COLUMNS: readonly StoreColumn[] = [
   { id: 'key', labelKey: 'colKey', sortColumn: 'key', filterColumn: 'key', hideable: true, widthClass: 'min-w-[260px]' },
-  { id: 'metric', labelKey: 'colMetric', sortColumn: 'metric', filterColumn: 'metric', hideable: true },
+  { id: 'field', labelKey: 'colField', sortColumn: 'field', filterColumn: 'field', hideable: true },
   { id: 'value', labelKey: 'colValue', sortColumn: 'value', filterColumn: 'value', hideable: true },
   { id: 'namespace', labelKey: 'colNamespace', sortColumn: 'namespace', filterColumn: 'namespace', hideable: true },
   { id: 'tags', labelKey: 'colTags', filterColumn: 'tags', hideable: true, conditional: 'tags' },
@@ -575,8 +574,6 @@ export function ColumnHeader({
   filter,
   uniqueValues,
   onFilterChange,
-  keyExpanded,
-  onToggleKeyExpanded,
   headerSlot,
   t,
 }: {
@@ -587,9 +584,7 @@ export function ColumnHeader({
   uniqueValues: readonly string[];
   onFilterChange: (columnId: FilterColumnId, next: ColumnFilter) => void;
   /** 키 컬럼 전체 확장 상태(키 컬럼 헤더에서만 사용). */
-  keyExpanded?: boolean;
   /** 키 컬럼 전체 확장 토글(키 컬럼 헤더에서만 사용). */
-  onToggleKeyExpanded?: () => void;
   /**
    * 컬럼 헤더에 주입하는 커스텀 필터 어포던스(패널 설정 전용). 예: 태그 컬럼의 전용
    * AND 태그 피커 팝오버. 미주입 시 헤더는 기존과 동일하게 렌더된다(회귀 0).
@@ -610,7 +605,6 @@ export function ColumnHeader({
       : undefined;
 
   // 키 컬럼 헤더에서 전체 키 확장/축약을 한 번에 토글(개별 행 토글 대체).
-  const showKeyToggle = column.id === 'key' && onToggleKeyExpanded !== undefined;
 
   return (
     <th
@@ -663,32 +657,6 @@ export function ColumnHeader({
         )}
         {/* 패널 설정 전용: 컬럼 헤더 커스텀 슬롯(태그 컬럼의 전용 AND 태그 피커). */}
         {headerSlot}
-        {showKeyToggle && (
-          <button
-            type="button"
-            onClick={onToggleKeyExpanded}
-            className={cn(
-              'inline-flex items-center rounded px-0.5 text-(--color-text-muted) transition-colors hover:text-(--color-text-primary)',
-              keyExpanded && 'text-(--color-text-primary)',
-            )}
-            aria-pressed={keyExpanded}
-            aria-label={t(
-              keyExpanded
-                ? 'agents.detail.store.keyCollapseColumnAriaLabel'
-                : 'agents.detail.store.keyExpandColumnAriaLabel',
-            )}
-            title={t(
-              keyExpanded
-                ? 'agents.detail.store.keyCollapseColumnAriaLabel'
-                : 'agents.detail.store.keyExpandColumnAriaLabel',
-            )}
-          >
-            <ChevronDown
-              className={cn('h-3 w-3 transition-transform', keyExpanded && 'rotate-180')}
-              aria-hidden="true"
-            />
-          </button>
-        )}
       </span>
     </th>
   );

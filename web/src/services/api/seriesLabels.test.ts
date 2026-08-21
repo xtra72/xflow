@@ -16,7 +16,7 @@ import {
 } from './seriesLabels';
 
 describe('parseSeriesLabels', () => {
-  it('__metric__ 을 metric 으로 추출하고 나머지를 tags 로 분류', () => {
+  it('__field__ 을 metric 으로 추출하고 나머지를 tags 로 분류', () => {
     const result = parseSeriesLabels({
       [METRIC_LABEL_KEY]: 'temperature',
       room: '1',

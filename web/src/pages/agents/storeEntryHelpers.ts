@@ -38,13 +38,13 @@ export function extractEntryTags(
 }
 
 /**
- * 엔트리의 `metric_type` 필드를 추출한다.
- * 백엔드는 모든 엔트리에 metric_type 을 포함하며(동적 키는 "unknown"),
+ * 엔트리의 `field` 필드를 추출한다.
+ * 백엔드는 모든 엔트리에 field 을 포함하며(동적 키는 "unknown"),
  * 누락/비문자열인 경우 빈 문자열을 반환해 호출자가 "unknown" 으로 표시하도록 한다.
  *
  * @spec SPEC-STORE-003 v0.4.0
  */
 export function extractEntryMetricType(entry: Record<string, unknown>): string {
-  const raw = entry.metric_type;
+  const raw = entry.field;
   return typeof raw === 'string' ? raw : '';
 }

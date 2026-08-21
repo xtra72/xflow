@@ -1112,27 +1112,70 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'influxdb-write': {
+  'storage-write': {
     description:
-      'InfluxDB에 시계열 데이터를 기록하는 노드입니다. payload에서 measurement, tags, fields를 추출하여 InfluxDB 에이전트의 쓰기 API를 호출합니다.',
+      '메시지를 스토리지에 기록하는 통합 노드입니다. 기록 규약은 메시지 구조를 그대로 따릅니다 — payload 의 키/값이 측정값(키 = 측정 종류), metadata 가 태그, 메시지 타임스탬프가 기록 시각이 됩니다. 백엔드는 agent_ref 가 가리키는 에이전트의 타입으로 결정되며(store → 키-값 저장소, influxdb → 시계열 DB), 설정을 그대로 둔 채 에이전트만 교체하면 저장 대상이 바뀝니다. 기록 후 원본 메시지를 그대로 다음 노드로 전달합니다 (pass-through).',
     ports: [
-      { name: 'in', direction: 'input', description: '기록할 데이터가 담긴 메시지 입력' },
-      { name: 'out', direction: 'output', description: '기록 성공 후 원본 메시지 pass-through' },
-      { name: 'error', direction: 'error', description: '기록 실패 시 에러 출력' },
+      { name: 'in', direction: 'input', description: 'payload 에 측정값(키/값) 1개 이상을 담은 메시지 입력. metadata 는 태그로, 타임스탬프는 기록 시각으로 쓰입니다.' },
+      { name: 'out', direction: 'output', description: '기록 완료 후 원본 메시지를 passthrough로 출력합니다.' },
+      { name: 'error', direction: 'error', description: '기록 실패 시 에러 메시지를 출력합니다.' },
     ],
     configFields: [
-      { name: 'agent_ref', type: 'string', required: true, description: 'InfluxDB 에이전트 이름 또는 ID' },
-      { name: 'measurement', type: 'string', required: false, description: '고정 measurement 이름' },
-      { name: 'measurement_key', type: 'string', required: false, description: 'payload에서 measurement를 추출할 키' },
-      { name: 'tag_mappings', type: 'string', required: false, description: '태그 매핑 (tag_name: payload_key)' },
-      { name: 'field_mappings', type: 'string', required: false, description: '필드 매핑 (field_name: payload_key). 비어있으면 전체 payload' },
-      { name: 'timestamp_key', type: 'string', required: false, description: '타임스탬프 추출 키 (Unix ms)' },
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '기록 대상 에이전트의 이름 또는 ID입니다. 에이전트 타입이 백엔드를 결정합니다 (store / influxdb).',
+      },
+      {
+        name: 'payload_mode',
+        type: 'string',
+        required: false,
+        description:
+          'payload 키 처리 방식입니다. fields = 모든 키/값을 measurement 하나 아래 여러 측정값으로 기록. split = 키마다 별도 시리즈로 분리하고 값을 그 시리즈의 값("value")으로 기록.',
+        default: 'fields',
+      },
+      {
+        name: 'measurement',
+        type: 'string',
+        required: true,
+        description:
+          'fields 모드의 시리즈 이름입니다. {…} 안의 경로를 메시지 값으로 치환합니다 (예: "{$.metadata.device.id}"). store 의 저장 키, influxdb 의 measurement 에 대응합니다. split 모드에서는 payload 키가 시리즈 이름이므로 쓰이지 않습니다.',
+      },
+      {
+        name: 'exclude_keys',
+        type: 'array',
+        required: false,
+        description: '측정값으로 쓰지 않을 payload 키 목록입니다 (예: ["device", "room"]).',
+      },
+      {
+        name: 'namespace',
+        type: 'string',
+        required: false,
+        description: 'Store 네임스페이스입니다. influxdb 백엔드에서는 무시됩니다.',
+        default: 'default',
+      },
+      {
+        name: 'ttl',
+        type: 'string',
+        required: false,
+        description: 'TTL 기간입니다 (예: "5m", "1h"). influxdb 백엔드에서는 무시됩니다.',
+      },
+      {
+        name: 'bool_to_int',
+        type: 'boolean',
+        required: false,
+        description: 'true/false 값을 1/0 정수로 변환하여 기록합니다. store 백엔드에서는 무시됩니다.',
+        default: 'false',
+      },
     ],
     configExample: {
-      agent_ref: 'my-influxdb',
-      measurement: 'temperature',
-      tag_mappings: { location: 'room' },
-      field_mappings: { value: 'temp_celsius' },
+      agent_ref: 'store-engine',
+      namespace: 'sensors',
+      payload_mode: 'fields',
+      measurement: '{$.metadata.device.id}',
+      exclude_keys: ['device_id'],
+      ttl: '1h',
     },
   },
 
@@ -1178,72 +1221,6 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       query: 'SELECT * FROM $measurement WHERE location = $location LIMIT $limit',
       language: 'influxql',
       result_key: 'results',
-    },
-  },
-
-  'store-write': {
-    description:
-      '메시지 데이터를 키-값 저장소에 기록하는 노드입니다. key_template으로 복합 키를 생성하고, value_key로 지정된 값 또는 전체 payload를 저장한 뒤 원본 메시지를 그대로 다음 노드로 전달합니다 (pass-through).',
-    ports: [
-      { name: 'in', direction: 'input', description: '저장할 메시지 입력. 페이로드에서 키 템플릿 필드와 값을 추출합니다.' },
-      { name: 'out', direction: 'output', description: '저장 완료 후 원본 메시지를 passthrough로 출력합니다.' },
-      { name: 'error', direction: 'error', description: 'Store 기록 실패 시 에러 메시지를 출력합니다.' },
-    ],
-    configFields: [
-      {
-        name: 'agent_ref',
-        type: 'string',
-        required: true,
-        description: '연결할 Store 에이전트의 이름 또는 ID입니다.',
-      },
-      {
-        name: 'namespace',
-        type: 'string',
-        required: false,
-        description: 'Store 네임스페이스입니다 (기본값: "default").',
-        default: 'default',
-      },
-      {
-        name: 'key_template',
-        type: 'string',
-        required: true,
-        description: '키 템플릿입니다. {field} 형식 플레이스홀더를 payload 값으로 치환합니다 (예: "{location}:{point}"). 이 키에 metrics 의 각 메트릭이 metric_type 별 시리즈로 기록됩니다.',
-      },
-      {
-        name: 'key_mappings',
-        type: 'object',
-        required: false,
-        description: '한 메시지에서 서로 다른 키에 값을 기록합니다(키 템플릿 → 값 $.경로). 네임스페이스·TTL·태그는 공유 적용됩니다.',
-      },
-      {
-        name: 'tags',
-        type: 'object',
-        required: false,
-        description: '모든 메트릭/키에 공유 적용되는 태그(키=값). 값은 리터럴 또는 $. 경로.',
-      },
-      {
-        name: 'metrics',
-        type: 'array',
-        required: false,
-        description:
-          '다중 메트릭 배열. 각 항목은 { metric_type, value_key(기본 $.payload.value), data_type, min_interval, min_change, min_change_percent } 를 가집니다. 같은 key_template 키에 metric_type 별 시리즈로 저장되며, 메트릭마다 독립적인 미세변화 억제(dead-band)가 적용됩니다. min_interval 이 설정된 메트릭만 억제되고, 간격 경과 시 변화가 없어도 1건 저장(heartbeat)합니다.',
-      },
-      {
-        name: 'ttl',
-        type: 'string',
-        required: false,
-        description: 'TTL 기간입니다 (예: "5m", "1h", "24h"). 모든 메트릭/키에 공유 적용. 비워두면 만료 없음.',
-      },
-    ],
-    configExample: {
-      agent_ref: 'store-engine',
-      namespace: 'sensors',
-      key_template: '{location}:{device_id}',
-      ttl: '1h',
-      metrics: [
-        { metric_type: 'temperature', value_key: '$.payload.temperature', data_type: 'float', min_interval: '30s', min_change: 0.5 },
-        { metric_type: 'humidity', value_key: '$.payload.humidity', data_type: 'float', min_interval: '1m', min_change: 2 },
-      ],
     },
   },
 

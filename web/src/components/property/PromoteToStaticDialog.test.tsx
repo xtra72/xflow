@@ -6,7 +6,7 @@
 //   - Esc / 배경 / 취소 버튼으로 모달 닫힘
 //   - data_type 미선택 시 변환 버튼 비활성 + tooltip 표시 (M14)
 //   - data_type 선택 시 변환 버튼 활성, onConfirm 페이로드에 포함됨 (M14)
-//   - metric_type 선택 입력 — 빈 값 통과, 정규식 위반 시 에러 + 비활성 (M14)
+//   - field 선택 입력 — 빈 값 통과, 정규식 위반 시 에러 + 비활성 (M14)
 //   - defaultDataType prop 전달 시 셀렉트 사전 채움 (M14)
 //   - 태그 추가/삭제 → onConfirm 페이로드의 tags 필드에 반영
 //   - 잘못된 형식의 태그 키 입력 시 경고 표시 + 변환 버튼 비활성화
@@ -50,7 +50,7 @@ describe('PromoteToStaticDialog', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('isOpen=true 면 모달과 키 이름, data_type/metric_type 입력이 표시된다', () => {
+  it('isOpen=true 면 모달과 키 이름, data_type/field 입력이 표시된다', () => {
     render(
       <PromoteToStaticDialog
         isOpen={true}
@@ -62,9 +62,9 @@ describe('PromoteToStaticDialog', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText('정적 키로 변환')).toBeInTheDocument();
     expect(screen.getByText('indoor:1:room_temp')).toBeInTheDocument();
-    // M14: data_type / metric_type 입력 필드 존재
+    // M14: data_type / field 입력 필드 존재
     expect(screen.getByLabelText(/데이터 타입/)).toBeInTheDocument();
-    expect(screen.getByLabelText(/메트릭 타입/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/필드/)).toBeInTheDocument();
     // 초기 상태: 태그 행 없음
     expect(screen.getByText('태그가 없습니다')).toBeInTheDocument();
   });
@@ -194,10 +194,10 @@ describe('PromoteToStaticDialog', () => {
   });
 
   // ─────────────────────────────────────────────────────────────────
-  // M14: metric_type 검증
+  // M14: field 검증
   // ─────────────────────────────────────────────────────────────────
 
-  it('metric_type 빈 값은 페이로드에서 생략된다 (M14)', () => {
+  it('field 빈 값은 페이로드에서 생략된다 (M14)', () => {
     const onConfirm = vi.fn();
     render(
       <PromoteToStaticDialog
@@ -210,18 +210,18 @@ describe('PromoteToStaticDialog', () => {
     fireEvent.change(screen.getByLabelText(/데이터 타입/), {
       target: { value: 'int' },
     });
-    // metric_type 입력 없음
+    // field 입력 없음
     fireEvent.click(screen.getByRole('button', { name: /^변환$/ }));
     expect(onConfirm).toHaveBeenCalledWith({
       data_type: 'int',
       tags: {},
     });
-    // metric_type 키 자체가 없어야 함 (백엔드 default 적용)
+    // field 키 자체가 없어야 함 (백엔드 default 적용)
     const arg = onConfirm.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(arg).not.toHaveProperty('metric_type');
+    expect(arg).not.toHaveProperty('field');
   });
 
-  it('metric_type 정상 값은 페이로드에 포함된다 (M14)', () => {
+  it('field 정상 값은 페이로드에 포함된다 (M14)', () => {
     const onConfirm = vi.fn();
     render(
       <PromoteToStaticDialog
@@ -234,18 +234,18 @@ describe('PromoteToStaticDialog', () => {
     fireEvent.change(screen.getByLabelText(/데이터 타입/), {
       target: { value: 'float' },
     });
-    fireEvent.change(screen.getByLabelText(/메트릭 타입/), {
+    fireEvent.change(screen.getByLabelText(/필드/), {
       target: { value: 'gauge' },
     });
     fireEvent.click(screen.getByRole('button', { name: /^변환$/ }));
     expect(onConfirm).toHaveBeenCalledWith({
       data_type: 'float',
-      metric_type: 'gauge',
+      field: 'gauge',
       tags: {},
     });
   });
 
-  it('metric_type 정규식 위반 시 에러 표시 + 변환 비활성 (M14)', () => {
+  it('field 정규식 위반 시 에러 표시 + 변환 비활성 (M14)', () => {
     const onConfirm = vi.fn();
     render(
       <PromoteToStaticDialog
@@ -258,8 +258,8 @@ describe('PromoteToStaticDialog', () => {
     fireEvent.change(screen.getByLabelText(/데이터 타입/), {
       target: { value: 'int' },
     });
-    // metric_type 에 점(.) 포함 — 정규식 위반
-    fireEvent.change(screen.getByLabelText(/메트릭 타입/), {
+    // field 에 점(.) 포함 — 정규식 위반
+    fireEvent.change(screen.getByLabelText(/필드/), {
       target: { value: 'metric.bad' },
     });
     expect(

@@ -37,14 +37,14 @@ const candidates: StoreKeyObject[] = [
     key: 'indoor:1:room_temp',
     registration: 'auto',
     data_type: 'float',
-    metric_type: 'gauge',
+    field: 'gauge',
     tags: { room: '1' },
   },
   {
     key: 'indoor:1:power',
     registration: 'auto',
     data_type: 'boolean',
-    metric_type: 'unknown',
+    field: 'unknown',
     tags: {},
   },
 ];

@@ -64,13 +64,13 @@ export type RegistrationSource = 'manual' | 'auto';
  * Store 키 메타데이터 객체 (SPEC-STORE-003 v0.3.0 M11).
  *
  * v0.3.0 BREAKING CHANGE: 키 목록 응답이 string 배열에서 객체 배열로 진화했다.
- * 각 객체는 키 이름, 등록 출처, 데이터 타입, 메트릭 타입, 태그 메타데이터를 포함한다.
+ * 각 객체는 키 이름, 등록 출처, 데이터 타입, 필드, 태그 메타데이터를 포함한다.
  *
  * 예) {
  *   key: "indoor:1:room_temp",
  *   registration: "manual",
  *   data_type: "float",
- *   metric_type: "gauge",
+ *   field: "gauge",
  *   tags: { room: "1", type: "temperature" }
  * }
  *
@@ -81,7 +81,7 @@ export interface StoreKeyObject {
   key: string;
   registration: RegistrationSource;
   data_type: DataType;
-  metric_type: string;
+  field: string;
   tags: Record<string, string>;
 }
 
@@ -154,8 +154,8 @@ interface StoreQueryRequest {
  * 개별 엔트리 (값 타입은 런타임에 검증).
  *
  * @spec SPEC-STORE-004
- * `labels` 는 M3 백엔드부터 추가된 시리즈 식별자다. 예약 키 `__metric__` 는
- * metric_type, 그 외 키는 tag key=value 이다. 같은 store key 라도 metric/tags 가
+ * `labels` 는 M3 백엔드부터 추가된 시리즈 식별자다. 예약 키 `__field__` 는
+ * field, 그 외 키는 tag key=value 이다. 같은 store key 라도 metric/tags 가
  * 다른 다중 시리즈가 한 응답에 평탄화되어 섞여 올 수 있으므로, 클라이언트는 이
  * 라벨을 기준으로 시리즈를 분리해 각각 독립 컬럼/라인으로 렌더한다.
  * 라벨이 없는(undefined) 엔트리는 라벨 없는 단일 시리즈로 취급한다(기존 호환).
@@ -412,7 +412,7 @@ function isAggregationUnsupportedError(err: unknown): boolean {
  * 단일 store key 조회 결과를 시리즈 단위로 분리한 표현.
  *
  * - `signature`: labels 기준 결정적 서명. 라벨 없는 단일 시리즈는 "".
- * - `labels`: 원본 labels 맵(metric `__metric__` + tags). 라벨 없으면 undefined.
+ * - `labels`: 원본 labels 맵(metric `__field__` + tags). 라벨 없으면 undefined.
  * - `buckets`: 버킷 시작 시각 → 집계값 맵.
  */
 interface KeySeries {
@@ -487,7 +487,7 @@ function collectAggregatedBuckets(entries: StoreQueryEntry[]): Map<number, numbe
  */
 function selectorSignature(filter: SeriesSelectorFilter): string {
   const labels: Record<string, string> = { ...(filter.tags ?? {}) };
-  if (filter.metricType) labels['__metric__'] = filter.metricType;
+  if (filter.fieldName) labels['__field__'] = filter.fieldName;
   return seriesSignature(labels);
 }
 
@@ -873,18 +873,18 @@ export async function renameStoreKey(
   return post<StoreRenameResult>(url, { new_key: newKey });
 }
 
-// ---- Key meta (metric_type / tags) ----
+// ---- Key meta (field / tags) ----
 
 /**
- * 임의 엔트리(정적 + 동적)의 metric_type / tags 를 설정한다.
+ * 임의 엔트리(정적 + 동적)의 field / tags 를 설정한다.
  *
  * `PUT /api/v1/store/{agent_name}/keys/{key}/meta` 를 호출한다.
  *
  * 동작 특성:
  *   - tags 는 **전체 교체** (merge 아님). 부분 수정 시 기존+변경 전체를 전송해야 한다.
- *   - metric_type 미지정/빈 문자열 → 백엔드가 `"unknown"` 으로 normalize.
+ *   - field 미지정/빈 문자열 → 백엔드가 `"unknown"` 으로 normalize.
  *   - 키는 URL 인코딩된다 (`:` → `%3A`). `encodeURIComponent` 가 콜론을 인코딩한다.
- *   - 검증 실패(metric_type 정규식 / tag key 정규식) 시 400 → `APIError` 로 전파된다.
+ *   - 검증 실패(field 정규식 / tag key 정규식) 시 400 → `APIError` 로 전파된다.
  *
  * @spec SPEC-STORE-003 v0.4.0
  */
@@ -905,7 +905,7 @@ export interface SetStoreKeyMetaVars {
 }
 
 /**
- * 엔트리 메타데이터(metric_type/tags) 설정 mutation 훅.
+ * 엔트리 메타데이터(field/tags) 설정 mutation 훅.
  *
  * 성공 시 해당 에이전트의 store 키 목록/태그 캐시를 invalidate 하여 즉시 UI 에
  * 반영한다. State 엔트리(`['agents', agentId]`)는 호출자가 추가로 invalidate 해야

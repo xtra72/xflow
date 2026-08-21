@@ -777,7 +777,7 @@ function FourQuadrantConfigLayout({
  * - 운영 섹션: max_key_length, scan_interval, default_ttl, max_history_size, history_ttl
  * - 데이터 섹션:
  *     * registration_type (enum 셀렉트 — v0.7.0 M12, 이전 allow_dynamic_keys 토글 대체)
- *     * keys (정적 키 + data_type + metric_type + 태그) — StoreKeysEditor 를 통해 편집한다.
+ *     * keys (정적 키 + data_type + field + 태그) — StoreKeysEditor 를 통해 편집한다.
  *
  * `keys` 는 ConfigSchema 에 포함되지 않는 커스텀 UI 필드로, 이 컴포넌트에서
  * 직접 data.keys 를 읽고 onChange 로 병합한다.
@@ -911,7 +911,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   // v0.7.0 (M13): Store 에이전트의 keys 행 검증 상태.
-  // StoreConfigEditor → StoreKeysEditor 에서 data_type/metric_type 검증 결과를 받아
+  // StoreConfigEditor → StoreKeysEditor 에서 data_type/field 검증 결과를 받아
   // manual 모드 미입력 시 저장 버튼을 비활성화한다. 다른 에이전트 타입에서는 항상 true.
   const [storeKeysValid, setStoreKeysValid] = useState(true);
 
@@ -2481,7 +2481,7 @@ type StorePageSize = (typeof STORE_PAGE_SIZE_OPTIONS)[number];
 /** Excel 유사 필터가 가능한 컬럼 id 목록(고유 값 사전 계산 대상). */
 const STORE_COLUMNS_WITH_FILTER: readonly FilterColumnId[] = [
   'key',
-  'metric',
+  'field',
   'value',
   'namespace',
   'binding',
@@ -2548,7 +2548,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   const [pageSize, setPageSize] = useState<StorePageSize>(10);
 
   // --- 검색 필터 상태 (store key 테이블) ---
-  // key / metric_type / tags 에 대한 부분일치(대소문자 무시) 검색어.
+  // key / field / tags 에 대한 부분일치(대소문자 무시) 검색어.
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // --- 컬럼 정렬 상태 (store key 테이블) ---
@@ -2570,13 +2570,12 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   }, [agentId]);
 
   // --- Excel 유사 컬럼별 필터 상태 (store key 테이블) ---
-  // 컬럼 id → { text, values }. AND 결합으로 태그/메트릭/검색 필터와 함께 적용한다.
+  // 컬럼 id → { text, values }. AND 결합으로 태그/필드/검색 필터와 함께 적용한다.
   // @spec SPEC-WEB-005
   const [columnFilters, setColumnFilters] = useState<ColumnFilterMap>(() => ({}));
 
   // 키 컬럼 전체 확장 상태. 개별 행이 아니라 키 컬럼 헤더의 토글로 일괄 제어한다.
   // false(기본): 앞 8자만 표시, true: 전체 키 표시.
-  const [keyColumnExpanded, setKeyColumnExpanded] = useState(false);
 
   // v0.7.0 (M14, Phase D): 백엔드에서 자동 등록된 키의 메타데이터(data_type 포함)를
   // 가져온다. PromoteToStaticDialog 가 defaultDataType 으로 사전 채움하기 위함이다.
@@ -2872,9 +2871,9 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
    * 백엔드의 Configure 가 런타임 정책을 즉시 적용하고, NodeStoreAdapter 의 lazy resolver
    * 가 흐름 연속성을 보장한다.
    *
-   * v0.7.0 (M14, Phase D): payload 시그니처가 진화하여 data_type / metric_type 을
+   * v0.7.0 (M14, Phase D): payload 시그니처가 진화하여 data_type / field 을
    * 포함한다. data_type 은 dialog 가 manual 모드 검증으로 강제하므로 항상 존재한다.
-   * metric_type 은 비어있으면 백엔드 default `"unknown"` 적용을 위해 entry 에서 생략한다.
+   * field 은 비어있으면 백엔드 default `"unknown"` 적용을 위해 entry 에서 생략한다.
    *
    * 에러 핸들링: SPEC-STORE-003 v0.3.0 신규 4종 + 마이그레이션 에러를 mapStoreError 로
    * 사용자 친화 한글 메시지로 매핑한다.
@@ -2899,14 +2898,14 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         setPromotingKey(null);
         return;
       }
-      // v0.7.0 (M14): data_type 은 항상 포함, metric_type 은 비어있을 때만 생략.
+      // v0.7.0 (M14): data_type 은 항상 포함, field 은 비어있을 때만 생략.
       const newEntry: StoreKeyEntry = {
         key: promotingKey,
         data_type: payload.data_type,
         tags: payload.tags,
       };
-      if (payload.metric_type && payload.metric_type !== '') {
-        newEntry.metric_type = payload.metric_type;
+      if (payload.field && payload.field !== '') {
+        newEntry.field = payload.field;
       }
       const newKeys: StoreKeyEntry[] = [...currentKeys, newEntry];
       try {
@@ -2968,10 +2967,10 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     setEditingKey(null);
   }, [setKeyMeta.isPending]);
 
-  // 편집 대상 엔트리의 현재 metric_type / tags 를 사전 채움 값으로 제공한다.
+  // 편집 대상 엔트리의 현재 field / tags 를 사전 채움 값으로 제공한다.
   // State 엔트리(allEntries)를 단일 출처로 사용한다.
   // @spec SPEC-STORE-004: editingKey 는 storage_key(인코딩 시리즈 키)이다. 엔트리는
-  // storage_key 로 찾아 그 시리즈의 metric_type/tags 를 사전 채움한다(없으면 key 폴백 — 레거시).
+  // storage_key 로 찾아 그 시리즈의 field/tags 를 사전 채움한다(없으면 key 폴백 — 레거시).
   const editingEntry = useMemo(() => {
     if (!editingKey) return undefined;
     return allEntries.find(
@@ -2998,7 +2997,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
 
   /**
    * 타입/태그 편집 확정 — PUT /store/{name}/keys/{key}/meta.
-   * tags 는 전체 교체이며, metric_type 빈 값은 백엔드가 "unknown" 으로 처리한다.
+   * tags 는 전체 교체이며, field 빈 값은 백엔드가 "unknown" 으로 처리한다.
    * 성공 시 훅이 store 키 캐시를, 여기서 추가로 agents(State 엔트리) 캐시를 invalidate 한다.
    *
    * @spec SPEC-STORE-003 v0.4.0
@@ -3010,14 +3009,14 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         await setKeyMeta.mutateAsync({
           agentName,
           key: editingKey,
-          meta: { metric_type: payload.metric_type, tags: payload.tags },
+          meta: { field: payload.field, tags: payload.tags },
         });
         addNotification({
           type: 'success',
           message: t('agents.detail.store.editMetaSuccess').replace('{key}', editingDisplayKey),
         });
         setEditingKey(null);
-        // State 엔트리(metric_type/tags 표시 출처)를 즉시 갱신.
+        // State 엔트리(field/tags 표시 출처)를 즉시 갱신.
         await queryClient.invalidateQueries({ queryKey: ['agents', agentId] });
       } catch (err) {
         // 다이얼로그를 닫지 않고 재시도 가능하게 한다.
@@ -3212,8 +3211,8 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         </div>
       </div>
 
-      {/* 검색 필터 (store key 테이블): key / metric_type / tags 부분일치(대소문자 무시).
-          메트릭은 key 컬럼에 이어붙이지 않되 검색 대상에는 포함한다. */}
+      {/* 검색 필터 (store key 테이블): key / field / tags 부분일치(대소문자 무시).
+          필드은 key 컬럼에 이어붙이지 않되 검색 대상에는 포함한다. */}
       <div className="relative">
         <Search
           className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-text-muted)"
@@ -3260,8 +3259,6 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
             columnFilters={columnFilters}
             onColumnFilterChange={handleColumnFilterChange}
             uniqueValuesByColumn={uniqueValuesByColumn}
-            keyColumnExpanded={keyColumnExpanded}
-            onToggleKeyExpanded={() => setKeyColumnExpanded((v) => !v)}
             maxHistorySize={maxHistorySize}
             staticKeyNames={staticKeyNames}
             rowActions={{
@@ -3340,12 +3337,12 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
       />
 
       {/* 타입/태그 편집 모달 (SPEC-STORE-003 v0.4.0). 임의 엔트리(동적 포함)의
-          metric_type/tags 를 PUT .../keys/{key}/meta 로 갱신한다. */}
+          field/tags 를 PUT .../keys/{key}/meta 로 갱신한다. */}
       <EditKeyMetaDialog
         isOpen={editingKey !== null}
         onClose={handleCloseEditMeta}
         keyName={editingDisplayKey}
-        initialMetricType={editingInitialMetricType}
+        initialField={editingInitialMetricType}
         initialTags={editingInitialTags}
         onConfirm={handleEditMetaConfirm}
         isSubmitting={setKeyMeta.isPending}

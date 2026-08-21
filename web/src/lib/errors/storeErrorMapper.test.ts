@@ -112,20 +112,20 @@ describe('mapStoreError', () => {
     });
   });
 
-  // ── ErrInvalidMetricType ───────────────────────────────────────
-  describe('ErrInvalidMetricType', () => {
+  // ── ErrInvalidField ───────────────────────────────────────
+  describe('ErrInvalidField', () => {
     it('표준 메시지를 매핑한다', () => {
-      const err = new Error('store: invalid metric_type "sensor!@#"');
+      const err = new Error('store: invalid field "sensor!@#"');
       const result = mapStoreError(err, t);
-      expect(result.kind).toBe('invalid_metric_type');
-      expect(result.userMessage).toContain('metric_type');
+      expect(result.kind).toBe('invalid_field');
+      expect(result.userMessage).toContain('field');
       expect(result.userMessage).toContain('영문');
     });
 
-    it('ErrInvalidMetricType 식별자도 매핑한다', () => {
-      const err = new Error('ErrInvalidMetricType: contains invalid characters');
+    it('ErrInvalidField 식별자도 매핑한다', () => {
+      const err = new Error('ErrInvalidField: contains invalid characters');
       const result = mapStoreError(err, t);
-      expect(result.kind).toBe('invalid_metric_type');
+      expect(result.kind).toBe('invalid_field');
     });
   });
 
@@ -219,8 +219,8 @@ describe('mapStoreError', () => {
     });
 
     it('문자열 입력도 message 로 직접 사용한다', () => {
-      const result = mapStoreError('invalid metric_type detected', t);
-      expect(result.kind).toBe('invalid_metric_type');
+      const result = mapStoreError('invalid field detected', t);
+      expect(result.kind).toBe('invalid_field');
     });
 
     it('object with message 필드(plain object) 도 메시지를 추출한다', () => {
@@ -252,10 +252,10 @@ describe('mapStoreError', () => {
 
     it('부분 매칭: 키워드가 더 긴 메시지에 포함되어도 매핑된다', () => {
       const err = new Error(
-        'Backend response: 400 Bad Request — store: invalid metric_type "abc!"; please retry',
+        'Backend response: 400 Bad Request — store: invalid field "abc!"; please retry',
       );
       const result = mapStoreError(err, t);
-      expect(result.kind).toBe('invalid_metric_type');
+      expect(result.kind).toBe('invalid_field');
     });
   });
 
@@ -291,9 +291,9 @@ describe('classifyStoreError', () => {
     );
   });
 
-  it('각 에러를 enum 으로 분류한다 (invalid_metric_type)', () => {
-    expect(classifyStoreError(new Error('invalid metric_type'))).toBe(
-      'invalid_metric_type',
+  it('각 에러를 enum 으로 분류한다 (invalid_field)', () => {
+    expect(classifyStoreError(new Error('invalid field'))).toBe(
+      'invalid_field',
     );
   });
 

@@ -646,7 +646,7 @@ const UDP_CLIENT_FIELDS: ConfigField[] = [
  *
  * SPEC-STORE-003 이후 필드는 UI 상 두 섹션으로 나뉘어 렌더링된다:
  *   - 운영 섹션: history_ttl, max_history_size, max_key_length, scan_interval, default_ttl
- *   - 데이터 섹션: registration_type, keys (정적 키 + data_type + metric_type + 태그)
+ *   - 데이터 섹션: registration_type, keys (정적 키 + data_type + field + 태그)
  *
  * 섹션 분리는 `AgentDetailPanel.tsx` 의 `StoreConfigEditor` 컴포넌트가 담당하며,
  * 여기서는 필드 메타데이터만 정의한다. `keys` 필드는 별도의 커스텀 UI 로
@@ -654,7 +654,7 @@ const UDP_CLIENT_FIELDS: ConfigField[] = [
  *
  * v0.7.0 진화 (M12, M13):
  *   - `allow_dynamic_keys: bool` → `registration_type: enum` ('auto' | 'manual')
- *   - keys[] 항목에 `data_type` 와 `metric_type` 추가 (StoreKeysEditor 에서 처리)
+ *   - keys[] 항목에 `data_type` 와 `field` 추가 (StoreKeysEditor 에서 처리)
  *
  * @spec SPEC-WEB-005 v0.7.0 (M12)
  * @spec SPEC-STORE-003 v0.3.0

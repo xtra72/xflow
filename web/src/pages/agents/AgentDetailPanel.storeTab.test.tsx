@@ -1,12 +1,12 @@
-// AgentDetailPanel.StoreTab — 타입(metric_type)/태그 표시·필터·편집 테스트
+// AgentDetailPanel.StoreTab — 타입(field)/태그 표시·필터·편집 테스트
 // (SPEC-STORE-003 v0.4.0).
 //
 // 범위:
-//   - 모든 엔트리(정적/동적)에 metric_type 배지가 노출된다 (동적/누락 → "unknown").
+//   - 모든 엔트리(정적/동적)에 field 배지가 노출된다 (동적/누락 → "unknown").
 //   - 태그가 key=value 칩으로 표시된다.
-//   - 메트릭 타입 필터(select)로 클라이언트 측 필터링이 동작한다.
+//   - 필드 필터(select)로 클라이언트 측 필터링이 동작한다.
 //   - 행의 편집 버튼 → EditKeyMetaDialog 표시 → 저장 시 useSetStoreKeyMeta 호출 +
-//     metric_type/tags 전체 교체 payload 전송.
+//     field/tags 전체 교체 payload 전송.
 //   - 원격(READ-ONLY) 타깃에서는 편집 버튼이 노출되지 않는다.
 //
 // 데이터/뮤테이션/시리즈 등 부수 의존은 스텁으로 격리한다.
@@ -22,7 +22,7 @@ import type { AgentInfo } from '@/types/agent';
 const LOCAL_TARGET: ResourceTarget = { type: 'local' };
 const REMOTE_TARGET: ResourceTarget = { type: 'remote', instanceId: 'node-a' };
 
-// State 엔트리는 모든 엔트리에 metric_type/tags 를 포함한다 (백엔드 v0.4.0).
+// State 엔트리는 모든 엔트리에 field/tags 를 포함한다 (백엔드 v0.4.0).
 const STORE_AGENT: AgentInfo = {
   id: 's-1',
   name: 'store-a',
@@ -40,7 +40,7 @@ const STORE_AGENT: AgentInfo = {
         key: 'indoor:temp',
         value: 21.5,
         namespace: 'default',
-        metric_type: 'temperature',
+        field: 'temperature',
         tags: { room: '1' },
         updated_at: new Date().toISOString(),
       },
@@ -48,7 +48,7 @@ const STORE_AGENT: AgentInfo = {
         key: 'outdoor:humidity',
         value: 55,
         namespace: 'default',
-        metric_type: 'humidity',
+        field: 'humidity',
         tags: {},
         updated_at: new Date().toISOString(),
       },
@@ -56,7 +56,7 @@ const STORE_AGENT: AgentInfo = {
         key: 'dynamic:count',
         value: 7,
         namespace: 'default',
-        metric_type: 'unknown',
+        field: 'unknown',
         tags: {},
         updated_at: new Date().toISOString(),
       },
@@ -150,14 +150,14 @@ beforeEach(() => {
 });
 
 describe('StoreTab — 타입/태그 표시', () => {
-  it('모든 엔트리에 metric_type 배지가 노출된다 (동적은 unknown)', () => {
+  it('모든 엔트리에 field 배지가 노출된다 (동적은 unknown)', () => {
     renderPanel(LOCAL_TARGET);
     // 배지는 테이블 행에 렌더된다. 필터 select 의 option 과 구분하기 위해
     // 테이블(table) 스코프로 한정해 조회한다.
     const table = screen.getByRole('table');
     expect(within(table).getByText('temperature')).toBeInTheDocument();
     expect(within(table).getByText('humidity')).toBeInTheDocument();
-    // dynamic:count 는 metric_type=unknown.
+    // dynamic:count 는 field=unknown.
     expect(within(table).getAllByText('unknown').length).toBeGreaterThanOrEqual(1);
   });
 
@@ -171,7 +171,7 @@ describe('StoreTab — 타입/태그 편집', () => {
   it('편집 버튼 → 다이얼로그 → 저장 시 useSetStoreKeyMeta 가 전체 교체 payload 로 호출된다', async () => {
     setKeyMetaMutateAsync.mockResolvedValueOnce({
       key: 'indoor:temp',
-      metric_type: 'temperature',
+      field: 'temperature',
       tags: { room: '1' },
     });
     renderPanel(LOCAL_TARGET);
@@ -185,7 +185,7 @@ describe('StoreTab — 타입/태그 편집', () => {
     // 다이얼로그가 사전 채움된다.
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText('indoor:temp')).toBeInTheDocument();
-    expect(within(dialog).getByLabelText(/property\.meta\.metricTypeOptional/)).toHaveValue(
+    expect(within(dialog).getByLabelText(/property\.meta\.fieldNameOptional/)).toHaveValue(
       'temperature',
     );
 
@@ -197,7 +197,7 @@ describe('StoreTab — 타입/태그 편집', () => {
     expect(setKeyMetaMutateAsync).toHaveBeenCalledWith({
       agentName: 'store-a',
       key: 'indoor:temp',
-      meta: { metric_type: 'temperature', tags: { room: '1' } },
+      meta: { field: 'temperature', tags: { room: '1' } },
     });
   });
 });
@@ -222,7 +222,7 @@ describe('StoreTab — 검색 필터', () => {
     expect(screen.queryByTitle('dynamic:count')).not.toBeInTheDocument();
   });
 
-  it('metric_type 으로도 검색된다 (key 에 없는 텍스트)', () => {
+  it('field 으로도 검색된다 (key 에 없는 텍스트)', () => {
     renderPanel(LOCAL_TARGET);
     fireEvent.change(screen.getByTestId('store-search-input'), {
       target: { value: 'humidity' },

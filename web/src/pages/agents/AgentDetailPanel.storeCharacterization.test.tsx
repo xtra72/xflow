@@ -41,7 +41,7 @@ const STORE_AGENT: AgentInfo = {
         key: 'indoor:temp',
         value: 21.5,
         namespace: 'default',
-        metric_type: 'temperature',
+        field: 'temperature',
         tags: { room: '1' },
         updated_at: new Date().toISOString(),
       },
@@ -49,7 +49,7 @@ const STORE_AGENT: AgentInfo = {
         key: 'outdoor:humidity',
         value: 55,
         namespace: 'default',
-        metric_type: 'humidity',
+        field: 'humidity',
         tags: {},
         updated_at: new Date().toISOString(),
       },
@@ -57,7 +57,7 @@ const STORE_AGENT: AgentInfo = {
         key: 'dynamic:count',
         value: 7,
         namespace: 'default',
-        metric_type: 'unknown',
+        field: 'unknown',
         tags: {},
         updated_at: new Date().toISOString(),
       },
@@ -168,7 +168,7 @@ describe('StoreTab 특성화 — 헤더/본문 단일 목록 + actions 컬럼', 
     const table = screen.getByRole('table');
     // 헤더는 STORE_COLUMNS 단일 출처를 매핑한다.
     expect(within(table).getByText('agents.detail.store.colKey')).toBeInTheDocument();
-    expect(within(table).getByText('agents.detail.store.colMetric')).toBeInTheDocument();
+    expect(within(table).getByText('agents.detail.store.colField')).toBeInTheDocument();
     expect(within(table).getByText('agents.detail.store.colValue')).toBeInTheDocument();
     expect(within(table).getByText('agents.detail.store.colNamespace')).toBeInTheDocument();
     expect(within(table).getByText('agents.detail.store.colBinding')).toBeInTheDocument();
@@ -256,7 +256,7 @@ describe('StoreTab 특성화 — 컬럼 표시/숨김 + localStorage 영속', ()
     // value 를 제외한 가시 컬럼을 사전 저장.
     window.localStorage.setItem(
       COLUMNS_STORAGE_KEY,
-      JSON.stringify(['key', 'metric', 'namespace', 'binding', 'ttl', 'updated']),
+      JSON.stringify(['key', 'field', 'namespace', 'binding', 'ttl', 'updated']),
     );
     renderPanel();
     const table = screen.getByRole('table');

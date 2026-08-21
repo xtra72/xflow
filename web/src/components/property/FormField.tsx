@@ -35,7 +35,6 @@ import { TriggerScheduleEditor } from './TriggerScheduleEditor';
 import { FieldHelp } from './FieldHelp';
 import { CompareFieldsEditor } from './CompareFieldsEditor';
 import { RoutesEditor } from './RoutesEditor';
-import { MetricsEditor } from './MetricsEditor';
 
 interface FormFieldProps {
   field: ConfigField;
@@ -444,14 +443,6 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
 
       {field.type === 'routes_editor' && (
         <RoutesEditor
-          value={value}
-          onChange={onChange}
-          readOnly={readOnly}
-        />
-      )}
-
-      {field.type === 'metrics_editor' && (
-        <MetricsEditor
           value={value}
           onChange={onChange}
           readOnly={readOnly}

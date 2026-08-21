@@ -132,9 +132,9 @@ export function buildExtractedTagsByKey(
 }
 
 /**
- * 키 이름에서 metric_type 후보를 추출한다 (TSDB 모드 자동 메타데이터 추출용).
+ * 키 이름에서 field 후보를 추출한다 (TSDB 모드 자동 메타데이터 추출용).
  *
- * Store 모드는 백엔드가 `StoreKeyObject.metric_type` 을 명시적으로 제공하지만,
+ * Store 모드는 백엔드가 `StoreKeyObject.field` 을 명시적으로 제공하지만,
  * TSDB 모드는 메타데이터 소스가 없으므로 키 이름의 구조에서 추정해야 한다.
  * 이 함수는 사용자에게 친숙한 두 가지 패턴을 우선순위에 따라 시도한다.
  *
@@ -160,7 +160,7 @@ export function extractMetricTypeFromKey(
   // 1. InfluxDB 스타일 — 콤마 앞부분이 measurement.
   //    `=` 동반 여부와 무관하게 콤마 위치만으로 판단한다.
   //    이는 `extractTagsFromKey` 의 InfluxDB 인식보다 느슨하지만,
-  //    metric_type 추정에는 첫 토큰이면 충분하다.
+  //    field 추정에는 첫 토큰이면 충분하다.
   const commaIdx = trimmed.indexOf(',');
   if (commaIdx > 0) {
     const measurement = trimmed.slice(0, commaIdx).trim();

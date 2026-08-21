@@ -11,7 +11,6 @@
 import {
   Activity,
   Antenna,
-  Archive,
   ArrowLeftRight,
   ArrowUpFromLine,
   BarChart3,
@@ -143,15 +142,14 @@ export const NODE_TYPE_ICONS: Record<string, LucideIcon> = {
   'century-hvacr01-control': SlidersHorizontal,
 
   // --- 저장 / 시계열 ---
-  // 시계열(influx/tsdb): write=Database, read/query=LineChart/Activity 로 구분
+  // 통합 쓰기 노드(storage-write)는 백엔드와 무관하게 Database 로 통일한다.
+  // 조회 계열은 read/query=LineChart/Activity/HardDrive 로 구분한다.
   influxdb: Database,
-  'influxdb-write': Database,
+  'storage-write': Database,
   'influxdb-read': LineChart,
   'influxdb-query': Activity,
   'tsdb-write': Database,
   'tsdb-query': LineChart,
-  // in-memory store: write=Archive, read=HardDrive
-  'store-write': Archive,
   'store-read': HardDrive,
 
   // --- 처리 ---

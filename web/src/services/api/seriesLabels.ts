@@ -1,7 +1,7 @@
 // 시리즈 라벨(labels) 파싱·정규화·표시 유틸.
 //
 // SPEC-STORE-004 (M5): 백엔드 `POST /api/v1/store/{name}/query` 응답의 각 엔트리는
-// `labels` 맵을 포함한다. 예약 키 `__metric__` 은 metric_type 을 의미하고, 그 외 키는
+// `labels` 맵을 포함한다. 예약 키 `__field__` 은 field 을 의미하고, 그 외 키는
 // tag key=value 이다. 같은 store key 라도 metric/tags 가 다른 다중 시리즈가 한 응답에
 // 섞여 올 수 있으므로(labels 로 구분), 프론트엔드는 labels 기준으로 시리즈를 분리해야 한다.
 //
@@ -12,30 +12,30 @@
 //   - formatSeriesLabel: 사람이 읽기 좋은 라벨 표기(예: "metric{room=1, type=temp}").
 //   - seriesDisplayName: store key + labels 를 합쳐 매트릭스 컬럼/차트 라인 이름을 만든다.
 //
-// 설계 메모: labels 가 비어있거나(undefined) `__metric__` 만 있는 단일 시리즈는
+// 설계 메모: labels 가 비어있거나(undefined) `__field__` 만 있는 단일 시리즈는
 // 기존 동작(키 단위 단일 컬럼)과의 호환을 위해 별도 표기 없이 store key 만 사용한다.
 // 다중 시리즈가 한 key 에서 발생할 때만 라벨 표기를 덧붙여 라인/컬럼을 구분한다.
 //
 // @spec SPEC-STORE-004
 
-/** 백엔드가 metric_type 을 담는 예약 라벨 키. (Go: seriesLabels) */
-export const METRIC_LABEL_KEY = '__metric__';
+/** 백엔드가 field 을 담는 예약 라벨 키. (Go: seriesLabels) */
+export const METRIC_LABEL_KEY = '__field__';
 
 /** 시리즈 ID 의 `key` 와 서명 구분자 — 키/라벨에 등장하지 않는 NUL. */
 export const SERIES_ID_SEPARATOR = String.fromCharCode(0);
 
 /** labels 맵을 metric 과 tags 로 분해한 결과. */
 export interface ParsedSeriesLabels {
-  /** `__metric__` 값. 없으면 빈 문자열. */
+  /** `__field__` 값. 없으면 빈 문자열. */
   metric: string;
-  /** `__metric__` 을 제외한 나머지 tag key=value 맵. */
+  /** `__field__` 을 제외한 나머지 tag key=value 맵. */
   tags: Record<string, string>;
 }
 
 /**
  * labels 맵을 {metric, tags} 로 분해한다.
  *
- * - `__metric__` 예약 키를 metric 으로 추출한다 (없으면 빈 문자열).
+ * - `__field__` 예약 키를 metric 으로 추출한다 (없으면 빈 문자열).
  * - 그 외 키는 모두 tag 로 분류한다.
  * - 입력이 undefined/null 이면 metric="" + 빈 tags 를 반환한다.
  */
@@ -77,7 +77,7 @@ export function seriesSignature(
 }
 
 /**
- * (key + metric_type + tags) 로부터 결정적 시리즈 식별자를 만든다.
+ * (key + field + tags) 로부터 결정적 시리즈 식별자를 만든다.
  *
  * 저장소 기준 분류(SeriesID = key + metric + tags)와 동일한 단위로, 시리즈별 선택
  * 상태의 키로 사용한다. `key` 와 `seriesSignature` 사이를 NUL()로 구분해
@@ -97,11 +97,11 @@ export function makeSeriesId(
 }
 
 /**
- * (key + metric_type + tags) 로부터 사람이 읽는 시리즈 표시 이름을 만든다.
+ * (key + field + tags) 로부터 사람이 읽는 시리즈 표시 이름을 만든다.
  *
  * `makeSeriesId` 와 같은 입력(시리즈 동일성 3요소)을 받되, 기계용 식별자가 아니라
  * 매트릭스 컬럼과 **같은 표기**(`key · metric{k=v, ...}`)를 돌려준다. 시리즈 선택 UI 나
- * 히트맵 마커처럼 ref(key/metric_type/tags)만 가진 자리에서, 컬럼명과 다른 두 번째 표기를
+ * 히트맵 마커처럼 ref(key/field/tags)만 가진 자리에서, 컬럼명과 다른 두 번째 표기를
  * 만들지 않도록 `seriesDisplayName` 에 위임한다.
  *
  * metric 과 tags 가 모두 없으면 라벨이 빈 문자열이 되어 `key` 만 반환된다 — 구분자(`·`)가

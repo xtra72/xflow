@@ -34,7 +34,7 @@ interface KeyValueMapEditorProps {
   pathHelper?: boolean;
 }
 
-// `$.` 빠른 삽입 칩 목록. influxdb-write 의 tag/field 값 JSONPath 참조 보조용.
+// `$.` 빠른 삽입 칩 목록. storage-write 의 태그 값 JSONPath 참조 보조용.
 const PATH_HELPER_CHIPS = ['$.payload.', '$.metadata.', '$.type', '$.timestamp'] as const;
 
 // ---- 변환 유틸 ----

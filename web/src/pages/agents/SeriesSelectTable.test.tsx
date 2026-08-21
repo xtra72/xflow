@@ -32,12 +32,12 @@ function safe(id: string): string {
 
 function row(
   key: string,
-  metric: string,
+  field: string,
   dataType: string,
   registration: string,
   tags: Record<string, string>,
 ): SeriesRow {
-  return { id: makeSeriesId(key, metric, tags), key, metric, dataType, registration, tags };
+  return { id: makeSeriesId(key, field, tags), key, field, dataType, registration, tags };
 }
 
 const ROWS: SeriesRow[] = [
@@ -92,7 +92,7 @@ describe('SeriesSelectTable', () => {
     render(<Harness />);
     expect(rowCheckboxes().length).toBe(3);
     expect(screen.getByTestId('series-col-key')).toBeInTheDocument();
-    expect(screen.getByTestId('series-col-metric')).toBeInTheDocument();
+    expect(screen.getByTestId('series-col-field')).toBeInTheDocument();
     expect(screen.getByTestId('series-col-dataType')).toBeInTheDocument();
     expect(screen.getByTestId('series-col-tags')).toBeInTheDocument();
     expect(screen.getByTestId('series-col-registration')).toBeInTheDocument();
@@ -119,11 +119,11 @@ describe('SeriesSelectTable', () => {
     expect(rowCheckboxes().some((c) => c.checked)).toBe(false);
   });
 
-  it('메트릭 컬럼 필터에서 값을 선택하면 해당 행만 남는다', () => {
+  it('필드 컬럼 필터에서 값을 선택하면 해당 행만 남는다', () => {
     render(<Harness />);
     // metric 필터 팝오버 열기 → 'temp' 선택.
-    fireEvent.click(screen.getByTestId('series-filter-metric'));
-    fireEvent.click(screen.getByTestId('series-filter-opt-metric-temp'));
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+    fireEvent.click(screen.getByTestId('series-filter-opt-field-temp'));
     // temp 인 alpha/charlie 만 남고 humid 인 bravo 는 제외.
     expect(
       screen.getByTestId(`series-tr-${safe(makeSeriesId('alpha', 'temp', { room: '1' }))}`),
@@ -160,10 +160,10 @@ describe('SeriesSelectTable', () => {
 
   it('필터 전체(clear) 버튼은 해당 컬럼 필터를 해제한다', () => {
     render(<Harness />);
-    fireEvent.click(screen.getByTestId('series-filter-metric'));
-    fireEvent.click(screen.getByTestId('series-filter-opt-metric-temp'));
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+    fireEvent.click(screen.getByTestId('series-filter-opt-field-temp'));
     expect(rowCheckboxes().length).toBe(2);
-    fireEvent.click(screen.getByTestId('series-filter-clear-metric'));
+    fireEvent.click(screen.getByTestId('series-filter-clear-field'));
     expect(rowCheckboxes().length).toBe(3);
   });
 
@@ -180,9 +180,9 @@ describe('SeriesSelectTable', () => {
 
   it('모든 행이 필터에서 제외되면 빈 상태 메시지를 보여준다', () => {
     render(<Harness />);
-    fireEvent.click(screen.getByTestId('series-filter-metric'));
-    fireEvent.click(screen.getByTestId('series-filter-opt-metric-temp'));
-    fireEvent.click(screen.getByTestId('series-filter-clear-metric'));
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+    fireEvent.click(screen.getByTestId('series-filter-opt-field-temp'));
+    fireEvent.click(screen.getByTestId('series-filter-clear-field'));
     // dataType=int + tag room=1 → 교집합 없음.
     fireEvent.click(screen.getByTestId('series-filter-dataType'));
     fireEvent.click(screen.getByTestId('series-filter-opt-dataType-int'));
@@ -192,16 +192,16 @@ describe('SeriesSelectTable', () => {
     expect(rowCheckboxes().length).toBe(0);
   });
 
-  it('선택 후 메트릭 필터로 행이 숨겨져도 선택 상태는 유지된다', () => {
+  it('선택 후 필드 필터로 행이 숨겨져도 선택 상태는 유지된다', () => {
     render(<Harness />);
     const bravoId = makeSeriesId('bravo', 'humid', { room: '2' });
     fireEvent.click(screen.getByTestId(`series-select-${safe(bravoId)}`));
     // temp 만 남기면 bravo(humid) 는 숨겨진다.
-    fireEvent.click(screen.getByTestId('series-filter-metric'));
-    fireEvent.click(screen.getByTestId('series-filter-opt-metric-temp'));
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+    fireEvent.click(screen.getByTestId('series-filter-opt-field-temp'));
     expect(screen.queryByTestId(`series-select-${safe(bravoId)}`)).toBeNull();
     // 필터 해제 시 bravo 가 다시 보이고 여전히 체크되어 있다.
-    fireEvent.click(screen.getByTestId('series-filter-clear-metric'));
+    fireEvent.click(screen.getByTestId('series-filter-clear-field'));
     const bravoCb = screen.getByTestId(
       `series-select-${safe(bravoId)}`,
     ) as HTMLInputElement;

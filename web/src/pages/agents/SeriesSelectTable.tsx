@@ -2,7 +2,7 @@
 //
 // TSDB/Store 데이터 뷰어에서 "조회할 시리즈"를 고르는 표.
 // - 저장소(StoreTab)처럼 시리즈를 평탄한 행 리스트로 출력한다.
-// - 각 컬럼(메트릭/데이터타입/태그/등록)에 정렬 + 다중선택 필터(facet)를 둔다.
+// - 각 컬럼(필드/데이터타입/태그/등록)에 정렬 + 다중선택 필터(facet)를 둔다.
 // - 선택은 컬럼 필터와 분리된 행 체크박스로 수행한다(필터로 좁히고 체크로 선택).
 //
 // 선택 상태(selectedIds)는 상위에서 관리하는 controlled 패턴이다 — 본 컴포넌트는
@@ -21,12 +21,12 @@ import type {
   RegistrationSource,
 } from '@/services/api/store';
 
-/** 테이블의 한 행 = 하나의 시리즈(저장소 기준 분류: key + metric + tags). */
+/** 테이블의 한 행 = 하나의 시리즈(저장소 기준 분류: key + field + tags). */
 export interface SeriesRow {
   /** 결정적 SeriesID (선택 키). */
   id: string;
   key: string;
-  metric: string;
+  field: string;
   dataType: string;
   /** 'manual' | 'auto' | '' (TSDB 합성/미상). */
   registration: string;
@@ -34,11 +34,11 @@ export interface SeriesRow {
 }
 
 /** 정렬 가능한 컬럼. */
-type SortColumn = 'key' | 'metric' | 'dataType' | 'tags' | 'registration';
+type SortColumn = 'key' | 'field' | 'dataType' | 'tags' | 'registration';
 type SortDirection = 'asc' | 'desc';
 
 /** 다중선택 facet 필터를 갖는 컬럼. */
-type FacetColumn = 'metric' | 'dataType' | 'tags' | 'registration';
+type FacetColumn = 'field' | 'dataType' | 'tags' | 'registration';
 
 export interface SeriesSelectTableProps {
   rows: SeriesRow[];
@@ -76,8 +76,8 @@ function columnValue(row: SeriesRow, col: SortColumn): string {
   switch (col) {
     case 'key':
       return row.key;
-    case 'metric':
-      return row.metric || 'unknown';
+    case 'field':
+      return row.field || 'unknown';
     case 'dataType':
       return row.dataType;
     case 'registration':
@@ -112,19 +112,19 @@ export function SeriesSelectTable({
 
   // 각 facet 컬럼의 distinct 값(전체 행 기준 — 필터 적용 후에도 옵션이 사라지지 않게).
   const facetOptions = useMemo(() => {
-    const metric = new Set<string>();
+    const field = new Set<string>();
     const dataType = new Set<string>();
     const registration = new Set<string>();
     const tags = new Set<string>();
     for (const r of rows) {
-      metric.add(r.metric || 'unknown');
+      field.add(r.field || 'unknown');
       if (r.dataType) dataType.add(r.dataType);
       if (r.registration) registration.add(r.registration);
       for (const [k, v] of Object.entries(r.tags)) tags.add(`${k}=${v}`);
     }
     const sortArr = (s: Set<string>) => Array.from(s).sort();
     return {
-      metric: sortArr(metric),
+      field: sortArr(field),
       dataType: sortArr(dataType),
       registration: sortArr(registration),
       tags: sortArr(tags),
@@ -135,7 +135,7 @@ export function SeriesSelectTable({
     const q = keySearch.trim().toLowerCase();
     const result = rows.filter((r) => {
       if (q && !r.key.toLowerCase().includes(q)) return false;
-      if (metricSel.size > 0 && !metricSel.has(r.metric || 'unknown')) return false;
+      if (metricSel.size > 0 && !metricSel.has(r.field || 'unknown')) return false;
       if (dataTypeSel.size > 0 && !dataTypeSel.has(r.dataType)) return false;
       if (registrationSel.size > 0 && !registrationSel.has(r.registration)) return false;
       if (tagSel.size > 0 && !matchesTagPairs(r.tags, tagSel)) return false;
@@ -178,7 +178,7 @@ export function SeriesSelectTable({
     FacetColumn,
     [Set<string>, React.Dispatch<React.SetStateAction<Set<string>>>]
   > = {
-    metric: [metricSel, setMetricSel],
+    field: [metricSel, setMetricSel],
     dataType: [dataTypeSel, setDataTypeSel],
     registration: [registrationSel, setRegistrationSel],
     tags: [tagSel, setTagSel],
@@ -293,7 +293,7 @@ export function SeriesSelectTable({
     );
   };
 
-  const colCount = 2 + 3 + (showRegistration ? 1 : 0); // checkbox + key + metric + dataType + tags (+registration)
+  const colCount = 2 + 3 + (showRegistration ? 1 : 0); // checkbox + key + field + dataType + tags (+registration)
 
   return (
     <div className="flex flex-col gap-2">
@@ -336,7 +336,7 @@ export function SeriesSelectTable({
             <tr className="border-b border-(--color-border-default)">
               <th scope="col" className="w-8 px-2 py-1.5" aria-label={t('series.colSelect')} />
               {headerCell('key', t('series.seriesKey'), 'key')}
-              {headerCell('metric', t('series.metric'), 'metric')}
+              {headerCell('field', t('series.field'), 'field')}
               {headerCell('dataType', t('series.dataType'), 'dataType')}
               {headerCell('tags', t('series.tags'), 'tags')}
               {showRegistration && headerCell('registration', t('series.registration'), 'registration')}
@@ -379,7 +379,7 @@ export function SeriesSelectTable({
                     </td>
                     <td className="px-2 py-1">
                       <MetadataChips
-                        metricType={r.metric}
+                        fieldName={r.field}
                         showAutoBadge={false}
                         className="shrink-0"
                       />
