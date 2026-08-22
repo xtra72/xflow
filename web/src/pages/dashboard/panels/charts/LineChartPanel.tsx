@@ -51,6 +51,7 @@ import { chartDataToCsv, downloadCsv } from './csvExport';
 import { useChartChannel } from './useChartChannel';
 import { useChartChannels, type ChannelState } from './useChartChannels';
 import { resolvePanelSourceBinding } from './panelDataSource';
+import { resolvePanelSeriesDisplay } from './panelSeriesStatus';
 import { isPanelSeriesSource, usePanelSeriesData } from './usePanelSeriesData';
 import { usePanelTitleVisible } from '../../panelChromeContext';
 
@@ -240,9 +241,10 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   // SPEC-TSDB-002 §2.3 [U3]: 소스 판정은 `panelDataSource` 계약이 소유한다. 패널은
   // `data_source` 를 직접 비교하지 않는다 — 소스 종류가 늘어도 이 지점이 종류만큼
   // 곱해지지 않게 하기 위함이다(UB1-1).
-  // `isStore` 는 "채널이 아닌 시리즈 소스가 활성인가" 를 뜻한다. M3 시점에는 store 만
-  // 그 조건을 만족하며, tsdb 는 M6 에서 같은 이름을 통해 합류한다.
-  const isStore = isPanelSeriesSource(resolvePanelSourceBinding(config));
+  // `isStore` 는 "채널이 아닌 시리즈 소스가 활성인가" 를 뜻한다. store 와 tsdb 가 둘 다
+  // 이 조건을 만족하며, 이름만 store 시절의 것이 남아 있다(호출부 무변경의 대가).
+  const sourceBinding = resolvePanelSourceBinding(config);
+  const isStore = isPanelSeriesSource(sourceBinding);
   const isMultiMode = !isStore && (cfg.channels?.length ?? 0) > 0;
   // recent_window_sec 가 있으면 거기에 맞춰 버퍼 크기 자동 결정.
   const effectiveMaxPoints = resolveMaxPoints(cfg);
@@ -306,6 +308,17 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   const errorReason = isStore
     ? storeResult.errorReason
     : channelStates.find((c) => c.state.errorReason)?.state.errorReason;
+
+  // SPEC-TSDB-002 §2.14 [S2]: 네 상태(빈 선택 / 빈 결과 / 부분 실패 / 전체 실패)를 서로
+  // 구분해 표시한다. 판정은 `panelSeriesStatus` 가 소유하며 패널은 그리기만 한다.
+  const seriesDisplay = resolvePanelSeriesDisplay(sourceBinding, storeResult);
+  // 빈 선택 안내는 **되돌아갈 채널이 없을 때만** 띄운다. 채널이 설정된 패널은 시리즈
+  // 소스가 비활성이어도 채널 데이터를 그대로 그리므로(하위 호환, §2.4), 그 위에 안내를
+  // 얹으면 정상 렌더를 오류처럼 보이게 한다.
+  const hasChannelFallback =
+    (cfg.channel_name ?? '') !== '' || (cfg.channels?.length ?? 0) > 0;
+  const showEmptySelection =
+    seriesDisplay.state === 'empty-selection' && !hasChannelFallback;
 
   // 시간 윈도우 설정
   const timeWindowMode: TimeWindowMode = cfg.time_window_mode ?? 'points';
@@ -912,6 +925,32 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
         />
       </div>
 
+      {/* 부분 실패 배지 — 성공 시리즈는 그대로 렌더하고 실패 개수만 알린다(§2.14 · §2.19).
+          오버레이가 아니라 배지인 이유: 남은 시리즈는 정상이므로 화면을 덮으면 안 된다.
+          `role="status"` 로 스크린리더에 실패 개수를 전달한다(§4.7 접근성). */}
+      {seriesDisplay.state === 'partial-failure' && (
+        <div
+          role="status"
+          data-testid="panel-series-partial-badge"
+          className="absolute right-2 top-2 rounded-full bg-amber-500/90 px-2 py-0.5 text-[10px] font-medium text-white"
+        >
+          {t('dashboard.chart.seriesPartialFailure').replace(
+            '{count}',
+            String(seriesDisplay.failureCount),
+          )}
+        </div>
+      )}
+
+      {/* 빈 선택 안내 — 오류가 아니라 "아직 고르지 않았다" 다(§2.14). */}
+      {showEmptySelection && (
+        <div
+          data-testid="panel-series-empty-selection"
+          className="absolute inset-0 flex items-center justify-center rounded-2xl p-4 text-center text-xs text-(--color-text-muted)"
+        >
+          {t('dashboard.chart.seriesEmptySelection')}
+        </div>
+      )}
+
       {(status === 'closed' || status === 'error') && (
         <div
           className="absolute inset-0 flex items-center justify-center rounded-2xl bg-black/50 p-4 text-center text-sm text-white"
@@ -919,7 +958,11 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
         >
           {status === 'closed'
             ? `Channel closed: ${closedReason ?? 'unknown'}`
-            : `Error: ${errorReason ?? 'unknown'}`}
+            : seriesDisplay.backendMismatch
+              ? // §2.18 · UB2-7: 백엔드 불일치는 일반 조회 실패와 사유가 다르다. 원문
+                // 오류 메시지 대신 "무엇을 고쳐야 하는가" 를 말하는 문구를 쓴다.
+                t('dashboard.chart.dataSourceTsdbBackendMismatch')
+              : `Error: ${errorReason ?? 'unknown'}`}
         </div>
       )}
     </div>

@@ -386,3 +386,57 @@ describe('설정 UI 게이팅 특성화 (SPEC-TSDB-002 M2, CT-19~CT-21)', () => 
     expect(gates()).toEqual([true, true, true, true]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// SPEC-TSDB-002 §2.12 [E2] — 소스 전환이 비파괴다 (AC-36)
+//
+// 되돌리기가 가능해야 사용자가 전환을 시도한다. 파괴적 전환은 "다른 소스를 한번
+// 눌러보는" 행위를 되돌릴 수 없는 결정으로 만든다.
+// ---------------------------------------------------------------------------
+describe('소스 전환 비파괴 (SPEC-TSDB-002 §2.12 [E2], AC-36)', () => {
+  it('store → tsdb 전환 시 store_source 가 보존된다', () => {
+    const onConfigChange = vi.fn();
+    const initial = storeConfig();
+    render(
+      <StoreSourceSection panel={makePanel(initial)} onConfigChange={onConfigChange} />,
+    );
+
+    fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
+
+    const patch = onConfigChange.mock.calls[0]?.[0] as Record<string, unknown>;
+    // 패치가 store_source 를 건드리지 않는다 — 종류만 바꾸고 다른 소스의 블록은 그대로 둔다.
+    expect(patch).not.toHaveProperty('store_source');
+    expect(patch.data_source).toBe('tsdb');
+    // 병합된 결과에도 원본 store 블록이 그대로 남는다.
+    const merged = { ...initial, ...patch };
+    expect(merged.store_source).toEqual(initial.store_source);
+  });
+
+  it('tsdb → store 왕복 후 두 블록이 모두 보존된다', () => {
+    // 제어 컴포넌트로 감싸 실제 왕복(부모가 패치를 반영)을 재현한다.
+    const seen: Array<Record<string, unknown>> = [];
+    function Harness(): React.ReactElement {
+      const [config, setConfig] = useState<Record<string, unknown>>(storeConfig());
+      seen.push(config);
+      return (
+        <StoreSourceSection
+          panel={makePanel(config)}
+          onConfigChange={(patch) => setConfig((prev) => ({ ...prev, ...patch }))}
+        />
+      );
+    }
+    render(<Harness />);
+    const original = seen[0]!.store_source;
+
+    fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
+    fireEvent.click(screen.getByTestId('chart-data-source-store'));
+
+    const final = seen[seen.length - 1]!;
+    expect(final.data_source).toBe('store');
+    // 왕복 후에도 두 블록이 공존한다 — tsdb 로 갔다 왔다고 store 선택이 사라지지 않고,
+    // store 로 돌아왔다고 방금 만든 tsdb 블록이 지워지지도 않는다.
+    expect(final.store_source).toEqual(original);
+    expect(final.tsdb_source).toBeDefined();
+    expect((final.tsdb_source as { backend: string }).backend).toBe('influxdb');
+  });
+});

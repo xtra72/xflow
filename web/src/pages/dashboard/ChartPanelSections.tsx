@@ -40,7 +40,12 @@ import {
   REDUCE_PANEL_TYPES,
 } from './panels/charts/chartChannelTypes';
 import { SERIES_REDUCE_FUNCS } from './panels/charts/seriesReduce';
-import { resolvePanelSourceBinding } from './panels/charts/panelDataSource';
+import {
+  CAPABILITY_REASON_KEYS,
+  panelSourceCapabilities,
+  resolvePanelSourceBinding,
+} from './panels/charts/panelDataSource';
+import { FillStrategyField, TsdbSourceSection } from './TsdbSourceSection';
 import {
   filterStoreKeyObjects,
   makeTagFilterId,
@@ -476,9 +481,29 @@ export function StoreSourceSection({
       )}
 
       {/*
-        TSDB 선택 UI(에이전트/bucket/measurement 드릴다운)는 후속 커밋이 넣는다. 현 시점엔
-        선택이 config 에 기록되기만 하고 전용 UI 는 없다 — 의도된 중간 상태다.
+        Store 모드: 빈 버킷 처리 전략은 Store 백엔드가 지원하지 않으므로 **비활성 + 사유**로
+        표시한다. 숨기지 않는 이유는 §2.13 [S1] 이다 — 선택지가 없으면 사용자는 "이 소스에는
+        없는 기능" 인지 "내가 못 찾는 것" 인지 구분할 수 없다. TSDB 모드의 같은 컨트롤과
+        **같은 컴포넌트**를 쓰므로 두 소스의 차이가 화면에서 그대로 드러난다.
       */}
+      {isStoreMode && (
+        <FillStrategyField
+          // 셀렉트가 통째로 비활성이므로 값도 핸들러도 도달하지 않는다. Store config 에
+          // `fill` 을 기록하지 않는 것이 의도다 — 백엔드가 무시하는 값을 저장하면
+          // 나중에 "설정했는데 왜 안 되지" 가 된다.
+          value=""
+          onChange={() => {}}
+          supported={panelSourceCapabilities('store').fillStrategies}
+          avgSupported={panelSourceCapabilities('store').fillAvg}
+          reasonKey={CAPABILITY_REASON_KEYS.fillStore}
+          testId="chart-store-fill"
+        />
+      )}
+
+      {/* TSDB 모드: 에이전트 · bucket · measurement→field→tag 드릴다운 선택 UI(§2.11 ~ §2.15). */}
+      {mode === 'tsdb' && (
+        <TsdbSourceSection panel={panel} onConfigChange={onConfigChange} />
+      )}
 
       {/*
         채널 모드 + 라인 차트: 채널 시리즈 편집기(채널 추가/선택/순서 + per-line 스타일).

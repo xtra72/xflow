@@ -3,10 +3,14 @@
 // 패널은 `data_source` 를 직접 비교해 훅을 고르지 않고 이 훅 하나를 호출한다.
 // 소스 종류가 N개로 늘어도 패널 렌더 코드는 그대로다(spec.md §1.2.5 · §2.3).
 //
-// **반환 형상은 `UseStoreChartDataResult` 를 그대로 유지한다.** 6개 패널이 이미
+// **반환 형상은 `UseStoreChartDataResult` 를 확장만 한다.** 6개 패널이 이미
 // `entries` · `seriesEntries` · `seriesNames` · `seriesStyles` · `booleanSeries` ·
-// `status` 를 소비하고 있으므로, 형상을 유지하면 패널 렌더 코드가 한 줄도 바뀌지
-// 않는다. 이것이 spec.md §2.3 이 말하는 "두 번째 하중 지지점" 이다.
+// `status` 를 소비하고 있으므로, 기존 필드를 그대로 두면 패널 렌더 코드가 한 줄도
+// 바뀌지 않는다. 이것이 spec.md §2.3 이 말하는 "두 번째 하중 지지점" 이다.
+//
+// 확장은 **가산 전용**이다 — 추가 필드는 전부 옵셔널이므로 `UseStoreChartDataResult`
+// 를 요구하는 자리에 그대로 대입된다. 필수 필드를 더하면 그 대입 가능성이 깨져 6개
+// 패널을 동시에 고쳐야 하고, 그것은 이 SPEC 이 피하려던 바로 그 상태다.
 //
 // **훅 규칙 준수 패턴**: 소스 종류별 훅을 조건 없이 **전부** 호출하고, 진 쪽에는
 // `undefined` 를 넘겨 idle 로 둔다(`GaugePanel.tsx` 가 이미 쓰는 패턴). 조건부 호출은
@@ -26,6 +30,26 @@ import {
   type UseStoreChartDataResult,
 } from './useStoreChartData';
 import { useTsdbChartData, type UseTsdbChartDataOptions } from './useTsdbChartData';
+
+/**
+ * 패널 시리즈 훅 결과 — `UseStoreChartDataResult` + TSDB 전용 상태 신호(가산).
+ *
+ * 두 신호가 여기 실리는 이유: `useTsdbChartData` 가 이미 계산하는데도 반환 타입이
+ * `UseStoreChartDataResult` 로 좁혀져 있으면 소비자가 **볼 수 없다**. 그러면 §2.14 의
+ * 부분 실패 배지와 §2.18 의 백엔드 불일치 문구를 화면에 띄울 방법이 사라진다.
+ *
+ * 둘 다 옵셔널인 이유는 store 경로에는 대응 개념이 없기 때문이다 — store 어댑터는
+ * `Promise.all` 이라 부분 실패가 성립하지 않고(§4.3), 백엔드 파생도 하지 않는다.
+ * 런타임에서도 store 경로는 이 키들을 **싣지 않는다**(있는데 0/false 인 것과 다르다).
+ *
+ * @spec SPEC-TSDB-002 §2.14 (S2) · §2.18 (U11)
+ */
+export interface UsePanelSeriesDataResult extends UseStoreChartDataResult {
+  /** 이번 조회에서 실패한 시리즈 개수(TSDB 경로에서만). @spec §2.19 */
+  partialFailureCount?: number;
+  /** 참조된 에이전트가 지원 백엔드가 아닌가(TSDB 경로에서만). @spec §2.18 */
+  backendMismatch?: boolean;
+}
 
 /** `usePanelSeriesData` 의 선택 인자. */
 export interface UsePanelSeriesDataOptions extends ResolvePanelSourceOptions {
@@ -64,7 +88,7 @@ export function isPanelSeriesSource(binding: PanelSourceBinding): boolean {
 export function usePanelSeriesData(
   config: Record<string, unknown>,
   options?: UsePanelSeriesDataOptions,
-): UseStoreChartDataResult {
+): UsePanelSeriesDataResult {
   const binding = resolvePanelSourceBinding(config, options);
 
   // Store 분기 — 활성일 때만 config 를 넘기고, 그 외에는 undefined 로 idle 을 유지한다.

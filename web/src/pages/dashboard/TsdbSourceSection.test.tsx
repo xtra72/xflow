@@ -1,0 +1,352 @@
+// TsdbSourceSection — 에이전트 선택 · bucket 능력 게이팅 · 3단 드릴다운 · 48 상한.
+//
+// 디스커버리 조회기는 props 로 주입하므로 네트워크가 없다. `useAgents` 와 i18n 만
+// 모킹한다(StoreSourceSection.test.tsx 와 같은 패턴).
+//
+// @spec SPEC-TSDB-002 §2.9 (U9) · §2.13 (S1) · §2.15 (O1) · §2.18 (U11)
+
+import type React from 'react';
+import { useState } from 'react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+
+import type { PanelConfig } from '@/stores/uiStore';
+
+vi.mock('@/lib/i18n', () => ({
+  useTranslation: () => ({ t: (k: string) => k }),
+}));
+
+/** 에이전트 목록 — influxdb v2 · influxdb v3 · store 각 1개. */
+let mockAgents: Array<{
+  id: string;
+  name: string;
+  type: string;
+  config?: Record<string, unknown>;
+}> = [];
+vi.mock('@/hooks/useAgent', () => ({
+  useAgents: () => ({ data: { data: mockAgents } }),
+}));
+
+import { TsdbSourceSection, type TsdbDiscoveryFetchers } from './TsdbSourceSection';
+import { defaultTsdbSource, type TsdbSourceConfig } from './panels/charts/chartChannelTypes';
+
+function makePanel(config: Record<string, unknown>): PanelConfig {
+  return { id: 'p1', type: 'line-chart', title: '테스트', config };
+}
+
+/** 주입 조회기 기본값 — 각 테스트가 필요한 것만 덮어쓴다. */
+function makeFetchers(over: Partial<TsdbDiscoveryFetchers> = {}): TsdbDiscoveryFetchers {
+  return {
+    fetchBuckets: vi.fn(async () => [{ name: 'metrics' }, { name: 'logs' }]),
+    fetchMeasurements: vi.fn(async () => ['cpu', 'mem']),
+    fetchFieldKeys: vi.fn(async () => ['usage', 'idle']),
+    fetchTagKeys: vi.fn(async () => ['host']),
+    fetchTagValues: vi.fn(async () => ['a', 'b']),
+    ...over,
+  };
+}
+
+function tsdbConfig(over: Partial<TsdbSourceConfig> = {}): Record<string, unknown> {
+  return {
+    data_source: 'tsdb',
+    tsdb_source: { ...defaultTsdbSource(), ...over },
+  };
+}
+
+/**
+ * 제어 컴포넌트 하네스 — 부모가 패치를 반영해야 선택이 누적된다(프로덕션과 같은 흐름).
+ * `onPatch` 로 매 패치를 관측한다.
+ */
+function Harness({
+  initial,
+  fetchers,
+  onPatch,
+}: {
+  initial: Record<string, unknown>;
+  fetchers: TsdbDiscoveryFetchers;
+  onPatch?: (patch: Record<string, unknown>) => void;
+}): React.ReactElement {
+  const [config, setConfig] = useState<Record<string, unknown>>(initial);
+  return (
+    <TsdbSourceSection
+      panel={makePanel(config)}
+      fetchers={fetchers}
+      onConfigChange={(patch) => {
+        onPatch?.(patch);
+        setConfig((prev) => ({ ...prev, ...patch }));
+      }}
+    />
+  );
+}
+
+/**
+ * measurement 셀렉트에 값을 넣는다.
+ *
+ * 목록이 도착하기 전에 `fireEvent.change` 를 쏘면 제어 셀렉트에 해당 option 이 아직
+ * 없어 값이 그대로 버려진다(빈 화면 그대로). 그래서 옵션이 채워질 때까지 기다린다.
+ */
+async function selectMeasurement(value: string): Promise<void> {
+  const ms = screen.getByTestId('chart-tsdb-measurement-select') as HTMLSelectElement;
+  await waitFor(() =>
+    expect(Array.from(ms.options).map((o) => o.value)).toContain(value),
+  );
+  fireEvent.change(ms, { target: { value } });
+  await waitFor(() => expect(ms.value).toBe(value));
+}
+
+/** 현재 config 의 tsdb_source 를 마지막 패치에서 읽는다. */
+function lastSeries(patches: Array<Record<string, unknown>>): TsdbSourceConfig['series'] {
+  const last = patches[patches.length - 1]?.tsdb_source as TsdbSourceConfig | undefined;
+  return last?.series ?? [];
+}
+
+beforeEach(() => {
+  mockAgents = [
+    { id: 'ix2', name: 'influx-v2', type: 'influxdb', config: { version: '2' } },
+    { id: 'ix3', name: 'influx-v3', type: 'influxdb', config: { version: '3' } },
+    { id: 'st1', name: 'store-1', type: 'store' },
+  ];
+});
+
+describe('TsdbSourceSection — 에이전트 선택 (§2.18)', () => {
+  it('influxdb 타입 에이전트만 선택지로 노출한다', () => {
+    render(<Harness initial={tsdbConfig()} fetchers={makeFetchers()} />);
+    const select = screen.getByTestId('chart-tsdb-agent-select') as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toEqual(['', 'ix2', 'ix3']);
+    // store 에이전트는 TSDB 소스가 지원하는 백엔드가 아니므로 애초에 고를 수 없다.
+    expect(values).not.toContain('st1');
+  });
+
+  it('에이전트를 고르면 agent_id 와 agent_name 을 함께 기록하고 시리즈를 비운다', () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [{ key: 'cpu', field: 'usage' }],
+        })}
+        fetchers={makeFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    fireEvent.change(screen.getByTestId('chart-tsdb-agent-select'), {
+      target: { value: 'ix3' },
+    });
+    const next = patches[0]?.tsdb_source as TsdbSourceConfig;
+    expect(next.agent_id).toBe('ix3');
+    expect(next.agent_name).toBe('influx-v3');
+    // 스키마가 다른 에이전트로 옮겼으므로 이전 시리즈는 해석되지 않는다.
+    expect(next.series).toEqual([]);
+  });
+
+  it('에이전트 미선택이면 시리즈 표 대신 안내를 보여주고 디스커버리를 호출하지 않는다', () => {
+    const fetchers = makeFetchers();
+    render(<Harness initial={tsdbConfig()} fetchers={fetchers} />);
+    expect(screen.getByTestId('chart-tsdb-no-agent')).toBeInTheDocument();
+    expect(screen.queryByTestId('chart-tsdb-series-select')).not.toBeInTheDocument();
+    expect(fetchers.fetchMeasurements).not.toHaveBeenCalled();
+    expect(fetchers.fetchBuckets).not.toHaveBeenCalled();
+  });
+});
+
+describe('TsdbSourceSection — 백엔드 버전별 능력 (§2.13 · OQ10)', () => {
+  it('v2 는 bucket 을 목록에서 고른다', async () => {
+    const fetchers = makeFetchers();
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={fetchers}
+      />,
+    );
+    expect(screen.getByTestId('chart-tsdb-backend')).toHaveTextContent(
+      'dashboard.chart.tsdbBackendInfluxV2',
+    );
+    const select = screen.getByTestId('chart-tsdb-bucket-select') as HTMLSelectElement;
+    await waitFor(() =>
+      expect(Array.from(select.options).map((o) => o.value)).toEqual([
+        '',
+        'metrics',
+        'logs',
+      ]),
+    );
+    expect(fetchers.fetchBuckets).toHaveBeenCalledWith('influx-v2');
+    // 관리 조작 안내는 v2 에서 뜨지 않는다 — v2 는 관리가 가능하다.
+    expect(screen.queryByTestId('chart-tsdb-management-notice')).not.toBeInTheDocument();
+  });
+
+  it('v3 는 bucket 자유 입력 + 질의 미반영 사유 + 관리 미지원 안내를 표시한다', () => {
+    const fetchers = makeFetchers();
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix3', agent_name: 'influx-v3' })}
+        fetchers={fetchers}
+      />,
+    );
+    expect(screen.getByTestId('chart-tsdb-backend')).toHaveTextContent(
+      'dashboard.chart.tsdbBackendInfluxV3',
+    );
+    // v3 는 목록 API 가 없으므로 자유 입력이다(OQ10).
+    expect(screen.getByTestId('chart-tsdb-bucket-input')).toBeInTheDocument();
+    expect(screen.queryByTestId('chart-tsdb-bucket-select')).not.toBeInTheDocument();
+    expect(fetchers.fetchBuckets).not.toHaveBeenCalled();
+    // §HISTORY-0.4.0 (2): v3 에서 bucket 은 질의에 도달하지 않는다 — 그 사실을 드러낸다.
+    expect(screen.getByText('dashboard.chart.capReasonBucketV3')).toBeInTheDocument();
+    // 관리 조작은 501 이지만 디스커버리는 활성이다(§2.10 · §2.13).
+    const notice = screen.getByTestId('chart-tsdb-management-notice');
+    expect(notice).toHaveAttribute('aria-disabled', 'true');
+    expect(notice).toHaveTextContent('dashboard.chart.capReasonManagementV3');
+    expect(fetchers.fetchMeasurements).toHaveBeenCalled();
+  });
+
+  it('미지원 설정은 숨기지 않고 aria-disabled 로 표시한다', () => {
+    // AC-38 — §2.13 [S1] 은 미지원 선택지를 **숨기지 말고** 비활성 + 사유로 두라고
+    // 규정한다(SPEC-AUTH-006 §4.2 원칙 승계). 숨기면 사용자는 "이 소스에 없는 기능"과
+    // "내가 못 찾는 것"을 구분할 수 없다.
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    // fill: 'avg' 는 목록에 남아 있으며 비활성이다.
+    const avg = screen.getByTestId('chart-tsdb-fill-avg');
+    expect(avg).toBeInTheDocument();
+    expect(avg).toHaveAttribute('aria-disabled', 'true');
+    expect(avg).toBeDisabled();
+    // 사유가 툴팁이 아니라 읽히는 문구로 존재한다(스크린리더 도달).
+    expect(screen.getByTestId('chart-tsdb-fill-reason')).toHaveTextContent(
+      'dashboard.chart.capReasonFillAvg',
+    );
+    // 나머지 fill 전략은 TSDB 에서 지원되므로 셀렉트 자체는 활성이다.
+    expect(screen.getByTestId('chart-tsdb-fill')).not.toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+  });
+});
+
+describe('TsdbSourceSection — measurement → field → tag 드릴다운 (§2.15)', () => {
+  it('measurement 를 고르면 field 목록으로 선택 표를 채운다', async () => {
+    const fetchers = makeFetchers();
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={fetchers}
+      />,
+    );
+    expect(screen.getByTestId('chart-tsdb-no-measurement')).toBeInTheDocument();
+
+    const ms = screen.getByTestId('chart-tsdb-measurement-select') as HTMLSelectElement;
+    await waitFor(() => expect(ms.options.length).toBe(3));
+    fireEvent.change(ms, { target: { value: 'cpu' } });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('chart-tsdb-series-select')).toBeInTheDocument(),
+    );
+    expect(fetchers.fetchFieldKeys).toHaveBeenCalledWith('influx-v2', 'cpu', undefined);
+    expect(screen.getAllByRole('checkbox')).toHaveLength(2);
+  });
+
+  it('태그 값을 고르면 후보 행의 태그가 좁혀지고 선택에 반영된다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    const fetchers = makeFetchers();
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={fetchers}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() =>
+      expect(screen.getByTestId('chart-tsdb-tag-key-select')).toBeEnabled(),
+    );
+    fireEvent.change(screen.getByTestId('chart-tsdb-tag-key-select'), {
+      target: { value: 'host' },
+    });
+    await waitFor(() =>
+      expect(fetchers.fetchTagValues).toHaveBeenCalledWith(
+        'influx-v2',
+        'cpu',
+        'host',
+        undefined,
+      ),
+    );
+    fireEvent.change(screen.getByTestId('chart-tsdb-tag-value-select'), {
+      target: { value: 'a' },
+    });
+    expect(screen.getByTestId('chart-tsdb-tag-filters')).toHaveTextContent('host=a');
+
+    // 행 식별자는 Store 와 같은 규칙(`key field tags`)이므로 태그가 좁혀지면 id 도 바뀐다.
+    fireEvent.click(screen.getByTestId('series-select-cpu usage host=a'));
+    expect(lastSeries(patches)).toEqual([
+      { key: 'cpu', field: 'usage', tags: { host: 'a' } },
+    ]);
+  });
+
+  it('체크를 해제하면 시리즈가 제거된다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [{ key: 'cpu', field: 'usage' }],
+        })}
+        fetchers={makeFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    await selectMeasurement('cpu');
+    // 태그 없는 시리즈의 식별자는 태그부가 빈 문자열이다(`"cpu usage "`).
+    // testing-library 의 기본 정규화가 후행 공백을 지우므로 질의는 trim 된 형태로 쓴다.
+    const box = await screen.findByTestId('series-select-cpu usage');
+    expect(box).toBeChecked();
+    fireEvent.click(box);
+    expect(lastSeries(patches)).toEqual([]);
+  });
+});
+
+describe('TsdbSourceSection — 시리즈 48 상한 (§2.9 [U9])', () => {
+  it('일괄 선택이 48 개를 넘으면 초과분을 반영하지 않고 경고한다', async () => {
+    // 상한은 안내가 아니라 **강제**다 — 통과시키면 폴링당 요청 수가 상한 없이 늘어난다.
+    const fields = Array.from({ length: 60 }, (_, i) => `f${i}`);
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers({ fetchFieldKeys: vi.fn(async () => fields) })}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getAllByRole('checkbox')).toHaveLength(60));
+
+    fireEvent.click(screen.getByTestId('tsdb-select-all'));
+
+    expect(lastSeries(patches)).toHaveLength(48);
+    expect(screen.getByTestId('chart-tsdb-over-limit')).toBeInTheDocument();
+  });
+});
+
+describe('TsdbSourceSection — 디스커버리 실패는 편집을 막지 않는다', () => {
+  it('bucket 목록 조회가 실패해도 안내만 띄우고 나머지 편집은 살아 있다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers({
+          fetchBuckets: vi.fn(async () => {
+            throw new Error('501');
+          }),
+        })}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('chart-tsdb-bucket-error')).toBeInTheDocument(),
+    );
+    // 목록이 없어도 measurement 드릴다운은 계속 쓸 수 있다.
+    expect(screen.getByTestId('chart-tsdb-measurement-select')).toBeEnabled();
+  });
+});

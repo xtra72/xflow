@@ -234,3 +234,84 @@ export const PANEL_SOURCE_CAPABILITIES: Record<ChartDataSourceKind, SourceCapabi
 export function panelSourceCapabilities(kind: ChartDataSourceKind): SourceCapabilities {
   return PANEL_SOURCE_CAPABILITIES[kind];
 }
+
+// ---- 백엔드 버전 축의 능력 (spec.md §2.13 [S1] · §HISTORY-0.4.0 (2)) ----
+
+/**
+ * InfluxDB 메이저 버전. 에이전트 config 의 `version` 필드(`'2' | '3'`)와 같은 어휘다
+ * (`web/src/config/agentSchemas.ts` 의 `INFLUXDB_FIELDS`).
+ *
+ * 버전은 **소스 종류가 아니라 백엔드의 하위 축**이다. `ChartDataSourceKind` 를 늘리지
+ * 않는 것이 §2.18 의 "백엔드는 파생" 과 일관된다.
+ */
+export type InfluxBackendVersion = '2' | '3';
+
+/** InfluxDB 버전별 능력. 미지원 항목은 숨기지 않고 비활성 + 사유로 표시한다(§2.13). */
+export interface TsdbBackendCapabilities {
+  /**
+   * bucket 을 **목록에서** 고를 수 있는가.
+   *
+   * v2 는 `GET /buckets` 로 목록을 준다. v3 는 관리 API 가 없으므로 자유 입력이다(OQ10).
+   */
+  bucketList: boolean;
+  /**
+   * 지정한 bucket 이 **질의에 반영되는가**.
+   *
+   * v3 는 `false` 다 — InfluxQL 템플릿 `SELECT ... FROM "<m>"` 에 database 를 담을
+   * 자리가 없고, database 는 클라이언트 연결에 바인딩되어 있다(§HISTORY-0.4.0 (2)).
+   * 이 사실을 UI 가 드러내지 않으면 사용자는 값을 바꿔도 결과가 그대로인 이유를 모른다.
+   */
+  bucketAffectsQuery: boolean;
+  /**
+   * bucket/measurement **관리** 조작(생성 · 삭제 · truncate).
+   *
+   * v3 는 `false` — 백엔드가 501 을 반환한다. **디스커버리는 v3 에서도 활성**이므로
+   * (§2.10) 이 플래그와 혼동하지 않는다.
+   */
+  management: boolean;
+}
+
+/**
+ * 버전별 능력 표. `Record<InfluxBackendVersion, ...>` 로 두어 버전이 늘면 컴파일이
+ * 먼저 깨지게 한다 — 소스 종류 축(`PANEL_SOURCE_CAPABILITIES`)과 같은 규율이다.
+ */
+export const TSDB_BACKEND_CAPABILITIES: Record<
+  InfluxBackendVersion,
+  TsdbBackendCapabilities
+> = {
+  '2': { bucketList: true, bucketAffectsQuery: true, management: true },
+  '3': { bucketList: false, bucketAffectsQuery: false, management: false },
+};
+
+/**
+ * 에이전트 config 에서 InfluxDB 버전을 읽는다. 판독 불가면 `'2'` 로 본다.
+ *
+ * `'2'` 를 기본으로 두는 이유: v2 는 능력이 더 넓으므로(목록 선택 · 관리 가능) 잘못
+ * 추정해도 사용자는 "되는 줄 알았는데 서버가 거부" 라는 **드러나는 실패**를 본다.
+ * 반대로 v3 로 추정하면 되는 기능을 비활성으로 감춰 **조용한 기능 상실**이 된다.
+ */
+export function resolveInfluxVersion(
+  config: Record<string, unknown> | undefined,
+): InfluxBackendVersion {
+  return String(config?.version ?? '') === '3' ? '3' : '2';
+}
+
+// ---- 미지원 사유 (spec.md §2.13 — "숨기지 않고 비활성 + 사유") ----
+
+/**
+ * 능력별 미지원 사유 i18n 키.
+ *
+ * 사유를 능력과 같은 자리에 두는 이유: 비활성 컨트롤과 그 사유가 따로 관리되면
+ * 능력 표만 바뀌고 문구가 남아 **틀린 이유**를 보여주는 상태가 된다. 여기서는 둘이
+ * 같은 모듈에 있으므로 한쪽만 고치기 어렵다.
+ */
+export const CAPABILITY_REASON_KEYS = {
+  /** `fill: 'avg'` — Flux · InfluxQL 어느 쪽에도 대응물이 없다(§2.7 → 400). */
+  fillAvg: 'dashboard.chart.capReasonFillAvg',
+  /** Store 백엔드는 fill 전략 자체를 지원하지 않는다(지정해도 무시). */
+  fillStore: 'dashboard.chart.capReasonFillStore',
+  /** v3 는 bucket 이 질의에 도달하지 않는다. */
+  bucketV3: 'dashboard.chart.capReasonBucketV3',
+  /** v3 는 관리 조작이 501 이다(디스커버리는 활성). */
+  managementV3: 'dashboard.chart.capReasonManagementV3',
+} as const;
