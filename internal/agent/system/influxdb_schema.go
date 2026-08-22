@@ -282,6 +282,12 @@ func (c *influxV2Client) resolveSchemaBucket(bucket string) (string, error) {
 // 쓴다. 응답 컬럼 이름은 SHOW 문마다 다르다.
 
 const (
+	// influxQLShowMeasurements 는 D1 의 v3 쿼리다. influxdb_v3.go 의
+	// ListMeasurements 가 사용한다.
+	influxQLShowMeasurements = "SHOW MEASUREMENTS"
+
+	// influxQLMeasurementColumn 은 SHOW MEASUREMENTS 결과의 컬럼 이름이다.
+	influxQLMeasurementColumn = "name"
 	// influxQLTagKeyColumn 은 SHOW TAG KEYS 결과의 컬럼 이름이다.
 	influxQLTagKeyColumn = "tagKey"
 	// influxQLTagValueColumn 은 SHOW TAG VALUES 결과의 컬럼 이름이다.

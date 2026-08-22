@@ -97,7 +97,15 @@ func (c *influxV3Client) querySQL(ctx context.Context, query string) ([]map[stri
 }
 
 // queryInfluxQL 은 InfluxQL 쿼리를 실행한다.
+//
+// nil 클라이언트를 여기서 걸러낸다. SDK 는 nil 수신자에서 패닉하며, 스키마
+// 디스커버리(D1~D4, §2.10)가 전부 이 경로를 지나므로 방어 지점을 하나로 둔다.
+// Health 가 이미 같은 판정을 한다.
 func (c *influxV3Client) queryInfluxQL(ctx context.Context, query string) ([]map[string]any, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("influxdb v3: 클라이언트가 nil 입니다")
+	}
+
 	iterator, err := c.client.Query(ctx, query, influxdb3.WithQueryType(influxdb3.InfluxQL))
 	if err != nil {
 		return nil, fmt.Errorf("influxdb v3 influxql query: %w", err)
@@ -139,6 +147,11 @@ func (c *influxV3Client) Close() error {
 // InfluxDB 3.x 는 v2 의 BucketsAPI / DeleteAPI 에 대응하는 관리 API 를 제공하지
 // 않는다. 관리 조작은 서버 CLI / 별도 관리 인터페이스로 수행해야 하므로, 여기서는
 // 모두 ErrManagementNotSupported 를 반환하는 스텁으로 구현한다.
+//
+// **ListMeasurements 는 예외다** — 그것은 관리 조작이 아니라 스키마 조회이며
+// InfluxQL 의 SHOW MEASUREMENTS 로 실제 동작한다. 아래 "스키마 디스커버리"
+// 절로 옮겼다(@spec SPEC-TSDB-002 §2.10 D1). v3 에 없는 것은 관리 API 이지
+// 스키마 조회가 아니다.
 
 // ListBuckets 는 v3 에서 지원하지 않는다.
 func (c *influxV3Client) ListBuckets(_ context.Context) ([]BucketInfo, error) {
@@ -160,12 +173,29 @@ func (c *influxV3Client) TruncateBucket(_ context.Context, _ string) error {
 	return ErrManagementNotSupported
 }
 
-// ListMeasurements 는 v3 에서 지원하지 않는다.
-func (c *influxV3Client) ListMeasurements(_ context.Context, _ string) ([]string, error) {
-	return nil, ErrManagementNotSupported
-}
-
 // DeleteMeasurement 는 v3 에서 지원하지 않는다.
 func (c *influxV3Client) DeleteMeasurement(_ context.Context, _, _ string) error {
 	return ErrManagementNotSupported
+}
+
+// --- 스키마 디스커버리 (@spec SPEC-TSDB-002 §2.10 D1) ---
+
+// ListMeasurements 는 SHOW MEASUREMENTS 로 measurement 목록을 조회한다(D1).
+//
+// **의도된 회귀다.** 이전에는 ErrManagementNotSupported 를 반환해 HTTP 501 이
+// 되었다. 그 501 은 "v3 는 관리 조작을 지원하지 않는다" 를 measurement 목록
+// 조회에까지 확대 적용한 결과였고, SHOW MEASUREMENTS 는 실제로 동작한다.
+// GET /influxdb/{agent}/measurements 는 v3 에서 501 -> 200 으로 바뀐다.
+//
+// 나머지 5 종 관리 조작(bucket 목록/생성/삭제/truncate · measurement 삭제)의
+// 501 은 그대로 유지한다 — 본 SPEC 은 읽기 전용 디스커버리만 다룬다(§1.3).
+//
+// bucket 인자는 무시된다. v3 의 database 는 클라이언트 생성 시 고정되며, 이는
+// D2~D4 (influxdb_schema.go) 의 규약과 같다.
+func (c *influxV3Client) ListMeasurements(ctx context.Context, _ string) ([]string, error) {
+	rows, err := c.queryInfluxQL(ctx, influxQLShowMeasurements)
+	if err != nil {
+		return nil, fmt.Errorf("influxdb v3 list measurements: %w", err)
+	}
+	return collectInfluxQLColumn(rows, influxQLMeasurementColumn), nil
 }
