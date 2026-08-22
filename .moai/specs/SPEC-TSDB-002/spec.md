@@ -1,7 +1,7 @@
 ---
 id: SPEC-TSDB-002
 title: 대시보드 패널 TSDB 데이터소스 — 패널측 계약 확립 + InfluxDB 첫 백엔드
-version: 0.4.0
+version: 0.5.0
 status: draft
 created: 2026-08-22
 updated: 2026-08-22
@@ -29,6 +29,83 @@ lifecycle_level: spec-first
 | 0.2.0 | 2026-08-22 | xtra | **도메인 모델 정정에 따른 재범위(re-scope).** 아래 §HISTORY-0.2.0 참조. |
 | 0.3.0 | 2026-08-22 | xtra | 신규 질문 NQ1~NQ5 **전부 확정**(모두 잠정안 그대로). NQ4 — 미등록 `/api/v1/tsdb/*` 라우트는 **본 SPEC 범위 밖의 별도 이슈**로 분리한다. TSDB 패널 소스가 memTSDB 를 쓰지 않게 되어 이 SPEC 의 구현을 막지 않으며, `internal/cli/tsdb.go` 하위명령 · 에이전트 상세 Series 탭 · `services/api/tsdb.ts` · `hooks/useTsdb.ts` 의 404/도달불가 상태와 SPEC-TSDB-001 REQ-TSDB-040 미충족 사실은 기록만 남긴다. NQ-rename — `SeriesDataSourceKind` 의 `'tsdb'` → `'memtsdb'` 리네임을 **확정**한다(같은 문자열이 두 화면에서 반대 뜻을 갖는 것을 막는다; 대상 5개 지점, 해당 경로가 라우트 미등록이라 리네임 위험이 낮다). NQ1·NQ2·NQ3·NQ5 도 잠정안 확정. 결정에 따른 요구사항 변경 없음 — 확정만 기록한다. |
 | 0.4.0 | 2026-08-22 | xtra | **M1~M5 구현 회차의 사실 정정 3건.** 구현이 각 정본을 따른 결과 SPEC 본문의 서술 3지점이 사실과 어긋남을 확인했다. 요구사항 변경 없음 — 서술만 정정한다. §HISTORY-0.4.0 참조. |
+| 0.5.0 | 2026-08-22 | xtra | **M6 + M7 구현 회차 기록.** M6 커밋 4건으로 첫 사용자 가치에 도달했고, M7 마무리에서 **구현 이탈 1건(eslint 게이트 범위 확대)** · **측정 범위 확대 1건(커버리지 include)** · **사실 정정 1건(3소스 교차 검증이 실제로는 2소스였음)** 이 발생했다. 요구사항 변경 없음 — 회차 사실과 그 처분만 기록한다. §HISTORY-0.5.0 참조. |
+
+### HISTORY-0.5.0 — M6 + M7 구현 회차
+
+#### (1) M6 — 합류 지점 도달, 커밋 4건
+
+계약 축(M1~M3)과 백엔드 축(M4~M5)이 합류해 처음으로 사용자에게 보이는 변화가 생겼다.
+
+| 커밋 | 범위 |
+|------|------|
+| `caa5d62e` | 시리즈 매트릭스 피벗 공용화 — 주입 가능한 키 페처 (무동작 리팩터) |
+| `427477a0` | TSDB 시리즈 어댑터 + 훅 배선 — 에이전트 타입 파생 · 부분 실패 격리 |
+| `1bc1008b` | TSDB 토글 config 영속 — 로컬 상태 제거 · AC-05 제자리 반전 |
+| `bf461774` | TSDB 선택 UI + 능력 게이팅 + 상태 4종 + i18n |
+
+#### (2) M7 구현 이탈 1건 — eslint 게이트의 범위 확대
+
+**AC-46 의 `npx eslint src --max-warnings 0` 을 통과시키기 위해, 사용자 승인 하에 저장소 전역 eslint 경고 46건(25개 파일)을 해소했다.** 이는 본 SPEC 이 계획한 범위를 넘어선 조치이므로 이탈로 기록한다.
+
+그중 이 SPEC 이 원래 건드린 파일은 `AgentDetailPanel.tsx` **1개(3건)** 뿐이고, 나머지 **24개 파일은 본 SPEC 범위 밖의 기존 부채**였다. AC-46 이 `src` 전역을 대상으로 하는 게이트이므로, 이 SPEC 의 변경분만 고쳐서는 게이트를 통과할 수 없었다.
+
+해소한 규칙은 2종이다.
+
+| 규칙 | 건수 | 조치 |
+|------|------|------|
+| `react-hooks/exhaustive-deps` | 15 | 폴백 표현식을 `useMemo` 로 감쌌다 |
+| `react-refresh/only-export-components` | 31 | 비컴포넌트 export 를 형제 모듈로 분리 — 신규 모듈 15개, 파일 분할 2건 |
+
+파일 분할 2건은 `TargetContext.tsx` → `TargetContext.ts` + `TargetProvider.tsx`, `panelChromeContext.tsx` → `panelChromeContext.ts` + `PanelChromeProvider.tsx` 다.
+
+**`eslint-disable` 주석 0건 · 규칙 severity 하향 0건.** 경고를 잠재우는 방식이 아니라 원인을 없애는 방식으로만 해소했다.
+
+별도로, gitignore 된 `tsc -b` 빌드 산출물 `web/vite.config.js` · `vite.config.d.ts` 를 `web/eslint.config.js` 의 `ignores` 에 추가했다(비스코프 `npx eslint .` 의 `no-undef` 오류 1건 해소).
+
+#### (3) M7.2 커버리지 — 측정 범위가 좁아 신규 파일 4개가 측정되지 않고 있었다
+
+**`web/vite.config.ts` 의 coverage `include` 가 좁아 신규 파일 4개가 아예 측정 대상에 들어오지 않았다** — `TsdbSourceSection.tsx` · `seriesMatrixPivot.ts` · `tsdbSource.ts` 와 수정 파일 `seriesDataSource.ts`. 즉 "커버리지 85%"라는 DoD 항목이 이 파일들에 대해서는 **측정조차 되지 않은 채** 참으로 보일 수 있는 상태였다.
+
+include 를 확장하고 `tsdbSource.test.ts` 에 테스트 11건을 보강해 `tsdbSource.ts` 를 75.95% → 100% 로 올렸다. 그 결과 **신규 파일 7종이 전부 85% 이상**이다.
+
+| 신규 파일 | % Stmts |
+|-----------|---------|
+| `panelDataSource.ts` | 96.29 |
+| `panelSeriesStatus.ts` | 100 |
+| `usePanelSeriesData.ts` | 100 |
+| `useTsdbChartData.ts` | 97.57 |
+| `TsdbSourceSection.tsx` | 96.12 |
+| `seriesMatrixPivot.ts` | 100 |
+| `tsdbSource.ts` | 100 |
+
+수정 파일 2종은 DoD 의 85% 대상이 아니므로 손대지 않고 기록만 남긴다 — `ChartPanelSections.tsx` 80.3%, `seriesDataSource.ts` 50%. 후자는 include 확장으로 이제 측정 대상에 들어와 향후 커버리지 표에 계속 보인다.
+
+#### (4) M7.3 사실 정정 — "3소스 교차 검증"이 사실상 2소스였다
+
+**`internal/api/handler/bucket_alignment_crosscheck_test.go` 는 v2 와 v3 를 `influxBucketStartsMs` 헬퍼 한 벌로 접어 `system.SeriesBucketStartMs` 를 공유 호출했다.** 즉 plan.md 7.3 이 요구한 3소스 단언이 아니라 "Store vs 공통 정규화" **2소스 단언**이었다. 두 백엔드가 같은 함수로 수렴하므로 어느 한쪽 방언만 깨져도 테스트가 잡아내지 못한다.
+
+사용자 결정에 따라 **백엔드별 축을 분리**했다.
+
+- **v2** — `BuildFluxSeriesQuery` 가 생성한 Flux `aggregateWindow` 인자에서 버킷 시작을 도출한다.
+- **v3** — `BuildInfluxQLSeriesQuery` 가 생성한 InfluxQL `GROUP BY time()` 인자에서 도출한다.
+- 그 둘과 Store 를 **3-way 로 단언**한다.
+
+신규 테스트 2건을 추가했다 — `TestBucketAlignment_PerBackendWindowParameters`(각 백엔드의 윈도우 폭 · offset · 레이블 위치를 개별 고정) · `TestBucketAlignment_SharedRuntimeNormalizationMatchesStore`.
+
+**런타임 수렴 사실 자체는 남는다.** `normalizeSeriesBuckets`(`influxdb_agent.go`)는 두 방언 모두 `SeriesBucketStartMs` 를 통과시키므로, **분리 가능한 지점은 정규화가 아니라 질의 생성**이다. 수렴 지점은 별도로 명명된 테스트(`..._SharedRuntimeNormalizationMatchesStore`)가 덮으며, 그것이 3소스 단언을 대체하지 않음을 테스트 주석에 명시했다.
+
+축 분리의 실효는 **변이 검증 3건**으로 입증했다.
+
+| 변이 | 기대 | 결과 |
+|------|------|------|
+| v2 전용: `timeSrc: "_start"` → `"_stop"` | v2 축만 실패 | 부합 |
+| v2 전용: `every: interval` → `interval*2` | v2 축만 실패 | 부합 |
+| v3 전용: `GROUP BY time(%s)` → `time(%s,7000ms)` | v3 축만 실패 | 부합 |
+
+특히 **`every: interval*2` 변이는 개정 전 테스트 파일 전체가 통과시켰다** — 개정이 없었다면 Flux 윈도우 폭이 두 배가 되어도 교차 검증이 침묵했다는 뜻이다.
+
+---
 
 ### HISTORY-0.4.0 — 구현 회차에서 드러난 사실 정정 3건
 

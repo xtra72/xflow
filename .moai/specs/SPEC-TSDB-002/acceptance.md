@@ -370,8 +370,9 @@ grep -rhoF 'timeSrc: "_stop"'  internal/agent/system/ 2>/dev/null | wc -l   # �
 ```
 
 - Go: `TestBuildFluxSeriesQuery_TimeSrcIsStart` · `TestInfluxSeriesEntry_TimestampIsBucketStart`
+- Go: `TestBucketAlignment_GeneratedQueriesRequestEpochAlignment` — 생성된 Flux 에 `timeSrc: "_start"` 가 있고 `offset:` 이 없음을, 생성된 InfluxQL 의 `GROUP BY time(...)` 에 offset 인자가 없음을 인터벌 8종에서 단언한다
 
-### AC-27 — Store ↔ InfluxDB 버킷 경계 교차 검증 (**v0.1.0 에서 반전됨**)
+### AC-27 — Store ↔ InfluxDB 버킷 경계 교차 검증 (**백엔드별 축 분리 — M7.3 개정**)
 
 ```gherkin
 Given 동일한 타임스탬프 집합과 인터벌이 주어졌을 때
@@ -380,9 +381,21 @@ Then divisor 인터벌(1s·10s·30s·60s·300s·900s·3600s)에서 3소스가 �
 And  non-divisor 인터벌(예: 420s)에서도 3소스가 **일치한다**
 ```
 
+**3소스 단언의 구성이 M7.3 에서 개정되었다.** 개정 전에는 v2 와 v3 의 버킷 시작을 `influxBucketStartsMs` 헬퍼 한 벌로 접어 `system.SeriesBucketStartMs` 를 **공유 호출**했다 — 즉 "3소스 비교"가 실제로는 "Store vs 공통 정규화" **2소스 비교**였다. 개정 후에는 각 백엔드가 **자기 방언으로 생성한 쿼리 문자열**에서 윈도우 파라미터(폭 · offset · 레이블 위치)를 읽어 낸다.
+
+| 축 | 도출 경로 |
+|----|-----------|
+| Store | `store_query.go` 의 epoch-zero 정렬 (정본, 무변경) |
+| InfluxDB v2 | `BuildFluxSeriesQuery` 가 생성한 Flux `aggregateWindow` 인자 |
+| InfluxDB v3 | `BuildInfluxQLSeriesQuery` 가 생성한 InfluxQL `GROUP BY time()` 인자 |
+
 - Go: `internal/api/handler/bucket_alignment_crosscheck_test.go`
   - `TestBucketAlignment_DivisorIntervals_AllPanelSourcesAgree`
   - `TestBucketAlignment_NonDivisorInterval_AllPanelSourcesAgree` — **420초에서도 일치**를 단언한다
+  - `TestBucketAlignment_PerBackendWindowParameters` — **신규(M7.3)**. 각 백엔드의 윈도우 폭 · offset · 레이블 위치를 개별 고정해, 교차 검증 실패 시 "폭이 틀렸는가 · 원점이 밀렸는가 · 레이블이 끝인가"를 갈라 준다
+  - `TestBucketAlignment_SharedRuntimeNormalizationMatchesStore` — **신규(M7.3)**. 런타임 수렴 지점(`normalizeSeriesBuckets` 가 v2 · v3 양쪽에서 부르는 `system.SeriesBucketStartMs`)이 Store 와 갈라지지 않음을 별도로 고정한다. **이 단언은 3소스 단언을 대체하지 않는다**
+
+> **런타임 수렴 사실은 남는다.** `normalizeSeriesBuckets`(`influxdb_agent.go`)가 두 방언 모두 `SeriesBucketStartMs` 를 통과시키므로, 분리 가능한 지점은 정규화가 아니라 **질의 생성**이다. 축 분리의 실효는 변이 검증 3건으로 입증했다 — v2 전용 결함(`timeSrc: "_start"`→`"_stop"`, `every: interval`→`interval*2`)은 v2 축만, v3 전용 결함(`GROUP BY time(%s)`→`time(%s,7000ms)`)은 v3 축만 실패시킨다. 특히 `every: interval*2` 변이는 **개정 전 테스트 파일 전체가 통과시켰다**(spec.md §HISTORY-0.5.0 (4)).
 
 ```bash
 # Store 의 epoch-zero 정렬이 정본이며 무변경이다
@@ -749,14 +762,74 @@ console.log('ko-only:',[...a].filter(k=>!b.has(k)).length,'en-only:',[...b].filt
 
 ---
 
+## M2. M7 회차에 실제 실행한 단언 (구현 완료 후)
+
+아래는 **M7 마무리 회차에 실행하고 출력을 직접 관측한** 항목이다. 값은 전부 이 회차의 실측이며, 이전 회차에서 이월한 값이 아니다. 로그는 `.moai/state/verify/tsdb002-m7/` 에 남겼다.
+
+### M2.1 정적 검사 · 전체 회귀 (AC-46 · M7.1)
+
+| 단언 | 명령 | 관측 결과 |
+|------|------|-----------|
+| Go 정적 검사 | `go vet ./...` | **exit 0** (`wp4-go-vet.log`) |
+| Go 전체 테스트 | `go test ./...` | **exit 0**, `grep -c '^FAIL'` → **0건** (`wp4-go-test.log`) |
+| 타입 검사 | `cd web && npx tsc --noEmit` | **exit 0** (`wp4-tsc.log`) |
+| 린트 (스코프) | `cd web && npx eslint src --max-warnings 0` | **exit 0** (`wp4-eslint-src.log`) |
+| 린트 (비스코프) | `cd web && npx eslint .` | **exit 0** (`wp4-eslint-all.log`) |
+| 프론트 전체 테스트 | `cd web && npx vitest run` | **exit 0** — **296 파일 / 4067 테스트 전량 통과** (`wp4-vitest.log`) |
+
+### M2.2 grep 단언
+
+| AC | 명령 | 기대 | 관측 |
+|----|------|------|------|
+| AC-43 #1 | `grep -coF 'QueryLanguage string' internal/api/handler/influxdb_query.go` | 1 | **1** |
+| AC-43 #2 | `grep -coF 'lang != "flux" && lang != "influxql"' internal/api/handler/influxdb_query.go` | 1 | **1** |
+| AC-43 #3 | `grep -choE 'g\.(GET\|POST\|DELETE)Perm\("/influxdb/\{agent_name\}/buckets' internal/api/handler/influxdb_management.go` | 4 | **4** |
+| AC-45 | `grep -rhoE "from .@/hooks/useTsdb.\|from ./useTsdb." web/src --include='*.ts' --include='*.tsx' \| wc -l` | 0 | **0** |
+| AC-49 | ko/en 평탄화 키 대칭 스크립트 | `0 / 0` | **`ko-only: 0 en-only: 0`** (`wp4-i18n-symmetry.log`) |
+
+### M2.3 테스트 존재 · 갈음
+
+| AC | 판정 | 근거 |
+|----|------|------|
+| AC-42 | **갈음** | 특성화 CT-01 ~ CT-21 전량 GREEN (M2.1 의 vitest 4067건 전량 통과에 포함) |
+| AC-47 | **충족** | `panelDataSource.test.ts` 에 두 테스트가 존재하고 통과한다 — `'tsdb + tsdb_source 부재 → tsdb/inactive (channel 폴백 아님)'` · `'인식 불가 문자열 → channel/active + unknownKind 플래그'` |
+
+### M2.4 커버리지 (M7.2)
+
+`cd web && npx vitest run --coverage` → **exit 0** (`wp4-coverage.log`). 전체 `All files` 90.15% Stmts.
+
+| 신규 파일 | % Stmts | 85% 기준 |
+|-----------|---------|----------|
+| `panelDataSource.ts` | 96.29 | 충족 |
+| `panelSeriesStatus.ts` | 100 | 충족 |
+| `usePanelSeriesData.ts` | 100 | 충족 |
+| `useTsdbChartData.ts` | 97.57 | 충족 |
+| `TsdbSourceSection.tsx` | 96.12 | 충족 |
+| `seriesMatrixPivot.ts` | 100 | 충족 |
+| `tsdbSource.ts` | 100 | 충족 |
+
+수정 파일 2종은 DoD 의 85% 대상이 아니며 기록만 남긴다 — `ChartPanelSections.tsx` 80.3%, `seriesDataSource.ts` 50%.
+
+> 이 회차에 `web/vite.config.ts` 의 coverage `include` 를 확장했다. 확장 전에는 위 표의 `TsdbSourceSection.tsx` · `seriesMatrixPivot.ts` · `tsdbSource.ts` 와 수정 파일 `seriesDataSource.ts` 가 **측정 대상 밖**이었다(spec.md §HISTORY-0.5.0 (3)).
+
+### M2.5 i18n 은퇴 키 (M7.4)
+
+은퇴 대상이던 placeholder 키 `dashboard.chart.dataSourceTsdbTitle` · `dataSourceTsdbBody` 는 **이미 제거되어 있다**(M6 커밋 `bf461774`). ko/en 양쪽에서 0건이다.
+
+데이터소스 표면(`dashboard.chart.*` · `dashboard.settings.*` · `dashboard.heatmap.*` · `panel.settings.*` · `tsdb.*` · `series.*`)을 대상으로 고아 키를 전수 조사한 결과, **본 SPEC 이 은퇴시킨 개념에 귀속되는 고아 키는 0건**이다. 검출된 고아 후보 21건은 전부 선행 SPEC(SPEC-PANEL-SETTINGS-001 `69f06709` · `9c250ddf`, SPEC-HEATMAP-PANEL-001 `69294ced`, SPEC-STORE-004 `78744734`)에 귀속되므로 본 SPEC 범위 밖이며 삭제하지 않는다.
+
+---
+
 ## N. 완료 게이트 요약
 
-| 게이트 | 조건 |
-|--------|------|
-| M1 종료 | AC-01 · AC-03 · AC-04 · AC-05 · AC-37 |
-| M2 종료 | AC-09 ~ AC-12 의 CT 테스트가 **수정 전 코드**에서 전량 GREEN, 프로덕션 diff 0 |
-| M3 종료 | AC-06 · AC-07 · AC-08 · AC-41 + M2 CT 전량 GREEN 유지 |
-| M4 종료 | AC-17 ~ AC-28 |
-| M5 종료 | AC-29 ~ AC-33 · AC-43 |
-| M6 종료 | AC-02 · AC-18 · AC-34 · AC-35 · AC-36 · AC-38 ~ AC-40 · AC-44 · AC-45 · AC-48 · AC-50 ~ AC-54 |
-| M7 종료 | AC-42 · AC-46 · AC-47 · AC-49 + 신규 파일 커버리지 85% |
+| 게이트 | 조건 | 상태 |
+|--------|------|------|
+| M1 종료 | AC-01 · AC-03 · AC-04 · AC-05 · AC-37 | 이전 회차 종료 |
+| M2 종료 | AC-09 ~ AC-12 의 CT 테스트가 **수정 전 코드**에서 전량 GREEN, 프로덕션 diff 0 | 이전 회차 종료 |
+| M3 종료 | AC-06 · AC-07 · AC-08 · AC-41 + M2 CT 전량 GREEN 유지 | 이전 회차 종료 |
+| M4 종료 | AC-17 ~ AC-28 | 이전 회차 종료 |
+| M5 종료 | AC-29 ~ AC-33 · AC-43 | 이전 회차 종료 |
+| M6 종료 | AC-02 · AC-18 · AC-34 · AC-35 · AC-36 · AC-38 ~ AC-40 · AC-44 · AC-45 · AC-48 · AC-50 ~ AC-54 | 이전 회차 종료 (커밋 `caa5d62e` · `427477a0` · `1bc1008b` · `bf461774`) |
+| M7 종료 | AC-42 · AC-46 · AC-47 · AC-49 + 신규 파일 커버리지 85% | **충족 — 이 회차 실측** (§M2). AC-42 갈음 · AC-46 6종 전부 exit 0 · AC-47 두 테스트 존재 · AC-49 `0 / 0` · 신규 파일 7종 전부 85% 이상 |
+
+> "이전 회차 종료"는 해당 회차에 기록된 사실이며 이 회차에 재측정한 값이 아니다. 이 회차에 직접 관측한 것은 §M2 에 열거한 항목뿐이다. 다만 §M2.1 의 `go test ./...` · `npx vitest run` 전량 통과는 M2 특성화(CT-01 ~ CT-21)를 포함한 전 회차 테스트가 현재 트리에서 여전히 GREEN 임을 의미한다.

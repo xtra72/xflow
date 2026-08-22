@@ -334,16 +334,18 @@ CT-17 이 핵심이다. `previewSeries.ts:65` 의 `if (dataSource === 'store') {
 
 ## 6. 완료 정의 (Definition of Done)
 
-- [ ] spec.md 의 U1~U4 · U6~U12 · E1~E2 · S1~S2 · UB1~UB2 전부 구현 (**U5 는 은퇴**)
-- [ ] acceptance.md 의 AC-01 ~ AC-12 · AC-17 ~ AC-54 전부 통과 (**AC-13 ~ AC-16 은 은퇴**)
-- [ ] M2 특성화 테스트 CT-01 ~ CT-21 이 M3 이후에도 전량 GREEN
-- [ ] `data_source` 부재 · `'channel'` · `'store'` config 의 렌더 결과 무변경
-- [ ] 신규 응답 DTO 0개 — `chartQueryResponse` 재사용 확인
-- [ ] 피벗 구현 1벌 — TSDB 전용 피벗 0건
-- [ ] 신규 파일 커버리지 85% 이상
-- [ ] `npx tsc --noEmit` · eslint · `go build ./...` · `go vet ./...` · `go test ./...` 전부 통과
-- [ ] i18n ko/en 대칭 + 은퇴 키 제거
-- [ ] spec.md §7 NQ1 ~ NQ5 처분이 HISTORY 에 기록
+> 체크 표시는 **M7 회차에 직접 관측한 것만** 붙였다. 미체크 항목은 "거짓"이 아니라 **이 회차에 전수 재검증하지 않았다**는 뜻이다. 관측 근거는 acceptance.md §M2 와 `.moai/state/verify/tsdb002-m7/` 의 로그다.
+
+- [ ] spec.md 의 U1~U4 · U6~U12 · E1~E2 · S1~S2 · UB1~UB2 전부 구현 (**U5 는 은퇴**) — 요구사항 단위 전수 재검증은 이 회차에 수행하지 않음
+- [ ] acceptance.md 의 AC-01 ~ AC-12 · AC-17 ~ AC-54 전부 통과 (**AC-13 ~ AC-16 은 은퇴**) — 이 회차에 실행한 것은 §M2 에 열거한 부분집합
+- [x] M2 특성화 테스트 CT-01 ~ CT-21 이 M3 이후에도 전량 GREEN — 마커 21종 전부 존재하고 `npx vitest run` 4067건 전량 통과(exit 0)
+- [x] `data_source` 부재 · `'channel'` · `'store'` config 의 렌더 결과 무변경 — 위 CT-01 ~ CT-21 이 잠근 동작이며 전량 GREEN
+- [x] 신규 응답 DTO 0개 — `chartQueryResponse` 재사용 확인 (`influxSeriesQueryResponse|influxSeriesMatrixRow` **0건**, `influxdb_series.go` 의 `chartQueryResponse` **2건**)
+- [x] 피벗 구현 1벌 — TSDB 전용 피벗 0건 (`seriesMatrixPivot.ts` present · `allBuckets` 3건, `store.ts` **0건**, `tsdbSource.ts` **0건**)
+- [x] 신규 파일 커버리지 85% 이상 — 신규 7종 전부 충족 (최저 `TsdbSourceSection.tsx` 96.12%)
+- [x] `npx tsc --noEmit` · eslint · `go build ./...` · `go vet ./...` · `go test ./...` 전부 통과 — 6종 전부 exit 0 (`npx eslint .` 비스코프 포함)
+- [x] i18n ko/en 대칭 + 은퇴 키 제거 — `ko-only: 0 en-only: 0`, 은퇴 placeholder 키 2종 부재. **본 SPEC 귀속 고아 키 0건**(잔여 후보 21건은 전부 선행 SPEC 귀속 → 범위 밖)
+- [x] spec.md §7 NQ1 ~ NQ5 처분이 HISTORY 에 기록 — `0.3.0` 행이 NQ1~NQ5 + NQ-rename 을 모두 기록 (M7.6 은 착수 시점에 **이미 충족**)
 
 ---
 

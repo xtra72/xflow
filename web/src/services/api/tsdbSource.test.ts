@@ -5,6 +5,9 @@
 //
 // @spec SPEC-TSDB-002 §2.18 (U11) · §2.19 (U12) · §2.6 (U6)
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, renderHook, waitFor } from '@testing-library/react';
+import { createElement, type ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getMock = vi.hoisted(() => vi.fn());
@@ -28,6 +31,7 @@ import {
   queryTsdbMatrix,
   queryTsdbSourceMatrix,
   resolveTsdbBackend,
+  tsdbSeriesDataSourceFor,
   TsdbBackendMismatchError,
   type TsdbAgentRef,
 } from './tsdbSource';
@@ -296,5 +300,199 @@ describe('queryTsdbMatrix — 요청 본문 규약 (§2.6 · §2.7)', () => {
       aggregation: 'average',
     });
     expect(postMock.mock.calls[0]![1]).not.toHaveProperty('bucket');
+  });
+});
+
+// ---- §2.6: measurement(key) 필수 ----
+
+describe('fetchTsdbSeries — measurement(key) 필수 (§2.6)', () => {
+  it('key 가 비어 있으면 그 시리즈 요청이 나가지 않고 실패한다', async () => {
+    const params: SeriesMatrixQuery = {
+      keys: [''],
+      seriesFilters: [{ fieldName: 'value' }],
+      startMs: 1_700_000_000_000,
+      endMs: 1_700_000_300_000,
+      intervalMs: 60_000,
+      aggregation: 'average',
+    };
+
+    // 단일 시리즈가 전부 실패한 것이므로 부분 실패가 아니라 전체 실패다(§2.14).
+    await expect(queryTsdbMatrix('ix', params)).rejects.toThrow('measurement(key)');
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it('key 가 빈 시리즈만 실패하고 형제 시리즈는 정상 조회된다', async () => {
+    postMock.mockResolvedValue(seriesResponse('value', {}, [[1_700_000_000_000, 7]]));
+
+    const result = await queryTsdbMatrix('ix', {
+      keys: ['', 'ok'],
+      seriesFilters: [{ fieldName: 'value' }, { fieldName: 'value' }],
+      startMs: 1_700_000_000_000,
+      endMs: 1_700_000_300_000,
+      intervalMs: 60_000,
+      aggregation: 'average',
+    });
+
+    expect(result.failures.map((f) => f.index)).toEqual([0]);
+    expect(result.matrix.columns).toEqual(['', 'ok']);
+    expect(postMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---- M6.6: 통합 데이터 소스 어댑터 ----
+
+describe('tsdbSeriesDataSourceFor — 어댑터 형상 (M6.6 · §1.2.1)', () => {
+  it("kind 는 'tsdb' 다 — 프로세스 내 저장소('memtsdb')와 구분된다(UB1-21)", () => {
+    expect(tsdbSeriesDataSourceFor(INFLUX_AGENT).kind).toBe('tsdb');
+  });
+
+  it('queryMatrix 는 매트릭스만 돌려준다(부분 실패 신호는 훅 계층 소관)', async () => {
+    postMock.mockResolvedValue(
+      seriesResponse('usage', {}, [[1_700_000_000_000, 12]]),
+    );
+
+    const source = tsdbSeriesDataSourceFor(INFLUX_AGENT);
+    const matrix = await source.queryMatrix({
+      keys: ['cpu'],
+      seriesFilters: [{ fieldName: 'usage' }],
+      startMs: 1_700_000_000_000,
+      endMs: 1_700_000_300_000,
+      intervalMs: 60_000,
+      aggregation: 'average',
+    });
+
+    expect(matrix.columns).toEqual(['cpu']);
+    expect(matrix.rows.map((r) => r.values[0])).toEqual([12]);
+    expect(postMock.mock.calls[0]![0]).toBe('/influxdb/ix/series/query');
+    expect(matrix).not.toHaveProperty('failures');
+  });
+
+  it('options.bucket 은 요청 본문에 실리고, 없으면 실리지 않는다', async () => {
+    postMock.mockResolvedValue(seriesResponse('usage', {}, []));
+
+    const query: SeriesMatrixQuery = {
+      keys: ['cpu'],
+      seriesFilters: [{ fieldName: 'usage' }],
+      startMs: 1_700_000_000_000,
+      endMs: 1_700_000_300_000,
+      intervalMs: 60_000,
+      aggregation: 'average',
+    };
+
+    await tsdbSeriesDataSourceFor(INFLUX_AGENT, { bucket: 'metrics' }).queryMatrix(query);
+    expect(postMock.mock.calls[0]![1]).toMatchObject({ bucket: 'metrics' });
+
+    postMock.mockClear();
+    await tsdbSeriesDataSourceFor(INFLUX_AGENT).queryMatrix(query);
+    expect(postMock.mock.calls[0]![1]).not.toHaveProperty('bucket');
+  });
+
+  it('참조된 에이전트가 지원 백엔드가 아니면 질의하지 않는다(§2.17-7)', async () => {
+    const source = tsdbSeriesDataSourceFor(STORE_AGENT);
+    await expect(
+      source.queryMatrix({
+        keys: ['cpu'],
+        seriesFilters: [{ fieldName: 'usage' }],
+        startMs: 1_700_000_000_000,
+        endMs: 1_700_000_300_000,
+        intervalMs: 60_000,
+        aggregation: 'average',
+      }),
+    ).rejects.toBeInstanceOf(TsdbBackendMismatchError);
+    expect(postMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---- D1 · §2.10: useKeys 는 measurement 목록을 돌려준다 ----
+
+/** react-query 훅을 감쌀 provider. 재시도를 끄고 캐시를 테스트마다 새로 만든다. */
+function queryWrapper() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client }, children);
+  return wrapper;
+}
+
+describe('tsdbSeriesDataSourceFor.useKeys — measurement 디스커버리 (D1 · §2.10)', () => {
+  it('measurement 목록을 페이지로 잘라 돌려준다', async () => {
+    getMock.mockResolvedValue({ measurements: ['cpu', 'mem', 'disk'], count: 3 });
+
+    const source = tsdbSeriesDataSourceFor(INFLUX_AGENT, { bucket: 'metrics' });
+    const { result } = renderHook(() => source.useKeys({ page: 1, size: 2 }), {
+      wrapper: queryWrapper(),
+    });
+
+    // 첫 렌더는 로딩이며 데이터가 없다.
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.data).toBeUndefined();
+
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(result.current.data?.keys).toEqual(['cpu', 'mem']);
+    expect(result.current.data?.pagination).toMatchObject({
+      page: 1,
+      size: 2,
+      total: 3,
+      totalPages: 2,
+    });
+    expect(result.current.isError).toBe(false);
+    expect(getMock.mock.calls[0]![0]).toContain('/influxdb/ix/measurements');
+    expect(getMock.mock.calls[0]![0]).toContain('bucket=metrics');
+  });
+
+  it('bucket 이 없으면 빈 bucket 으로 질의한다(에이전트 기본값 위임)', async () => {
+    getMock.mockResolvedValue({ measurements: ['cpu'], count: 1 });
+
+    const source = tsdbSeriesDataSourceFor(INFLUX_AGENT);
+    const { result } = renderHook(() => source.useKeys({ page: 1, size: 10 }), {
+      wrapper: queryWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(getMock.mock.calls[0]![0]).toContain('bucket=');
+  });
+
+  it('조회가 실패하면 isError 와 error 로 드러난다', async () => {
+    getMock.mockRejectedValue(new Error('discovery down'));
+
+    const source = tsdbSeriesDataSourceFor(INFLUX_AGENT);
+    const { result } = renderHook(() => source.useKeys({ page: 1, size: 10 }), {
+      wrapper: queryWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.data).toBeUndefined();
+  });
+
+  it('refetch 는 디스커버리를 다시 읽는다(캐시하지 않는다 — UB1-12)', async () => {
+    getMock.mockResolvedValue({ measurements: ['cpu'], count: 1 });
+
+    const source = tsdbSeriesDataSourceFor(INFLUX_AGENT);
+    const { result } = renderHook(() => source.useKeys({ page: 1, size: 10 }), {
+      wrapper: queryWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    const before = getMock.mock.calls.length;
+
+    getMock.mockResolvedValue({ measurements: ['cpu', 'mem'], count: 2 });
+    act(() => {
+      result.current.refetch();
+    });
+
+    await waitFor(() => expect(result.current.data?.keys).toEqual(['cpu', 'mem']));
+    expect(getMock.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it('에이전트 이름이 비면 질의하지 않는다(enabled 게이팅)', () => {
+    const source = tsdbSeriesDataSourceFor({ id: 'a-0', name: '', type: 'influxdb' });
+    const { result } = renderHook(() => source.useKeys({ page: 1, size: 10 }), {
+      wrapper: queryWrapper(),
+    });
+
+    expect(getMock).not.toHaveBeenCalled();
+    expect(result.current.data).toBeUndefined();
   });
 });
