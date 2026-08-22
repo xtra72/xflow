@@ -23,6 +23,7 @@ import type {
   StoreSourceConfig,
 } from './chartChannelTypes';
 import { DEFAULT_STORE_SOURCE_WINDOW } from './chartChannelTypes';
+import { isStoreSourceActive, resolvePanelSourceBinding } from './panelDataSource';
 
 // ---- 레거시 바인딩 형상 ----
 
@@ -84,10 +85,9 @@ export interface GaugeValueSourceFlags {
  * `data_source` 는 여기에 포함하지 않는다 — 그것은 진리표의 **별도 축**이다.
  */
 export function isGaugeStoreSourceActive(store: StoreSourceConfig | undefined): boolean {
-  if (!store) return false;
-  const tagActive =
-    store.selection_mode === 'tag' && Object.keys(store.tag_filters ?? {}).length > 0;
-  return (store.series?.length ?? 0) > 0 || tagActive;
+  // SPEC-TSDB-002 §2.3 [U3]: 활성 조건의 정본은 `panelDataSource` 하나뿐이다.
+  // 여기서 같은 식을 한 벌 더 두면 두 곳이 갈릴 수 있다. 이름은 호출부 호환을 위해 남긴다.
+  return isStoreSourceActive(store);
 }
 
 /** 패널 config 에서 판정 입력 플래그를 파생한다. */
@@ -119,7 +119,16 @@ export function gaugeValueSourceFlags(
  * `chart-emitter` 가 계속 이겨서는 안 된다 — 그러면 토글이 고장난 것으로 보인다.
  */
 export function resolveGaugeValueSource(flags: GaugeValueSourceFlags): GaugeValueSource {
-  return flags.dataSource === 'store' && flags.storeSourceActive && flags.hasSeriesReduce
+  // SPEC-TSDB-002 §2.3 [U3]: 소스 종류 판정(미지정·인식 불가 → channel 폴백 포함)은
+  // 계약에 위임한다. `flags` 는 종류 원값만 갖고 store 블록을 갖지 않으므로
+  // `data_source` 만 담은 config 로 **종류**를 받고, 활성 항은 `flags.storeSourceActive`
+  // (= 계약의 `isStoreSourceActive`) 를 그대로 쓴다.
+  //
+  // **`hasSeriesReduce` 논리곱은 여기 남는다.** 그것은 소스 활성이 아니라 게이지 고유의
+  // 레거시 우선순위 규칙이며 SPEC-CHART-002 §2.9 가 소유한다. `panelDataSource` 로
+  // 옮기면 게이지가 아닌 패널의 활성 판정까지 바뀐다.
+  const { kind } = resolvePanelSourceBinding({ data_source: flags.dataSource });
+  return kind === 'store' && flags.storeSourceActive && flags.hasSeriesReduce
     ? 'store-source'
     : 'legacy';
 }
@@ -197,8 +206,11 @@ export type GaugeMigrationState = 'available' | 'already-migrated' | 'unavailabl
 export function resolveGaugeMigrationState(
   config: Record<string, unknown>,
 ): GaugeMigrationState {
-  const flags = gaugeValueSourceFlags(config);
-  if (flags.dataSource === 'store' && flags.storeSourceActive) return 'already-migrated';
+  // SPEC-TSDB-002 §2.3 [U3]: 여기는 config 전체를 갖고 있으므로 계약에 그대로 물어본다.
+  // `binding.active`(store 종류) 는 `gaugeValueSourceFlags(config).storeSourceActive` 와
+  // 동치다 — 둘 다 `isStoreSourceActive(config.store_source)` 이다.
+  const binding = resolvePanelSourceBinding(config);
+  if (binding.kind === 'store' && binding.active) return 'already-migrated';
   return findMigratableGaugeStoreBinding(config) !== undefined ? 'available' : 'unavailable';
 }
 

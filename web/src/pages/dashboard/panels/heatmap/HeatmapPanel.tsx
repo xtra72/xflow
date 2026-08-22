@@ -20,7 +20,7 @@ import { useUIStore } from '@/stores/uiStore';
 
 import { normalizeStoreSeriesAlias } from '../charts/chartChannelTypes';
 import type { StoreSeriesRef, StoreSourceConfig } from '../charts/chartChannelTypes';
-import { useStoreChartData } from '../charts/useStoreChartData';
+import { usePanelSeriesData } from '../charts/usePanelSeriesData';
 import { parseHeatmapConfig } from './heatmapConfig';
 import { joinSensorPoints, resolveSensorSeries } from './heatmapJoin';
 import { heatmapSensorId, sensorSeriesLabel } from './sensorIdentity';
@@ -118,11 +118,17 @@ export default function HeatmapPanel({
         : undefined,
     [storeSource, refs],
   );
-  const isStore =
-    config.data_source === 'store' && (heatmapStoreSource?.series?.length ?? 0) > 0;
-
+  // SPEC-TSDB-002 §2.3 [U3]: 소스 판정과 조회를 `panelDataSource` / `usePanelSeriesData`
+  // 계약에 위임한다. 히트맵은 `config.store_source` 가 아니라 위에서 파생한
+  // `heatmapStoreSource` 로 조회하므로 그 파생 소스를 `storeSourceOverride` 로 **주입**한다.
+  // 계약이 `config.store_source` 를 직접 읽게 두면 tag 모드 히트맵이 새로 활성화되어
+  // 동작이 바뀐다(파생 소스는 `selection_mode:'keys'` 로 강제되어 tag 항이 늘 거짓이므로,
+  // 주입한 쪽의 활성 판정은 종전 `heatmapStoreSource.series.length > 0` 과 정확히 같다).
+  //
   // hook 은 항상 호출(React 규칙). 비활성 경로는 idle 로 유지된다.
-  const storeResult = useStoreChartData(isStore ? heatmapStoreSource : undefined, isStore);
+  const storeResult = usePanelSeriesData(config, {
+    storeSourceOverride: heatmapStoreSource,
+  });
 
   // 조회 결과(표시 이름 공간) → 센서 동일성 키 공간. 좌표/마커와 같은 공간에서만 결합한다.
   const resolved = useMemo(
