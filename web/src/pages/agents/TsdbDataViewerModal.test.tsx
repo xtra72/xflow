@@ -160,7 +160,7 @@ const ALL_KEYS = ['temp,room=1', 'temp,room=2', 'humidity,room=1'];
 /** 테스트용 fake dataSource — queryMatrix 는 직접 호출되지 않는다 (useMutation 모킹 때문). */
 function fakeDataSource(): SeriesDataSource {
   return {
-    kind: 'tsdb',
+    kind: 'memtsdb',
     useKeys: () => ({
       data: undefined,
       isLoading: false,

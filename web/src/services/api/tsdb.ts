@@ -463,7 +463,9 @@ export function formatDurationFromMs(ms: number): string {
  */
 export function tsdbSeriesDataSource(agentId?: string): SeriesDataSource {
   return {
-    kind: 'tsdb',
+    // memTSDB(`internal/tsdb/`) 어댑터. 외부 시계열 DB(`'tsdb'`)와 구분한다.
+    // @spec SPEC-TSDB-002 §2.1 (U1)
+    kind: 'memtsdb',
     useKeys: (params) => useTsdbSeriesQuery(agentId, params),
     queryMatrix: (params, signal) =>
       queryTsdbMatrixPivoted(params, agentId, signal),

@@ -295,7 +295,9 @@ function SeriesTab({
   // 기반이라 원격 READ 프록시 매핑이 없다. 원격 타깃은 안내만 표시한다.
   const seriesTarget = useTargetContext();
   const seriesRemote = isRemoteTarget(seriesTarget);
-  const kind: SeriesDataSourceKind = agentType === 'store' ? 'store' : 'tsdb';
+  // memTSDB 어댑터를 가리킨다(외부 시계열 DB 의 `'tsdb'` 와 다른 값).
+  // @spec SPEC-TSDB-002 §2.1 (U1) — 식별자 개명, 화면 동작 무변경(UB1-24)
+  const kind: SeriesDataSourceKind = agentType === 'store' ? 'store' : 'memtsdb';
   const dataSource = useSeriesDataSource({ kind, agentName, agentId });
 
   // 모달의 멀티셀렉트 옵션으로 쓰일 전체 키 풀 (최대 1페이지 = 100개).

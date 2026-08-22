@@ -12,8 +12,22 @@ import { tsdbSeriesDataSource } from './tsdb';
 
 // ---- Types ----
 
-/** 지원하는 데이터 소스 유형. */
-export type SeriesDataSourceKind = 'tsdb' | 'store';
+/**
+ * 지원하는 데이터 소스 유형.
+ *
+ * - `'store'`: Store 에이전트(인메모리 TSDB, `/api/v1/store/{agent_name}/*`).
+ * - `'tsdb'`: **에이전트를 통해 접근하는 외부 시계열 DB**(InfluxDB 가 첫 백엔드).
+ *   패널 데이터소스로 노출되며 SPEC-TSDB-002 M6 에서 어댑터가 배선된다.
+ * - `'memtsdb'`: 프로세스 내 시계열 저장소(`internal/tsdb/`, `/api/v1/tsdb/*`).
+ *   플로우 노드 · WS 구독자용 내부 설비이며 **패널 데이터소스가 아니다**.
+ *
+ * `'tsdb'` 는 v0.3.0 이전까지 memTSDB 를 가리켰다. 같은 문자열이 두 화면에서
+ * 반대 뜻을 갖는 것을 막기 위해 memTSDB 쪽을 `'memtsdb'` 로 개명하고 `'tsdb'` 를
+ * 외부 TSDB 에 배정한다. 식별자 개명이며 동작 변경이 아니다.
+ *
+ * @spec SPEC-TSDB-002 §2.1 (U1) · §4.8
+ */
+export type SeriesDataSourceKind = 'store' | 'tsdb' | 'memtsdb';
 
 /**
  * `useKeys()` 훅이 반환하는 페이지 응답.
@@ -116,7 +130,7 @@ export interface SeriesDataSource {
  * `kind` 에 따라 적절한 구현체를 반환한다.
  *
  * - `kind === 'store'`: `agentName` 이 반드시 제공되어야 한다 (백엔드 라우트가 name 기반).
- * - `kind === 'tsdb'`: 백엔드가 싱글톤이므로 `agentId` 는 옵션 (미래 확장 대비).
+ * - `kind === 'memtsdb'`: 백엔드가 싱글톤이므로 `agentId` 는 옵션 (미래 확장 대비).
  *
  * 팩토리가 순수 함수라 같은 입력에 대해 매번 새 객체를 만들지만, 내부 훅은
  * 파라미터를 참조만 하므로 참조 동일성이 필요한 곳에서는 상위에서 memo 처리한다.
@@ -134,6 +148,8 @@ export function useSeriesDataSource(params: {
     }
     return storeSeriesDataSource(params.agentName);
   }
+  // `'tsdb'`(외부 시계열 DB) 어댑터는 SPEC-TSDB-002 M6 에서 배선된다. M1 시점에는
+  // 그 값을 만드는 호출자가 없으므로 여기 도달하는 kind 는 `'memtsdb'` 뿐이다.
   return tsdbSeriesDataSource(params.agentId);
 }
 
