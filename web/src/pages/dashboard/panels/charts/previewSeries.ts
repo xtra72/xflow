@@ -8,6 +8,7 @@
 
 import { normalizeStoreSeriesAlias, storeSeriesLabel } from './chartChannelTypes';
 import type { ChannelRefConfig, StoreSourceConfig, StrokeStyle } from './chartChannelTypes';
+import { resolvePanelSourceBinding } from './panelDataSource';
 
 /** 미리보기 한 줄의 렌더 파라미터. */
 export interface PreviewSeries {
@@ -62,7 +63,18 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
 
   const color = (i: number): string => palette[i % palette.length] ?? '';
 
-  if (dataSource === 'store') {
+  // SPEC-TSDB-002 §2.3 [U3]: 소스 종류 판정을 계약에 위임한다(부재·인식 불가 → channel).
+  //
+  // **활성 판정과 채널 폴백의 결합을 그대로 유지한다.** 아래는 조기 반환이 아니라
+  // "store 인데 시리즈가 0개면 아래 채널 분기로 흘러내린다" 는 구조다. 이를 조기 반환으로
+  // 바꾸면 폴백이 사라지고 미리보기 범례가 sample 한 줄로 퇴화한다(CT-17).
+  // 그래서 안쪽 `series.length > 0` 검사도 `binding.active` 로 대체하지 않는다 —
+  // 계약의 store 활성 조건에는 tag 대안이 있지만 여기 폴백 기준은 시리즈 길이뿐이다.
+  const { kind } = resolvePanelSourceBinding({
+    data_source: dataSource,
+    store_source: storeSource,
+  });
+  if (kind === 'store') {
     const series = normalizeStoreSeriesAlias(storeSource?.series ?? []);
     if (series.length > 0) {
       return series.map((ref, i) => ({

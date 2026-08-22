@@ -39,6 +39,7 @@ import {
   REDUCE_PANEL_TYPES,
 } from './panels/charts/chartChannelTypes';
 import { SERIES_REDUCE_FUNCS } from './panels/charts/seriesReduce';
+import { resolvePanelSourceBinding } from './panels/charts/panelDataSource';
 import {
   filterStoreKeyObjects,
   makeTagFilterId,
@@ -319,6 +320,12 @@ export function StoreSourceSection({
   // 않는다(REQ-05/AC-05). 채널/Store 는 기존과 동일하게 config.data_source 로 영속된다.
   const [tsdbMode, setTsdbMode] = useState(false);
   const effectiveMode: 'channel' | 'store' | 'tsdb' = tsdbMode ? 'tsdb' : dataSource;
+  // SPEC-TSDB-002 §2.3 [U3]: 아래 4개 게이트의 소스 항을 계약에 위임한다. `tsdbMode`
+  // 로컬 상태는 M6.9 가 제거하며(현행 동작을 CT-21 이 기준선으로 잠갔다) 여기서는 손대지
+  // 않는다. `dataSource` 를 계약의 `kind` 로 갈아끼우지 않는 이유: 그러면 인식 불가
+  // 문자열이 'channel' 로 접혀 토글 선택 표시와 채널 전용 섹션(`dataSource === 'channel'`)의
+  // 현재 동작이 함께 바뀐다 — 그 반전은 M3 범위가 아니다.
+  const isStoreMode = !tsdbMode && resolvePanelSourceBinding(config).kind === 'store';
   useEffect(() => {
     onModeChange?.(effectiveMode);
   }, [effectiveMode, onModeChange]);
@@ -395,13 +402,13 @@ export function StoreSourceSection({
           })}
         </div>
         {/* Store 모드일 때만 조회 설정 정보 "i" 아이콘을 데이터소스 토글 옆에 표시한다. */}
-        {!tsdbMode && dataSource === 'store' && (
+        {isStoreMode && (
           <StoreInfoPopover storeSource={storeSource} />
         )}
         </div>
       </div>
         {/* Row 1 그룹 B: 에이전트 선택(스토어 모드에서만, 레이블 위). */}
-        {!tsdbMode && dataSource === 'store' && (
+        {isStoreMode && (
           <div className="min-w-[10rem] flex-1">
             <LabeledField label={t('dashboard.chart.storeAgent')}>
               <select
@@ -442,7 +449,7 @@ export function StoreSourceSection({
       </div>
 
       {/* Store 모드: 이름을 지정하지 않은 시리즈의 표시 이름 형식(패널 단위 기본값). */}
-      {!tsdbMode && dataSource === 'store' && (
+      {isStoreMode && (
         <SeriesNameFormatField
           value={storeSource.series_name_format}
           onChange={(series_name_format) => patchStore({ series_name_format })}
@@ -455,7 +462,7 @@ export function StoreSourceSection({
         선택기를 노출한다. line-chart/table/heatmap 은 같은 섹션을 쓰지만 선택기가 없다
         (§2.3 / UB1-10). 채널 모드에서도 노출하지 않는다(§2.10 [S2]).
       */}
-      {!tsdbMode && dataSource === 'store' && REDUCE_PANEL_TYPES.has(panel.type) && (
+      {isStoreMode && REDUCE_PANEL_TYPES.has(panel.type) && (
         <SeriesReduceField
           panelType={panel.type}
           storeSource={storeSource}

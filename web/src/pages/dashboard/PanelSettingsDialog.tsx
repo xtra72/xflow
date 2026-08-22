@@ -82,6 +82,7 @@ import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/Heatm
 import HeatmapPanel from './panels/heatmap/HeatmapPanel';
 import LineChartPanel from './panels/charts/LineChartPanel';
 import StatPanel from './panels/charts/StatPanel';
+import { resolvePanelSourceBinding } from './panels/charts/panelDataSource';
 import {
   clonePresetStops,
   HEATMAP_COLOR_PRESETS,
@@ -703,30 +704,29 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // 히트맵은 예외 — 시각 설정(도면 배경/색상/IDW)은 재조회를 트리거하지 않으므로 즉시 draft
   // config(panel)로 렌더해 도면 배경이 지연 없이 반영된다(아래 heatmap 렌더 블록 참고).
   const previewRenderPanel = previewPanel ?? panel;
-  // Store 라인 차트에서 실제 데이터 미리보기를 쓸지 판정한다. 시리즈가 하나도 선택되지
-  // 않았거나 채널 모드면 실제 패널은 빈 상태만 보여주므로, 스타일을 확인할 수 있는
-  // 합성 미니 프리뷰를 유지한다.
-  const previewStoreSource = previewRenderPanel.config?.store_source as
-    | { series?: unknown[]; selection_mode?: string; tag_filters?: Record<string, string> }
-    | undefined;
-  const isStoreLinePreview =
-    previewRenderPanel.type === 'line-chart' &&
-    previewRenderPanel.config?.data_source === 'store' &&
-    ((previewStoreSource?.series?.length ?? 0) > 0 ||
-      (previewStoreSource?.selection_mode === 'tag' &&
-        Object.keys(previewStoreSource.tag_filters ?? {}).length > 0));
   // SPEC-CHART-002 M6.3 — stat / gauge 도 같은 선례를 따른다: 신규 경로가 실제로 값을 낼 수
   // 있을 때만 **실제 패널**을 draft config 로 렌더하고, 그 밖에는 기존 미리보기를 유지한다.
   // 판정 규칙은 각 패널이 스스로 쓰는 규칙과 같아야 한다 — 미리보기와 실제 렌더가 서로 다른
   // 조건으로 갈리면 "설정 화면에서는 보이는데 대시보드에서는 안 보인다" 가 된다.
   const previewChartConfig = previewRenderPanel.config ?? {};
-  // stat: `StatPanel` 의 활성 조건과 동일(keys 모드 시리즈 1개 이상 + series_reduce 지정).
+  // SPEC-TSDB-002 §2.3 [U3]: 두 미리보기 게이트의 **소스 항**을 계약에 위임한다.
+  // 두 게이트는 같은 `previewRenderPanel.config` 에서 파생하므로 바인딩도 하나면 된다.
+  // **부가 조건은 각 게이트에 그대로 남는다** — 패널 타입, 라인의 `tag_filters` 대안,
+  // stat 의 `series_reduce` 요구는 소스 종류와 무관한 게이트 고유 조건이다.
+  const previewSourceBinding = resolvePanelSourceBinding(previewChartConfig);
+  const isPreviewStoreActive =
+    previewSourceBinding.kind === 'store' && previewSourceBinding.active;
+  // Store 라인 차트에서 실제 데이터 미리보기를 쓸지 판정한다. 시리즈가 하나도 선택되지
+  // 않았거나 채널 모드면 실제 패널은 빈 상태만 보여주므로, 스타일을 확인할 수 있는
+  // 합성 미니 프리뷰를 유지한다.
+  const isStoreLinePreview =
+    previewRenderPanel.type === 'line-chart' && isPreviewStoreActive;
+  // stat: `StatPanel` 의 활성 조건과 동일(활성 store 소스 + series_reduce 지정).
   // 레거시 경로(series_reduce 부재)에는 stat 전용 미니 프리뷰가 없으므로 미리보기도 없다 —
   // 이 SPEC 이 신설하는 것은 신규 경로의 미리보기뿐이다.
   const isStoreStatPreview =
     previewRenderPanel.type === 'stat' &&
-    previewChartConfig.data_source === 'store' &&
-    (previewStoreSource?.series?.length ?? 0) > 0 &&
+    isPreviewStoreActive &&
     previewChartConfig.series_reduce !== undefined;
   // gauge: 값 소스 판정의 단일 정본(`resolveGaugeValueSource`)을 그대로 쓴다. 레거시 경로가
   // 이기는 동안에는 합성 샘플값 미니 프리뷰가 그대로 남는다(레거시는 실제 값이 없을 수 있다).
