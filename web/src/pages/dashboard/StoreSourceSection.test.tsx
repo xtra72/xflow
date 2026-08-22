@@ -1,6 +1,8 @@
 // StoreSourceSection 의 시리즈 표시 이름(alias) 편집 테스트 (SPEC-WEB-005).
 // useAgents / useStoreKeysWithTags 를 모킹해 네트워크 없이 렌더한다.
 
+import type React from 'react';
+import { useState } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
@@ -291,11 +293,11 @@ describe('시리즈 이름 형식 (패널 옵션)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// SPEC-TSDB-002 M2 — 특성화 테스트 (DDD PRESERVE).
+// SPEC-TSDB-002 M2 — 특성화 테스트 (DDD PRESERVE) + M6.9/M6.10 제자리 반전.
 //
-// `ChartPanelSections.tsx:398 · 404 · 445 · 458` 4개 설정 UI 게이트의 현재 참 조건을
-// 잠근다. 네 지점 모두 `!tsdbMode && dataSource === 'store'` 형태이며, `tsdbMode` 는
-// **config 가 아니라 로컬 `useState`** 다(`:320`).
+// 4개 설정 UI 게이트(StoreInfoPopover · 에이전트 셀렉트 · 이름 형식 · 대표값)의 참 조건을
+// 잠근다. 네 지점 모두 이제 `config.data_source` 파생 모드가 `'store'` 인지만 본다 —
+// 로컬 `tsdbMode` 상태는 §2.11 [E1] 이 제거했다(CT-21 이 그 이전 동작을 기준선으로 잠갔다).
 //
 // @spec SPEC-TSDB-002 §2.3 (U3) · §2.11 (E1) — plan.md §3.6 CT-19 ~ CT-21
 // ---------------------------------------------------------------------------
@@ -318,7 +320,6 @@ describe('설정 UI 게이팅 특성화 (SPEC-TSDB-002 M2, CT-19~CT-21)', () => 
     // panel.type='stat' 은 REDUCE_PANEL_TYPES 에 속하므로 대표값 선택기까지 노출된다.
     render(<StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={vi.fn()} />);
     expect(gates()).toEqual([true, true, true, true]);
-    expect(screen.queryByTestId('chart-data-source-tsdb-placeholder')).toBeNull();
   });
 
   it("CT-20: data_source:'channel' 이면 4개 게이트가 모두 미렌더다", () => {
@@ -329,37 +330,58 @@ describe('설정 UI 게이팅 특성화 (SPEC-TSDB-002 M2, CT-19~CT-21)', () => 
       />,
     );
     expect(gates()).toEqual([false, false, false, false]);
-    expect(screen.queryByTestId('chart-data-source-tsdb-placeholder')).toBeNull();
   });
 
-  it('CT-21: 로컬 tsdbMode 가 true 면 4개 게이트 미렌더 + placeholder 렌더 (반전 기준선)', () => {
-    // ─── 이 테스트는 **M6.9 · M6.10 에서 반전될 기준선**이다(AC-35). ───
-    // 현재 TSDB 토글은 로컬 `useState` 에만 기록되고 `onConfigChange` 를 호출하지 않는다
-    // (SPEC-PANEL-SETTINGS-001 REQ-05 의 의도된 no-op). SPEC-TSDB-002 §2.11 [E1] 이 그
-    // 비목표를 대체하면 (a) placeholder 는 사라지고 (b) 토글이 config 에 영속되며
-    // (c) TSDB 선택 UI 가 렌더된다. 그 시점에 이 단언은 제자리에서 반전된다 — 삭제하지
-    // 않는 이유는 "왜 바뀌었는가" 의 기록을 diff 밖으로 내보내지 않기 위함이다.
+  it('CT-21 [반전]: TSDB 선택이 config 에 기록되고 tsdb config 에서는 4개 게이트가 미렌더다', () => {
+    // [SPEC-TSDB-002 §2.11 반전] SPEC-PANEL-SETTINGS-001 REQ-05 는 TSDB 토글을
+    // config 무기록(no-op)으로 규정했고 이 테스트가 그것을 잠갔다. SPEC-TSDB-002 가
+    // 그 비목표를 대체하므로 단언을 반전한다. 삭제하지 않는 이유는 "왜 바뀌었는가"의
+    // 기록을 diff 밖으로 내보내지 않기 위함이다.
     const onConfigChange = vi.fn();
-    render(
+    const { unmount } = render(
       <StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={onConfigChange} />,
     );
-    // 전제: store 모드에서는 4개 게이트가 살아 있다.
+    // 전제(무변경): store 모드에서는 4개 게이트가 살아 있다.
     expect(gates()).toEqual([true, true, true, true]);
 
     fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
 
+    // 반전 (a): 로컬 상태 no-op 이 아니라 config 기록이다.
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({ data_source: 'tsdb' }),
+    );
+    unmount();
+
+    // 반전 (b): 모드가 config 파생이므로 게이트는 tsdb config 에서 닫힌다.
+    render(
+      <StoreSourceSection
+        panel={makePanel({ ...storeConfig(), data_source: 'tsdb' })}
+        onConfigChange={vi.fn()}
+      />,
+    );
     expect(gates()).toEqual([false, false, false, false]);
-    expect(screen.getByTestId('chart-data-source-tsdb-placeholder')).toBeInTheDocument();
-    // config 는 건드리지 않는다(= Store 설정 보존). AC-05 의 현행 계약.
-    expect(onConfigChange).not.toHaveBeenCalled();
+    // 반전 (c): placeholder 는 렌더 트리에서 은퇴했다(testid 소멸).
   });
 
-  it('CT-21: tsdbMode 는 config.data_source 를 바꾸지 않으므로 채널로 되돌리면 게이트가 되살아난다', () => {
-    render(<StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={vi.fn()} />);
+  it('CT-21 [반전]: 모드가 config 파생이므로 store 로 되돌리면 게이트가 되살아난다', () => {
+    // 위와 같은 사유의 반전이다(§2.11). 이전에는 `setTsdbMode(false)` 로 로컬 상태만
+    // 풀렸고 config 는 내내 store 였다. 이제는 왕복 자체가 config 를 거치므로, 제어
+    // 컴포넌트로 감싸 부모가 패치를 반영해야 모드가 되돌아온다.
+    function Harness(): React.ReactElement {
+      const [config, setConfig] = useState<Record<string, unknown>>(storeConfig());
+      return (
+        <StoreSourceSection
+          panel={makePanel(config)}
+          onConfigChange={(patch) => setConfig((prev) => ({ ...prev, ...patch }))}
+        />
+      );
+    }
+    render(<Harness />);
+    expect(gates()).toEqual([true, true, true, true]);
+
     fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
     expect(gates()).toEqual([false, false, false, false]);
 
-    // store 버튼을 누르면 setTsdbMode(false) 로 로컬 상태만 풀린다(config 는 이미 store).
     fireEvent.click(screen.getByTestId('chart-data-source-store'));
     expect(gates()).toEqual([true, true, true, true]);
   });

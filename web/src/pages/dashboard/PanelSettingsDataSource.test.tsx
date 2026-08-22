@@ -2,7 +2,9 @@
 //
 // @spec SPEC-PANEL-SETTINGS-001 (T4/T6/T7 + 시리즈 선택 단일화)
 //   - AC-04/07: 행 체크박스 → store_source.series 반영(StoreKeySelector 와 byte-호환).
-//   - AC-05: TSDB placeholder + Store 설정 파괴 없음.
+//   - AC-05: TSDB 토글 → config 영속 + Store 설정 파괴 없음.
+//     (원래는 "TSDB placeholder + config 무기록" 이었다. SPEC-TSDB-002 §2.11 이 그
+//      비목표를 대체해 제자리 반전했다 — 아래 반전 사유 주석 참조.)
 //   - AC-06/09: 공용 StoreEntryTable, actions 대신 Alias 컬럼.
 //   - AC-08: 필터/정렬/표시숨김 패널별 localStorage 영속/복원.
 //   - AC-10: 빈 store / 미선택 에이전트 graceful.
@@ -12,7 +14,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PanelConfig } from '@/stores/uiStore';
-import { pickSeriesColor } from './panels/charts/chartChannelTypes';
+import { defaultTsdbSource, pickSeriesColor } from './panels/charts/chartChannelTypes';
 import { heatmapSensorId } from './panels/heatmap/sensorIdentity';
 
 const state = vi.hoisted(() => ({
@@ -78,6 +80,20 @@ function panelWithAgent(extra: Record<string, unknown> = {}): PanelConfig {
   } as unknown as PanelConfig;
 }
 
+/** TSDB 모드로 영속된 패널 — store_source 는 그대로 보존된다(§2.11 · §2.12). */
+function tsdbPanel(): PanelConfig {
+  return {
+    id: 'p1',
+    type: 'heatmap',
+    title: 'h',
+    config: {
+      data_source: 'tsdb',
+      store_source: { ...STORE_SOURCE },
+      tsdb_source: defaultTsdbSource(),
+    },
+  } as unknown as PanelConfig;
+}
+
 function emptyPanel(): PanelConfig {
   // Store 모드지만 에이전트 미선택 — 선택 테이블은 렌더되되 no-agent 안내를 보인다.
   return {
@@ -125,17 +141,42 @@ describe('T4 — 단일 데이터소스 토글 [채널 | Store | TSDB]', () => {
     expect(within(select).getByRole('table')).toBeInTheDocument();
   });
 
-  it('TSDB 선택 시 placeholder + 선택 테이블 미노출 + Store config 보존(AC-05)', () => {
+  it('TSDB 선택 시 data_source:tsdb 가 config 에 기록된다', () => {
+    // [SPEC-TSDB-002 §2.11 반전] SPEC-PANEL-SETTINGS-001 REQ-05 는 TSDB 토글을
+    // config 무기록(no-op)으로 규정했고 이 테스트가 그것을 잠갔다. SPEC-TSDB-002 가
+    // 그 비목표를 대체하므로 단언을 반전한다. 삭제하지 않는 이유는 "왜 바뀌었는가"의
+    // 기록을 diff 밖으로 내보내지 않기 위함이다.
+    const onConfigChange = vi.fn();
+    const { unmount } = render(
+      <PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={onConfigChange} />,
+    );
+    fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
+    // 반전 (a): 후속 SPEC 안내 placeholder 는 렌더 트리에서 은퇴했다(testid 소멸).
+    // 반전 (b): 선택이 config 에 기록된다.
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({ data_source: 'tsdb' }),
+    );
+    // 무변경: Store 설정은 파괴되지 않는다(§2.12 [E2]) — 패치에 store_source 가 없다.
+    const patch = onConfigChange.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(patch).toBeDefined();
+    expect(patch).not.toHaveProperty('store_source');
+    unmount();
+
+    // 반전 (c): 선택 테이블 미노출 단언은 유지하되 **config 기준**으로 옮긴다. 모드가
+    // 로컬 상태에서 config 파생으로 바뀌었으므로, 부모가 패치를 반영하지 않는 이 테스트
+    // 하네스에서는 클릭만으로 모드가 바뀌지 않는다(프로덕션에서는 부모가 반영한다).
+    render(<PanelSettingsDataSource panel={tsdbPanel()} onConfigChange={vi.fn()} />);
+    expect(screen.queryByTestId('panel-store-select')).not.toBeInTheDocument();
+  });
+
+  it('처음 TSDB 선택 시 defaultTsdbSource() 가 함께 기록된다', () => {
+    // `tsdb_source` 가 아직 없을 때만 기본 블록을 채운다 — store 쪽 규칙과 같다(§2.11 [E1]).
     const onConfigChange = vi.fn();
     render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={onConfigChange} />);
     fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
-    // 후속 SPEC 안내 placeholder.
-    expect(screen.getByTestId('chart-data-source-tsdb-placeholder')).toBeInTheDocument();
-    expect(screen.getByText('dashboard.settings.dataSourceTsdbBody')).toBeInTheDocument();
-    // 선택 테이블 미노출(Store 모드 아님).
-    expect(screen.queryByTestId('panel-store-select')).not.toBeInTheDocument();
-    // TSDB 는 UI 전용 — config 미변경(Store 설정 보존).
-    expect(onConfigChange).not.toHaveBeenCalled();
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({ data_source: 'tsdb', tsdb_source: defaultTsdbSource() }),
+    );
   });
 
   it('채널 모드에서는 공용 선택 테이블을 렌더하지 않는다', () => {

@@ -59,6 +59,7 @@ import {
 import type { SensorPosition } from './panels/heatmap/heatmapConfig';
 import { migrateSensorPositions } from './panels/heatmap/sensorIdentity';
 import { SeriesDetailEditor, StoreSourceSection } from './ChartPanelSections';
+import { resolvePanelSourceBinding } from './panels/charts/panelDataSource';
 import {
   loadPanelStoreTablePrefs,
   savePanelStoreTablePrefs,
@@ -82,10 +83,12 @@ export function PanelSettingsDataSource({
   panel: PanelConfig;
   onConfigChange: OnConfig;
 }) {
-  // 바인딩 모드의 단일 소스 오브 트루스는 StoreSourceSection. 초기값은 config.data_source
-  // (채널/Store)에서 파생하고(TSDB 는 UI 전용이라 항상 채널/Store 로 시작), 이후 콜백으로 동기화.
-  const initialMode: 'channel' | 'store' | 'tsdb' =
-    (panel.config?.data_source as string | undefined) === 'store' ? 'store' : 'channel';
+  // 바인딩 모드의 단일 소스 오브 트루스는 `config.data_source` 다(@spec SPEC-TSDB-002 §2.11).
+  // 초기값은 판정 계약에서 파생하고(인식 불가 값은 channel 로 접힌다), 이후 StoreSourceSection
+  // 의 콜백으로 동기화한다.
+  const initialMode: 'channel' | 'store' | 'tsdb' = resolvePanelSourceBinding(
+    panel.config ?? {},
+  ).kind;
   const [mode, setMode] = useState<'channel' | 'store' | 'tsdb'>(initialMode);
 
   return (

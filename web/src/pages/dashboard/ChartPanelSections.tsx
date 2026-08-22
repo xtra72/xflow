@@ -35,6 +35,7 @@ import type {
 } from './panels/charts/chartChannelTypes';
 import {
   DEFAULT_STORE_SOURCE_WINDOW,
+  defaultTsdbSource,
   pickSeriesColor,
   REDUCE_PANEL_TYPES,
 } from './panels/charts/chartChannelTypes';
@@ -302,39 +303,42 @@ export function StoreSourceSection({
   /** 채널 모드 시리즈 편집기에 주입할 활성 채널 조회기(테스트용). */
   fetchChannels?: () => Promise<ChartChannelSummary[]>;
   /**
-   * 데이터소스 바인딩 모드(채널/Store/TSDB) 변경 콜백. 이 컴포넌트가 모드의 단일 소스 오브
-   * 트루스를 소유하며, 상위(PanelSettingsDataSource)는 Store 모드에서만 선택 테이블을 렌더
-   * 하기 위해 이 값을 읽는다. @spec SPEC-PANEL-SETTINGS-001 (데이터소스 토글 단일화)
+   * 데이터소스 바인딩 모드(채널/Store/TSDB) 변경 콜백. 모드의 단일 소스 오브 트루스는
+   * `config.data_source` 이며(@spec SPEC-TSDB-002 §2.11), 이 콜백은 그 파생값을 상위
+   * (PanelSettingsDataSource)에 알린다 — 상위는 Store 모드에서만 선택 테이블을 렌더한다.
+   * @spec SPEC-PANEL-SETTINGS-001 (데이터소스 토글 단일화)
    */
   onModeChange?: (mode: 'channel' | 'store' | 'tsdb') => void;
 }): React.ReactElement {
   const { t } = useTranslation();
   const config = panel.config ?? {};
-  const dataSource = (config.data_source as ChartDataSourceKind | undefined) ?? 'channel';
   const storeSource =
     (config.store_source as StoreSourceConfig | undefined) ?? defaultStoreSource();
   // 라인 차트 패널은 per-line 스타일 통합 편집(채널/스토어 시리즈 양쪽)을 노출한다.
   const isLineChart = panel.type === 'line-chart';
 
-  // TSDB 는 실동작 없는 UI 전용 모드다. config 에 기록하지 않아 기존 Store 설정을 파괴하지
-  // 않는다(REQ-05/AC-05). 채널/Store 는 기존과 동일하게 config.data_source 로 영속된다.
-  const [tsdbMode, setTsdbMode] = useState(false);
-  const effectiveMode: 'channel' | 'store' | 'tsdb' = tsdbMode ? 'tsdb' : dataSource;
-  // SPEC-TSDB-002 §2.3 [U3]: 아래 4개 게이트의 소스 항을 계약에 위임한다. `tsdbMode`
-  // 로컬 상태는 M6.9 가 제거하며(현행 동작을 CT-21 이 기준선으로 잠갔다) 여기서는 손대지
-  // 않는다. `dataSource` 를 계약의 `kind` 로 갈아끼우지 않는 이유: 그러면 인식 불가
-  // 문자열이 'channel' 로 접혀 토글 선택 표시와 채널 전용 섹션(`dataSource === 'channel'`)의
-  // 현재 동작이 함께 바뀐다 — 그 반전은 M3 범위가 아니다.
-  const isStoreMode = !tsdbMode && resolvePanelSourceBinding(config).kind === 'store';
+  // SPEC-TSDB-002 §2.11 [E1]: 모드의 단일 소스 오브 트루스가 로컬 `useState` 에서
+  // `config.data_source` 로 이동했다. 세 모드 모두 config 에 영속되므로 TSDB 는 더
+  // 이상 UI 전용이 아니다 — SPEC-PANEL-SETTINGS-001 REQ-05 의 비목표를 본 SPEC 이 대체한다.
+  //
+  // 모드 판정을 `config.data_source` 원문이 아니라 계약의 `kind` 로 둔다. 그 결과 인식
+  // 불가 문자열은 `'channel'` 로 접힌다(§2.17-2). 이전엔 그런 config 에서 토글이 "아무것도
+  // 선택되지 않음" 으로 보이고 채널 시리즈 편집기도 사라졌는데, 정작 패널은 channel 로
+  // 폴백해 렌더하고 있었다. 이제 설정 UI 와 렌더 경로가 **같은 판정**을 쓴다.
+  const mode = resolvePanelSourceBinding(config).kind;
+  const isStoreMode = mode === 'store';
   useEffect(() => {
-    onModeChange?.(effectiveMode);
-  }, [effectiveMode, onModeChange]);
+    onModeChange?.(mode);
+  }, [mode, onModeChange]);
 
   const setDataSource = (kind: ChartDataSourceKind): void => {
-    setTsdbMode(false);
     if (kind === 'store' && !config.store_source) {
       // 처음 store 로 전환 시 기본 설정을 함께 채운다.
       onConfigChange({ data_source: 'store', store_source: defaultStoreSource() });
+    } else if (kind === 'tsdb' && !config.tsdb_source) {
+      // 처음 TSDB 로 전환 시 기본 블록을 함께 채운다(§2.11 [E1]). 이미 `tsdb_source` 가
+      // 있으면 종류만 기록해 기존 선택을 덮어쓰지 않는다 — store 쪽과 같은 규칙이다.
+      onConfigChange({ data_source: 'tsdb', tsdb_source: defaultTsdbSource() });
     } else {
       onConfigChange({ data_source: kind });
     }
@@ -377,7 +381,7 @@ export function StoreSourceSection({
           aria-label={t('dashboard.chart.dataSourceLabel')}
         >
           {(['channel', 'store', 'tsdb'] as const).map((kind) => {
-            const selected = kind === 'tsdb' ? tsdbMode : !tsdbMode && dataSource === kind;
+            const selected = mode === kind;
             return (
               <button
                 key={kind}
@@ -385,7 +389,7 @@ export function StoreSourceSection({
                 role="tab"
                 aria-selected={selected}
                 data-testid={`chart-data-source-${kind}`}
-                onClick={() => (kind === 'tsdb' ? setTsdbMode(true) : setDataSource(kind))}
+                onClick={() => setDataSource(kind)}
                 className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
                   selected
                     ? 'bg-blue-600 text-white'
@@ -471,28 +475,17 @@ export function StoreSourceSection({
         />
       )}
 
-      {/* TSDB: 실동작 없는 후속 SPEC 안내 placeholder (REQ-05/AC-05). Store 설정은 보존된다. */}
-      {tsdbMode && (
-        <div
-          data-testid="chart-data-source-tsdb-placeholder"
-          className="rounded-md border border-dashed border-(--color-border-default) bg-(--color-bg-elevated) p-4 text-center"
-        >
-          <p className="text-sm font-medium text-(--color-text-secondary)">
-            {t('dashboard.settings.dataSourceTsdbTitle')}
-          </p>
-          <p className="mt-1 text-xs text-(--color-text-muted)">
-            {t('dashboard.settings.dataSourceTsdbBody')}
-          </p>
-        </div>
-      )}
-
+      {/*
+        TSDB 선택 UI(에이전트/bucket/measurement 드릴다운)는 후속 커밋이 넣는다. 현 시점엔
+        선택이 config 에 기록되기만 하고 전용 UI 는 없다 — 의도된 중간 상태다.
+      */}
 
       {/*
         채널 모드 + 라인 차트: 채널 시리즈 편집기(채널 추가/선택/순서 + per-line 스타일).
         다른 차트 타입은 채널 모드에서 단일 channel_name 을 ChartChannelSection(우측 컬럼)
         으로 편집하므로 여기서는 렌더하지 않는다.
       */}
-      {!tsdbMode && dataSource === 'channel' && isLineChart && (
+      {mode === 'channel' && isLineChart && (
         <ChannelSeriesEditor
           panel={panel}
           onConfigChange={onConfigChange}
