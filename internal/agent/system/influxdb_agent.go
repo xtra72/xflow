@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -527,4 +528,156 @@ func (a *InfluxDBAgent) Stats() agent.StatsSnapshot {
 	s := a.stats.Snapshot()
 	s.MsgBufferPending, s.MsgBufferCapacity = a.BufferInfo()
 	return s
+}
+
+// --- 구조화 시리즈 질의 (@spec SPEC-TSDB-002 §2.6 (U6) · §2.8 (U8)) ---
+
+// SeriesBucket 는 구조화 시리즈 질의가 돌려주는 정규화된 버킷 하나이다.
+//
+// StartMs 는 버킷 **시작** 시각(epoch ms)이며 끝이 아니다(§2.8). 정렬 계약의
+// 정본은 Store 의 epoch-zero 식이고 두 소스가 같은 식을 쓴다.
+type SeriesBucket struct {
+	StartMs int64
+	Value   any
+}
+
+// InfluxSeriesQueryer 는 구조화 시리즈 질의 계약이다.
+// HTTP 핸들러가 타입 단언으로 에이전트를 검증한다.
+type InfluxSeriesQueryer interface {
+	QuerySeriesBuckets(ctx context.Context, spec SeriesQuerySpec) ([]SeriesBucket, error)
+}
+
+// 컴파일 타임 인터페이스 준수 체크.
+var _ InfluxSeriesQueryer = (*InfluxDBAgent)(nil)
+
+// QuerySeriesBuckets 는 구조화 시리즈 질의를 실행하고 버킷 배열을 반환한다.
+//
+// 흐름은 셋이다 — (1) 에이전트 버전으로 방언을 고르고, (2) 순수 함수로 쿼리를
+// 생성하고, (3) 결과 행을 버킷으로 정규화한다. 생성이 순수 함수로 분리되어
+// 있으므로 (v2/v3) × (집계 5) × (fill 5) × (태그 0/1/N) 전수는 네트워크 없이
+// 검증된다.
+func (a *InfluxDBAgent) QuerySeriesBuckets(ctx context.Context, spec SeriesQuerySpec) ([]SeriesBucket, error) {
+	a.mu.RLock()
+	version := a.influxConfig.Version
+	defaultBucket := a.influxConfig.Bucket
+	client := a.client
+	a.mu.RUnlock()
+
+	if client == nil {
+		return nil, errClientNotInitialized
+	}
+	if spec.Bucket == "" {
+		spec.Bucket = defaultBucket
+	}
+
+	query, lang, err := buildSeriesQueryForVersion(version, spec)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := client.Query(ctx, query, lang)
+	if err != nil {
+		return nil, fmt.Errorf("influxdb %s series query: %w", lang, err)
+	}
+	return normalizeSeriesBuckets(rows, spec)
+}
+
+// buildSeriesQueryForVersion 는 에이전트의 InfluxDB 버전에 따라 방언을 고른다.
+//
+// v3 가 InfluxQL 인 것은 선택이 아니다 — v3 는 Flux 를 지원하지 않고 SQL 은
+// HTTP 계층에서 도달 불가다(§1.2.9).
+func buildSeriesQueryForVersion(version string, spec SeriesQuerySpec) (string, string, error) {
+	switch version {
+	case "2":
+		q, err := BuildFluxSeriesQuery(spec)
+		return q, "flux", err
+	case "3":
+		q, err := BuildInfluxQLSeriesQuery(spec)
+		return q, "influxql", err
+	default:
+		return "", "", fmt.Errorf("influxdb: 지원하지 않는 버전 %q ('2' 또는 '3'을 지정하세요)", version)
+	}
+}
+
+// influxQLTimeColumn 은 InfluxQL 결과의 시간 컬럼 이름이다.
+// Flux 결과는 fluxTimeColumn(_time) 을 쓴다.
+const influxQLTimeColumn = "time"
+
+// normalizeSeriesBuckets 는 결과 행을 버킷 시작 시각 오름차순 배열로 정규화한다.
+//
+// 시간 컬럼과 값 컬럼의 이름이 방언마다 다르다. Flux 는 _time/_value 이고,
+// InfluxQL 은 time 과 **집계 함수 이름**(MEAN → mean)이다. 두 방언의 값 컬럼
+// 이름이 각각 Flux 함수 이름과 일치하므로 같은 매핑 함수를 쓴다.
+func normalizeSeriesBuckets(rows []map[string]any, spec SeriesQuerySpec) ([]SeriesBucket, error) {
+	valueColumn, err := fluxAggregationFn(spec.Aggregation)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]SeriesBucket, 0, len(rows))
+	for _, row := range rows {
+		tsMs, ok := seriesRowTimeMs(row)
+		if !ok {
+			// 시간을 읽지 못한 행은 버킷에 배치할 수 없다. 0 으로 두면 1970 년
+			// 버킷이 생겨 차트의 시간축이 통째로 늘어난다.
+			continue
+		}
+		out = append(out, SeriesBucket{
+			StartMs: SeriesBucketStartMs(tsMs, spec.IntervalMs),
+			Value:   seriesRowValue(row, valueColumn),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartMs < out[j].StartMs })
+	return out, nil
+}
+
+// seriesRowTimeMs 는 결과 행에서 시각을 epoch ms 로 뽑는다.
+//
+// 정수형은 InfluxDB 규약대로 나노초로 해석한다. 문자열은 RFC3339Nano 로 읽는다.
+func seriesRowTimeMs(row map[string]any) (int64, bool) {
+	raw, ok := row[fluxTimeColumn]
+	if !ok {
+		raw, ok = row[influxQLTimeColumn]
+	}
+	if !ok {
+		return 0, false
+	}
+	switch v := raw.(type) {
+	case time.Time:
+		if v.IsZero() {
+			return 0, false
+		}
+		return v.UnixMilli(), true
+	case int64:
+		return v / nsPerMs, true
+	case int:
+		return int64(v) / nsPerMs, true
+	case uint64:
+		return int64(v) / nsPerMs, true
+	case float64:
+		return int64(v) / nsPerMs, true
+	case string:
+		t, err := time.Parse(time.RFC3339Nano, v)
+		if err != nil {
+			return 0, false
+		}
+		return t.UnixMilli(), true
+	default:
+		return 0, false
+	}
+}
+
+// seriesRowValue 는 결과 행에서 집계값을 뽑는다.
+//
+// 키가 있으나 값이 nil 인 경우(fill 로 만들어진 빈 버킷)를 키 부재와 구분해야
+// 하므로 comma-ok 로 조회한다. nil 값은 그대로 통과시켜 클라이언트가 "빈 결과"로
+// 표시하게 한다.
+func seriesRowValue(row map[string]any, aggColumn string) any {
+	if v, ok := row[fluxValueColumn]; ok {
+		return v
+	}
+	if v, ok := row[aggColumn]; ok {
+		return v
+	}
+	return nil
 }

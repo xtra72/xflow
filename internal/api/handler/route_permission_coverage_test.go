@@ -105,6 +105,8 @@ func buildProductionRoutes(t *testing.T) []api.RouteRecord {
 	(&StoreQueryHandler{}).RegisterRoutes(g)
 	(&InfluxDBQueryHandler{}).RegisterRoutes(g)
 	(&InfluxDBManagementHandler{}).RegisterRoutes(g)
+	// @spec SPEC-TSDB-002 §2.6 (U6) — 구조화 시리즈 질의 라우트.
+	(&InfluxDBSeriesHandler{}).RegisterRoutes(g)
 
 	// 시스템 / 설정 / 대시보드.
 	(&SystemHandler{}).RegisterRoutes(g)
