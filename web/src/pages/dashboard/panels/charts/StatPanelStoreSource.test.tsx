@@ -244,3 +244,97 @@ describe('StatPanel Store 다중 시리즈 특성화 (SPEC-CHART-002 M2)', () =>
     expect(delta.textContent).toContain('+2');
   });
 });
+
+// ---------------------------------------------------------------------------
+// SPEC-TSDB-002 M2 — 특성화 테스트 (DDD PRESERVE).
+//
+// `StatPanel.tsx:80` 의 소스 활성 판정을 5분기로 잠근다. 여기에 더해 `series_reduce`
+// 부재 시 **레거시(단일 값) 렌더가 유지**된다는 사실도 함께 잠근다 — M3 의 치환이
+// 대표값 경로를 건드리지 않아야 한다(SPEC-CHART-002 §2.9 소유).
+//
+// @spec SPEC-TSDB-002 §2.3 (U3) · §2.4 (U4) — plan.md §3.1 CT-01 ~ CT-05 / AC-09
+// ---------------------------------------------------------------------------
+describe('StatPanel 소스 활성 판정 특성화 (SPEC-TSDB-002 M2, CT-01~CT-05)', () => {
+  function lastStoreCall(): { config: unknown; enabled: unknown } {
+    return storeCalls.args.at(-1) as { config: unknown; enabled: unknown };
+  }
+
+  beforeEach(() => {
+    channelCalls.args = [];
+    storeCalls.args = [];
+    channelResult.current = {
+      entries: [{ timestamp: 1, value: 11 }],
+      status: 'connected',
+      closedReason: undefined,
+      errorReason: undefined,
+    };
+    storeResult.current = {
+      entries: [{ timestamp: 1, value: 99 }],
+      seriesEntries: new Map(),
+      seriesNames: [],
+      status: 'connected',
+      closedReason: undefined,
+      errorReason: undefined,
+    };
+  });
+
+  it('CT-01: config 가 비어 있으면 채널 경로다(store 훅은 idle)', () => {
+    render(<StatPanel panelId="p1" config={{ decimal_places: 0 }} />);
+    expect(lastStoreCall()).toEqual({ config: undefined, enabled: false });
+    expect(screen.getByTestId('stat-value').textContent).toContain('11');
+  });
+
+  it("CT-02: data_source:'channel' 이면 채널 경로다", () => {
+    render(
+      <StatPanel
+        panelId="p1"
+        config={{ decimal_places: 0, data_source: 'channel', channel_name: 'c1' }}
+      />,
+    );
+    expect(lastStoreCall()).toEqual({ config: undefined, enabled: false });
+    expect(channelCalls.args).toContain('c1');
+    expect(screen.getByTestId('stat-value').textContent).toContain('11');
+  });
+
+  it("CT-03: data_source:'store' 인데 store_source 가 없으면 채널 경로로 폴백한다", () => {
+    render(
+      <StatPanel
+        panelId="p1"
+        config={{ decimal_places: 0, data_source: 'store', channel_name: 'c1' }}
+      />,
+    );
+    expect(lastStoreCall()).toEqual({ config: undefined, enabled: false });
+    expect(screen.getByTestId('stat-value').textContent).toContain('11');
+  });
+
+  it("CT-04: data_source:'store' + 시리즈 0개면 채널 경로로 폴백한다", () => {
+    render(
+      <StatPanel
+        panelId="p1"
+        config={{
+          decimal_places: 0,
+          data_source: 'store',
+          channel_name: 'c1',
+          store_source: { agent_name: 'store-1', series: [] },
+        }}
+      />,
+    );
+    expect(lastStoreCall()).toEqual({ config: undefined, enabled: false });
+    expect(screen.getByTestId('stat-value').textContent).toContain('11');
+  });
+
+  it("CT-05: data_source:'store' + 시리즈 N개면 store 경로다 (series_reduce 부재 → 레거시 단일 값 렌더)", () => {
+    const store_source = { agent_name: 'store-1', series: [{ key: 'k1' }] };
+    render(
+      <StatPanel
+        panelId="p1"
+        config={{ decimal_places: 0, data_source: 'store', channel_name: 'c1', store_source }}
+      />,
+    );
+    expect(lastStoreCall()).toEqual({ config: store_source, enabled: true });
+    expect(channelCalls.args).toContain(undefined);
+    // 대표값(series_reduce) 이 없으므로 타일 그리드가 아니라 값 슬롯 1개다.
+    expect(screen.getAllByTestId('stat-value')).toHaveLength(1);
+    expect(screen.getByTestId('stat-value').textContent).toContain('99');
+  });
+});

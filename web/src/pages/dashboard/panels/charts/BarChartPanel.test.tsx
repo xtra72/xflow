@@ -30,6 +30,36 @@ vi.mock('@/lib/i18n', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 
+// SPEC-TSDB-002 M2 특성화용 store 훅 기록기. 실제 export 는 그대로 두고 훅만 교체해
+// (소스, 활성) 인자를 관측한다. 채널 모드 테스트에서는 idle 결과를 반환하므로 기존
+// 동작(비활성 store 훅)과 동일하다.
+const storeHookCalls = vi.hoisted(() => ({
+  args: [] as Array<{ source: unknown; enabled: unknown }>,
+}));
+const storeHookResult = vi.hoisted(() => ({
+  current: {
+    entries: [] as Array<{ timestamp: number; value: unknown; labels?: Record<string, string> }>,
+    seriesEntries: new Map<string, unknown>(),
+    seriesStyles: new Map<string, unknown>(),
+    seriesNames: [] as string[],
+    booleanSeries: new Set<string>(),
+    status: 'connected' as const,
+    closedReason: undefined as string | undefined,
+    errorReason: undefined as string | undefined,
+  },
+}));
+
+vi.mock('./useStoreChartData', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./useStoreChartData')>();
+  return {
+    ...actual,
+    useStoreChartData: (source: unknown, enabled: unknown) => {
+      storeHookCalls.args.push({ source, enabled });
+      return storeHookResult.current;
+    },
+  };
+});
+
 // 공용 recharts 스텁을 쓰되, Bar 의 fill 을 data-* 로 노출하도록 이 파일에서만
 // 덮어쓴다(스텁 파일 자체는 건드리지 않는다 — M2 는 테스트 외 변경 금지).
 // JSX 대신 createElement 를 쓰는 이유: vi.mock 팩토리는 호이스팅되므로 파일 상단
@@ -267,5 +297,81 @@ describe('BarChartPanel 특성화 (SPEC-CHART-002 M2)', () => {
     expect(bars).toHaveLength(1);
     expect(bars[0]!.getAttribute('data-bar-key')).toBe('value');
     expect(bars[0]!.getAttribute('data-bar-fill')).toBe('#3b82f6');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-TSDB-002 M2 — 특성화 테스트 (DDD PRESERVE).
+//
+// `BarChartPanel.tsx:100` 의 소스 활성 판정을 5분기로 잠근다.
+//
+// @spec SPEC-TSDB-002 §2.3 (U3) · §2.4 (U4) — plan.md §3.1 CT-01 ~ CT-05 / AC-09
+// ---------------------------------------------------------------------------
+describe('BarChartPanel 소스 활성 판정 특성화 (SPEC-TSDB-002 M2, CT-01~CT-05)', () => {
+  function lastStoreCall(): { source: unknown; enabled: unknown } {
+    return storeHookCalls.args.at(-1)!;
+  }
+  function barRows(): Array<{ label: string; value: number }> {
+    const chart = screen.getByTestId('rc-bar-chart');
+    return JSON.parse(chart.getAttribute('data-rows')!) as Array<{ label: string; value: number }>;
+  }
+
+  beforeEach(() => {
+    storeHookCalls.args = [];
+    mockResult.current = {
+      entries: [{ timestamp: 1, value: 11, labels: { name: 'CH' } }],
+      status: 'connected',
+      closedReason: undefined,
+      errorReason: undefined,
+    };
+    storeHookResult.current = {
+      ...storeHookResult.current,
+      entries: [{ timestamp: 1, value: 99, labels: { name: 'STORE' } }],
+      status: 'connected',
+    };
+  });
+
+  const base = { channel_name: 'c1', mode: 'category', label_field: 'labels.name' } as const;
+
+  it('CT-01: config 가 비어 있으면 채널 경로다(store 훅은 idle)', () => {
+    render(<BarChartPanel panelId="p1" config={{ ...base }} />);
+    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
+    expect(barRows()).toEqual([{ label: 'CH', value: 11 }]);
+  });
+
+  it("CT-02: data_source:'channel' 이면 채널 경로다", () => {
+    render(<BarChartPanel panelId="p1" config={{ ...base, data_source: 'channel' }} />);
+    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
+    expect(barRows()).toEqual([{ label: 'CH', value: 11 }]);
+  });
+
+  it("CT-03: data_source:'store' 인데 store_source 가 없으면 채널 경로로 폴백한다", () => {
+    render(<BarChartPanel panelId="p1" config={{ ...base, data_source: 'store' }} />);
+    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
+    expect(barRows()).toEqual([{ label: 'CH', value: 11 }]);
+  });
+
+  it("CT-04: data_source:'store' + 시리즈 0개면 채널 경로로 폴백한다", () => {
+    render(
+      <BarChartPanel
+        panelId="p1"
+        config={{
+          ...base,
+          data_source: 'store',
+          store_source: { agent_name: 'store-1', series: [] },
+        }}
+      />,
+    );
+    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
+    expect(barRows()).toEqual([{ label: 'CH', value: 11 }]);
+  });
+
+  it("CT-05: data_source:'store' + 시리즈 N개면 store 경로다", () => {
+    const store_source = { agent_name: 'store-1', series: [{ key: 'k1' }] };
+    render(
+      <BarChartPanel panelId="p1" config={{ ...base, data_source: 'store', store_source }} />,
+    );
+    expect(lastStoreCall()).toEqual({ source: store_source, enabled: true });
+    expect(barRows()).toEqual([{ label: 'STORE', value: 99 }]);
   });
 });

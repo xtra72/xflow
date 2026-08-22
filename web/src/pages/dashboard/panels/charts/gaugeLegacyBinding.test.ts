@@ -25,6 +25,9 @@ import {
   resolveGaugeValueSource,
   type GaugeLegacyDataSource,
 } from './gaugeLegacyBinding';
+// SPEC-TSDB-002 M2 — M1 이 신설한 소스 판정 정본. 게이지의 활성 항이 이것과 동치임을
+// 잠그기 위해서만 사용한다(프로덕션 코드는 아직 이 모듈을 호출하지 않는다).
+import { isStoreSourceActive, resolvePanelSourceBinding } from './panelDataSource';
 
 /** 활성 store_source(keys 모드, 시리즈 1개). */
 function activeKeysStore(): StoreSourceConfig {
@@ -560,5 +563,111 @@ describe('이관 기본 조회 창은 공용 상수 단일 정본이다 (§2.8 [
       aggregation: 'average',
       refresh_interval_ms: 5000,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-TSDB-002 M2 — 특성화 테스트 (DDD PRESERVE).
+//
+// `gaugeLegacyBinding.ts:122` 는 다른 지점과 달리 소스 활성 판정에
+// **`hasSeriesReduce` 논리곱이 결합**되어 있다. 그 항은 소스 활성이 아니라 게이지
+// 고유의 레거시 우선순위 규칙이며 SPEC-CHART-002 §2.9 가 소유한다.
+//
+// M3 은 `flags.storeSourceActive` 항만 `resolvePanelSourceBinding(config).active`
+// 로 치환하고 `hasSeriesReduce` 논리곱은 **이 파일에 그대로 남긴다**. 아래 두 축이
+// 그 계약을 잠근다.
+//   (1) 진리표 4행이 무변경일 것 (CT-09 ~ CT-12)
+//   (2) `storeSourceActive` 항이 `resolvePanelSourceBinding(config).active` 와
+//       **동치**일 것 — 이것이 성립해야 치환이 동작 보존이다
+//
+// @spec SPEC-TSDB-002 §2.3 (U3) · §2.4 (U4) — plan.md §3.3 CT-09 ~ CT-12 / AC-11
+// ---------------------------------------------------------------------------
+describe('게이지 판정 진리표 특성화 (SPEC-TSDB-002 M2, CT-09~CT-12)', () => {
+  it('CT-09: data_source 부재/channel → legacy (소스·대표값과 무관)', () => {
+    expect(resolveFromConfig({})).toBe('legacy');
+    expect(resolveFromConfig({ dataSources: legacyPresent() })).toBe('legacy');
+    // 활성 store_source 와 series_reduce 가 모두 있어도 data_source 가 없으면 legacy.
+    expect(
+      resolveFromConfig({ store_source: activeKeysStore(), series_reduce: 'last' }),
+    ).toBe('legacy');
+    expect(
+      resolveFromConfig({
+        data_source: 'channel',
+        store_source: activeKeysStore(),
+        series_reduce: 'last',
+      }),
+    ).toBe('legacy');
+  });
+
+  it('CT-10: store + 소스 비활성 → legacy (series_reduce 유무와 무관)', () => {
+    for (const store of [undefined, inactiveKeysStore(), inactiveTagStore()]) {
+      expect(
+        resolveFromConfig({ data_source: 'store', store_source: store, series_reduce: 'last' }),
+      ).toBe('legacy');
+      expect(resolveFromConfig({ data_source: 'store', store_source: store })).toBe('legacy');
+    }
+  });
+
+  it('CT-11: store + 소스 활성 + series_reduce **부재** → legacy (하중 지지 행)', () => {
+    // 이 행이 `hasSeriesReduce` 논리곱의 유일한 증거다. 그 항을 소스 활성 판정으로
+    // 함께 옮기면 이 행이 'store-source' 로 뒤집힌다.
+    expect(resolveFromConfig({ data_source: 'store', store_source: activeKeysStore() })).toBe(
+      'legacy',
+    );
+    expect(resolveFromConfig({ data_source: 'store', store_source: activeTagStore() })).toBe(
+      'legacy',
+    );
+    expect(
+      resolveFromConfig({
+        data_source: 'store',
+        store_source: activeKeysStore(),
+        dataSources: legacyPresent(),
+      }),
+    ).toBe('legacy');
+  });
+
+  it('CT-12: store + 소스 활성 + series_reduce 있음 → store-source', () => {
+    expect(
+      resolveFromConfig({
+        data_source: 'store',
+        store_source: activeKeysStore(),
+        series_reduce: 'last',
+      }),
+    ).toBe('store-source');
+    expect(
+      resolveFromConfig({
+        data_source: 'store',
+        store_source: activeTagStore(),
+        series_reduce: 'last',
+      }),
+    ).toBe('store-source');
+  });
+
+  it('CT-09~CT-12: storeSourceActive 항은 resolvePanelSourceBinding(config).active 와 동치다', () => {
+    // M3 의 치환이 동작 보존인 **구조적 근거**. 두 판정이 갈리는 config 가 하나라도
+    // 있으면 게이지의 활성 조건이 바뀐다.
+    const stores = [
+      undefined,
+      activeKeysStore(),
+      activeTagStore(),
+      inactiveKeysStore(),
+      inactiveTagStore(),
+    ];
+    const kinds = [undefined, 'channel', 'store'];
+    for (const store_source of stores) {
+      for (const data_source of kinds) {
+        const config: Record<string, unknown> = { store_source };
+        if (data_source !== undefined) config.data_source = data_source;
+        expect(gaugeValueSourceFlags(config).storeSourceActive).toBe(
+          isStoreSourceActive(store_source),
+        );
+        // `data_source:'store'` 인 config 에 한해 panelDataSource 의 active 와도 동치다.
+        if (data_source === 'store') {
+          expect(resolvePanelSourceBinding(config).active).toBe(
+            gaugeValueSourceFlags(config).storeSourceActive,
+          );
+        }
+      }
+    }
   });
 });

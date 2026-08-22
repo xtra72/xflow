@@ -144,3 +144,65 @@ describe('buildPreviewSeries — 채널 모드(기존 동작 보존)', () => {
     expect(out[0]!.key).toBe('(sample)');
   });
 });
+
+// ---------------------------------------------------------------------------
+// SPEC-TSDB-002 M2 — 특성화 테스트 (DDD PRESERVE).
+//
+// `previewSeries.ts:65` 의 구조는 다음과 같다.
+//
+//   if (dataSource === 'store') { ... if (series.length > 0) return ...; }
+//   if (channels.length > 0) { return ... }        // ← 흘러내리는 폴백
+//   return [sample]
+//
+// 즉 **활성 판정과 채널 폴백이 결합**되어 있다. store 를 골랐지만 시리즈가 0개면
+// `return` 하지 않고 아래로 흘러내려 채널 목록을 쓴다. M3 에서 이 블록을 조기
+// 반환(early return)으로 바꾸면 그 폴백이 사라지고 미리보기 범례가 sample 한 줄로
+// 퇴화한다 — CT-17 이 그 회귀를 잡는다.
+//
+// @spec SPEC-TSDB-002 §2.3 (U3) · §2.4 (U4) — plan.md §3.5 CT-16 ~ CT-18 / AC-12
+// ---------------------------------------------------------------------------
+describe('buildPreviewSeries 활성 판정 + 채널 폴백 결합 특성화 (SPEC-TSDB-002 M2, CT-16~CT-18)', () => {
+  it("CT-16: dataSource:'store' + 시리즈 N개면 store 시리즈 범례 N개다(채널이 있어도)", () => {
+    const out = buildPreviewSeries(
+      input({
+        dataSource: 'store',
+        storeSource: storeSource(),
+        channels: [{ name: 'ch-a' }, { name: 'ch-b' }, { name: 'ch-c' }] as never,
+      }),
+    );
+    expect(out.map((s) => s.key)).toEqual(['LAI · value{room=1}', '소음']);
+  });
+
+  it("CT-17: dataSource:'store' + 시리즈 0개 + 채널 M개면 **채널 범례 M개**로 폴백한다", () => {
+    const out = buildPreviewSeries(
+      input({
+        dataSource: 'store',
+        storeSource: storeSource({ series: [] }),
+        channels: [{ name: 'ch-a' }, { name: 'ch-b' }, { name: 'ch-c' }] as never,
+      }),
+    );
+    // sample 한 줄이 아니라 채널 3줄이다. 조기 반환으로 바꾸면 여기가 깨진다.
+    expect(out).toHaveLength(3);
+    expect(out.map((s) => s.key)).toEqual(['ch-a', 'ch-b', 'ch-c']);
+  });
+
+  it("CT-17: storeSource 자체가 없어도 채널 폴백은 동일하다", () => {
+    const out = buildPreviewSeries(
+      input({
+        dataSource: 'store',
+        storeSource: undefined,
+        channels: [{ name: 'ch-a' }] as never,
+      }),
+    );
+    expect(out.map((s) => s.key)).toEqual(['ch-a']);
+  });
+
+  it("CT-18: dataSource:'store' + 시리즈 0개 + 채널 0개면 sample 한 줄이다", () => {
+    const out = buildPreviewSeries(
+      input({ dataSource: 'store', storeSource: storeSource({ series: [] }), channels: [] }),
+    );
+    expect(out).toEqual([
+      { key: '(sample)', color: '#c1', smooth: false, strokeWidth: 2, strokeDasharray: '' },
+    ]);
+  });
+});

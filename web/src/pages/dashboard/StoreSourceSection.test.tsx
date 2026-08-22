@@ -289,3 +289,78 @@ describe('시리즈 이름 형식 (패널 옵션)', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// SPEC-TSDB-002 M2 — 특성화 테스트 (DDD PRESERVE).
+//
+// `ChartPanelSections.tsx:398 · 404 · 445 · 458` 4개 설정 UI 게이트의 현재 참 조건을
+// 잠근다. 네 지점 모두 `!tsdbMode && dataSource === 'store'` 형태이며, `tsdbMode` 는
+// **config 가 아니라 로컬 `useState`** 다(`:320`).
+//
+// @spec SPEC-TSDB-002 §2.3 (U3) · §2.11 (E1) — plan.md §3.6 CT-19 ~ CT-21
+// ---------------------------------------------------------------------------
+describe('설정 UI 게이팅 특성화 (SPEC-TSDB-002 M2, CT-19~CT-21)', () => {
+  /** 4개 게이트의 렌더 여부(순서: StoreInfoPopover · 에이전트 셀렉트 · 이름 형식 · 대표값). */
+  function gates(): boolean[] {
+    return [
+      screen.queryByTestId('chart-store-info-button') !== null,
+      screen.queryByTestId('chart-store-agent-select') !== null,
+      screen.queryByTestId('chart-store-series-name-format') !== null,
+      screen.queryByTestId('chart-series-reduce') !== null,
+    ];
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("CT-19: data_source:'store' 면 4개 게이트가 모두 렌더된다", () => {
+    // panel.type='stat' 은 REDUCE_PANEL_TYPES 에 속하므로 대표값 선택기까지 노출된다.
+    render(<StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={vi.fn()} />);
+    expect(gates()).toEqual([true, true, true, true]);
+    expect(screen.queryByTestId('chart-data-source-tsdb-placeholder')).toBeNull();
+  });
+
+  it("CT-20: data_source:'channel' 이면 4개 게이트가 모두 미렌더다", () => {
+    render(
+      <StoreSourceSection
+        panel={makePanel({ data_source: 'channel', channel_name: 'c1' })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(gates()).toEqual([false, false, false, false]);
+    expect(screen.queryByTestId('chart-data-source-tsdb-placeholder')).toBeNull();
+  });
+
+  it('CT-21: 로컬 tsdbMode 가 true 면 4개 게이트 미렌더 + placeholder 렌더 (반전 기준선)', () => {
+    // ─── 이 테스트는 **M6.9 · M6.10 에서 반전될 기준선**이다(AC-35). ───
+    // 현재 TSDB 토글은 로컬 `useState` 에만 기록되고 `onConfigChange` 를 호출하지 않는다
+    // (SPEC-PANEL-SETTINGS-001 REQ-05 의 의도된 no-op). SPEC-TSDB-002 §2.11 [E1] 이 그
+    // 비목표를 대체하면 (a) placeholder 는 사라지고 (b) 토글이 config 에 영속되며
+    // (c) TSDB 선택 UI 가 렌더된다. 그 시점에 이 단언은 제자리에서 반전된다 — 삭제하지
+    // 않는 이유는 "왜 바뀌었는가" 의 기록을 diff 밖으로 내보내지 않기 위함이다.
+    const onConfigChange = vi.fn();
+    render(
+      <StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={onConfigChange} />,
+    );
+    // 전제: store 모드에서는 4개 게이트가 살아 있다.
+    expect(gates()).toEqual([true, true, true, true]);
+
+    fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
+
+    expect(gates()).toEqual([false, false, false, false]);
+    expect(screen.getByTestId('chart-data-source-tsdb-placeholder')).toBeInTheDocument();
+    // config 는 건드리지 않는다(= Store 설정 보존). AC-05 의 현행 계약.
+    expect(onConfigChange).not.toHaveBeenCalled();
+  });
+
+  it('CT-21: tsdbMode 는 config.data_source 를 바꾸지 않으므로 채널로 되돌리면 게이트가 되살아난다', () => {
+    render(<StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
+    expect(gates()).toEqual([false, false, false, false]);
+
+    // store 버튼을 누르면 setTsdbMode(false) 로 로컬 상태만 풀린다(config 는 이미 store).
+    fireEvent.click(screen.getByTestId('chart-data-source-store'));
+    expect(gates()).toEqual([true, true, true, true]);
+  });
+});

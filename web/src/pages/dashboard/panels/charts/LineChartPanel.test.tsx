@@ -57,16 +57,33 @@ const storeMockResult = vi.hoisted(() => ({
   },
 }));
 
+// SPEC-TSDB-002 M2 특성화용 호출 인자 기록기. 반환값은 종전과 동일하므로 기존
+// 테스트의 동작은 바뀌지 않고, "어느 훅이 활성으로 호출됐는가" 만 관측 가능해진다.
+const hookCalls = vi.hoisted(() => ({
+  channel: [] as unknown[],
+  channels: [] as unknown[],
+  store: [] as Array<{ source: unknown; enabled: unknown }>,
+}));
+
 vi.mock('./useChartChannel', () => ({
-  useChartChannel: () => mockResult.current,
+  useChartChannel: (channelName?: string) => {
+    hookCalls.channel.push(channelName);
+    return mockResult.current;
+  },
 }));
 
 vi.mock('./useChartChannels', () => ({
-  useChartChannels: () => multiMockResult.current,
+  useChartChannels: (channels?: unknown) => {
+    hookCalls.channels.push(channels);
+    return multiMockResult.current;
+  },
 }));
 
 vi.mock('./useStoreChartData', () => ({
-  useStoreChartData: () => storeMockResult.current,
+  useStoreChartData: (source?: unknown, enabled?: unknown) => {
+    hookCalls.store.push({ source, enabled });
+    return storeMockResult.current;
+  },
 }));
 
 // i18n 은 키를 그대로 반환하도록 모킹한다(I18nProvider 없이 렌더 가능).
@@ -1150,5 +1167,104 @@ describe('LineChartPanel', () => {
       expect(line.getAttribute('data-line-dash')).toBe('');
       expect(line.getAttribute('data-line-type')).toBe('linear');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-TSDB-002 M2 — 특성화 테스트 (DDD PRESERVE).
+//
+// `LineChartPanel.tsx:245` 의 소스 활성 판정(`config.data_source === 'store' && ...`)
+// 현재 동작을 잠근다. M3 에서 이 지점이 `resolvePanelSourceBinding(config).active` +
+// `usePanelSeriesData(config)` 로 치환되어도 아래 5분기는 **동일한 훅 활성 조합**을
+// 내야 한다.
+//
+// @spec SPEC-TSDB-002 §2.3 (U3) · §2.4 (U4) — plan.md §3.1 CT-01 ~ CT-05 / AC-09
+// ---------------------------------------------------------------------------
+describe('LineChartPanel 소스 활성 판정 특성화 (SPEC-TSDB-002 M2, CT-01~CT-05)', () => {
+  /** store 훅이 마지막으로 받은 (소스, 활성) 쌍. */
+  function lastStoreCall(): { source: unknown; enabled: unknown } {
+    return hookCalls.store.at(-1)!;
+  }
+
+  beforeEach(() => {
+    hookCalls.channel = [];
+    hookCalls.channels = [];
+    hookCalls.store = [];
+    mockResult.current = {
+      entries: [{ timestamp: 1000, value: 11 }],
+      status: 'connected',
+      closedReason: undefined,
+      errorReason: undefined,
+    };
+    multiMockResult.current = { channels: new Map() };
+    storeMockResult.current = {
+      entries: [],
+      // store 경로가 실제로 선택됐을 때만 나타나는 표식 시리즈.
+      seriesEntries: new Map([['StoreOnly', [{ timestamp: 1000, value: 99 }]]]),
+      seriesStyles: new Map(),
+      seriesNames: ['StoreOnly'],
+      booleanSeries: new Set(),
+      status: 'connected',
+      closedReason: undefined,
+      errorReason: undefined,
+    };
+  });
+
+  /** store 표식 시리즈가 라인으로 그려졌는가 = store 경로를 탔는가. */
+  function storeLineRendered(): boolean {
+    return screen
+      .queryAllByTestId('rc-line')
+      .some((l) => l.getAttribute('data-line-key') === 'StoreOnly');
+  }
+
+  it('CT-01: config 가 비어 있으면 채널 경로다(store 훅은 idle)', () => {
+    render(<LineChartPanel panelId="p1" config={{}} />);
+    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
+    expect(storeLineRendered()).toBe(false);
+  });
+
+  it("CT-02: data_source:'channel' 이면 채널 경로다", () => {
+    render(<LineChartPanel panelId="p1" config={{ data_source: 'channel', channel_name: 'c1' }} />);
+    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
+    expect(hookCalls.channel).toContain('c1');
+    expect(storeLineRendered()).toBe(false);
+  });
+
+  it("CT-03: data_source:'store' 인데 store_source 가 없으면 채널 경로로 폴백한다", () => {
+    render(<LineChartPanel panelId="p1" config={{ data_source: 'store', channel_name: 'c1' }} />);
+    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
+    expect(hookCalls.channel).toContain('c1');
+    expect(storeLineRendered()).toBe(false);
+  });
+
+  it("CT-04: data_source:'store' + 시리즈 0개면 채널 경로로 폴백한다", () => {
+    render(
+      <LineChartPanel
+        panelId="p1"
+        config={{
+          data_source: 'store',
+          channel_name: 'c1',
+          store_source: { agent_name: 'store-1', series: [] },
+        }}
+      />,
+    );
+    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
+    expect(hookCalls.channel).toContain('c1');
+    expect(storeLineRendered()).toBe(false);
+  });
+
+  it("CT-05: data_source:'store' + 시리즈 N개면 store 경로다", () => {
+    const store_source = { agent_name: 'store-1', series: [{ key: 'k1' }] };
+    render(
+      <LineChartPanel
+        panelId="p1"
+        config={{ data_source: 'store', channel_name: 'c1', store_source }}
+      />,
+    );
+    // store 훅에 **config.store_source 그 자체**가 전달된다(파생 소스가 아니다).
+    expect(lastStoreCall()).toEqual({ source: store_source, enabled: true });
+    // 채널 훅은 비활성(undefined)으로 호출된다 — 훅 규칙상 호출 자체는 유지된다.
+    expect(hookCalls.channel).toContain(undefined);
+    expect(storeLineRendered()).toBe(true);
   });
 });

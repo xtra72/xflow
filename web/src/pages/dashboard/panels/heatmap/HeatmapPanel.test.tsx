@@ -19,8 +19,14 @@ const storeMock: { current: UseStoreChartDataResult } = {
     status: 'idle',
   },
 };
+// SPEC-TSDB-002 M2 특성화용 호출 인자 기록기. 반환값은 종전과 동일하므로 기존 테스트의
+// 동작은 바뀌지 않고, 히트맵이 **어떤 소스 객체로** 조회하는지만 관측 가능해진다.
+const storeHookCalls: { args: Array<{ source: unknown; enabled: unknown }> } = { args: [] };
 vi.mock('../charts/useStoreChartData', () => ({
-  useStoreChartData: () => storeMock.current,
+  useStoreChartData: (source: unknown, enabled: unknown) => {
+    storeHookCalls.args.push({ source, enabled });
+    return storeMock.current;
+  },
 }));
 
 // i18n 은 키를 그대로 반환하도록 모킹한다(I18nProvider 없이 렌더 가능).
@@ -1023,5 +1029,88 @@ describe('HeatmapPanel — 타이틀 바', () => {
     } finally {
       useUIStore.getState().setDashboardEditMode(false);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-TSDB-002 M2 — 특성화 테스트 (DDD PRESERVE).
+//
+// `HeatmapPanel.tsx:122` 는 다른 5종 패널과 **형태만 같고 읽는 대상이 다르다.**
+// `config.store_source` 를 직접 보지 않고, 렌더 시점 `useMemo` 로 파생한
+// `heatmapStoreSource`(체크된 시리즈만 + `selection_mode:'keys'` 강제 +
+// `tag_filters` 제거 + alias 를 센서 동일성 키로 치환)의 시리즈 길이를 본다.
+//
+// 이 사실을 테스트가 알게 해 두지 않으면 M3 의 기계적 치환이 히트맵을 조용히
+// 비운다(또는 tag 모드 히트맵을 새로 활성화한다).
+//
+// @spec SPEC-TSDB-002 §2.3 (U3) — plan.md §3.2 CT-06 ~ CT-08 / AC-10
+// ---------------------------------------------------------------------------
+describe('HeatmapPanel 소스 활성 판정 특성화 (SPEC-TSDB-002 M2, CT-06~CT-08)', () => {
+  function lastStoreCall(): { source: unknown; enabled: unknown } {
+    return storeHookCalls.args.at(-1)!;
+  }
+
+  beforeEach(() => {
+    storeHookCalls.args = [];
+  });
+
+  it('CT-06: store 모드 + 히트맵 시리즈 N개면 **파생 소스**로 store 경로를 탄다', () => {
+    const positions = { 'room:1:temp': { x: 0.2, y: 0.3 } };
+    setStore({
+      seriesNames: [sid('room:1:temp')],
+      seriesEntries: new Map([[sid('room:1:temp'), reading(22)]]),
+      status: 'connected',
+    });
+    render(<HeatmapPanel panelId="p" config={makeConfig(positions)} />);
+
+    const call = lastStoreCall();
+    expect(call.enabled).toBe(true);
+    const source = call.source as {
+      selection_mode?: string;
+      tag_filters?: unknown;
+      series: Array<{ key: string; alias?: string }>;
+    };
+    // 전달된 것은 config.store_source 가 아니라 파생 소스다 —
+    // selection_mode 는 'keys' 로 강제되고 tag_filters 는 제거되며 alias 가 치환된다.
+    expect(source.selection_mode).toBe('keys');
+    expect(source.tag_filters).toBeUndefined();
+    expect(source.series).toHaveLength(1);
+    expect(source.series[0]!.alias).toBe(sid('room:1:temp'));
+  });
+
+  it('CT-07: store 모드 + 히트맵 시리즈 0개면 비활성이다', () => {
+    setStore({ seriesNames: [], seriesEntries: new Map(), status: 'connected' });
+    render(<HeatmapPanel panelId="p" config={makeConfig({}, {}, [])} />);
+
+    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
+  });
+
+  it('CT-08: store_source 는 있으나 히트맵이 읽는 키가 비면 비활성이다(tag 모드는 활성화하지 않는다)', () => {
+    // 이 config 는 spec.md §2.3 의 **일반 store 활성 조건**(tag 모드 + tag_filters 1개
+    // 이상)을 만족한다. 그럼에도 히트맵은 비활성이다 — 히트맵은 `store_source` 를 직접
+    // 읽지 않고, `series` 에서 파생한 키 목록만 보기 때문이다.
+    // M3 에서 이 지점을 `resolvePanelSourceBinding(config).active` 로 그대로 바꾸면
+    // 이 테스트가 RED 가 된다(= tag 모드 히트맵이 새로 활성화되는 동작 변경).
+    setStore({ seriesNames: [], seriesEntries: new Map(), status: 'connected' });
+    const config = {
+      data_source: 'store',
+      store_source: {
+        agent_name: 'a',
+        namespace: 'default',
+        selection_mode: 'tag',
+        tag_filters: { room: '1' },
+        series: [],
+        time_window_ms: 1000,
+        interval_ms: 1000,
+        aggregation: 'last',
+      },
+      sensor_positions: {},
+      idw: { power: 2, grid_resolution: 8 },
+    } as Record<string, unknown>;
+
+    render(<HeatmapPanel panelId="p" config={config} />);
+
+    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
+    expect(screen.queryByTestId('heatmap-canvas')).toBeNull();
   });
 });

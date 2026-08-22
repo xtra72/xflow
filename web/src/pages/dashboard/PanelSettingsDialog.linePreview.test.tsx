@@ -123,3 +123,86 @@ describe('store 라인 차트 미리보기 — 실제 데이터 패널 사용', 
     expect(wrapper.textContent).not.toContain('dashboard.settings.preview.label');
   });
 });
+
+// ---------------------------------------------------------------------------
+// SPEC-TSDB-002 M2 — 특성화 테스트 (DDD PRESERVE).
+//
+// `PanelSettingsDialog.tsx:714`(라인 미리보기 게이트)와 `:728`(stat 미리보기 게이트)는
+// 서로 다른 config 참조를 쓴다 — 전자는 `previewRenderPanel.config?.` 로 옵셔널
+// 체이닝하고, 후자는 `previewChartConfig = previewRenderPanel.config ?? {}` 를 거친다.
+// 또한 판정에 쓰는 부가 조건도 다르다(라인은 시리즈/태그, stat 은 시리즈 + series_reduce).
+//
+// 두 게이트를 하나로 뭉개면 "설정 화면에서는 보이는데 대시보드에서는 안 보인다" 가
+// 되므로, **독립 판정**임을 잠근다.
+//
+// @spec SPEC-TSDB-002 §2.3 (U3) · §2.4 (U4) — plan.md §3.4 CT-13 ~ CT-15
+// ---------------------------------------------------------------------------
+describe('미리보기 게이트 2곳의 독립 판정 특성화 (SPEC-TSDB-002 M2, CT-13~CT-15)', () => {
+  /** 시리즈 1개를 가진 store 블록(두 게이트가 공유하는 동일 config 조각). */
+  function activeStore(): Record<string, unknown> {
+    return {
+      agent_id: 'store-uuid-1',
+      agent_name: 'store-1',
+      selection_mode: 'keys',
+      series: [{ key: 'LAI', field: 'value' }],
+    };
+  }
+
+  function renderPanel(type: string, config: Record<string, unknown>) {
+    storeMock.panel = { id: 'p1', type, title: '패널', config } as unknown as PanelConfig;
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+  }
+
+  /** 라인 게이트(`:714`)가 참인가 = 합성 미니 프리뷰가 아니라 실제 패널을 그렸는가. */
+  function lineGateActive(): boolean {
+    const wrapper = screen.queryByTestId('line-chart-preview-wrapper');
+    if (!wrapper) return false;
+    return !wrapper.textContent?.includes('dashboard.settings.preview.label');
+  }
+
+  /** stat 게이트(`:728`)가 참인가 = stat 미리보기 래퍼가 렌더됐는가. */
+  function statGateActive(): boolean {
+    return screen.queryByTestId('stat-preview-wrapper') !== null;
+  }
+
+  it("CT-13: line-chart + previewRenderPanel.config.data_source === 'store' + 시리즈 N → `:714` 게이트 참", () => {
+    renderPanel('line-chart', { data_source: 'store', store_source: activeStore() });
+    expect(lineGateActive()).toBe(true);
+    // 다른 게이트는 패널 타입이 달라 거짓이다.
+    expect(statGateActive()).toBe(false);
+  });
+
+  it("CT-14: stat + previewChartConfig.data_source === 'store' + 시리즈 N + series_reduce → `:728` 게이트 참", () => {
+    renderPanel('stat', {
+      data_source: 'store',
+      store_source: activeStore(),
+      series_reduce: 'last',
+    });
+    expect(statGateActive()).toBe(true);
+    // 라인 래퍼는 `panel.type === 'line-chart'` 일 때만 렌더된다.
+    expect(screen.queryByTestId('line-chart-preview-wrapper')).toBeNull();
+  });
+
+  it('CT-15: 동일한 data_source/store_source 라도 두 게이트는 독립적으로 판정된다', () => {
+    const store_source = activeStore();
+
+    // (a) series_reduce 부재 + stat → `:728` 거짓.
+    renderPanel('stat', { data_source: 'store', store_source });
+    expect(statGateActive()).toBe(false);
+  });
+
+  it('CT-15: 같은 config 조각이 line-chart 에서는 `:714` 참을 낸다(부가 조건이 다르다)', () => {
+    // 위 (a) 와 완전히 같은 data_source/store_source/series_reduce 조합이지만
+    // 라인 게이트는 `series_reduce` 를 보지 않으므로 참이다.
+    renderPanel('line-chart', { data_source: 'store', store_source: activeStore() });
+    expect(lineGateActive()).toBe(true);
+  });
+
+  it('CT-15: config 자체가 없으면 두 게이트 모두 거짓이며 예외를 던지지 않는다', () => {
+    // `:714` 는 `config?.` 옵셔널 체이닝, `:728` 은 `config ?? {}` 로 서로 다른 방식으로
+    // 방어한다. 결과는 같아야 한다.
+    expect(() => renderPanel('line-chart', undefined as never)).not.toThrow();
+    expect(lineGateActive()).toBe(false);
+    expect(statGateActive()).toBe(false);
+  });
+});
