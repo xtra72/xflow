@@ -14,7 +14,7 @@
 //
 // @spec SPEC-TSDB-002 §2.3 (U3) · §2.4 (U4)
 
-import type { StoreSourceConfig } from './chartChannelTypes';
+import type { StoreSourceConfig, TsdbSourceConfig } from './chartChannelTypes';
 import {
   resolvePanelSourceBinding,
   type PanelSourceBinding,
@@ -25,27 +25,15 @@ import {
   type UseStoreChartDataOptions,
   type UseStoreChartDataResult,
 } from './useStoreChartData';
+import { useTsdbChartData, type UseTsdbChartDataOptions } from './useTsdbChartData';
 
 /** `usePanelSeriesData` 의 선택 인자. */
 export interface UsePanelSeriesDataOptions extends ResolvePanelSourceOptions {
   /** `useStoreChartData` 로 그대로 전달되는 테스트 주입 통로. */
   storeOptions?: UseStoreChartDataOptions;
+  /** `useTsdbChartData` 로 그대로 전달되는 테스트 주입 통로. */
+  tsdbOptions?: UseTsdbChartDataOptions;
 }
-
-/**
- * 비활성 소스가 내는 결과 — `useStoreChartData` 의 idle 결과와 같은 형상이다.
- *
- * 모듈 수준 상수로 두어 **참조가 안정**하다. 매 렌더 새 객체를 만들면 이 값을
- * 의존성으로 쓰는 `useMemo` 가 폴링마다 무효화된다.
- */
-const IDLE_RESULT: UseStoreChartDataResult = {
-  entries: [],
-  seriesEntries: new Map(),
-  seriesStyles: new Map(),
-  seriesNames: [],
-  booleanSeries: new Set(),
-  status: 'idle',
-};
 
 /**
  * 패널이 채널 훅이 아니라 **시리즈 소스 훅**을 써야 하는가.
@@ -62,25 +50,12 @@ export function isPanelSeriesSource(binding: PanelSourceBinding): boolean {
 }
 
 /**
- * TSDB 시리즈 훅의 **idle 스텁**.
- *
- * M3(디스패치 일반화) 시점에는 store 분기만 실제로 동작한다. TSDB 어댑터
- * (`useTsdbChartData`)는 M6 에서 만들어지며, **plan.md M6.8 이 이 스텁을 그것으로
- * 교체하는 유일한 배선 지점**이다. 지금 훅 형태로 두는 이유는 그때 훅 호출 순서가
- * 바뀌지 않게 하기 위함이다 — 스텁을 순수 상수로 두면 M6 에서 훅이 하나 늘어나며
- * 렌더 간 훅 개수가 달라진다.
- */
-function useTsdbChartDataStub(_active: boolean): UseStoreChartDataResult {
-  return IDLE_RESULT;
-}
-
-/**
  * 패널 config 에서 시리즈 데이터를 조회한다.
  *
  * | 판정된 종류 | 활성 | 반환 |
  * |-------------|------|------|
  * | `store` | 예 | Store 훅 결과 |
- * | `tsdb` | 예 | TSDB 훅 결과(M3 에서는 idle 스텁) |
+ * | `tsdb` | 예 | TSDB 훅 결과(부분 실패 신호를 함께 실은 확장 형상) |
  * | 그 외 / 비활성 | — | idle(= 종전 `useStoreChartData(undefined, false)` 와 동일) |
  *
  * 마지막 행이 하위 호환의 핵심이다. 종전 패널들은 채널 모드에서도 store 훅을 비활성
@@ -102,9 +77,15 @@ export function usePanelSeriesData(
     options?.storeOptions,
   );
 
-  // TSDB 분기 — 조건 없이 호출하고 진 쪽은 idle 로 둔다(M6.8 에서 실제 훅으로 교체).
+  // TSDB 분기 — Store 와 같은 규칙으로 조건 없이 호출하고, 진 쪽은 config 를 넘기지
+  // 않아 idle 로 둔다. 조건부 호출은 훅 규칙 위반이며 소스 전환 시 상태가 뒤섞인다.
   const tsdbActive = binding.kind === 'tsdb' && binding.active;
-  const tsdbResult = useTsdbChartDataStub(tsdbActive);
+  const tsdbSource = config.tsdb_source as TsdbSourceConfig | undefined;
+  const tsdbResult = useTsdbChartData(
+    tsdbActive ? tsdbSource : undefined,
+    tsdbActive,
+    options?.tsdbOptions,
+  );
 
   if (tsdbActive) return tsdbResult;
   // storeResult 는 비활성일 때 idle 형상을 반환하므로 채널 경로도 이 값으로 덮인다.

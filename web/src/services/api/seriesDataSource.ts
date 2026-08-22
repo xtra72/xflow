@@ -9,6 +9,7 @@
 
 import { storeSeriesDataSource } from './store';
 import { tsdbSeriesDataSource } from './tsdb';
+import { tsdbSeriesDataSourceFor } from './tsdbSource';
 
 // ---- Types ----
 
@@ -17,7 +18,7 @@ import { tsdbSeriesDataSource } from './tsdb';
  *
  * - `'store'`: Store 에이전트(인메모리 TSDB, `/api/v1/store/{agent_name}/*`).
  * - `'tsdb'`: **에이전트를 통해 접근하는 외부 시계열 DB**(InfluxDB 가 첫 백엔드).
- *   패널 데이터소스로 노출되며 SPEC-TSDB-002 M6 에서 어댑터가 배선된다.
+ *   패널 데이터소스로 노출되며 어댑터는 `tsdbSource.ts` 가 소유한다.
  * - `'memtsdb'`: 프로세스 내 시계열 저장소(`internal/tsdb/`, `/api/v1/tsdb/*`).
  *   플로우 노드 · WS 구독자용 내부 설비이며 **패널 데이터소스가 아니다**.
  *
@@ -130,7 +131,16 @@ export interface SeriesDataSource {
  * `kind` 에 따라 적절한 구현체를 반환한다.
  *
  * - `kind === 'store'`: `agentName` 이 반드시 제공되어야 한다 (백엔드 라우트가 name 기반).
- * - `kind === 'memtsdb'`: 백엔드가 싱글톤이므로 `agentId` 는 옵션 (미래 확장 대비).
+ * - `kind === 'tsdb'`: 외부 시계열 DB. `agentName` 이 필수이며, `agentType` 은 백엔드
+ *   파생의 정본이다(SPEC-TSDB-002 §2.18). 타입을 알 수 없으면 어댑터가 백엔드 불일치
+ *   오류를 내며, 이는 다른 소스로 조용히 새는 것보다 안전하다.
+ * - `kind === 'memtsdb'`: 프로세스 내 저장소(`internal/tsdb/`). 백엔드가 싱글톤이므로
+ *   `agentId` 는 옵션 (미래 확장 대비).
+ *
+ * **종류별 분기를 `switch` 로 전수 처리한다.** 종전에는 `'store'` 가 아니면 전부
+ * memTSDB 어댑터로 흘러내렸고, 그 폴백은 `'tsdb'` 가 도달 가능해지는 순간
+ * **외부 TSDB 요청을 memTSDB 로 오라우팅**한다. memTSDB 는 패널 데이터소스가 아니므로
+ * (spec.md §1.2.1 · UB1-21) 이 경로는 닫혀 있어야 한다.
  *
  * 팩토리가 순수 함수라 같은 입력에 대해 매번 새 객체를 만들지만, 내부 훅은
  * 파라미터를 참조만 하므로 참조 동일성이 필요한 곳에서는 상위에서 memo 처리한다.
@@ -139,18 +149,40 @@ export function useSeriesDataSource(params: {
   kind: SeriesDataSourceKind;
   agentName?: string;
   agentId?: string;
+  /** 외부 TSDB 백엔드 파생의 정본(`kind === 'tsdb'` 에서만 쓰인다). */
+  agentType?: string;
 }): SeriesDataSource {
-  if (params.kind === 'store') {
-    if (!params.agentName) {
-      throw new Error(
-        'useSeriesDataSource: store 데이터 소스는 agentName 이 필요합니다',
-      );
+  switch (params.kind) {
+    case 'store': {
+      if (!params.agentName) {
+        throw new Error(
+          'useSeriesDataSource: store 데이터 소스는 agentName 이 필요합니다',
+        );
+      }
+      return storeSeriesDataSource(params.agentName);
     }
-    return storeSeriesDataSource(params.agentName);
+    case 'tsdb': {
+      if (!params.agentName) {
+        throw new Error(
+          'useSeriesDataSource: tsdb 데이터 소스는 agentName 이 필요합니다',
+        );
+      }
+      return tsdbSeriesDataSourceFor({
+        id: params.agentId ?? '',
+        name: params.agentName,
+        type: params.agentType ?? '',
+      });
+    }
+    case 'memtsdb':
+      return tsdbSeriesDataSource(params.agentId);
+    default:
+      return assertNeverKind(params.kind);
   }
-  // `'tsdb'`(외부 시계열 DB) 어댑터는 SPEC-TSDB-002 M6 에서 배선된다. M1 시점에는
-  // 그 값을 만드는 호출자가 없으므로 여기 도달하는 kind 는 `'memtsdb'` 뿐이다.
-  return tsdbSeriesDataSource(params.agentId);
+}
+
+/** 종류가 늘었는데 분기를 빠뜨리면 여기서 컴파일이 깨진다. */
+function assertNeverKind(kind: never): never {
+  throw new Error(`useSeriesDataSource: 알 수 없는 데이터 소스 종류 ${String(kind)}`);
 }
 
 // ---- Shared aggregation helpers ----
