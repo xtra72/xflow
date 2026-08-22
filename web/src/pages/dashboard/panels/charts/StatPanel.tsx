@@ -14,7 +14,6 @@ import {
   getByPath,
   type ChartEntry,
   type StatPanelConfig,
-  type StoreSourceConfig,
 } from './chartChannelTypes';
 import { ConnectionStatusIcon } from './ConnectionStatusIcon';
 import {
@@ -25,7 +24,9 @@ import {
 import { reduceAllSeries, type ReducedSeries } from './seriesReduce';
 import { SeriesTileGrid } from './SeriesTileGrid';
 import { useChartChannel } from './useChartChannel';
-import { useStoreChartData, type StoreSeriesStyle } from './useStoreChartData';
+import { type StoreSeriesStyle } from './useStoreChartData';
+import { resolvePanelSourceBinding } from './panelDataSource';
+import { isPanelSeriesSource, usePanelSeriesData } from './usePanelSeriesData';
 import { usePanelTitleVisible } from '../../panelChromeContext';
 
 interface StatPanelProps {
@@ -75,15 +76,18 @@ export default function StatPanel({ panelId: _panelId, title, config }: StatPane
   const cfg = parseConfig(config);
   // SPEC-WEB-005: data_source === 'store' 면 Store 소스에서, 그 외에는 기존 채널에서
   // 데이터를 가져온다. 두 훅 모두 항상 호출하고(React 규칙) 비활성 쪽은 idle 로 유지한다.
-  const storeSource = config.store_source as StoreSourceConfig | undefined;
-  const isStore =
-    config.data_source === 'store' && (storeSource?.series?.length ?? 0) > 0;
+  // SPEC-TSDB-002 §2.3 [U3]: 소스 판정은 `panelDataSource` 계약이 소유한다. 패널은
+  // `data_source` 를 직접 비교하지 않는다 — 소스 종류가 늘어도 이 지점이 종류만큼
+  // 곱해지지 않게 하기 위함이다(UB1-1).
+  // `isStore` 는 "채널이 아닌 시리즈 소스가 활성인가" 를 뜻한다. M3 시점에는 store 만
+  // 그 조건을 만족하며, tsdb 는 M6 에서 같은 이름을 통해 합류한다.
+  const isStore = isPanelSeriesSource(resolvePanelSourceBinding(config));
 
   const channelRes = useChartChannel(
     isStore ? undefined : cfg.channel_name || undefined,
     { maxPoints: Math.max(cfg.max_points ?? 2, 2) },
   );
-  const storeRes = useStoreChartData(isStore ? storeSource : undefined, isStore);
+  const storeRes = usePanelSeriesData(config);
 
   const { entries, status, closedReason, errorReason } = isStore
     ? storeRes

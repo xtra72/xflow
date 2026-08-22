@@ -50,7 +50,8 @@ import type { ChartConnectionStatus } from '@/services/ws/chartChannel';
 import { chartDataToCsv, downloadCsv } from './csvExport';
 import { useChartChannel } from './useChartChannel';
 import { useChartChannels, type ChannelState } from './useChartChannels';
-import { useStoreChartData } from './useStoreChartData';
+import { resolvePanelSourceBinding } from './panelDataSource';
+import { isPanelSeriesSource, usePanelSeriesData } from './usePanelSeriesData';
 import { usePanelTitleVisible } from '../../panelChromeContext';
 
 interface LineChartPanelProps {
@@ -234,16 +235,14 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   const showTitle = usePanelTitleVisible();
   const { t } = useTranslation();
   const cfg = parseConfig(config);
-  // SPEC-WEB-005: data_source === 'store' 면 Store 소스에서 시리즈를 가져온다(공존).
+  // 시간창 표시(brush 범위)에만 쓰는 원본 store 블록. 조회 자체는 usePanelSeriesData 가 한다.
   const storeSource = config.store_source as StoreSourceConfig | undefined;
-  // 태그 자동 확장 모드는 series[] 가 비어 있고 tag_filters 로 키를 폴링 시점마다 동적
-  // 해석하므로, series 길이가 아닌 tag_filters 존재로도 store 모드를 활성화한다(SPEC-WEB-005).
-  const storeTagActive =
-    storeSource?.selection_mode === 'tag' &&
-    Object.keys(storeSource.tag_filters ?? {}).length > 0;
-  const isStore =
-    config.data_source === 'store' &&
-    ((storeSource?.series?.length ?? 0) > 0 || storeTagActive);
+  // SPEC-TSDB-002 §2.3 [U3]: 소스 판정은 `panelDataSource` 계약이 소유한다. 패널은
+  // `data_source` 를 직접 비교하지 않는다 — 소스 종류가 늘어도 이 지점이 종류만큼
+  // 곱해지지 않게 하기 위함이다(UB1-1).
+  // `isStore` 는 "채널이 아닌 시리즈 소스가 활성인가" 를 뜻한다. M3 시점에는 store 만
+  // 그 조건을 만족하며, tsdb 는 M6 에서 같은 이름을 통해 합류한다.
+  const isStore = isPanelSeriesSource(resolvePanelSourceBinding(config));
   const isMultiMode = !isStore && (cfg.channels?.length ?? 0) > 0;
   // recent_window_sec 가 있으면 거기에 맞춰 버퍼 크기 자동 결정.
   const effectiveMaxPoints = resolveMaxPoints(cfg);
@@ -257,7 +256,7 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
     !isStore && isMultiMode ? cfg.channels! : [],
     { maxPoints: effectiveMaxPoints },
   );
-  const storeResult = useStoreChartData(isStore ? storeSource : undefined, isStore);
+  const storeResult = usePanelSeriesData(config);
 
   // 모드별 채널 정규화
   const channelStates: NormalizedChannel[] = useMemo(
