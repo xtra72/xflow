@@ -10,7 +10,8 @@ import { useWebSocket } from '@/hooks';
 import { useFlows } from '@/hooks';
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import MetricsChart, { type MetricDataPoint, type MetricsData } from './MetricsChart';
-import LogViewer, { appendLog, type LogEntry, type LogLevel } from './LogViewer';
+import LogViewer, { type LogEntry, type LogLevel } from './LogViewer';
+import { appendLog } from './logBuffer';
 import EventTimeline, { type SystemEvent } from './EventTimeline';
 
 /** 탭 유형 */

@@ -21,6 +21,7 @@ import {
   MODBUS_DATA_TYPE_OPTIONS,
   MODBUS_BYTE_ORDER_OPTIONS,
 } from '@/config/agentSchemas';
+import { parseValuesInput } from './modbusCommandSetValues';
 
 // ---- 상수 ----
 
@@ -45,33 +46,6 @@ const CONTROL_ACTIONS = [
 
 const DEFAULT_DATA_TYPE = 'uint16';
 const DEFAULT_BYTE_ORDER = 'big_endian';
-
-// ---- 값(value/values) 파싱 ----
-
-/** 콤마/공백 구분 문자열 → 토큰 배열. 숫자면 number, 아니면 string 으로 변환. */
-function tokenizeValues(text: string): Array<number | string> {
-  return text
-    .split(/[\s,]+/)
-    .map((t) => t.trim())
-    .filter((t) => t !== '')
-    .map((t) => {
-      const n = Number(t);
-      return Number.isFinite(n) && t !== '' ? n : t;
-    });
-}
-
-/**
- * 값 입력 문자열 → WriteOp 의 value/values 조각(순수 함수, 단위 테스트 대상).
- * 토큰 0개 → {} (생략), 1개 → { value }, 2개 이상 → { values: [...] }.
- */
-export function parseValuesInput(
-  text: string,
-): { value: number | string } | { values: Array<number | string> } | Record<string, never> {
-  const tokens = tokenizeValues(text);
-  if (tokens.length === 0) return {};
-  if (tokens.length === 1) return { value: tokens[0]! };
-  return { values: tokens };
-}
 
 // ---- 내부 행 타입 ----
 

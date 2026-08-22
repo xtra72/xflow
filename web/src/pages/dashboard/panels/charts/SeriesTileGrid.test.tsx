@@ -20,13 +20,13 @@ vi.mock('@/lib/i18n', () => {
   return { useTranslation: () => ({ t: (k: string) => templates[k] ?? k }) };
 });
 
+import { SeriesTileGrid } from './SeriesTileGrid';
 import {
   DEFAULT_MULTI_OUTPUT_LIMIT,
   MIN_TILE_WIDTH_PX,
-  SeriesTileGrid,
   applyMultiOutputLimit,
   autoColumnCount,
-} from './SeriesTileGrid';
+} from './multiOutputLimit';
 
 /** 이름만 가진 최소 항목 — 그리드는 항목의 형상을 알지 못한다(제네릭). */
 function items(n: number): Array<{ name: string }> {

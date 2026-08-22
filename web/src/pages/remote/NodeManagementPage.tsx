@@ -20,11 +20,11 @@ import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { Network } from 'lucide-react';
 
+import { ManagerViewTopBar } from '@/components/remote/ManagerViewTopBar';
 import {
-  ManagerViewTopBar,
   parseManagerViewTab,
   type ManagerViewTab,
-} from '@/components/remote/ManagerViewTopBar';
+} from '@/components/remote/managerViewTab';
 import { NodeDashboard } from '@/components/remote/NodeDashboard';
 import { RemoteNotServerNotice } from '@/components/remote/RemoteNotServerNotice';
 import {

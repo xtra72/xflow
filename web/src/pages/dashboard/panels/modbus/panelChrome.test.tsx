@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-import { PanelChromeProvider } from '../../panelChromeContext';
+import { PanelChromeProvider } from '../../PanelChromeProvider';
 import { ModbusPanelFrame } from './panelChrome';
 
 describe('ModbusPanelFrame — 타이틀 바 게이팅', () => {

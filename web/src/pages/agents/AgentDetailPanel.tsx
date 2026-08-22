@@ -48,17 +48,15 @@ import type { AgentStatsInfo } from '@/types/agent';
 import type { ConfigSchema, ConfigSection } from '@/types/node';
 import { DynamicForm } from '@/components/property/DynamicForm';
 import { FormField } from '@/components/property/FormField';
+import { ModbusServerDevicesEditor } from '@/components/property/ModbusServerDevicesEditor';
+import { modbusServerDevicesValid } from '@/components/property/modbusServerDevicesModel';
+import { DeviceEditDialog } from '@/components/property/ModbusDevicesEditor';
 import {
-  ModbusServerDevicesEditor,
-  modbusServerDevicesValid,
-} from '@/components/property/ModbusServerDevicesEditor';
-import {
-  DeviceEditDialog,
   newDeviceRow,
   toDeviceRow,
   toEmitDevice,
   type DeviceRow,
-} from '@/components/property/ModbusDevicesEditor';
+} from '@/components/property/modbusDevicesModel';
 import BulkRegisterPanel from './BulkRegisterPanel';
 import {
   EMPTY_SEGMENTS,
@@ -73,7 +71,8 @@ import {
   useModbusGatewayBulkAdd,
 } from '@/hooks/useModbusBulk';
 import { EMPTY_REQUIRED, type BulkFailure, type BulkResult } from '@/hooks/useStation';
-import { TWO_COL_CONFIG, TwoColumnConfigLayout } from './twoColumnConfig';
+import { TwoColumnConfigLayout } from './twoColumnConfig';
+import { TWO_COL_CONFIG } from './twoColumnConfigMap';
 import {
   StoreKeysEditor,
   type StoreKeyEntry,
@@ -122,14 +121,14 @@ import {
   type FilterContext,
   type SortState,
 } from './storeEntrySort';
+import { ColumnSettingsMenu } from './storeColumns';
 import {
-  ColumnSettingsMenu,
   loadVisibleColumns,
   relevantColumns,
   renderedColumns as computeRenderedColumns,
   saveVisibleColumns,
   type StoreColumnId,
-} from './storeColumns';
+} from './storeColumnsModel';
 import { StoreEntryTable } from './StoreEntryTable';
 import { extractEntryMetricType, extractEntryTags } from './storeEntryHelpers';
 
@@ -964,7 +963,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
     }
   }
 
-  const config = agent?.config ?? {};
+  const config = useMemo(() => agent?.config ?? {}, [agent?.config]);
   const schema = getAgentConfigSchema(agentType);
 
   // M3 (SPEC-MODBUS-009 REQ-03): 실행 중 에이전트의 설정 탭에서 modbus-client 의 devices
@@ -1925,7 +1924,7 @@ function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
         },
       },
     );
-  }, [agentId, removeTarget, execAgent, addNotification, t]);
+  }, [agentId, removeTarget, execAgent, addNotification, t, fetchDevices]);
 
   // 편집 다이얼로그 초기값: 추가=빈 폼, 수정=기존 디바이스를 편집기 형상으로 변환(register_groups 를
   // function_code 기준 영역별로 재구성).

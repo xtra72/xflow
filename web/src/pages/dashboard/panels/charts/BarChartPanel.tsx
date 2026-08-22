@@ -33,7 +33,8 @@ import {
   toNumber,
 } from './chartChannelUtils';
 import { reduceAllSeries } from './seriesReduce';
-import { applyMultiOutputLimit, MultiOutputTruncationNotice } from './SeriesTileGrid';
+import { MultiOutputTruncationNotice } from './SeriesTileGrid';
+import { applyMultiOutputLimit } from './multiOutputLimit';
 import { useChartChannel } from './useChartChannel';
 import { type StoreSeriesStyle } from './useStoreChartData';
 import { resolvePanelSourceBinding } from './panelDataSource';

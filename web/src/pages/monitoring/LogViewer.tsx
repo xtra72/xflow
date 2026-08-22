@@ -23,9 +23,6 @@ export interface LogEntry {
   componentName?: string;
 }
 
-// 최대 보관 로그 수
-const MAX_ENTRIES = 10_000;
-
 // 페이지 크기 옵션
 const PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
 
@@ -384,16 +381,4 @@ export default function LogViewer({ entries }: LogViewerProps) {
       </div>
     </div>
   );
-}
-
-/**
- * 로그 배열에 새 항목을 추가하면서 MAX_ENTRIES 제한을 적용한다.
- * MonitoringPage에서 상태 업데이트에 사용할 유틸리티 함수.
- */
-export function appendLog(
-  prev: LogEntry[],
-  entry: LogEntry,
-): LogEntry[] {
-  const next = [...prev, entry];
-  return next.length > MAX_ENTRIES ? next.slice(next.length - MAX_ENTRIES) : next;
 }

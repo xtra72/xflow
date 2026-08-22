@@ -13,7 +13,7 @@ import {
   storeColumnsStorageKey,
   STORE_COLUMNS,
   type StoreColumnId,
-} from './storeColumns';
+} from './storeColumnsModel';
 
 describe('STORE_COLUMNS 레지스트리', () => {
   it('논리적 기본 순서를 정의한다', () => {

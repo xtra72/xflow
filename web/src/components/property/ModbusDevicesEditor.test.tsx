@@ -19,7 +19,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 
-import { ModbusDevicesEditor, parseBulkGroups } from './ModbusDevicesEditor';
+import { ModbusDevicesEditor } from './ModbusDevicesEditor';
+import { parseBulkGroups } from './modbusDevicesModel';
 
 vi.mock('@/lib/i18n', async () => {
   const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;

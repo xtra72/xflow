@@ -11,7 +11,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
-import { TagFilterChips, matchesTagFilter, makeFilterId } from './TagFilterChips';
+import { TagFilterChips } from './TagFilterChips';
+import { matchesTagFilter, makeFilterId } from './tagFilterUtils';
 import type { StoreTagPair } from '@/services/api/store';
 
 // i18n: 실제 ko 번역을 반환하는 mock — 컴포넌트가 useTranslation 을 쓰지만

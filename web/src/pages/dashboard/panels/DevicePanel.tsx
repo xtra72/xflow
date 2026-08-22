@@ -82,7 +82,10 @@ export default function DevicePanel({
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
 
   // 컬럼 가시성 상태 (스토어 config에서 읽기)
-  const visibleColumns = (_config.visibleColumns as DeviceColumnKey[]) ?? [...ALL_DEVICE_COLUMNS];
+  const visibleColumns = useMemo(
+    () => (_config.visibleColumns as DeviceColumnKey[]) ?? [...ALL_DEVICE_COLUMNS],
+    [_config.visibleColumns],
+  );
 
   // 타이틀 상태 (prop 기반)
   const panelColor = _config.panelColor as string | undefined;

@@ -30,7 +30,7 @@ import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTargetParam } from '@/hooks/useTargetParam';
 import PermissionButton from '@/components/common/PermissionButton';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
-import { TargetProvider } from '@/lib/remote/TargetContext';
+import { TargetProvider } from '@/lib/remote/TargetProvider';
 import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
 import { getDeviceTypeLabel, getDeviceDisplayName } from '@/lib/utils/deviceLabels';
 import { cn } from '@/lib/utils/cn';
@@ -184,7 +184,7 @@ export default function DeviceListPage({
   const { columns: visibleColumns, setColumns } = useDeviceColumns();
   const [showColumnsMenu, setShowColumnsMenu] = useState(false);
 
-  const devices: DeviceInfo[] = data?.data ?? [];
+  const devices: DeviceInfo[] = useMemo(() => data?.data ?? [], [data?.data]);
 
   // 클라이언트 측 필터링
   const filteredDevices = useMemo(() => {

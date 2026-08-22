@@ -28,7 +28,7 @@ import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTargetParam } from '@/hooks/useTargetParam';
 import PermissionButton from '@/components/common/PermissionButton';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
-import { TargetProvider } from '@/lib/remote/TargetContext';
+import { TargetProvider } from '@/lib/remote/TargetProvider';
 import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
 import { downloadJSON } from '@/lib/utils/download';
 import { exportAllFlows, updateFlow } from '@/services/api/flowService';
@@ -160,7 +160,7 @@ export default function FlowListPage({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  const allFlows: FlowInfo[] = flowsData?.data ?? [];
+  const allFlows: FlowInfo[] = useMemo(() => flowsData?.data ?? [], [flowsData?.data]);
 
   // 클라이언트 측 필터링
   const filteredFlows = useMemo(() => {

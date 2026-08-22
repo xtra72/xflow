@@ -7,7 +7,8 @@ import { X } from 'lucide-react';
 import { useCreateAgent } from '@/hooks/useAgent';
 import { AGENT_TYPES, getAgentConfigDefaults, getAgentConfigSchema } from '@/config/agentSchemas';
 import { DynamicForm } from '@/components/property/DynamicForm';
-import { TWO_COL_CONFIG, TwoColumnConfigLayout } from './twoColumnConfig';
+import { TwoColumnConfigLayout } from './twoColumnConfig';
+import { TWO_COL_CONFIG } from './twoColumnConfigMap';
 import { useTranslation } from '@/lib/i18n';
 
 interface CreateAgentModalProps {

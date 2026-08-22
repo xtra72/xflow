@@ -36,7 +36,7 @@ vi.mock('@/services/ws/chartChannel', () => ({
   },
 }));
 
-import { TargetProvider } from '@/lib/remote/TargetContext';
+import { TargetProvider } from '@/lib/remote/TargetProvider';
 import { LOCAL_TARGET } from '@/lib/remote/target';
 
 import { useChartChannel } from './useChartChannel';

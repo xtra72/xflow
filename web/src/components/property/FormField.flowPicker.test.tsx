@@ -56,7 +56,7 @@ vi.mock('@/hooks/useRemote', () => ({
 // TargetProvider/useTargetContext 는 실제 구현을 사용한다(컨텍스트 전파 검증 목적).
 import { FormField } from './FormField';
 import { I18nProvider } from '@/lib/i18n';
-import { TargetProvider } from '@/lib/remote/TargetContext';
+import { TargetProvider } from '@/lib/remote/TargetProvider';
 
 const REMOTE_TARGET: ResourceTarget = { type: 'remote', instanceId: 'node-a' };
 

@@ -6,7 +6,8 @@ import prettier from 'eslint-config-prettier';
 
 export default tseslint.config(
   // Global ignores
-  { ignores: ['dist/', 'node_modules/'] },
+  // tsc -b 가 vite.config.ts 에서 생성하는 빌드 산출물(.gitignore 대상)은 린트 제외
+  { ignores: ['dist/', 'node_modules/', 'vite.config.js', 'vite.config.d.ts'] },
 
   // Base JS recommended rules
   js.configs.recommended,

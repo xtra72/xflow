@@ -20,12 +20,12 @@ import { Eraser, RefreshCw } from 'lucide-react';
 import { useAgent, useAgents } from '@/hooks/useAgent';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
+import { ColumnSettingsMenu } from '@/pages/agents/storeColumns';
 import {
-  ColumnSettingsMenu,
   STORE_COLUMNS,
   type StoreColumn,
   type StoreColumnId,
-} from '@/pages/agents/storeColumns';
+} from '@/pages/agents/storeColumnsModel';
 import {
   applyColumnFilters,
   sortEntries,

@@ -14,7 +14,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { TargetProvider } from '@/lib/remote/TargetContext';
+import { TargetProvider } from '@/lib/remote/TargetProvider';
 import type { ResourceTarget } from '@/lib/remote/target';
 import type { AgentInfo } from '@/types/agent';
 

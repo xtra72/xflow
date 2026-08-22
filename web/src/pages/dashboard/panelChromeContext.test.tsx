@@ -3,11 +3,8 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-import {
-  PanelChromeProvider,
-  readPanelChrome,
-  usePanelTitleVisible,
-} from './panelChromeContext';
+import { PanelChromeProvider } from './PanelChromeProvider';
+import { readPanelChrome, usePanelTitleVisible } from './panelChromeContext';
 
 function Probe() {
   return <span data-testid="probe">{usePanelTitleVisible() ? 'shown' : 'hidden'}</span>;

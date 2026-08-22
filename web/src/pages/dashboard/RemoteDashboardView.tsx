@@ -29,7 +29,7 @@ import {
   remoteEditErrorMessage,
 } from '@/lib/remote/editError';
 import type { ResourceTarget } from '@/lib/remote/target';
-import { TargetProvider } from '@/lib/remote/TargetContext';
+import { TargetProvider } from '@/lib/remote/TargetProvider';
 import type { RemoteDashboardScope } from '@/services/api/remoteService';
 import {
   useUIStore,

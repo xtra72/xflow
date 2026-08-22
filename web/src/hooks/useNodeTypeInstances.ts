@@ -22,7 +22,7 @@ export interface NodeInstance {
  */
 export function useNodeTypeInstances(nodeType: string, enabled = true) {
   const { data: flowsData, isLoading: flowsLoading } = useFlows();
-  const flows = flowsData?.data ?? [];
+  const flows = useMemo(() => flowsData?.data ?? [], [flowsData?.data]);
 
   // running 플로우만 상태 조회
   const runningFlows = useMemo(

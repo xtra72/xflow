@@ -31,7 +31,7 @@ import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTargetParam } from '@/hooks/useTargetParam';
 import { useTranslation } from '@/lib/i18n';
 import { omitMaskedSecrets } from '@/lib/remote/secretOmission';
-import { TargetProvider } from '@/lib/remote/TargetContext';
+import { TargetProvider } from '@/lib/remote/TargetProvider';
 import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
 import { downloadJSON } from '@/lib/utils/download';
 import { exportAllAgents } from '@/services/api/agentService';
@@ -144,7 +144,7 @@ export default function AgentListPage({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  const allAgents: AgentInfo[] = data?.data ?? [];
+  const allAgents: AgentInfo[] = useMemo(() => data?.data ?? [], [data?.data]);
 
   /** 에이전트의 표시 상태를 결정한다 (connected/disconnected/error). */
   const getDisplayStatus = (agent: AgentInfo): string => {

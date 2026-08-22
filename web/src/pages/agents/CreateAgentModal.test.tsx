@@ -11,7 +11,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import CreateAgentModal from './CreateAgentModal';
-import { TWO_COL_CONFIG } from './twoColumnConfig';
+import { TWO_COL_CONFIG } from './twoColumnConfigMap';
 
 // 생성 뮤테이션 스텁(reset 은 open effect 에서 호출됨).
 vi.mock('@/hooks/useAgent', () => ({

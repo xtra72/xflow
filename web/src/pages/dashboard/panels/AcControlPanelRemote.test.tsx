@@ -34,7 +34,7 @@ vi.mock('@/lib/i18n', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 
-import { TargetProvider } from '@/lib/remote/TargetContext';
+import { TargetProvider } from '@/lib/remote/TargetProvider';
 
 import AcControlPanel from './AcControlPanel';
 

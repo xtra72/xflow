@@ -11,8 +11,8 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import {
   ModbusRwCommandSetEditor,
   ModbusControlCommandSetEditor,
-  parseValuesInput,
 } from './ModbusCommandSetEditor';
+import { parseValuesInput } from './modbusCommandSetValues';
 
 vi.mock('@/lib/i18n', async () => {
   const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;

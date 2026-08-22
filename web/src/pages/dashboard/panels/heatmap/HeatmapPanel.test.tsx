@@ -35,7 +35,7 @@ vi.mock('@/lib/i18n', () => ({
 }));
 
 import HeatmapPanel from './HeatmapPanel';
-import { PanelChromeProvider } from '../../panelChromeContext';
+import { PanelChromeProvider } from '../../PanelChromeProvider';
 import { heatmapSensorId } from './sensorIdentity';
 import { useUIStore } from '@/stores/uiStore';
 

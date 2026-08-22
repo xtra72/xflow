@@ -6,11 +6,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 
-import {
-  RegisterRemapEditor,
-  materializeTemplate,
-  parseBulkRules,
-} from './RegisterRemapEditor';
+import { RegisterRemapEditor } from './RegisterRemapEditor';
+import { materializeTemplate, parseBulkRules } from './registerRemapModel';
 
 vi.mock('@/lib/i18n', async () => {
   const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;

@@ -51,7 +51,7 @@ import PieChartPanel from './panels/charts/PieChartPanel';
 import TablePanel from './panels/charts/TablePanel';
 import HeatmapPanel from './panels/heatmap/HeatmapPanel';
 import ResourceWidget from './widgets/ResourceWidget';
-import { PanelChromeProvider } from './panelChromeContext';
+import { PanelChromeProvider } from './PanelChromeProvider';
 
 /** 패널 타입별 아이콘 매핑(플레이스홀더 패널용). */
 const PANEL_TYPE_ICONS: Partial<Record<PanelType, React.ReactNode>> = {

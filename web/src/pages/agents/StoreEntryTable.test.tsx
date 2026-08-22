@@ -30,7 +30,7 @@ vi.mock('@/hooks/useAgent', () => ({
 }));
 
 import { StoreEntryTable } from './StoreEntryTable';
-import { defaultVisibleColumns, renderedColumns } from './storeColumns';
+import { defaultVisibleColumns, renderedColumns } from './storeColumnsModel';
 
 const entries: Record<string, unknown>[] = [
   { key: 'k-static', value: 10, namespace: 'default', field: 'temperature', updated_at: new Date().toISOString() },

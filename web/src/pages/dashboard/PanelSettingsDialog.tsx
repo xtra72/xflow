@@ -99,8 +99,9 @@ import { uploadDashboardAsset } from '@/services/api/dashboardAssetService';
 import { useFloorPlanSources } from './panels/heatmap/useFloorPlanSources';
 import { useFloorPlanAspect } from './panels/heatmap/useFloorPlanAspect';
 import { gridCellSize, gridHeightForAspect, panelPixelAspect } from './gridGeometry';
-import { PanelChromeProvider } from './panelChromeContext';
-import ColorSwatchButton, { COLOR_PALETTE } from './colorSwatchPalette';
+import { PanelChromeProvider } from './PanelChromeProvider';
+import ColorSwatchButton from './colorSwatchPalette';
+import { COLOR_PALETTE } from './colorPalette';
 import {
   ChartChannelSection,
   StatChartSection,

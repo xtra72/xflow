@@ -237,7 +237,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
 
   // 에이전트 목록 조회 (hooks 규칙상 조건부 반환 이전에 호출)
   const { data: agentsResult } = useAgents();
-  const agents = agentsResult?.data ?? [];
+  const agents = useMemo(() => agentsResult?.data ?? [], [agentsResult?.data]);
 
   // 로컬 드래프트 상태: 변경 사항을 여기에 누적하고 적용/취소로 확정
   const [draft, setDraft] = useState<Record<string, unknown>>(originalData);

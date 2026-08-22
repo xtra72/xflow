@@ -8,18 +8,7 @@ import { X } from 'lucide-react';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
-export const COLOR_PALETTE = [
-  '#3b82f6', // blue
-  '#10b981', // emerald
-  '#f59e0b', // amber
-  '#ef4444', // red
-  '#8b5cf6', // violet
-  '#ec4899', // pink
-  '#06b6d4', // cyan
-  '#f97316', // orange
-  '#64748b', // slate
-  '#94a3b8', // slate-400
-];
+import { COLOR_PALETTE } from './colorPalette';
 
 interface ColorSwatchButtonProps {
   color: string | undefined;

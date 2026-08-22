@@ -62,7 +62,10 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
 
   // 패널 설정 (멀티-대시보드 패널 config에서 읽기)
   const title = panelConfig?.title ?? t('dashboard.agents');
-  const visibleColumns = (panelConfig?.config?.visibleColumns as AgentColumnKey[]) ?? [...ALL_AGENT_COLUMNS];
+  const visibleColumns = useMemo(
+    () => (panelConfig?.config?.visibleColumns as AgentColumnKey[]) ?? [...ALL_AGENT_COLUMNS],
+    [panelConfig?.config?.visibleColumns],
+  );
   const panelColor = panelConfig?.config?.panelColor as string | undefined;
   const accentElements = (panelConfig?.config?.accentElements as Record<string, string | boolean>) ?? {};
   const acColor = (group: string): string | undefined => {

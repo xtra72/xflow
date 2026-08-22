@@ -6,7 +6,7 @@
 // 방어적 파싱: 부재/손상 값은 기본값으로 폴백하고 예외를 던지지 않는다. ColumnFilter 의
 // values(Set) 는 직렬화 시 배열로, 파싱 시 Set 으로 왕복 변환한다.
 
-import type { StoreColumnId } from '@/pages/agents/storeColumns';
+import type { StoreColumnId } from '@/pages/agents/storeColumnsModel';
 import type {
   ColumnFilter,
   ColumnFilterMap,
