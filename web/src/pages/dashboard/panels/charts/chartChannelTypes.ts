@@ -42,11 +42,16 @@ export type ChartConnectionStatus =
  * 차트 패널의 데이터 소스 종류.
  *
  * - `channel`: 기존 chart-emitter WebSocket 채널 경로(기본값).
- * - `store`: Store 에이전트의 시리즈 매트릭스 폴링 경로.
+ * - `store`: Store 에이전트(인메모리 TSDB)의 시리즈 매트릭스 폴링 경로.
+ * - `tsdb`: **에이전트를 통해 접근하는 외부 시계열 DB**(InfluxDB 가 첫 백엔드).
  *
- * @spec SPEC-WEB-005
+ * memTSDB(`internal/tsdb/` · `/api/v1/tsdb/*`)는 플로우 노드 · WS 구독자용 내부
+ * 설비이며 **패널 데이터소스가 아니다** — 이 유니온에 대응 값이 없다.
+ * `SeriesDataSourceKind` 쪽 memTSDB 값은 `'memtsdb'` 다.
+ *
+ * @spec SPEC-WEB-005 · SPEC-TSDB-002 §2.1 (U1)
  */
-export type ChartDataSourceKind = 'channel' | 'store';
+export type ChartDataSourceKind = 'channel' | 'store' | 'tsdb';
 
 /**
  * Store 소스에서 조회할 단일 시리즈 참조.
@@ -190,6 +195,113 @@ export const DEFAULT_STORE_SOURCE_WINDOW = {
 >;
 
 /**
+ * TSDB 소스가 지원하는 백엔드. 확장 지점.
+ *
+ * 백엔드가 늘어도 `ChartDataSourceKind` 는 늘지 않는다 — 백엔드는 종류가 아니라
+ * TSDB 종류의 하위 축이며, 질의 라우팅의 정본은 참조된 에이전트의 실제 타입이다.
+ *
+ * @spec SPEC-TSDB-002 §2.2 (U2) · §2.18 (U11)
+ */
+export type TsdbBackend = 'influxdb';
+
+/**
+ * TSDB 시리즈 참조. **어휘는 `StoreSeriesRef` 와 동일**하며, 백엔드별 개념 대응은
+ * 쓰기 경로(`internal/node/storage_backend_*.go`)의 매핑 규약을 그대로 따른다.
+ *
+ *   key → measurement (influxdb)
+ *   field → field
+ *   tags → tags
+ *
+ * @spec SPEC-TSDB-002 §2.2 (U2)
+ */
+export interface TsdbSeriesRef {
+  /** 시리즈 키. influxdb 백엔드에서는 measurement 이름이다. */
+  key: string;
+  /**
+   * 값 필드. TSDB 소스에서는 **필수**다.
+   *
+   * `StoreSeriesRef.field` 와 달리 옵셔널이 아닌 이유는 "첫 번째 숫자 필드" 같은
+   * 폴백이 조용한 오답이기 때문이다(§2.16 #4).
+   */
+  field: string;
+  /** 시리즈 태그 필터. */
+  tags?: Record<string, string>;
+  /** 표시 별칭(미지정 시 형식/서술 표기로 폴백). */
+  alias?: string;
+  /** 라인/카테고리 색상(미지정 시 자동 팔레트). */
+  color?: string;
+  /** 라인 스타일(solid/dashed/dotted). 라인 차트 전용. */
+  stroke_style?: StrokeStyle;
+  /** 라인 두께(px). 라인 차트 전용. */
+  stroke_width?: number;
+  /** 부드러운 곡선. 라인 차트 전용. */
+  smooth?: boolean;
+}
+
+/**
+ * 외부 시계열 DB 소스 설정(`data_source === 'tsdb'` 일 때 사용).
+ *
+ * 백엔드 중립 키와 백엔드 전용 키가 한 블록에 **평탄하게 공존**한다. 이는 쓰기
+ * 경로의 선례를 따른 것이다 — `storage_write.go` 가 "백엔드 전용 키(해당 없는
+ * 백엔드는 무시)"를 같은 방식으로 다룬다. 백엔드마다 블록을 쪼개면 같은 개념이
+ * 두 형태로 존재하게 된다(§2.16 #2).
+ *
+ * @spec SPEC-TSDB-002 §2.2 (U2)
+ */
+export interface TsdbSourceConfig {
+  /**
+   * 기록된 백엔드(스냅샷). **질의 라우팅의 정본이 아니다** — 정본은 항상 참조된
+   * 에이전트의 실제 타입이다(§2.18). 이 값은 (a) 에이전트 목록이 로드되기 전
+   * 설정 UI 를 그리기 위한 낙관적 표시값이고, (b) 불일치를 감지하기 위한 대조군이다.
+   */
+  backend: TsdbBackend;
+
+  /** 에이전트의 안정적 ID(정본). @spec SPEC-WEB-006 */
+  agent_id?: string;
+  /** 에이전트 이름(표시용 스냅샷 + 하위호환 폴백). @spec SPEC-WEB-006 */
+  agent_name: string;
+
+  /** [influxdb 전용] v2 = bucket, v3 = database. 미지정이면 에이전트 기본값. */
+  bucket?: string;
+
+  /** 조회할 시리즈. 비어 있으면 소스는 비활성이다(§2.3). */
+  series: TsdbSeriesRef[];
+
+  /** 상대 시간 윈도우 길이(ms). now - time_window_ms 가 시작 시각. */
+  time_window_ms: number;
+  /** 버킷 크기(ms). */
+  interval_ms: number;
+  /** 집계 함수(UI 표기 그대로). */
+  aggregation: 'min' | 'max' | 'average' | 'first' | 'last';
+  /** 빈 버킷 처리 전략. `'avg'` 는 InfluxDB 양쪽 모두 대응물이 없어 지원하지 않는다(§2.7). */
+  fill?: '' | 'null' | 'zero' | 'previous';
+  /** 폴링 주기(ms). 미지정 시 기본값(약 5000ms)을 사용한다. */
+  refresh_interval_ms?: number;
+  /** 이름을 지정하지 않은 시리즈의 표시 이름 형식(템플릿). @spec SPEC-WEB-005 */
+  series_name_format?: string;
+}
+
+/**
+ * TSDB 소스 블록의 초기값. 사용자가 데이터 소스를 처음 TSDB 로 토글할 때 쓴다.
+ * @spec SPEC-TSDB-002 §2.2 (U2) · §2.12 (E2)
+ *
+ * 조회 창(시간창 · 인터벌 · 집계 · 폴링 주기)은 `DEFAULT_STORE_SOURCE_WINDOW` 를
+ * **전개**한다. 값을 복제하면 한쪽만 바뀔 때, 소스를 갈아탄 사용자가 조용히 다른
+ * 창을 보게 된다.
+ *
+ * `agent_name` 이 빈 문자열이고 `series` 가 빈 배열이므로 이 블록은 **비활성**이다
+ * (§2.3) — 에이전트를 고르기 전에는 조회하지 않는다.
+ */
+export function defaultTsdbSource(): TsdbSourceConfig {
+  return {
+    backend: 'influxdb',
+    agent_name: '',
+    series: [],
+    ...DEFAULT_STORE_SOURCE_WINDOW,
+  };
+}
+
+/**
  * 윈도우 단위 **구간 대표값** 함수. @spec SPEC-CHART-002 §2.2
  *
  * 한 시리즈의 시간 윈도우 타임라인 전체를 숫자 1개로 접는다. 계산 규칙은
@@ -228,6 +340,13 @@ export interface ChartPanelConfigBase {
   data_source?: ChartDataSourceKind;
   /** Store 소스 설정(data_source === 'store' 일 때 사용). @spec SPEC-WEB-005 */
   store_source?: StoreSourceConfig;
+  /**
+   * 외부 TSDB 소스 설정(data_source === 'tsdb' 일 때 사용). @spec SPEC-TSDB-002 §2.2
+   *
+   * `store_source` 와 **공존**한다 — 소스를 전환해도 다른 소스의 블록은 삭제하지
+   * 않는다(§2.12 [E2]). 되돌리기가 가능해야 사용자가 전환을 시도한다.
+   */
+  tsdb_source?: TsdbSourceConfig;
   /**
    * 윈도우 단위 구간 대표값. @spec SPEC-CHART-002 §2.1 [U1]
    *
