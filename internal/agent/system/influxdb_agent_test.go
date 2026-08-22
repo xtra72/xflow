@@ -28,6 +28,11 @@ type mockInfluxClient struct {
 	truncateBucketFunc    func(ctx context.Context, bucketRef string) error
 	listMeasurementsFunc  func(ctx context.Context, bucket string) ([]string, error)
 	deleteMeasurementFunc func(ctx context.Context, bucket, measurement string) error
+
+	// @spec SPEC-TSDB-002 §2.10 (U10) — 스키마 디스커버리 D2~D4.
+	listTagKeysFunc   func(ctx context.Context, bucket, measurement string) ([]string, error)
+	listTagValuesFunc func(ctx context.Context, bucket, measurement, tagKey string) ([]string, error)
+	listFieldKeysFunc func(ctx context.Context, bucket, measurement string) ([]string, error)
 }
 
 func (m *mockInfluxClient) Write(ctx context.Context, data []WriteData) error {
@@ -98,6 +103,27 @@ func (m *mockInfluxClient) DeleteMeasurement(ctx context.Context, bucket, measur
 		return m.deleteMeasurementFunc(ctx, bucket, measurement)
 	}
 	return nil
+}
+
+func (m *mockInfluxClient) ListTagKeys(ctx context.Context, bucket, measurement string) ([]string, error) {
+	if m.listTagKeysFunc != nil {
+		return m.listTagKeysFunc(ctx, bucket, measurement)
+	}
+	return nil, nil
+}
+
+func (m *mockInfluxClient) ListTagValues(ctx context.Context, bucket, measurement, tagKey string) ([]string, error) {
+	if m.listTagValuesFunc != nil {
+		return m.listTagValuesFunc(ctx, bucket, measurement, tagKey)
+	}
+	return nil, nil
+}
+
+func (m *mockInfluxClient) ListFieldKeys(ctx context.Context, bucket, measurement string) ([]string, error) {
+	if m.listFieldKeysFunc != nil {
+		return m.listFieldKeysFunc(ctx, bucket, measurement)
+	}
+	return nil, nil
 }
 
 // newTestInfluxDBAgent는 테스트용 InfluxDBAgent를 mock 클라이언트와 함께 생성한다.

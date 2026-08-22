@@ -268,7 +268,8 @@ func escapeFluxStringLiteral(s string) string {
 // escapeInfluxQLIdent 는 값을 InfluxQL 큰따옴표 식별자 본문으로 변환한다.
 // measurement · field · tag key 가 대상이다.
 //
-// internal/migrate/tsdbtags/client_v3.go 에 같은 뜻의 함수가 있으나 그 패키지를
+// tsdbtags 마이그레이션 패키지(internal/migrate 하위)의 client_v3.go 에 같은
+// 뜻의 함수가 있으나 그 패키지를
 // import 하지 않는다(§4.5) — 마이그레이션 도구의 좁은 인터페이스 보장을 API
 // 계층의 필요가 넓히지 않게 하기 위함이다. 대신 백슬래시까지 이스케이프한다.
 func escapeInfluxQLIdent(s string) string {
