@@ -239,7 +239,7 @@ export interface TsdbSeriesRef {
 }
 
 /**
- * 외부 시계열 DB 소스 설정(`data_source === 'tsdb'` 일 때 사용).
+ * 외부 시계열 DB 소스 설정(`data_source: 'tsdb'` 일 때 사용).
  *
  * 백엔드 중립 키와 백엔드 전용 키가 한 블록에 **평탄하게 공존**한다. 이는 쓰기
  * 경로의 선례를 따른 것이다 — `storage_write.go` 가 "백엔드 전용 키(해당 없는
@@ -341,7 +341,7 @@ export interface ChartPanelConfigBase {
   /** Store 소스 설정(data_source === 'store' 일 때 사용). @spec SPEC-WEB-005 */
   store_source?: StoreSourceConfig;
   /**
-   * 외부 TSDB 소스 설정(data_source === 'tsdb' 일 때 사용). @spec SPEC-TSDB-002 §2.2
+   * 외부 TSDB 소스 설정(data_source: 'tsdb' 일 때 사용). @spec SPEC-TSDB-002 §2.2
    *
    * `store_source` 와 **공존**한다 — 소스를 전환해도 다른 소스의 블록은 삭제하지
    * 않는다(§2.12 [E2]). 되돌리기가 가능해야 사용자가 전환을 시도한다.
