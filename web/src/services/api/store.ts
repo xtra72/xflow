@@ -32,7 +32,8 @@ import {
   type SeriesMatrixQuery,
   type SeriesSelectorFilter,
 } from './seriesDataSource';
-import { seriesDisplayName, seriesSignature } from './seriesLabels';
+import { seriesSignature } from './seriesLabels';
+import { buildSeriesMatrix } from './seriesMatrixPivot';
 
 // ---- Backend DTOs ----
 
@@ -431,7 +432,7 @@ interface KeySeries {
  *
  * 라벨이 없는 엔트리는 서명 "" 으로 묶여 "라벨 없는 단일 시리즈" 가 된다(기존 호환).
  */
-function groupEntriesBySeries(
+export function groupEntriesBySeries(
   entries: StoreQueryEntry[],
 ): Map<string, { labels: Record<string, string> | undefined; entries: StoreQueryEntry[] }> {
   const groups = new Map<
@@ -576,6 +577,7 @@ async function fetchKeySeries(
  * - 기본적으로 서버 측 집계를 사용한다(`interval_ms` + `aggregation` 전송).
  * - 서버가 4xx 로 응답하면 자동으로 클라이언트 집계 경로로 폴백한다.
  * - 개별 요청(폴백 포함)이 최종적으로 실패하면 전체 프로미스가 rejected 된다.
+ *   Store 는 `Promise.all` 이므로 한 키의 실패가 전체 실패다.
  * - `signal` 로 axios 요청 중단을 전파할 수 있다 (개별 요청 모두에 주입).
  * - 결과 매트릭스의 행은 `bucketStartMs` 오름차순으로 정렬된다.
  *
@@ -585,78 +587,27 @@ async function fetchKeySeries(
  *   - 한 key 에서 시리즈가 1개뿐이면 → store key 그대로 (기존 동작 보존).
  *   - 2개 이상이면 → `key · metric{tag=...}` 형태로 라벨을 덧붙여 구분.
  * 컬럼 순서는 요청 key 순서 → 각 key 안에서 시리즈 등장 순서를 보존한다.
+ *
+ * @spec SPEC-TSDB-002 §4.3
+ * 입력 검증 · 컬럼 구성 · 0행 자리 보존 · 버킷 합집합 피벗은 소스를 모르므로
+ * `buildSeriesMatrix` 가 소유한다. 이 함수에 남는 것은 "Store 에서 키별 시리즈를
+ * 어떻게 가져오는가" 하나뿐이다(UB1-25 — 피벗 사본을 만들지 않는다).
  */
 export async function queryStoreMatrix(
   agentName: string,
   params: SeriesMatrixQuery,
   signal?: AbortSignal,
 ): Promise<SeriesMatrix> {
-  if (params.keys.length === 0) {
-    return { columns: [], rows: [] };
-  }
-  if (params.endMs <= params.startMs) {
-    throw new Error('종료 시각은 시작 시각 이후여야 합니다');
-  }
-  if (!Number.isFinite(params.intervalMs) || params.intervalMs <= 0) {
-    throw new Error('인터벌은 양수여야 합니다');
-  }
-
   // 키별로 시리즈 배열을 병렬 조회 (서버 집계 우선, 4xx 시 폴백).
   // 같은 인덱스의 결과가 같은 요청 (key, seriesFilters[idx]) 에 대응한다.
   // 시리즈별 선택 시 같은 key 가 metric/tags 가 다른 채로 여러 인덱스에 중복될 수 있다.
-  const perKeySeries: KeySeries[][] = await Promise.all(
-    params.keys.map((key, idx) =>
-      fetchKeySeries(agentName, key, params, signal, params.seriesFilters?.[idx]),
+  return buildSeriesMatrix(params, (p) =>
+    Promise.all(
+      p.keys.map((key, idx) =>
+        fetchKeySeries(agentName, key, p, signal, p.seriesFilters?.[idx]),
+      ),
     ),
   );
-
-  // 같은 key 가 몇 번 요청되었는지 — 시리즈별 선택으로 한 key 가 여러 인덱스에
-  // 나뉘어 오면 컬럼명이 충돌하므로 라벨 표기를 강제한다.
-  const keyRequestCount = new Map<string, number>();
-  for (const key of params.keys) {
-    keyRequestCount.set(key, (keyRequestCount.get(key) ?? 0) + 1);
-  }
-
-  // 요청 순서를 보존하며 모든 시리즈를 컬럼으로 평탄화한다.
-  // 한 key 의 시리즈가 2개 이상이거나, 같은 key 가 여러 인덱스로 중복 요청되면
-  // 라벨 표기를 덧붙여 컬럼명을 구분한다.
-  const columns: string[] = [];
-  const columnBuckets: Array<Map<number, number>> = [];
-  params.keys.forEach((key, idx) => {
-    const seriesList = perKeySeries[idx] ?? [];
-    // 데이터가 전혀 없는 key 도 단일 컬럼(전부 null)으로 노출해 기존 동작을 보존한다.
-    if (seriesList.length === 0) {
-      columns.push(key);
-      columnBuckets.push(new Map<number, number>());
-      return;
-    }
-    const withLabel = seriesList.length > 1 || (keyRequestCount.get(key) ?? 0) > 1;
-    for (const series of seriesList) {
-      columns.push(seriesDisplayName(key, series.labels, withLabel));
-      columnBuckets.push(series.buckets);
-    }
-  });
-
-  // 전체 버킷 시작 시각의 합집합을 수집하고 정렬한다.
-  const allBuckets = new Set<number>();
-  for (const m of columnBuckets) {
-    for (const ts of m.keys()) allBuckets.add(ts);
-  }
-  const sortedBuckets = Array.from(allBuckets).sort((a, b) => a - b);
-
-  // 각 버킷에 대해 컬럼 순서대로 값을 배치한다 (없으면 null).
-  const rows: SeriesMatrix['rows'] = sortedBuckets.map((bucketStartMs) => ({
-    bucketStartMs,
-    values: columnBuckets.map((m) => {
-      const v = m.get(bucketStartMs);
-      return v === undefined ? null : v;
-    }),
-  }));
-
-  return {
-    columns,
-    rows,
-  };
 }
 
 // ---- React Query hook ----
