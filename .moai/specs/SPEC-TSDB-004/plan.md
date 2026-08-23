@@ -58,7 +58,7 @@ v2 는 httptest 왕복이 가능하다(`influxdb_schema_test.go` 의 `TestInflux
 | 4.2 | `buildSeriesQuerySpec` 가 `group_by` 를 스펙으로 옮김 | `internal/api/handler/influxdb_series.go` |
 | 4.3 | `tags` ∩ `group_by` ≠ ∅ 이면 400 (UB1-3) | 동일 |
 | 4.4 | `buildInfluxSeriesEntries` — `labels = {__field__} ∪ req.Tags ∪ bucket.Tags` | 동일 |
-| 4.5 | 그룹 수 상한 + `truncated` 신호 (OQ2 값) | 동일 |
+| 4.5 | **상한 없음 확인** — group by 를 이유로 자르는 경로가 없고 `truncated` 가 그 때문에 켜지지 않음을 테스트로 고정 | 동일 |
 | 4.6 | 라우트 권한 커버리지 무변경 확인 | `route_permission_coverage_test.go` |
 
 **검증**: `go test ./internal/api/...`. AC-09 ~ AC-12 · AC-14 통과.
@@ -84,7 +84,7 @@ v2 는 httptest 왕복이 가능하다(`influxdb_schema_test.go` 의 `TestInflux
 | 6.2 | `fetchTsdbSeries` 요청 본문에 `group_by` 전달 | `web/src/services/api/tsdbSource.ts` |
 | 6.3 | 그룹 키 다중 선택 UI (태그 키 디스커버리 D2 재사용, 자유 입력 허용) | `web/src/pages/dashboard/TsdbSourceSection.tsx` |
 | 6.4 | group by 항목 시각 구분 + 마지막 질의 그룹 수 표시 (S1) | 동일 |
-| 6.5 | 절단 배너 + 좁히는 방법 안내 (U7) | 동일 |
+| 6.5 | 그룹 목록 페이지네이션 + 전체 그룹 수 표시 + 많을 때 좁히는 방법 안내 (U7) | 동일 |
 | 6.6 | i18n ko/en 대칭 | `web/src/lib/i18n/` |
 
 **검증**: `npm test -- TsdbSourceSection`. AC-01 · AC-02 · AC-18 · AC-19 통과.
@@ -108,7 +108,7 @@ v2 는 httptest 왕복이 가능하다(`influxdb_schema_test.go` 의 `TestInflux
 | `matrixToEntries` 변경이 Store 패널을 깨뜨림 | 기존 대시보드 전량 표시 이름·색 붕괴 | M5.2·M5.3 안전망을 동작 변경 **전에** 세움 + AC-16 |
 | v3 `GROUP BY` 부분 지정에서 태그가 안 드러남 | v3 group by 불가 | M1 실측을 맨 앞에 배치 + 대체 경로(`GROUP BY *` 후 접기) 준비 |
 | 그룹 순서 변동으로 폴링마다 색이 바뀜 | 사용자가 라인을 추적 못함 | 태그 값 사전순 안정 정렬(M3.4) + AC-17 |
-| 고카디널리티 태그로 수백 시리즈 렌더 | 브라우저 정지 | 서버 상한 + `truncated` + 좁히기 안내(M4.5) |
+| 고카디널리티 태그로 수천 시리즈 렌더 | 질의 부하 · 페이로드 · 브라우저 정지 | **수용된 잔여 위험**(spec.md §2.7). 완화는 그룹 수 표시 + 좁히기 안내 + 열거 표면 페이지네이션(M6.4·M6.5)뿐이며 질의 부하는 줄지 않는다 |
 | `GROUP BY` 에 태그를 더해 버킷 경계가 바뀜 | 소스 간 시각 불일치 | `time(d)` 첫 자리 유지 + AC-08 이 기존 교차검증 테스트를 group by 축으로 확장 |
 | `group_by` 빈 경로가 미묘하게 달라짐 | 저장된 config 렌더 회귀 | 바이트 단위 무변경 특성화 테스트(M2.5) + AC-06 · AC-13 |
 
@@ -147,7 +147,8 @@ cd web && npm run build && npm test && npx tsc --noEmit && npm run lint
 
 - [ ] spec.md 의 U1~U9 · E1 · S1 · UB1 전부 구현
 - [ ] acceptance.md 의 AC-01 ~ AC-19 전부 통과
-- [ ] OQ1 · OQ2 · OQ3 처분이 spec.md HISTORY 에 기록
+- [x] OQ1 · OQ2 처분이 spec.md HISTORY 에 기록 (v0.2.0)
+- [ ] OQ3 처분이 spec.md HISTORY 에 기록
 - [ ] `group_by` 없는 경로의 쿼리 문자열 · 응답 · 렌더 결과 무변경 (특성화 테스트)
 - [ ] Store 경로 렌더 결과 무변경 (AC-16)
 - [ ] 신규·수정 파일 커버리지 85% 이상 — **프론트와 Go 양쪽 모두 측정** (SPEC-TSDB-002 M7.2 가 프론트만 측정해 Go 미달을 놓친 선례)
