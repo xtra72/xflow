@@ -92,6 +92,25 @@ export interface SeriesMatrix {
     bucketStartMs: number;
     values: Array<number | null>;
   }>;
+  /**
+   * `columns[j]` 가 요청의 몇 번째 키에서 나왔는지(SPEC-TSDB-004 §4.1).
+   *
+   * group by 는 요청 1건이 컬럼 N개를 만들므로 "컬럼 j ↔ 시리즈 j" 위치 대응이
+   * 깨진다. 출처 인덱스를 함께 실어 표시 메타데이터(alias · color · 선 스타일)를
+   * 정확히 귀속시킨다. 여러 컬럼이 같은 인덱스를 가리키면 그 인덱스는 group by
+   * 항목이다.
+   *
+   * **옵셔널이다.** 생략하면 소비자가 종전 위치 정렬로 되돌아가므로, 이 필드를
+   * 만들지 않는 생산자의 동작은 변하지 않는다.
+   */
+  columnOrigins?: number[];
+  /**
+   * `columns[j]` 시리즈의 원본 labels(`__field__` + tags).
+   *
+   * 표시 이름을 그룹의 실제 태그 값으로 만들 때 쓴다. 이름 문자열에서 태그를
+   * 역파싱하는 방식은 값에 구분자가 들어가면 깨지므로 구조를 유지한 채 전달한다.
+   */
+  columnLabels?: Array<Record<string, string> | undefined>;
 }
 
 /**

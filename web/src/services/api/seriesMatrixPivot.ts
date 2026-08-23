@@ -84,18 +84,27 @@ export async function buildSeriesMatrix(
   // 요청 순서를 보존하며 모든 시리즈를 컬럼으로 평탄화한다.
   const columns: string[] = [];
   const columnBuckets: Array<Map<number, number>> = [];
+  // 컬럼 j 가 어느 요청 인덱스에서 나왔는지 함께 기록한다(SPEC-TSDB-004 §4.1).
+  // group by 는 요청 1건이 컬럼 N개를 만들므로 위치 대응이 깨지며, 소비자가
+  // 표시 메타데이터를 귀속시키려면 이 축이 필요하다.
+  const columnOrigins: number[] = [];
+  const columnLabels: Array<Record<string, string> | undefined> = [];
   params.keys.forEach((key, idx) => {
     const seriesList = perKeySeries[idx] ?? [];
     // 데이터가 전혀 없는 key 도 단일 컬럼(전부 null)으로 노출해 기존 동작을 보존한다.
     if (seriesList.length === 0) {
       columns.push(key);
       columnBuckets.push(new Map<number, number>());
+      columnOrigins.push(idx);
+      columnLabels.push(undefined);
       return;
     }
     const withLabel = seriesList.length > 1 || (keyRequestCount.get(key) ?? 0) > 1;
     for (const series of seriesList) {
       columns.push(seriesDisplayName(key, series.labels, withLabel));
       columnBuckets.push(series.buckets);
+      columnOrigins.push(idx);
+      columnLabels.push(series.labels);
     }
   });
 
@@ -118,5 +127,7 @@ export async function buildSeriesMatrix(
   return {
     columns,
     rows,
+    columnOrigins,
+    columnLabels,
   };
 }

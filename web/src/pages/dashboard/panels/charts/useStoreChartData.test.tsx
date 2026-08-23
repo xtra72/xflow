@@ -587,3 +587,188 @@ describe('useStoreChartData tag 모드', () => {
     await flushMicrotasks();
   });
 });
+
+// ===== AC-16 안전망 — Store 경로 렌더 결과 무변경 (SPEC-TSDB-004 M5) =====
+//
+// matrixToEntries 는 Store 와 TSDB 가 **공유**한다. M5 가 위치 정렬을 라벨/출처
+// 기반 귀속으로 바꾸므로, 바꾸기 **전에** 현재 Store 동작을 골든으로 고정한다.
+// 이 describe 가 깨지면 기존 대시보드의 표시 이름·색·선스타일이 흔들린 것이다.
+describe('matrixToEntries — AC-16 Store 렌더 무변경 골든', () => {
+  const storeMatrix: SeriesMatrix = {
+    columns: ['room:temp', 'room:humidity', 'room:co2'],
+    rows: [
+      { bucketStartMs: 1000, values: [21.5, 40, null] },
+      { bucketStartMs: 2000, values: [22.0, null, 800] },
+    ],
+  };
+
+  const storeConfig = makeConfig({
+    series: [
+      {
+        key: 'room:temp',
+        alias: '실내 온도',
+        tags: { room: '1' },
+        color: '#ff0000',
+        stroke_style: 'dashed',
+        stroke_width: 3,
+        smooth: true,
+      },
+      { key: 'room:humidity', tags: { room: '1' }, color: '#00ff00' },
+      { key: 'room:co2', data_type: 'boolean' },
+    ],
+    series_name_format: '{$.measurement}',
+  });
+
+  it('시리즈 이름 · 스타일 · boolean 판정이 현행과 같다', () => {
+    const r = matrixToEntries(storeMatrix, storeConfig);
+
+    // 1) 표시 이름 — alias 우선, 없으면 name_format, 없으면 서술 표기.
+    expect(r.seriesNames).toEqual(['실내 온도', 'room:humidity', 'room:co2']);
+
+    // 2) per-line 스타일이 위치 순서대로 귀속된다.
+    expect(r.seriesStyles.get('실내 온도')).toEqual({
+      color: '#ff0000',
+      stroke_style: 'dashed',
+      stroke_width: 3,
+      smooth: true,
+    });
+    expect(r.seriesStyles.get('room:humidity')?.color).toBe('#00ff00');
+
+    // 3) data_type='boolean' 표기.
+    expect(r.booleanSeries.has('room:co2')).toBe(true);
+    expect(r.booleanSeries.has('실내 온도')).toBe(false);
+
+    // 4) labels 에 tags 가 병합되고 name 이 마지막에 온다.
+    const temp = r.entries.find((e) => e.labels?.name === '실내 온도');
+    expect(temp?.labels).toMatchObject({ name: '실내 온도', room: '1' });
+
+    // 5) 시리즈별 타임라인은 null 을 유지(라인 gap), 평탄화는 숫자만.
+    expect(r.seriesEntries.get('room:humidity')?.map((e) => e.value)).toEqual([40, null]);
+    expect(r.entries.map((e) => e.value)).toEqual([21.5, 40, 22.0, 800]);
+    expect(r.entries.map((e) => e.timestamp)).toEqual([1000, 1000, 2000, 2000]);
+  });
+
+  it('컬럼 수 불일치 시 컬럼명 폴백이 유지된다', () => {
+    // 출처 정보가 없는 매트릭스(다른 생산자)에서는 종전 정렬 규칙이 그대로다.
+    const shorter = makeConfig({ series: [{ key: 'room:temp', alias: 'Ignored' }] });
+    const r = matrixToEntries(storeMatrix, shorter);
+    expect(r.seriesNames).toEqual(['room:temp', 'room:humidity', 'room:co2']);
+    expect(r.seriesStyles.size).toBe(0);
+  });
+});
+
+// ===== AC-15 — group by 혼재 패널 메타데이터 귀속 (SPEC-TSDB-004 M5) =====
+//
+// 종전 규칙(`aligned = columns.length === series.length`)은 패널 전체에 대한
+// 단일 불리언이었다. group by 항목 하나가 컬럼을 늘리면 등식이 깨져 같은 패널의
+// **정확 일치 항목까지** alias·color·선스타일을 전부 잃었다(UB1-7).
+describe('matrixToEntries — AC-15 group by 혼재 패널', () => {
+  // 컬럼 4개 · config 항목 2개 — 종전이라면 aligned=false 로 전부 폴백했다.
+  //   [0] 정확 일치 room:temp
+  //   [1..3] group by cpu (host=a/b/c)
+  const mixedMatrix: SeriesMatrix = {
+    columns: ['room:temp', 'cpu{host=a}', 'cpu{host=b}', 'cpu{host=c}'],
+    rows: [{ bucketStartMs: 1000, values: [21.5, 1, 2, 3] }],
+    columnOrigins: [0, 1, 1, 1],
+    columnLabels: [
+      { __field__: 'value' },
+      { __field__: 'usage', host: 'a' },
+      { __field__: 'usage', host: 'b' },
+      { __field__: 'usage', host: 'c' },
+    ],
+  };
+
+  const mixedConfig = makeConfig({
+    series: [
+      {
+        key: 'room:temp',
+        alias: '실내 온도',
+        color: '#ff0000',
+        stroke_style: 'dashed',
+        stroke_width: 3,
+      },
+      {
+        key: 'cpu',
+        field: 'usage',
+        alias: 'CPU',
+        color: '#0000ff',
+        stroke_style: 'dotted',
+        stroke_width: 2,
+        smooth: true,
+      },
+    ],
+  });
+
+  it('정확 일치 항목이 메타데이터를 그대로 유지한다 (UB1-7)', () => {
+    const r = matrixToEntries(mixedMatrix, mixedConfig);
+
+    expect(r.seriesNames[0]).toBe('실내 온도');
+    expect(r.seriesStyles.get('실내 온도')).toEqual({
+      color: '#ff0000',
+      stroke_style: 'dashed',
+      stroke_width: 3,
+      smooth: undefined,
+    });
+  });
+
+  it('group by 파생 컬럼은 그룹 태그 값으로 서로 다른 이름을 갖는다', () => {
+    const r = matrixToEntries(mixedMatrix, mixedConfig);
+    const groupNames = r.seriesNames.slice(1);
+
+    // 세 이름이 서로 달라야 한다 — 같으면 한 줄로 병합되어 그룹이 사라진다.
+    expect(new Set(groupNames).size).toBe(3);
+    for (const [i, host] of ['a', 'b', 'c'].entries()) {
+      expect(groupNames[i]).toContain(host);
+    }
+  });
+
+  it('group by 파생 컬럼은 항목 color 를 쓰지 않고 선 모양은 공유한다 (OQ1)', () => {
+    const r = matrixToEntries(mixedMatrix, mixedConfig);
+
+    for (const name of r.seriesNames.slice(1)) {
+      const style = r.seriesStyles.get(name);
+      expect(style?.color).toBeUndefined();
+      // 선 모양은 "이 항목의 선 모양" 이므로 전 그룹이 공유한다.
+      expect(style?.stroke_style).toBe('dotted');
+      expect(style?.stroke_width).toBe(2);
+      expect(style?.smooth).toBe(true);
+    }
+  });
+
+  it('group by 파생 컬럼의 labels 에 그룹 태그가 실린다', () => {
+    const r = matrixToEntries(mixedMatrix, mixedConfig);
+    const hosts = r.entries
+      .filter((e) => e.labels?.host !== undefined)
+      .map((e) => e.labels!.host);
+    expect(new Set(hosts)).toEqual(new Set(['a', 'b', 'c']));
+  });
+
+  it('출처 정보가 없으면 종전 위치 정렬로 되돌아간다 (하위 호환)', () => {
+    // columnOrigins 를 뺀 같은 매트릭스 — 컬럼 4 vs 시리즈 2 이므로 폴백.
+    const noOrigins: SeriesMatrix = {
+      columns: mixedMatrix.columns,
+      rows: mixedMatrix.rows,
+    };
+    const r = matrixToEntries(noOrigins, mixedConfig);
+    expect(r.seriesNames).toEqual(mixedMatrix.columns);
+    expect(r.seriesStyles.size).toBe(0);
+  });
+
+  it('group by 항목만 있는 패널도 정상 동작한다', () => {
+    const onlyGroup: SeriesMatrix = {
+      columns: ['cpu{host=a}', 'cpu{host=b}'],
+      rows: [{ bucketStartMs: 1000, values: [1, 2] }],
+      columnOrigins: [0, 0],
+      columnLabels: [
+        { __field__: 'usage', host: 'a' },
+        { __field__: 'usage', host: 'b' },
+      ],
+    };
+    const cfg = makeConfig({
+      series: [{ key: 'cpu', field: 'usage', color: '#0000ff' }],
+    });
+    const r = matrixToEntries(onlyGroup, cfg);
+    expect(new Set(r.seriesNames).size).toBe(2);
+    for (const n of r.seriesNames) expect(r.seriesStyles.get(n)?.color).toBeUndefined();
+  });
+});

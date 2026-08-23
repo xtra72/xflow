@@ -29,6 +29,11 @@ import { fetchStoreKeys, storeSeriesDataSource } from '@/services/api/store';
 import { useAgents } from '@/hooks/useAgent';
 import { resolveStoreAgentName } from './storeAgentResolve';
 import { pickSeriesColor, storeSeriesLabel } from './chartChannelTypes';
+import {
+  METRIC_LABEL_KEY,
+  formatSeriesLabel,
+  parseSeriesLabels,
+} from '@/services/api/seriesLabels';
 import type {
   ChartConnectionStatus,
   ChartEntry,
@@ -191,21 +196,92 @@ export function matrixToEntries(
   const seriesStyles = new Map<string, StoreSeriesStyle>();
   const booleanSeries = new Set<string>();
   const flat: ChartEntry[] = [];
-  // 컬럼 수가 요청 시리즈 수와 같을 때만 alias/tags/스타일 메타데이터를 정렬 매핑한다.
+  // 컬럼 → config 시리즈 귀속 (SPEC-TSDB-004 §4.1).
+  //
+  // 종전에는 "컬럼 수 == 시리즈 수" 일 때만 위치 순서로 매핑했다. group by 는
+  // 요청 1건이 컬럼 N개를 만들므로 그 등식이 설계상 깨지고, 등식이 패널 전체에
+  // 대한 단일 불리언이었기 때문에 group by 항목 하나가 같은 패널의 정확 일치
+  // 항목까지 메타데이터를 잃게 만들었다(UB1-7).
+  //
+  // 매트릭스가 출처 인덱스를 실어 주면 그것으로 귀속한다. 실어 주지 않는
+  // 생산자에는 종전 위치 정렬을 그대로 적용해 동작을 보존한다.
+  const origins = matrix.columnOrigins;
   const aligned = matrix.columns.length === config.series.length;
+  // 같은 출처를 가리키는 컬럼이 둘 이상이면 그 항목은 group by 로 펼쳐진 것이다.
+  const originFanout = new Map<number, number>();
+  if (origins) {
+    for (const o of origins) originFanout.set(o, (originFanout.get(o) ?? 0) + 1);
+  }
+  const refAt = (j: number): StoreSeriesRef | undefined => {
+    if (!origins) return aligned ? config.series[j] : undefined;
+    const idx = origins[j];
+    return idx === undefined ? undefined : config.series[idx];
+  };
+  // group by 파생 컬럼은 자동 팔레트를 쓴다(OQ1) — 항목의 color 는 하나뿐이라
+  // N 개 그룹에 나눠 줄 수 없다. 선 모양(stroke/smooth)은 "이 항목의 선 모양"
+  // 이라는 의미가 그룹에 그대로 이어지므로 전 그룹이 공유한다.
+  const isGroupDerived = (j: number): boolean => {
+    if (!origins) return false;
+    const idx = origins[j];
+    return idx !== undefined && (originFanout.get(idx) ?? 0) > 1;
+  };
+  // 그룹 파생 컬럼의 표시 이름은 **그 그룹의 실제 태그 값**으로 만든다.
+  // 이름 문자열에서 역파싱하지 않고 매트릭스가 실어 준 labels 를 쓴다(§4.3).
+  const effectiveRefAt = (j: number): StoreSeriesRef | undefined => {
+    const ref = refAt(j);
+    if (!ref || !isGroupDerived(j)) return ref;
+    const labels = matrix.columnLabels?.[j];
+    if (!labels) return ref;
+    const groupTags: Record<string, string> = {};
+    for (const [k, v] of Object.entries(labels)) {
+      if (k !== METRIC_LABEL_KEY) groupTags[k] = v;
+    }
+    return { ...ref, tags: { ...(ref.tags ?? {}), ...groupTags } };
+  };
 
   const seriesNames: string[] = matrix.columns.map((colName, j) => {
-    const ref = aligned ? config.series[j] : undefined;
+    const ref = effectiveRefAt(j);
     if (!ref) return colName;
     // 표시 이름은 storeSeriesLabel 한 곳에서 결정한다 — 데이터 소스 목록·히트맵 마커와
     // 같은 규칙을 쓰지 않으면 "설정한 이름과 출력이 다르다" 는 불일치가 생긴다.
     //   이름(alias) 직접 입력 → 패널의 시리즈 이름 형식 → 내장 서술 표기.
+    //
+    // 그룹 파생 컬럼에서도 alias/형식은 **템플릿으로 해석된다** — 사용자가
+    // `CPU {$.tags.host}` 처럼 쓰면 그룹마다 다른 이름이 나온다. 토큰 없는 고정
+    // 문자열이면 그룹이 전부 같은 이름을 갖게 되는데, 그 충돌은 아래에서 태그
+    // 표기를 덧붙여 해소한다. alias 를 조용히 버리지 않는 이유는 사용자가 지정한
+    // 이름이 사라지는 편이 더 놀랍기 때문이다.
     return storeSeriesLabel(ref, config.series_name_format);
   });
 
+  // 그룹 파생 이름 충돌 해소 (SPEC-TSDB-004 OQ1).
+  //
+  // 같은 출처에서 나온 컬럼들이 같은 이름을 가지면 아래 루프에서 한 시리즈로
+  // 병합되어 그룹이 통째로 사라진다. 이름이 이미 서로 다르면 손대지 않는다 —
+  // 사용자가 토큰으로 구분해 둔 이름에 군더더기를 붙이지 않는다.
+  if (origins) {
+    const byOrigin = new Map<number, number[]>();
+    origins.forEach((o, j) => {
+      const list = byOrigin.get(o);
+      if (list) list.push(j);
+      else byOrigin.set(o, [j]);
+    });
+    for (const [, cols] of byOrigin) {
+      if (cols.length < 2) continue;
+      const names = cols.map((j) => seriesNames[j]!);
+      if (new Set(names).size === names.length) continue; // 이미 구분된다
+      for (const j of cols) {
+        const labels = matrix.columnLabels?.[j];
+        if (!labels) continue;
+        const suffix = formatSeriesLabel({ metric: '', tags: parseSeriesLabels(labels).tags });
+        if (suffix) seriesNames[j] = `${seriesNames[j]} ${suffix}`;
+      }
+    }
+  }
+
   matrix.columns.forEach((_colName, j) => {
     const name = seriesNames[j]!;
-    const ref = aligned ? config.series[j] : undefined;
+    const ref = effectiveRefAt(j);
     // 예약 라벨 `name` 은 시리즈 표시 이름이다. 태그에 `name` 키가 있어도 시리즈
     // 이름이 우선하도록 tags 를 먼저 펼친 뒤 name 을 마지막에 둔다(Bar/Pie 카테고리
     // 라벨이 태그 값으로 덮어써지는 문제 방지).
@@ -216,7 +292,8 @@ export function matrixToEntries(
     if (ref?.data_type === 'boolean') booleanSeries.add(name);
     if (ref && !seriesStyles.has(name)) {
       seriesStyles.set(name, {
-        color: ref.color,
+        // OQ1 — 그룹 파생 컬럼은 color 를 비워 자동 팔레트로 넘긴다.
+        ...(isGroupDerived(j) ? {} : { color: ref.color }),
         stroke_style: ref.stroke_style,
         stroke_width: ref.stroke_width,
         smooth: ref.smooth,
