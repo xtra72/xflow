@@ -123,6 +123,10 @@ interface InfluxSeriesQueryRequest {
   measurement: string;
   field: string;
   tags?: Record<string, string>;
+  /** @spec SPEC-TSDB-004 §2.1 — 시리즈를 나눌 태그 키. */
+  group_by?: string[];
+  /** @spec SPEC-TSDB-004 §2.7.1 — 페이지로 선택된 그룹 조합. */
+  group_filter?: Array<Record<string, string>>;
   start_ms: number;
   end_ms: number;
   interval_ms: number;
@@ -151,6 +155,10 @@ export interface TsdbSeriesRequest {
   key: string;
   field: string;
   tags?: Record<string, string>;
+  /** 시리즈를 나눌 태그 키 목록. @spec SPEC-TSDB-004 §2.1 */
+  groupBy?: string[];
+  /** 페이지로 선택된 그룹 조합 목록. @spec SPEC-TSDB-004 §2.7.1 */
+  groupFilter?: Array<Record<string, string>>;
 }
 
 /** 시리즈 1건의 조회 창. 시리즈 축을 뺀 나머지 파라미터다. */
@@ -209,6 +217,12 @@ export async function fetchTsdbSeries(
     measurement: ref.key,
     field: ref.field,
     ...(hasTags ? { tags: ref.tags } : {}),
+    // 빈 배열은 싣지 않는다 — 서버에서 "비면 현행" 이므로 보내도 무해하지만,
+    // 요청 본문이 정확 일치 모드에서 본 축 도입 이전과 같아야 대조가 쉽다.
+    ...(ref.groupBy && ref.groupBy.length > 0 ? { group_by: ref.groupBy } : {}),
+    ...(ref.groupFilter && ref.groupFilter.length > 0
+      ? { group_filter: ref.groupFilter }
+      : {}),
     start_ms: params.startMs,
     end_ms: params.endMs,
     interval_ms: params.intervalMs,
@@ -299,6 +313,8 @@ export async function queryTsdbMatrix(
             key,
             field: filter?.fieldName ?? '',
             ...(filter?.tags ? { tags: filter.tags } : {}),
+            ...(filter?.groupBy ? { groupBy: filter.groupBy } : {}),
+            ...(filter?.groupFilter ? { groupFilter: filter.groupFilter } : {}),
           },
           window,
           signal,

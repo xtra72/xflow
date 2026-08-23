@@ -145,9 +145,13 @@ function buildKeysAndFilters(config: TsdbSourceConfig): {
   for (const ref of config.series) {
     keys.push(ref.key);
     const hasTags = ref.tags !== undefined && Object.keys(ref.tags).length > 0;
+    const hasGroupBy = ref.group_by !== undefined && ref.group_by.length > 0;
     seriesFilters.push({
       fieldName: ref.field,
       ...(hasTags ? { tags: ref.tags } : {}),
+      // group by 항목은 이 인덱스가 컬럼 N개로 펼쳐진다(SPEC-TSDB-004 §2.1).
+      // 소비자는 SeriesMatrix.columnOrigins 로 출처를 되짚는다.
+      ...(hasGroupBy ? { groupBy: ref.group_by } : {}),
     });
   }
   return { keys, seriesFilters };

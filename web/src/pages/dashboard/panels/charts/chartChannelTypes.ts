@@ -224,11 +224,31 @@ export interface TsdbSeriesRef {
    * 폴백이 조용한 오답이기 때문이다(§2.16 #4).
    */
   field: string;
-  /** 시리즈 태그 필터. */
+  /** 시리즈 태그 필터(사전 필터 — 어느 데이터를 볼지). */
   tags?: Record<string, string>;
+  /**
+   * 시리즈를 나눌 태그 키 목록(분할 축 — 어떻게 나눌지). @spec SPEC-TSDB-004 §2.1
+   *
+   * 비어 있거나 없으면 **정확 일치 모드**이며 이 항목은 시리즈 1개다(현행 동작).
+   * 키가 하나 이상이면 **group by 모드**이며 그 키들의 값 조합마다 시리즈가
+   * 하나씩 생긴다 — 항목 1개가 런타임에 N개로 펼쳐진다.
+   *
+   * `tags` 와 직교한다. `tags: {region:'kr'}` + `group_by: ['host']` 는
+   * "kr 리전 안에서 host 별로" 를 뜻한다. 같은 키를 양쪽에 두면 서버가 400 으로
+   * 거부한다 — 값이 고정된 키로 나누면 그룹이 항상 1개이기 때문이다.
+   *
+   * group by 모드에서 `color` 는 무시되고 자동 팔레트가 그룹마다 배정된다
+   * (색 하나를 N개 그룹에 나눠 줄 수 없다). `stroke_style`·`stroke_width`·
+   * `smooth` 는 전 그룹이 공유한다.
+   */
+  group_by?: string[];
   /** 표시 별칭(미지정 시 형식/서술 표기로 폴백). */
   alias?: string;
-  /** 라인/카테고리 색상(미지정 시 자동 팔레트). */
+  /**
+   * 라인/카테고리 색상(미지정 시 자동 팔레트).
+   *
+   * `group_by` 가 지정된 항목에서는 무시된다(위 참조).
+   */
   color?: string;
   /** 라인 스타일(solid/dashed/dotted). 라인 차트 전용. */
   stroke_style?: StrokeStyle;

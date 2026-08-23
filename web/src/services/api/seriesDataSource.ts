@@ -53,6 +53,18 @@ export interface SeriesKeysPage {
 export interface SeriesSelectorFilter {
   fieldName?: string;
   tags?: Record<string, string>;
+  /**
+   * 시리즈를 나눌 태그 키 목록. @spec SPEC-TSDB-004 §2.1
+   *
+   * 지정되면 이 인덱스가 컬럼 N개로 펼쳐진다. 소비자는 `SeriesMatrix.columnOrigins`
+   * 로 그 컬럼들이 어느 인덱스에서 나왔는지 알 수 있다.
+   */
+  groupBy?: string[];
+  /**
+   * 반환할 그룹을 태그 값 **조합 목록**으로 제한한다(시리즈축 페이지네이션).
+   * @spec SPEC-TSDB-004 §2.7.1
+   */
+  groupFilter?: Array<Record<string, string>>;
 }
 
 export interface SeriesMatrixQuery {
