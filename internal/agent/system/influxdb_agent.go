@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -539,6 +540,13 @@ func (a *InfluxDBAgent) Stats() agent.StatsSnapshot {
 type SeriesBucket struct {
 	StartMs int64
 	Value   any
+	// Tags 는 이 버킷이 속한 **그룹의 실제 태그 값**이다
+	// (SPEC-TSDB-004 §2.5 U5).
+	//
+	// SeriesQuerySpec.GroupBy 가 비어 있으면 nil 이다 — 정확 일치 모드에서
+	// 태그는 요청이 이미 알고 있으므로 응답에 실을 이유가 없고, nil 이어야
+	// 라벨 구성이 본 축 도입 이전과 같아진다(§2.9 U9).
+	Tags map[string]string
 }
 
 // InfluxSeriesQueryer 는 구조화 시리즈 질의 계약이다.
@@ -614,6 +622,11 @@ func normalizeSeriesBuckets(rows []map[string]any, spec SeriesQuerySpec) ([]Seri
 		return nil, err
 	}
 
+	// 그룹 키는 방언과 무관하게 결과 **행의 컬럼**으로 온다. v2 는 keep 이
+	// 남긴 태그 컬럼, v3 는 GROUP BY 가 드러낸 태그 컬럼이며, 이 함수는 둘을
+	// 구분하지 않는다(SPEC-TSDB-004 §2.5).
+	groupKeys := sortedGroupKeys(spec.GroupBy)
+
 	out := make([]SeriesBucket, 0, len(rows))
 	for _, row := range rows {
 		tsMs, ok := seriesRowTimeMs(row)
@@ -625,10 +638,72 @@ func normalizeSeriesBuckets(rows []map[string]any, spec SeriesQuerySpec) ([]Seri
 		out = append(out, SeriesBucket{
 			StartMs: SeriesBucketStartMs(tsMs, spec.IntervalMs),
 			Value:   seriesRowValue(row, valueColumn),
+			Tags:    seriesRowGroupTags(row, groupKeys),
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].StartMs < out[j].StartMs })
+	// 그룹 태그 값 사전순 → 버킷 시작 시각 순으로 정렬한다(§2.8 UB1-8).
+	//
+	// 그룹 순서가 폴링마다 달라지면 클라이언트의 그룹 등장 순서가 흔들리고
+	// 자동 팔레트 색이 라인 사이를 옮겨 다닌다. 사용자는 같은 색을 같은 대상으로
+	// 읽으므로 이는 조용한 오답이다. groupKeys 가 비면 서명이 전부 빈 문자열이라
+	// 시작 시각 단일 기준으로 되돌아간다 — 본 축 도입 이전과 같다.
+	sort.SliceStable(out, func(i, j int) bool {
+		si := seriesGroupSignature(out[i].Tags, groupKeys)
+		sj := seriesGroupSignature(out[j].Tags, groupKeys)
+		if si != sj {
+			return si < sj
+		}
+		return out[i].StartMs < out[j].StartMs
+	})
 	return out, nil
+}
+
+// seriesRowGroupTags 는 결과 행에서 그룹 키에 해당하는 값을 뽑는다.
+//
+// groupKeys 가 비면 nil 을 돌려준다(§2.5). 행에 그 키가 없거나 값이 문자열이
+// 아니면 **빈 문자열**로 둔다 — 태그가 결손된 시리즈를 조용히 버리면 데이터가
+// 사라지고, 별도 그룹으로 두면 사용자가 결손 사실을 볼 수 있다.
+func seriesRowGroupTags(row map[string]any, groupKeys []string) map[string]string {
+	if len(groupKeys) == 0 {
+		return nil
+	}
+	tags := make(map[string]string, len(groupKeys))
+	for _, k := range groupKeys {
+		tags[k] = seriesTagValueString(row[k])
+	}
+	return tags
+}
+
+// seriesTagValueString 은 결과 행의 태그 값을 문자열로 만든다.
+// 태그는 규약상 문자열이지만 클라이언트가 다른 타입으로 넘길 수 있으므로
+// 문자열이 아니면 표기로 대체한다(nil 은 빈 문자열).
+func seriesTagValueString(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	default:
+		return fmt.Sprint(t)
+	}
+}
+
+// seriesGroupSignature 는 그룹 정렬용 결정적 서명을 만든다.
+//
+// 구분자는 NUL 이다 — 태그 값에 등장할 수 없으므로 "a|b" 와 "a" + "|b" 가
+// 같은 서명이 되는 충돌을 막는다.
+func seriesGroupSignature(tags map[string]string, groupKeys []string) string {
+	if len(groupKeys) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, k := range groupKeys {
+		if i > 0 {
+			b.WriteByte(0)
+		}
+		b.WriteString(tags[k])
+	}
+	return b.String()
 }
 
 // seriesRowTimeMs 는 결과 행에서 시각을 epoch ms 로 뽑는다.
