@@ -342,7 +342,7 @@ CT-17 이 핵심이다. `previewSeries.ts:65` 의 `if (dataSource === 'store') {
 - [x] `data_source` 부재 · `'channel'` · `'store'` config 의 렌더 결과 무변경 — 위 CT-01 ~ CT-21 이 잠근 동작이며 전량 GREEN
 - [x] 신규 응답 DTO 0개 — `chartQueryResponse` 재사용 확인 (`influxSeriesQueryResponse|influxSeriesMatrixRow` **0건**, `influxdb_series.go` 의 `chartQueryResponse` **2건**)
 - [x] 피벗 구현 1벌 — TSDB 전용 피벗 0건 (`seriesMatrixPivot.ts` present · `allBuckets` 3건, `store.ts` **0건**, `tsdbSource.ts` **0건**)
-- [x] 신규 파일 커버리지 85% 이상 — 신규 7종 전부 충족 (최저 `TsdbSourceSection.tsx` 96.12%)
+- [x] 신규 파일 커버리지 85% 이상 — 프론트 신규 7종 전부 충족 (최저 `TsdbSourceSection.tsx` 96.12%). **Go 신규 6종은 보강 회차에 별도 측정** — 5종은 97.6~100%, `influxdb_schema.go` 는 71.5% 미달이어서 v2 어댑터 왕복 테스트 4건을 추가해 86.7% 로 충족시켰다. v3 어댑터 2종의 잔여 0% 는 Arrow Flight(gRPC) 제약에 따른 수용된 한계다 (acceptance.md §M2.4 백엔드 표)
 - [x] `npx tsc --noEmit` · eslint · `go build ./...` · `go vet ./...` · `go test ./...` 전부 통과 — 6종 전부 exit 0 (`npx eslint .` 비스코프 포함)
 - [x] i18n ko/en 대칭 + 은퇴 키 제거 — `ko-only: 0 en-only: 0`, 은퇴 placeholder 키 2종 부재. **본 SPEC 귀속 고아 키 0건**(잔여 후보 21건은 전부 선행 SPEC 귀속 → 범위 밖)
 - [x] spec.md §7 NQ1 ~ NQ5 처분이 HISTORY 에 기록 — `0.3.0` 행이 NQ1~NQ5 + NQ-rename 을 모두 기록 (M7.6 은 착수 시점에 **이미 충족**)

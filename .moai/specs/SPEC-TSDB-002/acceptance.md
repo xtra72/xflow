@@ -812,6 +812,30 @@ console.log('ko-only:',[...a].filter(k=>!b.has(k)).length,'en-only:',[...b].filt
 
 > 이 회차에 `web/vite.config.ts` 의 coverage `include` 를 확장했다. 확장 전에는 위 표의 `TsdbSourceSection.tsx` · `seriesMatrixPivot.ts` · `tsdbSource.ts` 와 수정 파일 `seriesDataSource.ts` 가 **측정 대상 밖**이었다(spec.md §HISTORY-0.5.0 (3)).
 
+#### 백엔드 신규 파일 (M7.2 보강 회차)
+
+위 표는 **프론트 신규 7종만** 측정했다. 같은 85% 게이트가 걸리는 Go 신규 파일은 이 회차에 별도 측정했다 — `go test -coverprofile ./internal/agent/system/... ./internal/api/handler/... ./internal/api/dto/...` 기준 파일 평균이다.
+
+| 신규 파일 | 평균 | 85% 기준 |
+|-----------|------|----------|
+| `internal/agent/system/influxdb_seriesenum.go` | 100.0% | 충족 |
+| `internal/agent/system/influxdb_seriesenum_v3.go` | 100.0% | 충족 |
+| `internal/agent/system/influxdb_seriesquery.go` | 99.5% | 충족 |
+| `internal/api/handler/influxdb_series.go` | 99.5% | 충족 |
+| `internal/api/handler/influxdb_seriesenum.go` | 97.6% | 충족 |
+| `internal/agent/system/influxdb_schema.go` | **71.5% → 86.7%** | 보강 후 충족 |
+
+`influxdb_schema.go` 는 보강 전 **미달**이었다. 미달분의 정체는 `influxV2Client` · `influxV3Client` 의 디스커버리 어댑터 6종으로, 쿼리 생성(`buildFlux*`)과 결과 파싱(`collectFluxSchemaValues`)은 각각 100% 였으나 **그 둘을 잇는 어댑터 자체가 한 번도 실행되지 않았다**.
+
+보강 내용 — `influxdb_schema_test.go` 에 4개 테스트 추가:
+
+- `TestInfluxSchema_V2_어댑터_왕복_D2D3D4` — httptest 인프로세스 서버로 v2 디스커버리 3종을 끝에서 끝까지 왕복. 기본 버킷 해석 · 내부 컬럼(`_`) 필터 · 쿼리에 실린 bucket 을 함께 고정한다
+- `TestInfluxSchema_V2_어댑터_인자검증_거부` — 인자 검증 실패가 네트워크 요청을 발생시키지 않음을 고정(`calls == 0`)
+- `TestInfluxSchema_V2_어댑터_질의오류_전파` — 세 경로가 서로 구분되는 맥락 메시지로 감싸는지 고정
+- `TestInfluxSchema_BuildFluxFieldKeysQuery_인자거부` — D4 생성기의 검증 분기(빈 measurement · 제어문자 bucket)
+
+> **v3 어댑터 2종(`ListTagValues` · `ListFieldKeys`)은 0% 로 남는다 — 수용된 한계다.** influxdb3-go 는 Arrow Flight(gRPC)로 질의하므로 `net/http/httptest` 서버로 대체할 수 없다(`influxdb_seriesenum_v3_test.go` 머리말이 같은 제약을 기록한다). 이들을 덮으려면 gRPC 수준의 테스트 하네스가 필요하며 본 SPEC 범위 밖이다. 파일 평균 86.7% 는 이 잔여를 포함한 값이다.
+
 ### M2.5 i18n 은퇴 키 (M7.4)
 
 은퇴 대상이던 placeholder 키 `dashboard.chart.dataSourceTsdbTitle` · `dataSourceTsdbBody` 는 **이미 제거되어 있다**(M6 커밋 `bf461774`). ko/en 양쪽에서 0건이다.
