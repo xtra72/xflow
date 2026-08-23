@@ -162,12 +162,12 @@ cd web && npm run build && npm test && npx tsc --noEmit && npm run lint
 
 ## 6. 완료 정의 (Definition of Done)
 
-- [ ] spec.md 의 U1~U9 · E1 · S1 · UB1 전부 구현
+- [x] spec.md 의 U1~U9 · E1 · S1 · UB1 전부 구현 — M1~M6c 완료
 - [ ] acceptance.md 의 AC-01 ~ AC-19 전부 통과
 - [x] OQ1 · OQ2 처분이 spec.md HISTORY 에 기록 (v0.2.0)
 - [x] OQ3 처분이 spec.md HISTORY 에 기록 (v0.3.0, m1-probe.md)
-- [ ] `group_by` 없는 경로의 쿼리 문자열 · 응답 · 렌더 결과 무변경 (특성화 테스트)
-- [ ] Store 경로 렌더 결과 무변경 (AC-16)
+- [x] `group_by` 없는 경로의 쿼리 문자열 · 응답 · 렌더 결과 무변경 — 바이트 무변경 테스트(v2·v3) + 라벨 무변경 + 패널 바 미표시
+- [x] Store 경로 렌더 결과 무변경 (AC-16) — 골든 안전망을 동작 변경 전에 세워 확인
 - [ ] 신규·수정 파일 커버리지 85% 이상 — **프론트와 Go 양쪽 모두 측정** (SPEC-TSDB-002 M7.2 가 프론트만 측정해 Go 미달을 놓친 선례)
-- [ ] `go build` · `go vet` · `go test ./...` · `tsc --noEmit` · eslint · `npm test` 전부 통과
-- [ ] i18n ko/en 대칭
+- [x] `go build` · `go vet` · `go test ./...` · `tsc --noEmit` · eslint · `npm test` 전부 통과 — 6종 exit 0
+- [x] i18n ko/en 대칭 — 각 3533, 비대칭 0

@@ -147,3 +147,74 @@ describe('LineChartPanel — TSDB 상태 표시 (§2.14 [S2])', () => {
     expect(tsdbMocks.queryTsdbSourceMatrix).not.toHaveBeenCalled();
   });
 });
+
+// ===== 그룹 페이지 바 (SPEC-TSDB-004 §2.7 · M6c) =====
+
+describe('LineChartPanel — 그룹 페이지 바', () => {
+  /** 그룹 정보를 실은 매트릭스 응답. */
+  function withGroups(groups: unknown) {
+    tsdbMocks.queryTsdbSourceMatrix.mockResolvedValue({
+      matrix: {
+        columns: ['cpu{host=a}'],
+        rows: [{ bucketStartMs: 1000, values: [1] }],
+        columnOrigins: [0],
+        columnLabels: [{ __field__: 'usage', host: 'a' }],
+      },
+      failures: [],
+      groups,
+    });
+  }
+
+  async function renderPanel() {
+    render(
+      <LineChartPanel
+        panelId="p1"
+        config={{ data_source: 'tsdb', tsdb_source: tsdbSource }}
+      />,
+      { wrapper: makeWrapper('influxdb') },
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it('group by 항목이 없으면 바를 그리지 않는다 (기존 패널 렌더 무변경)', async () => {
+    withGroups(undefined);
+    await renderPanel();
+    expect(screen.queryByTestId('line-chart-group-page')).toBeNull();
+  });
+
+  it('그룹 수·페이지 문구를 i18n 키로 낸다', async () => {
+    // 이 파일의 i18n 모의는 키를 그대로 돌려주므로 치환 결과가 아니라 **키**를
+    // 단언한다. 숫자 치환 자체는 resolveGroupPageDisplay 단위 테스트가 고정한다.
+    withGroups([{ index: 0, total: 7, page: 0, pageCount: 4, truncated: false }]);
+    await renderPanel();
+    const status = await screen.findByTestId('line-chart-group-page-status');
+    expect(status.textContent).toContain('dashboard.chart.tsdbGroupPageStatus');
+  });
+
+  it('첫 페이지에서는 이전 버튼이 비활성이다', async () => {
+    withGroups([{ index: 0, total: 7, page: 0, pageCount: 4, truncated: false }]);
+    await renderPanel();
+    const prev = (await screen.findByTestId(
+      'line-chart-group-page-prev',
+    )) as HTMLButtonElement;
+    expect(prev.disabled).toBe(true);
+    const next = screen.getByTestId('line-chart-group-page-next') as HTMLButtonElement;
+    expect(next.disabled).toBe(false);
+  });
+
+  it('페이지가 하나뿐이면 이동 버튼을 그리지 않는다', async () => {
+    withGroups([{ index: 0, total: 2, page: 0, pageCount: 1, truncated: false }]);
+    await renderPanel();
+    await screen.findByTestId('line-chart-group-page-status');
+    expect(screen.queryByTestId('line-chart-group-page-next')).toBeNull();
+  });
+
+  it('열거 절단은 경고로 드러난다 (조용히 넘기지 않는다)', async () => {
+    withGroups([{ index: 0, total: 999, page: 0, pageCount: 50, truncated: true }]);
+    await renderPanel();
+    expect(await screen.findByTestId('line-chart-group-page-truncated')).toBeTruthy();
+  });
+});

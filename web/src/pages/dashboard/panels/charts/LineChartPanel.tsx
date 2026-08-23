@@ -51,7 +51,7 @@ import { chartDataToCsv, downloadCsv } from './csvExport';
 import { useChartChannel } from './useChartChannel';
 import { useChartChannels, type ChannelState } from './useChartChannels';
 import { resolvePanelSourceBinding } from './panelDataSource';
-import { resolvePanelSeriesDisplay } from './panelSeriesStatus';
+import { resolveGroupPageDisplay, resolvePanelSeriesDisplay } from './panelSeriesStatus';
 import { isPanelSeriesSource, usePanelSeriesData } from './usePanelSeriesData';
 import { usePanelTitleVisible } from '../../panelChromeContext';
 
@@ -258,7 +258,17 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
     !isStore && isMultiMode ? cfg.channels! : [],
     { maxPoints: effectiveMaxPoints },
   );
-  const storeResult = usePanelSeriesData(config);
+  /**
+   * 시리즈축 페이지 커서(SPEC-TSDB-004 §2.7).
+   *
+   * config 가 아니라 패널 로컬 상태다 — 페이지를 넘길 때마다 대시보드 config 가
+   * 저장되면 안 된다. 커서는 패널당 하나이며 모든 group by 항목에 같이 적용된다.
+   */
+  const [groupPageIndex, setGroupPageIndex] = useState(0);
+  const storeResult = usePanelSeriesData(config, {
+    tsdbOptions: { groupPage: groupPageIndex },
+  });
+  const onGroupPageChange = useCallback((p: number) => setGroupPageIndex(p), []);
 
   // 모드별 채널 정규화
   const channelStates: NormalizedChannel[] = useMemo(
@@ -312,6 +322,9 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   // SPEC-TSDB-002 §2.14 [S2]: 네 상태(빈 선택 / 빈 결과 / 부분 실패 / 전체 실패)를 서로
   // 구분해 표시한다. 판정은 `panelSeriesStatus` 가 소유하며 패널은 그리기만 한다.
   const seriesDisplay = resolvePanelSeriesDisplay(sourceBinding, storeResult);
+  // SPEC-TSDB-004 §2.7: 시리즈축 페이지네이션 상태. group by 항목이 없으면
+  // show=false 이므로 기존 패널의 렌더는 한 줄도 바뀌지 않는다.
+  const groupPage = resolveGroupPageDisplay(storeResult.groups);
   // 빈 선택 안내는 **되돌아갈 채널이 없을 때만** 띄운다. 채널이 설정된 패널은 시리즈
   // 소스가 비활성이어도 채널 데이터를 그대로 그리므로(하위 호환, §2.4), 그 위에 안내를
   // 얹으면 정상 렌더를 오류처럼 보이게 한다.
@@ -948,6 +961,58 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
           className="absolute inset-0 flex items-center justify-center rounded-2xl p-4 text-center text-xs text-(--color-text-muted)"
         >
           {t('dashboard.chart.seriesEmptySelection')}
+        </div>
+      )}
+
+      {/* 그룹 페이지 바 — 전체 그룹 수를 항상 보여 준다. 페이지네이션이 비활성이어도
+          사용자가 규모를 판단하려면 숫자가 보여야 한다(§2.7.2). */}
+      {groupPage.show && (
+        <div
+          data-testid="line-chart-group-page"
+          className="absolute bottom-1 right-2 flex items-center gap-1 text-[10px] text-(--color-text-muted)"
+        >
+          <span data-testid="line-chart-group-page-status">
+            {t('dashboard.chart.tsdbGroupPageStatus')
+              .replace('{total}', String(groupPage.total))
+              .replace('{page}', String(groupPage.page + 1))
+              .replace('{pageCount}', String(groupPage.pageCount))}
+          </span>
+          {groupPage.pageCount > 1 && (
+            <>
+              <button
+                type="button"
+                data-testid="line-chart-group-page-prev"
+                aria-label={t('dashboard.chart.tsdbGroupPagePrev')}
+                disabled={!groupPage.canPrev}
+                aria-disabled={!groupPage.canPrev}
+                onClick={() => onGroupPageChange?.(Math.max(0, groupPage.page - 1))}
+                className="rounded px-1 disabled:opacity-40"
+              >
+                {'<'}
+              </button>
+              <button
+                type="button"
+                data-testid="line-chart-group-page-next"
+                aria-label={t('dashboard.chart.tsdbGroupPageNext')}
+                disabled={!groupPage.canNext}
+                aria-disabled={!groupPage.canNext}
+                onClick={() => onGroupPageChange?.(groupPage.page + 1)}
+                className="rounded px-1 disabled:opacity-40"
+              >
+                {'>'}
+              </button>
+            </>
+          )}
+          {groupPage.truncated && (
+            <span
+              data-testid="line-chart-group-page-truncated"
+              role="alert"
+              className="text-amber-500"
+              title={t('dashboard.chart.tsdbGroupPageTruncated')}
+            >
+              !
+            </span>
+          )}
         </div>
       )}
 
