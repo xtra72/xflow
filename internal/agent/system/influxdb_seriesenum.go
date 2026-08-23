@@ -19,7 +19,9 @@
 // 를 넓히지 않고 별도 InfluxSeriesEnumerator 로 둔다(plan.md §4 위험 R5).
 // 넓히면 그 인터페이스를 만족하던 모든 구현(테스트 모의 포함)이 동시에 깨진다.
 //
-// v3 경로는 M3 의 몫이며 이 파일에 없다 — SPEC-TSDB-003 §7 OQ2 미확정.
+// v3 경로는 influxdb_seriesenum_v3.go 에 있다. 접기를 공유하지 않는 이유는
+// 결손 태그 표현 · 제외 컬럼 · 시리즈당 행 수가 전부 다르기 때문이다
+// (SPEC-TSDB-003 §HISTORY-0.5.0 (3)).
 package system
 
 import (
@@ -400,7 +402,7 @@ func (c *influxV2Client) EnumerateSeries(ctx context.Context, spec SeriesEnumSpe
 // bucket 이 비어 있으면 에이전트 설정의 기본 버킷을 쓴다 — ListTagKeys 등
 // D2~D4 와 같은 규약이다.
 //
-// 열거를 구현하지 않는 클라이언트(M3 이전의 v3)는 ErrSeriesEnumerationNotSupported
+// 열거를 구현하지 않는 클라이언트는 ErrSeriesEnumerationNotSupported
 // 로 표면화한다. InfluxClient 인터페이스를 넓히지 않는 이유는 위험 R5 와 같다 —
 // 넓히면 그것을 만족하던 모든 구현과 테스트 모의가 동시에 깨진다.
 func (a *InfluxDBAgent) EnumerateSeries(ctx context.Context, spec SeriesEnumSpec) (SeriesEnumResult, error) {

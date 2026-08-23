@@ -1,7 +1,7 @@
 ---
 id: SPEC-TSDB-003
 title: TSDB 시리즈 열거 — measurement + 태그 집합으로 실재 시리즈를 고른다
-version: 0.5.0
+version: 0.6.0
 status: draft
 created: 2026-08-23
 updated: 2026-08-23
@@ -27,6 +27,7 @@ lifecycle_level: spec-first
 | 0.3.0 | 2026-08-23 | xtra | **M2 구현 회차 — 사실 정정 1건 + OQ5 확정.** M1(실측 스파이크)은 실측 대상 InfluxDB 인스턴스가 없어 **보류**했고, M1→M2 가 연성 의존이므로 M2(v2 Flux 열거)를 선행했다. M3(v3)은 M1 과 함께 보류 상태다. §HISTORY-0.3.0 참조. |
 | 0.4.0 | 2026-08-23 | xtra | **M1 실측 부분 수행 — v2 축 확정, v3 축 미해결.** 사용자가 실 InfluxDB 2.x 인스턴스에서 `BuildFluxSeriesEnumQuery` 생성 질의를 직접 실행해 주석 CSV 원문을 관측했다. **M2 가 가정으로 세운 3건이 전부 사실로 확인**되었고, 문서로는 알 수 없던 사실 1건(점이 든 태그 키)이 추가로 드러났다. 관측 데이터를 회귀 테스트로 잠갔다. OQ2(v3 대체 경로)는 **여전히 미확정** — 관측된 인스턴스가 v2 이므로 M3 은 계속 보류다. §HISTORY-0.4.0 참조. |
 | 0.5.0 | 2026-08-23 | xtra | **M1 v3 축 실측 완료 — OQ2 확정, OQ3 확정, §2.5 경로 교체.** 로컬 `influxdb:3-core` 컨테이너에 관측된 v2 데이터와 같은 형상(점 든 태그 키 · 태그 결손 시리즈 · 태그 0개 measurement · 문자열 필드)을 주입하고 P1~P6 을 실행했다. **OQ2 → InfluxQL `GROUP BY *` 경로 채택**(SQL `DISTINCT` 3질의 폐기). **OQ3 → `field_exact: false` 유지**(근거가 바뀌었다). §2.5 를 3단 SQL 경로에서 2단 InfluxQL 경로로 교체한다. §HISTORY-0.5.0 참조. |
+| 0.6.0 | 2026-08-23 | xtra | **M3 구현 회차 — 산문 정정 2건.** (1) §2.5 2단계 질의의 시간 술어를 RFC3339Nano 문자열에서 **나노초 정수**로 정정한다. 실측에서 둘 다 동작하지만 정수가 v2 의 `time(v: <ns>)` 와 단위가 같아 창 해석이 어긋나지 않는다. (2) §2.6 능력 표의 `seriesFieldExact` **사유 문구**가 낡았다 — 폐기된 3단 SQL 경로의 근거(`SHOW FIELD KEYS` 가 measurement 단위)를 적고 있었다. 값(`false`)은 그대로지만 근거는 "`LIMIT` 표본이라 하한"이다. M5 가 이 문구를 사용자에게 렌더하므로 방치하면 틀린 이유가 화면에 나온다. 요구사항 변경 없음. |
 
 ---
 
@@ -464,7 +465,9 @@ from(bucket: "<bucket>")
 | 단계 | 쿼리 | 목적 |
 |------|------|------|
 | 1 | `SHOW TAG KEYS FROM "<m>"` (InfluxQL) | **태그 키 집합의 정본.** 기존 D2 `ListTagKeys` 를 재사용한다 |
-| 2 | `SELECT * FROM "<m>" WHERE time >= '<startRFC3339Nano>' AND time < '<endRFC3339Nano>' [AND "<tk>" = '<tv>'] GROUP BY * LIMIT <rowCap>` (InfluxQL) | 시리즈 행 회수 |
+| 2 | `SELECT * FROM "<m>" WHERE time >= <startNs> AND time < <endNs> [AND "<tk>" = '<tv>'] GROUP BY * LIMIT <rowCap>` (InfluxQL) | 시리즈 행 회수 |
+
+시간 술어는 **나노초 정수**다. RFC3339Nano 문자열 술어도 실측에서 동작하지만 정수를 택한다 — v2 의 `range(start: time(v: <ns>))` 와 단위가 같아져 두 백엔드의 창 해석이 어긋날 여지가 사라지고, 타임존·포맷 왕복이 없다.
 
 1단계가 없으면 안 되는 이유: **태그와 필드는 응답 타입으로 구분되지 않는다.** 문자열 필드가 있으면 태그와 JSON 타입이 같아진다(§HISTORY-0.5.0 (4)). 1단계의 키 집합만이 정본이다.
 
@@ -506,7 +509,7 @@ export interface TsdbBackendCapabilities {
 | 능력 | v2 | v3 | 사유 |
 |------|----|----|------|
 | `seriesEnumeration` | `true` | `true` | 경로는 다르나 둘 다 가능(§2.4 · §2.5) |
-| `seriesFieldExact` | **`true`** | **`false`** | v2 는 그룹 키에 `_field` 가 포함됨. v3 는 `SHOW FIELD KEYS` 가 measurement 단위라 태그 집합별로 쪼갤 수 없음 |
+| `seriesFieldExact` | **`true`** | **`false`** | v2 는 그룹 키에 `_field` 가 포함되어 `first()` 가 (시리즈 × 필드)마다 1행을 보장한다. v3 는 시리즈별 필드를 **실제로 관측**하지만 `LIMIT` 이 행을 표본으로 자르므로 관측된 필드 집합이 **하한**이다(§HISTORY-0.5.0 (5)) |
 
 `seriesFieldExact` 가 거짓인 백엔드에서 시스템은 §2.13 [S2] 의 안내를 표시한다.
 

@@ -42,7 +42,7 @@ func TestInfluxSeriesEnum_인터페이스_준수(t *testing.T) {
 	t.Parallel()
 	var _ InfluxSeriesEnumerator = (*InfluxDBAgent)(nil)
 	var _ InfluxSeriesEnumerator = (*influxV2Client)(nil)
-	// v3 는 M3 의 몫이다. 여기서 단언하지 않는다 — SPEC-TSDB-003 §7 OQ2 미확정.
+	// v3 는 influxdb_seriesenum_v3_test.go 가 단언한다. 여기서는 다루지 않는다.
 }
 
 // ===== v2 Flux 쿼리 생성 (AC-09 · AC-21 · AC-25) =====
@@ -719,7 +719,7 @@ func TestInfluxDBAgent_EnumerateSeries_클라이언트_미초기화(t *testing.T
 // TestInfluxDBAgent_EnumerateSeries_미지원_클라이언트 는 열거를 구현하지 않는
 // 클라이언트가 센티넬 오류로 표면화됨을 확인한다.
 //
-// v3 는 M3(SPEC-TSDB-003 §7 OQ2 확정 대기) 까지 이 경로를 탄다. "디스커버리
+// 열거를 구현하지 않는 클라이언트가 이 경로를 탄다. "디스커버리
 // 실패"로 뭉뚱그리지 않고 별도 센티넬로 두는 이유는 §2.5 와 같다 — 원인을 알 수
 // 없는 오류가 사용자에게 가장 비싼 실패다.
 func TestInfluxDBAgent_EnumerateSeries_미지원_클라이언트(t *testing.T) {
