@@ -156,11 +156,22 @@ func buildSeriesQuerySpec(req influxSeriesQueryRequest) (system.SeriesQuerySpec,
 		Measurement: req.Measurement,
 		Field:       req.Field,
 		Tags:        req.Tags,
+		GroupBy:     req.GroupBy,
 		StartMs:     req.StartMs,
 		EndMs:       req.EndMs,
 		IntervalMs:  req.IntervalMs,
 		Aggregation: aggregation,
 		Fill:        fill,
+	}
+	// UB1-3 — 같은 태그 키가 필터와 그룹 축에 동시에 올 수 없다.
+	// 생성기(BuildXxxSeriesQuery)도 같은 검사를 하지만 여기서 먼저 소진한다.
+	// §2.6 의 "400 은 에이전트 조회 전에 전부 결정된다" 원칙 때문이다 —
+	// 생성기까지 내려가면 에이전트 존재 여부에 따라 오류 시점이 달라진다.
+	for _, k := range req.GroupBy {
+		if _, clash := req.Tags[k]; clash {
+			return system.SeriesQuerySpec{}, fmt.Errorf("%w: %q",
+				system.ErrGroupByConflictsWithTagFilter, k)
+		}
 	}
 	if err := spec.ValidateIdentifiers(); err != nil {
 		return system.SeriesQuerySpec{}, err
@@ -253,7 +264,8 @@ func mapInfluxSeriesError(err error) *api.APIError {
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		return api.ErrRequestTimeout.WithMessage(err.Error())
 	case errors.Is(err, system.ErrUnescapableIdentifier),
-		errors.Is(err, system.ErrUnsupportedSeriesFill):
+		errors.Is(err, system.ErrUnsupportedSeriesFill),
+		errors.Is(err, system.ErrGroupByConflictsWithTagFilter):
 		return api.ErrBadRequest.WithMessage(err.Error())
 	default:
 		return api.ErrInternalServer.WithMessage(err.Error())
@@ -271,9 +283,17 @@ func mapInfluxSeriesError(err error) *api.APIError {
 func buildInfluxSeriesEntries(buckets []system.SeriesBucket, req influxSeriesQueryRequest) []chartQueryEntry {
 	out := make([]chartQueryEntry, 0, len(buckets))
 	for _, b := range buckets {
-		labels := make(map[string]string, len(req.Tags)+1)
+		labels := make(map[string]string, len(req.Tags)+len(b.Tags)+1)
+		// __field__ 는 모든 그룹에서 **상수**다(SPEC-TSDB-004 §2.6 U6).
+		// 그룹마다 다르게 만들면 클라이언트가 measurement 혼재로 오인하고,
+		// 그 순간 parseSeriesLabels 의 "비-__field__ 는 전부 태그" 규약이 깨진다.
 		labels[metricLabelKey] = req.Field
 		for k, v := range req.Tags {
+			labels[k] = v
+		}
+		// 그룹의 **실제** 태그 값이 요청 값을 덮는다. 정확 일치 모드에서는
+		// b.Tags 가 비어 있어 결과가 본 축 도입 이전과 같다(§2.9 U9).
+		for k, v := range b.Tags {
 			labels[k] = v
 		}
 		out = append(out, chartQueryEntry{

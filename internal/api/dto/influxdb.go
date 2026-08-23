@@ -11,6 +11,11 @@ package dto
 //
 // 요청 1건이 시리즈 1개를 처리한다 — Store 의 요청 축과 같다(§2.6). N 개 시리즈를
 // 가진 패널은 N 회 요청한다.
+//
+// **예외는 GroupBy 다**(SPEC-TSDB-004). 그룹 축이 지정되면 요청 1건이 그룹마다
+// 시리즈 하나씩, 여러 개를 돌려준다. 응답 형상은 그대로다 — 다중 시리즈는
+// entries 를 평탄화하고 labels 로 구분하는 기존 규약(SPEC-STORE-004)이 이미
+// 표현한다.
 type InfluxSeriesQueryRequest struct {
 	// Bucket 은 v2 의 bucket, v3 의 database 다. 빈 값이면 에이전트 기본값.
 	Bucket string `json:"bucket,omitempty"`
@@ -20,6 +25,18 @@ type InfluxSeriesQueryRequest struct {
 	Field string `json:"field"`
 	// Tags 는 시리즈 태그 필터다.
 	Tags map[string]string `json:"tags,omitempty"`
+	// GroupBy 는 시리즈를 나눌 태그 키 목록이다(SPEC-TSDB-004 §2.1).
+	//
+	// 비어 있으면 정확 일치 모드이며 요청·응답이 본 축 도입 이전과 같다.
+	// 비어 있지 않으면 지정한 키들의 값 조합마다 시리즈가 하나씩 생기고,
+	// 각 엔트리의 labels 가 그 그룹의 실제 태그 값을 담는다.
+	//
+	// Tags 와 직교한다 — Tags 는 사전 필터, GroupBy 는 분할 축이다. 같은 키가
+	// 양쪽에 오면 400 으로 거부한다(§2.8 UB1-3).
+	//
+	// **그룹 수에 상한이 없다**(§2.7). 응답은 절단되지 않으며 많아서 읽기 어려운
+	// 문제는 열거 표면의 페이지네이션이 담당한다.
+	GroupBy []string `json:"group_by,omitempty"`
 	// StartMs 는 조회 시작(포함)이다.
 	StartMs int64 `json:"start_ms"`
 	// EndMs 는 조회 끝(미포함)이다.

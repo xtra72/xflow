@@ -464,3 +464,178 @@ func TestInfluxSeriesQuery_BucketCountRoundsUpPartialBucket(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), fmt.Sprintf("bucket_count=%d", maxAggregationBuckets+1))
 }
+
+// ===== group by (SPEC-TSDB-004 M4) =====
+
+// TestInfluxSeriesQuery_GroupBy_LabelsComeFromResult 는 §2.6 U6 을 고정한다(AC-09).
+//
+// 라벨은 **요청이 아니라 결과**에서 만들어져야 한다. 요청 태그를 그대로 복사하면
+// 모든 그룹이 같은 라벨을 달고 클라이언트에서 한 시리즈로 접힌다 — 그룹이 나뉜
+// 것처럼 보이지만 그래프는 하나다.
+func TestInfluxSeriesQuery_GroupBy_LabelsComeFromResult(t *testing.T) {
+	t.Parallel()
+	agentFake := &fakeInfluxSeriesAgent{
+		fakeAgentCommon: newFakeAgent("i1", "metrics", "influxdb"),
+		seriesFn: func(_ context.Context, _ system.SeriesQuerySpec) ([]system.SeriesBucket, error) {
+			return []system.SeriesBucket{
+				{StartMs: 1_700_000_000_000, Value: 1.0, Tags: map[string]string{"host": "a"}},
+				{StartMs: 1_700_000_000_000, Value: 2.0, Tags: map[string]string{"host": "b"}},
+			}, nil
+		},
+	}
+	router := setupInfluxSeriesRouter(t, agentFake)
+
+	rec := postSeriesQuery(t, router, "metrics", validSeriesBody(map[string]any{
+		"tags":     map[string]string{"region": "kr"},
+		"group_by": []string{"host"},
+	}))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	resp := decodeQueryResponse(t, rec)
+	require.Len(t, resp.Data.Entries, 2)
+
+	// __field__ 는 모든 그룹에서 상수다 — 이것이 깨지면 클라이언트가
+	// measurement 혼재로 오인한다.
+	for _, e := range resp.Data.Entries {
+		assert.Equal(t, "usage", e.Labels["__field__"])
+		assert.Equal(t, "kr", e.Labels["region"], "사전 필터 태그는 유지된다")
+	}
+	// 그룹마다 host 가 다르다.
+	assert.Equal(t, "a", resp.Data.Entries[0].Labels["host"])
+	assert.Equal(t, "b", resp.Data.Entries[1].Labels["host"])
+}
+
+// TestInfluxSeriesQuery_GroupBy_ResultTagOverridesRequestTag 는 AC-10 을 고정한다.
+//
+// 요청에 없던 키가 응답에 나타나야 하고, 요청과 결과가 같은 키를 가지면
+// **결과 값이 이긴다**. 요청 값이 이기면 그룹 구분이 사라진다.
+func TestInfluxSeriesQuery_GroupBy_ResultTagOverridesRequestTag(t *testing.T) {
+	t.Parallel()
+	agentFake := &fakeInfluxSeriesAgent{
+		fakeAgentCommon: newFakeAgent("i1", "metrics", "influxdb"),
+		seriesFn: func(_ context.Context, _ system.SeriesQuerySpec) ([]system.SeriesBucket, error) {
+			return []system.SeriesBucket{
+				// 결과가 요청에 없던 rack 을 들고 온다.
+				{StartMs: 1_700_000_000_000, Value: 1.0, Tags: map[string]string{"rack": "r1"}},
+			}, nil
+		},
+	}
+	router := setupInfluxSeriesRouter(t, agentFake)
+
+	rec := postSeriesQuery(t, router, "metrics", validSeriesBody(map[string]any{
+		"tags":     nil,
+		"group_by": []string{"rack"},
+	}))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	resp := decodeQueryResponse(t, rec)
+	require.Len(t, resp.Data.Entries, 1)
+	assert.Equal(t, "r1", resp.Data.Entries[0].Labels["rack"],
+		"요청에 없던 그룹 키가 응답 라벨에 나타나야 한다")
+}
+
+// TestInfluxSeriesQuery_GroupBy_없으면라벨이이전과같다 는 §2.9 U9 를 고정한다.
+// 버킷에 Tags 가 없으면 라벨 구성이 본 축 도입 이전과 정확히 같아야 한다.
+func TestInfluxSeriesQuery_GroupBy_없으면라벨이이전과같다(t *testing.T) {
+	t.Parallel()
+	agentFake := &fakeInfluxSeriesAgent{
+		fakeAgentCommon: newFakeAgent("i1", "metrics", "influxdb"),
+		seriesFn: func(_ context.Context, _ system.SeriesQuerySpec) ([]system.SeriesBucket, error) {
+			return []system.SeriesBucket{{StartMs: 1_700_000_000_000, Value: 1.0}}, nil
+		},
+	}
+	router := setupInfluxSeriesRouter(t, agentFake)
+
+	rec := postSeriesQuery(t, router, "metrics", validSeriesBody(map[string]any{
+		"tags": map[string]string{"host": "a"},
+	}))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	resp := decodeQueryResponse(t, rec)
+	require.Len(t, resp.Data.Entries, 1)
+	assert.Equal(t, map[string]string{"__field__": "usage", "host": "a"},
+		resp.Data.Entries[0].Labels)
+}
+
+// TestInfluxSeriesQuery_GroupBy_SpecCarriesGroupAxis 는 요청의 group_by 가
+// 도메인 spec 으로 그대로 전달되는지 고정한다. 전달이 끊기면 백엔드는 조용히
+// 정확 일치 모드로 질의하고 사용자는 "group by 가 무시된다" 고 인지한다.
+func TestInfluxSeriesQuery_GroupBy_SpecCarriesGroupAxis(t *testing.T) {
+	t.Parallel()
+	var got system.SeriesQuerySpec
+	agentFake := &fakeInfluxSeriesAgent{
+		fakeAgentCommon: newFakeAgent("i1", "metrics", "influxdb"),
+		seriesFn: func(_ context.Context, spec system.SeriesQuerySpec) ([]system.SeriesBucket, error) {
+			got = spec
+			return nil, nil
+		},
+	}
+	router := setupInfluxSeriesRouter(t, agentFake)
+
+	rec := postSeriesQuery(t, router, "metrics", validSeriesBody(map[string]any{
+		"tags":     nil, // 기본 tags(host)를 지운다 — host 는 그룹 축으로 쓴다
+		"group_by": []string{"rack", "host"},
+	}))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, []string{"rack", "host"}, got.GroupBy,
+		"입력 순서 그대로 전달된다 — 정렬은 쿼리 생성기의 몫이다")
+}
+
+// TestInfluxSeriesQuery_GroupBy_ConflictWithTagFilterIsRejected 는 UB1-3 을
+// 고정한다(AC-14). 에이전트에 도달하기 **전에** 400 이어야 한다 — §2.6 의
+// "400 은 에이전트 조회 전에 전부 결정된다" 원칙이다.
+func TestInfluxSeriesQuery_GroupBy_ConflictWithTagFilterIsRejected(t *testing.T) {
+	t.Parallel()
+	called := false
+	agentFake := &fakeInfluxSeriesAgent{
+		fakeAgentCommon: newFakeAgent("i1", "metrics", "influxdb"),
+		seriesFn: func(_ context.Context, _ system.SeriesQuerySpec) ([]system.SeriesBucket, error) {
+			called = true
+			return nil, nil
+		},
+	}
+	router := setupInfluxSeriesRouter(t, agentFake)
+
+	rec := postSeriesQuery(t, router, "metrics", validSeriesBody(map[string]any{
+		"tags":     map[string]string{"host": "a", "region": "kr"},
+		"group_by": []string{"host"},
+	}))
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "host", "충돌한 키를 알려 줘야 한다")
+	assert.False(t, called, "질의가 실행되면 안 된다")
+}
+
+// TestInfluxSeriesQuery_GroupBy_NoCapNoTruncation 은 §2.7 을 고정한다(AC-11).
+//
+// 그룹 수가 많아도 잘리지 않고 truncated 가 켜지지 않아야 한다. 상한을 나중에
+// 슬쩍 들여오면 차트가 부분 집합을 완전한 그림처럼 그리게 되므로 여기서 막는다.
+func TestInfluxSeriesQuery_GroupBy_NoCapNoTruncation(t *testing.T) {
+	t.Parallel()
+	const groups = 200
+	agentFake := &fakeInfluxSeriesAgent{
+		fakeAgentCommon: newFakeAgent("i1", "metrics", "influxdb"),
+		seriesFn: func(_ context.Context, _ system.SeriesQuerySpec) ([]system.SeriesBucket, error) {
+			out := make([]system.SeriesBucket, 0, groups)
+			for i := 0; i < groups; i++ {
+				out = append(out, system.SeriesBucket{
+					StartMs: 1_700_000_000_000,
+					Value:   float64(i),
+					Tags:    map[string]string{"host": fmt.Sprintf("h%03d", i)},
+				})
+			}
+			return out, nil
+		},
+	}
+	router := setupInfluxSeriesRouter(t, agentFake)
+
+	rec := postSeriesQuery(t, router, "metrics", validSeriesBody(map[string]any{
+		"tags":     nil,
+		"group_by": []string{"host"},
+	}))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	resp := decodeQueryResponse(t, rec)
+	assert.Len(t, resp.Data.Entries, groups, "그룹이 잘리면 안 된다")
+	assert.Equal(t, groups, resp.Data.Count)
+	assert.False(t, resp.Data.Truncated, "group by 는 truncated 를 켜지 않는다")
+}
