@@ -75,6 +75,14 @@ var ErrUnescapableIdentifier = errors.New("influxdb: identifier cannot be safely
 // 있다는 사실을 알 방법이 없다.
 var ErrGroupByConflictsWithTagFilter = errors.New("influxdb: tag key cannot be both a filter and a group key")
 
+// ErrEmptyGroupFilterEntry 는 키가 하나도 없는 group_filter 항목이다.
+// HTTP 계층은 이를 400 으로 매핑한다(SPEC-TSDB-004 §2.7.1).
+//
+// 빈 조합은 "모든 그룹" 을 뜻하게 되어 페이지 선택을 조용히 무효화한다.
+// 건너뛰지 않고 거부하는 이유는, 무효화가 조용하면 사용자가 페이지네이션이
+// 동작하지 않는 원인을 자기 요청에서 찾지 못하기 때문이다.
+var ErrEmptyGroupFilterEntry = errors.New("influxdb: group_filter entry must have at least one tag")
+
 // SeriesQuerySpec 는 구조화 시리즈 질의 1건의 입력이다.
 // 요청 1건이 시리즈 1개를 처리하므로(§2.6) measurement/field 는 단수다.
 type SeriesQuerySpec struct {
@@ -100,6 +108,15 @@ type SeriesQuerySpec struct {
 	// 슬라이스 순서를 그대로 쓰면 같은 의미의 요청이 다른 쿼리 문자열을 만들어
 	// 캐시 · 테스트 · 로그 대조가 어긋난다.
 	GroupBy []string
+	// GroupFilter 는 반환할 그룹을 **태그 값 조합 목록**으로 제한한다
+	// (SPEC-TSDB-004 §2.7.1). 비어 있으면 제한하지 않는다.
+	//
+	// 조합 목록인 이유는 다중 키 때문이다 — 키별 허용값 맵으로 두면 데카르트
+	// 곱이 되어 실재하지 않는 조합까지 선택한다.
+	//
+	// 이것은 **시리즈축** 페이지네이션의 수단이다. 각 페이지는 여전히 완결된
+	// 시간창이며 버킷 경계는 요청마다 동일하다.
+	GroupFilter []map[string]string
 	// StartMs 는 조회 시작(포함)이다.
 	StartMs int64
 	// EndMs 는 조회 끝(미포함)이다.
@@ -246,6 +263,16 @@ func (s SeriesQuerySpec) ValidateIdentifiers() error {
 			return err
 		}
 	}
+	for _, combo := range s.GroupFilter {
+		for _, k := range sortedTagKeys(combo) {
+			if err := validateSeriesIdentifier("group filter key", k); err != nil {
+				return err
+			}
+			if err := validateSeriesIdentifier("group filter value", combo[k]); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -262,6 +289,11 @@ func (s SeriesQuerySpec) validateShape() error {
 	}
 	if s.EndMs <= s.StartMs {
 		return errors.New("influxdb: end_ms must be greater than start_ms")
+	}
+	for _, combo := range s.GroupFilter {
+		if len(combo) == 0 {
+			return ErrEmptyGroupFilterEntry
+		}
 	}
 	// UB1-3 — 같은 키가 필터와 그룹 축에 동시에 올 수 없다.
 	for _, k := range sortedGroupKeys(s.GroupBy) {
@@ -351,6 +383,31 @@ func sortedGroupKeys(groupBy []string) []string {
 	return keys
 }
 
+// sortedGroupFilter 는 조합 목록을 결정적 순서로 정렬한다.
+//
+// 조합의 서명은 정렬된 키와 값을 NUL 로 이어 만든다 — 태그 값에 등장할 수
+// 없는 구분자라 "a|b" 와 "a" + "|b" 가 같은 서명이 되는 충돌을 막는다.
+// 입력 순서가 생성 결과를 바꾸면 같은 페이지 요청이 다른 쿼리 문자열을 만든다.
+func sortedGroupFilter(combos []map[string]string) []map[string]string {
+	if len(combos) == 0 {
+		return nil
+	}
+	sig := func(c map[string]string) string {
+		var b strings.Builder
+		for _, k := range sortedTagKeys(c) {
+			b.WriteString(k)
+			b.WriteByte(0)
+			b.WriteString(c[k])
+			b.WriteByte(0)
+		}
+		return b.String()
+	}
+	out := make([]map[string]string, len(combos))
+	copy(out, combos)
+	sort.SliceStable(out, func(i, j int) bool { return sig(out[i]) < sig(out[j]) })
+	return out
+}
+
 // seriesDurationLiteral 은 밀리초를 Flux/InfluxQL 공통 duration 리터럴로 만든다.
 // 두 방언 모두 ms 단위를 인식하므로 단위 변환 없이 그대로 쓴다.
 func seriesDurationLiteral(ms int64) string {
@@ -377,6 +434,9 @@ const (
 
 	fluxFillZeroPipe     = `  |> fill(value: 0.0)` + "\n"
 	fluxFillPreviousPipe = `  |> fill(usePrevious: true)` + "\n"
+
+	// 페이지 선택 술어(SPEC-TSDB-004 §2.7.1). 조합마다 and, 조합 사이는 or.
+	fluxGroupFilterTmpl = `  |> filter(fn: (r) => %s)` + "\n"
 
 	// group(columns:) 은 aggregateWindow **앞**에 온다(SPEC-TSDB-004 §4.2).
 	// aggregateWindow 는 현재 그룹 키를 유지한 채 각 테이블을 시간 윈도우로
@@ -435,6 +495,21 @@ func BuildFluxSeriesQuery(spec SeriesQuerySpec) (string, error) {
 			escapeFluxStringLiteral(k),
 			escapeFluxStringLiteral(spec.Tags[k]))
 	}
+	// 페이지 선택 술어는 그룹 확정 **전에** 건다 — 걸러낸 뒤 그룹을 나눠야
+	// 불필요한 테이블이 만들어지지 않는다(SPEC-TSDB-004 §2.7.1).
+	if combos := sortedGroupFilter(spec.GroupFilter); len(combos) > 0 {
+		terms := make([]string, 0, len(combos))
+		for _, c := range combos {
+			conds := make([]string, 0, len(c))
+			for _, k := range sortedTagKeys(c) {
+				conds = append(conds, fmt.Sprintf(`r["%s"] == "%s"`,
+					escapeFluxStringLiteral(k), escapeFluxStringLiteral(c[k])))
+			}
+			terms = append(terms, "("+strings.Join(conds, " and ")+")")
+		}
+		fmt.Fprintf(&b, fluxGroupFilterTmpl, strings.Join(terms, " or "))
+	}
+
 	// 그룹 축이 있으면 집계 **전에** 그룹을 확정한다(§4.2).
 	groupKeys := sortedGroupKeys(spec.GroupBy)
 	if len(groupKeys) > 0 {
@@ -507,6 +582,18 @@ func BuildInfluxQLSeriesQuery(spec SeriesQuerySpec) (string, error) {
 	var groupCols strings.Builder
 	for _, k := range sortedGroupKeys(spec.GroupBy) {
 		fmt.Fprintf(&groupCols, `, "%s"`, escapeInfluxQLIdent(k))
+	}
+	if combos := sortedGroupFilter(spec.GroupFilter); len(combos) > 0 {
+		terms := make([]string, 0, len(combos))
+		for _, c := range combos {
+			conds := make([]string, 0, len(c))
+			for _, k := range sortedTagKeys(c) {
+				conds = append(conds, fmt.Sprintf(`"%s" = '%s'`,
+					escapeInfluxQLIdent(k), escapeInfluxQLStringLiteral(c[k])))
+			}
+			terms = append(terms, "("+strings.Join(conds, " AND ")+")")
+		}
+		fmt.Fprintf(&b, "   AND (%s)\n", strings.Join(terms, " OR "))
 	}
 	fmt.Fprintf(&b, influxQLGroupByTmpl,
 		seriesDurationLiteral(spec.IntervalMs), groupCols.String(), fillArg)

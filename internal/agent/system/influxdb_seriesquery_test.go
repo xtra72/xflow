@@ -727,3 +727,154 @@ func TestBuildSeriesQuery_GroupByIdentifierValidation(t *testing.T) {
 		assert.Contains(t, err.Error(), "group key", "%s", name)
 	}
 }
+
+// ===== group_filter — 시리즈축 페이지네이션 (SPEC-TSDB-004 §2.7.1) =====
+
+// TestBuildSeriesQuery_GroupFilter_Golden 은 페이지 선택 술어의 형상을 고정한다.
+//
+// 조합 안은 and, 조합 사이는 or 다. 이 결합을 뒤집으면 술어가 항상 참이 되어
+// 페이지 선택이 조용히 무효화된다.
+func TestBuildSeriesQuery_GroupFilter_Golden(t *testing.T) {
+	t.Parallel()
+	spec := baseSpec()
+	spec.Tags = nil
+	spec.GroupBy = []string{"host2"}
+	spec.GroupFilter = []map[string]string{{"host2": "b"}, {"host2": "a"}} // 역순 입력
+
+	flux, err := BuildFluxSeriesQuery(spec)
+	require.NoError(t, err)
+	assert.Contains(t, flux, `  |> filter(fn: (r) => (r["host2"] == "a") or (r["host2"] == "b"))`)
+	// 술어는 group() **앞**에 온다 — 걸러낸 뒤 나눠야 불필요한 테이블이 안 생긴다.
+	assert.Less(t, strings.Index(flux, `(r["host2"] == "a")`), strings.Index(flux, "|> group(columns:"))
+
+	iql, err := BuildInfluxQLSeriesQuery(spec)
+	require.NoError(t, err)
+	assert.Contains(t, iql, `   AND (("host2" = 'a') OR ("host2" = 'b'))`)
+}
+
+// TestBuildSeriesQuery_GroupFilter_다중키조합 은 조합 술어를 고정한다.
+// 키별 허용값 맵이었다면 데카르트 곱이 되어 (a,r2)·(b,r1) 까지 선택했을 것이다.
+func TestBuildSeriesQuery_GroupFilter_다중키조합(t *testing.T) {
+	t.Parallel()
+	spec := baseSpec()
+	spec.Tags = nil
+	spec.GroupBy = []string{"host2", "rack"}
+	spec.GroupFilter = []map[string]string{
+		{"host2": "a", "rack": "r1"},
+		{"host2": "b", "rack": "r2"},
+	}
+
+	flux, err := BuildFluxSeriesQuery(spec)
+	require.NoError(t, err)
+	assert.Contains(t, flux, `(r["host2"] == "a" and r["rack"] == "r1")`)
+	assert.Contains(t, flux, `(r["host2"] == "b" and r["rack"] == "r2")`)
+	// 실재하지 않는 조합은 술어에 없다.
+	assert.NotContains(t, flux, `(r["host2"] == "a" and r["rack"] == "r2")`)
+
+	iql, err := BuildInfluxQLSeriesQuery(spec)
+	require.NoError(t, err)
+	assert.Contains(t, iql, `("host2" = 'a' AND "rack" = 'r1')`)
+	assert.NotContains(t, iql, `("host2" = 'a' AND "rack" = 'r2')`)
+}
+
+// TestBuildSeriesQuery_GroupFilter_결정성 은 입력 순서가 결과를 바꾸지 않음을
+// 고정한다. 같은 페이지 요청이 다른 쿼리 문자열을 만들면 캐시·로그 대조가 어긋난다.
+func TestBuildSeriesQuery_GroupFilter_결정성(t *testing.T) {
+	t.Parallel()
+	mk := func(combos []map[string]string) SeriesQuerySpec {
+		sp := baseSpec()
+		sp.Tags = nil
+		sp.GroupBy = []string{"host2"}
+		sp.GroupFilter = combos
+		return sp
+	}
+	a := mk([]map[string]string{{"host2": "c"}, {"host2": "a"}, {"host2": "b"}})
+	b := mk([]map[string]string{{"host2": "a"}, {"host2": "b"}, {"host2": "c"}})
+
+	for name, build := range map[string]func(SeriesQuerySpec) (string, error){
+		"flux": BuildFluxSeriesQuery, "influxql": BuildInfluxQLSeriesQuery,
+	} {
+		qa, err := build(a)
+		require.NoError(t, err, name)
+		qb, err := build(b)
+		require.NoError(t, err, name)
+		assert.Equal(t, qb, qa, "%s: 입력 순서가 결과를 바꾸면 안 된다", name)
+	}
+}
+
+// TestBuildSeriesQuery_GroupFilter_빈경우_바이트무변경 은 §2.9 U9 를 고정한다.
+func TestBuildSeriesQuery_GroupFilter_빈경우_바이트무변경(t *testing.T) {
+	t.Parallel()
+	unset := baseSpec()
+	unset.GroupBy = []string{"host2"}
+	nilFilter := unset
+	nilFilter.GroupFilter = nil
+	emptyFilter := unset
+	emptyFilter.GroupFilter = []map[string]string{}
+
+	for name, build := range map[string]func(SeriesQuerySpec) (string, error){
+		"flux": BuildFluxSeriesQuery, "influxql": BuildInfluxQLSeriesQuery,
+	} {
+		base, err := build(unset)
+		require.NoError(t, err, name)
+		for label, sp := range map[string]SeriesQuerySpec{"nil": nilFilter, "empty": emptyFilter} {
+			got, err := build(sp)
+			require.NoError(t, err, name)
+			assert.Equal(t, base, got, "%s/%s", name, label)
+		}
+	}
+}
+
+// TestBuildSeriesQuery_GroupFilter_빈조합거부 는 §2.7.1 을 고정한다.
+// 빈 조합은 "모든 그룹" 이 되어 페이지 선택을 조용히 무효화한다.
+func TestBuildSeriesQuery_GroupFilter_빈조합거부(t *testing.T) {
+	t.Parallel()
+	spec := baseSpec()
+	spec.Tags = nil
+	spec.GroupBy = []string{"host2"}
+	spec.GroupFilter = []map[string]string{{"host2": "a"}, {}}
+
+	for name, build := range map[string]func(SeriesQuerySpec) (string, error){
+		"flux": BuildFluxSeriesQuery, "influxql": BuildInfluxQLSeriesQuery,
+	} {
+		_, err := build(spec)
+		require.Error(t, err, name)
+		assert.ErrorIs(t, err, ErrEmptyGroupFilterEntry, name)
+	}
+}
+
+// TestBuildSeriesQuery_GroupFilter_버킷경계불변 은 AC-08 을 페이지 축으로
+// 확장한다. 페이지가 달라도 윈도우 파라미터는 같아야 한다 — 시리즈축을 나누는
+// 것이지 시간축을 나누는 것이 아니다(UB1-10).
+func TestBuildSeriesQuery_GroupFilter_버킷경계불변(t *testing.T) {
+	t.Parallel()
+	windowOf := func(q string) string {
+		i := strings.Index(q, "aggregateWindow(")
+		if i < 0 {
+			i = strings.Index(q, "GROUP BY time(")
+		}
+		require.Positive(t, i)
+		return q[i:]
+	}
+	page := func(vals ...string) SeriesQuerySpec {
+		sp := baseSpec()
+		sp.Tags = nil
+		sp.GroupBy = []string{"host2"}
+		for _, v := range vals {
+			sp.GroupFilter = append(sp.GroupFilter, map[string]string{"host2": v})
+		}
+		return sp
+	}
+	for name, build := range map[string]func(SeriesQuerySpec) (string, error){
+		"flux": BuildFluxSeriesQuery, "influxql": BuildInfluxQLSeriesQuery,
+	} {
+		p1, err := build(page("a", "b"))
+		require.NoError(t, err, name)
+		p2, err := build(page("c", "d"))
+		require.NoError(t, err, name)
+		all, err := build(page())
+		require.NoError(t, err, name)
+		assert.Equal(t, windowOf(all), windowOf(p1), "%s: 페이지1 윈도우가 전체와 같아야 한다", name)
+		assert.Equal(t, windowOf(p1), windowOf(p2), "%s: 페이지 간 윈도우가 같아야 한다", name)
+	}
+}

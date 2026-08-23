@@ -63,6 +63,22 @@ v2 는 httptest 왕복이 가능하다(`influxdb_schema_test.go` 의 `TestInflux
 
 **검증**: `go test ./internal/api/...`. AC-09 ~ AC-12 · AC-14 통과.
 
+### M4b — 시리즈축 페이지네이션 (Priority High)
+
+> v0.4.0 에서 추가. 페이지네이션을 질의 계층으로 내리는 결정에 따른 백엔드 작업이다.
+
+| # | 작업 | 산출물 |
+|---|------|--------|
+| 4b.1 | `SeriesQuerySpec.GroupFilter []map[string]string` + 조합 정렬 · 빈 조합 거부 | `internal/agent/system/influxdb_seriesquery.go` |
+| 4b.2 | Flux 페이지 술어 — 조합 내 `and`, 조합 간 `or`, `group()` 앞에 배치 | 동일 |
+| 4b.3 | InfluxQL 페이지 술어 — `AND ((..) OR (..))` | 동일 |
+| 4b.4 | DTO `group_filter` + 핸들러 전달 + 400 매핑 | `internal/api/dto/influxdb.go`, `influxdb_series.go` |
+| 4b.5 | 버킷 경계 불변 테스트 — 페이지 간 윈도우 파라미터 동일 | `influxdb_seriesquery_test.go` |
+
+**네이티브 기전은 없다** — v3 `SLIMIT`/`SOFFSET` 는 `HTTP 405` 미구현, Flux 에 테이블 개수 제한 없음(M1 실측). 2단계 절차(D5 열거 → 페이지 슬라이스 → `group_filter` 질의)가 유일한 경로다.
+
+**검증**: `go test ./internal/agent/system/... ./internal/api/...`. AC-11 · AC-12 통과.
+
 ### M5 — 표시 메타데이터 귀속 (Priority High, 회귀 위험 최상)
 
 | # | 작업 | 산출물 |
@@ -84,8 +100,9 @@ v2 는 httptest 왕복이 가능하다(`influxdb_schema_test.go` 의 `TestInflux
 | 6.2 | `fetchTsdbSeries` 요청 본문에 `group_by` 전달 | `web/src/services/api/tsdbSource.ts` |
 | 6.3 | 그룹 키 다중 선택 UI (태그 키 디스커버리 D2 재사용, 자유 입력 허용) | `web/src/pages/dashboard/TsdbSourceSection.tsx` |
 | 6.4 | group by 항목 시각 구분 + 마지막 질의 그룹 수 표시 (S1) | 동일 |
-| 6.5 | 그룹 목록 페이지네이션 + 전체 그룹 수 표시 + 많을 때 좁히는 방법 안내 (U7) | 동일 |
-| 6.6 | i18n ko/en 대칭 | `web/src/lib/i18n/` |
+| 6.5 | D5 열거 클라이언트 + 그룹 후보 투영·중복제거·정렬 + 페이지 슬라이스 → `group_filter` 전달 | `web/src/services/api/` 신규 |
+| 6.6 | 페이지 이동 UI + 전체 그룹 수 표시 + 열거 절단 시 좁히는 방법 안내 (U7) | `TsdbSourceSection.tsx` |
+| 6.7 | i18n ko/en 대칭 | `web/src/lib/i18n/` |
 
 **검증**: `npm test -- TsdbSourceSection`. AC-01 · AC-02 · AC-18 · AC-19 통과.
 
@@ -116,7 +133,7 @@ v2 는 httptest 왕복이 가능하다(`influxdb_schema_test.go` 의 `TestInflux
 
 ## 4. 구현 순서
 
-M1 → M2 → M3 → M4 → M5 → M6
+M1 → M2 → M3 → M4 → **M4b** → M5 → M6
 
 - **M1 이 맨 앞인 이유**: OQ3 의 답이 M3.3 의 형태를 결정한다. 가정 위에 구현을 얹으면 되돌림 비용이 M2~M4 전체에 걸린다.
 - **M4(백엔드 완결)가 M5 이전인 이유**: 프론트가 소비할 계약이 확정되어야 한다. M4 완료 시점에 API 만으로 group by 가 동작해야 하며, 프론트가 없어도 `curl` 로 검증 가능해야 한다.

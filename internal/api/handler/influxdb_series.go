@@ -157,11 +157,17 @@ func buildSeriesQuerySpec(req influxSeriesQueryRequest) (system.SeriesQuerySpec,
 		Field:       req.Field,
 		Tags:        req.Tags,
 		GroupBy:     req.GroupBy,
+		GroupFilter: req.GroupFilter,
 		StartMs:     req.StartMs,
 		EndMs:       req.EndMs,
 		IntervalMs:  req.IntervalMs,
 		Aggregation: aggregation,
 		Fill:        fill,
+	}
+	for _, combo := range req.GroupFilter {
+		if len(combo) == 0 {
+			return system.SeriesQuerySpec{}, system.ErrEmptyGroupFilterEntry
+		}
 	}
 	// UB1-3 — 같은 태그 키가 필터와 그룹 축에 동시에 올 수 없다.
 	// 생성기(BuildXxxSeriesQuery)도 같은 검사를 하지만 여기서 먼저 소진한다.
@@ -265,7 +271,8 @@ func mapInfluxSeriesError(err error) *api.APIError {
 		return api.ErrRequestTimeout.WithMessage(err.Error())
 	case errors.Is(err, system.ErrUnescapableIdentifier),
 		errors.Is(err, system.ErrUnsupportedSeriesFill),
-		errors.Is(err, system.ErrGroupByConflictsWithTagFilter):
+		errors.Is(err, system.ErrGroupByConflictsWithTagFilter),
+		errors.Is(err, system.ErrEmptyGroupFilterEntry):
 		return api.ErrBadRequest.WithMessage(err.Error())
 	default:
 		return api.ErrInternalServer.WithMessage(err.Error())

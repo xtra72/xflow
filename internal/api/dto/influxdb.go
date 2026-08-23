@@ -37,6 +37,20 @@ type InfluxSeriesQueryRequest struct {
 	// **그룹 수에 상한이 없다**(§2.7). 응답은 절단되지 않으며 많아서 읽기 어려운
 	// 문제는 열거 표면의 페이지네이션이 담당한다.
 	GroupBy []string `json:"group_by,omitempty"`
+	// GroupFilter 는 반환할 그룹을 **태그 값 조합 목록**으로 제한한다
+	// (SPEC-TSDB-004 §2.7.1). 시리즈축 페이지네이션의 수단이다.
+	//
+	//	group_filter: [{"host":"a"}, {"host":"b"}]
+	//
+	// 각 페이지는 여전히 완결된 시간창이며 버킷 경계는 요청마다 동일하다 —
+	// 시간축이 아니라 시리즈축을 나누기 때문이다.
+	//
+	// 조합 목록인 이유는 다중 키 때문이다. 키별 허용값 맵으로 두면 데카르트
+	// 곱이 되어 실재하지 않는 조합까지 선택한다.
+	//
+	// 키가 하나도 없는 항목은 400 으로 거부한다 — 빈 조합은 "모든 그룹" 을
+	// 뜻하게 되어 페이지 선택을 조용히 무효화한다.
+	GroupFilter []map[string]string `json:"group_filter,omitempty"`
 	// StartMs 는 조회 시작(포함)이다.
 	StartMs int64 `json:"start_ms"`
 	// EndMs 는 조회 끝(미포함)이다.

@@ -639,3 +639,50 @@ func TestInfluxSeriesQuery_GroupBy_NoCapNoTruncation(t *testing.T) {
 	assert.Equal(t, groups, resp.Data.Count)
 	assert.False(t, resp.Data.Truncated, "group by 는 truncated 를 켜지 않는다")
 }
+
+// TestInfluxSeriesQuery_GroupFilter_SpecCarriesPageSelection 은 페이지 선택이
+// 도메인 spec 까지 전달되는지 고정한다(SPEC-TSDB-004 §2.7.1). 전달이 끊기면
+// 서버는 전 그룹을 계산하고 페이지네이션이 무효가 된다.
+func TestInfluxSeriesQuery_GroupFilter_SpecCarriesPageSelection(t *testing.T) {
+	t.Parallel()
+	var got system.SeriesQuerySpec
+	agentFake := &fakeInfluxSeriesAgent{
+		fakeAgentCommon: newFakeAgent("i1", "metrics", "influxdb"),
+		seriesFn: func(_ context.Context, spec system.SeriesQuerySpec) ([]system.SeriesBucket, error) {
+			got = spec
+			return nil, nil
+		},
+	}
+	router := setupInfluxSeriesRouter(t, agentFake)
+
+	rec := postSeriesQuery(t, router, "metrics", validSeriesBody(map[string]any{
+		"tags":         nil,
+		"group_by":     []string{"host"},
+		"group_filter": []map[string]string{{"host": "a"}, {"host": "b"}},
+	}))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, []map[string]string{{"host": "a"}, {"host": "b"}}, got.GroupFilter)
+}
+
+// TestInfluxSeriesQuery_GroupFilter_EmptyComboIsRejected 는 §2.7.1 을 고정한다.
+// 빈 조합은 "모든 그룹" 이 되어 페이지 선택을 조용히 무효화하므로 400 이다.
+func TestInfluxSeriesQuery_GroupFilter_EmptyComboIsRejected(t *testing.T) {
+	t.Parallel()
+	called := false
+	agentFake := &fakeInfluxSeriesAgent{
+		fakeAgentCommon: newFakeAgent("i1", "metrics", "influxdb"),
+		seriesFn: func(_ context.Context, _ system.SeriesQuerySpec) ([]system.SeriesBucket, error) {
+			called = true
+			return nil, nil
+		},
+	}
+	router := setupInfluxSeriesRouter(t, agentFake)
+
+	rec := postSeriesQuery(t, router, "metrics", validSeriesBody(map[string]any{
+		"tags":         nil,
+		"group_by":     []string{"host"},
+		"group_filter": []map[string]string{{"host": "a"}, {}},
+	}))
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+	assert.False(t, called, "질의가 실행되면 안 된다")
+}
