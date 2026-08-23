@@ -745,3 +745,88 @@ func TestInfluxDBAgent_EnumerateSeries_오류_전파(t *testing.T) {
 	_, err := a.EnumerateSeries(context.Background(), SeriesEnumSpec{Measurement: "cpu", StartMs: 1, EndMs: 2})
 	assert.ErrorIs(t, err, sentinel)
 }
+
+// --- M1 실측 회귀 (SPEC-TSDB-003 §HISTORY-0.4.0) -----------------------------
+
+// 아래 CSV 의 헤더 행과 데이터 12행은 실제 InfluxDB 2.x 인스턴스에 대해
+// BuildFluxSeriesEnumQuery 가 생성한 질의를 실행하고 **관측한 원문**이다
+// (measurement=temperature, 실습실/사무실 LoRaWAN 센서). 주석 3줄
+// (#datatype · #group · #default)은 관측 시 전달되지 않아 컬럼 타입에서
+// 재구성한 것이며, 데이터 행은 손대지 않았다.
+//
+// 이 테스트가 잠그는 관측 사실 3가지:
+//  1. result · table 구조 컬럼이 실재한다 — 제외하지 않으면 모든 시리즈에
+//     존재하지 않는 태그가 붙는다
+//  2. group() 이 서로 다른 태그 집합을 한 테이블(table=0)로 합치며, 없는
+//     태그 컬럼은 **빈 문자열**로 채워진다 — null 도, 별도 result 섹션도 아니다
+//  3. 태그 키에 점(.)이 들어간다 — device.dev_eui 등
+const observedEnumCSV = "" +
+	"#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,double,string,string,string,string,string,string,string,string,string\r\n" +
+	"#group,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false\r\n" +
+	"#default,_result,,,,,,,,,,,,,,\r\n" +
+	",result,table,_start,_stop,_time,_value,_field,_measurement,device.dev_eui,device.id,device.name,device.type,location,point,spot\r\n" +
+	",_result,0,2026-07-24T00:09:59.944155955Z,2026-08-23T00:09:59.944155955Z,2026-08-21T23:45:44.389Z,24.3,value,temperature,24e124126d152590,9a383ec1-e8a6-4608-9005-76ff441f461f,EM500-CO2-152590,EM500-CO2,실습실,전방 좌측,전방 좌측\r\n" +
+	",_result,0,2026-07-24T00:09:59.944155955Z,2026-08-23T00:09:59.944155955Z,2026-08-21T23:46:52.005Z,24.3,value,temperature,24e124126d152862,e2dc56fb-3fa5-4054-ad7f-ac24835f5183,EM500-CO2-152862,EM500-CO2,실습실,후방 오른쪽,후방 우측\r\n" +
+	",_result,0,2026-07-24T00:09:59.944155955Z,2026-08-23T00:09:59.944155955Z,2026-08-21T23:45:49.042Z,24.1,value,temperature,24e124128c067999,3ba5a374-87cb-4102-93fa-72ddc0c769a9,AM107-067999,AM107,실습실,후면 오른쪽,후면 오른쪽\r\n" +
+	",_result,0,2026-07-24T00:09:59.944155955Z,2026-08-23T00:09:59.944155955Z,2026-08-21T23:45:49.698Z,24.8,value,temperature,24e124128c140101,ea26f95c-6494-4dc3-9e32-6c3921d39805,AM107-140101,AM107,실습실,전방 우측,전방 우측\r\n" +
+	",_result,0,2026-07-24T00:09:59.944155955Z,2026-08-23T00:09:59.944155955Z,2026-08-21T23:54:10.574Z,26.9,value,temperature,24e124136d151523,0d67adc6-e88c-420a-bd30-c657f9e5a78e,EM300-TH-151523,EM300-TH,실습실,복도,복도\r\n" +
+	",_result,0,2026-07-24T00:09:59.944155955Z,2026-08-23T00:09:59.944155955Z,2026-08-21T23:46:36.644Z,23.8,value,temperature,24e124136d151547,c7816aa9-0111-48c9-886f-8834ade8637e,EM300-TH-151547,EM300-TH,실습실,중앙 우측,중앙 우측\r\n" +
+	",_result,0,2026-07-24T00:09:59.944155955Z,2026-08-23T00:09:59.944155955Z,2026-08-21T23:46:11.042Z,23.8,value,temperature,24e124136d151606,8a60c0fd-922c-426f-b11e-6d1e9a6376a4,EM300-TH-151606,EM300-TH,실습실,중앙 좌측,중앙 좌측\r\n" +
+	",_result,0,2026-07-24T00:09:59.944155955Z,2026-08-23T00:09:59.944155955Z,2026-08-21T23:46:01.6Z,28.3,value,temperature,24e124136d151836,9256c289-2056-489e-8860-ffb0b9ee8144,EM300-TH-151836,EM300-TH,사무실 밖,입구 오른쪽,입구 오른쪽\r\n" +
+	",_result,0,2026-07-24T00:09:59.944155955Z,2026-08-23T00:09:59.944155955Z,2026-08-21T23:45:58.524Z,26.7,value,temperature,24e124725d081175,b4298e09-4348-4f3d-af77-fe89bec8df76,AM103-081175,AM103,사무실,업무 공간 안쪽,업무 공간 안쪽\r\n" +
+	",_result,0,2026-07-24T00:09:59.944155955Z,2026-08-23T00:09:59.944155955Z,2026-08-21T23:47:56.919Z,26.2,value,temperature,24e124725d089152,557874e2-f644-4512-9237-0f4c53adc135,AM103-089152,AM103,회의실,,\r\n" +
+	",_result,0,2026-07-24T00:09:59.944155955Z,2026-08-23T00:09:59.944155955Z,2026-08-21T23:46:22.298Z,26.8,value,temperature,24e124785c389010,bc790e8f-1de7-43b6-9cc9-965075bbe804,EM320-TH-389010,EM320-TH,사무실,사무공간 스위치 옆,사무공간 스위치 옆\r\n" +
+	",_result,0,2026-07-24T00:09:59.944155955Z,2026-08-23T00:09:59.944155955Z,2026-08-21T23:46:34.857Z,24.4,value,temperature,24e124785c389818,c88c9b61-437f-4260-b366-b208b1387aa7,EM320-TH-389818,EM320-TH,실습실,,\r\n\r\n"
+
+func TestEnumerateSeries_실측CSV_회귀(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		_, _ = w.Write([]byte(observedEnumCSV))
+	}))
+	defer ts.Close()
+
+	c, err := newInfluxV2Client(InfluxDBConfig{URL: ts.URL, Token: "tok", Org: "org", Bucket: "metrics"})
+	require.NoError(t, err)
+	defer func() { _ = c.Close() }()
+
+	res, err := c.EnumerateSeries(context.Background(), SeriesEnumSpec{
+		Bucket:      "metrics",
+		Measurement: "temperature",
+		StartMs:     1753315799944,
+		EndMs:       1755907799944,
+	})
+	require.NoError(t, err)
+
+	// 12개 디바이스 = 12개 시리즈. 접기가 행을 잃지도 늘리지도 않는다.
+	require.Len(t, res.Series, 12)
+	assert.True(t, res.FieldExact, "v2 는 관측치이므로 field 축이 정확하다")
+
+	// 구조 컬럼과 밑줄 컬럼은 어떤 시리즈에도 태그로 새지 않는다.
+	forbidden := []string{"result", "table", "_start", "_stop", "_time", "_value", "_field", "_measurement"}
+	for _, s := range res.Series {
+		for _, bad := range forbidden {
+			assert.NotContains(t, s.Tags, bad, "구조/내부 컬럼이 태그로 샜다")
+		}
+		assert.Equal(t, []string{"value"}, s.Fields)
+	}
+
+	// 태그 값이 빈 문자열인 컬럼은 태그가 아니다 — InfluxDB 는 빈 태그 값을
+	// 저장하지 않으므로, group() 의 빈 채움은 "그 시리즈에 그 태그가 없다"는 뜻이다.
+	byName := make(map[string]EnumeratedSeries, len(res.Series))
+	for _, s := range res.Series {
+		byName[s.Tags["device.name"]] = s
+	}
+
+	full, ok := byName["EM500-CO2-152590"]
+	require.True(t, ok)
+	assert.Len(t, full.Tags, 7, "point · spot 을 포함한 7개 태그")
+	assert.Equal(t, "전방 좌측", full.Tags["point"])
+	assert.Equal(t, "24e124126d152590", full.Tags["device.dev_eui"], "점이 든 태그 키가 보존된다")
+
+	sparse, ok := byName["AM103-089152"]
+	require.True(t, ok)
+	assert.Len(t, sparse.Tags, 5, "point · spot 이 빈 값이므로 태그에서 빠진다")
+	assert.NotContains(t, sparse.Tags, "point")
+	assert.NotContains(t, sparse.Tags, "spot")
+	assert.Equal(t, "회의실", sparse.Tags["location"])
+}
