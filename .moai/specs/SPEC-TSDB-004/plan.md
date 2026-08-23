@@ -18,7 +18,7 @@ M1(v3 실측)을 맨 앞에 두는 이유는 OQ3 의 답이 M2 의 v3 분기 형
 
 [SPEC-TSDB-003](../SPEC-TSDB-003/spec.md) 의 `m1-probe.md` 와 같은 형식을 쓴다. 프로브 절차와 관측값을 그대로 남겨 후속 세션이 재현할 수 있어야 한다.
 
-**드러나지 않을 경우의 분기**: v3 는 `GROUP BY *` 로 질의하고 서버에서 지정 키만 남겨 접는다. 이 경우 M2 의 v3 생성기가 단순해지는 대신 M3 에 접기 단계가 추가된다.
+**결과(v0.3.0)**: 드러난다. 대체 경로는 폐기했다. 덧붙여 M3 의 `normalizeSeriesBuckets` 가 방언 중립으로 작성되어 v2/v3 분기 자체가 불필요함이 확인되었다 — OQ3 는 설계 결정이 아니라 검증 항목이었다.
 
 **검증**: 프로브 문서에 실행한 쿼리와 관측 출력이 그대로 남아 있을 것.
 
@@ -148,7 +148,7 @@ cd web && npm run build && npm test && npx tsc --noEmit && npm run lint
 - [ ] spec.md 의 U1~U9 · E1 · S1 · UB1 전부 구현
 - [ ] acceptance.md 의 AC-01 ~ AC-19 전부 통과
 - [x] OQ1 · OQ2 처분이 spec.md HISTORY 에 기록 (v0.2.0)
-- [ ] OQ3 처분이 spec.md HISTORY 에 기록
+- [x] OQ3 처분이 spec.md HISTORY 에 기록 (v0.3.0, m1-probe.md)
 - [ ] `group_by` 없는 경로의 쿼리 문자열 · 응답 · 렌더 결과 무변경 (특성화 테스트)
 - [ ] Store 경로 렌더 결과 무변경 (AC-16)
 - [ ] 신규·수정 파일 커버리지 85% 이상 — **프론트와 Go 양쪽 모두 측정** (SPEC-TSDB-002 M7.2 가 프론트만 측정해 Go 미달을 놓친 선례)
