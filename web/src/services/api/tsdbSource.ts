@@ -27,6 +27,13 @@ import type {
   SeriesMatrixQuery,
 } from './seriesDataSource';
 import { buildSeriesMatrix, type PivotKeySeries } from './seriesMatrixPivot';
+import {
+  deriveGroupCombos,
+  enumerateTsdbSeries,
+  groupPageCount,
+  sliceGroupPage,
+  type TsdbSeriesEnumResult,
+} from './tsdbSeriesEnum';
 import { groupEntriesBySeries, sliceKeysPage, storeChartValue } from './store';
 
 // ---- 에이전트 참조와 백엔드 파생 ----
@@ -252,6 +259,35 @@ export async function fetchTsdbSeries(
 export interface TsdbMatrixQuery extends SeriesMatrixQuery {
   /** [influxdb 전용] v2 = bucket, v3 = database. */
   bucket?: string;
+  /**
+   * 시리즈축 페이지네이션(SPEC-TSDB-004 §2.7.2).
+   *
+   * `size` 가 0 이하이거나 생략되면 페이지네이션이 비활성이고 그룹 전량을
+   * 조회한다 — 저장된 config 의 동작이 변하지 않는다(§2.9 U9).
+   */
+  groupPage?: { page: number; size: number };
+  /** 열거 주입 지점(테스트 seam). 생략 시 실제 D5 라우트를 호출한다. */
+  enumerateFn?: (
+    agentName: string,
+    q: { measurement: string; bucket?: string; tags?: Record<string, string>; startMs: number; endMs: number },
+    signal?: AbortSignal,
+  ) => Promise<TsdbSeriesEnumResult>;
+}
+
+/** group by 항목 1건의 페이지 상황. `index` 는 `params.keys` 의 인덱스다. */
+export interface TsdbGroupInfo {
+  index: number;
+  /** 전체 그룹 수(열거 결과 기준). */
+  total: number;
+  /** 현재 페이지(0 기반). 페이지네이션 비활성이면 0. */
+  page: number;
+  /** 전체 페이지 수. 비활성이면 1. */
+  pageCount: number;
+  /**
+   * 열거가 상한에 걸려 잘렸는지. `true` 면 페이지를 전부 넘겨도 일부 그룹에
+   * 도달하지 못한다 — UI 는 좁히는 방법을 안내해야 한다(§2.7.4).
+   */
+  truncated: boolean;
 }
 
 /** 실패한 시리즈 1건. `index` 는 `params.keys` 의 인덱스다. */
@@ -269,6 +305,8 @@ export interface TsdbSeriesFailure {
 export interface TsdbMatrixResult {
   matrix: SeriesMatrix;
   failures: TsdbSeriesFailure[];
+  /** group by 항목별 페이지 상황. 그룹 축이 없으면 비어 있다. */
+  groups?: TsdbGroupInfo[];
 }
 
 /** 취소 사유를 `useStoreChartData` 의 catch 규약(`name === 'AbortError'`)에 맞춘다. */
@@ -295,6 +333,56 @@ export async function queryTsdbMatrix(
 ): Promise<TsdbMatrixResult> {
   const failures: TsdbSeriesFailure[] = [];
 
+  // 시리즈축 페이지네이션(SPEC-TSDB-004 §2.7.2).
+  //
+  // 그룹 축이 있는 인덱스마다 **먼저 열거**해 전체 그룹 목록을 얻고, 그 페이지에
+  // 해당하는 조합만 group_filter 로 실어 질의한다. 백엔드에 시리즈 개수를 자르는
+  // 네이티브 기전이 없으므로(v3 SLIMIT 미구현 · Flux 대응물 없음) 이 2단계가
+  // 유일한 경로다.
+  //
+  // 열거는 폴링마다 반복한다 — 캐시하지 않는 것이 확정된 정책이다(§2.7.4).
+  const enumerate = params.enumerateFn ?? enumerateTsdbSeries;
+  const groups: TsdbGroupInfo[] = [];
+  const pageFilters = new Map<number, Array<Record<string, string>>>();
+  const pageSize = params.groupPage?.size ?? 0;
+  const pageIndex = params.groupPage?.page ?? 0;
+
+  for (const [idx, key] of params.keys.entries()) {
+    const groupBy = params.seriesFilters?.[idx]?.groupBy;
+    if (!groupBy || groupBy.length === 0) continue;
+    try {
+      const enumResult = await enumerate(
+        agentName,
+        {
+          measurement: key,
+          ...(params.bucket ? { bucket: params.bucket } : {}),
+          ...(params.seriesFilters?.[idx]?.tags
+            ? { tags: params.seriesFilters[idx]!.tags! }
+            : {}),
+          startMs: params.startMs,
+          endMs: params.endMs,
+        },
+        signal,
+      );
+      const combos = deriveGroupCombos(enumResult.series, groupBy);
+      groups.push({
+        index: idx,
+        total: combos.length,
+        page: pageSize > 0 ? pageIndex : 0,
+        pageCount: groupPageCount(combos.length, pageSize),
+        truncated: enumResult.truncated,
+      });
+      if (pageSize > 0) {
+        pageFilters.set(idx, sliceGroupPage(combos, pageIndex, pageSize));
+      }
+    } catch (err) {
+      // 열거 실패는 그 시리즈만의 실패다. 형제 시리즈는 영향받지 않으며,
+      // 페이지 필터 없이 진행하면 전량을 가져오게 되어 페이지네이션의 취지를
+      // 깨뜨리므로 이 인덱스를 실패로 기록하고 건너뛴다.
+      failures.push({ index: idx, error: err });
+    }
+  }
+
   const matrix = await buildSeriesMatrix(params, async (p) => {
     const window: TsdbSeriesWindow = {
       ...(params.bucket ? { bucket: params.bucket } : {}),
@@ -314,7 +402,11 @@ export async function queryTsdbMatrix(
             field: filter?.fieldName ?? '',
             ...(filter?.tags ? { tags: filter.tags } : {}),
             ...(filter?.groupBy ? { groupBy: filter.groupBy } : {}),
-            ...(filter?.groupFilter ? { groupFilter: filter.groupFilter } : {}),
+            ...(pageFilters.has(idx)
+              ? { groupFilter: pageFilters.get(idx)! }
+              : filter?.groupFilter
+                ? { groupFilter: filter.groupFilter }
+                : {}),
           },
           window,
           signal,
@@ -329,10 +421,12 @@ export async function queryTsdbMatrix(
   });
 
   if (signal?.aborted) throw abortedError();
-  if (params.keys.length > 0 && failures.length === params.keys.length) {
+  // 같은 인덱스가 열거·질의 양쪽에서 실패할 수 있으므로 인덱스로 중복을 제거한다.
+  const uniqueFailed = new Set(failures.map((f) => f.index));
+  if (params.keys.length > 0 && uniqueFailed.size === params.keys.length) {
     throw failures[0]!.error;
   }
-  return { matrix, failures };
+  return { matrix, failures, ...(groups.length > 0 ? { groups } : {}) };
 }
 
 /**

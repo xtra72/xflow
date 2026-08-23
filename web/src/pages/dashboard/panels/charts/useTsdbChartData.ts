@@ -30,6 +30,8 @@ import type {
 } from '@/services/api/seriesDataSource';
 import {
   queryTsdbSourceMatrix,
+  type TsdbGroupInfo,
+  type TsdbMatrixQuery,
   resolveTsdbBackend,
   TsdbBackendMismatchError,
   type TsdbAgentRef,
@@ -66,6 +68,13 @@ export interface UseTsdbChartDataOptions {
   queryTsdbFn?: QueryTsdbMatrixFn;
   /** 현재 시각 제공기(테스트 결정성 확보). 기본 Date.now. */
   nowFn?: () => number;
+  /**
+   * 시리즈축 페이지 커서(SPEC-TSDB-004 §2.7.2).
+   *
+   * config 가 아니라 옵션인 이유는 이것이 **보기 커서**이기 때문이다 — 페이지를
+   * 넘길 때마다 대시보드 config 가 저장되면 안 된다.
+   */
+  groupPage?: number;
 }
 
 /**
@@ -79,6 +88,11 @@ export interface UseTsdbChartDataResult extends UseStoreChartDataResult {
   partialFailureCount: number;
   /** 참조된 에이전트가 지원 백엔드가 아닌가(§2.18). 오류 사유 구분용. */
   backendMismatch?: boolean;
+  /**
+   * group by 항목별 페이지 상황(SPEC-TSDB-004 §2.7).
+   * 그룹 축이 없으면 비어 있다.
+   */
+  groups?: TsdbGroupInfo[];
 }
 
 const EMPTY_RESULT: UseTsdbChartDataResult = {
@@ -288,7 +302,7 @@ export function useTsdbChartData(
       const signal = controller.signal;
 
       const { keys, seriesFilters } = buildKeysAndFilters(config);
-      const query: SeriesMatrixQuery = {
+      const query: TsdbMatrixQuery = {
         keys,
         seriesFilters,
         startMs: now - config.time_window_ms,
@@ -297,6 +311,9 @@ export function useTsdbChartData(
         aggregation: config.aggregation,
         ...(config.fill ? { fill: config.fill } : {}),
       };
+      // 페이지 크기가 0 이면 페이지네이션 비활성 — 그룹 전량을 조회한다.
+      // 저장된 config 에 group_page_size 가 없으면 이 경로가 그대로 현행이다(§2.9).
+      const groupPageSize = config.group_page_size ?? 0;
       const ref: TsdbSourceRef = {
         ...(config.agent_id ? { agent_id: config.agent_id } : {}),
         agent_name: config.agent_name,
@@ -304,7 +321,17 @@ export function useTsdbChartData(
       };
 
       try {
-        const matrixResult = await queryFn(ref, agentsRef.current, query, signal);
+        const matrixResult = await queryFn(
+          ref,
+          agentsRef.current,
+          groupPageSize > 0
+            ? {
+                ...query,
+                groupPage: { page: optionsRef.current.groupPage ?? 0, size: groupPageSize },
+              }
+            : query,
+          signal,
+        );
         if (cancelled || signal.aborted) return;
         const converted = matrixToEntries(matrixResult.matrix, asSeriesConfig(config));
         setResult({
@@ -316,6 +343,7 @@ export function useTsdbChartData(
           status: 'connected',
           // 전부 성공하면 배지가 사라진다(§2.17-6).
           partialFailureCount: matrixResult.failures.length,
+          ...(matrixResult.groups ? { groups: matrixResult.groups } : {}),
         });
       } catch (err) {
         // abort 로 인한 취소는 에러로 보지 않는다.

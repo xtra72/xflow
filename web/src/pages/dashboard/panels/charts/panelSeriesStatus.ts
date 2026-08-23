@@ -90,3 +90,72 @@ export function resolvePanelSeriesDisplay(
   }
   return { state: 'ok', failureCount: 0, backendMismatch: false };
 }
+
+
+// ===== 그룹 페이지 표시 판정 (SPEC-TSDB-004 §2.7) =====
+
+/** 판정 입력 — 훅 결과의 groups 를 그대로 넘겨도 된다. */
+export interface GroupPageInfoLike {
+  total: number;
+  page: number;
+  pageCount: number;
+  truncated: boolean;
+}
+
+/** 패널이 그려야 할 그룹 페이지 상태. */
+export interface GroupPageDisplay {
+  /** 표시할 것이 있는가. group by 항목이 없으면 false 다. */
+  show: boolean;
+  /** 전체 그룹 수(여러 항목이면 합). */
+  total: number;
+  /** 현재 페이지(0 기반). */
+  page: number;
+  /** 전체 페이지 수(여러 항목이면 최댓값). */
+  pageCount: number;
+  /** 이전/다음으로 갈 수 있는가. */
+  canPrev: boolean;
+  canNext: boolean;
+  /**
+   * 열거가 상한에 걸렸는가. `true` 면 페이지를 전부 넘겨도 일부 그룹에 도달하지
+   * 못하므로 UI 는 좁히는 방법을 안내해야 한다(§2.7.4).
+   */
+  truncated: boolean;
+}
+
+/**
+ * 그룹 페이지 표시 상태를 판정한다.
+ *
+ * 판정을 패널마다 두면 §2.14 가 상태 4종에 대해 겪은 분산이 그대로 반복되므로,
+ * 여기 순수 함수 하나로 모은다.
+ *
+ * 여러 group by 항목이 한 패널에 있으면 **합/최댓값**으로 접는다 — 항목별 페이지를
+ * 따로 넘기게 하면 조작 축이 항목 수만큼 늘어 화면이 읽히지 않는다. 페이지 커서는
+ * 패널당 하나이며 모든 group by 항목에 같이 적용된다.
+ */
+export function resolveGroupPageDisplay(
+  groups: readonly GroupPageInfoLike[] | undefined,
+): GroupPageDisplay {
+  if (!groups || groups.length === 0) {
+    return {
+      show: false,
+      total: 0,
+      page: 0,
+      pageCount: 1,
+      canPrev: false,
+      canNext: false,
+      truncated: false,
+    };
+  }
+  const total = groups.reduce((n, g) => n + g.total, 0);
+  const pageCount = groups.reduce((n, g) => Math.max(n, g.pageCount), 1);
+  const page = groups[0]?.page ?? 0;
+  return {
+    show: true,
+    total,
+    page,
+    pageCount,
+    canPrev: page > 0,
+    canNext: page < pageCount - 1,
+    truncated: groups.some((g) => g.truncated),
+  };
+}

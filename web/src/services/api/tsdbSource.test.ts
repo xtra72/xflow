@@ -496,3 +496,153 @@ describe('tsdbSeriesDataSourceFor.useKeys — measurement 디스커버리 (D1 ·
     expect(result.current.data).toBeUndefined();
   });
 });
+
+// ===== 시리즈축 페이지네이션 (SPEC-TSDB-004 §2.7.2 · M6c) =====
+
+/** 열거 응답을 만든다. */
+function enumResponse(hosts: string[], truncated = false) {
+  return {
+    series: hosts.map((h) => ({ tags: { host: h }, fields: ['usage'] })),
+    field_exact: true,
+    count: hosts.length,
+    truncated,
+    window: { start_ms: 0, end_ms: 1 },
+  };
+}
+
+describe('queryTsdbMatrix — 시리즈축 페이지네이션 (SPEC-TSDB-004)', () => {
+  /** group by 1항목 조회 파라미터. */
+  function groupQuery(over: Record<string, unknown> = {}) {
+    return {
+      keys: ['cpu'],
+      seriesFilters: [{ fieldName: 'usage', groupBy: ['host'] }],
+      startMs: 0,
+      endMs: 60_000,
+      intervalMs: 10_000,
+      aggregation: 'average' as const,
+      ...over,
+    };
+  }
+
+  it('열거 결과에서 페이지만 group_filter 로 실어 보낸다', async () => {
+    const enumerateFn = vi.fn(async () => enumResponse(['a', 'b', 'c', 'd', 'e']));
+    postMock.mockResolvedValue(seriesResponse('usage', { host: 'a' }, [[0, 1]]));
+
+    const r = await queryTsdbMatrix('ix', {
+      ...groupQuery(),
+      groupPage: { page: 1, size: 2 },
+      enumerateFn,
+    });
+
+    expect(enumerateFn).toHaveBeenCalledTimes(1);
+    const body = postMock.mock.calls[0]![1] as Record<string, unknown>;
+    // 페이지 1(0 기반) · 크기 2 -> 세 번째·네 번째 조합.
+    expect(body.group_filter).toEqual([{ host: 'c' }, { host: 'd' }]);
+    expect(body.group_by).toEqual(['host']);
+
+    expect(r.groups).toEqual([
+      { index: 0, total: 5, page: 1, pageCount: 3, truncated: false },
+    ]);
+  });
+
+  it('페이지 크기가 0 이면 페이지네이션이 비활성이고 group_filter 를 싣지 않는다', async () => {
+    const enumerateFn = vi.fn(async () => enumResponse(['a', 'b', 'c']));
+    postMock.mockResolvedValue(seriesResponse('usage', { host: 'a' }, [[0, 1]]));
+
+    const r = await queryTsdbMatrix('ix', {
+      ...groupQuery(),
+      groupPage: { page: 0, size: 0 },
+      enumerateFn,
+    });
+
+    const body = postMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(body.group_filter).toBeUndefined();
+    // 전체 그룹 수는 여전히 알려 준다 — 사용자가 규모를 판단하려면 숫자가 보여야 한다.
+    expect(r.groups).toEqual([
+      { index: 0, total: 3, page: 0, pageCount: 1, truncated: false },
+    ]);
+  });
+
+  it('group by 축이 없으면 열거하지 않는다 (정확 일치 모드 무변경)', async () => {
+    const enumerateFn = vi.fn(async () => enumResponse(['a']));
+    postMock.mockResolvedValue(seriesResponse('usage', {}, [[0, 1]]));
+
+    const r = await queryTsdbMatrix('ix', {
+      keys: ['cpu'],
+      seriesFilters: [{ fieldName: 'usage' }],
+      startMs: 0,
+      endMs: 60_000,
+      intervalMs: 10_000,
+      aggregation: 'average',
+      groupPage: { page: 0, size: 2 },
+      enumerateFn,
+    });
+
+    expect(enumerateFn).not.toHaveBeenCalled();
+    expect(r.groups).toBeUndefined();
+    const body = postMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(body.group_filter).toBeUndefined();
+  });
+
+  it('열거 절단 신호를 그대로 전달한다', async () => {
+    const enumerateFn = vi.fn(async () => enumResponse(['a', 'b'], true));
+    postMock.mockResolvedValue(seriesResponse('usage', { host: 'a' }, [[0, 1]]));
+
+    const r = await queryTsdbMatrix('ix', {
+      ...groupQuery(),
+      groupPage: { page: 0, size: 1 },
+      enumerateFn,
+    });
+    expect(r.groups?.[0]?.truncated).toBe(true);
+  });
+
+  it('열거가 실패하면 그 시리즈만 실패로 기록한다', async () => {
+    const enumerateFn = vi.fn(async () => {
+      throw new Error('enum boom');
+    });
+    postMock.mockResolvedValue(seriesResponse('value', {}, [[0, 1]]));
+
+    const r = await queryTsdbMatrix('ix', {
+      keys: ['cpu', 'mem'],
+      seriesFilters: [
+        { fieldName: 'usage', groupBy: ['host'] },
+        { fieldName: 'value' },
+      ],
+      startMs: 0,
+      endMs: 60_000,
+      intervalMs: 10_000,
+      aggregation: 'average',
+      groupPage: { page: 0, size: 2 },
+      enumerateFn,
+    });
+
+    // 형제 시리즈(mem)는 살아 있다.
+    expect(r.failures.map((f) => f.index)).toContain(0);
+    expect(r.matrix.columns.length).toBeGreaterThan(0);
+  });
+
+  it('열거 시 사전 필터 태그와 시간창을 함께 넘긴다', async () => {
+    const enumerateFn = vi.fn(async () => enumResponse(['a']));
+    postMock.mockResolvedValue(seriesResponse('usage', { host: 'a' }, [[0, 1]]));
+
+    await queryTsdbMatrix('ix', {
+      ...groupQuery({
+        seriesFilters: [{ fieldName: 'usage', groupBy: ['host'], tags: { region: 'kr' } }],
+      }),
+      bucket: 'metrics',
+      groupPage: { page: 0, size: 1 },
+      enumerateFn,
+    });
+
+    // 열거 인자는 (agentName, query, signal) 3-튜플이다.
+    const call = enumerateFn.mock.calls[0] as unknown as [
+      string,
+      { measurement: string; bucket?: string; tags?: Record<string, string>; startMs: number; endMs: number },
+    ];
+    expect(call[1].measurement).toBe('cpu');
+    expect(call[1].bucket).toBe('metrics');
+    expect(call[1].tags).toEqual({ region: 'kr' });
+    expect(call[1].startMs).toBe(0);
+    expect(call[1].endMs).toBe(60_000);
+  });
+});

@@ -297,6 +297,14 @@ export interface TsdbSourceConfig {
   fill?: '' | 'null' | 'zero' | 'previous';
   /** 폴링 주기(ms). 미지정 시 기본값(약 5000ms)을 사용한다. */
   refresh_interval_ms?: number;
+  /**
+   * 한 페이지에 조회할 그룹 수(시리즈축 페이지네이션). @spec SPEC-TSDB-004 §2.7
+   *
+   * 0 이거나 없으면 페이지네이션이 비활성이고 그룹 전량을 조회한다 — 저장된
+   * config 의 동작이 변하지 않는다. 페이지 **인덱스**는 여기 두지 않는다.
+   * 그것은 보기 커서이며 페이지를 넘길 때마다 config 가 저장되면 안 된다.
+   */
+  group_page_size?: number;
   /** 이름을 지정하지 않은 시리즈의 표시 이름 형식(템플릿). @spec SPEC-WEB-005 */
   series_name_format?: string;
 }

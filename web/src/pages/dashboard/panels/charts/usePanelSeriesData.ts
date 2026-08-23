@@ -29,6 +29,7 @@ import {
   type UseStoreChartDataOptions,
   type UseStoreChartDataResult,
 } from './useStoreChartData';
+import type { TsdbGroupInfo } from '@/services/api/tsdbSource';
 import { useTsdbChartData, type UseTsdbChartDataOptions } from './useTsdbChartData';
 
 /**
@@ -49,6 +50,14 @@ export interface UsePanelSeriesDataResult extends UseStoreChartDataResult {
   partialFailureCount?: number;
   /** 참조된 에이전트가 지원 백엔드가 아닌가(TSDB 경로에서만). @spec §2.18 */
   backendMismatch?: boolean;
+  /**
+   * group by 항목별 페이지 상황(TSDB 경로에서만).
+   * @spec SPEC-TSDB-004 §2.7
+   *
+   * 옵셔널인 것이 하중 지지점이다 — 필수로 두면 store 경로가 이 키를 만들어야
+   * 하고, 그것이 §2.3 이 지키려던 "두 경로의 반환 키 집합 동일" 불변식을 깬다.
+   */
+  groups?: TsdbGroupInfo[];
 }
 
 /** `usePanelSeriesData` 의 선택 인자. */
