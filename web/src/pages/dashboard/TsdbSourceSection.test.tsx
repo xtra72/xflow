@@ -94,6 +94,18 @@ async function selectMeasurement(value: string): Promise<void> {
   await waitFor(() => expect(ms.value).toBe(value));
 }
 
+/**
+ * 선택 표 안의 체크박스만 돌려준다.
+ *
+ * `screen.getAllByRole('checkbox')` 는 그룹 기준 체크박스(SPEC-TSDB-004)까지
+ * 집계하므로, 표의 행 수를 단언하는 곳에서는 범위를 좁혀야 한다.
+ */
+function seriesTableCheckboxes(): HTMLInputElement[] {
+  const table = screen.queryByTestId('chart-tsdb-series-select');
+  if (!table) return [];
+  return Array.from(table.querySelectorAll('input[type="checkbox"]'));
+}
+
 /** 현재 config 의 tsdb_source 를 마지막 패치에서 읽는다. */
 function lastSeries(patches: Array<Record<string, unknown>>): TsdbSourceConfig['series'] {
   const last = patches[patches.length - 1]?.tsdb_source as TsdbSourceConfig | undefined;
@@ -246,7 +258,9 @@ describe('TsdbSourceSection — measurement → field → tag 드릴다운 (§2.
       expect(screen.getByTestId('chart-tsdb-series-select')).toBeInTheDocument(),
     );
     expect(fetchers.fetchFieldKeys).toHaveBeenCalledWith('influx-v2', 'cpu', undefined);
-    expect(screen.getAllByRole('checkbox')).toHaveLength(2);
+    // 선택 표 **안**의 체크박스만 센다. 전역 조회는 그룹 기준 체크박스까지
+    // 집계해 "표에 field 행이 몇 개인가" 라는 이 단언의 의도를 흐린다.
+    expect(seriesTableCheckboxes()).toHaveLength(2);
   });
 
   it('태그 값을 고르면 후보 행의 태그가 좁혀지고 선택에 반영된다', async () => {
@@ -322,7 +336,7 @@ describe('TsdbSourceSection — 시리즈 48 상한 (§2.9 [U9])', () => {
       />,
     );
     await selectMeasurement('cpu');
-    await waitFor(() => expect(screen.getAllByRole('checkbox')).toHaveLength(60));
+    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(60));
 
     fireEvent.click(screen.getByTestId('tsdb-select-all'));
 
@@ -348,5 +362,161 @@ describe('TsdbSourceSection — 디스커버리 실패는 편집을 막지 않�
     );
     // 목록이 없어도 measurement 드릴다운은 계속 쓸 수 있다.
     expect(screen.getByTestId('chart-tsdb-measurement-select')).toBeEnabled();
+  });
+});
+
+// ===== group by 축 (SPEC-TSDB-004 §2.1 · M6) =====
+
+describe('TsdbSourceSection — 그룹 기준 (SPEC-TSDB-004)', () => {
+  it('measurement 를 고르면 태그 키가 그룹 기준 후보로 나온다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host', 'rack']) })}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by')).toBeTruthy());
+    expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy();
+    expect(screen.getByTestId('chart-tsdb-group-by-rack')).toBeTruthy();
+  });
+
+  it('고르지 않으면 선택된 시리즈에 group_by 가 실리지 않는다 (정확 일치 모드)', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-series-select')).toBeTruthy());
+    const boxes = seriesTableCheckboxes();
+    fireEvent.click(boxes[boxes.length - 1]!);
+
+    await waitFor(() => expect(lastSeries(patches).length).toBeGreaterThan(0));
+    expect(lastSeries(patches)[0]!.group_by).toBeUndefined();
+  });
+
+  it('그룹 기준을 고르면 선택된 시리즈에 group_by 가 실린다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['rack', 'host']) })}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-rack'));
+
+    const boxes = seriesTableCheckboxes();
+    fireEvent.click(boxes[boxes.length - 1]!);
+
+    await waitFor(() => expect(lastSeries(patches).length).toBeGreaterThan(0));
+    // 키 순서는 정렬해 고정한다 — 같은 선택이 다른 config 를 만들면 안 된다.
+    expect(lastSeries(patches)[0]!.group_by).toEqual(['host', 'rack']);
+  });
+
+  it('값을 고정한 태그는 그룹 기준으로 고를 수 없다 (UB1-3)', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host']) })}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
+
+    // host 를 태그 필터로 고정한다.
+    fireEvent.change(screen.getByTestId('chart-tsdb-tag-key-select'), {
+      target: { value: 'host' },
+    });
+    const tv = screen.getByTestId('chart-tsdb-tag-value-select') as HTMLSelectElement;
+    await waitFor(() => expect(Array.from(tv.options).map((o) => o.value)).toContain('a'));
+    fireEvent.change(tv, { target: { value: 'a' } });
+
+    await waitFor(() =>
+      expect(
+        (screen.getByTestId('chart-tsdb-group-by-host') as HTMLInputElement).disabled,
+      ).toBe(true),
+    );
+    // 사유가 화면에 읽히는 문구로 있어야 한다(툴팁만으로는 스크린리더에 닿지 않는다).
+    expect(screen.getByTestId('chart-tsdb-group-by-pinned')).toBeTruthy();
+  });
+
+  it('그룹 기준으로 고른 뒤 그 태그 값을 고정하면 그룹 축에서 빠진다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host']) })}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+    expect((screen.getByTestId('chart-tsdb-group-by-host') as HTMLInputElement).checked).toBe(
+      true,
+    );
+
+    fireEvent.change(screen.getByTestId('chart-tsdb-tag-key-select'), {
+      target: { value: 'host' },
+    });
+    const tv = screen.getByTestId('chart-tsdb-tag-value-select') as HTMLSelectElement;
+    await waitFor(() => expect(Array.from(tv.options).map((o) => o.value)).toContain('a'));
+    fireEvent.change(tv, { target: { value: 'a' } });
+
+    await waitFor(() =>
+      expect(
+        (screen.getByTestId('chart-tsdb-group-by-host') as HTMLInputElement).checked,
+      ).toBe(false),
+    );
+  });
+
+  it('group by 항목이 있으면 설정 화면에 그 사실이 드러난다 (§2.11 S1)', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [
+            { key: 'cpu', field: 'usage', group_by: ['host'] },
+            { key: 'mem', field: 'used' },
+          ],
+        })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    const summary = await screen.findByTestId('chart-tsdb-grouped-series');
+    expect(summary.textContent).toContain('cpu.usage');
+    // 정확 일치 항목은 요약에 들어가지 않는다.
+    expect(summary.textContent).not.toContain('mem.used');
+  });
+
+  it('measurement 를 바꾸면 그룹 축이 초기화된다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host']) })}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+    expect((screen.getByTestId('chart-tsdb-group-by-host') as HTMLInputElement).checked).toBe(
+      true,
+    );
+
+    await selectMeasurement('mem');
+    await waitFor(() =>
+      expect(
+        (screen.getByTestId('chart-tsdb-group-by-host') as HTMLInputElement).checked,
+      ).toBe(false),
+    );
   });
 });

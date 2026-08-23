@@ -221,6 +221,13 @@ export function TsdbSourceSection({
   const [tagValue, setTagValue] = useState('');
   const [tagFilters, setTagFilters] = useState<Record<string, string>>({});
   const [overLimit, setOverLimit] = useState(false);
+  /**
+   * 그룹 기준 태그 키(SPEC-TSDB-004 §2.1). 선택 시점에 시리즈 항목으로 옮겨진다.
+   *
+   * config 가 아니라 편집 커서인 이유는 tagFilters 와 같다 — 이미 선택된 시리즈의
+   * 그룹 축을 바꾸는 것이 아니라, **앞으로 선택할** 시리즈에 붙일 축이다.
+   */
+  const [groupKeys, setGroupKeys] = useState<string[]>([]);
 
   const bucket = tsdbSource.bucket ?? '';
 
@@ -277,6 +284,12 @@ export function TsdbSourceSection({
     }));
   }, [measurement, fieldKeys.items, tagFilters]);
 
+  /** 현재 편집 커서의 그룹 축을 시리즈 항목 형태로 만든다. */
+  const groupByPatch = useMemo(
+    () => (groupKeys.length > 0 ? { group_by: [...groupKeys].sort() } : {}),
+    [groupKeys],
+  );
+
   /**
    * 선택 집합을 갱신한다. **48 상한을 강제**한다(§2.9) — 안내만 하고 통과시키면
    * 폴링당 요청 수가 상한 없이 늘어난다. 초과분은 반영하지 않고 배너를 띄운다.
@@ -314,10 +327,11 @@ export function TsdbSourceSection({
           key: row.key,
           field: row.field,
           ...(Object.keys(row.tags).length > 0 ? { tags: { ...row.tags } } : {}),
+          ...groupByPatch,
         },
       ]);
     },
-    [applySelection, rowById, tsdbSource.series],
+    [applySelection, groupByPatch, rowById, tsdbSource.series],
   );
 
   const handleSelectMany = useCallback(
@@ -333,12 +347,13 @@ export function TsdbSourceSection({
           key: row.key,
           field: row.field,
           ...(Object.keys(row.tags).length > 0 ? { tags: { ...row.tags } } : {}),
+          ...groupByPatch,
         });
       }
       if (added.length === 0) return;
       applySelection([...tsdbSource.series, ...added]);
     },
-    [applySelection, rowById, tsdbSource.series],
+    [applySelection, groupByPatch, rowById, tsdbSource.series],
   );
 
   const handleClearMany = useCallback(
@@ -499,6 +514,8 @@ export function TsdbSourceSection({
                 setTagKey('');
                 setTagValue('');
                 setTagFilters({});
+                // 태그 키 집합이 measurement 마다 다르므로 그룹 축도 함께 비운다.
+                setGroupKeys([]);
               }}
               className={inputClass()}
             >
@@ -549,6 +566,9 @@ export function TsdbSourceSection({
                   else next[tagKey] = v;
                   return next;
                 });
+                // UB1-3 — 값을 고정한 키로는 나눌 수 없다(그룹이 항상 1개다).
+                // 서버가 400 으로 거부하므로 UI 에서 먼저 해소한다.
+                if (v !== '') setGroupKeys((prev) => prev.filter((k) => k !== tagKey));
               }}
               className={inputClass()}
             >
@@ -562,6 +582,66 @@ export function TsdbSourceSection({
           </FieldLabel>
         </div>
       </div>
+
+      {/* 그룹 기준(group by) — 태그 값으로 시리즈를 나눈다(SPEC-TSDB-004 §2.1).
+          값을 고정한 키는 후보에서 제외한다 — 그 키로 나누면 그룹이 항상 1개이고
+          서버가 400 으로 거부한다(UB1-3). 숨기지 않고 **비활성 + 사유**로 두어
+          "왜 못 고르는가" 가 화면에서 읽히게 한다(§2.13 [S1] 원칙 승계). */}
+      {measurement !== '' && tagKeys.items.length > 0 && (
+        <div data-testid="chart-tsdb-group-by">
+          <FieldLabel label={t('dashboard.chart.tsdbGroupBy')}>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {tagKeys.items.map((k) => {
+                const pinned = tagFilters[k] !== undefined;
+                const checked = groupKeys.includes(k);
+                return (
+                  <label
+                    key={k}
+                    className={`flex items-center gap-1 text-xs ${
+                      pinned ? 'opacity-50' : ''
+                    }`}
+                    {...(pinned
+                      ? { title: t('dashboard.chart.tsdbGroupByPinnedReason') }
+                      : {})}
+                  >
+                    <input
+                      type="checkbox"
+                      data-testid={`chart-tsdb-group-by-${k}`}
+                      checked={checked}
+                      disabled={pinned}
+                      aria-disabled={pinned}
+                      onChange={(e) => {
+                        setGroupKeys((prev) =>
+                          e.target.checked
+                            ? [...prev, k].sort()
+                            : prev.filter((x) => x !== k),
+                        );
+                      }}
+                    />
+                    <span>{k}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </FieldLabel>
+          <p className="mt-1 text-[11px] text-(--color-text-muted)">
+            {groupKeys.length === 0
+              ? t('dashboard.chart.tsdbGroupByNone')
+              : t('dashboard.chart.tsdbGroupByHint').replace(
+                  '{keys}',
+                  [...groupKeys].sort().join(', '),
+                )}
+          </p>
+          {tagKeys.items.some((k) => tagFilters[k] !== undefined) && (
+            <p
+              data-testid="chart-tsdb-group-by-pinned"
+              className="mt-1 text-[11px] text-(--color-text-muted)"
+            >
+              {t('dashboard.chart.tsdbGroupByPinnedReason')}
+            </p>
+          )}
+        </div>
+      )}
 
       {Object.keys(tagFilters).length > 0 && (
         <p data-testid="chart-tsdb-tag-filters" className="text-[11px] text-(--color-text-muted)">
@@ -593,6 +673,29 @@ export function TsdbSourceSection({
             showRegistration={false}
           />
         </div>
+      )}
+
+      {/* 선택된 항목 중 group by 축을 가진 것을 드러낸다(§2.11 [S1]).
+          정확 일치 항목과 시각적으로 구분되어야 한다 — 하나가 런타임에 여러
+          시리즈로 펼쳐진다는 사실이 설정 화면에서 보이지 않으면, 사용자는 차트에
+          예상보다 많은 라인이 나오는 이유를 알 수 없다. */}
+      {tsdbSource.series.some((sr) => (sr.group_by?.length ?? 0) > 0) && (
+        <p
+          data-testid="chart-tsdb-grouped-series"
+          className="text-[11px] text-(--color-text-muted)"
+        >
+          {tsdbSource.series
+            .filter((sr) => (sr.group_by?.length ?? 0) > 0)
+            .map(
+              (sr) =>
+                `${sr.key}.${sr.field} — ` +
+                t('dashboard.chart.tsdbGroupByBadge').replace(
+                  '{keys}',
+                  [...(sr.group_by ?? [])].sort().join(', '),
+                ),
+            )
+            .join(' / ')}
+        </p>
       )}
 
       {overLimit && (
