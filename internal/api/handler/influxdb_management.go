@@ -58,6 +58,7 @@ var defaultInfluxManagementTimeout = 60 * time.Second
 //	GET    /influxdb/{agent_name}/tag-keys?measurement=&bucket=
 //	GET    /influxdb/{agent_name}/tag-values?measurement=&tag_key=&bucket=
 //	GET    /influxdb/{agent_name}/field-keys?measurement=&bucket=
+//	GET    /influxdb/{agent_name}/series?measurement=&bucket=&start_ms=&end_ms=&tags=&limit=
 //
 // D1(measurement 목록)은 위 /measurements 라우트가 겸한다 — 신규 라우트를 만들지
 // 않는다. 같은 목록을 두 경로가 돌려주면 어느 쪽이 정본인지 알 수 없게 된다.
@@ -90,6 +91,14 @@ func (h *InfluxDBManagementHandler) RegisterRoutes(g *api.RouteGroup) {
 	g.GETPerm("/influxdb/{agent_name}/tag-keys", "store.read", h.ListTagKeys)
 	g.GETPerm("/influxdb/{agent_name}/tag-values", "store.read", h.ListTagValues)
 	g.GETPerm("/influxdb/{agent_name}/field-keys", "store.read", h.ListFieldKeys)
+
+	// @spec SPEC-TSDB-003 §2.2 (U2) — 시리즈 열거 D5. 핸들러는
+	// influxdb_seriesenum.go 에 있다.
+	//
+	// POST /influxdb/{agent_name}/series/query(InfluxDBSeriesHandler)와 경로
+	// 접두사를 공유하나 메서드가 달라 ServeMux 에서 충돌하지 않는다(OQ1 확정).
+	// 그 가정은 두 핸들러를 같은 라우터에 등록하는 테스트가 검증한다.
+	g.GETPerm("/influxdb/{agent_name}/series", "store.read", h.ListSeries)
 }
 
 // resolveDiscoverer 는 agent_name 으로 에이전트를 조회하고 influxSchemaDiscoverer

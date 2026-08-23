@@ -79,6 +79,13 @@ type SeriesEnumResult struct {
 	// FieldExact 는 Fields 가 정확한 관측치인지(true) measurement 전체 field
 	// 목록의 근사인지(false) 를 나타낸다.
 	FieldExact bool
+	// RowLimitHit 은 **접기 전 원시 행**이 쿼리 상한에 닿았는지다.
+	//
+	// 이 신호가 없으면 §2.7 이 요구하는 truncated 를 세울 수 없다. 원시 행이
+	// 잘리면 태그 집합 수가 상한 아래여도 목록이 불완전하기 때문이다 — 그
+	// 경우 핸들러는 truncated=false 를 돌려주고 사용자는 목록이 전부라고
+	// 믿게 된다. 접기 이후에는 복원할 수 없는 정보이므로 여기서 싣는다.
+	RowLimitHit bool
 }
 
 // InfluxSeriesEnumerator 는 시리즈 열거 계약이다.
@@ -382,7 +389,11 @@ func enumerateSeriesWithFlux(ctx context.Context, spec SeriesEnumSpec, run fluxQ
 		return SeriesEnumResult{}, fmt.Errorf("influxdb v2 enumerate series (bucket=%q, measurement=%q): %w",
 			spec.Bucket, spec.Measurement, err)
 	}
-	return SeriesEnumResult{Series: foldEnumRows(rows), FieldExact: true}, nil
+	return SeriesEnumResult{
+		Series:      foldEnumRows(rows),
+		FieldExact:  true,
+		RowLimitHit: len(rows) >= resolveSeriesEnumRowLimit(spec.RowLimit),
+	}, nil
 }
 
 // EnumerateSeries 는 그룹 키에서 시리즈를 도출한다(D5 의 v2 경로 · §2.4).

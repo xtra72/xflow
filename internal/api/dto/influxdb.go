@@ -62,3 +62,57 @@ const (
 	// 양쪽 백엔드 모두 대응물이 없다. 조용히 대체하지 않고 400 으로 거부한다.
 	SeriesFillAvg = "avg"
 )
+
+// --- 시리즈 열거(디스커버리 D5) 응답 (@spec SPEC-TSDB-003 §2.2 (U2)) ---
+//
+// 여기에는 응답 타입이 있다. 구조화 질의(위)와 반대인 이유는 열거가 **기존 응답
+// 형상에 대응물이 없기** 때문이다 — 평탄 entries 는 (시각, 값) 열이고, 열거는
+// (태그 집합, field 목록) 열이다. 있는 형상에 억지로 태우면 소비자가 두 뜻을
+// 구분할 수 없다.
+//
+// system.EnumeratedSeries 를 그대로 직렬화하지 않고 여기에 다시 두는 이유는
+// 계층 경계다 — dto 는 agent 계층을 import 하지 않으며, 와이어 형상이 에이전트
+// 내부 타입의 json 태그 변경에 딸려 흔들려서는 안 된다.
+
+// InfluxSeriesEnumWindow 는 서버가 **실제로 사용한** 탐색 창이다(§2.8).
+//
+// 요청이 창을 생략했을 때 무엇이 적용됐는지 드러내는 것이 이 필드의 목적이다.
+// 창을 코드에 숨기면(UB1-6) 사용자는 "시리즈가 삭제됨"과 "탐색 창 밖"을 구분할
+// 수 없고, 전자로 오해하면 잘못된 조치를 한다.
+type InfluxSeriesEnumWindow struct {
+	// StartMs 는 탐색 창 시작(포함)이다.
+	StartMs int64 `json:"start_ms"`
+	// EndMs 는 탐색 창 끝(미포함)이다.
+	EndMs int64 `json:"end_ms"`
+}
+
+// InfluxEnumeratedSeries 는 열거된 시리즈 1개다.
+type InfluxEnumeratedSeries struct {
+	// Tags 는 실재하는 태그 집합 1벌이다. 키 없는 시리즈는 빈 객체({})이며
+	// null 이 아니다 — 프런트가 분기 없이 태그 맵을 읽을 수 있어야 한다.
+	Tags map[string]string `json:"tags"`
+	// Fields 는 그 태그 집합에서 관측된 field 키 목록이며 사전순이다.
+	Fields []string `json:"fields"`
+}
+
+// InfluxSeriesEnumResponse 는 GET /influxdb/{agent_name}/series 의 응답 데이터다.
+//
+// dto.NewSuccessResponse 봉투 안에 담긴다 — 디스커버리 D1~D4 와 같은 규약이며
+// 신규 봉투를 만들지 않는다.
+type InfluxSeriesEnumResponse struct {
+	// Series 는 태그 직렬화 오름차순으로 정렬된 시리즈 목록이다(UB1-16).
+	// 절단이 발생할 때 폴링마다 다른 부분집합이 잘리면 사용자가 고른 시리즈가
+	// 목록에서 사라졌다 나타났다 한다.
+	Series []InfluxEnumeratedSeries `json:"series"`
+	// FieldExact 는 Fields 가 정확한 관측치인지(true) 하한/근사인지(false) 다.
+	// 백엔드마다 다르며(v2 true · v3 false), 프런트 능력 표가 아니라 **이 값**이
+	// 정본이다(§2.6).
+	FieldExact bool `json:"field_exact"`
+	// Count 는 Series 의 길이다.
+	Count int `json:"count"`
+	// Truncated 는 상한에 걸려 잘렸는지다(§2.7). 절단을 조용히 수행하지 않는다 —
+	// UI 가 이 신호로 배너와 좁히는 방법을 함께 제시한다.
+	Truncated bool `json:"truncated"`
+	// Window 는 서버가 실제로 사용한 탐색 창이다.
+	Window InfluxSeriesEnumWindow `json:"window"`
+}

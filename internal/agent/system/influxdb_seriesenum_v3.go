@@ -258,7 +258,11 @@ func enumerateSeriesWithInfluxQL(
 			spec.Measurement, err)
 	}
 
-	return SeriesEnumResult{Series: foldEnumRowsV3(rows, tagKeys), FieldExact: false}, nil
+	return SeriesEnumResult{
+		Series:      foldEnumRowsV3(rows, tagKeys),
+		FieldExact:  false,
+		RowLimitHit: len(rows) >= resolveSeriesEnumRowLimit(spec.RowLimit),
+	}, nil
 }
 
 // EnumerateSeries 는 SHOW TAG KEYS + GROUP BY * 2질의로 시리즈를 열거한다

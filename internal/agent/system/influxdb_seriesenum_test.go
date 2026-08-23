@@ -830,3 +830,40 @@ func TestEnumerateSeries_실측CSV_회귀(t *testing.T) {
 	assert.NotContains(t, sparse.Tags, "spot")
 	assert.Equal(t, "회의실", sparse.Tags["location"])
 }
+
+// --- 원시 행 상한 신호 (SPEC-TSDB-003 §2.7) --------------------------------
+
+// 원시 행이 쿼리 상한에 닿으면 RowLimitHit 이 선다. 이 신호가 없으면 태그 집합
+// 수가 상한 아래일 때 핸들러가 truncated=false 를 돌려주고, 사용자는 불완전한
+// 목록을 전부라고 믿게 된다. 접기 이후에는 복원할 수 없는 정보다.
+func TestEnumerateSeriesWithFlux_원시행_상한_도달(t *testing.T) {
+	t.Parallel()
+
+	spec := f3EnumSpec()
+	spec.RowLimit = 2
+	run := func(_ context.Context, _ string) ([]map[string]any, error) {
+		return []map[string]any{
+			{"_field": "usage", "host": "a"},
+			{"_field": "usage", "host": "b"},
+		}, nil
+	}
+
+	got, err := enumerateSeriesWithFlux(context.Background(), spec, run)
+	require.NoError(t, err)
+	assert.True(t, got.RowLimitHit, "행 수가 상한과 같으면 잘렸을 수 있다")
+	assert.Len(t, got.Series, 2)
+}
+
+func TestEnumerateSeriesWithFlux_원시행_상한_미달(t *testing.T) {
+	t.Parallel()
+
+	spec := f3EnumSpec()
+	spec.RowLimit = 10
+	run := func(_ context.Context, _ string) ([]map[string]any, error) {
+		return []map[string]any{{"_field": "usage", "host": "a"}}, nil
+	}
+
+	got, err := enumerateSeriesWithFlux(context.Background(), spec, run)
+	require.NoError(t, err)
+	assert.False(t, got.RowLimitHit)
+}

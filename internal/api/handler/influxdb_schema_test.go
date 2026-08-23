@@ -69,7 +69,8 @@ func TestInfluxSchema_라우트_등록(t *testing.T) {
 	g := router.Group("/api/v1")
 	before := router.RouteCount()
 	h.RegisterRoutes(g)
-	assert.Equal(t, 9, router.RouteCount()-before, "관리 6 종 + 디스커버리 3 종")
+	// @spec SPEC-TSDB-003 §2.2 (U2) — 열거 D5 가 더해져 10 이다.
+	assert.Equal(t, 10, router.RouteCount()-before, "관리 6 종 + 디스커버리 3 종 + 열거 1 종")
 }
 
 // TestInfluxSchema_디스커버리_권한 은 3 종 모두 store.read 임을 확인한다.

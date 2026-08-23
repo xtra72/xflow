@@ -113,7 +113,8 @@ func TestInfluxManagement_RegisterRoutes(t *testing.T) {
 	h.RegisterRoutes(g)
 	// @spec SPEC-TSDB-002 §2.10 (U10) — 관리 6 종 + 디스커버리 3 종(D2~D4).
 	// D1(measurements)은 기존 관리 라우트를 겸하므로 신규 등록이 없다.
-	assert.Equal(t, 9, router.RouteCount()-before)
+	// @spec SPEC-TSDB-003 §2.2 (U2) — 열거 D5 1 종이 더해져 10 이다.
+	assert.Equal(t, 10, router.RouteCount()-before)
 }
 
 // ===== ListBuckets =====

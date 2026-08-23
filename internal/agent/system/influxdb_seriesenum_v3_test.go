@@ -732,3 +732,30 @@ func TestFoldEnumRowsV3_실측JSON_회귀(t *testing.T) {
 	}
 	assert.True(t, found, "device.name 태그가 점 표기 그대로 보존되어야 한다")
 }
+
+// 원시 행 상한 신호는 v3 도 같다(SPEC-TSDB-003 §2.7). v3 는 시리즈당 1행이
+// 보장되지 않으므로 행 상한에 닿기가 v2 보다 오히려 쉽다.
+func TestEnumerateSeriesWithInfluxQL_원시행_상한_도달(t *testing.T) {
+	t.Parallel()
+
+	res, err := enumerateSeriesWithInfluxQL(context.Background(),
+		SeriesEnumSpec{Measurement: "cpu", StartMs: 1, EndMs: 2, RowLimit: 2},
+		func(_ context.Context, _, _ string) ([]string, error) { return []string{"host"}, nil },
+		func(_ context.Context, _ string) ([]map[string]any, error) {
+			return []map[string]any{
+				{"iox::measurement": "cpu", "time": "t", "host": "a", "usage": 1.0},
+				{"iox::measurement": "cpu", "time": "t", "host": "b", "usage": 2.0},
+			}, nil
+		})
+	require.NoError(t, err)
+	assert.True(t, res.RowLimitHit)
+
+	res2, err := enumerateSeriesWithInfluxQL(context.Background(),
+		SeriesEnumSpec{Measurement: "cpu", StartMs: 1, EndMs: 2, RowLimit: 10},
+		func(_ context.Context, _, _ string) ([]string, error) { return []string{"host"}, nil },
+		func(_ context.Context, _ string) ([]map[string]any, error) {
+			return []map[string]any{{"iox::measurement": "cpu", "time": "t", "host": "a", "usage": 1.0}}, nil
+		})
+	require.NoError(t, err)
+	assert.False(t, res2.RowLimitHit)
+}
