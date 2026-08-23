@@ -1,7 +1,7 @@
 ---
 id: SPEC-TSDB-003
 title: TSDB 시리즈 열거 — measurement + 태그 집합으로 실재 시리즈를 고른다
-version: 0.4.0
+version: 0.5.0
 status: draft
 created: 2026-08-23
 updated: 2026-08-23
@@ -26,6 +26,79 @@ lifecycle_level: spec-first
 | 0.2.0 | 2026-08-23 | xtra | **초안 승인 + 열린 질문 3건 확정.** (1) SPEC 승인 — M1(실측 스파이크)부터 착수한다. (2) **OQ6 확정 — 로컬 편집 상태.** 탐색 창을 `tsdb_source` 에 영속하지 않는다; §2.10 형상 무변경과 AC-28·AC-29·AC-30 이 그대로 유지된다. (3) **OQ8 확정 — 대체 선언한다.** 본 SPEC 이 SPEC-TSDB-002 §2.15 [O1] 의 3단 드릴다운 항목을 대체한다(§2.15 [S3]). 나머지 OQ1·OQ3·OQ4·OQ5·OQ7·OQ9·OQ10 은 **잠정안 그대로 진행**하며 M1 종료 시 실측 근거와 함께 최종 확정한다. OQ2 는 여전히 미확정이며 M1 이 닫는다. 요구사항 변경 없음 — 확정만 기록한다. |
 | 0.3.0 | 2026-08-23 | xtra | **M2 구현 회차 — 사실 정정 1건 + OQ5 확정.** M1(실측 스파이크)은 실측 대상 InfluxDB 인스턴스가 없어 **보류**했고, M1→M2 가 연성 의존이므로 M2(v2 Flux 열거)를 선행했다. M3(v3)은 M1 과 함께 보류 상태다. §HISTORY-0.3.0 참조. |
 | 0.4.0 | 2026-08-23 | xtra | **M1 실측 부분 수행 — v2 축 확정, v3 축 미해결.** 사용자가 실 InfluxDB 2.x 인스턴스에서 `BuildFluxSeriesEnumQuery` 생성 질의를 직접 실행해 주석 CSV 원문을 관측했다. **M2 가 가정으로 세운 3건이 전부 사실로 확인**되었고, 문서로는 알 수 없던 사실 1건(점이 든 태그 키)이 추가로 드러났다. 관측 데이터를 회귀 테스트로 잠갔다. OQ2(v3 대체 경로)는 **여전히 미확정** — 관측된 인스턴스가 v2 이므로 M3 은 계속 보류다. §HISTORY-0.4.0 참조. |
+| 0.5.0 | 2026-08-23 | xtra | **M1 v3 축 실측 완료 — OQ2 확정, OQ3 확정, §2.5 경로 교체.** 로컬 `influxdb:3-core` 컨테이너에 관측된 v2 데이터와 같은 형상(점 든 태그 키 · 태그 결손 시리즈 · 태그 0개 measurement · 문자열 필드)을 주입하고 P1~P6 을 실행했다. **OQ2 → InfluxQL `GROUP BY *` 경로 채택**(SQL `DISTINCT` 3질의 폐기). **OQ3 → `field_exact: false` 유지**(근거가 바뀌었다). §2.5 를 3단 SQL 경로에서 2단 InfluxQL 경로로 교체한다. §HISTORY-0.5.0 참조. |
+
+---
+
+### HISTORY-0.5.0 — M1 실측(v3 축) 결과
+
+로컬 `influxdb:3-core` 컨테이너(`--object-store file`, 포트 8181)에 §HISTORY-0.4.0 이 관측한 v2 데이터와
+같은 형상을 주입하고 프로브를 실행했다. 주입 형상: 점 든 태그 키 4종(`device.dev_eui` 등) · 태그 7개
+시리즈 3개 · 태그 5개 시리즈 1개(`point`·`spot` 결손) · 태그 0개 measurement(`heartbeat`) ·
+다중 필드 measurement(`multi`) · 문자열 필드 measurement(`ambig`).
+
+**(1) `SHOW SERIES` 미지원이 실측으로 확인되었다.**
+
+파싱 단계에서 거부되며, 오류 문구가 지원 목록을 그대로 열거한다.
+
+```
+error in InfluxQL statement: parsing error: invalid SHOW statement,
+expected DATABASES, FIELD KEYS, MEASUREMENTS, TAG KEYS, TAG VALUES,
+or RETENTION POLICIES following SHOW at pos 5
+```
+
+문서(§1.2.4)와 실제가 일치한다. 런타임 실패가 아니라 파싱 실패이므로 오류 메시지가 명확하다.
+
+**(2) OQ2 확정 — InfluxQL `GROUP BY *` 를 채택하고 SQL `DISTINCT` 3질의를 폐기한다.**
+
+`SELECT * FROM "<m>" WHERE time >= ... GROUP BY * LIMIT 1` 의 응답에서 **태그가 각 행의 평탄한
+컬럼으로 나타난다.** 별도 `tags` 객체도, 그룹 메타도 아니다.
+
+```json
+{"iox::measurement":"temperature","time":"2026-08-23T00:24:10.754182912",
+ "device.dev_eui":"24e124126d152590","device.id":"9a383ec1-...","device.name":"EM500-CO2-152590",
+ "device.type":"EM500-CO2","location":"실습실","point":"전방 좌측","spot":"전방 좌측","value":24.3}
+```
+
+이로써 §4.3 이 "매력적이나 문서로 확인되지 않는다"고 유예했던 단일 질의 경로가 열렸다.
+
+**(3) v3 는 v2 와 세 지점에서 다르다 — 접기를 공유할 수 없다.**
+
+| 축 | v2 (Flux) | v3 (InfluxQL `GROUP BY *`) |
+|----|-----------|---------------------------|
+| 결손 태그의 표현 | **빈 문자열**로 채워짐(§HISTORY-0.4.0) | **키 자체가 없음**(`AM103-089152` 행에 `point`·`spot` 키 부재) |
+| 제외할 비-밑줄 컬럼 | `result` · `table` | **`iox::measurement` · `time`** |
+| 시리즈당 행 수 | `first()` 가 1행 보장 | **보장 없음** — 필드가 서로 다른 시각에 기록된 시리즈는 여러 행으로 온다(`host=c` → 2행) |
+
+특히 v3 의 `time` 은 v2 의 `_time` 과 달리 **밑줄이 없다.** `iox::measurement` 도 마찬가지다.
+v2 의 `result`·`table` 과 정확히 같은 함정 부류이며, 밑줄 규칙만으로는 둘 다 걸러지지 않는다.
+
+**(4) 태그와 필드는 타입으로 구분할 수 없다 — `SHOW TAG KEYS` 가 정본이어야 한다.**
+
+문자열 필드가 있으면 태그와 JSON 타입이 같아진다.
+
+```json
+{"iox::measurement":"ambig","time":"...","host":"a","status":"ok","temp":1.0}
+```
+
+`host` 는 태그, `status` 는 문자열 필드지만 응답만으로는 구분되지 않는다(`SHOW TAG KEYS FROM "ambig"`
+→ `host` 하나, `SHOW FIELD KEYS` → `status`·`temp`). 따라서 v3 열거는 **2질의**다 — 먼저
+`SHOW TAG KEYS` 로 태그 키 집합을 얻고(기존 D2 `ListTagKeys` 재사용), 그 집합으로 행의 키를 분류한다.
+
+**(5) OQ3 확정 — `field_exact: false` 를 유지하되 근거가 바뀐다.**
+
+기존 근거는 "3단계가 measurement 전체 field 목록을 주므로 모든 태그 집합에 동일 부여" 였다.
+새 경로에서는 **행에서 시리즈별 필드를 실제로 관측**하므로 정확도가 크게 오른다 — `multi` 의
+`host=a` 는 `{temp, humi}`, `host=b` 는 `{temp}` 로 정확히 갈렸다.
+
+그럼에도 `false` 를 유지하는 이유는 **행 상한이 표본이기 때문**이다. 필드가 서로 다른 시각에
+기록된 시리즈(`host=c`)는 시각마다 별도 행으로 오므로, `LIMIT` 이 그중 일부만 잘라 오면 필드가
+누락된다. 관측된 필드의 합집합은 **하한**이지 정확한 집합이 아니다.
+
+**(6) 남은 갭.**
+
+로컬 단일 노드 컨테이너의 소규모 데이터(시리즈 6개)에 대한 관측이다. 고카디널리티에서의
+`GROUP BY *` 응답 시간과 행 상한 도달 거동(OQ4 의 1,000)은 측정하지 않았다.
 
 ---
 
@@ -386,19 +459,33 @@ from(bucket: "<bucket>")
 
 **시스템은 v3 에서 `SHOW SERIES` 를 발행해서는 안 된다.** 공식 문서 두 곳이 미지원을 명시한다(§1.2.4). 발행하면 런타임 오류가 되고, 그 오류는 "디스커버리 실패"로만 보여 사용자가 원인을 알 수 없다.
 
-시스템은 v3 에서 다음 3단 경로로 열거한다.
+시스템은 v3 에서 다음 **2단 경로**로 열거한다(OQ2 확정 — §HISTORY-0.5.0 (2)).
 
-| 단계 | 쿼리 | 지원 근거 |
-|------|------|-----------|
-| 1 | `SHOW TAG KEYS FROM "<m>"` (InfluxQL) | 공식 문서 지원 목록 |
-| 2 | `SELECT DISTINCT "<tk1>", "<tk2>", ... FROM "<m>" WHERE time >= '<startRFC3339Nano>' AND time < '<endRFC3339Nano>' [AND "<tk>" = '<tv>'] LIMIT <rowCap>` (SQL) | 클라이언트 SQL 경로 존재(`influxdb_v3.go:76-97`); 화이트리스트 무관(§1.2.6) |
-| 3 | `SHOW FIELD KEYS FROM "<m>"` (InfluxQL) | 공식 문서 지원 목록 |
+| 단계 | 쿼리 | 목적 |
+|------|------|------|
+| 1 | `SHOW TAG KEYS FROM "<m>"` (InfluxQL) | **태그 키 집합의 정본.** 기존 D2 `ListTagKeys` 를 재사용한다 |
+| 2 | `SELECT * FROM "<m>" WHERE time >= '<startRFC3339Nano>' AND time < '<endRFC3339Nano>' [AND "<tk>" = '<tv>'] GROUP BY * LIMIT <rowCap>` (InfluxQL) | 시리즈 행 회수 |
 
-3단계의 결과는 **measurement 전체의 field 목록**이며, 모든 태그 집합에 동일하게 부여된다. 따라서 이 경로에서 `field_exact` 는 **`false`** 다.
+1단계가 없으면 안 되는 이유: **태그와 필드는 응답 타입으로 구분되지 않는다.** 문자열 필드가 있으면 태그와 JSON 타입이 같아진다(§HISTORY-0.5.0 (4)). 1단계의 키 집합만이 정본이다.
 
-태그 키가 0개면 2단계를 건너뛰고 `series: [{ tags: {}, fields: [...] }]` 한 항목을 반환한다 — 태그 없는 measurement 도 시리즈 1개다.
+2단계 행의 키 분류 규칙:
 
-**대안과 그 처분은 §4.3 에 있다.** 특히 InfluxQL `GROUP BY *`(공식 문서상 [지원됨](https://docs.influxdata.com/influxdb3/core/reference/influxql/group-by/) — "Groups data by all tags")을 쓰는 단일 쿼리 경로는 매력적이나, 그 결과에서 태그가 행 컬럼으로 드러나는지는 **문서로 확인되지 않는다**(OQ2). M1 이 실측한다.
+| 키 | 처분 |
+|----|------|
+| 1단계의 태그 키 집합에 속함 | **태그** |
+| `iox::measurement` · `time` | **제외** — 둘 다 밑줄이 없다. v2 의 `result`·`table` 과 같은 함정 부류이며 밑줄 규칙으로 걸러지지 않는다 |
+| 밑줄(`_`) 접두 | 제외(방어적) |
+| 그 외 | **필드 이름** |
+
+**결손 태그는 키 자체가 없다** — v2 가 빈 문자열로 채우는 것과 다르다(§HISTORY-0.5.0 (3)). 따라서 v2 의 접기 함수를 그대로 쓸 수 없다.
+
+**시리즈당 1행이 보장되지 않는다.** 필드가 서로 다른 시각에 기록된 시리즈는 시각마다 별도 행으로 온다. 접기는 태그 집합 기준으로 중복을 합치고 필드를 합집합해야 한다.
+
+이 경로에서 `field_exact` 는 **`false`** 다(OQ3). 행에서 시리즈별 필드를 실제로 관측하므로 정확도는 높지만, `LIMIT` 이 표본을 자르면 필드가 누락될 수 있어 관측된 필드 집합은 **하한**이다(§HISTORY-0.5.0 (5)).
+
+태그 키가 0개면 2단계 행에 태그 컬럼이 없고, `series: [{ tags: {}, fields: [...] }]` 한 항목으로 접힌다 — 태그 없는 measurement 도 시리즈 1개다(`heartbeat` 로 실측).
+
+**폐기된 대안**: SQL `SELECT DISTINCT` 3질의 경로. 질의가 하나 더 들고, 필드 축이 measurement 전역이라 시리즈별 정확도가 낮다. §4.3 의 대안 비교 참조.
 
 ### 2.6 [U6] (Ubiquitous) 백엔드 비대칭을 능력 표에 명시한다
 
@@ -735,8 +822,8 @@ export interface TsdbBackendCapabilities {
 | # | 질문 | 권장 | 근거 / 대안 |
 |---|------|------|-------------|
 | **OQ1** | D5 의 라우트 이름과 배치. `GET /influxdb/{agent}/series` 는 기존 `POST /influxdb/{agent}/series/query` 와 접두사를 공유한다 | `GET /influxdb/{agent_name}/series`, `InfluxDBManagementHandler` 에 등록 | 메서드가 달라 라우팅 충돌은 없고, D1~D4 의 `resolveDiscoverer`(`influxdb_management.go:97`) · 오류 매핑(`:345`)을 그대로 쓴다. **대안**: `GET /series-list` 로 접두사를 분리하거나, `InfluxDBSeriesHandler` 에 등록해 `/series` 접두사를 한 핸들러가 소유 |
-| **OQ2** | v3 열거의 기본 경로. SQL `SELECT DISTINCT` (3쿼리) vs InfluxQL `GROUP BY *` (1쿼리) | **M1 스파이크로 실측 후 결정.** 실측 전 기본값은 SQL `DISTINCT` | `GROUP BY *` 는 [문서상 지원](https://docs.influxdata.com/influxdb3/core/reference/influxql/group-by/)되나 태그가 `iteratorToMaps`(`influxdb_v3.go:118-129`)를 통해 행 컬럼으로 드러나는지 미확인. SQL 경로는 구성 요소가 전부 검증됨(§4.3). **이 질문이 확정되기 전에는 M3 을 시작할 수 없다** |
-| **OQ3** | v3 의 `field_exact: false` 를 수용할 것인가, 아니면 field 별 `DISTINCT` 를 N회 실행해 정확도를 사는가 | **수용한다**(`false`) | field 가 F개면 쿼리가 F+2회가 된다. 근사의 대가는 "존재하지 않는 조합을 고를 수 있음"이고 그 결과는 빈 결과이며 오류가 아니다(§2.18-3). **대안**: field 수가 임계(예: 5) 이하일 때만 정확 경로를 쓰는 하이브리드 |
+| **OQ2** (확정 v0.5.0 — `GROUP BY *` 채택) | v3 열거의 기본 경로. SQL `SELECT DISTINCT` (3쿼리) vs InfluxQL `GROUP BY *` (1쿼리) | **M1 스파이크로 실측 후 결정.** 실측 전 기본값은 SQL `DISTINCT` | `GROUP BY *` 는 [문서상 지원](https://docs.influxdata.com/influxdb3/core/reference/influxql/group-by/)되나 태그가 `iteratorToMaps`(`influxdb_v3.go:118-129`)를 통해 행 컬럼으로 드러나는지 미확인. SQL 경로는 구성 요소가 전부 검증됨(§4.3). **이 질문이 확정되기 전에는 M3 을 시작할 수 없다** |
+| **OQ3** (확정 v0.5.0 — `field_exact: false` 유지) | v3 의 `field_exact: false` 를 수용할 것인가, 아니면 field 별 `DISTINCT` 를 N회 실행해 정확도를 사는가 | **수용한다**(`false`) | field 가 F개면 쿼리가 F+2회가 된다. 근사의 대가는 "존재하지 않는 조합을 고를 수 있음"이고 그 결과는 빈 결과이며 오류가 아니다(§2.18-3). **대안**: field 수가 임계(예: 5) 이하일 때만 정확 경로를 쓰는 하이브리드 |
 | **OQ4** | 반환 태그 집합 상한 1,000 의 값 | **1,000** | 근거는 "선택 표가 전 행을 렌더한다"(`SeriesSelectTable.tsx:356`)는 정성적 사실이며 측정치가 아니다. **대안**: M1 에서 렌더 시간을 실측해 값을 정하거나, 설정 가능하게 둔다 |
 | **OQ5** | 탐색 창 기본값 30일. 그리고 `measurementFieldKeys` · `measurementTagValues` 의 `start` 기본값이 `measurementTagKeys` 와 같은가 | **30일**(현상 유지 — §4.6). 나머지 두 함수의 기본값은 M2 에서 문서 재확인 | `measurementTagKeys` 만 문서로 확인했다(`-30d`). 같은 계열이므로 동일할 가능성이 높으나 **확인하지 않았다** |
 | **OQ6** (확정 v0.2.0) | 탐색 창을 `tsdb_source` 에 **영속할 것인가**, 편집 커서(로컬 상태)로 둘 것인가 | **로컬 상태** | 탐색 창은 선택 행위의 도구이지 패널의 조회 설정이 아니다. 영속하면 `tsdb_source` 형상이 바뀌어 §2.10(형상 무변경)이 깨진다. **대안**: 영속하면 설정 화면을 다시 열 때 창이 유지되어 편의는 높다 |
