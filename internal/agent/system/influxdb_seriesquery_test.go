@@ -530,3 +530,200 @@ func countTagPredicates(builderName, query string) int {
 	}
 	return n
 }
+
+// ===== group by (SPEC-TSDB-004 §2.2 ~ §2.4) =====
+
+// TestBuildFluxSeriesQuery_GroupBy_Golden 은 v2 그룹 질의의 전체 형상을 고정한다(AC-04).
+//
+// 세 가지가 동시에 성립해야 한다 — group 파이프가 존재하고, 그것이
+// aggregateWindow **앞**에 있고(§4.2), keep 목록이 그룹 키를 남긴다.
+func TestBuildFluxSeriesQuery_GroupBy_Golden(t *testing.T) {
+	t.Parallel()
+	spec := baseSpec()
+	spec.Tags = map[string]string{"region": "kr"}
+	spec.GroupBy = []string{"rack", "host"} // 정렬 전 순서로 넣는다
+
+	got, err := BuildFluxSeriesQuery(spec)
+	require.NoError(t, err)
+
+	want := strings.Join([]string{
+		`from(bucket: "metrics")`,
+		`  |> range(start: time(v: 1700000000000000000), stop: time(v: 1700003600000000000))`,
+		`  |> filter(fn: (r) => r._measurement == "cpu")`,
+		`  |> filter(fn: (r) => r._field == "usage")`,
+		`  |> filter(fn: (r) => r["region"] == "kr")`,
+		`  |> group(columns: ["host", "rack"])`,
+		`  |> aggregateWindow(every: 60000ms, fn: mean, createEmpty: false, timeSrc: "_start")`,
+		`  |> keep(columns: ["_time", "_value", "host", "rack"])`,
+	}, "\n")
+	assert.Equal(t, want, got)
+}
+
+// TestBuildFluxSeriesQuery_GroupPipePrecedesAggregateWindow 는 §4.2 의 순서
+// 계약을 인덱스로 직접 고정한다.
+//
+// 골든 테스트만으로는 부족하다 — 템플릿 문자열이 함께 바뀌면 골든도 같이
+// 갱신되어 순서 역전이 통과할 수 있다. 순서는 독립 단언으로 남긴다.
+func TestBuildFluxSeriesQuery_GroupPipePrecedesAggregateWindow(t *testing.T) {
+	t.Parallel()
+	spec := baseSpec()
+	spec.GroupBy = []string{"host2"}
+
+	got, err := BuildFluxSeriesQuery(spec)
+	require.NoError(t, err)
+
+	groupAt := strings.Index(got, "|> group(columns:")
+	aggAt := strings.Index(got, "|> aggregateWindow(")
+	keepAt := strings.Index(got, "|> keep(columns:")
+	require.Positive(t, groupAt, "group 파이프가 존재해야 한다")
+	require.Positive(t, aggAt)
+	assert.Less(t, groupAt, aggAt, "group 은 aggregateWindow 앞에 와야 한다(§4.2)")
+	assert.Less(t, aggAt, keepAt, "keep 은 마지막이다")
+}
+
+// TestBuildInfluxQLSeriesQuery_GroupBy_Golden 은 v3 그룹 절의 형상을 고정한다(AC-05).
+func TestBuildInfluxQLSeriesQuery_GroupBy_Golden(t *testing.T) {
+	t.Parallel()
+	spec := baseSpec()
+	spec.Tags = map[string]string{"region": "kr"}
+	spec.GroupBy = []string{"rack", "host"}
+
+	got, err := BuildInfluxQLSeriesQuery(spec)
+	require.NoError(t, err)
+
+	assert.Contains(t, got, ` GROUP BY time(60000ms), "host", "rack" FILL(none)`)
+}
+
+// TestBuildInfluxQLSeriesQuery_GroupBy_TimeStaysFirst 는 버킷 경계 계약을
+// 지킨다(AC-05 · AC-08). time(d) 가 첫 자리이고 offset 인자가 없어야 한다.
+//
+// 이 두 성질이 SPEC-TSDB-002 §2.8 의 epoch 정렬을 성립시킨다. 그룹 키 추가가
+// 경계를 흔들지 않는다는 것이 본 SPEC 이 지켜야 할 불변식이다.
+func TestBuildInfluxQLSeriesQuery_GroupBy_TimeStaysFirst(t *testing.T) {
+	t.Parallel()
+	for _, groupBy := range [][]string{nil, {"host2"}, {"host2", "rack"}} {
+		spec := baseSpec()
+		spec.GroupBy = groupBy
+
+		got, err := BuildInfluxQLSeriesQuery(spec)
+		require.NoError(t, err)
+
+		gb := got[strings.Index(got, " GROUP BY "):]
+		assert.True(t, strings.HasPrefix(gb, ` GROUP BY time(`),
+			"time() 이 GROUP BY 첫 자리여야 한다: %q", gb)
+		// offset 인자는 `time(d, off)` 형태로 나타난다. 쉼표가 time(...) **안**에
+		// 있으면 안 된다 — 그룹 키 쉼표는 닫는 괄호 뒤에 온다.
+		timeArgs := gb[len(` GROUP BY time(`):strings.Index(gb, ")")]
+		assert.NotContains(t, timeArgs, ",", "time() 에 offset 인자가 없어야 한다")
+	}
+}
+
+// TestBuildSeriesQuery_GroupByKeysAreSortedAndDeduped 는 결정성을 고정한다(AC-03).
+func TestBuildSeriesQuery_GroupByKeysAreSortedAndDeduped(t *testing.T) {
+	t.Parallel()
+
+	shuffled := baseSpec()
+	shuffled.Tags = nil
+	shuffled.GroupBy = []string{"rack", "host2", "az", "host2"} // 역순 + 중복
+
+	sorted := baseSpec()
+	sorted.Tags = nil
+	sorted.GroupBy = []string{"az", "host2", "rack"}
+
+	for _, build := range map[string]func(SeriesQuerySpec) (string, error){
+		"flux":     BuildFluxSeriesQuery,
+		"influxql": BuildInfluxQLSeriesQuery,
+	} {
+		a, err := build(shuffled)
+		require.NoError(t, err)
+		b, err := build(sorted)
+		require.NoError(t, err)
+		assert.Equal(t, b, a, "입력 순서와 중복이 생성 결과에 영향을 주면 안 된다")
+
+		// 반복 호출에도 동일해야 한다(맵이 아니라 슬라이스지만 회귀 방지).
+		for i := 0; i < 10; i++ {
+			again, err := build(shuffled)
+			require.NoError(t, err)
+			require.Equal(t, a, again)
+		}
+	}
+}
+
+// TestBuildSeriesQuery_GroupByEmptyIsByteIdentical 은 §2.9 U9 를 고정한다(AC-06).
+//
+// nil 과 빈 슬라이스가 서로 같을 뿐 아니라, **그룹 축을 아예 설정하지 않은**
+// spec 과도 바이트 단위로 같아야 한다. 저장된 config 의 렌더 불변이 여기에 걸린다.
+func TestBuildSeriesQuery_GroupByEmptyIsByteIdentical(t *testing.T) {
+	t.Parallel()
+
+	unset := baseSpec()
+	nilGroup := baseSpec()
+	nilGroup.GroupBy = nil
+	emptyGroup := baseSpec()
+	emptyGroup.GroupBy = []string{}
+
+	for name, build := range map[string]func(SeriesQuerySpec) (string, error){
+		"flux":     BuildFluxSeriesQuery,
+		"influxql": BuildInfluxQLSeriesQuery,
+	} {
+		base, err := build(unset)
+		require.NoError(t, err, name)
+
+		gotNil, err := build(nilGroup)
+		require.NoError(t, err, name)
+		assert.Equal(t, base, gotNil, "%s: nil GroupBy 는 미설정과 같아야 한다", name)
+
+		gotEmpty, err := build(emptyGroup)
+		require.NoError(t, err, name)
+		assert.Equal(t, base, gotEmpty, "%s: 빈 GroupBy 는 미설정과 같아야 한다", name)
+
+		// 그룹 관련 토큰이 하나도 새지 않아야 한다.
+		assert.NotContains(t, base, "group(columns:", "%s", name)
+	}
+}
+
+// TestBuildSeriesQuery_GroupByConflictsWithTagFilter 는 UB1-3 을 고정한다(AC-14).
+func TestBuildSeriesQuery_GroupByConflictsWithTagFilter(t *testing.T) {
+	t.Parallel()
+
+	spec := baseSpec()
+	spec.Tags = map[string]string{"host": "a", "region": "kr"}
+	spec.GroupBy = []string{"host"} // Tags 와 충돌
+
+	for name, build := range map[string]func(SeriesQuerySpec) (string, error){
+		"flux":     BuildFluxSeriesQuery,
+		"influxql": BuildInfluxQLSeriesQuery,
+	} {
+		_, err := build(spec)
+		require.Error(t, err, name)
+		assert.ErrorIs(t, err, ErrGroupByConflictsWithTagFilter, name)
+		assert.Contains(t, err.Error(), "host", "%s: 충돌한 키를 알려 줘야 한다", name)
+	}
+
+	// 충돌하지 않는 조합은 통과한다.
+	ok := baseSpec()
+	ok.Tags = map[string]string{"region": "kr"}
+	ok.GroupBy = []string{"host2"}
+	_, err := BuildFluxSeriesQuery(ok)
+	assert.NoError(t, err)
+}
+
+// TestBuildSeriesQuery_GroupByIdentifierValidation 은 그룹 키가 태그 키와 같은
+// 식별자 검증을 받는지 고정한다. 검증을 건너뛰면 제어문자가 쿼리에 삽입된다.
+func TestBuildSeriesQuery_GroupByIdentifierValidation(t *testing.T) {
+	t.Parallel()
+
+	spec := baseSpec()
+	spec.Tags = nil
+	spec.GroupBy = []string{"bad\nkey"}
+
+	for name, build := range map[string]func(SeriesQuerySpec) (string, error){
+		"flux":     BuildFluxSeriesQuery,
+		"influxql": BuildInfluxQLSeriesQuery,
+	} {
+		_, err := build(spec)
+		require.Error(t, err, name)
+		assert.ErrorIs(t, err, ErrUnescapableIdentifier, name)
+		assert.Contains(t, err.Error(), "group key", "%s", name)
+	}
+}

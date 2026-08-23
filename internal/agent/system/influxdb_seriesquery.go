@@ -66,6 +66,15 @@ var ErrUnsupportedSeriesFill = errors.New("influxdb: fill strategy is not suppor
 // HTTP 계층은 이를 400 으로 매핑한다(§2.7).
 var ErrUnescapableIdentifier = errors.New("influxdb: identifier cannot be safely escaped")
 
+// ErrGroupByConflictsWithTagFilter 는 같은 태그 키가 정확 일치 필터(Tags)와
+// 그룹 축(GroupBy)에 동시에 온 경우다. HTTP 계층은 이를 400 으로 매핑한다
+// (SPEC-TSDB-004 §2.8 UB1-3).
+//
+// 값이 하나로 고정된 키로 나누면 그룹이 항상 1개다. 조용히 통과시키면
+// 사용자는 "group by 가 동작하지 않는다"고 인지하며, 원인이 자기 요청에
+// 있다는 사실을 알 방법이 없다.
+var ErrGroupByConflictsWithTagFilter = errors.New("influxdb: tag key cannot be both a filter and a group key")
+
 // SeriesQuerySpec 는 구조화 시리즈 질의 1건의 입력이다.
 // 요청 1건이 시리즈 1개를 처리하므로(§2.6) measurement/field 는 단수다.
 type SeriesQuerySpec struct {
@@ -78,6 +87,19 @@ type SeriesQuerySpec struct {
 	Field string
 	// Tags 는 시리즈 태그 필터다. 생성 순서는 키 오름차순으로 고정한다.
 	Tags map[string]string
+	// GroupBy 는 시리즈를 나눌 태그 키 목록이다(SPEC-TSDB-004 §2.2).
+	//
+	// 비어 있으면 정확 일치 모드이며 생성 결과는 본 축 도입 이전과 바이트 단위로
+	// 같다(§2.9 U9). 비어 있지 않으면 지정한 키들의 **값 조합마다** 시리즈가
+	// 하나씩 생긴다.
+	//
+	// Tags 와 직교한다 — Tags 는 어느 데이터를 볼지(사전 필터), GroupBy 는
+	// 어떻게 나눌지(분할 축)를 정한다. 같은 키가 양쪽에 오면 거부한다.
+	//
+	// 생성 순서는 Tags 와 같이 키 오름차순으로 고정하고 중복은 제거한다 —
+	// 슬라이스 순서를 그대로 쓰면 같은 의미의 요청이 다른 쿼리 문자열을 만들어
+	// 캐시 · 테스트 · 로그 대조가 어긋난다.
+	GroupBy []string
 	// StartMs 는 조회 시작(포함)이다.
 	StartMs int64
 	// EndMs 는 조회 끝(미포함)이다.
@@ -217,6 +239,13 @@ func (s SeriesQuerySpec) ValidateIdentifiers() error {
 			return err
 		}
 	}
+	// 그룹 키도 쿼리 문자열에 그대로 삽입되므로 태그 키와 동일한 검증을 받는다
+	// (SPEC-TSDB-004 §2.2).
+	for _, k := range sortedGroupKeys(s.GroupBy) {
+		if err := validateSeriesIdentifier("group key", k); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -233,6 +262,12 @@ func (s SeriesQuerySpec) validateShape() error {
 	}
 	if s.EndMs <= s.StartMs {
 		return errors.New("influxdb: end_ms must be greater than start_ms")
+	}
+	// UB1-3 — 같은 키가 필터와 그룹 축에 동시에 올 수 없다.
+	for _, k := range sortedGroupKeys(s.GroupBy) {
+		if _, clash := s.Tags[k]; clash {
+			return fmt.Errorf("%w: %q", ErrGroupByConflictsWithTagFilter, k)
+		}
 	}
 	return nil
 }
@@ -296,6 +331,26 @@ func sortedTagKeys(tags map[string]string) []string {
 	return keys
 }
 
+// sortedGroupKeys 는 그룹 키를 오름차순 · 중복 제거해 반환한다
+// (SPEC-TSDB-004 §2.2). 빈 입력에는 nil 을 돌려주어 호출부가 len 만으로
+// 정확 일치 모드를 판정할 수 있게 한다.
+func sortedGroupKeys(groupBy []string) []string {
+	if len(groupBy) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(groupBy))
+	keys := make([]string, 0, len(groupBy))
+	for _, k := range groupBy {
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // seriesDurationLiteral 은 밀리초를 Flux/InfluxQL 공통 duration 리터럴로 만든다.
 // 두 방언 모두 ms 단위를 인식하므로 단위 변환 없이 그대로 쓴다.
 func seriesDurationLiteral(ms int64) string {
@@ -323,8 +378,25 @@ const (
 	fluxFillZeroPipe     = `  |> fill(value: 0.0)` + "\n"
 	fluxFillPreviousPipe = `  |> fill(usePrevious: true)` + "\n"
 
-	fluxKeepTmpl = `  |> keep(columns: ["_time", "_value"])`
+	// group(columns:) 은 aggregateWindow **앞**에 온다(SPEC-TSDB-004 §4.2).
+	// aggregateWindow 는 현재 그룹 키를 유지한 채 각 테이블을 시간 윈도우로
+	// 집계하므로, 그룹을 먼저 확정해야 "그룹마다 시간 버킷" 이 된다. 순서를
+	// 뒤집으면 전체를 한 테이블로 접은 뒤 나누게 되어 집계값 자체가 달라진다.
+	fluxGroupTmpl = `  |> group(columns: [%s])` + "\n"
+
+	// keep 은 파이프라인 끝에 남지만 컬럼 목록은 그룹 키에 따라 달라진다.
+	// 그룹 키를 남기지 않으면 응답에서 어느 그룹의 값인지 알 수 없다.
+	fluxKeepTmpl = `  |> keep(columns: [%s])`
 )
+
+// fluxColumnList 는 Flux 배열 리터럴 본문(따옴표 포함, 쉼표+공백 구분)을 만든다.
+func fluxColumnList(cols []string) string {
+	quoted := make([]string, 0, len(cols))
+	for _, c := range cols {
+		quoted = append(quoted, `"`+escapeFluxStringLiteral(c)+`"`)
+	}
+	return strings.Join(quoted, ", ")
+}
 
 // nsPerMs 는 epoch ms → epoch ns 변환 계수이다.
 const nsPerMs = int64(1_000_000)
@@ -363,10 +435,18 @@ func BuildFluxSeriesQuery(spec SeriesQuerySpec) (string, error) {
 			escapeFluxStringLiteral(k),
 			escapeFluxStringLiteral(spec.Tags[k]))
 	}
+	// 그룹 축이 있으면 집계 **전에** 그룹을 확정한다(§4.2).
+	groupKeys := sortedGroupKeys(spec.GroupBy)
+	if len(groupKeys) > 0 {
+		fmt.Fprintf(&b, fluxGroupTmpl, fluxColumnList(groupKeys))
+	}
 	fmt.Fprintf(&b, fluxAggregateWindowTmpl,
 		seriesDurationLiteral(spec.IntervalMs), fn, createEmpty)
 	b.WriteString(postPipe)
-	b.WriteString(fluxKeepTmpl)
+	// 그룹 키가 없으면 컬럼 목록이 ["_time", "_value"] 로 좁혀져 본 축 도입
+	// 이전과 바이트 단위로 같아진다(§2.9 U9).
+	keepCols := append([]string{"_time", "_value"}, groupKeys...)
+	fmt.Fprintf(&b, fluxKeepTmpl, fluxColumnList(keepCols))
 	return b.String(), nil
 }
 
@@ -380,7 +460,11 @@ const (
 	// GROUP BY time(d) 에 offset 인자를 지정하지 않는다. 기본 offset 0 이 곧
 	// epoch 정렬 + 시작 레이블이며, Store 의 (tsMs / intervalMs) * intervalMs 와
 	// 같은 경계를 만든다(§2.8). offset 을 주면 그 일치가 깨진다.
-	influxQLGroupByTmpl = ` GROUP BY time(%s) FILL(%s)`
+	// %s 세 자리는 각각 duration · 그룹 키 목록(비면 빈 문자열) · fill 이다.
+	// time(d) 를 **첫 자리에 유지한다** — 버킷 경계 계약이 offset 인자 부재에
+	// 얹혀 있으므로(SPEC-TSDB-002 §2.8) 그 형태를 흔들지 않는다. 태그 키 추가는
+	// 경계에 영향을 주지 않으며 AC-08 이 이를 고정한다.
+	influxQLGroupByTmpl = ` GROUP BY time(%s)%s FILL(%s)`
 )
 
 // BuildInfluxQLSeriesQuery 는 InfluxDB 3.x 용 InfluxQL 쿼리를 생성한다(§2.7).
@@ -418,7 +502,14 @@ func BuildInfluxQLSeriesQuery(spec SeriesQuerySpec) (string, error) {
 			escapeInfluxQLIdent(k),
 			escapeInfluxQLStringLiteral(spec.Tags[k]))
 	}
-	fmt.Fprintf(&b, influxQLGroupByTmpl, seriesDurationLiteral(spec.IntervalMs), fillArg)
+	// 그룹 키가 없으면 groupCols 가 빈 문자열이 되어 본 축 도입 이전과
+	// 바이트 단위로 같은 절이 나온다(§2.9 U9).
+	var groupCols strings.Builder
+	for _, k := range sortedGroupKeys(spec.GroupBy) {
+		fmt.Fprintf(&groupCols, `, "%s"`, escapeInfluxQLIdent(k))
+	}
+	fmt.Fprintf(&b, influxQLGroupByTmpl,
+		seriesDurationLiteral(spec.IntervalMs), groupCols.String(), fillArg)
 	return b.String(), nil
 }
 
