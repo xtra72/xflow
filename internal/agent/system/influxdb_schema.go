@@ -29,6 +29,7 @@ package system
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // InfluxSchemaDiscoverer 는 스키마 디스커버리 계약이다.
@@ -39,7 +40,7 @@ import (
 // 그것은 읽기 전용 경로에 필요 없는 넓힘이다.
 type InfluxSchemaDiscoverer interface {
 	ListTagKeys(ctx context.Context, bucket, measurement string) ([]string, error)
-	ListTagValues(ctx context.Context, bucket, measurement, tagKey string) ([]string, error)
+	ListTagValues(ctx context.Context, bucket, measurement, tagKey string, filters map[string]string) ([]string, error)
 	ListFieldKeys(ctx context.Context, bucket, measurement string) ([]string, error)
 }
 
@@ -65,7 +66,7 @@ func (a *InfluxDBAgent) ListTagKeys(ctx context.Context, bucket, measurement str
 
 // ListTagValues 는 client 에 위임하여 (measurement, tagKey) 의 태그 값 목록을
 // 반환한다(D3).
-func (a *InfluxDBAgent) ListTagValues(ctx context.Context, bucket, measurement, tagKey string) ([]string, error) {
+func (a *InfluxDBAgent) ListTagValues(ctx context.Context, bucket, measurement, tagKey string, filters map[string]string) ([]string, error) {
 	c, err := a.managementClient()
 	if err != nil {
 		return nil, err
@@ -73,7 +74,7 @@ func (a *InfluxDBAgent) ListTagValues(ctx context.Context, bucket, measurement, 
 	if bucket == "" {
 		bucket = a.defaultBucket()
 	}
-	return c.ListTagValues(ctx, bucket, measurement, tagKey)
+	return c.ListTagValues(ctx, bucket, measurement, tagKey, filters)
 }
 
 // ListFieldKeys 는 client 에 위임하여 measurement 의 필드 키 목록을 반환한다(D4).
@@ -150,15 +151,43 @@ func buildFluxTagKeysQuery(bucket, measurement string) (string, error) {
 
 // buildFluxTagValuesQuery 는 D3 의 v2 쿼리를 만든다.
 // tsdbtags/client_v2.go 의 ListTagValues 복제본이다.
-func buildFluxTagValuesQuery(bucket, measurement, tagKey string) (string, error) {
+func buildFluxTagValuesQuery(
+	bucket, measurement, tagKey string,
+	filters map[string]string,
+) (string, error) {
 	if err := validateSchemaArgs(bucket, measurement, map[string]string{"tag key": tagKey}); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s\nschema.measurementTagValues(bucket: \"%s\", measurement: \"%s\", tag: \"%s\")",
+	for _, k := range sortedTagKeys(filters) {
+		if err := validateSeriesIdentifier("filter key", k); err != nil {
+			return "", err
+		}
+		if err := validateSeriesIdentifier("filter value", filters[k]); err != nil {
+			return "", err
+		}
+	}
+	// 필터가 없으면 종전 형태를 그대로 낸다(바이트 무변경).
+	if len(filters) == 0 {
+		return fmt.Sprintf("%s\nschema.measurementTagValues(bucket: \"%s\", measurement: \"%s\", tag: \"%s\")",
+			fluxSchemaImport,
+			escapeFluxStringLiteral(bucket),
+			escapeFluxStringLiteral(measurement),
+			escapeFluxStringLiteral(tagKey),
+		), nil
+	}
+	// measurementTagValues 는 predicate 인자가 없다. 필터가 있으면 tagValues 를
+	// 쓰고 measurement 조건을 predicate 안으로 옮긴다 — 두 함수는 같은 축약을
+	// 수행하며 predicate 유무만 다르다.
+	conds := []string{fmt.Sprintf(`r._measurement == "%s"`, escapeFluxStringLiteral(measurement))}
+	for _, k := range sortedTagKeys(filters) {
+		conds = append(conds, fmt.Sprintf(`r["%s"] == "%s"`,
+			escapeFluxStringLiteral(k), escapeFluxStringLiteral(filters[k])))
+	}
+	return fmt.Sprintf("%s\nschema.tagValues(bucket: \"%s\", tag: \"%s\", predicate: (r) => %s)",
 		fluxSchemaImport,
 		escapeFluxStringLiteral(bucket),
-		escapeFluxStringLiteral(measurement),
 		escapeFluxStringLiteral(tagKey),
+		strings.Join(conds, " and "),
 	), nil
 }
 
@@ -229,12 +258,12 @@ func (c *influxV2Client) ListTagKeys(ctx context.Context, bucket, measurement st
 }
 
 // ListTagValues 는 schema.measurementTagValues() 로 태그 값 목록을 조회한다(D3).
-func (c *influxV2Client) ListTagValues(ctx context.Context, bucket, measurement, tagKey string) ([]string, error) {
+func (c *influxV2Client) ListTagValues(ctx context.Context, bucket, measurement, tagKey string, filters map[string]string) ([]string, error) {
 	bucket, err := c.resolveSchemaBucket(bucket)
 	if err != nil {
 		return nil, err
 	}
-	flux, err := buildFluxTagValuesQuery(bucket, measurement, tagKey)
+	flux, err := buildFluxTagValuesQuery(bucket, measurement, tagKey, filters)
 	if err != nil {
 		return nil, err
 	}
@@ -308,14 +337,36 @@ func buildInfluxQLTagKeysQuery(measurement string) (string, error) {
 
 // buildInfluxQLTagValuesQuery 는 D3 의 v3 쿼리를 만든다.
 // tsdbtags/client_v3.go 의 ListTagValues 복제본이다.
-func buildInfluxQLTagValuesQuery(measurement, tagKey string) (string, error) {
+func buildInfluxQLTagValuesQuery(
+	measurement, tagKey string,
+	filters map[string]string,
+) (string, error) {
 	if err := validateSchemaArgs("", measurement, map[string]string{"tag key": tagKey}); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(`SHOW TAG VALUES FROM "%s" WITH KEY = "%s"`,
+	for _, k := range sortedTagKeys(filters) {
+		if err := validateSeriesIdentifier("filter key", k); err != nil {
+			return "", err
+		}
+		if err := validateSeriesIdentifier("filter value", filters[k]); err != nil {
+			return "", err
+		}
+	}
+	base := fmt.Sprintf(`SHOW TAG VALUES FROM "%s" WITH KEY = "%s"`,
 		escapeInfluxQLIdent(measurement),
 		escapeInfluxQLIdent(tagKey),
-	), nil
+	)
+	if len(filters) == 0 {
+		return base, nil
+	}
+	// SHOW TAG VALUES 는 WHERE 절을 받는다(M1 실측). 메타데이터 질의이므로
+	// 원시 행을 스캔하지 않는다 — 열거의 행 상한과 무관하게 전량을 얻는다.
+	conds := make([]string, 0, len(filters))
+	for _, k := range sortedTagKeys(filters) {
+		conds = append(conds, fmt.Sprintf(`"%s" = '%s'`,
+			escapeInfluxQLIdent(k), escapeInfluxQLStringLiteral(filters[k])))
+	}
+	return base + " WHERE " + strings.Join(conds, " AND "), nil
 }
 
 // buildInfluxQLFieldKeysQuery 는 D4 의 v3 쿼리를 만든다.
@@ -359,8 +410,8 @@ func (c *influxV3Client) ListTagKeys(ctx context.Context, _ string, measurement 
 }
 
 // ListTagValues 는 SHOW TAG VALUES FROM ... WITH KEY = 로 태그 값 목록을 조회한다(D3).
-func (c *influxV3Client) ListTagValues(ctx context.Context, _ string, measurement, tagKey string) ([]string, error) {
-	q, err := buildInfluxQLTagValuesQuery(measurement, tagKey)
+func (c *influxV3Client) ListTagValues(ctx context.Context, _ string, measurement, tagKey string, filters map[string]string) ([]string, error) {
+	q, err := buildInfluxQLTagValuesQuery(measurement, tagKey, filters)
 	if err != nil {
 		return nil, err
 	}

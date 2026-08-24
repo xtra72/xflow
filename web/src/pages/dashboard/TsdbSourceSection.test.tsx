@@ -628,11 +628,9 @@ describe('TsdbSourceSection — 그룹 미리보기 (사용자 보고)', () => {
         initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
         fetchers={makeFetchers({
           fetchTagKeys: vi.fn(async () => ['host']),
-          fetchSeriesEnum: vi.fn(async () => enumOf([
-            { tags: { host: 'A' }, fields: ['usage'] },
-            { tags: { host: 'B' }, fields: ['usage'] },
-            { tags: { host: 'C' }, fields: ['usage'] },
-          ])),
+          fetchTagValues: vi.fn(async (_a: string, _m: string, key: string) =>
+            key === 'host' ? ['A', 'B', 'C'] : ['a', 'b'],
+          ),
         })}
       />,
     );
@@ -650,14 +648,14 @@ describe('TsdbSourceSection — 그룹 미리보기 (사용자 보고)', () => {
     );
   });
 
-  it('열거는 사전 필터를 반영한다', async () => {
-    const fetchSeriesEnum = vi.fn(async () =>
-      enumOf([{ tags: { host: 'A' }, fields: ['usage'] }]),
+  it('미리보기는 사전 필터를 서버에 넘긴다', async () => {
+    const fetchTagValues = vi.fn(async (_a: string, _m: string, key: string) =>
+      key === 'host' ? ['A'] : ['a', 'b'],
     );
     render(
       <Harness
         initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
-        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host', 'region']), fetchSeriesEnum })}
+        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host', 'region']), fetchTagValues })}
       />,
     );
     await selectMeasurement('cpu');
@@ -672,14 +670,16 @@ describe('TsdbSourceSection — 그룹 미리보기 (사용자 보고)', () => {
     fireEvent.change(tv, { target: { value: 'a' } });
 
     fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
-    await waitFor(() => expect(fetchSeriesEnum).toHaveBeenCalled());
-
-    const call = fetchSeriesEnum.mock.calls[fetchSeriesEnum.mock.calls.length - 1] as unknown as [
-      string,
-      string,
-      Record<string, string>,
-    ];
-    expect(call[2]).toEqual({ region: 'a' });
+    // 태그 값 조회는 (agent, measurement, tagKey, bucket, filters) 로 부른다.
+    await waitFor(() =>
+      expect(
+        fetchTagValues.mock.calls.some((c) => (c as unknown as unknown[])[4] !== undefined),
+      ).toBe(true),
+    );
+    const withFilter = fetchTagValues.mock.calls.find(
+      (c) => (c as unknown as unknown[])[4] !== undefined,
+    ) as unknown as [string, string, string, string | undefined, Record<string, string>];
+    expect(withFilter[4]).toEqual({ region: 'a' });
   });
 
   it('그룹 기준이 없으면 미리보기를 그리지 않는다', async () => {
@@ -700,8 +700,9 @@ describe('TsdbSourceSection — 그룹 미리보기 (사용자 보고)', () => {
         initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
         fetchers={makeFetchers({
           fetchTagKeys: vi.fn(async () => ['host']),
-          fetchSeriesEnum: vi.fn(async () => {
-            throw new Error('403');
+          fetchTagValues: vi.fn(async (_a: string, _m: string, key: string) => {
+            if (key === 'host') throw new Error('403');
+            return ['a', 'b'];
           }),
         })}
       />,
@@ -720,14 +721,14 @@ describe('TsdbSourceSection — 그룹 미리보기 (사용자 보고)', () => {
 
 describe('TsdbSourceSection — 그룹 행 선택 (사용자 요청: N개로 나눠 고르기)', () => {
   function groupedFetchers() {
+    // 그룹 키가 하나이므로 미리보기는 태그 값 조회(D3)를 탄다.
     return makeFetchers({
       fetchTagKeys: vi.fn(async () => ['host']),
       fetchFieldKeys: vi.fn(async () => ['usage']),
-      fetchSeriesEnum: vi.fn(async () => enumOf([
-        { tags: { host: 'A' }, fields: ['usage'] },
-        { tags: { host: 'B' }, fields: ['usage'] },
-        { tags: { host: 'C' }, fields: ['usage'] },
-      ])),
+      // 드롭다운과 그룹 미리보기가 같은 조회기를 쓰므로 **키로 구분**한다.
+      fetchTagValues: vi.fn(async (_a: string, _m: string, key: string) =>
+        key === 'host' ? ['A', 'B', 'C'] : ['a', 'b'],
+      ),
     });
   }
 
@@ -821,12 +822,12 @@ describe('TsdbSourceSection — 열거 절단 · 시간창 (사용자 보고: �
       <Harness
         initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
         fetchers={makeFetchers({
-          fetchTagKeys: vi.fn(async () => ['host']),
+          fetchTagKeys: vi.fn(async () => ['host', 'rack']),
           fetchSeriesEnum: vi.fn(async () =>
             enumOf(
               [
-                { tags: { host: 'A' }, fields: ['usage'] },
-                { tags: { host: 'B' }, fields: ['usage'] },
+                { tags: { host: 'A', rack: 'r1' }, fields: ['usage'] },
+                { tags: { host: 'B', rack: 'r2' }, fields: ['usage'] },
               ],
               true, // 상한에 걸림
             ),
@@ -836,7 +837,9 @@ describe('TsdbSourceSection — 열거 절단 · 시간창 (사용자 보고: �
     );
     await selectMeasurement('cpu');
     await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
+    // 키가 둘이면 조합이 필요하므로 열거 경로를 탄다(태그 값 조회는 조합을 못 준다).
     fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-rack'));
 
     // 목록은 2개지만 그것이 전부가 아니라는 사실이 화면에 드러나야 한다.
     expect(await screen.findByTestId('chart-tsdb-group-preview-truncated')).toBeTruthy();
@@ -868,12 +871,17 @@ describe('TsdbSourceSection — 열거 절단 · 시간창 (사용자 보고: �
           agent_name: 'influx-v2',
           time_window_ms: 3_600_000,
         })}
-        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host']), fetchSeriesEnum })}
+        fetchers={makeFetchers({
+          fetchTagKeys: vi.fn(async () => ['host', 'rack']),
+          fetchSeriesEnum,
+        })}
       />,
     );
     await selectMeasurement('cpu');
     await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
+    // 다중 키라야 열거 경로를 탄다.
     fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-rack'));
     await waitFor(() => expect(fetchSeriesEnum).toHaveBeenCalled());
 
     const call = fetchSeriesEnum.mock.calls[fetchSeriesEnum.mock.calls.length - 1] as unknown as [

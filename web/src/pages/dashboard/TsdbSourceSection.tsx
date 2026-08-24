@@ -102,6 +102,7 @@ export interface TsdbDiscoveryFetchers {
     measurement: string,
     tagKey: string,
     bucket?: string,
+    filters?: Record<string, string>,
   ) => Promise<string[]>;
   /**
    * 시리즈 열거(D5) — 그룹 미리보기용.
@@ -360,10 +361,36 @@ export function TsdbSourceSection({
   );
   const groupPreview = useGroupCombos(
     agentName !== '' && measurement !== '' && groupKeys.length > 0,
-    () => {
+    async () => {
+      // 그룹 키가 **하나면** 태그 값 조회(D3)를 쓴다.
+      //
+      // 시리즈 열거는 접기 전 원시 행 20,000 에 상한이 걸려 있어, 고빈도
+      // measurement 에서는 그 행이 소수 값으로만 채워져 값 일부만 나온다. 태그 값
+      // 조회는 메타데이터 질의라 그 상한과 무관하며, 사전 필터도 서버가 반영한다.
+      //
+      // 키가 여럿이면 **조합**이 필요한데 태그 값 조회는 키별 값만 주므로
+      // (곱하면 실재하지 않는 조합이 생긴다) 열거로 간다. 그쪽은 상한에 걸릴 수
+      // 있으므로 truncated 를 그대로 표면화한다.
+      if (groupKeys.length === 1) {
+        const key = groupKeys[0]!;
+        const values = await fetchers.fetchTagValues(
+          agentName,
+          measurement,
+          key,
+          bucket || undefined,
+          tagFilters,
+        );
+        return {
+          series: values.map((v) => ({ tags: { [key]: v }, fields: [] })),
+          field_exact: true,
+          count: values.length,
+          truncated: false,
+          window: { start_ms: 0, end_ms: 0 },
+        };
+      }
       // 패널이 실제로 그리는 창을 그대로 쓴다. 창을 안 넘기면 서버 기본값(30일)이
       // 적용되고, 그러면 원시 행 상한이 옛 데이터로 먼저 차서 최근 시리즈가
-      // 열거에서 빠진다 — 사용자에게는 "장비가 안 보인다" 로 나타난다.
+      // 열거에서 빠진다.
       const endMs = Date.now();
       const windowMs = tsdbSource.time_window_ms > 0 ? tsdbSource.time_window_ms : 0;
       return fetchers.fetchSeriesEnum(

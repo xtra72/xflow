@@ -77,5 +77,5 @@ func TestLoggerOptions_ObserverOverridesOtherOptions(t *testing.T) {
 	WithLogObserver(obs)(&cfg)
 
 	assert.Equal(t, slog.LevelDebug, cfg.defaultLevel) // 설정은 유지됨
-	assert.Same(t, obs, cfg.observer)                    // 하지만 Observer가 주입됨
+	assert.Same(t, obs, cfg.observer)                  // 하지만 Observer가 주입됨
 }

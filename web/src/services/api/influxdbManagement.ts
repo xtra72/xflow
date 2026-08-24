@@ -171,9 +171,26 @@ export async function fetchInfluxTagValues(
   measurement: string,
   tagKey: string,
   bucket?: string,
+  /**
+   * 사전 필터(`k=v`). 값 목록을 그 조건 아래로 좁힌다.
+   *
+   * 그룹 미리보기가 이 인자를 쓴다 — 시리즈 열거는 접기 전 원시 행 상한에 걸려
+   * 고빈도 measurement 에서 값 일부만 주지만, 태그 값 조회는 메타데이터 질의라
+   * 그 상한과 무관하다. @spec SPEC-TSDB-004
+   */
+  filters?: Record<string, string>,
 ): Promise<string[]> {
   const params = new URLSearchParams({ measurement, tag_key: tagKey });
   if (bucket) params.set('bucket', bucket);
+  if (filters && Object.keys(filters).length > 0) {
+    params.set(
+      'tags',
+      Object.keys(filters)
+        .sort()
+        .map((k) => `${k}=${filters[k]}`)
+        .join(','),
+    );
+  }
   const data = await get<Record<string, unknown> | string[] | null>(
     `/influxdb/${encodeURIComponent(agentName)}/tag-values?${params}`,
   );

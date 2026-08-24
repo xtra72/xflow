@@ -44,7 +44,7 @@ func TestInfluxSchema_BuildFluxQueries_D2D3D4(t *testing.T) {
 		},
 		{
 			name:  "D3 tag values",
-			build: func() (string, error) { return buildFluxTagValuesQuery("metrics", "cpu", "host") },
+			build: func() (string, error) { return buildFluxTagValuesQuery("metrics", "cpu", "host", nil) },
 			want: "import \"influxdata/influxdb/schema\"\n" +
 				"schema.measurementTagValues(bucket: \"metrics\", measurement: \"cpu\", tag: \"host\")",
 		},
@@ -75,7 +75,7 @@ func TestInfluxSchema_BuildFluxQueries_D2D3D4(t *testing.T) {
 func TestInfluxSchema_Flux_이스케이프(t *testing.T) {
 	t.Parallel()
 
-	got, err := buildFluxTagValuesQuery(`b"1`, `m"2`, `t${x}`)
+	got, err := buildFluxTagValuesQuery(`b"1`, `m"2`, `t${x}`, nil)
 	require.NoError(t, err)
 	assert.Contains(t, got, `bucket: "b\"1"`)
 	assert.Contains(t, got, `measurement: "m\"2"`)
@@ -99,7 +99,7 @@ func TestInfluxSchema_BuildInfluxQLQueries_D2D3D4(t *testing.T) {
 		},
 		{
 			name:  "D3 tag values",
-			build: func() (string, error) { return buildInfluxQLTagValuesQuery("cpu", "host") },
+			build: func() (string, error) { return buildInfluxQLTagValuesQuery("cpu", "host", nil) },
 			want:  `SHOW TAG VALUES FROM "cpu" WITH KEY = "host"`,
 		},
 		{
@@ -122,7 +122,7 @@ func TestInfluxSchema_BuildInfluxQLQueries_D2D3D4(t *testing.T) {
 func TestInfluxSchema_InfluxQL_이스케이프(t *testing.T) {
 	t.Parallel()
 
-	got, err := buildInfluxQLTagValuesQuery(`m"1`, `t"2`)
+	got, err := buildInfluxQLTagValuesQuery(`m"1`, `t"2`, nil)
 	require.NoError(t, err)
 	assert.Equal(t, `SHOW TAG VALUES FROM "m\"1" WITH KEY = "t\"2"`, got)
 }
@@ -145,11 +145,11 @@ func TestInfluxSchema_필수인자_검증(t *testing.T) {
 
 	t.Run("tag key 누락", func(t *testing.T) {
 		t.Parallel()
-		_, err := buildFluxTagValuesQuery("metrics", "cpu", "")
+		_, err := buildFluxTagValuesQuery("metrics", "cpu", "", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "tag key is required")
 
-		_, err = buildInfluxQLTagValuesQuery("cpu", "")
+		_, err = buildInfluxQLTagValuesQuery("cpu", "", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "tag key is required")
 	})
@@ -281,7 +281,7 @@ func TestInfluxDBAgent_디스커버리_위임(t *testing.T) {
 	assert.Equal(t, "explicit", gotBucket)
 	assert.Equal(t, "cpu", gotMeasurement)
 
-	values, err := a.ListTagValues(ctx, "explicit", "cpu", "host")
+	values, err := a.ListTagValues(ctx, "explicit", "cpu", "host", nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a", "b"}, values)
 	assert.Equal(t, "host", gotTagKey)
@@ -316,7 +316,7 @@ func TestInfluxDBAgent_디스커버리_기본버킷_fallback(t *testing.T) {
 
 	_, err := a.ListTagKeys(ctx, "", "cpu")
 	require.NoError(t, err)
-	_, err = a.ListTagValues(ctx, "", "cpu", "host")
+	_, err = a.ListTagValues(ctx, "", "cpu", "host", nil)
 	require.NoError(t, err)
 	_, err = a.ListFieldKeys(ctx, "", "cpu")
 	require.NoError(t, err)
@@ -334,7 +334,7 @@ func TestInfluxDBAgent_디스커버리_클라이언트_미초기화(t *testing.T
 
 	_, err := a.ListTagKeys(ctx, "b", "cpu")
 	assert.ErrorIs(t, err, errClientNotInitialized)
-	_, err = a.ListTagValues(ctx, "b", "cpu", "host")
+	_, err = a.ListTagValues(ctx, "b", "cpu", "host", nil)
 	assert.ErrorIs(t, err, errClientNotInitialized)
 	_, err = a.ListFieldKeys(ctx, "b", "cpu")
 	assert.ErrorIs(t, err, errClientNotInitialized)
@@ -385,7 +385,7 @@ func TestInfluxSchema_NoCache(t *testing.T) {
 	for range 2 {
 		_, err := a.ListTagKeys(ctx, "metrics", "cpu")
 		require.NoError(t, err)
-		_, err = a.ListTagValues(ctx, "metrics", "cpu", "host")
+		_, err = a.ListTagValues(ctx, "metrics", "cpu", "host", nil)
 		require.NoError(t, err)
 		_, err = a.ListFieldKeys(ctx, "metrics", "cpu")
 		require.NoError(t, err)
@@ -486,7 +486,7 @@ func TestInfluxSchema_V2_어댑터_왕복_D2D3D4(t *testing.T) {
 
 	// D3 — 태그 값. 여기서는 내부 컬럼 필터가 걸리지 않는다(값은 밑줄로
 	// 시작할 수 있는 사용자 데이터다).
-	tagValues, err := c.ListTagValues(ctx, "explicit", "cpu", "region")
+	tagValues, err := c.ListTagValues(ctx, "explicit", "cpu", "region", nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"kr", "jp"}, tagValues)
 
@@ -525,7 +525,7 @@ func TestInfluxSchema_V2_어댑터_인자검증_거부(t *testing.T) {
 
 	_, err = c.ListTagKeys(ctx, "", "")
 	require.Error(t, err)
-	_, err = c.ListTagValues(ctx, "", "cpu", "")
+	_, err = c.ListTagValues(ctx, "", "cpu", "", nil)
 	require.Error(t, err)
 	_, err = c.ListFieldKeys(ctx, "", "")
 	require.Error(t, err)
@@ -555,7 +555,7 @@ func TestInfluxSchema_V2_어댑터_질의오류_전파(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list tag keys")
 
-	_, err = c.ListTagValues(ctx, "", "cpu", "region")
+	_, err = c.ListTagValues(ctx, "", "cpu", "region", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list tag values")
 
@@ -583,4 +583,58 @@ func TestInfluxSchema_BuildFluxFieldKeysQuery_인자거부(t *testing.T) {
 	_, err = buildFluxFieldKeysQuery("bad\nbucket", "cpu")
 	require.ErrorIs(t, err, ErrUnescapableIdentifier)
 	assert.Contains(t, err.Error(), "bucket")
+}
+
+// ===== D3 사전 필터 (SPEC-TSDB-004 UB1-16 후속) =====
+
+// TestInfluxSchema_TagValues_필터없으면_바이트무변경 은 기존 경로를 고정한다.
+func TestInfluxSchema_TagValues_필터없으면_바이트무변경(t *testing.T) {
+	t.Parallel()
+	fx, err := buildFluxTagValuesQuery("metrics", "cpu", "host", nil)
+	require.NoError(t, err)
+	assert.Contains(t, fx, `schema.measurementTagValues(bucket: "metrics", measurement: "cpu", tag: "host")`)
+	assert.NotContains(t, fx, "predicate")
+
+	fxEmpty, err := buildFluxTagValuesQuery("metrics", "cpu", "host", map[string]string{})
+	require.NoError(t, err)
+	assert.Equal(t, fx, fxEmpty)
+
+	iq, err := buildInfluxQLTagValuesQuery("cpu", "host", nil)
+	require.NoError(t, err)
+	assert.Equal(t, `SHOW TAG VALUES FROM "cpu" WITH KEY = "host"`, iq)
+}
+
+// TestInfluxSchema_TagValues_필터적용 은 사전 필터가 질의에 실리는지 고정한다.
+//
+// 이 경로가 존재하는 이유는 그룹 미리보기다. 시리즈 열거는 **접기 전 원시 행**
+// 상한(20,000)에 걸려 고빈도 measurement 에서 값 일부만 보여 준다. 태그 값 조회는
+// 메타데이터 질의라 그 상한과 무관하고, 필터를 걸면 "이 조건에서 실제로 나올 값"
+// 만 남는다.
+func TestInfluxSchema_TagValues_필터적용(t *testing.T) {
+	t.Parallel()
+	filters := map[string]string{"region": "kr", "az": "a"}
+
+	fx, err := buildFluxTagValuesQuery("metrics", "cpu", "host", filters)
+	require.NoError(t, err)
+	// measurementTagValues 에는 predicate 인자가 없으므로 tagValues 로 바꾼다.
+	assert.Contains(t, fx, `schema.tagValues(bucket: "metrics", tag: "host"`)
+	assert.Contains(t, fx, `r._measurement == "cpu"`)
+	// 키 오름차순으로 고정한다 — 같은 필터가 다른 질의를 만들면 안 된다.
+	assert.Contains(t, fx, `r["az"] == "a" and r["region"] == "kr"`)
+
+	iq, err := buildInfluxQLTagValuesQuery("cpu", "host", filters)
+	require.NoError(t, err)
+	assert.Equal(t,
+		`SHOW TAG VALUES FROM "cpu" WITH KEY = "host" WHERE "az" = 'a' AND "region" = 'kr'`,
+		iq)
+}
+
+// TestInfluxSchema_TagValues_필터_식별자검증 은 필터도 같은 검증을 받는지 고정한다.
+func TestInfluxSchema_TagValues_필터_식별자검증(t *testing.T) {
+	t.Parallel()
+	bad := map[string]string{"bad\nkey": "v"}
+	_, err := buildFluxTagValuesQuery("metrics", "cpu", "host", bad)
+	require.ErrorIs(t, err, ErrUnescapableIdentifier)
+	_, err = buildInfluxQLTagValuesQuery("cpu", "host", bad)
+	require.ErrorIs(t, err, ErrUnescapableIdentifier)
 }

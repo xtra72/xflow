@@ -33,7 +33,7 @@ func (f *fakeInfluxDiscovererAgent) ListTagKeys(ctx context.Context, bucket, mea
 	return nil, nil
 }
 
-func (f *fakeInfluxDiscovererAgent) ListTagValues(ctx context.Context, bucket, measurement, tagKey string) ([]string, error) {
+func (f *fakeInfluxDiscovererAgent) ListTagValues(ctx context.Context, bucket, measurement, tagKey string, _ map[string]string) ([]string, error) {
 	if f.listTagValuesFn != nil {
 		return f.listTagValuesFn(ctx, bucket, measurement, tagKey)
 	}

@@ -34,7 +34,7 @@ type influxManager interface {
 // 합치면 읽기 전용 라우트가 쓰기 능력을 갖춘 에이전트만 받게 된다.
 type influxSchemaDiscoverer interface {
 	ListTagKeys(ctx context.Context, bucket, measurement string) ([]string, error)
-	ListTagValues(ctx context.Context, bucket, measurement, tagKey string) ([]string, error)
+	ListTagValues(ctx context.Context, bucket, measurement, tagKey string, filters map[string]string) ([]string, error)
 	ListFieldKeys(ctx context.Context, bucket, measurement string) ([]string, error)
 }
 
@@ -389,8 +389,12 @@ func (h *InfluxDBManagementHandler) ListTagKeys(ctx api.Context) error {
 	}))
 }
 
-// ListTagValues 는 GET /influxdb/{agent_name}/tag-values?measurement=&tag_key=&bucket=
+// ListTagValues 는 GET /influxdb/{agent_name}/tag-values?measurement=&tag_key=&bucket=&tags=
 // 를 처리한다(D3).
+//
+// `tags` 는 사전 필터다(`k=v,k2=v2`). 값 목록을 그 조건 아래로 좁힌다 —
+// 그룹 미리보기가 "이 필터에서 실제로 나올 값" 만 보여 주려면 필요하다.
+// 메타데이터 질의이므로 열거와 달리 원시 행 상한에 걸리지 않는다.
 func (h *InfluxDBManagementHandler) ListTagValues(ctx api.Context) error {
 	disc, apiErr := h.resolveDiscoverer(ctx)
 	if apiErr != nil {
@@ -408,10 +412,15 @@ func (h *InfluxDBManagementHandler) ListTagValues(ctx api.Context) error {
 		return api.ErrBadRequest.WithMessage("tag_key is required")
 	}
 
+	filters, err := parseSeriesEnumTagFilter(ctx.Query("tags"))
+	if err != nil {
+		return err
+	}
+
 	mctx, cancel := context.WithTimeout(ctx.Context(), defaultInfluxManagementTimeout)
 	defer cancel()
 
-	values, err := disc.ListTagValues(mctx, ctx.Query("bucket"), measurement, tagKey)
+	values, err := disc.ListTagValues(mctx, ctx.Query("bucket"), measurement, tagKey, filters)
 	if err != nil {
 		return mapInfluxDiscoveryError(err)
 	}

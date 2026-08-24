@@ -116,7 +116,7 @@ func (m *mockInfluxClient) ListTagKeys(ctx context.Context, bucket, measurement 
 	return nil, nil
 }
 
-func (m *mockInfluxClient) ListTagValues(ctx context.Context, bucket, measurement, tagKey string) ([]string, error) {
+func (m *mockInfluxClient) ListTagValues(ctx context.Context, bucket, measurement, tagKey string, _ map[string]string) ([]string, error) {
 	if m.listTagValuesFunc != nil {
 		return m.listTagValuesFunc(ctx, bucket, measurement, tagKey)
 	}
