@@ -522,10 +522,12 @@ describe('TsdbSourceSection — 그룹 기준 (SPEC-TSDB-004)', () => {
         fetchers={makeFetchers()}
       />,
     );
-    const summary = await screen.findByTestId('chart-tsdb-grouped-series');
-    expect(summary.textContent).toContain('cpu.usage');
-    // 정확 일치 항목은 요약에 들어가지 않는다.
-    expect(summary.textContent).not.toContain('mem.used');
+    // 등록 목록은 조건과 무관하게 등록분 **전체**를 보여 준다.
+    const items = await screen.findAllByTestId('chart-tsdb-registered-item');
+    expect(items).toHaveLength(2);
+    const text = items.map((i) => i.textContent).join(' ');
+    expect(text).toContain('cpu.usage');
+    expect(text).toContain('mem.used');
   });
 
   it('measurement 를 바꾸면 그룹 축이 초기화된다', async () => {
@@ -551,31 +553,122 @@ describe('TsdbSourceSection — 그룹 기준 (SPEC-TSDB-004)', () => {
   });
 });
 
-describe('TsdbSourceSection — 이미 선택된 시리즈에 그룹을 거는 경로 (버그 재현)', () => {
-  it('시리즈를 먼저 고른 뒤 그룹 기준을 체크하면 그 시리즈에 반영된다', async () => {
+describe('TsdbSourceSection — 검색 커서와 등록의 분리 (조건을 바꿔 누적 등록)', () => {
+  // **UB1-13 을 대체한다.** 종전에는 "그룹 기준을 체크하면 이미 고른 시리즈에
+  // 반영된다" 를 요구했으나, 검색/등록을 분리한 모델에서는 그 동작이 오히려
+  // 해롭다 — 조건 A 로 등록한 뒤 조건 B 를 검색하려고 축을 바꾸면 A 가 덮여
+  // 사라진다. 커서 변경은 등록분을 건드리지 않는 것이 맞다.
+  it('그룹 기준을 바꿔도 이미 등록된 시리즈는 그대로다', async () => {
     const patches: Array<Record<string, unknown>> = [];
     render(
       <Harness
         initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
-        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host']) })}
+        fetchers={makeFetchers({
+          fetchTagKeys: vi.fn(async () => ['host']),
+          fetchFieldKeys: vi.fn(async () => ['usage']),
+          fetchTagValues: vi.fn(async (_a: string, _m: string, key: string) =>
+            key === 'host' ? ['A', 'B'] : ['a', 'b'],
+          ),
+        })}
         onPatch={(p) => patches.push(p)}
       />,
     );
     await selectMeasurement('cpu');
-    await waitFor(() => expect(screen.getByTestId('chart-tsdb-series-select')).toBeTruthy());
+    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(1));
 
-    // 1) 먼저 시리즈를 고른다 (그룹 기준 없이).
-    const boxes = seriesTableCheckboxes();
-    fireEvent.click(boxes[boxes.length - 1]!);
-    await waitFor(() => expect(lastSeries(patches).length).toBeGreaterThan(0));
+    // 조건 1 — 그룹 없이 등록.
+    fireEvent.click(seriesTableCheckboxes()[0]!);
+    await waitFor(() => expect(lastSeries(patches)).toHaveLength(1));
     expect(lastSeries(patches)[0]!.group_by).toBeUndefined();
 
-    // 2) 그 다음 그룹 기준을 체크한다.
+    // 조건 2 — 그룹 축을 켠다. 등록분은 그대로여야 한다.
     fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(2));
+    expect(lastSeries(patches)).toHaveLength(1);
+    expect(lastSeries(patches)[0]!.group_by).toBeUndefined();
+  });
 
-    // 이미 고른 시리즈에 반영되어야 한다 — 반영되지 않으면 사용자는 "그룹을
-    // 설정했는데 아무 일도 일어나지 않는다" 를 겪는다.
-    await waitFor(() => expect(lastSeries(patches)[0]!.group_by).toEqual(['host']));
+  it('조건을 바꿔 검색한 시리즈를 추가로 등록한다 (누적)', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers({
+          fetchTagKeys: vi.fn(async () => ['host']),
+          fetchFieldKeys: vi.fn(async () => ['usage']),
+          fetchTagValues: vi.fn(async (_a: string, _m: string, key: string) =>
+            key === 'host' ? ['A', 'B'] : ['a', 'b'],
+          ),
+        })}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(1));
+    fireEvent.click(seriesTableCheckboxes()[0]!);
+    await waitFor(() => expect(lastSeries(patches)).toHaveLength(1));
+
+    // 조건을 바꾸고(그룹 축 추가) 다시 등록한다.
+    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(2));
+    fireEvent.click(seriesTableCheckboxes()[0]!);
+
+    // 두 조건의 등록이 **함께** 남는다.
+    await waitFor(() => expect(lastSeries(patches)).toHaveLength(2));
+    const entries = lastSeries(patches);
+    expect(entries.filter((e) => e.group_by === undefined)).toHaveLength(1);
+    expect(entries.filter((e) => (e.group_by?.length ?? 0) > 0)).toHaveLength(1);
+  });
+
+  it('등록 목록에서 개별 해제할 수 있다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [
+            { key: 'cpu', field: 'usage' },
+            { key: 'mem', field: 'used' },
+          ],
+        })}
+        fetchers={makeFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    const items = await screen.findAllByTestId('chart-tsdb-registered-item');
+    expect(items).toHaveLength(2);
+
+    fireEvent.click(screen.getByTestId('chart-tsdb-registered-remove-0'));
+    await waitFor(() => expect(lastSeries(patches)).toHaveLength(1));
+    expect(lastSeries(patches)[0]!.key).toBe('mem');
+  });
+
+  it('등록이 없으면 안내를 표시한다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    expect(screen.getByTestId('chart-tsdb-registered-empty')).toBeTruthy();
+  });
+
+  it('전체 해제는 등록분을 비운다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [{ key: 'cpu', field: 'usage' }],
+        })}
+        fetchers={makeFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    fireEvent.click(await screen.findByTestId('chart-tsdb-registered-clear'));
+    await waitFor(() => expect(lastSeries(patches)).toHaveLength(0));
   });
 });
 

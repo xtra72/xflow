@@ -527,51 +527,34 @@ export function TsdbSourceSection({
   );
 
   /**
-   * 그룹 축 변경을 **이미 선택된 시리즈**에 반영한다.
-   *
-   * 선택 시점에만 반영하면 "시리즈를 고른 뒤 그룹 기준을 체크" 하는 순서에서
-   * 아무 일도 일어나지 않는다 — 사용자는 기능이 고장 난 것으로 읽는다.
-   *
-   * 현재 measurement 의 항목만 건드린다. 다른 measurement 의 시리즈는 태그 키
-   * 집합이 다르므로 같은 축을 걸 수 없다.
-   */
-  const applyGroupKeysToSelection = useCallback(
-    (next: string[]): void => {
-      if (measurement === '') return;
-      let changed = false;
-      const updated = tsdbSource.series.map((sr) => {
-        if (sr.key !== measurement) return sr;
-        const cur = sr.group_by ?? [];
-        if (cur.length === next.length && cur.every((v, i) => v === next[i])) return sr;
-        changed = true;
-        const { group_by: _drop, ...rest } = sr;
-        return next.length > 0 ? { ...rest, group_by: next } : rest;
-      });
-      if (changed) patch({ series: updated });
-    },
-    [measurement, patch, tsdbSource.series],
-  );
-
-  /**
-   * 그룹 조합 하나를 켜고 끈다.
+   * 그룹 조합 하나를 **등록/해제**한다.
    *
    * 항목은 (measurement, field) 당 **하나**로 유지하고, 고른 조합을 그 항목의
    * `group_filter` 에 모은다. 조합마다 항목을 따로 만들면 요청이 조합 수만큼
-   * 늘어 group by 로 얻은 이점이 사라진다 — 한 요청이 여러 그룹을 돌려주는 것이
-   * 이 기능의 요지다.
+   * 늘어 group by 로 얻은 이점이 사라진다.
    *
-   * 마지막 조합을 끄면 항목 자체를 없앤다. 빈 `group_filter` 는 백엔드 규약상
-   * "전 그룹" 이라 남겨 두면 끈 것이 오히려 전부 켜진다.
+   * 마지막 조합을 해제하면 항목 자체를 없앤다. 빈 `group_filter` 는 백엔드
+   * 규약상 "전 그룹" 이라 남겨 두면 해제가 오히려 전부 켜진다.
+   *
+   * **현재 검색 조건의 그룹 축으로 항목을 찾는다.** 다른 조건으로 등록해 둔
+   * 항목(그룹 축이 다른 것)은 건드리지 않는다 — 조건을 바꿔 가며 누적 등록할
+   * 수 있어야 한다.
    */
   const toggleGroupPick = useCallback(
     (field: string, combo: Record<string, string>): void => {
+      const sortedGroup = [...groupKeys].sort();
+      const sameList = (a: readonly string[], b: readonly string[]): boolean =>
+        a.length === b.length && a.every((v, i) => v === b[i]);
       const same = (a: Record<string, string>, b: Record<string, string>): boolean => {
         const ka = Object.keys(a).sort();
         const kb = Object.keys(b).sort();
         return ka.length === kb.length && ka.every((k, i) => kb[i] === k && a[k] === b[k]);
       };
       const idx = tsdbSource.series.findIndex(
-        (sr) => sr.key === measurement && sr.field === field && (sr.group_by?.length ?? 0) > 0,
+        (sr) =>
+          sr.key === measurement &&
+          sr.field === field &&
+          sameList(sr.group_by ?? [], sortedGroup),
       );
       const next = [...tsdbSource.series];
       if (idx < 0) {
@@ -579,7 +562,7 @@ export function TsdbSourceSection({
           key: measurement,
           field,
           ...(Object.keys(tagFilters).length > 0 ? { tags: { ...tagFilters } } : {}),
-          group_by: [...groupKeys].sort(),
+          group_by: sortedGroup,
           group_filter: [combo],
         });
         applySelection(next);
@@ -645,9 +628,13 @@ export function TsdbSourceSection({
         if (byField.size === 0) return;
         const next = [...tsdbSource.series];
         for (const [field, combos] of byField) {
+          const sortedGroup = [...groupKeys].sort();
           const idx = next.findIndex(
             (sr) =>
-              sr.key === measurement && sr.field === field && (sr.group_by?.length ?? 0) > 0,
+              sr.key === measurement &&
+              sr.field === field &&
+              (sr.group_by ?? []).length === sortedGroup.length &&
+              (sr.group_by ?? []).every((v, n) => v === sortedGroup[n]),
           );
           const sig = (c: Record<string, string>): string =>
             Object.keys(c)
@@ -659,7 +646,7 @@ export function TsdbSourceSection({
               key: measurement,
               field,
               ...(Object.keys(tagFilters).length > 0 ? { tags: { ...tagFilters } } : {}),
-              group_by: [...groupKeys].sort(),
+              group_by: sortedGroup,
               group_filter: combos,
             });
             continue;
@@ -938,9 +925,7 @@ export function TsdbSourceSection({
                 // UB1-3 — 값을 고정한 키로는 나눌 수 없다(그룹이 항상 1개다).
                 // 서버가 400 으로 거부하므로 UI 에서 먼저 해소한다.
                 if (v !== '') {
-                  const next = groupKeys.filter((k) => k !== tagKey);
-                  setGroupKeys(next);
-                  applyGroupKeysToSelection(next);
+                  setGroupKeys((prev) => prev.filter((k) => k !== tagKey));
                 }
               }}
               className={inputClass()}
@@ -987,8 +972,9 @@ export function TsdbSourceSection({
                         const next = e.target.checked
                           ? [...groupKeys, k].sort()
                           : groupKeys.filter((x) => x !== k);
+                        // 검색 커서만 바꾼다. 이미 **등록된** 시리즈는 건드리지
+                        // 않는다 — 조건을 바꿔 가며 누적 등록할 수 있어야 한다.
                         setGroupKeys(next);
-                        applyGroupKeysToSelection(next);
                       }}
                     />
                     <span>{k}</span>
@@ -1114,28 +1100,83 @@ export function TsdbSourceSection({
         </div>
       )}
 
-      {/* 선택된 항목 중 group by 축을 가진 것을 드러낸다(§2.11 [S1]).
-          정확 일치 항목과 시각적으로 구분되어야 한다 — 하나가 런타임에 여러
-          시리즈로 펼쳐진다는 사실이 설정 화면에서 보이지 않으면, 사용자는 차트에
-          예상보다 많은 라인이 나오는 이유를 알 수 없다. */}
-      {tsdbSource.series.some((sr) => (sr.group_by?.length ?? 0) > 0) && (
-        <p
-          data-testid="chart-tsdb-grouped-series"
-          className="text-[11px] text-(--color-text-muted)"
-        >
-          {tsdbSource.series
-            .filter((sr) => (sr.group_by?.length ?? 0) > 0)
-            .map(
-              (sr) =>
-                `${sr.key}.${sr.field} — ` +
-                t('dashboard.chart.tsdbGroupByBadge').replace(
-                  '{keys}',
-                  [...(sr.group_by ?? [])].sort().join(', '),
-                ),
-            )
-            .join(' / ')}
+      {/* 등록된 시리즈 — **검색 조건과 독립적인 목록**이다.
+          검색은 커서이고 등록은 영속이므로 둘을 나눠 보여 준다. 조건을 바꿔
+          다시 검색해도 이 목록은 유지되며, 여기서만 개별 해제할 수 있다. */}
+      <div data-testid="chart-tsdb-registered">
+        <div className="mb-1 flex items-center gap-2">
+          <span className="text-xs font-medium text-(--color-text-muted)">
+            {t('dashboard.chart.tsdbRegistered')}
+          </span>
+          <span className="text-[11px] text-(--color-text-muted)">
+            {t('dashboard.chart.tsdbRegisteredCount').replace(
+              '{count}',
+              String(tsdbSource.series.length),
+            )}
+          </span>
+          {tsdbSource.series.length > 0 && (
+            <button
+              type="button"
+              data-testid="chart-tsdb-registered-clear"
+              onClick={() => applySelection([])}
+              className="rounded border border-(--color-border) px-1.5 py-0.5 text-[11px] text-(--color-text-muted)"
+            >
+              {t('dashboard.chart.tsdbRegisteredClear')}
+            </button>
+          )}
+        </div>
+        {tsdbSource.series.length === 0 ? (
+          <p
+            data-testid="chart-tsdb-registered-empty"
+            className="text-[11px] text-(--color-text-muted)"
+          >
+            {t('dashboard.chart.tsdbRegisteredNone')}
+          </p>
+        ) : (
+          <ul className="space-y-0.5">
+            {tsdbSource.series.map((sr, idx) => {
+              const tagPart = Object.keys(sr.tags ?? {})
+                .sort()
+                .map((k) => `${k}=${sr.tags![k]}`)
+                .join(', ');
+              const groupPart =
+                (sr.group_by?.length ?? 0) > 0
+                  ? t('dashboard.chart.tsdbRegisteredGroups')
+                      .replace('{keys}', [...(sr.group_by ?? [])].sort().join(', '))
+                      .replace('{count}', String(sr.group_filter?.length ?? 0))
+                  : '';
+              return (
+                <li
+                  key={`${sr.key}|${sr.field}|${tagPart}|${groupPart}|${idx}`}
+                  data-testid="chart-tsdb-registered-item"
+                  className="flex items-center gap-2 text-[11px] text-(--color-text-muted)"
+                >
+                  <button
+                    type="button"
+                    data-testid={`chart-tsdb-registered-remove-${idx}`}
+                    aria-label={t('dashboard.chart.tsdbRegisteredRemove')}
+                    title={t('dashboard.chart.tsdbRegisteredRemove')}
+                    onClick={() =>
+                      applySelection(tsdbSource.series.filter((_, n) => n !== idx))
+                    }
+                    className="rounded border border-(--color-border) px-1 leading-none"
+                  >
+                    ×
+                  </button>
+                  <span className="font-mono">
+                    {sr.key}.{sr.field}
+                  </span>
+                  {tagPart !== '' && <span>{tagPart}</span>}
+                  {groupPart !== '' && <span>{groupPart}</span>}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <p className="mt-1 text-[11px] text-(--color-text-muted)">
+          {t('dashboard.chart.tsdbSearchHint')}
         </p>
-      )}
+      </div>
 
       {overLimit && (
         <p data-testid="chart-tsdb-over-limit" role="alert" className="text-[11px] text-amber-500">
