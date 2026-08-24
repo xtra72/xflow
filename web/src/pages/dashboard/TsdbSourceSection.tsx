@@ -312,6 +312,32 @@ export function TsdbSourceSection({
     [rows],
   );
 
+  /**
+   * 그룹 축 변경을 **이미 선택된 시리즈**에 반영한다.
+   *
+   * 선택 시점에만 반영하면 "시리즈를 고른 뒤 그룹 기준을 체크" 하는 순서에서
+   * 아무 일도 일어나지 않는다 — 사용자는 기능이 고장 난 것으로 읽는다.
+   *
+   * 현재 measurement 의 항목만 건드린다. 다른 measurement 의 시리즈는 태그 키
+   * 집합이 다르므로 같은 축을 걸 수 없다.
+   */
+  const applyGroupKeysToSelection = useCallback(
+    (next: string[]): void => {
+      if (measurement === '') return;
+      let changed = false;
+      const updated = tsdbSource.series.map((sr) => {
+        if (sr.key !== measurement) return sr;
+        const cur = sr.group_by ?? [];
+        if (cur.length === next.length && cur.every((v, i) => v === next[i])) return sr;
+        changed = true;
+        const { group_by: _drop, ...rest } = sr;
+        return next.length > 0 ? { ...rest, group_by: next } : rest;
+      });
+      if (changed) patch({ series: updated });
+    },
+    [measurement, patch, tsdbSource.series],
+  );
+
   const handleToggle = useCallback(
     (id: string): void => {
       const existing = tsdbSource.series.filter((s) => seriesIdOf(s) !== id);
@@ -568,7 +594,11 @@ export function TsdbSourceSection({
                 });
                 // UB1-3 — 값을 고정한 키로는 나눌 수 없다(그룹이 항상 1개다).
                 // 서버가 400 으로 거부하므로 UI 에서 먼저 해소한다.
-                if (v !== '') setGroupKeys((prev) => prev.filter((k) => k !== tagKey));
+                if (v !== '') {
+                  const next = groupKeys.filter((k) => k !== tagKey);
+                  setGroupKeys(next);
+                  applyGroupKeysToSelection(next);
+                }
               }}
               className={inputClass()}
             >
@@ -611,11 +641,11 @@ export function TsdbSourceSection({
                       disabled={pinned}
                       aria-disabled={pinned}
                       onChange={(e) => {
-                        setGroupKeys((prev) =>
-                          e.target.checked
-                            ? [...prev, k].sort()
-                            : prev.filter((x) => x !== k),
-                        );
+                        const next = e.target.checked
+                          ? [...groupKeys, k].sort()
+                          : groupKeys.filter((x) => x !== k);
+                        setGroupKeys(next);
+                        applyGroupKeysToSelection(next);
                       }}
                     />
                     <span>{k}</span>

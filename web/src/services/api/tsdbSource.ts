@@ -335,21 +335,27 @@ export async function queryTsdbMatrix(
 
   // 시리즈축 페이지네이션(SPEC-TSDB-004 §2.7.2).
   //
-  // 그룹 축이 있는 인덱스마다 **먼저 열거**해 전체 그룹 목록을 얻고, 그 페이지에
-  // 해당하는 조합만 group_filter 로 실어 질의한다. 백엔드에 시리즈 개수를 자르는
-  // 네이티브 기전이 없으므로(v3 SLIMIT 미구현 · Flux 대응물 없음) 이 2단계가
-  // 유일한 경로다.
+  // 열거는 **페이지를 자를 때만** 필요하다. 페이지네이션이 꺼져 있으면(기본값)
+  // 그룹 전량을 어차피 가져오므로 열거할 이유가 없고, 그룹 수는 실제 결과에서
+  // 세면 된다. 표시 하나를 위해 폴링마다 요청을 더하고 실패 지점을 늘리는 것은
+  // 값을 못 한다.
   //
-  // 열거는 폴링마다 반복한다 — 캐시하지 않는 것이 확정된 정책이다(§2.7.4).
+  // **열거 실패는 시리즈 실패가 아니다.** 열거는 보조 조회이며, 그 실패로 데이터가
+  // 사라지면 안 된다. 실패 시 페이지 없이 전량을 조회한다 — 많이 가져오는 것이
+  // 아무것도 못 보는 것보다 낫고, 그룹 정보만 비운다.
   const enumerate = params.enumerateFn ?? enumerateTsdbSeries;
   const groups: TsdbGroupInfo[] = [];
   const pageFilters = new Map<number, Array<Record<string, string>>>();
   const pageSize = params.groupPage?.size ?? 0;
   const pageIndex = params.groupPage?.page ?? 0;
+  /** group by 축을 가진 인덱스 — 페이지네이션 여부와 무관하게 그룹 수를 센다. */
+  const groupedIndexes: number[] = [];
 
   for (const [idx, key] of params.keys.entries()) {
     const groupBy = params.seriesFilters?.[idx]?.groupBy;
     if (!groupBy || groupBy.length === 0) continue;
+    groupedIndexes.push(idx);
+    if (pageSize <= 0) continue;
     try {
       const enumResult = await enumerate(
         agentName,
@@ -368,18 +374,14 @@ export async function queryTsdbMatrix(
       groups.push({
         index: idx,
         total: combos.length,
-        page: pageSize > 0 ? pageIndex : 0,
+        page: pageIndex,
         pageCount: groupPageCount(combos.length, pageSize),
         truncated: enumResult.truncated,
       });
-      if (pageSize > 0) {
-        pageFilters.set(idx, sliceGroupPage(combos, pageIndex, pageSize));
-      }
-    } catch (err) {
-      // 열거 실패는 그 시리즈만의 실패다. 형제 시리즈는 영향받지 않으며,
-      // 페이지 필터 없이 진행하면 전량을 가져오게 되어 페이지네이션의 취지를
-      // 깨뜨리므로 이 인덱스를 실패로 기록하고 건너뛴다.
-      failures.push({ index: idx, error: err });
+      pageFilters.set(idx, sliceGroupPage(combos, pageIndex, pageSize));
+    } catch {
+      // 페이지를 자를 수 없으면 전량을 가져온다. 그룹 정보는 아래에서 실제
+      // 결과로부터 채워진다.
     }
   }
 
@@ -421,11 +423,25 @@ export async function queryTsdbMatrix(
   });
 
   if (signal?.aborted) throw abortedError();
-  // 같은 인덱스가 열거·질의 양쪽에서 실패할 수 있으므로 인덱스로 중복을 제거한다.
-  const uniqueFailed = new Set(failures.map((f) => f.index));
-  if (params.keys.length > 0 && uniqueFailed.size === params.keys.length) {
+  if (params.keys.length > 0 && failures.length === params.keys.length) {
     throw failures[0]!.error;
   }
+
+  // 열거로 채우지 못한 group by 인덱스는 **실제 결과**에서 그룹 수를 센다.
+  // 페이지네이션이 꺼져 있으면 전량을 가져왔으므로 이 수가 곧 전체 그룹 수다.
+  for (const idx of groupedIndexes) {
+    if (groups.some((g) => g.index === idx)) continue;
+    const rendered = (matrix.columnOrigins ?? []).filter((o) => o === idx).length;
+    groups.push({
+      index: idx,
+      total: rendered,
+      page: 0,
+      pageCount: 1,
+      truncated: false,
+    });
+  }
+  groups.sort((a, b) => a.index - b.index);
+
   return { matrix, failures, ...(groups.length > 0 ? { groups } : {}) };
 }
 

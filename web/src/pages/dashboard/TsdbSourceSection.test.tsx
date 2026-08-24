@@ -520,3 +520,31 @@ describe('TsdbSourceSection — 그룹 기준 (SPEC-TSDB-004)', () => {
     );
   });
 });
+
+describe('TsdbSourceSection — 이미 선택된 시리즈에 그룹을 거는 경로 (버그 재현)', () => {
+  it('시리즈를 먼저 고른 뒤 그룹 기준을 체크하면 그 시리즈에 반영된다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host']) })}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-series-select')).toBeTruthy());
+
+    // 1) 먼저 시리즈를 고른다 (그룹 기준 없이).
+    const boxes = seriesTableCheckboxes();
+    fireEvent.click(boxes[boxes.length - 1]!);
+    await waitFor(() => expect(lastSeries(patches).length).toBeGreaterThan(0));
+    expect(lastSeries(patches)[0]!.group_by).toBeUndefined();
+
+    // 2) 그 다음 그룹 기준을 체크한다.
+    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+
+    // 이미 고른 시리즈에 반영되어야 한다 — 반영되지 않으면 사용자는 "그룹을
+    // 설정했는데 아무 일도 일어나지 않는다" 를 겪는다.
+    await waitFor(() => expect(lastSeries(patches)[0]!.group_by).toEqual(['host']));
+  });
+});

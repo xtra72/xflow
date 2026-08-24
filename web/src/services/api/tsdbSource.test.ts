@@ -545,7 +545,9 @@ describe('queryTsdbMatrix — 시리즈축 페이지네이션 (SPEC-TSDB-004)', 
     ]);
   });
 
-  it('페이지 크기가 0 이면 페이지네이션이 비활성이고 group_filter 를 싣지 않는다', async () => {
+  it('페이지 크기가 0 이면 열거하지 않고 그룹 수를 실제 결과에서 센다', async () => {
+    // 페이지네이션이 꺼져 있으면 전량을 가져오므로 열거할 이유가 없다. 표시 하나를
+    // 위해 폴링마다 요청을 더하고 실패 지점을 늘리는 것은 값을 못 한다.
     const enumerateFn = vi.fn(async () => enumResponse(['a', 'b', 'c']));
     postMock.mockResolvedValue(seriesResponse('usage', { host: 'a' }, [[0, 1]]));
 
@@ -555,11 +557,12 @@ describe('queryTsdbMatrix — 시리즈축 페이지네이션 (SPEC-TSDB-004)', 
       enumerateFn,
     });
 
+    expect(enumerateFn).not.toHaveBeenCalled();
     const body = postMock.mock.calls[0]![1] as Record<string, unknown>;
     expect(body.group_filter).toBeUndefined();
-    // 전체 그룹 수는 여전히 알려 준다 — 사용자가 규모를 판단하려면 숫자가 보여야 한다.
+    // 전량을 가져왔으므로 렌더된 컬럼 수가 곧 전체 그룹 수다.
     expect(r.groups).toEqual([
-      { index: 0, total: 3, page: 0, pageCount: 1, truncated: false },
+      { index: 0, total: 1, page: 0, pageCount: 1, truncated: false },
     ]);
   });
 
@@ -596,29 +599,27 @@ describe('queryTsdbMatrix — 시리즈축 페이지네이션 (SPEC-TSDB-004)', 
     expect(r.groups?.[0]?.truncated).toBe(true);
   });
 
-  it('열거가 실패하면 그 시리즈만 실패로 기록한다', async () => {
+  it('열거가 실패해도 시리즈는 살아 있다 (열거는 보조 조회다)', async () => {
+    // 종전 구현은 열거 실패를 시리즈 실패로 기록했고, group by 항목만 있는
+    // 패널에서는 "전 시리즈 실패" 로 판정되어 패널이 통째로 죽었다.
+    // 열거는 페이지를 자르기 위한 보조 조회이므로, 실패하면 페이지 없이 전량을
+    // 가져온다 — 많이 가져오는 것이 아무것도 못 보는 것보다 낫다.
     const enumerateFn = vi.fn(async () => {
       throw new Error('enum boom');
     });
-    postMock.mockResolvedValue(seriesResponse('value', {}, [[0, 1]]));
+    postMock.mockResolvedValue(seriesResponse('usage', { host: 'a' }, [[0, 1]]));
 
     const r = await queryTsdbMatrix('ix', {
-      keys: ['cpu', 'mem'],
-      seriesFilters: [
-        { fieldName: 'usage', groupBy: ['host'] },
-        { fieldName: 'value' },
-      ],
-      startMs: 0,
-      endMs: 60_000,
-      intervalMs: 10_000,
-      aggregation: 'average',
+      ...groupQuery(),
       groupPage: { page: 0, size: 2 },
       enumerateFn,
     });
 
-    // 형제 시리즈(mem)는 살아 있다.
-    expect(r.failures.map((f) => f.index)).toContain(0);
+    expect(r.failures).toHaveLength(0);
     expect(r.matrix.columns.length).toBeGreaterThan(0);
+    // 페이지를 자를 수 없었으므로 필터 없이 나간다.
+    const body = postMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(body.group_filter).toBeUndefined();
   });
 
   it('열거 시 사전 필터 태그와 시간창을 함께 넘긴다', async () => {
@@ -644,5 +645,32 @@ describe('queryTsdbMatrix — 시리즈축 페이지네이션 (SPEC-TSDB-004)', 
     expect(call[1].tags).toEqual({ region: 'kr' });
     expect(call[1].startMs).toBe(0);
     expect(call[1].endMs).toBe(60_000);
+  });
+});
+
+describe('queryTsdbMatrix — 열거 실패가 시리즈를 죽이면 안 된다 (버그 재현)', () => {
+  it('group by 항목 1개짜리 패널에서 열거가 실패해도 시리즈는 나와야 한다', async () => {
+    // 열거는 **보조**다. 페이지네이션이 꺼져 있으면(기본값) 그 결과는 그룹 수
+    // 표시에만 쓰인다. 표시용 조회의 실패가 데이터를 통째로 없애면 안 된다.
+    const enumerateFn = vi.fn(async () => {
+      throw new Error('enumerate 403');
+    });
+    postMock.mockResolvedValue(seriesResponse('usage', { host: 'a' }, [[0, 1]]));
+
+    const r = await queryTsdbMatrix('ix', {
+      keys: ['cpu'],
+      seriesFilters: [{ fieldName: 'usage', groupBy: ['host'] }],
+      startMs: 0,
+      endMs: 60_000,
+      intervalMs: 10_000,
+      aggregation: 'average',
+      enumerateFn,
+    });
+
+    // 질의는 나가야 하고 컬럼이 있어야 한다.
+    expect(postMock).toHaveBeenCalled();
+    expect(r.matrix.columns.length).toBeGreaterThan(0);
+    // 열거 실패를 시리즈 실패로 보고하지 않는다.
+    expect(r.failures).toHaveLength(0);
   });
 });
