@@ -1160,6 +1160,8 @@
       "tsdbGroupPreviewCount": "{count} series will be produced",
       "tsdbGroupPreviewTruncated": "The group list was truncated by a cap — there are more groups. Narrow the tag filter or shorten the panel time range.",
       "tsdbGroupByBadge": "Grouped by {keys}",
+      "tsdbRefresh": "Refresh series",
+      "tsdbRefreshHint": "Press after changing the measurement or group keys. Already registered series stay.",
       "tsdbRegistered": "Registered series",
       "tsdbRegisteredNone": "No series registered yet. Search above and check a row to register it.",
       "tsdbRegisteredCount": "{count} registered",

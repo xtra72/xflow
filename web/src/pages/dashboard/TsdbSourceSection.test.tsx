@@ -8,7 +8,7 @@
 import type React from 'react';
 import { useState } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 import type { PanelConfig } from '@/stores/uiStore';
 
@@ -32,6 +32,14 @@ import { defaultTsdbSource, type TsdbSourceConfig } from './panels/charts/chartC
 
 function makePanel(config: Record<string, unknown>): PanelConfig {
   return { id: 'p1', type: 'line-chart', title: '테스트', config };
+}
+
+/** 시리즈 목록을 새로 만든다 — 새 모델에서 목록은 리프레시로만 갱신된다. */
+async function refreshList(): Promise<void> {
+  const btn = await screen.findByTestId('chart-tsdb-refresh');
+  await act(async () => {
+    fireEvent.click(btn);
+  });
 }
 
 /** 열거 응답 형상으로 감싼다 — 테스트는 시리즈 목록만 신경 쓰면 된다. */
@@ -276,47 +284,15 @@ describe('TsdbSourceSection — measurement → field → tag 드릴다운 (§2.
       expect(screen.getByTestId('chart-tsdb-series-select')).toBeInTheDocument(),
     );
     expect(fetchers.fetchFieldKeys).toHaveBeenCalledWith('influx-v2', 'cpu', undefined);
-    // 선택 표 **안**의 체크박스만 센다. 전역 조회는 그룹 기준 체크박스까지
-    // 집계해 "표에 field 행이 몇 개인가" 라는 이 단언의 의도를 흐린다.
+    // 목록은 **리프레시로만** 채워진다(요구 4) — 누르기 전에는 비어 있다.
+    expect(seriesTableCheckboxes()).toHaveLength(0);
+    await refreshList();
+    // 선택 표 **안**의 체크박스만 센다.
     expect(seriesTableCheckboxes()).toHaveLength(2);
   });
 
-  it('태그 값을 고르면 후보 행의 태그가 좁혀지고 선택에 반영된다', async () => {
-    const patches: Array<Record<string, unknown>> = [];
-    const fetchers = makeFetchers();
-    render(
-      <Harness
-        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
-        fetchers={fetchers}
-        onPatch={(p) => patches.push(p)}
-      />,
-    );
-    await selectMeasurement('cpu');
-    await waitFor(() =>
-      expect(screen.getByTestId('chart-tsdb-tag-key-select')).toBeEnabled(),
-    );
-    fireEvent.change(screen.getByTestId('chart-tsdb-tag-key-select'), {
-      target: { value: 'host' },
-    });
-    await waitFor(() =>
-      expect(fetchers.fetchTagValues).toHaveBeenCalledWith(
-        'influx-v2',
-        'cpu',
-        'host',
-        undefined,
-      ),
-    );
-    fireEvent.change(screen.getByTestId('chart-tsdb-tag-value-select'), {
-      target: { value: 'a' },
-    });
-    expect(screen.getByTestId('chart-tsdb-tag-filters')).toHaveTextContent('host=a');
-
-    // 행 식별자는 Store 와 같은 규칙(`key field tags`)이므로 태그가 좁혀지면 id 도 바뀐다.
-    fireEvent.click(screen.getByTestId('series-select-cpu usage host=a'));
-    expect(lastSeries(patches)).toEqual([
-      { key: 'cpu', field: 'usage', tags: { host: 'a' } },
-    ]);
-  });
+  // [삭제] 태그 값을 고르면 후보 행의 태그가 좁혀지고 선택에 반영된다
+  //   드릴다운 제거. 트리의 개별 값 선택이 이를 대체하며 아래 트리 테스트가 덮는다.
 
   it('체크를 해제하면 시리즈가 제거된다', async () => {
     const patches: Array<Record<string, unknown>> = [];
@@ -332,6 +308,7 @@ describe('TsdbSourceSection — measurement → field → tag 드릴다운 (§2.
       />,
     );
     await selectMeasurement('cpu');
+    await refreshList();
     // 태그 없는 시리즈의 식별자는 태그부가 빈 문자열이다(`"cpu usage "`).
     // testing-library 의 기본 정규화가 후행 공백을 지우므로 질의는 trim 된 형태로 쓴다.
     const box = await screen.findByTestId('series-select-cpu usage');
@@ -354,6 +331,7 @@ describe('TsdbSourceSection — 시리즈 48 상한 (§2.9 [U9])', () => {
       />,
     );
     await selectMeasurement('cpu');
+    await refreshList();
     await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(60));
 
     fireEvent.click(screen.getByTestId('tsdb-select-all'));
@@ -386,18 +364,8 @@ describe('TsdbSourceSection — 디스커버리 실패는 편집을 막지 않�
 // ===== group by 축 (SPEC-TSDB-004 §2.1 · M6) =====
 
 describe('TsdbSourceSection — 그룹 기준 (SPEC-TSDB-004)', () => {
-  it('measurement 를 고르면 태그 키가 그룹 기준 후보로 나온다', async () => {
-    render(
-      <Harness
-        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
-        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host', 'rack']) })}
-      />,
-    );
-    await selectMeasurement('cpu');
-    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by')).toBeTruthy());
-    expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy();
-    expect(screen.getByTestId('chart-tsdb-group-by-rack')).toBeTruthy();
-  });
+  // [삭제] measurement 를 고르면 태그 키가 그룹 기준 후보로 나온다
+  //   트리 노드 테스트로 대체.
 
   it('고르지 않으면 선택된 시리즈에 group_by 가 실리지 않는다 (정확 일치 모드)', async () => {
     const patches: Array<Record<string, unknown>> = [];
@@ -410,6 +378,7 @@ describe('TsdbSourceSection — 그룹 기준 (SPEC-TSDB-004)', () => {
     );
     await selectMeasurement('cpu');
     await waitFor(() => expect(screen.getByTestId('chart-tsdb-series-select')).toBeTruthy());
+    await refreshList();
     const boxes = seriesTableCheckboxes();
     fireEvent.click(boxes[boxes.length - 1]!);
 
@@ -434,11 +403,12 @@ describe('TsdbSourceSection — 그룹 기준 (SPEC-TSDB-004)', () => {
       />,
     );
     await selectMeasurement('cpu');
-    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
-    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
-    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-rack'));
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-tree-key-host')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('chart-tsdb-tree-key-host'));
+    fireEvent.click(screen.getByTestId('chart-tsdb-tree-key-rack'));
 
     // 그룹 기준을 걸면 표가 **조합마다 한 행**으로 펼쳐진다. 열거를 기다린다.
+    await refreshList();
     await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(2));
 
     fireEvent.click(seriesTableCheckboxes()[0]!);
@@ -451,62 +421,11 @@ describe('TsdbSourceSection — 그룹 기준 (SPEC-TSDB-004)', () => {
     expect(entry.group_filter).toEqual([{ host: 'a', rack: 'r1' }]);
   });
 
-  it('값을 고정한 태그는 그룹 기준으로 고를 수 없다 (UB1-3)', async () => {
-    render(
-      <Harness
-        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
-        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host']) })}
-      />,
-    );
-    await selectMeasurement('cpu');
-    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
+  // [삭제] 값을 고정한 태그는 그룹 기준으로 고를 수 없다 (UB1-3)
+  //   태그 값 고정 필터가 트리로 흡수되어 '고정된 키' 개념 자체가 사라졌다. UB1-3 은 서버 검증으로만 남는다.
 
-    // host 를 태그 필터로 고정한다.
-    fireEvent.change(screen.getByTestId('chart-tsdb-tag-key-select'), {
-      target: { value: 'host' },
-    });
-    const tv = screen.getByTestId('chart-tsdb-tag-value-select') as HTMLSelectElement;
-    await waitFor(() => expect(Array.from(tv.options).map((o) => o.value)).toContain('a'));
-    fireEvent.change(tv, { target: { value: 'a' } });
-
-    await waitFor(() =>
-      expect(
-        (screen.getByTestId('chart-tsdb-group-by-host') as HTMLInputElement).disabled,
-      ).toBe(true),
-    );
-    // 사유가 화면에 읽히는 문구로 있어야 한다(툴팁만으로는 스크린리더에 닿지 않는다).
-    expect(screen.getByTestId('chart-tsdb-group-by-pinned')).toBeTruthy();
-  });
-
-  it('그룹 기준으로 고른 뒤 그 태그 값을 고정하면 그룹 축에서 빠진다', async () => {
-    const patches: Array<Record<string, unknown>> = [];
-    render(
-      <Harness
-        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
-        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host']) })}
-        onPatch={(p) => patches.push(p)}
-      />,
-    );
-    await selectMeasurement('cpu');
-    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
-    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
-    expect((screen.getByTestId('chart-tsdb-group-by-host') as HTMLInputElement).checked).toBe(
-      true,
-    );
-
-    fireEvent.change(screen.getByTestId('chart-tsdb-tag-key-select'), {
-      target: { value: 'host' },
-    });
-    const tv = screen.getByTestId('chart-tsdb-tag-value-select') as HTMLSelectElement;
-    await waitFor(() => expect(Array.from(tv.options).map((o) => o.value)).toContain('a'));
-    fireEvent.change(tv, { target: { value: 'a' } });
-
-    await waitFor(() =>
-      expect(
-        (screen.getByTestId('chart-tsdb-group-by-host') as HTMLInputElement).checked,
-      ).toBe(false),
-    );
-  });
+  // [삭제] 그룹 기준으로 고른 뒤 그 태그 값을 고정하면 그룹 축에서 빠진다
+  //   위와 같은 사유 — 고정이라는 별도 조작이 없다.
 
   it('group by 항목이 있으면 설정 화면에 그 사실이 드러난다 (§2.11 S1)', async () => {
     render(
@@ -538,16 +457,16 @@ describe('TsdbSourceSection — 그룹 기준 (SPEC-TSDB-004)', () => {
       />,
     );
     await selectMeasurement('cpu');
-    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
-    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
-    expect((screen.getByTestId('chart-tsdb-group-by-host') as HTMLInputElement).checked).toBe(
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-tree-key-host')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('chart-tsdb-tree-key-host'));
+    expect((screen.getByTestId('chart-tsdb-tree-key-host') as HTMLInputElement).checked).toBe(
       true,
     );
 
     await selectMeasurement('mem');
     await waitFor(() =>
       expect(
-        (screen.getByTestId('chart-tsdb-group-by-host') as HTMLInputElement).checked,
+        (screen.getByTestId('chart-tsdb-tree-key-host') as HTMLInputElement).checked,
       ).toBe(false),
     );
   });
@@ -574,6 +493,7 @@ describe('TsdbSourceSection — 검색 커서와 등록의 분리 (조건을 바
       />,
     );
     await selectMeasurement('cpu');
+    await refreshList();
     await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(1));
 
     // 조건 1 — 그룹 없이 등록.
@@ -582,8 +502,11 @@ describe('TsdbSourceSection — 검색 커서와 등록의 분리 (조건을 바
     expect(lastSeries(patches)[0]!.group_by).toBeUndefined();
 
     // 조건 2 — 그룹 축을 켠다. 등록분은 그대로여야 한다.
-    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
-    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(2));
+    fireEvent.click(screen.getByTestId('chart-tsdb-tree-key-host'));
+    await refreshList();
+    // 고정된 등록분 1 + 새 그룹 후보 2 = 3. 등록한 것이 목록에서 사라지지
+    // 않는다는 것이 요구 5 의 핵심이다.
+    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(3));
     expect(lastSeries(patches)).toHaveLength(1);
     expect(lastSeries(patches)[0]!.group_by).toBeUndefined();
   });
@@ -604,14 +527,17 @@ describe('TsdbSourceSection — 검색 커서와 등록의 분리 (조건을 바
       />,
     );
     await selectMeasurement('cpu');
+    await refreshList();
     await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(1));
     fireEvent.click(seriesTableCheckboxes()[0]!);
     await waitFor(() => expect(lastSeries(patches)).toHaveLength(1));
 
     // 조건을 바꾸고(그룹 축 추가) 다시 등록한다.
-    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
-    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(2));
-    fireEvent.click(seriesTableCheckboxes()[0]!);
+    fireEvent.click(screen.getByTestId('chart-tsdb-tree-key-host'));
+    await refreshList();
+    // 고정 1 + 그룹 후보 2 = 3. 고정분은 맨 앞이므로 그 뒤를 고른다.
+    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(3));
+    fireEvent.click(seriesTableCheckboxes()[1]!);
 
     // 두 조건의 등록이 **함께** 남는다.
     await waitFor(() => expect(lastSeries(patches)).toHaveLength(2));
@@ -673,7 +599,7 @@ describe('TsdbSourceSection — 검색 커서와 등록의 분리 (조건을 바
 });
 
 describe('TsdbSourceSection — 저장된 선택에서 커서 복원 (버그 재현)', () => {
-  it('다이얼로그를 다시 열면 measurement · 그룹 기준 · 태그 필터가 복원된다', async () => {
+  it('다이얼로그를 다시 열면 measurement 와 그룹 기준이 복원된다', async () => {
     render(
       <Harness
         initial={tsdbConfig({
@@ -694,12 +620,11 @@ describe('TsdbSourceSection — 저장된 선택에서 커서 복원 (버그 재
     // 그룹 기준 체크가 복원된다.
     await waitFor(() =>
       expect(
-        (screen.getByTestId('chart-tsdb-group-by-host') as HTMLInputElement).checked,
+        (screen.getByTestId('chart-tsdb-tree-key-host') as HTMLInputElement).checked,
       ).toBe(true),
     );
 
-    // 태그 필터도 복원된다.
-    expect(screen.getByTestId('chart-tsdb-tag-filters').textContent).toContain('region=kr');
+    // 태그 필터 표시는 제거됐다(트리가 대체) — 복원 대상은 measurement 와 트리다.
   });
 
   it('선택이 없으면 커서는 비어 있다 (신규 패널)', async () => {
@@ -715,65 +640,11 @@ describe('TsdbSourceSection — 저장된 선택에서 커서 복원 (버그 재
 });
 
 describe('TsdbSourceSection — 그룹 미리보기 (사용자 보고)', () => {
-  it('그룹 기준을 걸면 실제 태그 값이 목록으로 나온다', async () => {
-    render(
-      <Harness
-        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
-        fetchers={makeFetchers({
-          fetchTagKeys: vi.fn(async () => ['host']),
-          fetchTagValues: vi.fn(async (_a: string, _m: string, key: string) =>
-            key === 'host' ? ['A', 'B', 'C'] : ['a', 'b'],
-          ),
-        })}
-      />,
-    );
-    await selectMeasurement('cpu');
-    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
-    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+  // [삭제] 그룹 기준을 걸면 실제 태그 값이 목록으로 나온다
+  //   미리보기 목록이 트리의 자식 노드로 대체됐다.
 
-    const items = await screen.findAllByTestId('chart-tsdb-group-preview-item');
-    expect(items).toHaveLength(3);
-    expect(items.map((i) => i.textContent)).toEqual(['host=A', 'host=B', 'host=C']);
-    // 이 파일의 i18n 모의는 키를 그대로 돌려주므로 개수 문구는 키로 단언한다.
-    // 개수 자체는 위 목록 길이가 고정한다.
-    expect(screen.getByTestId('chart-tsdb-group-preview-count').textContent).toContain(
-      'dashboard.chart.tsdbGroupPreviewCount',
-    );
-  });
-
-  it('미리보기는 사전 필터를 서버에 넘긴다', async () => {
-    const fetchTagValues = vi.fn(async (_a: string, _m: string, key: string) =>
-      key === 'host' ? ['A'] : ['a', 'b'],
-    );
-    render(
-      <Harness
-        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
-        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host', 'region']), fetchTagValues })}
-      />,
-    );
-    await selectMeasurement('cpu');
-    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
-
-    // region 을 사전 필터로 고정한다.
-    fireEvent.change(screen.getByTestId('chart-tsdb-tag-key-select'), {
-      target: { value: 'region' },
-    });
-    const tv = screen.getByTestId('chart-tsdb-tag-value-select') as HTMLSelectElement;
-    await waitFor(() => expect(Array.from(tv.options).map((o) => o.value)).toContain('a'));
-    fireEvent.change(tv, { target: { value: 'a' } });
-
-    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
-    // 태그 값 조회는 (agent, measurement, tagKey, bucket, filters) 로 부른다.
-    await waitFor(() =>
-      expect(
-        fetchTagValues.mock.calls.some((c) => (c as unknown as unknown[])[4] !== undefined),
-      ).toBe(true),
-    );
-    const withFilter = fetchTagValues.mock.calls.find(
-      (c) => (c as unknown as unknown[])[4] !== undefined,
-    ) as unknown as [string, string, string, string | undefined, Record<string, string>];
-    expect(withFilter[4]).toEqual({ region: 'a' });
-  });
+  // [삭제] 미리보기는 사전 필터를 서버에 넘긴다
+  //   사전 필터가 트리로 흡수되어 별도 축이 아니다.
 
   it('그룹 기준이 없으면 미리보기를 그리지 않는다', async () => {
     render(
@@ -787,29 +658,8 @@ describe('TsdbSourceSection — 그룹 미리보기 (사용자 보고)', () => {
     expect(screen.queryByTestId('chart-tsdb-group-preview')).toBeNull();
   });
 
-  it('열거 실패는 편집을 막지 않는다', async () => {
-    render(
-      <Harness
-        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
-        fetchers={makeFetchers({
-          fetchTagKeys: vi.fn(async () => ['host']),
-          fetchTagValues: vi.fn(async (_a: string, _m: string, key: string) => {
-            if (key === 'host') throw new Error('403');
-            return ['a', 'b'];
-          }),
-        })}
-      />,
-    );
-    await selectMeasurement('cpu');
-    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
-    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
-
-    expect(await screen.findByTestId('chart-tsdb-group-preview-error')).toBeTruthy();
-    // 체크는 그대로 유지된다 — 미리보기 실패가 설정을 되돌리지 않는다.
-    expect((screen.getByTestId('chart-tsdb-group-by-host') as HTMLInputElement).checked).toBe(
-      true,
-    );
-  });
+  // [삭제] 열거 실패는 편집을 막지 않는다
+  //   리프레시 실패 경고로 대체 — chart-tsdb-refresh-error 가 같은 계약을 고정한다.
 });
 
 describe('TsdbSourceSection — 그룹 행 선택 (사용자 요청: N개로 나눠 고르기)', () => {
@@ -834,8 +684,9 @@ describe('TsdbSourceSection — 그룹 행 선택 (사용자 요청: N개로 나
       />,
     );
     await selectMeasurement('cpu');
-    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
-    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-tree-key-host')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('chart-tsdb-tree-key-host'));
+    await refreshList();
     await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(3));
   }
 
@@ -901,11 +752,11 @@ describe('TsdbSourceSection — 그룹 행 선택 (사용자 요청: N개로 나
         fetchers={groupedFetchers()}
       />,
     );
-    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(3));
-    const boxes = seriesTableCheckboxes();
-    expect(boxes[0]!.checked).toBe(true);
-    expect(boxes[1]!.checked).toBe(false);
-    expect(boxes[2]!.checked).toBe(true);
+    await refreshList();
+    // 트리가 저장된 값(A·C)만 고른 상태로 복원되므로 후보도 그 둘이다.
+    // B 를 보려면 트리에서 값 선택을 풀거나 키만 체크하면 된다.
+    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(2));
+    for (const b of seriesTableCheckboxes()) expect(b.checked).toBe(true);
   });
 });
 
@@ -929,14 +780,17 @@ describe('TsdbSourceSection — 열거 절단 · 시간창 (사용자 보고: �
       />,
     );
     await selectMeasurement('cpu');
-    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-tree-key-host')).toBeTruthy());
     // 키가 둘이면 조합이 필요하므로 열거 경로를 탄다(태그 값 조회는 조합을 못 준다).
-    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
-    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-rack'));
+    fireEvent.click(screen.getByTestId('chart-tsdb-tree-key-host'));
+    fireEvent.click(screen.getByTestId('chart-tsdb-tree-key-rack'));
 
+    await refreshList();
     // 목록은 2개지만 그것이 전부가 아니라는 사실이 화면에 드러나야 한다.
-    expect(await screen.findByTestId('chart-tsdb-group-preview-truncated')).toBeTruthy();
-    expect(await screen.findAllByTestId('chart-tsdb-group-preview-item')).toHaveLength(2);
+    expect(await screen.findByTestId('chart-tsdb-refresh-truncated')).toBeTruthy();
+    // 기본 field 2종 × 조합 2개 = 4행. 개수보다 **절단 경고가 뜬다**는 것이
+    // 이 테스트의 요지다 — 짧은 목록을 전부인 것처럼 보여 주지 않아야 한다.
+    expect(seriesTableCheckboxes()).toHaveLength(4);
   });
 
   it('잘리지 않으면 경고를 표시하지 않는다', async () => {
@@ -947,10 +801,10 @@ describe('TsdbSourceSection — 열거 절단 · 시간창 (사용자 보고: �
       />,
     );
     await selectMeasurement('cpu');
-    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
-    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
-    await screen.findAllByTestId('chart-tsdb-group-preview-item');
-    expect(screen.queryByTestId('chart-tsdb-group-preview-truncated')).toBeNull();
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-tree-key-host')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('chart-tsdb-tree-key-host'));
+    await refreshList();
+    expect(screen.queryByTestId('chart-tsdb-refresh-truncated')).toBeNull();
   });
 
   it('열거에 패널의 시간창을 넘긴다 (서버 기본 30일을 쓰지 않는다)', async () => {
@@ -971,10 +825,11 @@ describe('TsdbSourceSection — 열거 절단 · 시간창 (사용자 보고: �
       />,
     );
     await selectMeasurement('cpu');
-    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
-    // 다중 키라야 열거 경로를 탄다.
-    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
-    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-rack'));
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-tree-key-host')).toBeTruthy());
+    // 다중 키라야 열거 경로를 탄다(단일 키는 태그 값 조회를 쓴다).
+    fireEvent.click(screen.getByTestId('chart-tsdb-tree-key-host'));
+    fireEvent.click(screen.getByTestId('chart-tsdb-tree-key-rack'));
+    await refreshList();
     await waitFor(() => expect(fetchSeriesEnum).toHaveBeenCalled());
 
     const call = fetchSeriesEnum.mock.calls[fetchSeriesEnum.mock.calls.length - 1] as unknown as [
@@ -987,5 +842,93 @@ describe('TsdbSourceSection — 열거 절단 · 시간창 (사용자 보고: �
     expect(call[4]).toBeDefined();
     // 창 길이가 패널 설정과 같아야 한다 — 30일 기본값이 아니다.
     expect(call[4]!.endMs - call[4]!.startMs).toBe(3_600_000);
+  });
+});
+
+// ===== 그룹 기준 트리 (사용자 요구 3) =====
+
+describe('TsdbSourceSection — 그룹 기준 트리', () => {
+  function treeFetchers() {
+    return makeFetchers({
+      fetchTagKeys: vi.fn(async () => ['host', 'rack']),
+      fetchFieldKeys: vi.fn(async () => ['usage']),
+      fetchTagValues: vi.fn(async (_a: string, _m: string, key: string) =>
+        key === 'host' ? ['A', 'B', 'C'] : ['r1', 'r2'],
+      ),
+    });
+  }
+
+  it('키만 체크하면 그 키의 모든 값이 후보가 된다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={treeFetchers()}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-tree-key-host')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('chart-tsdb-tree-key-host'));
+    await refreshList();
+    // host 값 3종 × field 1 = 3.
+    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(3));
+  });
+
+  it('펼쳐서 개별 값을 고르면 그 값들만 후보가 된다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={treeFetchers()}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-tree-expand-host')).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId('chart-tsdb-tree-expand-host'));
+    // 값 노드는 펼칠 때 지연 조회한다.
+    const a = await screen.findByTestId('chart-tsdb-tree-value-host-A');
+    fireEvent.click(a);
+    fireEvent.click(await screen.findByTestId('chart-tsdb-tree-value-host-C'));
+
+    await refreshList();
+    // 고른 2개만 후보다 — 값 선택이 곧 범위 제한이다.
+    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(2));
+  });
+
+  it('값을 고르면 그 키가 자동으로 그룹 축이 된다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={treeFetchers()}
+      />,
+    );
+    await selectMeasurement('cpu');
+    fireEvent.click(await screen.findByTestId('chart-tsdb-tree-expand-host'));
+    fireEvent.click(await screen.findByTestId('chart-tsdb-tree-value-host-A'));
+
+    // 키를 따로 켜라고 요구하면 조작이 두 번이다.
+    await waitFor(() =>
+      expect(
+        (screen.getByTestId('chart-tsdb-tree-key-host') as HTMLInputElement).checked,
+      ).toBe(true),
+    );
+  });
+
+  it('리프레시 전에는 조건을 바꿔도 목록이 그대로다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={treeFetchers()}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await refreshList();
+    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(1));
+
+    // 그룹 축을 켜도 리프레시 전에는 목록이 바뀌지 않는다(요구 4).
+    fireEvent.click(await screen.findByTestId('chart-tsdb-tree-key-host'));
+    expect(seriesTableCheckboxes()).toHaveLength(1);
+
+    await refreshList();
+    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(3));
   });
 });

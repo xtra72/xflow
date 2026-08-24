@@ -1160,6 +1160,8 @@
       "tsdbGroupPreviewCount": "시리즈 {count}개가 생깁니다",
       "tsdbGroupPreviewTruncated": "그룹 목록이 상한에 걸려 잘렸습니다 — 실제 그룹은 더 많습니다. 태그 필터를 좁히거나 패널의 시간 범위를 줄이세요.",
       "tsdbGroupByBadge": "그룹: {keys}",
+      "tsdbRefresh": "시리즈 새로고침",
+      "tsdbRefreshHint": "measurement · 그룹 기준을 바꾼 뒤 누르세요. 이미 등록한 시리즈는 그대로 유지됩니다.",
       "tsdbRegistered": "등록된 시리즈",
       "tsdbRegisteredNone": "아직 등록된 시리즈가 없습니다. 위에서 검색해 체크하면 등록됩니다.",
       "tsdbRegisteredCount": "{count}개 등록됨",

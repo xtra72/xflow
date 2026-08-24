@@ -192,69 +192,6 @@ function useDiscoveryList(
   return { items, error, loading };
 }
 
-/**
- * 그룹 미리보기 — 현재 사전 필터 아래에서 그룹 기준이 만들 **실제 조합**을 구한다.
- *
- * 별도 훅인 이유는 `useDiscoveryList` 가 `string[]` 전용이기 때문이다. 조합은
- * `Record<string,string>` 이라 그 형상에 담기지 않는다.
- */
-function useGroupCombos(
-  enabled: boolean,
-  load: () => Promise<TsdbSeriesEnumResult>,
-  groupKeys: readonly string[],
-  deps: readonly unknown[],
-): {
-  combos: Array<Record<string, string>>;
-  error: boolean;
-  loading: boolean;
-  truncated: boolean;
-} {
-  const [combos, setCombos] = useState<Array<Record<string, string>>>([]);
-  const [error, setError] = useState(false);
-  const [loading, setLoading] = useState(false);
-  /**
-   * 열거가 상한에 걸렸는가.
-   *
-   * **버리면 안 되는 신호다.** 상한에 걸리면 목록이 실제보다 짧은데, 알리지 않으면
-   * 사용자는 그것이 전부인 줄 알고 "장비가 2개뿐" 이라고 결론 내린다.
-   */
-  const [truncated, setTruncated] = useState(false);
-
-  useEffect(() => {
-    if (!enabled) {
-      setCombos([]);
-      setError(false);
-      setLoading(false);
-      setTruncated(false);
-      return;
-    }
-    let alive = true;
-    setLoading(true);
-    setError(false);
-    void load()
-      .then((r) => {
-        if (!alive) return;
-        setCombos(deriveGroupCombos(r.series, groupKeys));
-        setTruncated(r.truncated);
-        setLoading(false);
-      })
-      .catch(() => {
-        if (!alive) return;
-        // 미리보기 실패가 편집을 막아서는 안 된다 — 목록 없이도 그룹 설정은 유효하다.
-        setCombos([]);
-        setTruncated(false);
-        setError(true);
-        setLoading(false);
-      });
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-
-  return { combos, error, loading, truncated };
-}
-
 /** 시리즈 참조 → `SeriesSelectTable` 의 선택 식별자. Store 와 같은 규칙을 쓴다. */
 function seriesIdOf(ref: Pick<TsdbSeriesRef, 'key' | 'field' | 'tags'>): string {
   return storeSeriesId(ref.key, ref.field, ref.tags ?? {});
@@ -322,20 +259,39 @@ export function TsdbSourceSection({
    * lazy 초기화라 최초 렌더의 값만 쓴다. 이후 사용자의 편집을 덮어쓰지 않는다.
    */
   const [measurement, setMeasurement] = useState(() => tsdbSource.series[0]?.key ?? '');
-  const [tagKey, setTagKey] = useState('');
-  const [tagValue, setTagValue] = useState('');
-  const [tagFilters, setTagFilters] = useState<Record<string, string>>(
-    () => tsdbSource.series[0]?.tags ?? {},
-  );
   const [overLimit, setOverLimit] = useState(false);
   /**
-   * 그룹 기준 태그 키(SPEC-TSDB-004 §2.1). 선택 시점에 시리즈 항목으로 옮겨진다.
+   * 그룹 기준 트리 선택. `태그 키 -> 고른 값 목록`이며 **빈 배열은 "그 키의 모든
+   * 값"**을 뜻한다(키만 체크한 상태).
    *
-   * config 가 아니라 편집 커서인 이유는 tagFilters 와 같다 — 이미 선택된 시리즈의
-   * 그룹 축을 바꾸는 것이 아니라, **앞으로 선택할** 시리즈에 붙일 축이다.
+   * 태그 키/값 드릴다운을 이 트리가 대체한다. 종전에는 "값을 고정하는 필터" 와
+   * "값으로 나누는 그룹 축" 이 별개 조작이었는데, 사용자가 실제로 하는 일은
+   * 하나다 — **어느 태그의 어느 값들을 볼 것인가**.
    */
-  const [groupKeys, setGroupKeys] = useState<string[]>(
-    () => tsdbSource.series[0]?.group_by ?? [],
+  const [treeSel, setTreeSel] = useState<Record<string, string[]>>(() => {
+    const first = tsdbSource.series[0];
+    if (!first?.group_by?.length) return {};
+    const out: Record<string, string[]> = {};
+    for (const k of first.group_by) {
+      out[k] = (first.group_filter ?? [])
+        .map((c) => c[k] ?? '')
+        .filter((v) => v !== '');
+    }
+    return out;
+  });
+  /** 값 목록을 펼친 태그 키. 값은 펼칠 때 지연 조회한다. */
+  const [expandedKey, setExpandedKey] = useState('');
+
+  /** 그룹 축 = 트리에서 하나라도 고른 키. 정렬해 결정성을 유지한다. */
+  const groupKeys = useMemo(() => Object.keys(treeSel).sort(), [treeSel]);
+
+  /**
+   * 사전 필터는 더 이상 별도 조작이 아니다(트리가 대체). 저장된 config 의
+   * 하위호환을 위해 첫 항목의 태그만 읽어 유지한다.
+   */
+  const tagFilters = useMemo(
+    () => tsdbSource.series[0]?.tags ?? {},
+    [tsdbSource.series],
   );
 
   const bucket = tsdbSource.bucket ?? '';
@@ -360,66 +316,11 @@ export function TsdbSourceSection({
     () => fetchers.fetchTagKeys(agentName, measurement, bucket || undefined),
     [agentName, measurement, bucket],
   );
-  const groupPreview = useGroupCombos(
-    agentName !== '' && measurement !== '' && groupKeys.length > 0,
-    async () => {
-      // 그룹 키가 **하나면** 태그 값 조회(D3)를 쓴다.
-      //
-      // 시리즈 열거는 접기 전 원시 행 20,000 에 상한이 걸려 있어, 고빈도
-      // measurement 에서는 그 행이 소수 값으로만 채워져 값 일부만 나온다. 태그 값
-      // 조회는 메타데이터 질의라 그 상한과 무관하며, 사전 필터도 서버가 반영한다.
-      //
-      // 키가 여럿이면 **조합**이 필요한데 태그 값 조회는 키별 값만 주므로
-      // (곱하면 실재하지 않는 조합이 생긴다) 열거로 간다. 그쪽은 상한에 걸릴 수
-      // 있으므로 truncated 를 그대로 표면화한다.
-      const nowMs = Date.now();
-      const spanMs = tsdbSource.time_window_ms > 0 ? tsdbSource.time_window_ms : 0;
-      const win = spanMs > 0 ? { startMs: nowMs - spanMs, endMs: nowMs } : undefined;
-
-      if (groupKeys.length === 1) {
-        const key = groupKeys[0]!;
-        const values = await fetchers.fetchTagValues(
-          agentName,
-          measurement,
-          key,
-          bucket || undefined,
-          tagFilters,
-          win,
-        );
-        return {
-          series: values.map((v) => ({ tags: { [key]: v }, fields: [] })),
-          field_exact: true,
-          count: values.length,
-          truncated: false,
-          window: { start_ms: 0, end_ms: 0 },
-        };
-      }
-      // 패널이 실제로 그리는 창을 그대로 쓴다. 창을 안 넘기면 서버 기본값(30일)이
-      // 적용되고, 그러면 원시 행 상한이 옛 데이터로 먼저 차서 최근 시리즈가
-      // 열거에서 빠진다.
-      return fetchers.fetchSeriesEnum(
-        agentName,
-        measurement,
-        tagFilters,
-        bucket || undefined,
-        win,
-      );
-    },
-    groupKeys,
-    [
-      agentName,
-      measurement,
-      bucket,
-      groupKeys.join(','),
-      JSON.stringify(tagFilters),
-      tsdbSource.time_window_ms,
-    ],
-  );
-
+  /** 펼친 태그 키의 값 목록. 트리의 자식 노드다. */
   const tagValues = useDiscoveryList(
-    agentName !== '' && measurement !== '' && tagKey !== '',
-    () => fetchers.fetchTagValues(agentName, measurement, tagKey, bucket || undefined),
-    [agentName, measurement, tagKey, bucket],
+    agentName !== '' && measurement !== '' && expandedKey !== '',
+    () => fetchers.fetchTagValues(agentName, measurement, expandedKey, bucket || undefined),
+    [agentName, measurement, expandedKey, bucket],
   );
 
   // --- 선택 표 (SeriesSelectTable 재사용) ---
@@ -460,43 +361,143 @@ export function TsdbSourceSection({
    *
    * 그룹 기준이 없으면 종전과 같이 field 당 한 행이다.
    */
-  const rows: SeriesRow[] = useMemo(() => {
-    if (measurement === '') return [];
-    if (groupKeys.length === 0) {
-      return fieldKeys.items.map((field) => ({
-        id: storeSeriesId(measurement, field, tagFilters),
-        key: measurement,
-        field,
-        dataType: '',
-        registration: '',
-        tags: tagFilters,
-      }));
+  /**
+   * 후보 목록 — **리프레시로만 갱신되는 명시 상태**다(사용자 요구 4).
+   *
+   * 자동 파생이면 measurement · 그룹 기준을 만질 때마다 목록이 출렁이고 조회가
+   * 나간다. 사용자가 조건을 다 고른 뒤 한 번 부르는 편이 조작과 비용 양쪽에 맞다.
+   */
+  const [candidates, setCandidates] = useState<Array<{ field: string; combo: Record<string, string> }>>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState(false);
+  const [refreshTruncated, setRefreshTruncated] = useState(false);
+
+  /** 등록분에서 후보를 되살린다 — 리프레시해도 고른 시리즈는 사라지지 않는다(요구 5). */
+  const pinnedCandidates = useCallback((): Array<{ field: string; combo: Record<string, string> }> => {
+    const out: Array<{ field: string; combo: Record<string, string> }> = [];
+    for (const sr of tsdbSource.series) {
+      if (sr.key !== measurement) continue;
+      const picks = sr.group_filter ?? [];
+      if (picks.length === 0) out.push({ field: sr.field, combo: {} });
+      else for (const c of picks) out.push({ field: sr.field, combo: c });
     }
-    // 조합이 아직 안 왔으면 행을 만들지 않는다 — 사전 필터를 반영하지 않은
-    // 임시 행을 보여 주면 사용자가 없는 시리즈를 고르게 된다.
-    return fieldKeys.items.flatMap((field) =>
-      groupPreview.combos.map((combo) => ({
-        id: storeSeriesId(measurement, field, { ...tagFilters, ...combo }),
+    return out;
+  }, [measurement, tsdbSource.series]);
+
+  const comboSig = useCallback(
+    (field: string, combo: Record<string, string>): string =>
+      field +
+      '\u0000' +
+      Object.keys(combo)
+        .sort()
+        .map((k) => `${k}=${combo[k]}`)
+        .join(','),
+    [],
+  );
+
+  /**
+   * 후보 목록을 다시 만든다.
+   *
+   * 등록분을 **먼저** 넣고 새로 조회한 것을 뒤에 합친다 — 고정분이 목록 앞에
+   * 유지되고, 조건을 바꿔도 이미 고른 것이 시야에서 사라지지 않는다.
+   */
+  const refresh = useCallback(async (): Promise<void> => {
+    if (agentName === '' || measurement === '') return;
+    setRefreshing(true);
+    setRefreshError(false);
+    setRefreshTruncated(false);
+    const seen = new Set<string>();
+    const out: Array<{ field: string; combo: Record<string, string> }> = [];
+    const push = (field: string, combo: Record<string, string>): void => {
+      const sig = comboSig(field, combo);
+      if (seen.has(sig)) return;
+      seen.add(sig);
+      out.push({ field, combo });
+    };
+    for (const c of pinnedCandidates()) push(c.field, c.combo);
+
+    try {
+      const fields = fieldKeys.items;
+      if (groupKeys.length === 0) {
+        for (const f of fields) push(f, {});
+      } else {
+        const nowMs = Date.now();
+        const spanMs = tsdbSource.time_window_ms > 0 ? tsdbSource.time_window_ms : 0;
+        const win = spanMs > 0 ? { startMs: nowMs - spanMs, endMs: nowMs } : undefined;
+        let combos: Array<Record<string, string>>;
+        if (groupKeys.length === 1) {
+          const key = groupKeys[0]!;
+          const picked = treeSel[key] ?? [];
+          const values =
+            picked.length > 0
+              ? picked
+              : await fetchers.fetchTagValues(agentName, measurement, key, bucket || undefined, {}, win);
+          combos = values.map((v) => ({ [key]: v }));
+        } else {
+          const r = await fetchers.fetchSeriesEnum(agentName, measurement, {}, bucket || undefined, win);
+          setRefreshTruncated(r.truncated);
+          combos = deriveGroupCombos(r.series, groupKeys).filter((c) =>
+            groupKeys.every((k) => {
+              const picked = treeSel[k] ?? [];
+              return picked.length === 0 || picked.includes(c[k] ?? '');
+            }),
+          );
+        }
+        for (const f of fields) for (const c of combos) push(f, c);
+      }
+      setCandidates(out);
+    } catch {
+      // 조회 실패해도 고정분은 남긴다 — 등록한 것이 화면에서 사라지면 안 된다.
+      setCandidates(out);
+      setRefreshError(true);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [
+    agentName,
+    bucket,
+    comboSig,
+    fetchers,
+    fieldKeys.items,
+    groupKeys,
+    measurement,
+    pinnedCandidates,
+    treeSel,
+    tsdbSource.time_window_ms,
+  ]);
+
+  const rows: SeriesRow[] = useMemo(
+    () =>
+      candidates.map((c) => ({
+        id: storeSeriesId(measurement, c.field, { ...tagFilters, ...c.combo }),
         key: measurement,
-        field,
+        field: c.field,
         dataType: '',
         registration: '',
-        tags: { ...tagFilters, ...combo },
+        tags: { ...tagFilters, ...c.combo },
       })),
-    );
-  }, [measurement, fieldKeys.items, tagFilters, groupKeys, groupPreview.combos]);
+    [candidates, measurement, tagFilters],
+  );
 
   /** 행 id → 그 행이 나타내는 그룹 조합. 그룹 기준이 없으면 비어 있다. */
   const comboById = useMemo(() => {
     const m = new Map<string, Record<string, string>>();
-    if (groupKeys.length === 0 || measurement === '') return m;
-    for (const field of fieldKeys.items) {
-      for (const combo of groupPreview.combos) {
-        m.set(storeSeriesId(measurement, field, { ...tagFilters, ...combo }), combo);
-      }
+    for (const c of candidates) {
+      if (Object.keys(c.combo).length === 0) continue;
+      m.set(storeSeriesId(measurement, c.field, { ...tagFilters, ...c.combo }), c.combo);
     }
     return m;
-  }, [measurement, fieldKeys.items, tagFilters, groupKeys, groupPreview.combos]);
+  }, [candidates, measurement, tagFilters]);
+
+
+  /**
+   * 후보 행 = 현재 measurement 의 field 키 × 현재 태그 필터.
+   *
+   * 태그를 드릴다운의 **3단계**로 두었으므로 행의 태그는 전부 같다. 태그별로 행을
+   * 쪼개려면 `tag-values` 를 조합 폭발로 순회해야 하는데, 그 비용은 InfluxDB 쪽에서
+   * 온전히 발생한다(§5). 사용자가 태그를 좁힌 뒤 필드를 고르는 순서가 실제 조작
+   * 순서와도 맞는다.
+   */
 
   /** 현재 편집 커서의 그룹 축을 시리즈 항목 형태로 만든다. */
   const groupByPatch = useMemo(
@@ -732,9 +733,9 @@ export function TsdbSourceSection({
               onChange={(e) => {
                 const id = e.target.value;
                 setMeasurement('');
-                setTagKey('');
-                setTagValue('');
-                setTagFilters({});
+                setTreeSel({});
+                setExpandedKey('');
+                setCandidates([]);
                 setOverLimit(false);
                 if (!id) {
                   // 미선택으로 초기화 — 소스가 비활성이 되어 조회가 멈춘다(§2.3).
@@ -810,8 +811,9 @@ export function TsdbSourceSection({
             disabled={agentName === ''}
             onChange={(e) => {
               setMeasurement('');
-              setTagKey('');
-              setTagFilters({});
+              setTreeSel({});
+              setExpandedKey('');
+              setCandidates([]);
               patch({ bucket: e.target.value || undefined });
             }}
             className={inputClass()}
@@ -867,11 +869,11 @@ export function TsdbSourceSection({
               disabled={agentName === ''}
               onChange={(e) => {
                 setMeasurement(e.target.value);
-                setTagKey('');
-                setTagValue('');
-                setTagFilters({});
-                // 태그 키 집합이 measurement 마다 다르므로 그룹 축도 함께 비운다.
-                setGroupKeys([]);
+                // 태그 키 집합이 measurement 마다 다르므로 트리와 후보를 비운다.
+                setTreeSel({});
+                setExpandedKey('');
+                setCandidates([]);
+                setOverLimit(false);
               }}
               className={inputClass()}
             >
@@ -884,201 +886,109 @@ export function TsdbSourceSection({
             </select>
           </FieldLabel>
         </div>
-        <div className="min-w-[8rem] flex-1">
-          <FieldLabel label={t('dashboard.chart.tsdbTagKey')}>
-            <select
-              data-testid="chart-tsdb-tag-key-select"
-              value={tagKey}
-              disabled={measurement === ''}
-              onChange={(e) => {
-                setTagKey(e.target.value);
-                setTagValue('');
-              }}
-              className={inputClass()}
-            >
-              <option value="">{t('dashboard.chart.tsdbTagKeySelect')}</option>
-              {tagKeys.items.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
-          </FieldLabel>
-        </div>
-        <div className="min-w-[8rem] flex-1">
-          <FieldLabel label={t('dashboard.chart.tsdbTagValue')}>
-            <select
-              data-testid="chart-tsdb-tag-value-select"
-              value={tagValue}
-              disabled={tagKey === ''}
-              onChange={(e) => {
-                const v = e.target.value;
-                setTagValue(v);
-                // 값을 고르는 즉시 필터에 반영한다 — "추가" 버튼을 한 단계 더 두면
-                // 사용자가 고르고도 반영되지 않은 상태를 만들 수 있다.
-                setTagFilters((prev) => {
-                  const next = { ...prev };
-                  if (v === '') delete next[tagKey];
-                  else next[tagKey] = v;
-                  return next;
-                });
-                // UB1-3 — 값을 고정한 키로는 나눌 수 없다(그룹이 항상 1개다).
-                // 서버가 400 으로 거부하므로 UI 에서 먼저 해소한다.
-                if (v !== '') {
-                  setGroupKeys((prev) => prev.filter((k) => k !== tagKey));
-                }
-              }}
-              className={inputClass()}
-            >
-              <option value="">{t('dashboard.chart.tsdbTagValueAny')}</option>
-              {tagValues.items.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </FieldLabel>
-        </div>
       </div>
 
-      {/* 그룹 기준(group by) — 태그 값으로 시리즈를 나눈다(SPEC-TSDB-004 §2.1).
-          값을 고정한 키는 후보에서 제외한다 — 그 키로 나누면 그룹이 항상 1개이고
-          서버가 400 으로 거부한다(UB1-3). 숨기지 않고 **비활성 + 사유**로 두어
-          "왜 못 고르는가" 가 화면에서 읽히게 한다(§2.13 [S1] 원칙 승계). */}
+      {/* 그룹 기준 트리 — 태그 키를 고르면 그 키의 **모든 값**으로 나누고,
+          펼쳐서 개별 값을 고르면 **그 값들로만** 나눈다(요구 3).
+          종전의 "태그 값 고정 필터 + 그룹 축" 두 조작을 하나로 합친 것이다. */}
       {measurement !== '' && tagKeys.items.length > 0 && (
-        <div data-testid="chart-tsdb-group-by">
+        <div data-testid="chart-tsdb-group-tree">
           <FieldLabel label={t('dashboard.chart.tsdbGroupBy')}>
-            <div className="flex flex-wrap gap-x-3 gap-y-1">
+            <ul className="space-y-0.5">
               {tagKeys.items.map((k) => {
-                const pinned = tagFilters[k] !== undefined;
-                const checked = groupKeys.includes(k);
+                const picked = treeSel[k];
+                const keyOn = picked !== undefined;
+                const open = expandedKey === k;
                 return (
-                  <label
-                    key={k}
-                    className={`flex items-center gap-1 text-xs ${
-                      pinned ? 'opacity-50' : ''
-                    }`}
-                    {...(pinned
-                      ? { title: t('dashboard.chart.tsdbGroupByPinnedReason') }
-                      : {})}
-                  >
-                    <input
-                      type="checkbox"
-                      data-testid={`chart-tsdb-group-by-${k}`}
-                      checked={checked}
-                      disabled={pinned}
-                      aria-disabled={pinned}
-                      onChange={(e) => {
-                        const next = e.target.checked
-                          ? [...groupKeys, k].sort()
-                          : groupKeys.filter((x) => x !== k);
-                        // 검색 커서만 바꾼다. 이미 **등록된** 시리즈는 건드리지
-                        // 않는다 — 조건을 바꿔 가며 누적 등록할 수 있어야 한다.
-                        setGroupKeys(next);
-                      }}
-                    />
-                    <span>{k}</span>
-                  </label>
+                  <li key={k}>
+                    <div className="flex items-center gap-1 text-xs">
+                      <button
+                        type="button"
+                        data-testid={`chart-tsdb-tree-expand-${k}`}
+                        aria-expanded={open}
+                        aria-label={k}
+                        onClick={() => setExpandedKey(open ? '' : k)}
+                        className="w-4 text-(--color-text-muted)"
+                      >
+                        {open ? '▾' : '▸'}
+                      </button>
+                      <label className="flex items-center gap-1">
+                        <input
+                          type="checkbox"
+                          data-testid={`chart-tsdb-tree-key-${k}`}
+                          checked={keyOn}
+                          onChange={(e) => {
+                            setTreeSel((prev) => {
+                              const next = { ...prev };
+                              if (e.target.checked) next[k] = [];
+                              else delete next[k];
+                              return next;
+                            });
+                          }}
+                        />
+                        <span>{k}</span>
+                      </label>
+                      {keyOn && (picked?.length ?? 0) > 0 && (
+                        <span className="text-[10px] text-(--color-text-muted)">
+                          ({picked!.length})
+                        </span>
+                      )}
+                    </div>
+                    {open && (
+                      <ul
+                        data-testid={`chart-tsdb-tree-values-${k}`}
+                        className="ml-5 mt-0.5 flex flex-wrap gap-x-3 gap-y-1"
+                      >
+                        {tagValues.loading && (
+                          <li className="text-[11px] text-(--color-text-muted)">
+                            {t('dashboard.chart.tsdbGroupPreviewLoading')}
+                          </li>
+                        )}
+                        {!tagValues.loading &&
+                          tagValues.items.map((v) => {
+                            const on = (treeSel[k] ?? []).includes(v);
+                            return (
+                              <li key={v}>
+                                <label className="flex items-center gap-1 text-[11px]">
+                                  <input
+                                    type="checkbox"
+                                    data-testid={`chart-tsdb-tree-value-${k}-${v}`}
+                                    checked={on}
+                                    onChange={(e) => {
+                                      // 값을 고르면 그 키는 자동으로 그룹 축이 된다 —
+                                      // 키를 따로 켜라고 요구하면 조작이 두 번이다.
+                                      setTreeSel((prev) => {
+                                        const cur = prev[k] ?? [];
+                                        const nextVals = e.target.checked
+                                          ? [...cur, v].sort()
+                                          : cur.filter((x) => x !== v);
+                                        return { ...prev, [k]: nextVals };
+                                      });
+                                    }}
+                                  />
+                                  <span>{v}</span>
+                                </label>
+                              </li>
+                            );
+                          })}
+                      </ul>
+                    )}
+                  </li>
                 );
               })}
-            </div>
+            </ul>
           </FieldLabel>
           <p className="mt-1 text-[11px] text-(--color-text-muted)">
             {groupKeys.length === 0
               ? t('dashboard.chart.tsdbGroupByNone')
-              : t('dashboard.chart.tsdbGroupByHint').replace(
-                  '{keys}',
-                  [...groupKeys].sort().join(', '),
-                )}
+              : t('dashboard.chart.tsdbGroupByHint').replace('{keys}', groupKeys.join(', '))}
           </p>
-
-          {/* 그룹 미리보기 — 실제로 어떤 태그 값이 시리즈가 되는지 보여 준다.
-              그룹 기준만 표시하고 값을 감추면 사용자는 "몇 개가 나오는지" 를 적용
-              후에야 알게 되고, 고카디널리티 태그를 실수로 걸었을 때 되돌리는
-              비용이 커진다. 사전 필터를 반영한 **실재 조합**을 쓴다. */}
-          {groupKeys.length > 0 && (
-            <div data-testid="chart-tsdb-group-preview" className="mt-1">
-              {groupPreview.loading ? (
-                <p className="text-[11px] text-(--color-text-muted)">
-                  {t('dashboard.chart.tsdbGroupPreviewLoading')}
-                </p>
-              ) : groupPreview.error ? (
-                <p
-                  data-testid="chart-tsdb-group-preview-error"
-                  className="text-[11px] text-(--color-text-muted)"
-                >
-                  {t('dashboard.chart.tsdbGroupPreviewError')}
-                </p>
-              ) : groupPreview.combos.length === 0 ? (
-                <p
-                  data-testid="chart-tsdb-group-preview-empty"
-                  className="text-[11px] text-amber-500"
-                >
-                  {t('dashboard.chart.tsdbGroupPreviewEmpty')}
-                </p>
-              ) : (
-                <>
-                  <p
-                    data-testid="chart-tsdb-group-preview-count"
-                    className="text-[11px] text-(--color-text-muted)"
-                  >
-                    {t('dashboard.chart.tsdbGroupPreviewCount').replace(
-                      '{count}',
-                      String(groupPreview.combos.length),
-                    )}
-                  </p>
-                  {groupPreview.truncated && (
-                    <p
-                      data-testid="chart-tsdb-group-preview-truncated"
-                      role="alert"
-                      className="text-[11px] text-amber-500"
-                    >
-                      {t('dashboard.chart.tsdbGroupPreviewTruncated')}
-                    </p>
-                  )}
-                  <ul className="mt-0.5 flex flex-wrap gap-1">
-                    {groupPreview.combos.map((c) => {
-                      const label = Object.keys(c)
-                        .sort()
-                        .map((k) => `${k}=${c[k] === '' ? '(없음)' : c[k]}`)
-                        .join(', ');
-                      return (
-                        <li
-                          key={label}
-                          data-testid="chart-tsdb-group-preview-item"
-                          className="rounded bg-(--color-surface-2) px-1.5 py-0.5 font-mono text-[10px] text-(--color-text-muted)"
-                        >
-                          {label}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </>
-              )}
-            </div>
-          )}
-          {tagKeys.items.some((k) => tagFilters[k] !== undefined) && (
-            <p
-              data-testid="chart-tsdb-group-by-pinned"
-              className="mt-1 text-[11px] text-(--color-text-muted)"
-            >
-              {t('dashboard.chart.tsdbGroupByPinnedReason')}
-            </p>
-          )}
         </div>
       )}
 
-      {Object.keys(tagFilters).length > 0 && (
-        <p data-testid="chart-tsdb-tag-filters" className="text-[11px] text-(--color-text-muted)">
-          {Object.keys(tagFilters)
-            .sort()
-            .map((k) => `${k}=${tagFilters[k]}`)
-            .join(', ')}
-        </p>
-      )}
-
-      {/* 선택 표 — Store 와 같은 컴포넌트를 쓴다(§2.15 [O1]). 등록(registration) 컬럼은
-          Store 메타데이터이므로 TSDB 에서는 노출하지 않는다. */}
+      {/* 시리즈 목록 — 리프레시로 갱신한다(요구 4). measurement · 그룹 기준을
+          바꾼 뒤 눌러야 목록이 새로 만들어진다. 자동 갱신이 아니어서 조건을
+          여러 개 고치는 동안 조회가 나가지 않는다. */}
       {agentName === '' ? (
         <p data-testid="chart-tsdb-no-agent" className="text-xs text-(--color-text-muted)">
           {t('dashboard.chart.tsdbSeriesNoAgent')}
@@ -1089,6 +999,41 @@ export function TsdbSourceSection({
         </p>
       ) : (
         <div data-testid="chart-tsdb-series-select">
+          <div className="mb-1 flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="chart-tsdb-refresh"
+              disabled={refreshing}
+              onClick={() => {
+                void refresh();
+              }}
+              className="rounded border border-(--color-border) px-2 py-0.5 text-xs disabled:opacity-50"
+            >
+              {refreshing
+                ? t('dashboard.chart.tsdbGroupPreviewLoading')
+                : t('dashboard.chart.tsdbRefresh')}
+            </button>
+            <span className="text-[11px] text-(--color-text-muted)">
+              {t('dashboard.chart.tsdbRefreshHint')}
+            </span>
+          </div>
+          {refreshError && (
+            <p
+              data-testid="chart-tsdb-refresh-error"
+              className="mb-1 text-[11px] text-(--color-text-muted)"
+            >
+              {t('dashboard.chart.tsdbGroupPreviewError')}
+            </p>
+          )}
+          {refreshTruncated && (
+            <p
+              data-testid="chart-tsdb-refresh-truncated"
+              role="alert"
+              className="mb-1 text-[11px] text-amber-500"
+            >
+              {t('dashboard.chart.tsdbGroupPreviewTruncated')}
+            </p>
+          )}
           <SeriesSelectTable
             rows={rows}
             selectedIds={selectedIds}
