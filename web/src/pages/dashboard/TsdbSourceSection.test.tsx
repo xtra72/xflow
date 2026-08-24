@@ -548,3 +548,45 @@ describe('TsdbSourceSection — 이미 선택된 시리즈에 그룹을 거는 �
     await waitFor(() => expect(lastSeries(patches)[0]!.group_by).toEqual(['host']));
   });
 });
+
+describe('TsdbSourceSection — 저장된 선택에서 커서 복원 (버그 재현)', () => {
+  it('다이얼로그를 다시 열면 measurement · 그룹 기준 · 태그 필터가 복원된다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [
+            { key: 'cpu', field: 'usage', tags: { region: 'kr' }, group_by: ['host'] },
+          ],
+        })}
+        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host', 'region']) })}
+      />,
+    );
+
+    // measurement 셀렉트가 저장된 값을 가리킨다.
+    const ms = screen.getByTestId('chart-tsdb-measurement-select') as HTMLSelectElement;
+    await waitFor(() => expect(ms.value).toBe('cpu'));
+
+    // 그룹 기준 체크가 복원된다.
+    await waitFor(() =>
+      expect(
+        (screen.getByTestId('chart-tsdb-group-by-host') as HTMLInputElement).checked,
+      ).toBe(true),
+    );
+
+    // 태그 필터도 복원된다.
+    expect(screen.getByTestId('chart-tsdb-tag-filters').textContent).toContain('region=kr');
+  });
+
+  it('선택이 없으면 커서는 비어 있다 (신규 패널)', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    const ms = screen.getByTestId('chart-tsdb-measurement-select') as HTMLSelectElement;
+    expect(ms.value).toBe('');
+  });
+});

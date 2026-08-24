@@ -216,10 +216,21 @@ export function TsdbSourceSection({
 
   // --- 드릴다운 로컬 상태 (config 가 아니라 편집 커서다) ---
 
-  const [measurement, setMeasurement] = useState('');
+  /**
+   * 드릴다운 커서를 **저장된 선택에서 복원**한다(SPEC-TSDB-004 UB1-15).
+   *
+   * 커서 자체는 config 가 아니지만, 빈 값으로 시작하면 다이얼로그를 다시 열 때
+   * measurement 셀렉트가 비어 보이고 그룹 기준 체크가 전부 풀려 있다 — 사용자에게는
+   * "설정이 저장되지 않았다" 로 읽힌다. 실제로는 series 에 다 들어 있다.
+   *
+   * lazy 초기화라 최초 렌더의 값만 쓴다. 이후 사용자의 편집을 덮어쓰지 않는다.
+   */
+  const [measurement, setMeasurement] = useState(() => tsdbSource.series[0]?.key ?? '');
   const [tagKey, setTagKey] = useState('');
   const [tagValue, setTagValue] = useState('');
-  const [tagFilters, setTagFilters] = useState<Record<string, string>>({});
+  const [tagFilters, setTagFilters] = useState<Record<string, string>>(
+    () => tsdbSource.series[0]?.tags ?? {},
+  );
   const [overLimit, setOverLimit] = useState(false);
   /**
    * 그룹 기준 태그 키(SPEC-TSDB-004 §2.1). 선택 시점에 시리즈 항목으로 옮겨진다.
@@ -227,7 +238,9 @@ export function TsdbSourceSection({
    * config 가 아니라 편집 커서인 이유는 tagFilters 와 같다 — 이미 선택된 시리즈의
    * 그룹 축을 바꾸는 것이 아니라, **앞으로 선택할** 시리즈에 붙일 축이다.
    */
-  const [groupKeys, setGroupKeys] = useState<string[]>([]);
+  const [groupKeys, setGroupKeys] = useState<string[]>(
+    () => tsdbSource.series[0]?.group_by ?? [],
+  );
 
   const bucket = tsdbSource.bucket ?? '';
 

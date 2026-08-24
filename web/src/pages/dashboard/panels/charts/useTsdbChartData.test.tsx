@@ -276,3 +276,89 @@ describe('useTsdbChartData — 오류와 백엔드 불일치', () => {
     expect(queryFn).not.toHaveBeenCalled();
   });
 });
+
+describe('useTsdbChartData — group by 시리즈 렌더 (버그 재현)', () => {
+  it('group by 항목 1개가 그룹 2개로 펼쳐지면 시리즈 2개가 나와야 한다', async () => {
+    // 실제 경로와 같은 형상: 컬럼 2개 · 출처 인덱스는 둘 다 0 · 라벨에 그룹 태그.
+    const grouped: SeriesMatrix = {
+      columns: ['cpu{host=a}', 'cpu{host=b}'],
+      rows: [
+        { bucketStartMs: 1000, values: [1, 2] },
+        { bucketStartMs: 2000, values: [3, 4] },
+      ],
+      columnOrigins: [0, 0],
+      columnLabels: [
+        { __field__: 'usage', host: 'a' },
+        { __field__: 'usage', host: 'b' },
+      ],
+    };
+    const queryFn = vi.fn(async () => ok(grouped));
+    const { result } = renderTsdb(
+      makeConfig({ series: [{ key: 'cpu', field: 'usage', group_by: ['host'] }] }),
+      true,
+      { queryTsdbFn: queryFn },
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(result.current.status).toBe('connected');
+    // 그룹 2개가 각각 독립 시리즈로 나와야 한다.
+    expect(result.current.seriesNames).toHaveLength(2);
+    expect(new Set(result.current.seriesNames).size).toBe(2);
+    expect(result.current.entries.length).toBeGreaterThan(0);
+  });
+
+  it('group_by 가 요청 필터로 전달된다', async () => {
+    const queryFn = vi.fn(async () => ok());
+    renderTsdb(
+      makeConfig({ series: [{ key: 'cpu', field: 'usage', group_by: ['host'] }] }),
+      true,
+      { queryTsdbFn: queryFn },
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const call = queryFn.mock.calls[0] as unknown as [
+      unknown,
+      unknown,
+      { seriesFilters?: Array<Record<string, unknown>> },
+    ];
+    expect(call[2].seriesFilters?.[0]?.groupBy).toEqual(['host']);
+  });
+});
+
+describe('useTsdbChartData — group_by 변경이 재조회를 촉발해야 한다 (버그 재현)', () => {
+  it('group_by 를 나중에 걸면 다시 질의한다', async () => {
+    const queryFn = vi.fn(async () => ok());
+    const { rerender } = renderHook<UseTsdbChartDataResult, { cfg: TsdbSourceConfig }>(
+      ({ cfg }) => useTsdbChartData(cfg, true, { queryTsdbFn: queryFn }),
+      {
+        wrapper,
+        initialProps: { cfg: makeConfig({ series: [{ key: 'cpu', field: 'usage' }] }) },
+      },
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const before = queryFn.mock.calls.length;
+    expect(before).toBeGreaterThan(0);
+
+    // 그룹 축만 바꾼다 — 사용자가 설정 화면에서 그룹 기준을 체크한 상황.
+    rerender({
+      cfg: makeConfig({ series: [{ key: 'cpu', field: 'usage', group_by: ['host'] }] }),
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(queryFn.mock.calls.length).toBeGreaterThan(before);
+    const last = queryFn.mock.calls[queryFn.mock.calls.length - 1] as unknown as [
+      unknown,
+      unknown,
+      { seriesFilters?: Array<Record<string, unknown>> },
+    ];
+    expect(last[2].seriesFilters?.[0]?.groupBy).toEqual(['host']);
+  });
+});

@@ -245,14 +245,20 @@ export function useTsdbChartData(
               .map((k) => `${k}=${s.tags![k]}`)
               .join(',')
           : '';
+        // 그룹 축도 포함한다(SPEC-TSDB-004 UB1-14) — 빠뜨리면 그룹 기준을 켜도
+        // 재구독이 일어나지 않아 차트가 옛 시리즈를 그대로 보여 준다. 사용자에게는
+        // "설정은 저장되는데 그림이 안 바뀐다" 로 보인다.
+        const groupPart = s.group_by ? [...s.group_by].sort().join(',') : '';
         // alias 도 포함한다 — 이름 편집이 재구독→재변환으로 범례에 반영되게 한다.
-        return `${s.key}|${s.field}|${tagPart}|${s.alias ?? ''}`;
+        return `${s.key}|${s.field}|${tagPart}|${groupPart}|${s.alias ?? ''}`;
       })
       .join('');
 
     return [
       resolutionKey,
       config.bucket ?? '',
+      // 페이지 크기가 바뀌면 조회 형태가 달라진다(열거 유무 · group_filter).
+      config.group_page_size ?? 0,
       config.time_window_ms,
       config.interval_ms,
       config.aggregation,
