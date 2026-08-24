@@ -23,6 +23,11 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useAgents } from '@/hooks/useAgent';
 import { useTranslation } from '@/lib/i18n';
+import {
+  deriveGroupCombos,
+  enumerateTsdbSeries,
+  type TsdbEnumeratedSeries,
+} from '@/services/api/tsdbSeriesEnum';
 import { SeriesSelectTable, type SeriesRow } from '@/pages/agents/SeriesSelectTable';
 import {
   fetchInfluxBuckets,
@@ -98,6 +103,20 @@ export interface TsdbDiscoveryFetchers {
     tagKey: string,
     bucket?: string,
   ) => Promise<string[]>;
+  /**
+   * 시리즈 열거(D5) — 그룹 미리보기용.
+   *
+   * 그룹 기준을 걸면 어떤 태그 값들이 실제로 시리즈가 되는지 보여 줘야 한다.
+   * 값 목록(D3 `fetchTagValues`)이 아니라 **열거**를 쓰는 이유는 사전 필터를
+   * 반영한 **실재 조합**이 필요하기 때문이다 — `location=사무실` 로 좁힌 뒤의
+   * `device.dev_eui` 는 전체 값 목록보다 작을 수 있다.
+   */
+  fetchSeriesEnum: (
+    agentName: string,
+    measurement: string,
+    tags: Record<string, string>,
+    bucket?: string,
+  ) => Promise<TsdbEnumeratedSeries[]>;
 }
 
 const DEFAULT_FETCHERS: TsdbDiscoveryFetchers = {
@@ -106,6 +125,14 @@ const DEFAULT_FETCHERS: TsdbDiscoveryFetchers = {
   fetchFieldKeys: fetchInfluxFieldKeys,
   fetchTagKeys: fetchInfluxTagKeys,
   fetchTagValues: fetchInfluxTagValues,
+  fetchSeriesEnum: async (agentName, measurement, tags, bucket) => {
+    const r = await enumerateTsdbSeries(agentName, {
+      measurement,
+      ...(bucket ? { bucket } : {}),
+      ...(Object.keys(tags).length > 0 ? { tags } : {}),
+    });
+    return r.series;
+  },
 };
 
 /**
@@ -157,6 +184,54 @@ function useDiscoveryList(
   }, deps);
 
   return { items, error, loading };
+}
+
+/**
+ * 그룹 미리보기 — 현재 사전 필터 아래에서 그룹 기준이 만들 **실제 조합**을 구한다.
+ *
+ * 별도 훅인 이유는 `useDiscoveryList` 가 `string[]` 전용이기 때문이다. 조합은
+ * `Record<string,string>` 이라 그 형상에 담기지 않는다.
+ */
+function useGroupCombos(
+  enabled: boolean,
+  load: () => Promise<TsdbEnumeratedSeries[]>,
+  groupKeys: readonly string[],
+  deps: readonly unknown[],
+): { combos: Array<Record<string, string>>; error: boolean; loading: boolean } {
+  const [combos, setCombos] = useState<Array<Record<string, string>>>([]);
+  const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!enabled) {
+      setCombos([]);
+      setError(false);
+      setLoading(false);
+      return;
+    }
+    let alive = true;
+    setLoading(true);
+    setError(false);
+    void load()
+      .then((series) => {
+        if (!alive) return;
+        setCombos(deriveGroupCombos(series, groupKeys));
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!alive) return;
+        // 미리보기 실패가 편집을 막아서는 안 된다 — 목록 없이도 그룹 설정은 유효하다.
+        setCombos([]);
+        setError(true);
+        setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+
+  return { combos, error, loading };
 }
 
 /** 시리즈 참조 → `SeriesSelectTable` 의 선택 식별자. Store 와 같은 규칙을 쓴다. */
@@ -264,6 +339,13 @@ export function TsdbSourceSection({
     () => fetchers.fetchTagKeys(agentName, measurement, bucket || undefined),
     [agentName, measurement, bucket],
   );
+  const groupPreview = useGroupCombos(
+    agentName !== '' && measurement !== '' && groupKeys.length > 0,
+    () => fetchers.fetchSeriesEnum(agentName, measurement, tagFilters, bucket || undefined),
+    groupKeys,
+    [agentName, measurement, bucket, groupKeys.join(','), JSON.stringify(tagFilters)],
+  );
+
   const tagValues = useDiscoveryList(
     agentName !== '' && measurement !== '' && tagKey !== '',
     () => fetchers.fetchTagValues(agentName, measurement, tagKey, bucket || undefined),
@@ -675,6 +757,63 @@ export function TsdbSourceSection({
                   [...groupKeys].sort().join(', '),
                 )}
           </p>
+
+          {/* 그룹 미리보기 — 실제로 어떤 태그 값이 시리즈가 되는지 보여 준다.
+              그룹 기준만 표시하고 값을 감추면 사용자는 "몇 개가 나오는지" 를 적용
+              후에야 알게 되고, 고카디널리티 태그를 실수로 걸었을 때 되돌리는
+              비용이 커진다. 사전 필터를 반영한 **실재 조합**을 쓴다. */}
+          {groupKeys.length > 0 && (
+            <div data-testid="chart-tsdb-group-preview" className="mt-1">
+              {groupPreview.loading ? (
+                <p className="text-[11px] text-(--color-text-muted)">
+                  {t('dashboard.chart.tsdbGroupPreviewLoading')}
+                </p>
+              ) : groupPreview.error ? (
+                <p
+                  data-testid="chart-tsdb-group-preview-error"
+                  className="text-[11px] text-(--color-text-muted)"
+                >
+                  {t('dashboard.chart.tsdbGroupPreviewError')}
+                </p>
+              ) : groupPreview.combos.length === 0 ? (
+                <p
+                  data-testid="chart-tsdb-group-preview-empty"
+                  className="text-[11px] text-amber-500"
+                >
+                  {t('dashboard.chart.tsdbGroupPreviewEmpty')}
+                </p>
+              ) : (
+                <>
+                  <p
+                    data-testid="chart-tsdb-group-preview-count"
+                    className="text-[11px] text-(--color-text-muted)"
+                  >
+                    {t('dashboard.chart.tsdbGroupPreviewCount').replace(
+                      '{count}',
+                      String(groupPreview.combos.length),
+                    )}
+                  </p>
+                  <ul className="mt-0.5 flex flex-wrap gap-1">
+                    {groupPreview.combos.map((c) => {
+                      const label = Object.keys(c)
+                        .sort()
+                        .map((k) => `${k}=${c[k] === '' ? '(없음)' : c[k]}`)
+                        .join(', ');
+                      return (
+                        <li
+                          key={label}
+                          data-testid="chart-tsdb-group-preview-item"
+                          className="rounded bg-(--color-surface-2) px-1.5 py-0.5 font-mono text-[10px] text-(--color-text-muted)"
+                        >
+                          {label}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
           {tagKeys.items.some((k) => tagFilters[k] !== undefined) && (
             <p
               data-testid="chart-tsdb-group-by-pinned"

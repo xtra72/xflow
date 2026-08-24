@@ -42,6 +42,10 @@ function makeFetchers(over: Partial<TsdbDiscoveryFetchers> = {}): TsdbDiscoveryF
     fetchFieldKeys: vi.fn(async () => ['usage', 'idle']),
     fetchTagKeys: vi.fn(async () => ['host']),
     fetchTagValues: vi.fn(async () => ['a', 'b']),
+    fetchSeriesEnum: vi.fn(async () => [
+      { tags: { host: 'a' }, fields: ['usage'] },
+      { tags: { host: 'b' }, fields: ['usage'] },
+    ]),
     ...over,
   };
 }
@@ -588,5 +592,100 @@ describe('TsdbSourceSection — 저장된 선택에서 커서 복원 (버그 재
     );
     const ms = screen.getByTestId('chart-tsdb-measurement-select') as HTMLSelectElement;
     expect(ms.value).toBe('');
+  });
+});
+
+describe('TsdbSourceSection — 그룹 미리보기 (사용자 보고)', () => {
+  it('그룹 기준을 걸면 실제 태그 값이 목록으로 나온다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers({
+          fetchTagKeys: vi.fn(async () => ['host']),
+          fetchSeriesEnum: vi.fn(async () => [
+            { tags: { host: 'A' }, fields: ['usage'] },
+            { tags: { host: 'B' }, fields: ['usage'] },
+            { tags: { host: 'C' }, fields: ['usage'] },
+          ]),
+        })}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+
+    const items = await screen.findAllByTestId('chart-tsdb-group-preview-item');
+    expect(items).toHaveLength(3);
+    expect(items.map((i) => i.textContent)).toEqual(['host=A', 'host=B', 'host=C']);
+    // 이 파일의 i18n 모의는 키를 그대로 돌려주므로 개수 문구는 키로 단언한다.
+    // 개수 자체는 위 목록 길이가 고정한다.
+    expect(screen.getByTestId('chart-tsdb-group-preview-count').textContent).toContain(
+      'dashboard.chart.tsdbGroupPreviewCount',
+    );
+  });
+
+  it('열거는 사전 필터를 반영한다', async () => {
+    const fetchSeriesEnum = vi.fn(async () => [{ tags: { host: 'A' }, fields: ['usage'] }]);
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host', 'region']), fetchSeriesEnum })}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
+
+    // region 을 사전 필터로 고정한다.
+    fireEvent.change(screen.getByTestId('chart-tsdb-tag-key-select'), {
+      target: { value: 'region' },
+    });
+    const tv = screen.getByTestId('chart-tsdb-tag-value-select') as HTMLSelectElement;
+    await waitFor(() => expect(Array.from(tv.options).map((o) => o.value)).toContain('a'));
+    fireEvent.change(tv, { target: { value: 'a' } });
+
+    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+    await waitFor(() => expect(fetchSeriesEnum).toHaveBeenCalled());
+
+    const call = fetchSeriesEnum.mock.calls[fetchSeriesEnum.mock.calls.length - 1] as unknown as [
+      string,
+      string,
+      Record<string, string>,
+    ];
+    expect(call[2]).toEqual({ region: 'a' });
+  });
+
+  it('그룹 기준이 없으면 미리보기를 그리지 않는다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-series-select')).toBeTruthy());
+    expect(screen.queryByTestId('chart-tsdb-group-preview')).toBeNull();
+  });
+
+  it('열거 실패는 편집을 막지 않는다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers({
+          fetchTagKeys: vi.fn(async () => ['host']),
+          fetchSeriesEnum: vi.fn(async () => {
+            throw new Error('403');
+          }),
+        })}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+
+    expect(await screen.findByTestId('chart-tsdb-group-preview-error')).toBeTruthy();
+    // 체크는 그대로 유지된다 — 미리보기 실패가 설정을 되돌리지 않는다.
+    expect((screen.getByTestId('chart-tsdb-group-by-host') as HTMLInputElement).checked).toBe(
+      true,
+    );
   });
 });
