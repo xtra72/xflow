@@ -34,7 +34,7 @@ type influxManager interface {
 // 합치면 읽기 전용 라우트가 쓰기 능력을 갖춘 에이전트만 받게 된다.
 type influxSchemaDiscoverer interface {
 	ListTagKeys(ctx context.Context, bucket, measurement string) ([]string, error)
-	ListTagValues(ctx context.Context, bucket, measurement, tagKey string, filters map[string]string) ([]string, error)
+	ListTagValues(ctx context.Context, bucket, measurement, tagKey string, filters map[string]string, window system.SchemaWindow) ([]string, error)
 	ListFieldKeys(ctx context.Context, bucket, measurement string) ([]string, error)
 }
 
@@ -417,10 +417,25 @@ func (h *InfluxDBManagementHandler) ListTagValues(ctx api.Context) error {
 		return err
 	}
 
+	// 시간창은 명시하지 않으면 백엔드의 암묵 기본값이 적용된다 — v3 의
+	// SHOW TAG VALUES 는 최근 창만 훑고, Flux 의 schema.tagValues 는 -30d 다.
+	// 그 창 밖에서만 보고한 장비가 목록에서 조용히 빠지므로, 호출자가 창을
+	// 지정하면 그대로 싣는다(SPEC-TSDB-004 UB1-19).
+	startMs, apiErr := parseSeriesEnumInt(ctx, "start_ms")
+	if apiErr != nil {
+		return apiErr
+	}
+	endMs, apiErr := parseSeriesEnumInt(ctx, "end_ms")
+	if apiErr != nil {
+		return apiErr
+	}
+	startMs, endMs = system.ResolveSeriesEnumWindow(startMs, endMs, time.Now())
+
 	mctx, cancel := context.WithTimeout(ctx.Context(), defaultInfluxManagementTimeout)
 	defer cancel()
 
-	values, err := disc.ListTagValues(mctx, ctx.Query("bucket"), measurement, tagKey, filters)
+	values, err := disc.ListTagValues(mctx, ctx.Query("bucket"), measurement, tagKey, filters,
+		system.SchemaWindow{StartMs: startMs, EndMs: endMs})
 	if err != nil {
 		return mapInfluxDiscoveryError(err)
 	}

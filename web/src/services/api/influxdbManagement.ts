@@ -179,6 +179,13 @@ export async function fetchInfluxTagValues(
    * 그 상한과 무관하다. @spec SPEC-TSDB-004
    */
   filters?: Record<string, string>,
+  /**
+   * 조회 시간창. **비우면 백엔드의 암묵 기본값이 적용된다** — v3 의
+   * SHOW TAG VALUES 는 최근 창만 훑고 Flux 는 -30d 다. 그 창 밖에서만 보고한
+   * 장비가 목록에서 조용히 빠지므로, 패널이 그리는 창을 넘겨야 한다.
+   * @spec SPEC-TSDB-004 UB1-19
+   */
+  window?: { startMs: number; endMs: number },
 ): Promise<string[]> {
   const params = new URLSearchParams({ measurement, tag_key: tagKey });
   if (bucket) params.set('bucket', bucket);
@@ -190,6 +197,10 @@ export async function fetchInfluxTagValues(
         .map((k) => `${k}=${filters[k]}`)
         .join(','),
     );
+  }
+  if (window) {
+    params.set('start_ms', String(window.startMs));
+    params.set('end_ms', String(window.endMs));
   }
   const data = await get<Record<string, unknown> | string[] | null>(
     `/influxdb/${encodeURIComponent(agentName)}/tag-values?${params}`,

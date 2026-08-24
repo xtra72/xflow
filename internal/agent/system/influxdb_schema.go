@@ -40,7 +40,7 @@ import (
 // 그것은 읽기 전용 경로에 필요 없는 넓힘이다.
 type InfluxSchemaDiscoverer interface {
 	ListTagKeys(ctx context.Context, bucket, measurement string) ([]string, error)
-	ListTagValues(ctx context.Context, bucket, measurement, tagKey string, filters map[string]string) ([]string, error)
+	ListTagValues(ctx context.Context, bucket, measurement, tagKey string, filters map[string]string, window SchemaWindow) ([]string, error)
 	ListFieldKeys(ctx context.Context, bucket, measurement string) ([]string, error)
 }
 
@@ -66,7 +66,7 @@ func (a *InfluxDBAgent) ListTagKeys(ctx context.Context, bucket, measurement str
 
 // ListTagValues 는 client 에 위임하여 (measurement, tagKey) 의 태그 값 목록을
 // 반환한다(D3).
-func (a *InfluxDBAgent) ListTagValues(ctx context.Context, bucket, measurement, tagKey string, filters map[string]string) ([]string, error) {
+func (a *InfluxDBAgent) ListTagValues(ctx context.Context, bucket, measurement, tagKey string, filters map[string]string, window SchemaWindow) ([]string, error) {
 	c, err := a.managementClient()
 	if err != nil {
 		return nil, err
@@ -74,7 +74,7 @@ func (a *InfluxDBAgent) ListTagValues(ctx context.Context, bucket, measurement, 
 	if bucket == "" {
 		bucket = a.defaultBucket()
 	}
-	return c.ListTagValues(ctx, bucket, measurement, tagKey, filters)
+	return c.ListTagValues(ctx, bucket, measurement, tagKey, filters, window)
 }
 
 // ListFieldKeys 는 client 에 위임하여 measurement 의 필드 키 목록을 반환한다(D4).
@@ -149,11 +149,26 @@ func buildFluxTagKeysQuery(bucket, measurement string) (string, error) {
 	), nil
 }
 
+// SchemaWindow 는 스키마 조회의 명시 시간창이다(SPEC-TSDB-004 UB1-19).
+//
+// **비워 두면 안 되는 이유가 실측으로 확인됐다.** InfluxDB 3 의 SHOW TAG VALUES 는
+// 시간 조건이 없으면 암묵적인 최근 창만 훑는다 — 데이터가 그대로 있어도 그 창
+// 밖이면 빈 결과가 온다. Flux 의 schema.tagValues 도 start 기본값(-30d)을 갖는다.
+// 창을 명시하지 않으면 "그 창 밖에서만 보고한 장비" 가 목록에서 조용히 사라진다.
+type SchemaWindow struct {
+	StartMs int64
+	EndMs   int64
+}
+
+// valid 는 창이 질의에 실을 만한지 판정한다. 0 값 구조체는 무효다.
+func (w SchemaWindow) valid() bool { return w.EndMs > w.StartMs && w.StartMs > 0 }
+
 // buildFluxTagValuesQuery 는 D3 의 v2 쿼리를 만든다.
 // tsdbtags/client_v2.go 의 ListTagValues 복제본이다.
 func buildFluxTagValuesQuery(
 	bucket, measurement, tagKey string,
 	filters map[string]string,
+	window SchemaWindow,
 ) (string, error) {
 	if err := validateSchemaArgs(bucket, measurement, map[string]string{"tag key": tagKey}); err != nil {
 		return "", err
@@ -166,8 +181,8 @@ func buildFluxTagValuesQuery(
 			return "", err
 		}
 	}
-	// 필터가 없으면 종전 형태를 그대로 낸다(바이트 무변경).
-	if len(filters) == 0 {
+	// 필터도 창도 없으면 종전 형태를 그대로 낸다(바이트 무변경).
+	if len(filters) == 0 && !window.valid() {
 		return fmt.Sprintf("%s\nschema.measurementTagValues(bucket: \"%s\", measurement: \"%s\", tag: \"%s\")",
 			fluxSchemaImport,
 			escapeFluxStringLiteral(bucket),
@@ -183,11 +198,18 @@ func buildFluxTagValuesQuery(
 		conds = append(conds, fmt.Sprintf(`r["%s"] == "%s"`,
 			escapeFluxStringLiteral(k), escapeFluxStringLiteral(filters[k])))
 	}
-	return fmt.Sprintf("%s\nschema.tagValues(bucket: \"%s\", tag: \"%s\", predicate: (r) => %s)",
+	span := ""
+	if window.valid() {
+		// start 를 명시하지 않으면 -30d 기본값이 적용된다.
+		span = fmt.Sprintf(", start: time(v: %d), stop: time(v: %d)",
+			window.StartMs*nsPerMs, window.EndMs*nsPerMs)
+	}
+	return fmt.Sprintf("%s\nschema.tagValues(bucket: \"%s\", tag: \"%s\", predicate: (r) => %s%s)",
 		fluxSchemaImport,
 		escapeFluxStringLiteral(bucket),
 		escapeFluxStringLiteral(tagKey),
 		strings.Join(conds, " and "),
+		span,
 	), nil
 }
 
@@ -258,12 +280,12 @@ func (c *influxV2Client) ListTagKeys(ctx context.Context, bucket, measurement st
 }
 
 // ListTagValues 는 schema.measurementTagValues() 로 태그 값 목록을 조회한다(D3).
-func (c *influxV2Client) ListTagValues(ctx context.Context, bucket, measurement, tagKey string, filters map[string]string) ([]string, error) {
+func (c *influxV2Client) ListTagValues(ctx context.Context, bucket, measurement, tagKey string, filters map[string]string, window SchemaWindow) ([]string, error) {
 	bucket, err := c.resolveSchemaBucket(bucket)
 	if err != nil {
 		return nil, err
 	}
-	flux, err := buildFluxTagValuesQuery(bucket, measurement, tagKey, filters)
+	flux, err := buildFluxTagValuesQuery(bucket, measurement, tagKey, filters, window)
 	if err != nil {
 		return nil, err
 	}
@@ -340,6 +362,7 @@ func buildInfluxQLTagKeysQuery(measurement string) (string, error) {
 func buildInfluxQLTagValuesQuery(
 	measurement, tagKey string,
 	filters map[string]string,
+	window SchemaWindow,
 ) (string, error) {
 	if err := validateSchemaArgs("", measurement, map[string]string{"tag key": tagKey}); err != nil {
 		return "", err
@@ -356,12 +379,19 @@ func buildInfluxQLTagValuesQuery(
 		escapeInfluxQLIdent(measurement),
 		escapeInfluxQLIdent(tagKey),
 	)
-	if len(filters) == 0 {
+	if len(filters) == 0 && !window.valid() {
 		return base, nil
 	}
 	// SHOW TAG VALUES 는 WHERE 절을 받는다(M1 실측). 메타데이터 질의이므로
 	// 원시 행을 스캔하지 않는다 — 열거의 행 상한과 무관하게 전량을 얻는다.
-	conds := make([]string, 0, len(filters))
+	//
+	// **시간 조건을 반드시 싣는다.** 없으면 암묵적인 최근 창만 훑어, 데이터가
+	// 그대로 있어도 그 창 밖 태그 값이 빠진다(실측 확인).
+	conds := make([]string, 0, len(filters)+1)
+	if window.valid() {
+		conds = append(conds, fmt.Sprintf(`time >= '%s' AND time < '%s'`,
+			formatInfluxQLTime(window.StartMs), formatInfluxQLTime(window.EndMs)))
+	}
 	for _, k := range sortedTagKeys(filters) {
 		conds = append(conds, fmt.Sprintf(`"%s" = '%s'`,
 			escapeInfluxQLIdent(k), escapeInfluxQLStringLiteral(filters[k])))
@@ -410,8 +440,8 @@ func (c *influxV3Client) ListTagKeys(ctx context.Context, _ string, measurement 
 }
 
 // ListTagValues 는 SHOW TAG VALUES FROM ... WITH KEY = 로 태그 값 목록을 조회한다(D3).
-func (c *influxV3Client) ListTagValues(ctx context.Context, _ string, measurement, tagKey string, filters map[string]string) ([]string, error) {
-	q, err := buildInfluxQLTagValuesQuery(measurement, tagKey, filters)
+func (c *influxV3Client) ListTagValues(ctx context.Context, _ string, measurement, tagKey string, filters map[string]string, window SchemaWindow) ([]string, error) {
+	q, err := buildInfluxQLTagValuesQuery(measurement, tagKey, filters, window)
 	if err != nil {
 		return nil, err
 	}

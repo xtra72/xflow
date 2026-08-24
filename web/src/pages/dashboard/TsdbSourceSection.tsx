@@ -103,6 +103,7 @@ export interface TsdbDiscoveryFetchers {
     tagKey: string,
     bucket?: string,
     filters?: Record<string, string>,
+    window?: { startMs: number; endMs: number },
   ) => Promise<string[]>;
   /**
    * 시리즈 열거(D5) — 그룹 미리보기용.
@@ -371,6 +372,10 @@ export function TsdbSourceSection({
       // 키가 여럿이면 **조합**이 필요한데 태그 값 조회는 키별 값만 주므로
       // (곱하면 실재하지 않는 조합이 생긴다) 열거로 간다. 그쪽은 상한에 걸릴 수
       // 있으므로 truncated 를 그대로 표면화한다.
+      const nowMs = Date.now();
+      const spanMs = tsdbSource.time_window_ms > 0 ? tsdbSource.time_window_ms : 0;
+      const win = spanMs > 0 ? { startMs: nowMs - spanMs, endMs: nowMs } : undefined;
+
       if (groupKeys.length === 1) {
         const key = groupKeys[0]!;
         const values = await fetchers.fetchTagValues(
@@ -379,6 +384,7 @@ export function TsdbSourceSection({
           key,
           bucket || undefined,
           tagFilters,
+          win,
         );
         return {
           series: values.map((v) => ({ tags: { [key]: v }, fields: [] })),
@@ -391,14 +397,12 @@ export function TsdbSourceSection({
       // 패널이 실제로 그리는 창을 그대로 쓴다. 창을 안 넘기면 서버 기본값(30일)이
       // 적용되고, 그러면 원시 행 상한이 옛 데이터로 먼저 차서 최근 시리즈가
       // 열거에서 빠진다.
-      const endMs = Date.now();
-      const windowMs = tsdbSource.time_window_ms > 0 ? tsdbSource.time_window_ms : 0;
       return fetchers.fetchSeriesEnum(
         agentName,
         measurement,
         tagFilters,
         bucket || undefined,
-        windowMs > 0 ? { startMs: endMs - windowMs, endMs } : undefined,
+        win,
       );
     },
     groupKeys,

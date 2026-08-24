@@ -105,7 +105,7 @@ type InfluxClient interface {
 	ListTagKeys(ctx context.Context, bucket, measurement string) ([]string, error)
 
 	// ListTagValues 는 (measurement, tagKey) 의 태그 값 목록을 반환한다(D3).
-	ListTagValues(ctx context.Context, bucket, measurement, tagKey string, filters map[string]string) ([]string, error)
+	ListTagValues(ctx context.Context, bucket, measurement, tagKey string, filters map[string]string, window SchemaWindow) ([]string, error)
 
 	// ListFieldKeys 는 measurement 의 필드 키 목록을 반환한다(D4).
 	ListFieldKeys(ctx context.Context, bucket, measurement string) ([]string, error)
