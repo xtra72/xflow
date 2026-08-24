@@ -242,6 +242,16 @@ export interface TsdbSeriesRef {
    * `smooth` 는 전 그룹이 공유한다.
    */
   group_by?: string[];
+  /**
+   * 표시할 그룹을 태그 값 **조합 목록**으로 고른 것. @spec SPEC-TSDB-004 §2.7.1
+   *
+   * 없거나 비면 `group_by` 가 만드는 **전 그룹**을 표시한다(하위호환 · 백엔드 규약과
+   * 동일). 설정 UI 는 사용자가 표에서 고른 조합을 여기에 명시한다.
+   *
+   * 조합 목록인 이유는 다중 키 때문이다 — 키별 허용값 맵으로 두면 데카르트 곱이
+   * 되어 실재하지 않는 조합까지 고르게 된다.
+   */
+  group_filter?: Array<Record<string, string>>;
   /** 표시 별칭(미지정 시 형식/서술 표기로 폴백). */
   alias?: string;
   /**

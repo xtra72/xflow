@@ -166,6 +166,9 @@ function buildKeysAndFilters(config: TsdbSourceConfig): {
       // group by 항목은 이 인덱스가 컬럼 N개로 펼쳐진다(SPEC-TSDB-004 §2.1).
       // 소비자는 SeriesMatrix.columnOrigins 로 출처를 되짚는다.
       ...(hasGroupBy ? { groupBy: ref.group_by } : {}),
+      ...(hasGroupBy && ref.group_filter && ref.group_filter.length > 0
+        ? { groupFilter: ref.group_filter }
+        : {}),
     });
   }
   return { keys, seriesFilters };
@@ -249,8 +252,20 @@ export function useTsdbChartData(
         // 재구독이 일어나지 않아 차트가 옛 시리즈를 그대로 보여 준다. 사용자에게는
         // "설정은 저장되는데 그림이 안 바뀐다" 로 보인다.
         const groupPart = s.group_by ? [...s.group_by].sort().join(',') : '';
+        // 고른 그룹이 바뀌면 재조회해야 한다 — UB1-14 와 같은 사유다.
+        const pickPart = s.group_filter
+          ? s.group_filter
+              .map((c) =>
+                Object.keys(c)
+                  .sort()
+                  .map((k) => `${k}=${c[k]}`)
+                  .join(','),
+              )
+              .sort()
+              .join(';')
+          : '';
         // alias 도 포함한다 — 이름 편집이 재구독→재변환으로 범례에 반영되게 한다.
-        return `${s.key}|${s.field}|${tagPart}|${groupPart}|${s.alias ?? ''}`;
+        return `${s.key}|${s.field}|${tagPart}|${groupPart}|${pickPart}|${s.alias ?? ''}`;
       })
       .join('');
 

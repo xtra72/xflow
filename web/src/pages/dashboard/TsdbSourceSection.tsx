@@ -354,10 +354,26 @@ export function TsdbSourceSection({
 
   // --- 선택 표 (SeriesSelectTable 재사용) ---
 
-  const selectedIds = useMemo(
-    () => tsdbSource.series.map(seriesIdOf),
-    [tsdbSource.series],
-  );
+  /**
+   * 선택 식별자 — 그룹 항목은 **고른 조합마다** id 를 하나씩 낸다.
+   *
+   * config 항목 1개가 표에서는 행 N개로 보이므로, 체크 상태도 그 축으로 펼쳐야
+   * 한다. 펼치지 않으면 고른 그룹이 표에 반영되지 않는다.
+   */
+  const selectedIds = useMemo(() => {
+    const out: string[] = [];
+    for (const sr of tsdbSource.series) {
+      const picks = sr.group_by && sr.group_by.length > 0 ? (sr.group_filter ?? []) : [];
+      if (picks.length === 0) {
+        out.push(seriesIdOf(sr));
+        continue;
+      }
+      for (const combo of picks) {
+        out.push(storeSeriesId(sr.key, sr.field, { ...(sr.tags ?? {}), ...combo }));
+      }
+    }
+    return out;
+  }, [tsdbSource.series]);
 
   /**
    * 후보 행 = 현재 measurement 의 field 키 × 현재 태그 필터.
@@ -367,17 +383,50 @@ export function TsdbSourceSection({
    * 온전히 발생한다(§5). 사용자가 태그를 좁힌 뒤 필드를 고르는 순서가 실제 조작
    * 순서와도 맞는다.
    */
+  /**
+   * 후보 행 — 그룹 기준이 있으면 **조합마다 행이 하나씩** 생긴다
+   * (SPEC-TSDB-004 §2.11). 사용자는 그중 볼 것을 고르고, 고른 조합이 항목의
+   * `group_filter` 로 모인다.
+   *
+   * 그룹 기준이 없으면 종전과 같이 field 당 한 행이다.
+   */
   const rows: SeriesRow[] = useMemo(() => {
     if (measurement === '') return [];
-    return fieldKeys.items.map((field) => ({
-      id: storeSeriesId(measurement, field, tagFilters),
-      key: measurement,
-      field,
-      dataType: '',
-      registration: '',
-      tags: tagFilters,
-    }));
-  }, [measurement, fieldKeys.items, tagFilters]);
+    if (groupKeys.length === 0) {
+      return fieldKeys.items.map((field) => ({
+        id: storeSeriesId(measurement, field, tagFilters),
+        key: measurement,
+        field,
+        dataType: '',
+        registration: '',
+        tags: tagFilters,
+      }));
+    }
+    // 조합이 아직 안 왔으면 행을 만들지 않는다 — 사전 필터를 반영하지 않은
+    // 임시 행을 보여 주면 사용자가 없는 시리즈를 고르게 된다.
+    return fieldKeys.items.flatMap((field) =>
+      groupPreview.combos.map((combo) => ({
+        id: storeSeriesId(measurement, field, { ...tagFilters, ...combo }),
+        key: measurement,
+        field,
+        dataType: '',
+        registration: '',
+        tags: { ...tagFilters, ...combo },
+      })),
+    );
+  }, [measurement, fieldKeys.items, tagFilters, groupKeys, groupPreview.combos]);
+
+  /** 행 id → 그 행이 나타내는 그룹 조합. 그룹 기준이 없으면 비어 있다. */
+  const comboById = useMemo(() => {
+    const m = new Map<string, Record<string, string>>();
+    if (groupKeys.length === 0 || measurement === '') return m;
+    for (const field of fieldKeys.items) {
+      for (const combo of groupPreview.combos) {
+        m.set(storeSeriesId(measurement, field, { ...tagFilters, ...combo }), combo);
+      }
+    }
+    return m;
+  }, [measurement, fieldKeys.items, tagFilters, groupKeys, groupPreview.combos]);
 
   /** 현재 편집 커서의 그룹 축을 시리즈 항목 형태로 만든다. */
   const groupByPatch = useMemo(
@@ -433,8 +482,61 @@ export function TsdbSourceSection({
     [measurement, patch, tsdbSource.series],
   );
 
+  /**
+   * 그룹 조합 하나를 켜고 끈다.
+   *
+   * 항목은 (measurement, field) 당 **하나**로 유지하고, 고른 조합을 그 항목의
+   * `group_filter` 에 모은다. 조합마다 항목을 따로 만들면 요청이 조합 수만큼
+   * 늘어 group by 로 얻은 이점이 사라진다 — 한 요청이 여러 그룹을 돌려주는 것이
+   * 이 기능의 요지다.
+   *
+   * 마지막 조합을 끄면 항목 자체를 없앤다. 빈 `group_filter` 는 백엔드 규약상
+   * "전 그룹" 이라 남겨 두면 끈 것이 오히려 전부 켜진다.
+   */
+  const toggleGroupPick = useCallback(
+    (field: string, combo: Record<string, string>): void => {
+      const same = (a: Record<string, string>, b: Record<string, string>): boolean => {
+        const ka = Object.keys(a).sort();
+        const kb = Object.keys(b).sort();
+        return ka.length === kb.length && ka.every((k, i) => kb[i] === k && a[k] === b[k]);
+      };
+      const idx = tsdbSource.series.findIndex(
+        (sr) => sr.key === measurement && sr.field === field && (sr.group_by?.length ?? 0) > 0,
+      );
+      const next = [...tsdbSource.series];
+      if (idx < 0) {
+        next.push({
+          key: measurement,
+          field,
+          ...(Object.keys(tagFilters).length > 0 ? { tags: { ...tagFilters } } : {}),
+          group_by: [...groupKeys].sort(),
+          group_filter: [combo],
+        });
+        applySelection(next);
+        return;
+      }
+      const cur = next[idx]!;
+      const picks = cur.group_filter ?? [];
+      const has = picks.some((c) => same(c, combo));
+      const updated = has ? picks.filter((c) => !same(c, combo)) : [...picks, combo];
+      if (updated.length === 0) {
+        next.splice(idx, 1);
+      } else {
+        next[idx] = { ...cur, group_filter: updated };
+      }
+      applySelection(next);
+    },
+    [applySelection, groupKeys, measurement, tagFilters, tsdbSource.series],
+  );
+
   const handleToggle = useCallback(
     (id: string): void => {
+      const combo = comboById.get(id);
+      if (combo) {
+        const row = rowById(id);
+        if (row) toggleGroupPick(row.field, combo);
+        return;
+      }
       const existing = tsdbSource.series.filter((s) => seriesIdOf(s) !== id);
       if (existing.length !== tsdbSource.series.length) {
         applySelection(existing);
@@ -452,11 +554,60 @@ export function TsdbSourceSection({
         },
       ]);
     },
-    [applySelection, groupByPatch, rowById, tsdbSource.series],
+    [applySelection, comboById, groupByPatch, rowById, toggleGroupPick, tsdbSource.series],
   );
 
   const handleSelectMany = useCallback(
     (ids: string[]): void => {
+      // 그룹 모드에서는 조합을 항목별로 모아 **한 번에** 반영한다. id 마다
+      // toggleGroupPick 을 부르면 앞선 호출의 결과를 뒤 호출이 덮어쓴다
+      // (tsdbSource.series 가 그 사이 갱신되지 않는다).
+      if (comboById.size > 0) {
+        const byField = new Map<string, Array<Record<string, string>>>();
+        for (const id of ids) {
+          const combo = comboById.get(id);
+          const row = rowById(id);
+          if (!combo || !row) continue;
+          const list = byField.get(row.field);
+          if (list) list.push(combo);
+          else byField.set(row.field, [combo]);
+        }
+        if (byField.size === 0) return;
+        const next = [...tsdbSource.series];
+        for (const [field, combos] of byField) {
+          const idx = next.findIndex(
+            (sr) =>
+              sr.key === measurement && sr.field === field && (sr.group_by?.length ?? 0) > 0,
+          );
+          const sig = (c: Record<string, string>): string =>
+            Object.keys(c)
+              .sort()
+              .map((k) => `${k}=${c[k]}`)
+              .join(',');
+          if (idx < 0) {
+            next.push({
+              key: measurement,
+              field,
+              ...(Object.keys(tagFilters).length > 0 ? { tags: { ...tagFilters } } : {}),
+              group_by: [...groupKeys].sort(),
+              group_filter: combos,
+            });
+            continue;
+          }
+          const cur = next[idx]!;
+          const seen = new Set((cur.group_filter ?? []).map(sig));
+          const merged = [...(cur.group_filter ?? [])];
+          for (const c of combos) {
+            if (seen.has(sig(c))) continue;
+            seen.add(sig(c));
+            merged.push(c);
+          }
+          next[idx] = { ...cur, group_filter: merged };
+        }
+        applySelection(next);
+        return;
+      }
+
       const known = new Set(tsdbSource.series.map(seriesIdOf));
       const added: TsdbSeriesRef[] = [];
       for (const id of ids) {
@@ -474,15 +625,42 @@ export function TsdbSourceSection({
       if (added.length === 0) return;
       applySelection([...tsdbSource.series, ...added]);
     },
-    [applySelection, groupByPatch, rowById, tsdbSource.series],
+    [
+      applySelection,
+      comboById,
+      groupByPatch,
+      groupKeys,
+      measurement,
+      rowById,
+      tagFilters,
+      tsdbSource.series,
+    ],
   );
 
   const handleClearMany = useCallback(
     (ids: string[]): void => {
+      if (comboById.size > 0) {
+        const drop = new Set(ids);
+        const next: TsdbSeriesRef[] = [];
+        for (const sr of tsdbSource.series) {
+          if ((sr.group_by?.length ?? 0) === 0) {
+            if (!drop.has(seriesIdOf(sr))) next.push(sr);
+            continue;
+          }
+          const kept = (sr.group_filter ?? []).filter(
+            (c) => !drop.has(storeSeriesId(sr.key, sr.field, { ...(sr.tags ?? {}), ...c })),
+          );
+          // 전부 해제된 항목은 없앤다 — 빈 group_filter 는 "전 그룹" 이라
+          // 남겨 두면 해제가 오히려 전부 켜는 결과가 된다.
+          if (kept.length > 0) next.push({ ...sr, group_filter: kept });
+        }
+        applySelection(next);
+        return;
+      }
       const drop = new Set(ids);
       applySelection(tsdbSource.series.filter((s) => !drop.has(seriesIdOf(s))));
     },
-    [applySelection, tsdbSource.series],
+    [applySelection, comboById, tsdbSource.series],
   );
 
   return (

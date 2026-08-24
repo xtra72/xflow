@@ -403,12 +403,19 @@ describe('TsdbSourceSection — 그룹 기준 (SPEC-TSDB-004)', () => {
     expect(lastSeries(patches)[0]!.group_by).toBeUndefined();
   });
 
-  it('그룹 기준을 고르면 선택된 시리즈에 group_by 가 실린다', async () => {
+  it('그룹 행을 고르면 group_by 와 고른 조합(group_filter)이 함께 실린다', async () => {
     const patches: Array<Record<string, unknown>> = [];
     render(
       <Harness
         initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
-        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['rack', 'host']) })}
+        fetchers={makeFetchers({
+          fetchTagKeys: vi.fn(async () => ['rack', 'host']),
+          fetchFieldKeys: vi.fn(async () => ['usage']),
+          fetchSeriesEnum: vi.fn(async () => [
+            { tags: { host: 'a', rack: 'r1' }, fields: ['usage'] },
+            { tags: { host: 'b', rack: 'r2' }, fields: ['usage'] },
+          ]),
+        })}
         onPatch={(p) => patches.push(p)}
       />,
     );
@@ -417,12 +424,17 @@ describe('TsdbSourceSection — 그룹 기준 (SPEC-TSDB-004)', () => {
     fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
     fireEvent.click(screen.getByTestId('chart-tsdb-group-by-rack'));
 
-    const boxes = seriesTableCheckboxes();
-    fireEvent.click(boxes[boxes.length - 1]!);
+    // 그룹 기준을 걸면 표가 **조합마다 한 행**으로 펼쳐진다. 열거를 기다린다.
+    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(2));
 
-    await waitFor(() => expect(lastSeries(patches).length).toBeGreaterThan(0));
+    fireEvent.click(seriesTableCheckboxes()[0]!);
+    await waitFor(() => expect(lastSeries(patches).length).toBe(1));
+
+    const entry = lastSeries(patches)[0]!;
     // 키 순서는 정렬해 고정한다 — 같은 선택이 다른 config 를 만들면 안 된다.
-    expect(lastSeries(patches)[0]!.group_by).toEqual(['host', 'rack']);
+    expect(entry.group_by).toEqual(['host', 'rack']);
+    // 항목은 하나로 유지되고 고른 조합만 group_filter 에 모인다.
+    expect(entry.group_filter).toEqual([{ host: 'a', rack: 'r1' }]);
   });
 
   it('값을 고정한 태그는 그룹 기준으로 고를 수 없다 (UB1-3)', async () => {
@@ -687,5 +699,102 @@ describe('TsdbSourceSection — 그룹 미리보기 (사용자 보고)', () => {
     expect((screen.getByTestId('chart-tsdb-group-by-host') as HTMLInputElement).checked).toBe(
       true,
     );
+  });
+});
+
+describe('TsdbSourceSection — 그룹 행 선택 (사용자 요청: N개로 나눠 고르기)', () => {
+  function groupedFetchers() {
+    return makeFetchers({
+      fetchTagKeys: vi.fn(async () => ['host']),
+      fetchFieldKeys: vi.fn(async () => ['usage']),
+      fetchSeriesEnum: vi.fn(async () => [
+        { tags: { host: 'A' }, fields: ['usage'] },
+        { tags: { host: 'B' }, fields: ['usage'] },
+        { tags: { host: 'C' }, fields: ['usage'] },
+      ]),
+    });
+  }
+
+  async function setupGrouped(patches: Array<Record<string, unknown>>) {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={groupedFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(3));
+  }
+
+  it('그룹 기준을 걸면 표가 그룹 수만큼 행으로 나뉜다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    await setupGrouped(patches);
+    // field 1개 × 그룹 3개 = 행 3개.
+    expect(seriesTableCheckboxes()).toHaveLength(3);
+  });
+
+  it('여러 그룹을 고르면 항목 1개에 조합이 모인다 (요청이 늘지 않는다)', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    await setupGrouped(patches);
+
+    fireEvent.click(seriesTableCheckboxes()[0]!);
+    await waitFor(() => expect(lastSeries(patches).length).toBe(1));
+    fireEvent.click(seriesTableCheckboxes()[2]!);
+    await waitFor(() =>
+      expect(lastSeries(patches)[0]!.group_filter).toHaveLength(2),
+    );
+
+    const entry = lastSeries(patches)[0]!;
+    expect(lastSeries(patches)).toHaveLength(1);
+    expect(entry.group_filter).toEqual([{ host: 'A' }, { host: 'C' }]);
+  });
+
+  it('마지막 조합을 해제하면 항목이 사라진다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    await setupGrouped(patches);
+
+    fireEvent.click(seriesTableCheckboxes()[1]!);
+    await waitFor(() => expect(lastSeries(patches).length).toBe(1));
+    fireEvent.click(seriesTableCheckboxes()[1]!);
+    // 빈 group_filter 는 백엔드 규약상 "전 그룹" 이라 남기면 해제가 오히려
+    // 전부 켜는 결과가 된다.
+    await waitFor(() => expect(lastSeries(patches)).toHaveLength(0));
+  });
+
+  it('전체 선택은 모든 조합을 한 항목에 모은다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    await setupGrouped(patches);
+
+    fireEvent.click(screen.getByTestId('tsdb-select-all'));
+    await waitFor(() => expect(lastSeries(patches).length).toBe(1));
+    expect(lastSeries(patches)[0]!.group_filter).toHaveLength(3);
+  });
+
+  it('저장된 선택이 표의 체크 상태로 복원된다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [
+            {
+              key: 'cpu',
+              field: 'usage',
+              group_by: ['host'],
+              group_filter: [{ host: 'A' }, { host: 'C' }],
+            },
+          ],
+        })}
+        fetchers={groupedFetchers()}
+      />,
+    );
+    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(3));
+    const boxes = seriesTableCheckboxes();
+    expect(boxes[0]!.checked).toBe(true);
+    expect(boxes[1]!.checked).toBe(false);
+    expect(boxes[2]!.checked).toBe(true);
   });
 });

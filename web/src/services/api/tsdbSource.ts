@@ -355,6 +355,9 @@ export async function queryTsdbMatrix(
     const groupBy = params.seriesFilters?.[idx]?.groupBy;
     if (!groupBy || groupBy.length === 0) continue;
     groupedIndexes.push(idx);
+    // 사용자가 그룹을 **명시적으로 골랐으면** 그것이 곧 경계다. 페이지로 다시
+    // 자르면 고른 것이 안 나오는 상태가 되어 선택이 무의미해진다.
+    if ((params.seriesFilters?.[idx]?.groupFilter?.length ?? 0) > 0) continue;
     if (pageSize <= 0) continue;
     try {
       const enumResult = await enumerate(
