@@ -1158,6 +1158,7 @@
       "tsdbGroupPreviewError": "그룹 목록을 확인하지 못했습니다. 설정은 그대로 유효합니다.",
       "tsdbGroupPreviewEmpty": "현재 태그 필터에서는 그룹을 찾지 못했습니다.",
       "tsdbGroupPreviewCount": "시리즈 {count}개가 생깁니다",
+      "tsdbGroupPreviewTruncated": "그룹 목록이 상한에 걸려 잘렸습니다 — 실제 그룹은 더 많습니다. 태그 필터를 좁히거나 패널의 시간 범위를 줄이세요.",
       "tsdbGroupByBadge": "그룹: {keys}",
       "tsdbGroupPageStatus": "그룹 {total}개 · {page}/{pageCount} 페이지",
       "tsdbGroupPagePrev": "이전 그룹",

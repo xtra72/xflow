@@ -1158,6 +1158,7 @@
       "tsdbGroupPreviewError": "Could not list the groups. The setting is still valid.",
       "tsdbGroupPreviewEmpty": "No groups found under the current tag filter.",
       "tsdbGroupPreviewCount": "{count} series will be produced",
+      "tsdbGroupPreviewTruncated": "The group list was truncated by a cap — there are more groups. Narrow the tag filter or shorten the panel time range.",
       "tsdbGroupByBadge": "Grouped by {keys}",
       "tsdbGroupPageStatus": "{total} groups · page {page}/{pageCount}",
       "tsdbGroupPagePrev": "Previous groups",

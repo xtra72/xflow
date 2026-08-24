@@ -26,7 +26,7 @@ import { useTranslation } from '@/lib/i18n';
 import {
   deriveGroupCombos,
   enumerateTsdbSeries,
-  type TsdbEnumeratedSeries,
+  type TsdbSeriesEnumResult,
 } from '@/services/api/tsdbSeriesEnum';
 import { SeriesSelectTable, type SeriesRow } from '@/pages/agents/SeriesSelectTable';
 import {
@@ -116,7 +116,8 @@ export interface TsdbDiscoveryFetchers {
     measurement: string,
     tags: Record<string, string>,
     bucket?: string,
-  ) => Promise<TsdbEnumeratedSeries[]>;
+    window?: { startMs: number; endMs: number },
+  ) => Promise<TsdbSeriesEnumResult>;
 }
 
 const DEFAULT_FETCHERS: TsdbDiscoveryFetchers = {
@@ -125,14 +126,17 @@ const DEFAULT_FETCHERS: TsdbDiscoveryFetchers = {
   fetchFieldKeys: fetchInfluxFieldKeys,
   fetchTagKeys: fetchInfluxTagKeys,
   fetchTagValues: fetchInfluxTagValues,
-  fetchSeriesEnum: async (agentName, measurement, tags, bucket) => {
-    const r = await enumerateTsdbSeries(agentName, {
+  fetchSeriesEnum: (agentName, measurement, tags, bucket, window) =>
+    enumerateTsdbSeries(agentName, {
       measurement,
       ...(bucket ? { bucket } : {}),
       ...(Object.keys(tags).length > 0 ? { tags } : {}),
-    });
-    return r.series;
-  },
+      // 창을 넘기지 않으면 서버 기본값(30일)이 적용된다. 그러면 원시 행 상한
+      // (20,000)이 옛 데이터로 먼저 차서 최근 시리즈가 열거에서 빠진다 —
+      // 사용자에게는 "장비가 안 보인다" 로 나타난다. 패널이 실제로 그리는 창을
+      // 그대로 쓴다.
+      ...(window ? { startMs: window.startMs, endMs: window.endMs } : {}),
+    }),
 };
 
 /**
@@ -194,34 +198,49 @@ function useDiscoveryList(
  */
 function useGroupCombos(
   enabled: boolean,
-  load: () => Promise<TsdbEnumeratedSeries[]>,
+  load: () => Promise<TsdbSeriesEnumResult>,
   groupKeys: readonly string[],
   deps: readonly unknown[],
-): { combos: Array<Record<string, string>>; error: boolean; loading: boolean } {
+): {
+  combos: Array<Record<string, string>>;
+  error: boolean;
+  loading: boolean;
+  truncated: boolean;
+} {
   const [combos, setCombos] = useState<Array<Record<string, string>>>([]);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(false);
+  /**
+   * 열거가 상한에 걸렸는가.
+   *
+   * **버리면 안 되는 신호다.** 상한에 걸리면 목록이 실제보다 짧은데, 알리지 않으면
+   * 사용자는 그것이 전부인 줄 알고 "장비가 2개뿐" 이라고 결론 내린다.
+   */
+  const [truncated, setTruncated] = useState(false);
 
   useEffect(() => {
     if (!enabled) {
       setCombos([]);
       setError(false);
       setLoading(false);
+      setTruncated(false);
       return;
     }
     let alive = true;
     setLoading(true);
     setError(false);
     void load()
-      .then((series) => {
+      .then((r) => {
         if (!alive) return;
-        setCombos(deriveGroupCombos(series, groupKeys));
+        setCombos(deriveGroupCombos(r.series, groupKeys));
+        setTruncated(r.truncated);
         setLoading(false);
       })
       .catch(() => {
         if (!alive) return;
         // 미리보기 실패가 편집을 막아서는 안 된다 — 목록 없이도 그룹 설정은 유효하다.
         setCombos([]);
+        setTruncated(false);
         setError(true);
         setLoading(false);
       });
@@ -231,7 +250,7 @@ function useGroupCombos(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
-  return { combos, error, loading };
+  return { combos, error, loading, truncated };
 }
 
 /** 시리즈 참조 → `SeriesSelectTable` 의 선택 식별자. Store 와 같은 규칙을 쓴다. */
@@ -341,9 +360,29 @@ export function TsdbSourceSection({
   );
   const groupPreview = useGroupCombos(
     agentName !== '' && measurement !== '' && groupKeys.length > 0,
-    () => fetchers.fetchSeriesEnum(agentName, measurement, tagFilters, bucket || undefined),
+    () => {
+      // 패널이 실제로 그리는 창을 그대로 쓴다. 창을 안 넘기면 서버 기본값(30일)이
+      // 적용되고, 그러면 원시 행 상한이 옛 데이터로 먼저 차서 최근 시리즈가
+      // 열거에서 빠진다 — 사용자에게는 "장비가 안 보인다" 로 나타난다.
+      const endMs = Date.now();
+      const windowMs = tsdbSource.time_window_ms > 0 ? tsdbSource.time_window_ms : 0;
+      return fetchers.fetchSeriesEnum(
+        agentName,
+        measurement,
+        tagFilters,
+        bucket || undefined,
+        windowMs > 0 ? { startMs: endMs - windowMs, endMs } : undefined,
+      );
+    },
     groupKeys,
-    [agentName, measurement, bucket, groupKeys.join(','), JSON.stringify(tagFilters)],
+    [
+      agentName,
+      measurement,
+      bucket,
+      groupKeys.join(','),
+      JSON.stringify(tagFilters),
+      tsdbSource.time_window_ms,
+    ],
   );
 
   const tagValues = useDiscoveryList(
@@ -971,6 +1010,15 @@ export function TsdbSourceSection({
                       String(groupPreview.combos.length),
                     )}
                   </p>
+                  {groupPreview.truncated && (
+                    <p
+                      data-testid="chart-tsdb-group-preview-truncated"
+                      role="alert"
+                      className="text-[11px] text-amber-500"
+                    >
+                      {t('dashboard.chart.tsdbGroupPreviewTruncated')}
+                    </p>
+                  )}
                   <ul className="mt-0.5 flex flex-wrap gap-1">
                     {groupPreview.combos.map((c) => {
                       const label = Object.keys(c)

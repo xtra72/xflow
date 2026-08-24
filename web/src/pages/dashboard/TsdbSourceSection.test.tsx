@@ -34,6 +34,20 @@ function makePanel(config: Record<string, unknown>): PanelConfig {
   return { id: 'p1', type: 'line-chart', title: '테스트', config };
 }
 
+/** 열거 응답 형상으로 감싼다 — 테스트는 시리즈 목록만 신경 쓰면 된다. */
+function enumOf(
+  series: Array<{ tags: Record<string, string>; fields: string[] }>,
+  truncated = false,
+) {
+  return {
+    series,
+    field_exact: true,
+    count: series.length,
+    truncated,
+    window: { start_ms: 0, end_ms: 1 },
+  };
+}
+
 /** 주입 조회기 기본값 — 각 테스트가 필요한 것만 덮어쓴다. */
 function makeFetchers(over: Partial<TsdbDiscoveryFetchers> = {}): TsdbDiscoveryFetchers {
   return {
@@ -42,10 +56,10 @@ function makeFetchers(over: Partial<TsdbDiscoveryFetchers> = {}): TsdbDiscoveryF
     fetchFieldKeys: vi.fn(async () => ['usage', 'idle']),
     fetchTagKeys: vi.fn(async () => ['host']),
     fetchTagValues: vi.fn(async () => ['a', 'b']),
-    fetchSeriesEnum: vi.fn(async () => [
+    fetchSeriesEnum: vi.fn(async () => enumOf([
       { tags: { host: 'a' }, fields: ['usage'] },
       { tags: { host: 'b' }, fields: ['usage'] },
-    ]),
+    ])),
     ...over,
   };
 }
@@ -411,10 +425,10 @@ describe('TsdbSourceSection — 그룹 기준 (SPEC-TSDB-004)', () => {
         fetchers={makeFetchers({
           fetchTagKeys: vi.fn(async () => ['rack', 'host']),
           fetchFieldKeys: vi.fn(async () => ['usage']),
-          fetchSeriesEnum: vi.fn(async () => [
+          fetchSeriesEnum: vi.fn(async () => enumOf([
             { tags: { host: 'a', rack: 'r1' }, fields: ['usage'] },
             { tags: { host: 'b', rack: 'r2' }, fields: ['usage'] },
-          ]),
+          ])),
         })}
         onPatch={(p) => patches.push(p)}
       />,
@@ -614,11 +628,11 @@ describe('TsdbSourceSection — 그룹 미리보기 (사용자 보고)', () => {
         initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
         fetchers={makeFetchers({
           fetchTagKeys: vi.fn(async () => ['host']),
-          fetchSeriesEnum: vi.fn(async () => [
+          fetchSeriesEnum: vi.fn(async () => enumOf([
             { tags: { host: 'A' }, fields: ['usage'] },
             { tags: { host: 'B' }, fields: ['usage'] },
             { tags: { host: 'C' }, fields: ['usage'] },
-          ]),
+          ])),
         })}
       />,
     );
@@ -637,7 +651,9 @@ describe('TsdbSourceSection — 그룹 미리보기 (사용자 보고)', () => {
   });
 
   it('열거는 사전 필터를 반영한다', async () => {
-    const fetchSeriesEnum = vi.fn(async () => [{ tags: { host: 'A' }, fields: ['usage'] }]);
+    const fetchSeriesEnum = vi.fn(async () =>
+      enumOf([{ tags: { host: 'A' }, fields: ['usage'] }]),
+    );
     render(
       <Harness
         initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
@@ -707,11 +723,11 @@ describe('TsdbSourceSection — 그룹 행 선택 (사용자 요청: N개로 나
     return makeFetchers({
       fetchTagKeys: vi.fn(async () => ['host']),
       fetchFieldKeys: vi.fn(async () => ['usage']),
-      fetchSeriesEnum: vi.fn(async () => [
+      fetchSeriesEnum: vi.fn(async () => enumOf([
         { tags: { host: 'A' }, fields: ['usage'] },
         { tags: { host: 'B' }, fields: ['usage'] },
         { tags: { host: 'C' }, fields: ['usage'] },
-      ]),
+      ])),
     });
   }
 
@@ -796,5 +812,79 @@ describe('TsdbSourceSection — 그룹 행 선택 (사용자 요청: N개로 나
     expect(boxes[0]!.checked).toBe(true);
     expect(boxes[1]!.checked).toBe(false);
     expect(boxes[2]!.checked).toBe(true);
+  });
+});
+
+describe('TsdbSourceSection — 열거 절단 · 시간창 (사용자 보고: 시리즈 2개만 보임)', () => {
+  it('열거가 잘리면 경고를 표시한다 (조용히 짧은 목록을 주지 않는다)', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers({
+          fetchTagKeys: vi.fn(async () => ['host']),
+          fetchSeriesEnum: vi.fn(async () =>
+            enumOf(
+              [
+                { tags: { host: 'A' }, fields: ['usage'] },
+                { tags: { host: 'B' }, fields: ['usage'] },
+              ],
+              true, // 상한에 걸림
+            ),
+          ),
+        })}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+
+    // 목록은 2개지만 그것이 전부가 아니라는 사실이 화면에 드러나야 한다.
+    expect(await screen.findByTestId('chart-tsdb-group-preview-truncated')).toBeTruthy();
+    expect(await screen.findAllByTestId('chart-tsdb-group-preview-item')).toHaveLength(2);
+  });
+
+  it('잘리지 않으면 경고를 표시하지 않는다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2' })}
+        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host']) })}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+    await screen.findAllByTestId('chart-tsdb-group-preview-item');
+    expect(screen.queryByTestId('chart-tsdb-group-preview-truncated')).toBeNull();
+  });
+
+  it('열거에 패널의 시간창을 넘긴다 (서버 기본 30일을 쓰지 않는다)', async () => {
+    const fetchSeriesEnum = vi.fn(async () =>
+      enumOf([{ tags: { host: 'A' }, fields: ['usage'] }]),
+    );
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          time_window_ms: 3_600_000,
+        })}
+        fetchers={makeFetchers({ fetchTagKeys: vi.fn(async () => ['host']), fetchSeriesEnum })}
+      />,
+    );
+    await selectMeasurement('cpu');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-group-by-host')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('chart-tsdb-group-by-host'));
+    await waitFor(() => expect(fetchSeriesEnum).toHaveBeenCalled());
+
+    const call = fetchSeriesEnum.mock.calls[fetchSeriesEnum.mock.calls.length - 1] as unknown as [
+      string,
+      string,
+      Record<string, string>,
+      string | undefined,
+      { startMs: number; endMs: number } | undefined,
+    ];
+    expect(call[4]).toBeDefined();
+    // 창 길이가 패널 설정과 같아야 한다 — 30일 기본값이 아니다.
+    expect(call[4]!.endMs - call[4]!.startMs).toBe(3_600_000);
   });
 });
