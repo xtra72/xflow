@@ -416,8 +416,13 @@ export function StoreSourceSection({
         )}
         </div>
       </div>
-        {/* Row 1 그룹 B: 에이전트 선택(스토어 모드에서만, 레이블 위). */}
-        {isStoreMode && (
+      </div>
+
+      {/* Row 2: 에이전트 선택 — TSDB 쪽과 같은 레이아웃으로 **한 줄 아래**에 둔다.
+          토글과 같은 행에 두면 소스를 바꿀 때 셀렉트가 나타났다 사라지며 행 높이가
+          출렁인다. 두 소스가 같은 자리에 같은 모양으로 있는 편이 읽기 쉽다. */}
+      {isStoreMode && (
+        <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-[10rem] flex-1">
             <LabeledField label={t('dashboard.chart.storeAgent')}>
               <select
@@ -454,8 +459,8 @@ export function StoreSourceSection({
               </select>
             </LabeledField>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Store 모드: 이름을 지정하지 않은 시리즈의 표시 이름 형식(패널 단위 기본값). */}
       {isStoreMode && (
