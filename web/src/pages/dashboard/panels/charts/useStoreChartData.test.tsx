@@ -711,14 +711,18 @@ describe('matrixToEntries — AC-15 group by 혼재 패널', () => {
     });
   });
 
-  it('group by 파생 컬럼은 그룹 태그 값으로 서로 다른 이름을 갖는다', () => {
+  it('group by 파생 컬럼은 서로 다른 이름을 갖되 태그를 이름에 넣지 않는다', () => {
+    // v0.21.0 이전에는 구분자로 그룹 태그 값(`{host=a}`)을 붙였다. 사용자가
+    // 이름을 지어 둔 자리에 기계 문자열이 덧붙는 것이 보고되어(§2.13),
+    // 구분자는 태그 없는 최소 번호로 바뀌었다. 필요한 성질은 "서로 다를 것"뿐이다.
     const r = matrixToEntries(mixedMatrix, mixedConfig);
     const groupNames = r.seriesNames.slice(1);
 
     // 세 이름이 서로 달라야 한다 — 같으면 한 줄로 병합되어 그룹이 사라진다.
     expect(new Set(groupNames).size).toBe(3);
-    for (const [i, host] of ['a', 'b', 'c'].entries()) {
-      expect(groupNames[i]).toContain(host);
+    for (const n of groupNames) {
+      expect(n).toContain('CPU');
+      expect(n).not.toContain('host');
     }
   });
 
@@ -799,10 +803,13 @@ describe('useStoreChartData — 이름 형식 변경이 재조회를 촉발한�
   });
 });
 
-describe('matrixToEntries — 이름 충돌 해소는 구분 키만 덧붙인다 (사용자 보고)', () => {
-  // 보고: `{$.location}` 을 지정했는데 범례가
+describe('matrixToEntries — 이름 충돌 해소에 태그를 쓰지 않는다 (사용자 보고)', () => {
+  // 1차 보고: `{$.location}` 을 지정했는데 범례가
   // `실습실 {device.dev_eui=…, device.type=EM300-TH, location=실습실}` 로 나온다.
-  // 줄을 실제로 가르는 것은 dev_eui 하나뿐이므로 그것만 남아야 한다.
+  // → 구분에 기여하는 키(dev_eui)만 남기도록 좁혔다(v0.18.0).
+  // 2차 보고: 그래도 `실습실 {device.dev_eui=24e124136d151523}` 이라 길다.
+  // → dev_eui 는 읽어도 무엇인지 알 수 없으면서 지정한 이름보다 길다. 구분자는
+  //   태그 없는 최소 번호로 바꾼다(§2.13). 정확한 통제는 그룹별 이름(§2.12).
   const matrix: SeriesMatrix = {
     columns: ['c0', 'c1', 'c2'],
     rows: [{ bucketStartMs: 1000, values: [1, 2, 3] }],
@@ -818,14 +825,14 @@ describe('matrixToEntries — 이름 충돌 해소는 구분 키만 덧붙인다
     series_name_format: '{$.tags.location}',
   });
 
-  it('값이 같은 태그는 덧붙이지 않는다', () => {
+  it('어떤 태그도 이름에 덧붙이지 않는다', () => {
     const r = matrixToEntries(matrix, config);
     for (const n of r.seriesNames) {
       expect(n).toContain('실습실');
-      expect(n).toContain('device.dev_eui=');
-      // 모든 줄에서 같은 값이라 구분에 기여하지 않는다.
-      expect(n).not.toContain('device.type=');
+      expect(n).not.toContain('device.dev_eui');
+      expect(n).not.toContain('device.type');
       expect(n).not.toContain('location=');
+      expect(n).not.toContain('{');
     }
   });
 
@@ -937,5 +944,50 @@ describe('matrixToEntries — 그룹별 개별 이름', () => {
     });
     // 펼쳐지지 않은 항목은 시리즈가 하나이며 그 이름은 항목 이름이다.
     expect(matrixToEntries(flat, config).seriesNames[0]).toBe('고정');
+  });
+});
+
+// ===== 이름 충돌 해소는 태그를 이름에 넣지 않는다 (SPEC-TSDB-004 §2.13) =====
+
+describe('matrixToEntries — 충돌 해소 표기', () => {
+  /** location 으로 이름 지은 3그룹. 두 줄이 같은 이름이 된다. */
+  const m: SeriesMatrix = {
+    columns: ['t.v#0', 't.v#1', 't.v#2'],
+    rows: [{ bucketStartMs: 0, values: [1, 2, 3] }],
+    columnOrigins: [0, 0, 0],
+    columnLabels: [
+      { __field__: 'v', 'device.dev_eui': 'a1', location: '실습실 안쪽' },
+      { __field__: 'v', 'device.dev_eui': 'b2', location: '실습실' },
+      { __field__: 'v', 'device.dev_eui': 'c3', location: '실습실' },
+    ],
+  };
+  const config = makeConfig({
+    series: [{ key: 't', field: 'v', group_by: ['device.dev_eui'] }],
+    series_name_format: '{$.tags.location}',
+  });
+
+  it('이름에 태그 정보를 넣지 않는다', () => {
+    const { seriesNames } = matrixToEntries(m, config);
+    for (const n of seriesNames) {
+      expect(n).not.toContain('dev_eui');
+      expect(n).not.toContain('a1');
+      expect(n).not.toContain('b2');
+      expect(n).not.toContain('c3');
+      expect(n).not.toContain('{');
+    }
+  });
+
+  it('충돌하지 않는 줄은 지정한 이름 그대로 둔다', () => {
+    // 종전에는 같은 출처의 줄이 하나라도 충돌하면 전부에 표기를 붙였다.
+    expect(matrixToEntries(m, config).seriesNames[0]).toBe('실습실 안쪽');
+  });
+
+  it('충돌한 줄만 구분자를 얻고 서로 다른 이름이 된다', () => {
+    const { seriesNames, seriesEntries } = matrixToEntries(m, config);
+    expect(seriesNames[1]).not.toBe(seriesNames[2]);
+    expect(seriesNames[1]).toContain('실습실');
+    expect(seriesNames[2]).toContain('실습실');
+    // 이름이 갈려야 줄이 병합되지 않는다 — 3그룹이면 3줄이다.
+    expect(seriesEntries.size).toBe(3);
   });
 });

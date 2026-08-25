@@ -32,8 +32,6 @@ import { resolveStoreAgentName } from './storeAgentResolve';
 import { pickSeriesColor, storeSeriesLabel } from './chartChannelTypes';
 import {
   METRIC_LABEL_KEY,
-  formatSeriesLabel,
-  parseSeriesLabels,
 } from '@/services/api/seriesLabels';
 import type {
   ChartConnectionStatus,
@@ -266,11 +264,20 @@ export function matrixToEntries(
     return storeSeriesLabel(ref, config.series_name_format);
   });
 
-  // 그룹 파생 이름 충돌 해소 (SPEC-TSDB-004 OQ1).
+  // 그룹 파생 이름 충돌 해소 (SPEC-TSDB-004 OQ1 · §2.13).
   //
   // 같은 출처에서 나온 컬럼들이 같은 이름을 가지면 아래 루프에서 한 시리즈로
-  // 병합되어 그룹이 통째로 사라진다. 이름이 이미 서로 다르면 손대지 않는다 —
-  // 사용자가 토큰으로 구분해 둔 이름에 군더더기를 붙이지 않는다.
+  // 병합되어 그룹이 통째로 사라진다. 그래서 이름은 서로 달라야 한다.
+  //
+  // **구분자에 태그 정보를 쓰지 않는다.** 종전에는 값이 다른 태그 키를 덧붙여
+  // `실습실 {device.dev_eui=24e124136d151523}` 처럼 되었는데, dev_eui 같은 값은
+  // 읽어도 무엇인지 알 수 없으면서 지정한 이름보다 길다. 범례에 이름을 지으라고
+  // 형식·별칭을 제공해 놓고 그 뒤에 기계 문자열을 덧붙이면 이름을 지은 의미가
+  // 없어진다. 어느 줄이 어느 장비인지 정확히 통제하려면 그룹별 개별 이름을
+  // 지정하면 된다(§2.12) — 그러면 이름이 갈려 이 분기 자체를 타지 않는다.
+  //
+  // **충돌한 줄에만** 붙인다. 종전에는 같은 출처의 줄이 하나라도 충돌하면 전부에
+  // 표기를 붙여, 이미 유일한 이름까지 오염됐다.
   if (origins) {
     const byOrigin = new Map<number, number[]>();
     origins.forEach((o, j) => {
@@ -280,31 +287,25 @@ export function matrixToEntries(
     });
     for (const [, cols] of byOrigin) {
       if (cols.length < 2) continue;
-      const names = cols.map((j) => seriesNames[j]!);
-      if (new Set(names).size === names.length) continue; // 이미 구분된다
-      // **구분에 필요한 키만** 덧붙인다.
-      //
-      // 종전에는 태그 전부를 붙여
-      // `실습실 {device.dev_eui=…, device.type=EM300-TH, location=실습실}` 처럼
-      // 지정한 이름보다 군더더기가 길어졌다. 실제로 줄을 가르는 것은 **값이 서로
-      // 다른 키**뿐이므로 그것만 남긴다. 위 예에서는 dev_eui 하나다.
-      //
-      // 이름을 완전히 통제하고 싶으면 시리즈별 이름을 지정하면 된다 — 그 경우
-      // 이름이 서로 달라져 이 분기 자체를 타지 않는다.
-      const tagSets = cols.map((j) => parseSeriesLabels(matrix.columnLabels?.[j]).tags);
-      const allKeys = new Set<string>();
-      for (const tset of tagSets) for (const k of Object.keys(tset)) allKeys.add(k);
-      const varying = [...allKeys]
-        .filter((k) => new Set(tagSets.map((tset) => tset[k] ?? '')).size > 1)
-        .sort();
-      if (varying.length === 0) continue;
-      cols.forEach((j, n) => {
-        const tset = tagSets[n]!;
-        const picked: Record<string, string> = {};
-        for (const k of varying) picked[k] = tset[k] ?? '';
-        const suffix = formatSeriesLabel({ metric: '', tags: picked });
-        if (suffix) seriesNames[j] = `${seriesNames[j]} ${suffix}`;
-      });
+      const byName = new Map<string, number[]>();
+      for (const j of cols) {
+        const name = seriesNames[j]!;
+        const list = byName.get(name);
+        if (list) list.push(j);
+        else byName.set(name, [j]);
+      }
+      const taken = new Set(cols.map((j) => seriesNames[j]!));
+      for (const [name, dup] of byName) {
+        if (dup.length < 2) continue; // 유일한 이름은 손대지 않는다
+        dup.forEach((j, n) => {
+          // 붙인 이름이 다른 줄과 또 겹치지 않을 때까지 번호를 올린다.
+          let seq = n + 1;
+          let next = `${name} (${seq})`;
+          while (taken.has(next)) next = `${name} (${++seq})`;
+          taken.add(next);
+          seriesNames[j] = next;
+        });
+      }
     }
   }
 
