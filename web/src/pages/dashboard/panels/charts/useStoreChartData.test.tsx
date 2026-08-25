@@ -772,3 +772,29 @@ describe('matrixToEntries — AC-15 group by 혼재 패널', () => {
     for (const n of r.seriesNames) expect(r.seriesStyles.get(n)?.color).toBeUndefined();
   });
 });
+
+describe('useStoreChartData — 이름 형식 변경이 재조회를 촉발한다 (TSDB 와 같은 축)', () => {
+  it('series_name_format 만 바꿔도 다시 조회한다', async () => {
+    const queryMatrixFn = vi.fn(async () => sampleMatrix);
+    const { rerender } = renderHook(
+      ({ fmt }: { fmt: string | undefined }) =>
+        useStoreChartData(
+          makeConfig(fmt === undefined ? {} : { series_name_format: fmt }),
+          true,
+          { queryMatrixFn },
+        ),
+      { initialProps: { fmt: undefined as string | undefined } },
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const before = queryMatrixFn.mock.calls.length;
+    expect(before).toBeGreaterThan(0);
+
+    rerender({ fmt: '{$.measurement}' });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(queryMatrixFn.mock.calls.length).toBeGreaterThan(before);
+  });
+});

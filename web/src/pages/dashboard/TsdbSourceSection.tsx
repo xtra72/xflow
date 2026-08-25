@@ -987,6 +987,18 @@ export function TsdbSourceSection({
         </div>
       )}
 
+      {/* 시리즈 이름 형식 — 미지정이 정상 상태다. 비우면 내장 서술 표기(시리즈 키 +
+          필드 + 태그)가 쓰이며 대부분 그것으로 충분하다. */}
+      <SeriesNameFormatField
+        value={tsdbSource.series_name_format}
+        onChange={(series_name_format) => patch({ series_name_format })}
+        sample={tsdbSource.series[0]}
+        testIdPrefix="chart-tsdb-series-name-format"
+        label={t('dashboard.chart.tsdbSeriesNameFormat')}
+        placeholder={t('dashboard.chart.tsdbSeriesNameFormatPlaceholder')}
+        hint={t('dashboard.chart.tsdbSeriesNameFormatHint')}
+      />
+
       {/* 시리즈 목록 — 리프레시로 갱신한다(요구 4). measurement · 그룹 기준을
           바꾼 뒤 눌러야 목록이 새로 만들어진다. 자동 갱신이 아니어서 조건을
           여러 개 고치는 동안 조회가 나가지 않는다. */}
@@ -1045,18 +1057,6 @@ export function TsdbSourceSection({
           />
         </div>
       )}
-
-      {/* 시리즈 이름 형식 — 미지정이 정상 상태다. 비우면 내장 서술 표기(시리즈 키 +
-          필드 + 태그)가 쓰이며 대부분 그것으로 충분하다. */}
-      <SeriesNameFormatField
-        value={tsdbSource.series_name_format}
-        onChange={(series_name_format) => patch({ series_name_format })}
-        sample={tsdbSource.series[0]}
-        testIdPrefix="chart-tsdb-series-name-format"
-        label={t('dashboard.chart.tsdbSeriesNameFormat')}
-        placeholder={t('dashboard.chart.tsdbSeriesNameFormatPlaceholder')}
-        hint={t('dashboard.chart.tsdbSeriesNameFormatHint')}
-      />
 
       {/* 등록된 시리즈 — **검색 조건과 독립적인 목록**이다.
           검색은 커서이고 등록은 영속이므로 둘을 나눠 보여 준다. 조건을 바꿔

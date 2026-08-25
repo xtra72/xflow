@@ -993,3 +993,23 @@ describe('TsdbSourceSection — 시리즈 이름 형식', () => {
     });
   });
 });
+
+describe('TsdbSourceSection — 이름 형식 위치', () => {
+  it('이름 형식이 시리즈 목록보다 위에 온다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [{ key: 'cpu', field: 'usage' }],
+        })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    await selectMeasurement('cpu');
+    const fmt = screen.getByTestId('chart-tsdb-series-name-format');
+    const list = await screen.findByTestId('chart-tsdb-series-select');
+    // DOM 순서로 위/아래를 단언한다 — 이름을 정한 뒤 목록에서 고르는 흐름이다.
+    expect(fmt.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});

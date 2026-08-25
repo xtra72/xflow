@@ -409,6 +409,10 @@ export function useStoreChartData(
       config.interval_ms,
       config.aggregation,
       config.refresh_interval_ms ?? DEFAULT_REFRESH_MS,
+      // 패널 단위 이름 형식도 재구독 축이다. 위 alias 주석이 기록한 "범례 이름
+      // 안바뀜" 과 같은 결함이 패널 축에서 남아 있었다 — 이름은 시리즈별(alias)과
+      // 패널별(format) 두 축에서 오므로 둘 다 키에 있어야 한다.
+      config.series_name_format ?? '',
       selectionPart,
     ].join('|');
   }, [enabled, config, resolvedAgentName]);

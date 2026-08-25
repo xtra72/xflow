@@ -279,6 +279,10 @@ export function useTsdbChartData(
       config.aggregation,
       config.fill ?? '',
       config.refresh_interval_ms ?? DEFAULT_REFRESH_MS,
+      // 패널 단위 이름 형식도 재구독 축이다. 빠뜨리면 형식을 고쳐도 범례가
+      // 그대로다 — selectionPart 의 alias 와 같은 사유(UB1-14 계열)이며,
+      // 이름은 시리즈별(alias)과 패널별(format) 두 축에서 온다.
+      config.series_name_format ?? '',
       selectionPart,
     ].join('|');
   }, [enabled, config, resolutionKey]);

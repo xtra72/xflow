@@ -362,3 +362,36 @@ describe('useTsdbChartData — group_by 변경이 재조회를 촉발해야 한�
     expect(last[2].seriesFilters?.[0]?.groupBy).toEqual(['host']);
   });
 });
+
+describe('useTsdbChartData — 이름 형식 변경이 재변환을 촉발해야 한다 (버그 재현)', () => {
+  it('series_name_format 만 바꿔도 다시 질의·변환한다', async () => {
+    const queryFn = vi.fn(async () => ok());
+    const { rerender } = renderHook<UseTsdbChartDataResult, { cfg: TsdbSourceConfig }>(
+      ({ cfg }) => useTsdbChartData(cfg, true, { queryTsdbFn: queryFn }),
+      {
+        wrapper,
+        initialProps: {
+          cfg: makeConfig({ series: [{ key: 'cpu', field: 'usage' }] }),
+        },
+      },
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const before = queryFn.mock.calls.length;
+    expect(before).toBeGreaterThan(0);
+
+    // 패널 단위 이름 형식만 바꾼다 — alias 는 그대로다.
+    rerender({
+      cfg: makeConfig({
+        series: [{ key: 'cpu', field: 'usage' }],
+        series_name_format: '{$.measurement}',
+      }),
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(queryFn.mock.calls.length).toBeGreaterThan(before);
+  });
+});
