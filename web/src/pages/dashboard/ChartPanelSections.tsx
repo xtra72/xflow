@@ -46,6 +46,7 @@ import {
   resolvePanelSourceBinding,
 } from './panels/charts/panelDataSource';
 import { FillStrategyField, TsdbSourceSection } from './TsdbSourceSection';
+import { SeriesNameFormatField } from './SeriesNameFormatField';
 import {
   filterStoreKeyObjects,
   makeTagFilterId,
@@ -683,77 +684,6 @@ function SeriesReduceField({
  *
  * 미리보기는 선택된 첫 시리즈로 해석해 보여준다 — 선택 전에는 형식만 보인다.
  */
-function SeriesNameFormatField({
-  value,
-  onChange,
-  sample,
-}: {
-  value: string | undefined;
-  onChange: (next: string | undefined) => void;
-  sample: StoreSeriesRef | undefined;
-}): React.ReactElement {
-  const { t } = useTranslation();
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const ctx = sample
-    ? { measurement: sample.key, field: sample.field, tags: sample.tags ?? {} }
-    : undefined;
-  const tokenPaths = ctx ? availableAliasTokens(ctx) : [];
-
-  const insertToken = (path: string): void => {
-    const token = makeAliasToken(path);
-    const current = value ?? '';
-    const el = inputRef.current;
-    let next: string;
-    if (el && el.selectionStart != null && el.selectionEnd != null) {
-      next = current.slice(0, el.selectionStart) + token + current.slice(el.selectionEnd);
-    } else {
-      next = current + token;
-    }
-    onChange(next.trim() === '' ? undefined : next);
-  };
-
-  const preview =
-    value && value.trim() !== '' && ctx ? resolveSeriesAlias(value, ctx) : undefined;
-
-  return (
-    <div className="space-y-1" data-testid="chart-store-series-name-format">
-      <LabeledField label={t('dashboard.chart.storeSeriesNameFormat')}>
-        <input
-          type="text"
-          value={value ?? ''}
-          ref={inputRef}
-          placeholder={t('dashboard.chart.storeSeriesNameFormatPlaceholder')}
-          onChange={(e) => onChange(e.target.value.trim() === '' ? undefined : e.target.value)}
-          className={inputClass()}
-          data-testid="chart-store-series-name-format-input"
-        />
-      </LabeledField>
-      <div className="flex flex-wrap items-center gap-1.5 px-0.5">
-        <span className="text-xs text-(--color-text-muted)">
-          {t('dashboard.chart.storeAliasInsertToken')}
-        </span>
-        {tokenPaths.map((k) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => insertToken(k)}
-            data-testid={`chart-store-series-name-format-token-${k}`}
-            className="rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-0.5 font-mono text-xs text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
-          >
-            {makeAliasToken(k)}
-          </button>
-        ))}
-        {preview !== undefined && (
-          <span className="ml-1 inline-flex min-w-0 items-center gap-0.5 text-xs text-(--color-text-muted)">
-            <span>{t('dashboard.chart.storeAliasPreview')}</span>
-            <span className="truncate font-mono text-(--color-text-primary)">{preview}</span>
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
 /**
  * Store 조회 설정(시간 윈도우 / 인터벌 / 집계 / 갱신 주기)을 읽기전용으로 보여주는 정보
  * 말풍선. "i" 아이콘 클릭 시 팝오버로 현재 값 + 설명을 표시한다(인라인 편집 대신).

@@ -253,10 +253,18 @@ describe('TsdbSourceSection — 백엔드 버전별 능력 (§2.13 · OQ10)', ()
     expect(avg).toBeInTheDocument();
     expect(avg).toHaveAttribute('aria-disabled', 'true');
     expect(avg).toBeDisabled();
-    // 사유가 툴팁이 아니라 읽히는 문구로 존재한다(스크린리더 도달).
+    // 사유는 타이틀 뒤 "?" 로 접혀 있다. 기본 상태에서는 보이지 않는다.
+    expect(screen.queryByTestId('chart-tsdb-fill-reason')).toBeNull();
+    const why = screen.getByTestId('chart-tsdb-fill-why');
+    expect(why).toHaveAttribute('aria-expanded', 'false');
+
+    // 펼치면 사유가 **실제 텍스트로 DOM 에 들어간다** — hover 툴팁이 아니라
+    // 토글인 이유이며, 키보드·스크린리더 사용자에게도 도달한다.
+    fireEvent.click(why);
     expect(screen.getByTestId('chart-tsdb-fill-reason')).toHaveTextContent(
       'dashboard.chart.capReasonFillAvg',
     );
+    expect(why).toHaveAttribute('aria-expanded', 'true');
     // 나머지 fill 전략은 TSDB 에서 지원되므로 셀렉트 자체는 활성이다.
     expect(screen.getByTestId('chart-tsdb-fill')).not.toHaveAttribute(
       'aria-disabled',
@@ -930,5 +938,58 @@ describe('TsdbSourceSection — 그룹 기준 트리', () => {
 
     await refreshList();
     await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(3));
+  });
+});
+
+// ===== 시리즈 이름 형식 (사용자 요구) =====
+
+describe('TsdbSourceSection — 시리즈 이름 형식', () => {
+  it('입력과 기본 표기 안내를 제공한다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [{ key: 'cpu', field: 'usage', tags: { host: 'a' } }],
+        })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    expect(screen.getByTestId('chart-tsdb-series-name-format')).toBeTruthy();
+    // 미지정이 정상 상태이며, 그때 무엇이 쓰이는지 화면이 말해야 한다.
+    expect(screen.getByTestId('chart-tsdb-series-name-format-hint').textContent).toContain(
+      'dashboard.chart.tsdbSeriesNameFormatHint',
+    );
+    expect(
+      (screen.getByTestId('chart-tsdb-series-name-format-input') as HTMLInputElement).value,
+    ).toBe('');
+  });
+
+  it('형식을 입력하면 config 에 반영되고 비우면 미지정으로 돌아간다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [{ key: 'cpu', field: 'usage' }],
+        })}
+        fetchers={makeFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    const input = screen.getByTestId('chart-tsdb-series-name-format-input');
+    fireEvent.change(input, { target: { value: 'CPU {$.tags.host}' } });
+    await waitFor(() => {
+      const last = patches[patches.length - 1]?.tsdb_source as { series_name_format?: string };
+      expect(last?.series_name_format).toBe('CPU {$.tags.host}');
+    });
+
+    // 공백만 남기면 undefined 로 되돌아간다 — 미지정이 정상 상태다.
+    fireEvent.change(input, { target: { value: '   ' } });
+    await waitFor(() => {
+      const last = patches[patches.length - 1]?.tsdb_source as { series_name_format?: string };
+      expect(last?.series_name_format).toBeUndefined();
+    });
   });
 });

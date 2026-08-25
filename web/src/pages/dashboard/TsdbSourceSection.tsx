@@ -29,6 +29,7 @@ import {
   type TsdbSeriesEnumResult,
 } from '@/services/api/tsdbSeriesEnum';
 import { SeriesSelectTable, type SeriesRow } from '@/pages/agents/SeriesSelectTable';
+import { SeriesNameFormatField } from './SeriesNameFormatField';
 import {
   fetchInfluxBuckets,
   fetchInfluxFieldKeys,
@@ -1045,6 +1046,18 @@ export function TsdbSourceSection({
         </div>
       )}
 
+      {/* 시리즈 이름 형식 — 미지정이 정상 상태다. 비우면 내장 서술 표기(시리즈 키 +
+          필드 + 태그)가 쓰이며 대부분 그것으로 충분하다. */}
+      <SeriesNameFormatField
+        value={tsdbSource.series_name_format}
+        onChange={(series_name_format) => patch({ series_name_format })}
+        sample={tsdbSource.series[0]}
+        testIdPrefix="chart-tsdb-series-name-format"
+        label={t('dashboard.chart.tsdbSeriesNameFormat')}
+        placeholder={t('dashboard.chart.tsdbSeriesNameFormatPlaceholder')}
+        hint={t('dashboard.chart.tsdbSeriesNameFormatHint')}
+      />
+
       {/* 등록된 시리즈 — **검색 조건과 독립적인 목록**이다.
           검색은 커서이고 등록은 영속이므로 둘을 나눠 보여 준다. 조건을 바꿔
           다시 검색해도 이 목록은 유지되며, 여기서만 개별 해제할 수 있다. */}
@@ -1166,11 +1179,31 @@ export function FillStrategyField({
   testId: string;
 }): React.ReactElement {
   const { t } = useTranslation();
+  const [whyOpen, setWhyOpen] = useState(false);
+  const hasReason = !supported || !avgSupported;
   return (
     <div>
-      <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-        {t('dashboard.chart.tsdbFill')}
-      </label>
+      <div className="mb-1.5 flex items-center gap-1">
+        <label className="block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.chart.tsdbFill')}
+        </label>
+        {/* 사유를 "?" 뒤에 둔다. **hover 툴팁이 아니라 토글**인 이유는, 툴팁은
+            키보드·스크린리더 사용자에게 도달하지 않기 때문이다. 눌러서 펼치면
+            사유가 실제 텍스트로 DOM 에 들어간다. */}
+        {hasReason && (
+          <button
+            type="button"
+            data-testid={`${testId}-why`}
+            aria-expanded={whyOpen}
+            aria-label={t('dashboard.chart.tsdbFillWhy')}
+            title={t('dashboard.chart.tsdbFillWhy')}
+            onClick={() => setWhyOpen((v) => !v)}
+            className="rounded-full border border-(--color-border) px-1 text-[10px] leading-none text-(--color-text-muted)"
+          >
+            ?
+          </button>
+        )}
+      </div>
       <select
         data-testid={testId}
         value={value}
@@ -1188,8 +1221,11 @@ export function FillStrategyField({
           {t('dashboard.chart.tsdbFillAvg')}
         </option>
       </select>
-      {(!supported || !avgSupported) && (
-        <p data-testid={`${testId}-reason`} className="mt-1 text-[10px] leading-snug text-(--color-text-muted)">
+      {hasReason && whyOpen && (
+        <p
+          data-testid={`${testId}-reason`}
+          className="mt-1 text-[10px] leading-snug text-(--color-text-muted)"
+        >
           {t(reasonKey)}
         </p>
       )}
