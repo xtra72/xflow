@@ -116,6 +116,7 @@ function parseConfig(config: Record<string, unknown>): LineChartPanelConfig {
     fixed_end_ms: config.fixed_end_ms as number | undefined,
     time_window_refresh_ms: config.time_window_refresh_ms as number | undefined,
     legend: config.legend as LegendConfig | undefined,
+    gap_dash_threshold: config.gap_dash_threshold as number | undefined,
     smooth: (config.smooth as boolean) ?? false,
     multi_series_field: config.multi_series_field as string | undefined,
   };
@@ -523,8 +524,14 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   // (`채우지 않음`)이면 서버가 빈 버킷을 아예 보내지 않아 행이 통째로 없고,
   // null 을 세는 방식으로는 하나도 찾을 수 없다. 채널 모드는 버킷 개념이
   // 없으므로 0(행 인덱스 기준)으로 둔다.
+  //
+  // 소스 블록은 `parseConfig` 가 옮기지 않으므로(허용 목록 방식) **원본 config**
+  // 에서 읽는다. `cfg` 에서 읽으면 타입은 통과하지만 값이 항상 undefined 라
+  // 판정이 조용히 꺼진다 — 실제로 그렇게 한 번 놓쳤다.
   const gapIntervalMs =
-    (cfg.tsdb_source?.interval_ms ?? cfg.store_source?.interval_ms ?? 0) || 0;
+    ((config.tsdb_source as { interval_ms?: number } | undefined)?.interval_ms ??
+      storeSource?.interval_ms ??
+      0) || 0;
   const { rows: chartData, gapKeys } = useMemo(
     () => buildGapOverlay(rawOrPaused, seriesKeys, gapThreshold, gapIntervalMs),
     [rawOrPaused, seriesKeys, gapThreshold, gapIntervalMs],
