@@ -347,8 +347,14 @@ export interface TsdbSourceConfig {
   time_window_ms: number;
   /** 버킷 크기(ms). */
   interval_ms: number;
-  /** 집계 함수(UI 표기 그대로). */
-  aggregation: 'min' | 'max' | 'average' | 'first' | 'last';
+  /**
+   * 인터벌(버킷) 집계 함수. @spec SPEC-TSDB-004 §2.18
+   *
+   * `StoreSourceConfig.aggregation` 보다 **넓다** — Store 백엔드는 min/max/avg 세
+   * 종만 처리하고, InfluxDB 는 일곱 종을 처리한다. 어휘를 억지로 맞추면 한쪽에
+   * 없는 값이 조용히 400 이 된다.
+   */
+  aggregation: 'min' | 'max' | 'average' | 'first' | 'last' | 'sum' | 'count';
   /** 빈 버킷 처리 전략. `'avg'` 는 InfluxDB 양쪽 모두 대응물이 없어 지원하지 않는다(§2.7). */
   fill?: '' | 'null' | 'zero' | 'previous';
   /** 폴링 주기(ms). 미지정 시 기본값(약 5000ms)을 사용한다. */

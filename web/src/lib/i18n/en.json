@@ -1252,7 +1252,9 @@
       "storeTagMatchCount": "{count} keys matched",
       "storeTagNone": "No tags available. Use key selection instead.",
       "storeSeriesNameFormat": "Series name format",
-      "storeSeriesNameFormatPlaceholder": "Empty = default (e.g. {$.measurement}/{$.field})"
+      "storeSeriesNameFormatPlaceholder": "Empty = default (e.g. {$.measurement}/{$.field})",
+      "tsdbAggregation": "Interval aggregation",
+      "tsdbAggregationCountHint": "Values are sample counts, not the field unit. This may conflict with the Y-axis label and unit settings."
     },
     "widget": {
       "throughputLabel": "Throughput (msg/s)"
@@ -3981,7 +3983,9 @@
     "close": "Close",
     "running": "Running…",
     "rerun": "Re-run",
-    "run": "Run"
+    "run": "Run",
+    "aggSum": "Sum",
+    "aggCount": "Count"
   },
   "admin": {
     "permissionRequired": "Permission required",

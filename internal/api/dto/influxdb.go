@@ -57,7 +57,7 @@ type InfluxSeriesQueryRequest struct {
 	EndMs int64 `json:"end_ms"`
 	// IntervalMs 는 버킷 폭이며 0 보다 커야 한다.
 	IntervalMs int64 `json:"interval_ms"`
-	// Aggregation 은 집계 어휘다: min|max|average|first|last.
+	// Aggregation 은 집계 어휘다: min|max|average|first|last|sum|count.
 	Aggregation string `json:"aggregation"`
 	// Fill 은 빈 버킷 채우기 전략이다: ""|null|zero|previous.
 	Fill string `json:"fill,omitempty"`
@@ -77,6 +77,11 @@ const (
 	SeriesAggregationFirst = "first"
 	// SeriesAggregationLast 는 구간의 마지막 값이다.
 	SeriesAggregationLast = "last"
+	// SeriesAggregationSum 은 구간 값들의 합이다.
+	SeriesAggregationSum = "sum"
+	// SeriesAggregationCount 는 구간의 표본 개수다. 결과 단위가 원본 필드의
+	// 단위가 아니라 "개" 인 유일한 집계다.
+	SeriesAggregationCount = "count"
 )
 
 // fill 어휘(§2.7 fill 표의 왼쪽 열).

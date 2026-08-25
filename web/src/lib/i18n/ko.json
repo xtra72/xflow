@@ -1252,7 +1252,9 @@
       "storeTagMatchCount": "{count}개 키 매칭",
       "storeTagNone": "사용 가능한 태그가 없습니다. 키를 직접 선택하세요.",
       "storeSeriesNameFormat": "시리즈 이름 형식",
-      "storeSeriesNameFormatPlaceholder": "비우면 기본 표기 (예: {$.measurement}/{$.field})"
+      "storeSeriesNameFormatPlaceholder": "비우면 기본 표기 (예: {$.measurement}/{$.field})",
+      "tsdbAggregation": "인터벌 집계",
+      "tsdbAggregationCountHint": "값이 원본 필드의 단위가 아니라 표본 \"개수\" 입니다. Y축 라벨·단위 설정과 어긋날 수 있습니다."
     },
     "widget": {
       "throughputLabel": "처리량 (msg/s)"
@@ -3981,7 +3983,9 @@
     "close": "닫기",
     "running": "실행 중…",
     "rerun": "다시 실행",
-    "run": "실행"
+    "run": "실행",
+    "aggSum": "합계 (sum)",
+    "aggCount": "횟수 (count)"
   },
   "admin": {
     "permissionRequired": "권한이 필요합니다",

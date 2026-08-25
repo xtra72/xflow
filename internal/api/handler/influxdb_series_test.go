@@ -269,6 +269,8 @@ func TestInfluxSeriesQuery_AggregationVocabularyIsMappedToDomainEnum(t *testing.
 		"average": system.SeriesAggAverage,
 		"first":   system.SeriesAggFirst,
 		"last":    system.SeriesAggLast,
+		"sum":     system.SeriesAggSum,
+		"count":   system.SeriesAggCount,
 	}
 	for wire, want := range cases {
 		t.Run(wire, func(t *testing.T) {

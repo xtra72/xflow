@@ -195,6 +195,22 @@ function useDiscoveryList(
   return { items, error, loading };
 }
 
+/**
+ * 인터벌(버킷) 집계 옵션. @spec SPEC-TSDB-004 §2.18
+ *
+ * Store 소스보다 넓다 — InfluxDB 는 일곱 종을 서버에서 처리한다. 라벨 키는
+ * 에이전트의 TSDB 뷰어와 공유해 같은 값이 화면마다 다르게 불리지 않게 한다.
+ */
+const TSDB_AGG_OPTIONS: { value: TsdbSourceConfig['aggregation']; labelKey: string }[] = [
+  { value: 'min', labelKey: 'tsdb.aggMin' },
+  { value: 'max', labelKey: 'tsdb.aggMax' },
+  { value: 'average', labelKey: 'tsdb.aggAverage' },
+  { value: 'first', labelKey: 'tsdb.aggFirst' },
+  { value: 'last', labelKey: 'tsdb.aggLast' },
+  { value: 'sum', labelKey: 'tsdb.aggSum' },
+  { value: 'count', labelKey: 'tsdb.aggCount' },
+];
+
 /** 시리즈 참조 → `SeriesSelectTable` 의 선택 식별자. Store 와 같은 규칙을 쓴다. */
 function seriesIdOf(ref: Pick<TsdbSeriesRef, 'key' | 'field' | 'tags'>): string {
   return storeSeriesId(ref.key, ref.field, ref.tags ?? {});
@@ -1170,6 +1186,34 @@ export function TsdbSourceSection({
 
       {/* 시리즈 이름 형식 — 미지정이 정상 상태다. 비우면 내장 서술 표기(시리즈 키 +
           필드 + 태그)가 쓰이며 대부분 그것으로 충분하다. */}
+      {/* 인터벌 집계 — 버킷 하나를 대표하는 값을 무엇으로 삼을지 (§2.18).
+          시간창·인터벌과 함께 "조회 창" 을 이루지만, 나머지 둘은 값 입력이고
+          이것만 선택지라 여기서 먼저 노출한다. */}
+      <FieldLabel label={t('dashboard.chart.tsdbAggregation')}>
+        <select
+          data-testid="chart-tsdb-aggregation"
+          value={tsdbSource.aggregation}
+          onChange={(e) =>
+            patch({ aggregation: e.target.value as TsdbSourceConfig['aggregation'] })
+          }
+          className={inputClass()}
+        >
+          {TSDB_AGG_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {t(o.labelKey)}
+            </option>
+          ))}
+        </select>
+      </FieldLabel>
+      {tsdbSource.aggregation === 'count' && (
+        <p
+          data-testid="chart-tsdb-aggregation-count-hint"
+          className="text-[11px] text-(--color-text-muted)"
+        >
+          {t('dashboard.chart.tsdbAggregationCountHint')}
+        </p>
+      )}
+
       <SeriesNameFormatField
         value={tsdbSource.series_name_format}
         onChange={(series_name_format) => patch({ series_name_format })}

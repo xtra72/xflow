@@ -110,6 +110,8 @@ const AGGREGATION_OPTIONS: { value: TsdbAggregation; labelKey: string }[] = [
   { value: 'average', labelKey: 'tsdb.aggAverage' },
   { value: 'first', labelKey: 'tsdb.aggFirst' },
   { value: 'last', labelKey: 'tsdb.aggLast' },
+  { value: 'sum', labelKey: 'tsdb.aggSum' },
+  { value: 'count', labelKey: 'tsdb.aggCount' },
 ];
 
 /** 빈 버킷 채우기(gap-fill) 전략 옵션. 인터벌 구간에 값이 없을 때 적용. */

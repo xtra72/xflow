@@ -184,7 +184,10 @@ function buildKeysAndFilters(config: StoreSourceConfig): {
  */
 export function matrixToEntries(
   matrix: SeriesMatrix,
-  config: StoreSourceConfig,
+  // 변환기가 실제로 읽는 것은 시리즈 목록과 이름 형식뿐이다. 전체 소스 설정을
+  // 요구하면 TSDB 투영(`asSeriesConfig`)이 쓰지도 않는 조회 창 값을 지어내야
+  // 하고, 두 소스의 집계 어휘가 다른 지금은 그 값이 거짓이 된다(§2.18).
+  config: Pick<StoreSourceConfig, 'series' | 'series_name_format'>,
 ): {
   entries: ChartEntry[];
   seriesEntries: Map<string, ChartEntry[]>;

@@ -187,7 +187,7 @@ func buildSeriesQuerySpec(req influxSeriesQueryRequest) (system.SeriesQuerySpec,
 
 // parseSeriesAggregation 는 요청 어휘를 도메인 집계 연산으로 옮긴다.
 //
-// 5 종을 명시적으로 나열하고 default 에서 거부한다. map 리터럴이었다면 항목을
+// 7 종을 명시적으로 나열하고 default 에서 거부한다. map 리터럴이었다면 항목을
 // 빠뜨려도 컴파일되고, 그 결과는 조용한 400 이 아니라 조용한 오답이다(§4.6).
 func parseSeriesAggregation(v string) (system.SeriesAggregation, error) {
 	switch v {
@@ -201,12 +201,17 @@ func parseSeriesAggregation(v string) (system.SeriesAggregation, error) {
 		return system.SeriesAggFirst, nil
 	case dto.SeriesAggregationLast:
 		return system.SeriesAggLast, nil
+	case dto.SeriesAggregationSum:
+		return system.SeriesAggSum, nil
+	case dto.SeriesAggregationCount:
+		return system.SeriesAggCount, nil
 	default:
 		return system.SeriesAggMin, fmt.Errorf(
-			"invalid aggregation: %q (expected one of: %s, %s, %s, %s, %s)",
+			"invalid aggregation: %q (expected one of: %s, %s, %s, %s, %s, %s, %s)",
 			v,
 			dto.SeriesAggregationMin, dto.SeriesAggregationMax, dto.SeriesAggregationAverage,
-			dto.SeriesAggregationFirst, dto.SeriesAggregationLast)
+			dto.SeriesAggregationFirst, dto.SeriesAggregationLast,
+			dto.SeriesAggregationSum, dto.SeriesAggregationCount)
 	}
 }
 

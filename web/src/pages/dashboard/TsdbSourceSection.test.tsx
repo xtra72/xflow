@@ -1310,3 +1310,68 @@ describe('TsdbSourceSection — 이름 형식 토큰', () => {
     expect(screen.queryByTestId('chart-tsdb-series-name-format-unknown')).toBeNull();
   });
 });
+
+// ===== 인터벌 집계 옵션 (SPEC-TSDB-004 §2.18) =====
+
+describe('TsdbSourceSection — 인터벌 집계', () => {
+  it('집계 선택을 노출하고 현재 값을 보여 준다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2', aggregation: 'average' })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    const sel = (await screen.findByTestId('chart-tsdb-aggregation')) as HTMLSelectElement;
+    expect(sel.value).toBe('average');
+    // 최대·최소·평균·첫·마지막·합·횟수 7 종.
+    expect(Array.from(sel.options).map((o) => o.value)).toEqual([
+      'min',
+      'max',
+      'average',
+      'first',
+      'last',
+      'sum',
+      'count',
+    ]);
+  });
+
+  it('집계를 바꾸면 설정에 반영된다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2', aggregation: 'average' })}
+        fetchers={makeFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    const sel = await screen.findByTestId('chart-tsdb-aggregation');
+    fireEvent.change(sel, { target: { value: 'sum' } });
+    await waitFor(() =>
+      expect(
+        (patches.at(-1)?.tsdb_source as { aggregation?: string } | undefined)?.aggregation,
+      ).toBe('sum'),
+    );
+  });
+
+  it('횟수는 단위가 달라진다는 것을 알린다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2', aggregation: 'count' })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    // 값이 원본 필드의 단위가 아니라 "개" 가 되므로 축 라벨과 어긋날 수 있다.
+    expect(await screen.findByTestId('chart-tsdb-aggregation-count-hint')).toBeTruthy();
+  });
+
+  it('횟수가 아니면 안내를 띄우지 않는다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2', aggregation: 'max' })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    await screen.findByTestId('chart-tsdb-aggregation');
+    expect(screen.queryByTestId('chart-tsdb-aggregation-count-hint')).toBeNull();
+  });
+});

@@ -181,13 +181,11 @@ function buildKeysAndFilters(config: TsdbSourceConfig): {
  * 두 소스의 시리즈 어휘가 같기 때문에(§2.2) 변환기를 한 벌로 쓸 수 있다 —
  * TSDB 전용 변환기를 새로 만들면 표시 이름 규칙이 두 곳으로 갈린다.
  */
-function asSeriesConfig(config: TsdbSourceConfig): StoreSourceConfig {
+function asSeriesConfig(
+  config: TsdbSourceConfig,
+): Pick<StoreSourceConfig, 'series' | 'series_name_format'> {
   return {
-    agent_name: config.agent_name,
     series: config.series,
-    time_window_ms: config.time_window_ms,
-    interval_ms: config.interval_ms,
-    aggregation: config.aggregation,
     ...(config.series_name_format
       ? { series_name_format: config.series_name_format }
       : {}),

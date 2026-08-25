@@ -37,6 +37,11 @@ const (
 	SeriesAggFirst
 	// SeriesAggLast 는 구간의 마지막 값이다.
 	SeriesAggLast
+	// SeriesAggSum 은 구간 값들의 합이다.
+	SeriesAggSum
+	// SeriesAggCount 는 구간의 표본 개수다. 다른 집계와 달리 결과의 단위가
+	// 원본 필드의 단위가 아니라 "개" 이며, 값이 없는 구간은 0 이다.
+	SeriesAggCount
 )
 
 // SeriesFill 은 빈 버킷 채우기 전략이다.
@@ -150,6 +155,10 @@ func fluxAggregationFn(agg SeriesAggregation) (string, error) {
 		return "first", nil
 	case SeriesAggLast:
 		return "last", nil
+	case SeriesAggSum:
+		return "sum", nil
+	case SeriesAggCount:
+		return "count", nil
 	default:
 		return "", fmt.Errorf("influxdb: unsupported series aggregation (%d)", int(agg))
 	}
@@ -170,6 +179,10 @@ func influxQLAggregationFn(agg SeriesAggregation) (string, error) {
 		return "FIRST", nil
 	case SeriesAggLast:
 		return "LAST", nil
+	case SeriesAggSum:
+		return "SUM", nil
+	case SeriesAggCount:
+		return "COUNT", nil
 	default:
 		return "", fmt.Errorf("influxdb: unsupported series aggregation (%d)", int(agg))
 	}

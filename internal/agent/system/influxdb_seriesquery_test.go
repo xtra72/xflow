@@ -27,9 +27,10 @@ func baseSpec() SeriesQuerySpec {
 	}
 }
 
-// allAggregations 는 §2.7 매핑 표의 5 종 전부다.
+// allAggregations 는 §2.7 매핑 표의 7 종 전부다.
 var allAggregations = []SeriesAggregation{
 	SeriesAggMin, SeriesAggMax, SeriesAggAverage, SeriesAggFirst, SeriesAggLast,
+	SeriesAggSum, SeriesAggCount,
 }
 
 // allFills 는 §2.7 fill 표의 5 종 전부다(거부 대상 1 종 포함).
@@ -122,7 +123,7 @@ func TestBuildInfluxQLSeriesQuery_GroupByHasNoOffsetArgument(t *testing.T) {
 	}
 }
 
-// --- AC-25: 집계 어휘 매핑 5 종 전수 ---
+// --- AC-25: 집계 어휘 매핑 7 종 전수 ---
 
 func TestSeriesQueryAggregationMapping(t *testing.T) {
 	t.Parallel()
@@ -139,8 +140,11 @@ func TestSeriesQueryAggregationMapping(t *testing.T) {
 		{"arithmetic-mean", SeriesAggAverage, "mean", "MEAN"},
 		{"first", SeriesAggFirst, "first", "FIRST"},
 		{"last", SeriesAggLast, "last", "LAST"},
+		// 합·횟수. 이름은 양쪽 백엔드 모두 요청 어휘와 같다(대소문자만 다르다).
+		{"sum", SeriesAggSum, "sum", "SUM"},
+		{"count", SeriesAggCount, "count", "COUNT"},
 	}
-	require.Len(t, cases, len(allAggregations), "5 종 전수여야 한다")
+	require.Len(t, cases, len(allAggregations), "7 종 전수여야 한다")
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -510,7 +514,8 @@ func TestBuildSeriesQuery_Exhaustive(t *testing.T) {
 			}
 		}
 	}
-	assert.Equal(t, 2*5*5*3, combos, "전수 조합 개수")
+	// 백엔드 2 × 집계 7 × fill 5 × 태그 형상 3.
+	assert.Equal(t, 2*len(allAggregations)*len(allFills)*len(tagCases), combos, "전수 조합 개수")
 }
 
 // countTagPredicates 는 생성된 쿼리에서 태그 술어 줄 수를 센다.
