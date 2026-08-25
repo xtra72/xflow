@@ -846,3 +846,96 @@ describe('matrixToEntries — 이름 충돌 해소는 구분 키만 덧붙인다
     for (const n of r.seriesNames) expect(n).not.toContain('{');
   });
 });
+
+// ===== 그룹별 개별 이름 (SPEC-TSDB-004 §2.12) =====
+
+describe('matrixToEntries — 그룹별 개별 이름', () => {
+  /** host 로 나뉜 3그룹 매트릭스. 항목은 하나다. */
+  const grouped: SeriesMatrix = {
+    columns: ['cpu.usage#0', 'cpu.usage#1', 'cpu.usage#2'],
+    rows: [{ bucketStartMs: 0, values: [1, 2, 3] }],
+    columnOrigins: [0, 0, 0],
+    columnLabels: [
+      { __field__: 'usage', host: 'a' },
+      { __field__: 'usage', host: 'b' },
+      { __field__: 'usage', host: 'c' },
+    ],
+  };
+
+  it('group_alias 가 그룹마다 다른 이름을 준다', () => {
+    const config = makeConfig({
+      series: [
+        {
+          key: 'cpu',
+          field: 'usage',
+          group_by: ['host'],
+          group_alias: { a: '실습실', c: '사무실' },
+        },
+      ],
+    });
+    const { seriesNames } = matrixToEntries(grouped, config);
+    // 지정한 그룹은 그 이름 그대로. 군더더기 태그 표기가 붙지 않는다.
+    expect(seriesNames[0]).toBe('실습실');
+    expect(seriesNames[2]).toBe('사무실');
+    // 지정하지 않은 그룹은 종전 규칙(형식/서술 표기)을 그대로 따른다.
+    expect(seriesNames[1]).not.toBe('실습실');
+    expect(seriesNames[1]).not.toBe('사무실');
+  });
+
+  it('그룹별 이름이 항목 이름(템플릿)을 이긴다', () => {
+    const config = makeConfig({
+      series: [
+        {
+          key: 'cpu',
+          field: 'usage',
+          alias: 'CPU {$.tags.host}',
+          group_by: ['host'],
+          group_alias: { b: '지정한 이름' },
+        },
+      ],
+    });
+    const { seriesNames } = matrixToEntries(grouped, config);
+    expect(seriesNames[0]).toBe('CPU a');
+    expect(seriesNames[1]).toBe('지정한 이름');
+    expect(seriesNames[2]).toBe('CPU c');
+  });
+
+  it('다중 키 그룹은 정렬된 키 순서의 조합 서명으로 찾는다', () => {
+    const multi: SeriesMatrix = {
+      columns: ['m.f#0', 'm.f#1'],
+      rows: [{ bucketStartMs: 0, values: [1, 2] }],
+      columnOrigins: [0, 0],
+      columnLabels: [
+        { __field__: 'f', zone: 'z1', host: 'a' },
+        { __field__: 'f', zone: 'z2', host: 'b' },
+      ],
+    };
+    // group_by 를 역순으로 줘도 서명은 정렬 순서(host, zone)로 만든다.
+    const config = makeConfig({
+      series: [
+        {
+          key: 'm',
+          field: 'f',
+          group_by: ['zone', 'host'],
+          group_alias: { [`a\u0000z1`]: '첫 조합' },
+        },
+      ],
+    });
+    const { seriesNames } = matrixToEntries(multi, config);
+    expect(seriesNames[0]).toBe('첫 조합');
+  });
+
+  it('그룹 파생이 아닌 항목에서는 group_alias 를 무시한다', () => {
+    const flat: SeriesMatrix = {
+      columns: ['cpu.usage'],
+      rows: [{ bucketStartMs: 0, values: [1] }],
+      columnOrigins: [0],
+      columnLabels: [{ __field__: 'usage', host: 'a' }],
+    };
+    const config = makeConfig({
+      series: [{ key: 'cpu', field: 'usage', alias: '고정', group_alias: { a: '무시됨' } }],
+    });
+    // 펼쳐지지 않은 항목은 시리즈가 하나이며 그 이름은 항목 이름이다.
+    expect(matrixToEntries(flat, config).seriesNames[0]).toBe('고정');
+  });
+});

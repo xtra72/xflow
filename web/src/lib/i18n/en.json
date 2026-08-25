@@ -1176,6 +1176,8 @@
       "tsdbRegisteredAlias": "Name for this series",
       "tsdbRegisteredAliasPlaceholder": "Empty follows the panel format",
       "tsdbRegisteredAliasHint": "Use a token for a different name per group — e.g. {$.tags.device.dev_eui}",
+      "tsdbRegisteredGroupAlias": "Name for group ({combo})",
+      "tsdbRegisteredGroupAliasPlaceholder": "Empty follows the series name",
       "tsdbSearchHint": "Change the conditions and search again — already registered series stay, and you can add more.",
       "tsdbGroupPageStatus": "{total} groups · page {page}/{pageCount}",
       "tsdbGroupPagePrev": "Previous groups",

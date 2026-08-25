@@ -7,6 +7,7 @@
 // Recharts 렌더 없이 검증할 수 있도록 산출 로직만 분리한다.
 
 import { normalizeStoreSeriesAlias, storeSeriesLabel } from './chartChannelTypes';
+import { groupComboSignature } from '@/services/api/tsdbSeriesEnum';
 import type {
   ChannelRefConfig,
   StoreSourceConfig,
@@ -118,8 +119,16 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
         });
         continue;
       }
+      const groupKeys = [...(ref.group_by ?? [])].sort();
       for (const combo of picks) {
-        const merged = { ...ref, tags: { ...(ref.tags ?? {}), ...combo } };
+        // 그룹별 개별 이름이 있으면 그것이 이긴다(§2.12) — 실제 렌더와 같은
+        // 우선순위를 미리보기도 따라야 "미리보기와 대시보드가 다르다" 가 안 된다.
+        const named = ref.group_alias?.[groupComboSignature(combo, groupKeys)]?.trim();
+        const merged = {
+          ...ref,
+          tags: { ...(ref.tags ?? {}), ...combo },
+          ...(named ? { alias: named } : {}),
+        };
         lines.push({
           key: storeSeriesLabel(merged, tsdbSource?.series_name_format),
           color: color(lines.length),

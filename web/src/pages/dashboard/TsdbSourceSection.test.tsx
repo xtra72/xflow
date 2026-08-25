@@ -1042,6 +1042,57 @@ describe('TsdbSourceSection — 시리즈별 개별 이름', () => {
     await waitFor(() => expect(lastSeries(patches)[1]!.alias).toBeUndefined());
   });
 
+  it('group by 항목은 선택한 조합마다 이름 칸을 준다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [
+            {
+              key: 'cpu',
+              field: 'usage',
+              group_by: ['host'],
+              group_filter: [{ host: 'A' }, { host: 'B' }],
+            },
+          ],
+        })}
+        fetchers={makeFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    // 항목 하나가 조합 2개로 펼쳐지므로 이름 칸도 조합마다 하나씩이다.
+    const first = await screen.findByTestId('chart-tsdb-registered-group-alias-0-0');
+    expect(screen.getByTestId('chart-tsdb-registered-group-alias-0-1')).toBeTruthy();
+
+    fireEvent.change(first, { target: { value: '실습실' } });
+    await waitFor(() =>
+      expect(lastSeries(patches)[0]!.group_alias).toEqual({ A: '실습실' }),
+    );
+    // 다른 조합은 건드리지 않는다.
+    expect(lastSeries(patches)[0]!.group_alias!['B']).toBeUndefined();
+
+    // 비우면 그 그룹만 미지정으로 되돌아간다.
+    fireEvent.change(first, { target: { value: '   ' } });
+    await waitFor(() => expect(lastSeries(patches)[0]!.group_alias).toBeUndefined());
+  });
+
+  it('그룹 축이 없는 항목에는 그룹 이름 칸이 없다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [{ key: 'cpu', field: 'usage' }],
+        })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    await screen.findByTestId('chart-tsdb-registered-alias-0');
+    expect(screen.queryByTestId('chart-tsdb-registered-group-alias-0-0')).toBeNull();
+  });
+
   it('group by 항목의 이름은 토큰으로 그룹마다 달라질 수 있다', async () => {
     const patches: Array<Record<string, unknown>> = [];
     render(

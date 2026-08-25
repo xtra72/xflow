@@ -73,6 +73,24 @@ export interface StoreSeriesRef {
   data_type?: DataType;
   /** 표시 별칭(미지정 시 key). */
   alias?: string;
+  /**
+   * 시리즈를 나눌 태그 키 목록(TSDB group by 축). @spec SPEC-TSDB-004 §2.1
+   *
+   * Store 소스는 이 축을 만들지 않지만, TSDB config 가 같은 어휘로 이 변환기를
+   * 공유하므로(`asSeriesConfig`) 여기에도 둔다. 없으면 정확 일치 모드다.
+   */
+  group_by?: string[];
+  /**
+   * **그룹별** 개별 표시 이름. 키는 `group_by` 를 정렬한 순서의 조합 서명이다
+   * (`groupComboSignature`). @spec SPEC-TSDB-004 §2.12
+   *
+   * `alias` 는 항목 하나에 이름 하나라 group by 로 펼쳐진 N개 그룹에 서로 다른
+   * 이름을 줄 수 없다. 토큰 템플릿(`CPU {$.tags.host}`)은 규칙이 있는 이름만
+   * 만들 수 있으므로, 그룹마다 임의의 이름을 붙이려면 별도 축이 필요하다.
+   *
+   * 우선순위: 그룹별 이름 > 항목 `alias` > 패널 형식 > 내장 서술 표기.
+   */
+  group_alias?: Record<string, string>;
   /** 라인/카테고리 색상(미지정 시 자동 팔레트). */
   color?: string;
   /**
@@ -252,8 +270,20 @@ export interface TsdbSeriesRef {
    * 되어 실재하지 않는 조합까지 고르게 된다.
    */
   group_filter?: Array<Record<string, string>>;
-  /** 표시 별칭(미지정 시 형식/서술 표기로 폴백). */
+  /** 표시 별칭(미지정 시 형식/서술 표기로 폴백). group by 항목에서는 템플릿이다. */
   alias?: string;
+  /**
+   * **그룹별** 개별 표시 이름. 키는 `group_by` 를 정렬한 순서의 조합 서명이다
+   * (`groupComboSignature`). @spec SPEC-TSDB-004 §2.12
+   *
+   * `alias` 하나로는 펼쳐진 N개 그룹에 서로 다른 이름을 줄 수 없다. 토큰
+   * 템플릿은 규칙 있는 이름만 만들므로, 그룹마다 임의의 이름(예: "실습실")을
+   * 붙이려면 이 축이 필요하다. 우선순위는 그룹별 이름 > `alias` > 패널 형식.
+   *
+   * 조합을 해제해도 여기 남은 이름은 지우지 않는다 — 다시 켰을 때 이름이
+   * 돌아오는 편이 놀랍지 않다. 항목을 지우면 함께 사라진다.
+   */
+  group_alias?: Record<string, string>;
   /**
    * 라인/카테고리 색상(미지정 시 자동 팔레트).
    *

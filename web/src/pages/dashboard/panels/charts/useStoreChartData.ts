@@ -25,6 +25,7 @@ import type {
   SeriesMatrixQuery,
   SeriesSelectorFilter,
 } from '@/services/api/seriesDataSource';
+import { groupComboSignature } from '@/services/api/tsdbSeriesEnum';
 import { fetchStoreKeys, storeSeriesDataSource } from '@/services/api/store';
 import { useAgents } from '@/hooks/useAgent';
 import { resolveStoreAgentName } from './storeAgentResolve';
@@ -236,7 +237,18 @@ export function matrixToEntries(
     for (const [k, v] of Object.entries(labels)) {
       if (k !== METRIC_LABEL_KEY) groupTags[k] = v;
     }
-    return { ...ref, tags: { ...(ref.tags ?? {}), ...groupTags } };
+    const merged = { ...ref, tags: { ...(ref.tags ?? {}), ...groupTags } };
+    // 그룹별 개별 이름 (SPEC-TSDB-004 §2.12).
+    //
+    // 항목의 `alias` 는 하나뿐이라 N개 그룹에 서로 다른 이름을 줄 수 없다.
+    // 사용자가 특정 그룹에 이름을 붙여 뒀으면 그것을 이 컬럼의 alias 로 세운다 —
+    // 그러면 아래 이름 결정은 종전 경로(alias 우선)를 그대로 탄다.
+    const groupKeys = [...(ref.group_by ?? [])].sort();
+    if (groupKeys.length > 0 && ref.group_alias) {
+      const named = ref.group_alias[groupComboSignature(groupTags, groupKeys)]?.trim();
+      if (named) return { ...merged, alias: named };
+    }
+    return merged;
   };
 
   const seriesNames: string[] = matrix.columns.map((colName, j) => {

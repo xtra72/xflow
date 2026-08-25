@@ -206,3 +206,27 @@ describe('buildPreviewSeries 활성 판정 + 채널 폴백 결합 특성화 (SPE
     ]);
   });
 });
+
+describe('buildPreviewSeries — tsdb 그룹별 개별 이름 (SPEC-TSDB-004 §2.12)', () => {
+  const tsdb = {
+    backend: 'influxdb',
+    agent_name: 'ix',
+    series: [
+      {
+        key: 'cpu',
+        field: 'usage',
+        group_by: ['host'],
+        group_filter: [{ host: 'a' }, { host: 'b' }],
+        group_alias: { a: '실습실' },
+      },
+    ],
+  } as unknown as PreviewSeriesInput['tsdbSource'];
+
+  it('그룹별 이름이 있는 줄은 그 이름으로 미리본다', () => {
+    const out = buildPreviewSeries(input({ dataSource: 'tsdb', tsdbSource: tsdb }));
+    expect(out).toHaveLength(2);
+    expect(out[0]!.key).toBe('실습실');
+    // 이름을 주지 않은 그룹은 종전 서술 표기 그대로다.
+    expect(out[1]!.key).not.toBe('실습실');
+  });
+});

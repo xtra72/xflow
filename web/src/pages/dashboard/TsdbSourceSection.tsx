@@ -26,6 +26,7 @@ import { useTranslation } from '@/lib/i18n';
 import {
   deriveGroupCombos,
   enumerateTsdbSeries,
+  groupComboSignature,
   type TsdbSeriesEnumResult,
 } from '@/services/api/tsdbSeriesEnum';
 import { SeriesSelectTable, type SeriesRow } from '@/pages/agents/SeriesSelectTable';
@@ -1103,30 +1104,37 @@ export function TsdbSourceSection({
                       .replace('{keys}', [...(sr.group_by ?? [])].sort().join(', '))
                       .replace('{count}', String(sr.group_filter?.length ?? 0))
                   : '';
+              const groupKeys = [...(sr.group_by ?? [])].sort();
+              const combos = groupKeys.length > 0 ? (sr.group_filter ?? []) : [];
               return (
                 <li
                   key={`${sr.key}|${sr.field}|${tagPart}|${groupPart}|${idx}`}
                   data-testid="chart-tsdb-registered-item"
-                  className="flex items-center gap-2 text-[11px] text-(--color-text-muted)"
+                  className="space-y-1 rounded border border-(--color-border) p-1 text-[11px] text-(--color-text-muted)"
                 >
-                  <button
-                    type="button"
-                    data-testid={`chart-tsdb-registered-remove-${idx}`}
-                    aria-label={t('dashboard.chart.tsdbRegisteredRemove')}
-                    title={t('dashboard.chart.tsdbRegisteredRemove')}
-                    onClick={() =>
-                      applySelection(tsdbSource.series.filter((_, n) => n !== idx))
-                    }
-                    className="rounded border border-(--color-border) px-1 leading-none"
-                  >
-                    ×
-                  </button>
-                  <span className="font-mono">
-                    {sr.key}.{sr.field}
-                  </span>
-                  {tagPart !== '' && <span>{tagPart}</span>}
-                  {groupPart !== '' && <span>{groupPart}</span>}
-                  {/* 시리즈별 개별 이름. 비우면 패널 형식을 따른다.
+                  {/* 1행: 무엇이 등록되었는가. 2행 이하: 이름 짓기.
+                      한 줄에 몰아넣으면 식별 문자열이 길 때 이름 칸이 0폭까지
+                      쭈그러들어 "이름을 지정할 수 없다" 가 된다. */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      data-testid={`chart-tsdb-registered-remove-${idx}`}
+                      aria-label={t('dashboard.chart.tsdbRegisteredRemove')}
+                      title={t('dashboard.chart.tsdbRegisteredRemove')}
+                      onClick={() =>
+                        applySelection(tsdbSource.series.filter((_, n) => n !== idx))
+                      }
+                      className="rounded border border-(--color-border) px-1 leading-none"
+                    >
+                      ×
+                    </button>
+                    <span className="font-mono">
+                      {sr.key}.{sr.field}
+                    </span>
+                    {tagPart !== '' && <span>{tagPart}</span>}
+                    {groupPart !== '' && <span>{groupPart}</span>}
+                  </div>
+                  {/* 항목 이름. 비우면 패널 형식을 따른다.
                       group by 항목에서는 이 값이 **템플릿으로 해석**되므로
                       토큰을 쓰면 그룹마다 다른 이름이 된다. */}
                   <input
@@ -1149,8 +1157,60 @@ export function TsdbSourceSection({
                         }),
                       );
                     }}
-                    className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[11px]"
+                    className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[11px]"
                   />
+                  {/* 그룹별 개별 이름 (§2.12).
+                      항목 하나가 조합 N개로 펼쳐지므로 이름 칸도 조합마다 준다 —
+                      항목 이름 하나로는 "이 그룹은 실습실, 저 그룹은 사무실" 을
+                      표현할 수 없다. 비우면 위 항목 이름/패널 형식으로 되돌아간다. */}
+                  {combos.length > 0 && (
+                    <ul className="space-y-0.5 pl-3">
+                      {combos.map((combo, cIdx) => {
+                        const sig = groupComboSignature(combo, groupKeys);
+                        const label = groupKeys
+                          .map((k) => `${k}=${combo[k] ?? ''}`)
+                          .join(', ');
+                        return (
+                          <li key={sig} className="flex items-center gap-1">
+                            <span className="shrink-0 font-mono" title={label}>
+                              {label}
+                            </span>
+                            <input
+                              type="text"
+                              data-testid={`chart-tsdb-registered-group-alias-${idx}-${cIdx}`}
+                              value={sr.group_alias?.[sig] ?? ''}
+                              aria-label={t('dashboard.chart.tsdbRegisteredGroupAlias').replace(
+                                '{combo}',
+                                label,
+                              )}
+                              placeholder={t(
+                                'dashboard.chart.tsdbRegisteredGroupAliasPlaceholder',
+                              )}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                applySelection(
+                                  tsdbSource.series.map((x, n) => {
+                                    if (n !== idx) return x;
+                                    const next = { ...(x.group_alias ?? {}) };
+                                    if (v.trim() === '') delete next[sig];
+                                    else next[sig] = v;
+                                    // 남은 이름이 없으면 필드 자체를 없앤다 —
+                                    // 빈 맵을 남기면 저장본에 빈 껍데기가 쌓인다.
+                                    if (Object.keys(next).length === 0) {
+                                      const { group_alias: _drop, ...rest } = x;
+                                      return rest;
+                                    }
+                                    return { ...x, group_alias: next };
+                                  }),
+                                );
+                              }}
+                              className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[11px]"
+                            />
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                 </li>
               );
             })}
