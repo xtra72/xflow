@@ -1375,3 +1375,86 @@ describe('TsdbSourceSection — 인터벌 집계', () => {
     expect(screen.queryByTestId('chart-tsdb-aggregation-count-hint')).toBeNull();
   });
 });
+
+// ===== 인터벌 간격 (SPEC-TSDB-004 §2.18) =====
+
+describe('TsdbSourceSection — 인터벌 간격', () => {
+  it('현재 간격을 프리셋으로 보여 준다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2', interval_ms: 60_000 })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    const sel = (await screen.findByTestId('chart-tsdb-interval')) as HTMLSelectElement;
+    expect(sel.value).toBe('60000');
+  });
+
+  it('간격을 바꾸면 설정에 반영된다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2', interval_ms: 60_000 })}
+        fetchers={makeFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    fireEvent.change(await screen.findByTestId('chart-tsdb-interval'), {
+      target: { value: '300000' },
+    });
+    await waitFor(() =>
+      expect(
+        (patches.at(-1)?.tsdb_source as { interval_ms?: number } | undefined)?.interval_ms,
+      ).toBe(300_000),
+    );
+  });
+
+  it('프리셋에 없는 값은 직접 입력으로 열어 그 값을 보여 준다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2', interval_ms: 45_000 })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    const sel = (await screen.findByTestId('chart-tsdb-interval')) as HTMLSelectElement;
+    // 저장된 값이 프리셋에 없다고 선택을 잃으면 안 된다.
+    expect(sel.value).toBe('custom');
+    expect((screen.getByTestId('chart-tsdb-interval-custom') as HTMLInputElement).value).toBe('45');
+  });
+
+  it('직접 입력한 초를 ms 로 반영한다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2', interval_ms: 45_000 })}
+        fetchers={makeFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    fireEvent.change(await screen.findByTestId('chart-tsdb-interval-custom'), {
+      target: { value: '90' },
+    });
+    await waitFor(() =>
+      expect(
+        (patches.at(-1)?.tsdb_source as { interval_ms?: number } | undefined)?.interval_ms,
+      ).toBe(90_000),
+    );
+  });
+
+  it('0 이하는 반영하지 않는다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({ agent_id: 'ix2', agent_name: 'influx-v2', interval_ms: 45_000 })}
+        fetchers={makeFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    const before = patches.length;
+    fireEvent.change(await screen.findByTestId('chart-tsdb-interval-custom'), {
+      target: { value: '0' },
+    });
+    // 0 을 그대로 저장하면 질의를 만들 수 없는 config 가 된다(pollKey 가 빈 문자열).
+    expect(patches.length).toBe(before);
+  });
+});

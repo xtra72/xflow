@@ -1187,11 +1187,11 @@
       "tsdbGroupPagePrev": "Previous groups",
       "tsdbGroupPageNext": "Next groups",
       "tsdbGroupPageTruncated": "The group list hit its cap; some groups stay out of reach even after paging. Add a tag filter or reduce the group keys.",
-      "tsdbFill": "Empty bucket fill",
-      "tsdbFillNone": "Not set",
-      "tsdbFillNull": "Fill with null",
+      "tsdbFill": "Empty intervals",
+      "tsdbFillNone": "Do not fill (skip the interval)",
+      "tsdbFillNull": "Leave empty (line breaks)",
       "tsdbFillZero": "Fill with 0",
-      "tsdbFillPrevious": "Fill with previous value",
+      "tsdbFillPrevious": "Carry the previous value",
       "tsdbFillAvg": "Fill with average (unsupported)",
       "tsdbSeriesNoAgent": "Select a TSDB agent first.",
       "tsdbSeriesNoMeasurement": "Select a measurement to list its fields.",
@@ -1254,7 +1254,9 @@
       "storeSeriesNameFormat": "Series name format",
       "storeSeriesNameFormatPlaceholder": "Empty = default (e.g. {$.measurement}/{$.field})",
       "tsdbAggregation": "Interval aggregation",
-      "tsdbAggregationCountHint": "Values are sample counts, not the field unit. This may conflict with the Y-axis label and unit settings."
+      "tsdbAggregationCountHint": "Values are sample counts, not the field unit. This may conflict with the Y-axis label and unit settings.",
+      "tsdbInterval": "Interval",
+      "tsdbIntervalCustomAria": "Interval in seconds"
     },
     "widget": {
       "throughputLabel": "Throughput (msg/s)"

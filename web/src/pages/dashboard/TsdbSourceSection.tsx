@@ -64,6 +64,14 @@ type OnConfig = (config: Record<string, unknown>) => void;
 // 않는다 — `ChartPanelSections` 가 이 파일을 import 하므로 순환이 된다. 두 줄짜리
 // 스타일 상수를 공유하려고 순환 의존을 만드는 것은 남는 장사가 아니다.
 
+/** 인터벌 ms 를 사람이 읽는 눈금으로 표기한다(10s · 5m · 1h · 1d). */
+function formatIntervalMs(ms: number): string {
+  if (ms % 86_400_000 === 0) return `${ms / 86_400_000}d`;
+  if (ms % 3_600_000 === 0) return `${ms / 3_600_000}h`;
+  if (ms % 60_000 === 0) return `${ms / 60_000}m`;
+  return `${Math.round(ms / 1000)}s`;
+}
+
 function inputClass(): string {
   return 'w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50';
 }
@@ -194,6 +202,17 @@ function useDiscoveryList(
 
   return { items, error, loading };
 }
+
+/**
+ * 인터벌(버킷) 간격 프리셋(ms). @spec SPEC-TSDB-004 §2.18
+ *
+ * 에이전트 TSDB 뷰어와 같은 눈금을 쓴다 — 같은 개념이 화면마다 다른 보기를
+ * 가지면 값을 옮겨 적을 때 어긋난다. 목록에 없는 값도 저장될 수 있으므로
+ * ("직접 입력") 선택을 잃지 않게 별도 경로를 둔다.
+ */
+const TSDB_INTERVAL_PRESETS_MS = [
+  10_000, 30_000, 60_000, 300_000, 900_000, 1_800_000, 3_600_000, 21_600_000, 86_400_000,
+] as const;
 
 /**
  * 인터벌(버킷) 집계 옵션. @spec SPEC-TSDB-004 §2.18
@@ -1045,17 +1064,6 @@ export function TsdbSourceSection({
         </p>
       )}
 
-      {/* Row 3: 빈 버킷 처리 전략. `avg` 는 어느 백엔드에도 대응물이 없어 비활성이다(§2.13). */}
-      <FillStrategyField
-        value={tsdbSource.fill ?? ''}
-        onChange={(fill) => patch({ fill: fill === '' ? undefined : fill })}
-        supported={caps.fillStrategies}
-        avgSupported={caps.fillAvg}
-        reasonKey={
-          caps.fillStrategies ? CAPABILITY_REASON_KEYS.fillAvg : CAPABILITY_REASON_KEYS.fillStore
-        }
-        testId="chart-tsdb-fill"
-      />
 
       {/* Row 4: measurement → field → tag 3단 드릴다운(§2.15 [O1]). */}
       <div className="flex flex-wrap items-start gap-3">
@@ -1186,9 +1194,55 @@ export function TsdbSourceSection({
 
       {/* 시리즈 이름 형식 — 미지정이 정상 상태다. 비우면 내장 서술 표기(시리즈 키 +
           필드 + 태그)가 쓰이며 대부분 그것으로 충분하다. */}
-      {/* 인터벌 집계 — 버킷 하나를 대표하는 값을 무엇으로 삼을지 (§2.18).
-          시간창·인터벌과 함께 "조회 창" 을 이루지만, 나머지 둘은 값 입력이고
-          이것만 선택지라 여기서 먼저 노출한다. */}
+      {/* 인터벌 간격 — 버킷 하나의 크기. 집계·빈 구간 처리와 **함께 읽어야**
+          뜻이 서는 값이라 세 개를 한 자리에 모은다(§2.18). */}
+      <FieldLabel label={t('dashboard.chart.tsdbInterval')}>
+        <select
+          data-testid="chart-tsdb-interval"
+          value={
+            (TSDB_INTERVAL_PRESETS_MS as readonly number[]).includes(tsdbSource.interval_ms)
+              ? String(tsdbSource.interval_ms)
+              : 'custom'
+          }
+          onChange={(e) => {
+            const v = e.target.value;
+            // "직접 입력" 을 고르는 것만으로는 값을 바꾸지 않는다 — 아래 입력칸이
+            // 열릴 뿐이고, 저장된 값은 사용자가 새 숫자를 넣을 때만 바뀐다.
+            if (v === 'custom') return;
+            patch({ interval_ms: Number(v) });
+          }}
+          className={inputClass()}
+        >
+          {TSDB_INTERVAL_PRESETS_MS.map((ms) => (
+            <option key={ms} value={ms}>
+              {formatIntervalMs(ms)}
+            </option>
+          ))}
+          <option value="custom">{t('tsdb.intervalCustom')}</option>
+        </select>
+      </FieldLabel>
+      {!(TSDB_INTERVAL_PRESETS_MS as readonly number[]).includes(tsdbSource.interval_ms) && (
+        <label className="flex items-center gap-1 text-[11px] text-(--color-text-muted)">
+          <input
+            type="number"
+            min={1}
+            data-testid="chart-tsdb-interval-custom"
+            value={Math.round(tsdbSource.interval_ms / 1000)}
+            aria-label={t('dashboard.chart.tsdbIntervalCustomAria')}
+            onChange={(e) => {
+              const sec = Number(e.target.value);
+              // 0 이하는 질의를 만들 수 없는 config 가 된다(pollKey 가 비고 폴링이
+              // 멈춘다). 입력 중의 빈 값·0 을 저장하지 않고 무시한다.
+              if (!Number.isFinite(sec) || sec <= 0) return;
+              patch({ interval_ms: Math.round(sec) * 1000 });
+            }}
+            className="w-20 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[11px]"
+          />
+          <span>{t('dashboard.chart.storeInfoSecUnit')}</span>
+        </label>
+      )}
+
+      {/* 인터벌 집계 — 버킷 하나를 대표하는 값을 무엇으로 삼을지 (§2.18). */}
       <FieldLabel label={t('dashboard.chart.tsdbAggregation')}>
         <select
           data-testid="chart-tsdb-aggregation"
@@ -1213,6 +1267,18 @@ export function TsdbSourceSection({
           {t('dashboard.chart.tsdbAggregationCountHint')}
         </p>
       )}
+
+      {/* 빈 구간 처리 — 인터벌 안에 값이 없을 때. `avg` 는 어느 백엔드에도 대응물이 없어 비활성이다(§2.13). */}
+      <FillStrategyField
+        value={tsdbSource.fill ?? ''}
+        onChange={(fill) => patch({ fill: fill === '' ? undefined : fill })}
+        supported={caps.fillStrategies}
+        avgSupported={caps.fillAvg}
+        reasonKey={
+          caps.fillStrategies ? CAPABILITY_REASON_KEYS.fillAvg : CAPABILITY_REASON_KEYS.fillStore
+        }
+        testId="chart-tsdb-fill"
+      />
 
       <SeriesNameFormatField
         value={tsdbSource.series_name_format}

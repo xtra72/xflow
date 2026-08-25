@@ -1187,12 +1187,12 @@
       "tsdbGroupPagePrev": "이전 그룹",
       "tsdbGroupPageNext": "다음 그룹",
       "tsdbGroupPageTruncated": "그룹 목록이 상한에 걸려 일부는 페이지를 넘겨도 보이지 않습니다. 태그 필터를 걸거나 그룹 기준을 줄이세요.",
-      "tsdbFill": "빈 버킷 처리",
-      "tsdbFillNone": "지정 안 함",
-      "tsdbFillNull": "null 로 채움",
-      "tsdbFillZero": "0 으로 채움",
-      "tsdbFillPrevious": "직전 값으로 채움",
-      "tsdbFillAvg": "평균으로 채움 (미지원)",
+      "tsdbFill": "값이 없는 구간",
+      "tsdbFillNone": "채우지 않음 (구간 생략)",
+      "tsdbFillNull": "비우기 (선이 끊김)",
+      "tsdbFillZero": "0 으로 채우기",
+      "tsdbFillPrevious": "직전 값 유지",
+      "tsdbFillAvg": "평균으로 채우기 (미지원)",
       "tsdbSeriesNoAgent": "먼저 TSDB 에이전트를 선택하세요.",
       "tsdbSeriesNoMeasurement": "measurement 를 선택하면 필드 목록이 표시됩니다.",
       "tsdbSeriesOverLimit": "선택 계열은 최대 {limit}개까지입니다. 초과 선택은 반영되지 않습니다.",
@@ -1254,7 +1254,9 @@
       "storeSeriesNameFormat": "시리즈 이름 형식",
       "storeSeriesNameFormatPlaceholder": "비우면 기본 표기 (예: {$.measurement}/{$.field})",
       "tsdbAggregation": "인터벌 집계",
-      "tsdbAggregationCountHint": "값이 원본 필드의 단위가 아니라 표본 \"개수\" 입니다. Y축 라벨·단위 설정과 어긋날 수 있습니다."
+      "tsdbAggregationCountHint": "값이 원본 필드의 단위가 아니라 표본 \"개수\" 입니다. Y축 라벨·단위 설정과 어긋날 수 있습니다.",
+      "tsdbInterval": "인터벌 간격",
+      "tsdbIntervalCustomAria": "인터벌 간격(초)"
     },
     "widget": {
       "throughputLabel": "처리량 (msg/s)"
