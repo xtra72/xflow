@@ -218,6 +218,7 @@ describe('buildPreviewSeries — tsdb 그룹별 개별 이름 (SPEC-TSDB-004 §2
         group_by: ['host'],
         group_filter: [{ host: 'a' }, { host: 'b' }],
         group_alias: { a: '실습실' },
+        group_color: { b: '#abcdef' },
       },
     ],
   } as unknown as PreviewSeriesInput['tsdbSource'];
@@ -228,5 +229,28 @@ describe('buildPreviewSeries — tsdb 그룹별 개별 이름 (SPEC-TSDB-004 §2
     expect(out[0]!.key).toBe('실습실');
     // 이름을 주지 않은 그룹은 종전 서술 표기 그대로다.
     expect(out[1]!.key).not.toBe('실습실');
+  });
+});
+
+describe('buildPreviewSeries — tsdb 그룹별 라인 색 (SPEC-TSDB-004 §2.14)', () => {
+  it('그룹별 색이 있는 줄은 그 색으로, 없는 줄은 자동 팔레트로 미리본다', () => {
+    const tsdb = {
+      backend: 'influxdb',
+      agent_name: 'ix',
+      series: [
+        {
+          key: 'cpu',
+          field: 'usage',
+          color: '#000000',
+          group_by: ['host'],
+          group_filter: [{ host: 'a' }, { host: 'b' }],
+          group_color: { b: '#abcdef' },
+        },
+      ],
+    } as unknown as PreviewSeriesInput['tsdbSource'];
+    const out = buildPreviewSeries(input({ dataSource: 'tsdb', tsdbSource: tsdb }));
+    expect(out[1]!.color).toBe('#abcdef');
+    // 항목 color 는 그룹 파생 줄에 쓰이지 않는다(OQ1) — 자동 팔레트다.
+    expect(out[0]!.color).toBe(PALETTE[0]);
   });
 });

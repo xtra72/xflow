@@ -241,12 +241,20 @@ export function matrixToEntries(
     // 항목의 `alias` 는 하나뿐이라 N개 그룹에 서로 다른 이름을 줄 수 없다.
     // 사용자가 특정 그룹에 이름을 붙여 뒀으면 그것을 이 컬럼의 alias 로 세운다 —
     // 그러면 아래 이름 결정은 종전 경로(alias 우선)를 그대로 탄다.
+    // 여기 도달했다는 것은 이미 그룹 파생 컬럼이라는 뜻이다(위 조기 반환).
+    // 조합 서명은 `group_by` 가 있을 때만 만들 수 있다 — 매트릭스가 출처만 알려
+    // 주고 축을 알려 주지 않는 경우(Store 경로)에는 그룹별 지정이 성립하지 않는다.
     const groupKeys = [...(ref.group_by ?? [])].sort();
-    if (groupKeys.length > 0 && ref.group_alias) {
-      const named = ref.group_alias[groupComboSignature(groupTags, groupKeys)]?.trim();
-      if (named) return { ...merged, alias: named };
-    }
-    return merged;
+    const sig = groupKeys.length > 0 ? groupComboSignature(groupTags, groupKeys) : undefined;
+    const named = sig ? ref.group_alias?.[sig]?.trim() : undefined;
+    // 색은 **항상** 덮어쓴다 — 지정이 없으면 undefined 로 덮어 항목 color 가 파생
+    // 줄로 새는 것을 막는다(OQ1). 색 하나를 N개 그룹에 나눠 줄 수 없으므로,
+    // 그룹에 색을 주려면 그룹별로 지정해야 한다.
+    return {
+      ...merged,
+      ...(named ? { alias: named } : {}),
+      color: sig ? ref.group_color?.[sig] : undefined,
+    };
   };
 
   const seriesNames: string[] = matrix.columns.map((colName, j) => {
@@ -322,8 +330,9 @@ export function matrixToEntries(
     if (ref?.data_type === 'boolean') booleanSeries.add(name);
     if (ref && !seriesStyles.has(name)) {
       seriesStyles.set(name, {
-        // OQ1 — 그룹 파생 컬럼은 color 를 비워 자동 팔레트로 넘긴다.
-        ...(isGroupDerived(j) ? {} : { color: ref.color }),
+        // OQ1 은 effectiveRefAt 에서 처리한다 — 그룹 파생 컬럼의 color 는 거기서
+        // 그룹별 색(없으면 undefined)으로 덮인다. 비면 자동 팔레트로 넘어간다.
+        color: ref.color,
         stroke_style: ref.stroke_style,
         stroke_width: ref.stroke_width,
         smooth: ref.smooth,

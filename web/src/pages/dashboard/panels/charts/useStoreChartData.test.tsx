@@ -991,3 +991,76 @@ describe('matrixToEntries — 충돌 해소 표기', () => {
     expect(seriesEntries.size).toBe(3);
   });
 });
+
+// ===== 그룹별 라인 색 (SPEC-TSDB-004 §2.14) =====
+
+describe('matrixToEntries — 그룹별 라인 색', () => {
+  const grouped: SeriesMatrix = {
+    columns: ['cpu.usage#0', 'cpu.usage#1'],
+    rows: [{ bucketStartMs: 0, values: [1, 2] }],
+    columnOrigins: [0, 0],
+    columnLabels: [
+      { __field__: 'usage', host: 'a' },
+      { __field__: 'usage', host: 'b' },
+    ],
+  };
+
+  it('group_color 가 지정된 그룹만 그 색을 쓴다', () => {
+    const config = makeConfig({
+      series: [
+        {
+          key: 'cpu',
+          field: 'usage',
+          group_by: ['host'],
+          group_alias: { a: '실습실', b: '사무실' },
+          group_color: { a: '#ff0000' },
+        },
+      ],
+    });
+    const { seriesStyles } = matrixToEntries(grouped, config);
+    expect(seriesStyles.get('실습실')?.color).toBe('#ff0000');
+    // 지정하지 않은 그룹은 자동 팔레트로 넘긴다(색을 비워 둔다).
+    expect(seriesStyles.get('사무실')?.color).toBeUndefined();
+  });
+
+  it('항목 color 는 그룹 파생 줄로 새지 않는다 (OQ1)', () => {
+    const config = makeConfig({
+      series: [
+        {
+          key: 'cpu',
+          field: 'usage',
+          color: '#0000ff',
+          group_by: ['host'],
+          group_alias: { a: '실습실', b: '사무실' },
+          group_color: { b: '#00ff00' },
+        },
+      ],
+    });
+    const { seriesStyles } = matrixToEntries(grouped, config);
+    // 색 하나를 N개 그룹에 나눠 줄 수 없으므로 항목 color 는 무시된다.
+    expect(seriesStyles.get('실습실')?.color).toBeUndefined();
+    expect(seriesStyles.get('사무실')?.color).toBe('#00ff00');
+  });
+
+  it('선 모양은 그룹 파생 줄이 항목 값을 그대로 공유한다', () => {
+    const config = makeConfig({
+      series: [
+        {
+          key: 'cpu',
+          field: 'usage',
+          stroke_style: 'dashed',
+          stroke_width: 3,
+          smooth: true,
+          group_by: ['host'],
+          group_alias: { a: '실습실', b: '사무실' },
+        },
+      ],
+    });
+    const { seriesStyles } = matrixToEntries(grouped, config);
+    for (const n of ['실습실', '사무실']) {
+      expect(seriesStyles.get(n)?.stroke_style).toBe('dashed');
+      expect(seriesStyles.get(n)?.stroke_width).toBe(3);
+      expect(seriesStyles.get(n)?.smooth).toBe(true);
+    }
+  });
+});

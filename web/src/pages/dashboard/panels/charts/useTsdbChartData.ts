@@ -267,13 +267,25 @@ export function useTsdbChartData(
         // alias 도 포함한다 — 이름 편집이 재구독→재변환으로 범례에 반영되게 한다.
         // 그룹별 개별 이름도 같은 사유로 포함한다(§2.12) — 빠뜨리면 그룹 이름을
         // 고쳐도 범례가 그대로다.
-        const namePart = s.group_alias
-          ? Object.keys(s.group_alias)
-              .sort()
-              .map((k) => `${k}=${s.group_alias![k]}`)
-              .join(';')
-          : '';
-        return `${s.key}|${s.field}|${tagPart}|${groupPart}|${pickPart}|${s.alias ?? ''}|${namePart}`;
+        const mapPart = (m: Record<string, string> | undefined): string =>
+          m
+            ? Object.keys(m)
+                .sort()
+                .map((k) => `${k}=${m[k]}`)
+                .join(';')
+            : '';
+        // 그룹별 색도 같은 사유로 포함한다(§2.14).
+        return [
+          s.key,
+          s.field,
+          tagPart,
+          groupPart,
+          pickPart,
+          s.alias ?? '',
+          mapPart(s.group_alias),
+          s.color ?? '',
+          mapPart(s.group_color),
+        ].join('|');
       })
       .join('');
 

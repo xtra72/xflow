@@ -14,6 +14,8 @@ interface ColorSwatchButtonProps {
   color: string | undefined;
   onChange: (next: string | undefined) => void;
   ariaLabel: string;
+  /** 트리거 버튼의 test id(선택). 목록 안에서 개별 스와치를 집을 때 쓴다. */
+  testId?: string;
 }
 
 /**
@@ -26,6 +28,7 @@ export default function ColorSwatchButton({
   color,
   onChange,
   ariaLabel,
+  testId,
 }: ColorSwatchButtonProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -40,6 +43,7 @@ export default function ColorSwatchButton({
         )}
         style={color ? { backgroundColor: color } : undefined}
         aria-label={ariaLabel}
+        {...(testId ? { 'data-testid': testId } : {})}
       />
       {open && (
         <span

@@ -30,6 +30,7 @@ import {
   type TsdbSeriesEnumResult,
 } from '@/services/api/tsdbSeriesEnum';
 import { SeriesSelectTable, type SeriesRow } from '@/pages/agents/SeriesSelectTable';
+import ColorSwatchButton from './colorSwatchPalette';
 import { SeriesNameFormatField } from './SeriesNameFormatField';
 import {
   fetchInfluxBuckets,
@@ -1137,28 +1138,52 @@ export function TsdbSourceSection({
                   {/* 항목 이름. 비우면 패널 형식을 따른다.
                       group by 항목에서는 이 값이 **템플릿으로 해석**되므로
                       토큰을 쓰면 그룹마다 다른 이름이 된다. */}
-                  <input
-                    type="text"
-                    data-testid={`chart-tsdb-registered-alias-${idx}`}
-                    value={sr.alias ?? ''}
-                    aria-label={t('dashboard.chart.tsdbRegisteredAlias')}
-                    placeholder={t('dashboard.chart.tsdbRegisteredAliasPlaceholder')}
-                    title={t('dashboard.chart.tsdbRegisteredAliasHint')}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      applySelection(
-                        tsdbSource.series.map((x, n) => {
-                          if (n !== idx) return x;
-                          if (v.trim() === '') {
-                            const { alias: _drop, ...rest } = x;
-                            return rest;
-                          }
-                          return { ...x, alias: v };
-                        }),
-                      );
-                    }}
-                    className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[11px]"
-                  />
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="text"
+                      data-testid={`chart-tsdb-registered-alias-${idx}`}
+                      value={sr.alias ?? ''}
+                      aria-label={t('dashboard.chart.tsdbRegisteredAlias')}
+                      placeholder={t('dashboard.chart.tsdbRegisteredAliasPlaceholder')}
+                      title={t('dashboard.chart.tsdbRegisteredAliasHint')}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        applySelection(
+                          tsdbSource.series.map((x, n) => {
+                            if (n !== idx) return x;
+                            if (v.trim() === '') {
+                              const { alias: _drop, ...rest } = x;
+                              return rest;
+                            }
+                            return { ...x, alias: v };
+                          }),
+                        );
+                      }}
+                      className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[11px]"
+                    />
+                    {/* 항목 라인 색. group by 항목에서는 노출하지 않는다 — 색 하나를
+                        N개 그룹에 나눠 줄 수 없어 쓰이지 않기 때문이다(OQ1).
+                        그 경우 색은 조합마다 아래에서 지정한다. */}
+                    {combos.length === 0 && (
+                      <ColorSwatchButton
+                        color={sr.color}
+                        testId={`chart-tsdb-registered-color-${idx}`}
+                        ariaLabel={t('dashboard.chart.tsdbRegisteredColor')}
+                        onChange={(next) =>
+                          applySelection(
+                            tsdbSource.series.map((x, n) => {
+                              if (n !== idx) return x;
+                              if (next === undefined) {
+                                const { color: _drop, ...rest } = x;
+                                return rest;
+                              }
+                              return { ...x, color: next };
+                            }),
+                          )
+                        }
+                      />
+                    )}
+                  </div>
                   {/* 그룹별 개별 이름 (§2.12).
                       항목 하나가 조합 N개로 펼쳐지므로 이름 칸도 조합마다 준다 —
                       항목 이름 하나로는 "이 그룹은 실습실, 저 그룹은 사무실" 을
@@ -1205,6 +1230,29 @@ export function TsdbSourceSection({
                                 );
                               }}
                               className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[11px]"
+                            />
+                            <ColorSwatchButton
+                              color={sr.group_color?.[sig]}
+                              testId={`chart-tsdb-registered-group-color-${idx}-${cIdx}`}
+                              ariaLabel={t('dashboard.chart.tsdbRegisteredGroupColor').replace(
+                                '{combo}',
+                                label,
+                              )}
+                              onChange={(next) =>
+                                applySelection(
+                                  tsdbSource.series.map((x, n) => {
+                                    if (n !== idx) return x;
+                                    const map = { ...(x.group_color ?? {}) };
+                                    if (next === undefined) delete map[sig];
+                                    else map[sig] = next;
+                                    if (Object.keys(map).length === 0) {
+                                      const { group_color: _drop, ...rest } = x;
+                                      return rest;
+                                    }
+                                    return { ...x, group_color: map };
+                                  }),
+                                )
+                              }
                             />
                           </li>
                         );

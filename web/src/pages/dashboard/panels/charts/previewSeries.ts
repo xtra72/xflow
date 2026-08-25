@@ -123,7 +123,8 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
       for (const combo of picks) {
         // 그룹별 개별 이름이 있으면 그것이 이긴다(§2.12) — 실제 렌더와 같은
         // 우선순위를 미리보기도 따라야 "미리보기와 대시보드가 다르다" 가 안 된다.
-        const named = ref.group_alias?.[groupComboSignature(combo, groupKeys)]?.trim();
+        const sig = groupComboSignature(combo, groupKeys);
+        const named = ref.group_alias?.[sig]?.trim();
         const merged = {
           ...ref,
           tags: { ...(ref.tags ?? {}), ...combo },
@@ -131,7 +132,8 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
         };
         lines.push({
           key: storeSeriesLabel(merged, tsdbSource?.series_name_format),
-          color: color(lines.length),
+          // 그룹별 색이 있으면 그것, 없으면 자동 팔레트 — 실제 렌더와 같다(§2.14).
+          color: ref.group_color?.[sig] ?? color(lines.length),
           smooth: ref.smooth ?? globalSmooth,
           strokeWidth: ref.stroke_width ?? 2,
           strokeDasharray: ref.stroke_style ? strokeDasharray[ref.stroke_style] : '',

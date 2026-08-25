@@ -1093,6 +1093,57 @@ describe('TsdbSourceSection — 시리즈별 개별 이름', () => {
     expect(screen.queryByTestId('chart-tsdb-registered-group-alias-0-0')).toBeNull();
   });
 
+  it('항목마다 라인 색을 지정할 수 있다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [{ key: 'cpu', field: 'usage' }],
+        })}
+        fetchers={makeFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    const swatch = await screen.findByTestId('chart-tsdb-registered-color-0');
+    fireEvent.click(swatch);
+    // 팔레트에서 아무 색이나 고르면 그 색이 항목에 붙는다.
+    const swatches = screen.getAllByRole('button', { name: /#/ });
+    fireEvent.click(swatches[0]!);
+    await waitFor(() => expect(lastSeries(patches)[0]!.color).toBeTruthy());
+  });
+
+  it('group by 항목은 조합마다 라인 색을 지정할 수 있다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [
+            {
+              key: 'cpu',
+              field: 'usage',
+              group_by: ['host'],
+              group_filter: [{ host: 'A' }, { host: 'B' }],
+            },
+          ],
+        })}
+        fetchers={makeFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    // 항목 색은 group by 에서 쓰이지 않으므로(OQ1) 노출하지 않는다.
+    expect(screen.queryByTestId('chart-tsdb-registered-color-0')).toBeNull();
+
+    fireEvent.click(await screen.findByTestId('chart-tsdb-registered-group-color-0-1'));
+    fireEvent.click(screen.getAllByRole('button', { name: /#/ })[0]!);
+    await waitFor(() => expect(lastSeries(patches)[0]!.group_color?.['B']).toBeTruthy());
+    // 다른 조합은 건드리지 않는다.
+    expect(lastSeries(patches)[0]!.group_color?.['A']).toBeUndefined();
+  });
+
   it('group by 항목의 이름은 토큰으로 그룹마다 달라질 수 있다', async () => {
     const patches: Array<Record<string, unknown>> = [];
     render(

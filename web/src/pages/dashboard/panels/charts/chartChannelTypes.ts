@@ -91,6 +91,14 @@ export interface StoreSeriesRef {
    * 우선순위: 그룹별 이름 > 항목 `alias` > 패널 형식 > 내장 서술 표기.
    */
   group_alias?: Record<string, string>;
+  /**
+   * **그룹별** 라인 색. 키는 `group_alias` 와 같은 조합 서명이다.
+   * @spec SPEC-TSDB-004 §2.14
+   *
+   * 항목의 `color` 는 group by 파생 줄에 쓰이지 않는다(OQ1) — 색 하나를 N개
+   * 그룹에 나눠 줄 수 없기 때문이다. 지정하지 않은 그룹은 자동 팔레트를 쓴다.
+   */
+  group_color?: Record<string, string>;
   /** 라인/카테고리 색상(미지정 시 자동 팔레트). */
   color?: string;
   /**
@@ -284,6 +292,14 @@ export interface TsdbSeriesRef {
    * 돌아오는 편이 놀랍지 않다. 항목을 지우면 함께 사라진다.
    */
   group_alias?: Record<string, string>;
+  /**
+   * **그룹별** 라인 색. 키는 `group_alias` 와 같은 조합 서명이다.
+   * @spec SPEC-TSDB-004 §2.14
+   *
+   * 항목의 `color` 는 group by 파생 줄에 쓰이지 않는다(OQ1) — 색 하나를 N개
+   * 그룹에 나눠 줄 수 없기 때문이다. 지정하지 않은 그룹은 자동 팔레트를 쓴다.
+   */
+  group_color?: Record<string, string>;
   /**
    * 라인/카테고리 색상(미지정 시 자동 팔레트).
    *
