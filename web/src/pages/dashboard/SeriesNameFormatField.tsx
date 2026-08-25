@@ -14,6 +14,7 @@ import {
   availableAliasTokens,
   makeAliasToken,
   resolveSeriesAlias,
+  unknownAliasTokens,
 } from './panels/charts/aliasTemplate';
 
 /** 이름 형식 해석에 쓰는 표본 시리즈. 두 소스의 참조 타입이 이 형상을 만족한다. */
@@ -74,6 +75,9 @@ export function SeriesNameFormatField({
 
   const preview =
     value && value.trim() !== '' && ctx ? resolveSeriesAlias(value, ctx) : undefined;
+  // 실재하지 않는 토큰은 조용히 빈 문자열이 되어 "형식이 안 먹는다" 로 보인다.
+  // 결과만 보여 주면 오타인지 값이 빈 것인지 구분할 수 없으므로 따로 알린다.
+  const unknown = value && ctx ? unknownAliasTokens(value, ctx) : [];
 
   return (
     <div className="space-y-1" data-testid={testIdPrefix}>
@@ -112,12 +116,24 @@ export function SeriesNameFormatField({
           </button>
         ))}
         {preview !== undefined && (
-          <span className="ml-1 inline-flex min-w-0 items-center gap-0.5 text-xs text-(--color-text-muted)">
+          <span
+            data-testid={`${testIdPrefix}-preview`}
+            className="ml-1 inline-flex min-w-0 items-center gap-0.5 text-xs text-(--color-text-muted)"
+          >
             <span>{t('dashboard.chart.storeAliasPreview')}</span>
             <span className="truncate font-mono text-(--color-text-primary)">{preview}</span>
           </span>
         )}
       </div>
+      {unknown.length > 0 && (
+        <p
+          data-testid={`${testIdPrefix}-unknown`}
+          className="px-0.5 text-[11px] text-amber-500"
+        >
+          {t('dashboard.chart.seriesNameFormatUnknownToken')}{' '}
+          <span className="font-mono">{unknown.map((k) => makeAliasToken(k)).join(', ')}</span>
+        </p>
+      )}
     </div>
   );
 }

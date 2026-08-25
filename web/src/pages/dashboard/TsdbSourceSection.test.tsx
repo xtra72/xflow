@@ -1241,3 +1241,72 @@ describe('TsdbSourceSection — 검색 표와 등록 목록 통합', () => {
     expect(screen.queryByTestId('chart-tsdb-registered-item')).toBeNull();
   });
 });
+
+// ===== 이름 형식의 토큰 목록 · 미리보기 (SPEC-TSDB-004 §2.17) =====
+
+describe('TsdbSourceSection — 이름 형식 토큰', () => {
+  /** 보고된 실제 설정: 사전 필터는 고정, dev_eui 로 나눈다. */
+  function groupedConfig() {
+    return tsdbConfig({
+      agent_id: 'ix2',
+      agent_name: 'influx-v2',
+      series: [
+        {
+          key: 'temperature',
+          field: 'value',
+          tags: { location: '실습실', 'device.type': 'EM300-TH' },
+          group_by: ['device.dev_eui'],
+          group_filter: [{ 'device.dev_eui': 'e1' }, { 'device.dev_eui': 'e2' }],
+        },
+      ],
+    });
+  }
+
+  it('그룹 축의 태그 키도 토큰으로 제시한다', async () => {
+    render(<Harness initial={groupedConfig()} fetchers={makeFetchers()} />);
+    const field = await screen.findByTestId('chart-tsdb-series-name-format');
+    // 줄을 실제로 가르는 키가 dev_eui 인데 종전에는 목록에 없어, 사용자가
+    // 없는 토큰(device.id)을 추측하게 됐다.
+    expect(field.textContent).toContain('device.dev_eui');
+    expect(field.textContent).toContain('location');
+  });
+
+  it('미리보기는 첫 조합의 실제 값으로 해석한다', async () => {
+    render(<Harness initial={groupedConfig()} fetchers={makeFetchers()} />);
+    const input = (await screen.findByTestId(
+      'chart-tsdb-series-name-format-input',
+    )) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '{$.location}-{$.device.dev_eui}' } });
+    await waitFor(() =>
+      expect(screen.getByTestId('chart-tsdb-series-name-format-preview').textContent).toContain(
+        '실습실-e1',
+      ),
+    );
+  });
+
+  it('실재하지 않는 토큰을 쓰면 알려 준다', async () => {
+    render(<Harness initial={groupedConfig()} fetchers={makeFetchers()} />);
+    const input = (await screen.findByTestId(
+      'chart-tsdb-series-name-format-input',
+    )) as HTMLInputElement;
+    // 보고된 입력. 조용히 빈 문자열이 되어 "형식이 안 먹는다" 로 보인다.
+    fireEvent.change(input, { target: { value: '{$.location}-{$.device.id}' } });
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('chart-tsdb-series-name-format-unknown').textContent,
+      ).toContain('device.id'),
+    );
+  });
+
+  it('알려진 토큰만 쓰면 경고하지 않는다', async () => {
+    render(<Harness initial={groupedConfig()} fetchers={makeFetchers()} />);
+    const input = (await screen.findByTestId(
+      'chart-tsdb-series-name-format-input',
+    )) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '{$.location}-{$.device.dev_eui}' } });
+    await waitFor(() =>
+      expect(screen.getByTestId('chart-tsdb-series-name-format-preview')).toBeTruthy(),
+    );
+    expect(screen.queryByTestId('chart-tsdb-series-name-format-unknown')).toBeNull();
+  });
+});

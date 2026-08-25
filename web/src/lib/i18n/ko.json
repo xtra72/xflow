@@ -1181,6 +1181,7 @@
       "tsdbRegisteredColor": "이 시리즈 라인 색",
       "tsdbRegisteredGroupColor": "이 그룹 라인 색 ({combo})",
       "tsdbRowOtherCondition": "다른 조건",
+      "seriesNameFormatUnknownToken": "이 데이터에 없는 이름이라 빈 문자열이 됩니다:",
       "tsdbSearchHint": "조건을 바꿔 다시 검색하면 이미 등록된 시리즈는 그대로 두고 더 등록할 수 있습니다.",
       "tsdbGroupPageStatus": "그룹 {total}개 · {page}/{pageCount} 페이지",
       "tsdbGroupPagePrev": "이전 그룹",

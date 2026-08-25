@@ -8,6 +8,7 @@ import {
   extractAliasTokens,
   makeAliasToken,
   resolveSeriesAlias,
+  unknownAliasTokens,
 } from './aliasTemplate';
 
 const tags = { name: 'TempSensor', type: 'inside', room: '1' };
@@ -151,5 +152,37 @@ describe('extractAliasTokens — 경로 토큰', () => {
       'field',
       'tags.room',
     ]);
+  });
+});
+
+// ===== 알 수 없는 토큰 (SPEC-TSDB-004 §2.17) =====
+
+describe('unknownAliasTokens', () => {
+  const ctx = {
+    measurement: 'temperature',
+    field: 'value',
+    tags: { location: '실습실', 'device.type': 'EM300-TH', 'device.dev_eui': 'e1' },
+  };
+
+  it('실재하지 않는 태그를 가리키는 토큰을 집어낸다', () => {
+    // 보고된 입력. device.id 는 이 데이터에 없는 태그다.
+    expect(unknownAliasTokens('{$.location}-{$.device.id}', ctx)).toEqual(['device.id']);
+  });
+
+  it('점이 든 태그 키도 실재하면 알려진 토큰이다', () => {
+    expect(unknownAliasTokens('{$.location}-{$.device.dev_eui}', ctx)).toEqual([]);
+  });
+
+  it('예약어와 명시 형식을 인정한다', () => {
+    expect(unknownAliasTokens('{$.measurement}/{$.field} [{$.tags.location}]', ctx)).toEqual([]);
+  });
+
+  it('토큰이 없으면 빈 배열', () => {
+    expect(unknownAliasTokens('그냥 이름', ctx)).toEqual([]);
+    expect(unknownAliasTokens('', ctx)).toEqual([]);
+  });
+
+  it('같은 토큰이 여러 번이면 한 번만 보고한다', () => {
+    expect(unknownAliasTokens('{$.nope}-{$.nope}', ctx)).toEqual(['nope']);
   });
 });

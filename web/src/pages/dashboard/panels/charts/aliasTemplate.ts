@@ -135,3 +135,21 @@ export function availableAliasTokens(ctx: AliasContext): string[] {
   }
   return out;
 }
+
+/**
+ * 템플릿에서 **실재하지 않는 대상**을 가리키는 토큰 경로를 등장 순서대로 반환한다.
+ *
+ * 알 수 없는 토큰은 빈 문자열로 치환되므로, 오타나 없는 태그 이름을 쓰면 결과에서
+ * 조용히 사라진다 — `{$.location}-{$.device.id}` 가 `실습실-` 이 되어 "형식이
+ * 동작하지 않는다" 로 보인다. 편집기가 그 사실을 알려 줄 수 있도록 판정만 제공한다.
+ *
+ * 값이 비어 있는 것과 대상이 없는 것은 다르다. 여기서는 **대상의 존재**만 본다.
+ */
+export function unknownAliasTokens(template: string, ctx: AliasContext): string[] {
+  const tags = ctx.tags ?? {};
+  return extractAliasTokens(template).filter((path) => {
+    if (path === 'measurement' || path === 'field') return false;
+    if (path.startsWith('tags.')) return !(path.slice('tags.'.length) in tags);
+    return !(path in tags);
+  });
+}

@@ -594,6 +594,25 @@ export function TsdbSourceSection({
     [patch],
   );
 
+  /**
+   * 이름 형식의 토큰 목록·미리보기에 쓰는 표본 시리즈.
+   *
+   * 항목의 `tags` 만 넘기면 **그룹 축의 키가 빠진다** — 줄을 실제로 가르는 키가
+   * 목록에 없어, 사용자가 없는 토큰을 추측하게 된다(보고된 `{$.device.id}`).
+   * 그래서 그룹 키를 첫 조합의 실제 값과 함께 얹는다. 조합이 아직 없으면 키만
+   * 빈 값으로 얹어 목록에는 나오게 한다.
+   */
+  const nameFormatSample = useMemo(() => {
+    const sr = tsdbSource.series[0];
+    if (!sr) return undefined;
+    const gk = [...(sr.group_by ?? [])].sort();
+    if (gk.length === 0) return sr;
+    const combo = sr.group_filter?.[0] ?? {};
+    const tags: Record<string, string> = { ...(sr.tags ?? {}) };
+    for (const k of gk) tags[k] = combo[k] ?? '';
+    return { ...sr, tags };
+  }, [tsdbSource.series]);
+
   /** 항목 하나를 갈아 끼운다. 나머지는 그대로 둔다. */
   const patchSeriesAt = useCallback(
     (idx: number, next: (sr: TsdbSeriesRef) => TsdbSeriesRef): void => {
@@ -1154,7 +1173,7 @@ export function TsdbSourceSection({
       <SeriesNameFormatField
         value={tsdbSource.series_name_format}
         onChange={(series_name_format) => patch({ series_name_format })}
-        sample={tsdbSource.series[0]}
+        sample={nameFormatSample}
         testIdPrefix="chart-tsdb-series-name-format"
         label={t('dashboard.chart.tsdbSeriesNameFormat')}
         placeholder={t('dashboard.chart.tsdbSeriesNameFormatPlaceholder')}
