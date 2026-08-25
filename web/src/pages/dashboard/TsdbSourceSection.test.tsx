@@ -449,12 +449,14 @@ describe('TsdbSourceSection — 그룹 기준 (SPEC-TSDB-004)', () => {
         fetchers={makeFetchers()}
       />,
     );
-    // 등록 목록은 조건과 무관하게 등록분 **전체**를 보여 준다.
-    const items = await screen.findAllByTestId('chart-tsdb-registered-item');
-    expect(items).toHaveLength(2);
-    const text = items.map((i) => i.textContent).join(' ');
-    expect(text).toContain('cpu.usage');
-    expect(text).toContain('mem.used');
+    // v0.24.0 부터 등록분은 **검색 표 안에** 실린다. 조건과 무관하게 전체가
+    // 보여야 하므로, 지금 검색 조건이 없어도 두 항목이 행으로 나온다.
+    const table = await screen.findByTestId('chart-tsdb-series-select');
+    await waitFor(() =>
+      expect(table.querySelectorAll('[data-testid^="series-tr-"]')).toHaveLength(2),
+    );
+    expect(table.textContent).toContain('cpu');
+    expect(table.textContent).toContain('mem');
   });
 
   it('measurement 를 바꾸면 그룹 축이 초기화된다', async () => {
@@ -570,10 +572,17 @@ describe('TsdbSourceSection — 검색 커서와 등록의 분리 (조건을 바
         onPatch={(p) => patches.push(p)}
       />,
     );
-    const items = await screen.findAllByTestId('chart-tsdb-registered-item');
-    expect(items).toHaveLength(2);
+    // v0.24.0 부터 해제는 표의 체크를 푸는 것으로 한다 — 별도 × 버튼을 두면
+    // 같은 조작이 두 자리에 생긴다.
+    const table = await screen.findByTestId('chart-tsdb-series-select');
+    await waitFor(() =>
+      expect(table.querySelectorAll('[data-testid^="series-tr-"]')).toHaveLength(2),
+    );
+    const boxes = table.querySelectorAll<HTMLInputElement>('[data-testid^="series-select-"]');
+    expect(boxes).toHaveLength(2);
+    for (const b of boxes) expect(b.checked).toBe(true);
 
-    fireEvent.click(screen.getByTestId('chart-tsdb-registered-remove-0'));
+    fireEvent.click(boxes[0]!);
     await waitFor(() => expect(lastSeries(patches)).toHaveLength(1));
     expect(lastSeries(patches)[0]!.key).toBe('mem');
   });
@@ -1144,30 +1153,71 @@ describe('TsdbSourceSection — 시리즈별 개별 이름', () => {
     expect(lastSeries(patches)[0]!.group_color?.['A']).toBeUndefined();
   });
 
-  it('group by 항목의 이름은 토큰으로 그룹마다 달라질 수 있다', async () => {
-    const patches: Array<Record<string, unknown>> = [];
+  // [삭제됨 · v0.24.0] 'group by 항목의 이름은 토큰으로 그룹마다 달라질 수 있다'
+  //
+  // 두 목록을 한 표로 합치면서 group by 항목의 **항목 단위 템플릿 이름** 입력이
+  // 사라졌다. 표의 행은 조합이므로 항목 자체를 가리키는 행이 없기 때문이다.
+  // 규칙 기반 이름은 패널의 시리즈 이름 형식(`series_name_format`)이 같은 문법으로
+  // 이미 제공하고, 개별 이름은 조합별 입력이 담당한다. 두 축으로 충분하다.
+});
+
+// ===== 한 표로 통합 (SPEC-TSDB-004 §2.16) =====
+
+describe('TsdbSourceSection — 검색 표와 등록 목록 통합', () => {
+  it('현재 검색 조건에 없는 등록분도 같은 표에 배지와 함께 남는다', async () => {
     render(
       <Harness
         initial={tsdbConfig({
           agent_id: 'ix2',
           agent_name: 'influx-v2',
+          // measurement 커서는 cpu 인데 mem 도 등록되어 있다.
           series: [
-            {
-              key: 'cpu',
-              field: 'usage',
-              group_by: ['host'],
-              group_filter: [{ host: 'A' }, { host: 'B' }],
-            },
+            { key: 'cpu', field: 'usage' },
+            { key: 'mem', field: 'used' },
           ],
         })}
         fetchers={makeFetchers()}
-        onPatch={(p) => patches.push(p)}
       />,
     );
-    const input = await screen.findByTestId('chart-tsdb-registered-alias-0');
-    fireEvent.change(input, { target: { value: 'CPU {$.tags.host}' } });
-    // 항목은 하나지만 렌더 시 템플릿이 그룹마다 해석된다.
-    await waitFor(() => expect(lastSeries(patches)[0]!.alias).toBe('CPU {$.tags.host}'));
-    expect(lastSeries(patches)).toHaveLength(1);
+    const table = await screen.findByTestId('chart-tsdb-series-select');
+    await waitFor(() =>
+      expect(table.querySelectorAll('[data-testid^="series-tr-"]')).toHaveLength(2),
+    );
+    // 표에서 빼면 해제하거나 이름을 고칠 자리가 사라진다(UB1-20).
+    expect(table.textContent).toContain('mem');
+    expect(table.querySelectorAll('[data-testid^="series-badge-"]').length).toBeGreaterThan(0);
+  });
+
+  it('등록된 행에만 이름·색 편집기가 붙는다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [{ key: 'cpu', field: 'usage' }],
+        })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    const table = await screen.findByTestId('chart-tsdb-series-select');
+    await waitFor(() => expect(screen.getByTestId('chart-tsdb-registered-alias-0')).toBeTruthy());
+    // 편집기는 그 행 바로 아래 줄에 있다 — 표 밖의 두 번째 목록이 아니다.
+    expect(table.querySelectorAll('[data-testid^="series-detail-"]')).toHaveLength(1);
+  });
+
+  it('등록 요약은 개수와 전체 해제만 남기고 목록을 중복하지 않는다', async () => {
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [{ key: 'cpu', field: 'usage' }],
+        })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    await screen.findByTestId('chart-tsdb-registered-clear');
+    // 종전의 항목 리스트는 사라졌다.
+    expect(screen.queryByTestId('chart-tsdb-registered-item')).toBeNull();
   });
 });

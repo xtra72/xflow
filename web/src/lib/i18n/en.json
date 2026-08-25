@@ -1180,6 +1180,7 @@
       "tsdbRegisteredGroupAliasPlaceholder": "Empty follows the series name",
       "tsdbRegisteredColor": "Line color for this series",
       "tsdbRegisteredGroupColor": "Line color for group ({combo})",
+      "tsdbRowOtherCondition": "other condition",
       "tsdbSearchHint": "Change the conditions and search again — already registered series stay, and you can add more.",
       "tsdbGroupPageStatus": "{total} groups · page {page}/{pageCount}",
       "tsdbGroupPagePrev": "Previous groups",

@@ -469,18 +469,49 @@ export function TsdbSourceSection({
     tsdbSource.time_window_ms,
   ]);
 
-  const rows: SeriesRow[] = useMemo(
-    () =>
-      candidates.map((c) => ({
-        id: storeSeriesId(measurement, c.field, { ...tagFilters, ...c.combo }),
-        key: measurement,
-        field: c.field,
-        dataType: '',
-        registration: '',
-        tags: { ...tagFilters, ...c.combo },
-      })),
-    [candidates, measurement, tagFilters],
-  );
+  /**
+   * 표의 행 = **현재 검색 후보 ∪ 등록분**.
+   *
+   * 등록은 검색 조건과 독립적으로 누적되므로(UB1-20), 다른 조건으로 등록해 둔
+   * 시리즈는 지금 후보에 없을 수 있다. 그것까지 같은 표에 실어야 목록이 하나로
+   * 합쳐진다 — 표에서 빼면 그 시리즈를 해제하거나 이름을 고칠 자리가 사라진다.
+   * 후보에 없는 등록분은 배지로 구분한다.
+   */
+  const rows: SeriesRow[] = useMemo(() => {
+    const out: SeriesRow[] = [];
+    const seen = new Set<string>();
+    const push = (
+      key: string,
+      field: string,
+      tags: Record<string, string>,
+      badge?: string,
+    ): void => {
+      const id = storeSeriesId(key, field, tags);
+      if (seen.has(id)) return;
+      seen.add(id);
+      out.push({ id, key, field, dataType: '', registration: '', tags, ...(badge ? { badge } : {}) });
+    };
+    for (const c of candidates) {
+      push(measurement, c.field, { ...tagFilters, ...c.combo });
+    }
+    // 후보에 없는 등록분 — measurement 가 다른 것도 포함한다.
+    for (const sr of tsdbSource.series) {
+      const picks = (sr.group_by?.length ?? 0) > 0 ? (sr.group_filter ?? []) : [];
+      if (picks.length === 0) {
+        push(sr.key, sr.field, { ...(sr.tags ?? {}) }, t('dashboard.chart.tsdbRowOtherCondition'));
+        continue;
+      }
+      for (const combo of picks) {
+        push(
+          sr.key,
+          sr.field,
+          { ...(sr.tags ?? {}), ...combo },
+          t('dashboard.chart.tsdbRowOtherCondition'),
+        );
+      }
+    }
+    return out;
+  }, [candidates, measurement, tagFilters, tsdbSource.series, t]);
 
   /** 행 id → 그 행이 나타내는 그룹 조합. 그룹 기준이 없으면 비어 있다. */
   const comboById = useMemo(() => {
@@ -489,8 +520,45 @@ export function TsdbSourceSection({
       if (Object.keys(c.combo).length === 0) continue;
       m.set(storeSeriesId(measurement, c.field, { ...tagFilters, ...c.combo }), c.combo);
     }
+    // 등록분에서 온 행도 조합을 알아야 체크 해제·이름 편집이 같은 축으로 걸린다.
+    for (const sr of tsdbSource.series) {
+      if ((sr.group_by?.length ?? 0) === 0) continue;
+      for (const combo of sr.group_filter ?? []) {
+        m.set(storeSeriesId(sr.key, sr.field, { ...(sr.tags ?? {}), ...combo }), combo);
+      }
+    }
     return m;
-  }, [candidates, measurement, tagFilters]);
+  }, [candidates, measurement, tagFilters, tsdbSource.series]);
+
+  /**
+   * 행 → 편집 대상. 등록되지 않은 행이면 `undefined`.
+   *
+   * 그룹 행은 항목 하나 안의 **조합**을 가리키므로 `(항목 인덱스, 조합 서명)` 두
+   * 좌표가 필요하다. 정확 일치 행은 항목 자체를 가리킨다.
+   */
+  const editorTargetOf = useCallback(
+    (row: SeriesRow): { idx: number; sig?: string; comboIdx?: number } | undefined => {
+      const combo = comboById.get(row.id);
+      for (const [i, sr] of tsdbSource.series.entries()) {
+        if (sr.key !== row.key || sr.field !== row.field) continue;
+        const gk = [...(sr.group_by ?? [])].sort();
+        if (combo) {
+          if (gk.length === 0) continue;
+          if (gk.join(',') !== Object.keys(combo).sort().join(',')) continue;
+          const comboIdx = (sr.group_filter ?? []).findIndex(
+            (c) => groupComboSignature(c, gk) === groupComboSignature(combo, gk),
+          );
+          if (comboIdx < 0) continue;
+          return { idx: i, sig: groupComboSignature(combo, gk), comboIdx };
+        }
+        if (gk.length > 0) continue;
+        return { idx: i };
+      }
+      return undefined;
+    },
+    [comboById, tsdbSource.series],
+  );
+
 
 
   /**
@@ -523,6 +591,97 @@ export function TsdbSourceSection({
       patch({ series: next });
     },
     [patch],
+  );
+
+  /** 항목 하나를 갈아 끼운다. 나머지는 그대로 둔다. */
+  const patchSeriesAt = useCallback(
+    (idx: number, next: (sr: TsdbSeriesRef) => TsdbSeriesRef): void => {
+      applySelection(tsdbSource.series.map((x, n) => (n === idx ? next(x) : x)));
+    },
+    [applySelection, tsdbSource.series],
+  );
+
+  /**
+   * 체크된 행 아래에 이름 · 색 편집기를 그린다.
+   *
+   * 종전에는 표 아래에 "등록된 시리즈" 목록을 따로 두어 같은 시리즈를 두 번
+   * 보여 줬다. 편집을 행 자리로 옮기면 목록이 하나로 합쳐진다.
+   */
+  const renderRowDetail = useCallback(
+    (row: SeriesRow): React.ReactNode => {
+      const target = editorTargetOf(row);
+      if (!target) return null; // 등록되지 않은 행에는 설정할 것이 없다
+      const sr = tsdbSource.series[target.idx];
+      if (!sr) return null;
+      const { sig } = target;
+      const name = sig ? (sr.group_alias?.[sig] ?? '') : (sr.alias ?? '');
+      const color = sig ? sr.group_color?.[sig] : sr.color;
+      const idSuffix = sig ? `${target.idx}-${target.comboIdx}` : `${target.idx}`;
+      const testId = sig
+        ? `chart-tsdb-registered-group-alias-${idSuffix}`
+        : `chart-tsdb-registered-alias-${idSuffix}`;
+      const colorTestId = sig
+        ? `chart-tsdb-registered-group-color-${idSuffix}`
+        : `chart-tsdb-registered-color-${idSuffix}`;
+      return (
+        <span className="flex items-center gap-1">
+          <input
+            type="text"
+            data-testid={testId}
+            value={name}
+            aria-label={t('dashboard.chart.tsdbRegisteredAlias')}
+            placeholder={t('dashboard.chart.tsdbRegisteredAliasPlaceholder')}
+            title={t('dashboard.chart.tsdbRegisteredAliasHint')}
+            onChange={(e) => {
+              const v = e.target.value;
+              patchSeriesAt(target.idx, (x) => {
+                if (!sig) {
+                  if (v.trim() === '') {
+                    const { alias: _drop, ...rest } = x;
+                    return rest;
+                  }
+                  return { ...x, alias: v };
+                }
+                const map = { ...(x.group_alias ?? {}) };
+                if (v.trim() === '') delete map[sig];
+                else map[sig] = v;
+                if (Object.keys(map).length === 0) {
+                  const { group_alias: _drop, ...rest } = x;
+                  return rest;
+                }
+                return { ...x, group_alias: map };
+              });
+            }}
+            className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[11px]"
+          />
+          <ColorSwatchButton
+            color={color}
+            testId={colorTestId}
+            ariaLabel={t('dashboard.chart.tsdbRegisteredColor')}
+            onChange={(next) =>
+              patchSeriesAt(target.idx, (x) => {
+                if (!sig) {
+                  if (next === undefined) {
+                    const { color: _drop, ...rest } = x;
+                    return rest;
+                  }
+                  return { ...x, color: next };
+                }
+                const map = { ...(x.group_color ?? {}) };
+                if (next === undefined) delete map[sig];
+                else map[sig] = next;
+                if (Object.keys(map).length === 0) {
+                  const { group_color: _drop, ...rest } = x;
+                  return rest;
+                }
+                return { ...x, group_color: map };
+              })
+            }
+          />
+        </span>
+      );
+    },
+    [editorTargetOf, patchSeriesAt, t, tsdbSource.series],
   );
 
   const rowById = useCallback(
@@ -1056,217 +1215,40 @@ export function TsdbSourceSection({
             onSelectMany={handleSelectMany}
             onClearMany={handleClearMany}
             showRegistration={false}
+            renderRowDetail={renderRowDetail}
           />
         </div>
       )}
 
-      {/* 등록된 시리즈 — **검색 조건과 독립적인 목록**이다.
-          검색은 커서이고 등록은 영속이므로 둘을 나눠 보여 준다. 조건을 바꿔
-          다시 검색해도 이 목록은 유지되며, 여기서만 개별 해제할 수 있다. */}
-      <div data-testid="chart-tsdb-registered">
-        <div className="mb-1 flex items-center gap-2">
-          <span className="text-xs font-medium text-(--color-text-muted)">
-            {t('dashboard.chart.tsdbRegistered')}
-          </span>
-          <span className="text-[11px] text-(--color-text-muted)">
-            {t('dashboard.chart.tsdbRegisteredCount').replace(
-              '{count}',
-              String(tsdbSource.series.length),
-            )}
-          </span>
-          {tsdbSource.series.length > 0 && (
-            <button
-              type="button"
-              data-testid="chart-tsdb-registered-clear"
-              onClick={() => applySelection([])}
-              className="rounded border border-(--color-border) px-1.5 py-0.5 text-[11px] text-(--color-text-muted)"
-            >
-              {t('dashboard.chart.tsdbRegisteredClear')}
-            </button>
+      {/* 등록 요약 — 개별 편집은 위 표의 각 행에서 한다(§2.16).
+          두 목록으로 나누면 같은 시리즈가 두 번 보인다. */}
+      <div data-testid="chart-tsdb-registered" className="flex items-center gap-2">
+        <span className="text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.chart.tsdbRegistered')}
+        </span>
+        <span className="text-[11px] text-(--color-text-muted)">
+          {t('dashboard.chart.tsdbRegisteredCount').replace(
+            '{count}',
+            String(tsdbSource.series.length),
           )}
-        </div>
-        {tsdbSource.series.length === 0 ? (
-          <p
+        </span>
+        {tsdbSource.series.length > 0 ? (
+          <button
+            type="button"
+            data-testid="chart-tsdb-registered-clear"
+            onClick={() => applySelection([])}
+            className="rounded border border-(--color-border) px-1.5 py-0.5 text-[11px] text-(--color-text-muted)"
+          >
+            {t('dashboard.chart.tsdbRegisteredClear')}
+          </button>
+        ) : (
+          <span
             data-testid="chart-tsdb-registered-empty"
             className="text-[11px] text-(--color-text-muted)"
           >
             {t('dashboard.chart.tsdbRegisteredNone')}
-          </p>
-        ) : (
-          <ul className="space-y-0.5">
-            {tsdbSource.series.map((sr, idx) => {
-              const tagPart = Object.keys(sr.tags ?? {})
-                .sort()
-                .map((k) => `${k}=${sr.tags![k]}`)
-                .join(', ');
-              const groupPart =
-                (sr.group_by?.length ?? 0) > 0
-                  ? t('dashboard.chart.tsdbRegisteredGroups')
-                      .replace('{keys}', [...(sr.group_by ?? [])].sort().join(', '))
-                      .replace('{count}', String(sr.group_filter?.length ?? 0))
-                  : '';
-              const groupKeys = [...(sr.group_by ?? [])].sort();
-              const combos = groupKeys.length > 0 ? (sr.group_filter ?? []) : [];
-              return (
-                <li
-                  key={`${sr.key}|${sr.field}|${tagPart}|${groupPart}|${idx}`}
-                  data-testid="chart-tsdb-registered-item"
-                  className="space-y-1 rounded border border-(--color-border) p-1 text-[11px] text-(--color-text-muted)"
-                >
-                  {/* 1행: 무엇이 등록되었는가. 2행 이하: 이름 짓기.
-                      한 줄에 몰아넣으면 식별 문자열이 길 때 이름 칸이 0폭까지
-                      쭈그러들어 "이름을 지정할 수 없다" 가 된다. */}
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      data-testid={`chart-tsdb-registered-remove-${idx}`}
-                      aria-label={t('dashboard.chart.tsdbRegisteredRemove')}
-                      title={t('dashboard.chart.tsdbRegisteredRemove')}
-                      onClick={() =>
-                        applySelection(tsdbSource.series.filter((_, n) => n !== idx))
-                      }
-                      className="rounded border border-(--color-border) px-1 leading-none"
-                    >
-                      ×
-                    </button>
-                    <span className="font-mono">
-                      {sr.key}.{sr.field}
-                    </span>
-                    {tagPart !== '' && <span>{tagPart}</span>}
-                    {groupPart !== '' && <span>{groupPart}</span>}
-                  </div>
-                  {/* 항목 이름. 비우면 패널 형식을 따른다.
-                      group by 항목에서는 이 값이 **템플릿으로 해석**되므로
-                      토큰을 쓰면 그룹마다 다른 이름이 된다. */}
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="text"
-                      data-testid={`chart-tsdb-registered-alias-${idx}`}
-                      value={sr.alias ?? ''}
-                      aria-label={t('dashboard.chart.tsdbRegisteredAlias')}
-                      placeholder={t('dashboard.chart.tsdbRegisteredAliasPlaceholder')}
-                      title={t('dashboard.chart.tsdbRegisteredAliasHint')}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        applySelection(
-                          tsdbSource.series.map((x, n) => {
-                            if (n !== idx) return x;
-                            if (v.trim() === '') {
-                              const { alias: _drop, ...rest } = x;
-                              return rest;
-                            }
-                            return { ...x, alias: v };
-                          }),
-                        );
-                      }}
-                      className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[11px]"
-                    />
-                    {/* 항목 라인 색. group by 항목에서는 노출하지 않는다 — 색 하나를
-                        N개 그룹에 나눠 줄 수 없어 쓰이지 않기 때문이다(OQ1).
-                        그 경우 색은 조합마다 아래에서 지정한다. */}
-                    {combos.length === 0 && (
-                      <ColorSwatchButton
-                        color={sr.color}
-                        testId={`chart-tsdb-registered-color-${idx}`}
-                        ariaLabel={t('dashboard.chart.tsdbRegisteredColor')}
-                        onChange={(next) =>
-                          applySelection(
-                            tsdbSource.series.map((x, n) => {
-                              if (n !== idx) return x;
-                              if (next === undefined) {
-                                const { color: _drop, ...rest } = x;
-                                return rest;
-                              }
-                              return { ...x, color: next };
-                            }),
-                          )
-                        }
-                      />
-                    )}
-                  </div>
-                  {/* 그룹별 개별 이름 (§2.12).
-                      항목 하나가 조합 N개로 펼쳐지므로 이름 칸도 조합마다 준다 —
-                      항목 이름 하나로는 "이 그룹은 실습실, 저 그룹은 사무실" 을
-                      표현할 수 없다. 비우면 위 항목 이름/패널 형식으로 되돌아간다. */}
-                  {combos.length > 0 && (
-                    <ul className="space-y-0.5 pl-3">
-                      {combos.map((combo, cIdx) => {
-                        const sig = groupComboSignature(combo, groupKeys);
-                        const label = groupKeys
-                          .map((k) => `${k}=${combo[k] ?? ''}`)
-                          .join(', ');
-                        return (
-                          <li key={sig} className="flex items-center gap-1">
-                            <span className="shrink-0 font-mono" title={label}>
-                              {label}
-                            </span>
-                            <input
-                              type="text"
-                              data-testid={`chart-tsdb-registered-group-alias-${idx}-${cIdx}`}
-                              value={sr.group_alias?.[sig] ?? ''}
-                              aria-label={t('dashboard.chart.tsdbRegisteredGroupAlias').replace(
-                                '{combo}',
-                                label,
-                              )}
-                              placeholder={t(
-                                'dashboard.chart.tsdbRegisteredGroupAliasPlaceholder',
-                              )}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                applySelection(
-                                  tsdbSource.series.map((x, n) => {
-                                    if (n !== idx) return x;
-                                    const next = { ...(x.group_alias ?? {}) };
-                                    if (v.trim() === '') delete next[sig];
-                                    else next[sig] = v;
-                                    // 남은 이름이 없으면 필드 자체를 없앤다 —
-                                    // 빈 맵을 남기면 저장본에 빈 껍데기가 쌓인다.
-                                    if (Object.keys(next).length === 0) {
-                                      const { group_alias: _drop, ...rest } = x;
-                                      return rest;
-                                    }
-                                    return { ...x, group_alias: next };
-                                  }),
-                                );
-                              }}
-                              className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[11px]"
-                            />
-                            <ColorSwatchButton
-                              color={sr.group_color?.[sig]}
-                              testId={`chart-tsdb-registered-group-color-${idx}-${cIdx}`}
-                              ariaLabel={t('dashboard.chart.tsdbRegisteredGroupColor').replace(
-                                '{combo}',
-                                label,
-                              )}
-                              onChange={(next) =>
-                                applySelection(
-                                  tsdbSource.series.map((x, n) => {
-                                    if (n !== idx) return x;
-                                    const map = { ...(x.group_color ?? {}) };
-                                    if (next === undefined) delete map[sig];
-                                    else map[sig] = next;
-                                    if (Object.keys(map).length === 0) {
-                                      const { group_color: _drop, ...rest } = x;
-                                      return rest;
-                                    }
-                                    return { ...x, group_color: map };
-                                  }),
-                                )
-                              }
-                            />
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+          </span>
         )}
-        <p className="mt-1 text-[11px] text-(--color-text-muted)">
-          {t('dashboard.chart.tsdbSearchHint')}
-        </p>
       </div>
 
       {overLimit && (

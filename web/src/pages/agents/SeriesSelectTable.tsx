@@ -10,7 +10,7 @@
 //
 // @spec SPEC-WEB-005
 
-import { useCallback, useMemo, useState } from 'react';
+import { Fragment, useCallback, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpDown, Filter, Search } from 'lucide-react';
 
 import { useTranslation } from '@/lib/i18n';
@@ -31,6 +31,14 @@ export interface SeriesRow {
   /** 'manual' | 'auto' | '' (TSDB 합성/미상). */
   registration: string;
   tags: Record<string, string>;
+  /**
+   * 시리즈 키 옆에 붙는 짧은 배지(선택).
+   *
+   * 대시보드 편집기에서 "현재 검색 조건에는 없지만 등록되어 있는 행" 을 같은 표에
+   * 남겨 두기 위해 쓴다 — 등록은 검색 조건과 독립적으로 누적되므로, 표에서 빼면
+   * 편집할 자리가 사라진다.
+   */
+  badge?: string;
 }
 
 /** 정렬 가능한 컬럼. */
@@ -52,6 +60,13 @@ export interface SeriesSelectTableProps {
   onClearMany: (ids: string[]) => void;
   /** 등록(registration) 컬럼 노출 여부(Store 모드에서만 의미 있음). */
   showRegistration: boolean;
+  /**
+   * 행 아래에 덧붙일 편집 영역(선택). `null` 을 반환하면 아무것도 그리지 않는다.
+   *
+   * 선택한 행에 대한 설정(이름 · 색)을 표 바깥의 두 번째 목록으로 빼지 않고 그
+   * 자리에서 편집하기 위한 통로다. 표 자체는 이 내용을 모른 채 자리만 내준다.
+   */
+  renderRowDetail?: (row: SeriesRow) => React.ReactNode;
 }
 
 /** tags 를 정렬/표시용으로 결정적 직렬화한다(키 사전순). */
@@ -94,6 +109,7 @@ export function SeriesSelectTable({
   onSelectMany,
   onClearMany,
   showRegistration,
+  renderRowDetail,
 }: SeriesSelectTableProps) {
   const { t } = useTranslation();
   const [sort, setSort] = useState<{ column: SortColumn; direction: SortDirection }>(
@@ -358,7 +374,7 @@ export function SeriesSelectTable({
                 const tagEntries = Object.entries(r.tags);
                 // SeriesID 의 NUL 구분자를 '~' 로 치환한 testid (같은 key 다중 시리즈 충돌 방지).
                 const safeId = r.id.split(SERIES_ID_SEPARATOR).join('~');
-                return (
+                const row = (
                   <tr
                     key={r.id}
                     className="border-b border-(--color-border-default) last:border-b-0 hover:bg-(--color-bg-elevated)"
@@ -376,6 +392,14 @@ export function SeriesSelectTable({
                     </td>
                     <td className="max-w-[16rem] truncate px-2 py-1 font-mono text-(--color-text-primary)">
                       {r.key}
+                      {r.badge !== undefined && r.badge !== '' && (
+                        <span
+                          data-testid={`series-badge-${safeId}`}
+                          className="ml-1 rounded bg-(--color-bg-surface) px-1 py-0.5 text-[10px] font-medium text-(--color-text-muted)"
+                        >
+                          {r.badge}
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 py-1">
                       <MetadataChips
@@ -417,6 +441,22 @@ export function SeriesSelectTable({
                       </td>
                     )}
                   </tr>
+                );
+                const detail = renderRowDetail?.(r);
+                if (!detail) return row;
+                return (
+                  <Fragment key={r.id}>
+                    {row}
+                    <tr
+                      className="border-b border-(--color-border-default) last:border-b-0"
+                      data-testid={`series-detail-${safeId}`}
+                    >
+                      <td />
+                      <td colSpan={colCount - 1} className="px-2 pb-1.5">
+                        {detail}
+                      </td>
+                    </tr>
+                  </Fragment>
                 );
               })
             )}
