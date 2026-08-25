@@ -7,7 +7,12 @@
 // Recharts 렌더 없이 검증할 수 있도록 산출 로직만 분리한다.
 
 import { normalizeStoreSeriesAlias, storeSeriesLabel } from './chartChannelTypes';
-import type { ChannelRefConfig, StoreSourceConfig, StrokeStyle } from './chartChannelTypes';
+import type {
+  ChannelRefConfig,
+  StoreSourceConfig,
+  StrokeStyle,
+  TsdbSourceConfig,
+} from './chartChannelTypes';
 import { resolvePanelSourceBinding } from './panelDataSource';
 
 /** 미리보기 한 줄의 렌더 파라미터. */
@@ -24,6 +29,8 @@ export interface PreviewSeries {
 export interface PreviewSeriesInput {
   dataSource: string | undefined;
   storeSource: StoreSourceConfig | undefined;
+  /** TSDB 소스 설정. 등록된 시리즈로 미리보기를 구성한다. @spec SPEC-TSDB-004 */
+  tsdbSource?: TsdbSourceConfig | undefined;
   channels: readonly ChannelRefConfig[];
   channelName: string;
   globalSmooth: boolean;
@@ -52,6 +59,7 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
   const {
     dataSource,
     storeSource,
+    tsdbSource,
     channels,
     channelName,
     globalSmooth,
@@ -73,6 +81,7 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
   const { kind } = resolvePanelSourceBinding({
     data_source: dataSource,
     store_source: storeSource,
+    tsdb_source: tsdbSource,
   });
   if (kind === 'store') {
     const series = normalizeStoreSeriesAlias(storeSource?.series ?? []);
@@ -85,6 +94,43 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
         strokeDasharray: ref.stroke_style ? strokeDasharray[ref.stroke_style] : '',
       }));
     }
+  }
+
+  // TSDB 도 같은 규칙으로 **등록된 시리즈**를 미리보기로 만든다.
+  //
+  // group by 항목은 config 상 1개이지만 런타임에는 고른 조합마다 한 줄이 되므로,
+  // 미리보기도 그 수만큼 펼친다 — 펼치지 않으면 "설정에서는 한 줄인데 대시보드에는
+  // 여러 줄" 이 되어 미리보기가 제 일을 못 한다.
+  //
+  // 색은 group by 파생 줄에서 항목 color 를 쓰지 않는다(SPEC-TSDB-004 OQ1) —
+  // 실제 렌더가 자동 팔레트를 쓰므로 미리보기도 같아야 한다.
+  if (kind === 'tsdb') {
+    const lines: PreviewSeries[] = [];
+    for (const ref of tsdbSource?.series ?? []) {
+      const picks = ref.group_by?.length ? (ref.group_filter ?? []) : [];
+      if (picks.length === 0) {
+        lines.push({
+          key: storeSeriesLabel(ref, tsdbSource?.series_name_format),
+          color: ref.color ?? color(lines.length),
+          smooth: ref.smooth ?? globalSmooth,
+          strokeWidth: ref.stroke_width ?? 2,
+          strokeDasharray: ref.stroke_style ? strokeDasharray[ref.stroke_style] : '',
+        });
+        continue;
+      }
+      for (const combo of picks) {
+        const merged = { ...ref, tags: { ...(ref.tags ?? {}), ...combo } };
+        lines.push({
+          key: storeSeriesLabel(merged, tsdbSource?.series_name_format),
+          color: color(lines.length),
+          smooth: ref.smooth ?? globalSmooth,
+          strokeWidth: ref.stroke_width ?? 2,
+          strokeDasharray: ref.stroke_style ? strokeDasharray[ref.stroke_style] : '',
+        });
+      }
+    }
+    // 등록이 0개면 아래 폴백으로 흘러내린다 — 빈 차트는 고장처럼 보인다.
+    if (lines.length > 0) return lines;
   }
 
   if (channels.length > 0) {

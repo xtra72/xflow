@@ -941,7 +941,8 @@
         "tagSource": "소스",
         "dragOrderTitle": "드래그하여 순서 변경",
         "seriesCount": "시리즈 {count}개",
-        "panelArea": "패널 영역"
+        "panelArea": "패널 영역",
+        "previewRealData": "실제 데이터로 미리보기"
       },
       "dataSource": "데이터 소스",
       "dataSourceStoreSelectTitle": "시리즈 선택 (체크박스)",

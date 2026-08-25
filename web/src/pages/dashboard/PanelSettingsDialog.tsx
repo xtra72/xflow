@@ -64,6 +64,7 @@ import {
   type YAxisDataType,
   type YEnumLabel,
   type LegendConfig as ChartLegendConfig,
+  type TsdbSourceConfig,
 } from './panels/charts/chartChannelTypes';
 import { ChartLegend } from './panels/charts/ChartLegend';
 import { buildPreviewSeries } from './panels/charts/previewSeries';
@@ -346,6 +347,14 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   const PREVIEW_ZOOM_MAX = 2.0;
   const PREVIEW_ZOOM_STEP = 0.1;
   const [previewZoom, setPreviewZoom] = useState<number>(1.0);
+  /**
+   * 미리보기에 **실제 데이터**를 쓸지.
+   *
+   * 기본 참 — 종전 동작(활성 소스면 실제 패널 렌더)을 그대로 둔다. 끄면 합성
+   * 미리보기로 내려가 조회 없이 스타일만 확인할 수 있다. 데이터가 아직 없거나
+   * 폴링 비용을 피하고 싶을 때 필요하다.
+   */
+  const [previewRealData, setPreviewRealData] = useState(true);
   const zoomIn = useCallback(
     () => setPreviewZoom((z) => Math.min(PREVIEW_ZOOM_MAX, Math.round((z + PREVIEW_ZOOM_STEP) * 10) / 10)),
     [],
@@ -715,8 +724,14 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // **부가 조건은 각 게이트에 그대로 남는다** — 패널 타입, 라인의 `tag_filters` 대안,
   // stat 의 `series_reduce` 요구는 소스 종류와 무관한 게이트 고유 조건이다.
   const previewSourceBinding = resolvePanelSourceBinding(previewChartConfig);
+  // SPEC-TSDB-004: tsdb 도 같은 자격이다. 소스 종류를 계약이 판정하므로 여기서
+  // 'store' 만 보면 TSDB 패널은 영원히 합성 미리보기에 머문다.
+  //
+  // previewRealData 가 거짓이면 실제 렌더를 쓰지 않고 합성 미리보기로 내려간다.
   const isPreviewStoreActive =
-    previewSourceBinding.kind === 'store' && previewSourceBinding.active;
+    previewRealData &&
+    (previewSourceBinding.kind === 'store' || previewSourceBinding.kind === 'tsdb') &&
+    previewSourceBinding.active;
   // Store 라인 차트에서 실제 데이터 미리보기를 쓸지 판정한다. 시리즈가 하나도 선택되지
   // 않았거나 채널 모드면 실제 패널은 빈 상태만 보여주므로, 스타일을 확인할 수 있는
   // 합성 미니 프리뷰를 유지한다.
@@ -907,6 +922,22 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 />
               </div>
             )}
+            {/* 실제 데이터 적용 여부 — 소스가 활성일 때만 의미가 있다.
+                끄면 합성 미리보기로 내려가 조회 없이 스타일만 확인한다. */}
+            {(previewSourceBinding.kind === 'store' || previewSourceBinding.kind === 'tsdb') &&
+              previewSourceBinding.active && (
+                <label
+                  data-testid="preview-real-data-toggle"
+                  className="mb-1 flex items-center gap-1 self-start text-[11px] text-(--color-text-muted)"
+                >
+                  <input
+                    type="checkbox"
+                    checked={previewRealData}
+                    onChange={(e) => setPreviewRealData(e.target.checked)}
+                  />
+                  <span>{t('dashboard.settings.preview.previewRealData')}</span>
+                </label>
+              )}
             {panel.type === 'line-chart' && (
               <div
                 // 실제 LineChartPanel 을 렌더할 때 높이를 물려주려면 flex 컨테이너여야 한다
@@ -4139,6 +4170,7 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
       buildPreviewSeries({
         dataSource: config.data_source as string | undefined,
         storeSource,
+        tsdbSource: config.tsdb_source as TsdbSourceConfig | undefined,
         channels,
         channelName,
         globalSmooth,
@@ -4148,7 +4180,7 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
         channelFallbackName: (i) =>
           t('dashboard.settings.preview.channelFallback').replace('{index}', String(i)),
       }),
-    [config.data_source, storeSource, channels, channelName, globalSmooth, t],
+    [config.data_source, config.tsdb_source, storeSource, channels, channelName, globalSmooth, t],
   );
 
   const data = useMemo(() => {

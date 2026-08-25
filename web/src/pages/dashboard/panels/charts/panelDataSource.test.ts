@@ -326,3 +326,86 @@ describe('defaultTsdbSource', () => {
     expect(a.series).not.toBe(b.series);
   });
 });
+
+// ===== TSDB 미리보기 구성 (SPEC-TSDB-004) =====
+
+import { buildPreviewSeries } from './previewSeries';
+
+describe('buildPreviewSeries — TSDB 등록 시리즈로 구성', () => {
+  const base = {
+    dataSource: 'tsdb',
+    storeSource: undefined,
+    channels: [],
+    channelName: '',
+    globalSmooth: false,
+    strokeDasharray: { solid: '', dashed: '6 4', dotted: '2 3' } as Record<
+      'solid' | 'dashed' | 'dotted',
+      string
+    >,
+    palette: ['#p0', '#p1', '#p2'],
+    sampleName: 'sample',
+    channelFallbackName: (i: number) => `ch${i}`,
+  };
+
+  it('정확 일치 항목은 한 줄이며 항목 색을 쓴다', () => {
+    const r = buildPreviewSeries({
+      ...base,
+      tsdbSource: {
+        backend: 'influxdb',
+        agent_name: 'ix',
+        series: [{ key: 'cpu', field: 'usage', alias: 'CPU', color: '#abc' }],
+        time_window_ms: 60_000,
+        interval_ms: 10_000,
+        aggregation: 'average',
+      },
+    });
+    expect(r).toHaveLength(1);
+    expect(r[0]!.key).toBe('CPU');
+    expect(r[0]!.color).toBe('#abc');
+  });
+
+  it('group by 항목은 고른 조합 수만큼 펼쳐진다', () => {
+    // config 상 1항목이지만 런타임에는 여러 줄이 된다. 펼치지 않으면 "설정에서는
+    // 한 줄인데 대시보드에는 여러 줄" 이 되어 미리보기가 제 일을 못 한다.
+    const r = buildPreviewSeries({
+      ...base,
+      tsdbSource: {
+        backend: 'influxdb',
+        agent_name: 'ix',
+        series: [
+          {
+            key: 'cpu',
+            field: 'usage',
+            color: '#abc',
+            group_by: ['host'],
+            group_filter: [{ host: 'A' }, { host: 'B' }],
+          },
+        ],
+        time_window_ms: 60_000,
+        interval_ms: 10_000,
+        aggregation: 'average',
+      },
+    });
+    expect(r).toHaveLength(2);
+    // 이름이 서로 달라야 한다 — 같으면 범례에서 구분되지 않는다.
+    expect(new Set(r.map((x) => x.key)).size).toBe(2);
+    // 자동 팔레트를 쓴다(OQ1) — 실제 렌더와 같아야 미리보기가 신뢰된다.
+    expect(r.map((x) => x.color)).toEqual(['#p0', '#p1']);
+  });
+
+  it('등록이 없으면 sample 한 줄로 폴백한다 (빈 차트는 고장처럼 보인다)', () => {
+    const r = buildPreviewSeries({
+      ...base,
+      tsdbSource: {
+        backend: 'influxdb',
+        agent_name: 'ix',
+        series: [],
+        time_window_ms: 60_000,
+        interval_ms: 10_000,
+        aggregation: 'average',
+      },
+    });
+    expect(r).toHaveLength(1);
+    expect(r[0]!.key).toBe('sample');
+  });
+});

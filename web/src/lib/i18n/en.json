@@ -941,7 +941,8 @@
         "tagSource": "Source",
         "dragOrderTitle": "Drag to reorder",
         "seriesCount": "{count} series",
-        "panelArea": "Panel area"
+        "panelArea": "Panel area",
+        "previewRealData": "Preview with live data"
       },
       "dataSource": "Data source",
       "dataSourceStoreSelectTitle": "Series selection (checkboxes)",
