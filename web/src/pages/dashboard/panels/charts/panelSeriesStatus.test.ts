@@ -12,6 +12,20 @@ describe('resolveGroupPageDisplay', () => {
     expect(resolveGroupPageDisplay([]).show).toBe(false);
   });
 
+  it('페이지가 하나뿐이고 절단도 없으면 표시하지 않는다', () => {
+    // 그림 위에 겹치는 표기는 조작할 것이나 알릴 것이 있을 때만 값을 한다.
+    // "그룹 3개 · 1/1 페이지" 는 넘길 페이지도 경고도 없는 순수 소음이다.
+    expect(
+      resolveGroupPageDisplay([{ total: 3, page: 0, pageCount: 1, truncated: false }]).show,
+    ).toBe(false);
+  });
+
+  it('페이지가 하나여도 절단되면 표시한다 — 알릴 것이 있다', () => {
+    expect(
+      resolveGroupPageDisplay([{ total: 99, page: 0, pageCount: 1, truncated: true }]).show,
+    ).toBe(true);
+  });
+
   it('단일 항목의 총계와 페이지를 그대로 쓴다', () => {
     const d = resolveGroupPageDisplay([
       { total: 5, page: 1, pageCount: 3, truncated: false },

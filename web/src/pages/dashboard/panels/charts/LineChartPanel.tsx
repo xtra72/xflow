@@ -1030,8 +1030,9 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
         </div>
       )}
 
-      {/* 그룹 페이지 바 — 전체 그룹 수를 항상 보여 준다. 페이지네이션이 비활성이어도
-          사용자가 규모를 판단하려면 숫자가 보여야 한다(§2.7.2). */}
+      {/* 그룹 페이지 바 — **넘길 페이지가 있거나 절단 경고가 있을 때만** 그린다.
+          그림 위에 겹치는 표기는 조작할 것이나 알릴 것이 있을 때만 값을 한다.
+          판정은 resolveGroupPageDisplay 가 소유한다(§2.7.2). */}
       {groupPage.show && (
         <div
           data-testid="line-chart-group-page"

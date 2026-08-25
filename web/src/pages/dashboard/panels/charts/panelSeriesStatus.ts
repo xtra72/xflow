@@ -149,13 +149,19 @@ export function resolveGroupPageDisplay(
   const total = groups.reduce((n, g) => n + g.total, 0);
   const pageCount = groups.reduce((n, g) => Math.max(n, g.pageCount), 1);
   const page = groups[0]?.page ?? 0;
+  const truncated = groups.some((g) => g.truncated);
   return {
-    show: true,
+    // 그림 위에 겹치는 표기는 **조작할 것이나 알릴 것**이 있을 때만 값을 한다.
+    // 넘길 페이지도 절단 경고도 없으면 "그룹 3개 · 1/1 페이지" 는 순수 소음이다.
+    //
+    // 종전에는 규모를 판단하도록 총계를 항상 보여 줬는데, 그 정보는 설정 화면의
+    // 등록 목록에서 이미 읽을 수 있어 패널에 겹칠 이유가 없다.
+    show: pageCount > 1 || truncated,
     total,
     page,
     pageCount,
     canPrev: page > 0,
     canNext: page < pageCount - 1,
-    truncated: groups.some((g) => g.truncated),
+    truncated,
   };
 }

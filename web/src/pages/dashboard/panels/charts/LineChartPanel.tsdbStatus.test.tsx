@@ -205,11 +205,11 @@ describe('LineChartPanel — 그룹 페이지 바', () => {
     expect(next.disabled).toBe(false);
   });
 
-  it('페이지가 하나뿐이면 이동 버튼을 그리지 않는다', async () => {
+  it('페이지가 하나뿐이고 절단도 없으면 바 자체를 그리지 않는다', async () => {
+    // 넘길 페이지도 경고도 없으면 그림 위에 겹칠 이유가 없다.
     withGroups([{ index: 0, total: 2, page: 0, pageCount: 1, truncated: false }]);
     await renderPanel();
-    await screen.findByTestId('line-chart-group-page-status');
-    expect(screen.queryByTestId('line-chart-group-page-next')).toBeNull();
+    expect(screen.queryByTestId('line-chart-group-page')).toBeNull();
   });
 
   it('열거 절단은 경고로 드러난다 (조용히 넘기지 않는다)', async () => {
