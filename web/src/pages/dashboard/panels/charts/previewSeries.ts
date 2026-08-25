@@ -125,9 +125,18 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
         // 우선순위를 미리보기도 따라야 "미리보기와 대시보드가 다르다" 가 안 된다.
         const sig = groupComboSignature(combo, groupKeys);
         const named = ref.group_alias?.[sig]?.trim();
+        // 고정 태그(사전 필터)는 기본 이름에서 걷어낸다 — 조합마다 값이 같아
+        // 줄을 가르지 않는다(§2.15). 실제 렌더와 같은 규칙이어야 미리보기가
+        // 대시보드와 갈리지 않는다. 별칭·형식이 있으면 템플릿이 참조할 수 있어
+        // 손대지 않는다.
+        const hasName =
+          (named ?? '') !== '' ||
+          (ref.alias?.trim() ?? '') !== '' ||
+          (tsdbSource?.series_name_format?.trim() ?? '') !== '';
         const merged = {
           ...ref,
-          tags: { ...(ref.tags ?? {}), ...combo },
+          tags:
+            !hasName && picks.length > 1 ? { ...combo } : { ...(ref.tags ?? {}), ...combo },
           ...(named ? { alias: named } : {}),
         };
         lines.push({

@@ -1064,3 +1064,63 @@ describe('matrixToEntries — 그룹별 라인 색', () => {
     }
   });
 });
+
+// ===== 기본 이름에서 고정 태그 제거 (SPEC-TSDB-004 §2.15) =====
+
+describe('matrixToEntries — 기본 이름의 고정 태그', () => {
+  // 실제 보고된 설정: 사전 필터 location·device.type 은 고정이고 dev_eui 로 나눈다.
+  const m: SeriesMatrix = {
+    columns: ['a', 'b', 'c'],
+    rows: [{ bucketStartMs: 0, values: [1, 2, 3] }],
+    columnOrigins: [0, 0, 0],
+    columnLabels: [
+      { __field__: 'value', 'device.dev_eui': 'e1', 'device.type': 'EM300-TH', location: '실습실' },
+      { __field__: 'value', 'device.dev_eui': 'e2', 'device.type': 'EM300-TH', location: '실습실' },
+      { __field__: 'value', 'device.dev_eui': 'e3', 'device.type': 'EM300-TH', location: '실습실' },
+    ],
+  };
+  const base = {
+    key: 'temperature',
+    field: 'value',
+    tags: { location: '실습실', 'device.type': 'EM300-TH' },
+    group_by: ['device.dev_eui'],
+  };
+
+  it('모든 줄에서 값이 같은 태그는 기본 이름에 넣지 않는다', () => {
+    const { seriesNames } = matrixToEntries(m, makeConfig({ series: [base] }));
+    for (const n of seriesNames) {
+      // 구분에 기여하는 dev_eui 는 남는다.
+      expect(n).toContain('device.dev_eui');
+      // 세 줄 모두 같은 값이라 군더더기다.
+      expect(n).not.toContain('device.type');
+      expect(n).not.toContain('location');
+    }
+    expect(new Set(seriesNames).size).toBe(3);
+  });
+
+  it('이름 형식이 있으면 태그를 걷어내지 않는다 (템플릿이 참조한다)', () => {
+    // location 은 고정이지만 형식이 그 값을 쓰므로 사라지면 안 된다.
+    const cfg = makeConfig({ series: [base], series_name_format: '{$.tags.location}' });
+    const { seriesNames } = matrixToEntries(m, cfg);
+    for (const n of seriesNames) expect(n).toContain('실습실');
+  });
+
+  it('그룹별 이름이 있으면 그 이름이 그대로 나온다', () => {
+    const cfg = makeConfig({
+      series: [{ ...base, group_alias: { e1: '창가', e2: '중앙', e3: '문가' } }],
+    });
+    expect(matrixToEntries(m, cfg).seriesNames).toEqual(['창가', '중앙', '문가']);
+  });
+
+  it('그룹 파생이 아닌 항목의 이름은 종전 그대로다', () => {
+    const flat: SeriesMatrix = {
+      columns: ['x'],
+      rows: [{ bucketStartMs: 0, values: [1] }],
+      columnOrigins: [0],
+      columnLabels: [{ __field__: 'value', location: '실습실' }],
+    };
+    const cfg = makeConfig({ series: [{ key: 'temperature', field: 'value', tags: { location: '실습실' } }] });
+    // 시리즈가 하나면 "모든 줄에서 같다" 는 판정이 성립하지 않는다 — 유일한 식별 정보다.
+    expect(matrixToEntries(flat, cfg).seriesNames[0]).toContain('location');
+  });
+});

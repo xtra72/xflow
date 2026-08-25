@@ -32,6 +32,7 @@ import { resolveStoreAgentName } from './storeAgentResolve';
 import { pickSeriesColor, storeSeriesLabel } from './chartChannelTypes';
 import {
   METRIC_LABEL_KEY,
+  parseSeriesLabels,
 } from '@/services/api/seriesLabels';
 import type {
   ChartConnectionStatus,
@@ -257,9 +258,46 @@ export function matrixToEntries(
     };
   };
 
+  // 출처별 **고정 태그** — 그 출처의 모든 컬럼에서 값이 같은 태그 키
+  // (SPEC-TSDB-004 §2.15). group by 항목의 사전 필터(`tags`)가 여기 해당한다.
+  //
+  // 기본 이름(내장 서술 표기)은 태그를 전부 나열하는데, 모든 줄에서 값이 같은
+  // 태그는 줄을 가르지 않으므로 이름에서 순수 군더더기다 — 실제 보고 예:
+  // `temperature · value{device.dev_eui=…, device.type=EM300-TH, location=실습실}`
+  // 에서 device.type 과 location 은 세 줄 모두 같다.
+  const fixedTagsByOrigin = new Map<number, Set<string>>();
+  if (origins) {
+    const perOrigin = new Map<number, Array<Record<string, string>>>();
+    origins.forEach((o, j) => {
+      const tags = parseSeriesLabels(matrix.columnLabels?.[j]).tags;
+      const list = perOrigin.get(o);
+      if (list) list.push(tags);
+      else perOrigin.set(o, [tags]);
+    });
+    for (const [o, list] of perOrigin) {
+      if (list.length < 2) continue; // 줄이 하나면 "모두 같다" 가 성립하지 않는다
+      const keys = new Set<string>();
+      for (const tset of list) for (const k of Object.keys(tset)) keys.add(k);
+      const fixed = new Set(
+        [...keys].filter((k) => new Set(list.map((tset) => tset[k] ?? '')).size === 1),
+      );
+      if (fixed.size > 0) fixedTagsByOrigin.set(o, fixed);
+    }
+  }
+
   const seriesNames: string[] = matrix.columns.map((colName, j) => {
     const ref = effectiveRefAt(j);
     if (!ref) return colName;
+    // 고정 태그는 **기본 이름에서만** 걷어낸다. 별칭·형식은 템플릿이라
+    // `{$.tags.location}` 처럼 고정 태그를 참조할 수 있어, 걷어내면 이름이 빈다.
+    const named =
+      (ref.alias?.trim() ?? '') !== '' || (config.series_name_format?.trim() ?? '') !== '';
+    const fixed = origins ? fixedTagsByOrigin.get(origins[j] ?? -1) : undefined;
+    if (!named && fixed && ref.tags) {
+      const kept: Record<string, string> = {};
+      for (const [k, v] of Object.entries(ref.tags)) if (!fixed.has(k)) kept[k] = v;
+      return storeSeriesLabel({ ...ref, tags: kept }, config.series_name_format);
+    }
     // 표시 이름은 storeSeriesLabel 한 곳에서 결정한다 — 데이터 소스 목록·히트맵 마커와
     // 같은 규칙을 쓰지 않으면 "설정한 이름과 출력이 다르다" 는 불일치가 생긴다.
     //   이름(alias) 직접 입력 → 패널의 시리즈 이름 형식 → 내장 서술 표기.

@@ -254,3 +254,42 @@ describe('buildPreviewSeries — tsdb 그룹별 라인 색 (SPEC-TSDB-004 §2.14
     expect(out[0]!.color).toBe(PALETTE[0]);
   });
 });
+
+describe('buildPreviewSeries — tsdb 기본 이름의 고정 태그 (SPEC-TSDB-004 §2.15)', () => {
+  const base = {
+    key: 'temperature',
+    field: 'value',
+    tags: { location: '실습실', 'device.type': 'EM300-TH' },
+    group_by: ['device.dev_eui'],
+    group_filter: [{ 'device.dev_eui': 'e1' }, { 'device.dev_eui': 'e2' }],
+  };
+  const src = (over: Record<string, unknown> = {}) =>
+    ({
+      backend: 'influxdb',
+      agent_name: 'ix',
+      series: [{ ...base, ...over }],
+    }) as unknown as PreviewSeriesInput['tsdbSource'];
+
+  it('조합마다 값이 같은 사전 필터는 기본 이름에서 뺀다', () => {
+    const out = buildPreviewSeries(input({ dataSource: 'tsdb', tsdbSource: src() }));
+    for (const line of out) {
+      expect(line.key).toContain('device.dev_eui');
+      expect(line.key).not.toContain('location');
+      expect(line.key).not.toContain('device.type');
+    }
+  });
+
+  it('조합이 하나면 사전 필터를 그대로 둔다 (유일한 식별 정보다)', () => {
+    const one = src({ group_filter: [{ 'device.dev_eui': 'e1' }] });
+    expect(buildPreviewSeries(input({ dataSource: 'tsdb', tsdbSource: one }))[0]!.key).toContain(
+      'location',
+    );
+  });
+
+  it('별칭이 있으면 태그를 걷어내지 않는다', () => {
+    const named = src({ alias: '{$.tags.location}' });
+    for (const line of buildPreviewSeries(input({ dataSource: 'tsdb', tsdbSource: named }))) {
+      expect(line.key).toBe('실습실');
+    }
+  });
+});
