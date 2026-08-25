@@ -270,12 +270,29 @@ export function matrixToEntries(
       if (cols.length < 2) continue;
       const names = cols.map((j) => seriesNames[j]!);
       if (new Set(names).size === names.length) continue; // 이미 구분된다
-      for (const j of cols) {
-        const labels = matrix.columnLabels?.[j];
-        if (!labels) continue;
-        const suffix = formatSeriesLabel({ metric: '', tags: parseSeriesLabels(labels).tags });
+      // **구분에 필요한 키만** 덧붙인다.
+      //
+      // 종전에는 태그 전부를 붙여
+      // `실습실 {device.dev_eui=…, device.type=EM300-TH, location=실습실}` 처럼
+      // 지정한 이름보다 군더더기가 길어졌다. 실제로 줄을 가르는 것은 **값이 서로
+      // 다른 키**뿐이므로 그것만 남긴다. 위 예에서는 dev_eui 하나다.
+      //
+      // 이름을 완전히 통제하고 싶으면 시리즈별 이름을 지정하면 된다 — 그 경우
+      // 이름이 서로 달라져 이 분기 자체를 타지 않는다.
+      const tagSets = cols.map((j) => parseSeriesLabels(matrix.columnLabels?.[j]).tags);
+      const allKeys = new Set<string>();
+      for (const tset of tagSets) for (const k of Object.keys(tset)) allKeys.add(k);
+      const varying = [...allKeys]
+        .filter((k) => new Set(tagSets.map((tset) => tset[k] ?? '')).size > 1)
+        .sort();
+      if (varying.length === 0) continue;
+      cols.forEach((j, n) => {
+        const tset = tagSets[n]!;
+        const picked: Record<string, string> = {};
+        for (const k of varying) picked[k] = tset[k] ?? '';
+        const suffix = formatSeriesLabel({ metric: '', tags: picked });
         if (suffix) seriesNames[j] = `${seriesNames[j]} ${suffix}`;
-      }
+      });
     }
   }
 

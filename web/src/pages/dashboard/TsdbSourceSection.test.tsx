@@ -1013,3 +1013,59 @@ describe('TsdbSourceSection — 이름 형식 위치', () => {
     expect(fmt.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
+
+describe('TsdbSourceSection — 시리즈별 개별 이름', () => {
+  it('등록 항목마다 이름을 지정하고 비우면 패널 형식으로 되돌아간다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [
+            { key: 'cpu', field: 'usage' },
+            { key: 'mem', field: 'used' },
+          ],
+        })}
+        fetchers={makeFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    const input = await screen.findByTestId('chart-tsdb-registered-alias-1');
+    fireEvent.change(input, { target: { value: '메모리' } });
+    await waitFor(() => expect(lastSeries(patches)[1]!.alias).toBe('메모리'));
+    // 다른 항목은 건드리지 않는다.
+    expect(lastSeries(patches)[0]!.alias).toBeUndefined();
+
+    // 비우면 미지정으로 되돌아가 패널 형식을 따른다.
+    fireEvent.change(input, { target: { value: '  ' } });
+    await waitFor(() => expect(lastSeries(patches)[1]!.alias).toBeUndefined());
+  });
+
+  it('group by 항목의 이름은 토큰으로 그룹마다 달라질 수 있다', async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [
+            {
+              key: 'cpu',
+              field: 'usage',
+              group_by: ['host'],
+              group_filter: [{ host: 'A' }, { host: 'B' }],
+            },
+          ],
+        })}
+        fetchers={makeFetchers()}
+        onPatch={(p) => patches.push(p)}
+      />,
+    );
+    const input = await screen.findByTestId('chart-tsdb-registered-alias-0');
+    fireEvent.change(input, { target: { value: 'CPU {$.tags.host}' } });
+    // 항목은 하나지만 렌더 시 템플릿이 그룹마다 해석된다.
+    await waitFor(() => expect(lastSeries(patches)[0]!.alias).toBe('CPU {$.tags.host}'));
+    expect(lastSeries(patches)).toHaveLength(1);
+  });
+});

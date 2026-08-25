@@ -798,3 +798,51 @@ describe('useStoreChartData — 이름 형식 변경이 재조회를 촉발한�
     expect(queryMatrixFn.mock.calls.length).toBeGreaterThan(before);
   });
 });
+
+describe('matrixToEntries — 이름 충돌 해소는 구분 키만 덧붙인다 (사용자 보고)', () => {
+  // 보고: `{$.location}` 을 지정했는데 범례가
+  // `실습실 {device.dev_eui=…, device.type=EM300-TH, location=실습실}` 로 나온다.
+  // 줄을 실제로 가르는 것은 dev_eui 하나뿐이므로 그것만 남아야 한다.
+  const matrix: SeriesMatrix = {
+    columns: ['c0', 'c1', 'c2'],
+    rows: [{ bucketStartMs: 1000, values: [1, 2, 3] }],
+    columnOrigins: [0, 0, 0],
+    columnLabels: [
+      { __field__: 'value', 'device.dev_eui': 'A', 'device.type': 'EM300-TH', location: '실습실' },
+      { __field__: 'value', 'device.dev_eui': 'B', 'device.type': 'EM300-TH', location: '실습실' },
+      { __field__: 'value', 'device.dev_eui': 'C', 'device.type': 'EM300-TH', location: '실습실' },
+    ],
+  };
+  const config = makeConfig({
+    series: [{ key: 'th', field: 'value' }],
+    series_name_format: '{$.tags.location}',
+  });
+
+  it('값이 같은 태그는 덧붙이지 않는다', () => {
+    const r = matrixToEntries(matrix, config);
+    for (const n of r.seriesNames) {
+      expect(n).toContain('실습실');
+      expect(n).toContain('device.dev_eui=');
+      // 모든 줄에서 같은 값이라 구분에 기여하지 않는다.
+      expect(n).not.toContain('device.type=');
+      expect(n).not.toContain('location=');
+    }
+  });
+
+  it('세 줄이 서로 다른 이름을 갖는다 (병합되지 않는다)', () => {
+    const r = matrixToEntries(matrix, config);
+    expect(new Set(r.seriesNames).size).toBe(3);
+    expect(r.seriesEntries.size).toBe(3);
+  });
+
+  it('시리즈별 이름을 지정하면 덧붙이지 않는다', () => {
+    // 이름이 이미 서로 다르면 충돌 분기를 아예 타지 않는다 — 지정한 것만 나온다.
+    const named = makeConfig({
+      series: [{ key: 'th', field: 'value', alias: '{$.tags.device.dev_eui}' }],
+      series_name_format: '{$.tags.location}',
+    });
+    const r = matrixToEntries(matrix, named);
+    expect(new Set(r.seriesNames).size).toBe(3);
+    for (const n of r.seriesNames) expect(n).not.toContain('{');
+  });
+});

@@ -1126,6 +1126,31 @@ export function TsdbSourceSection({
                   </span>
                   {tagPart !== '' && <span>{tagPart}</span>}
                   {groupPart !== '' && <span>{groupPart}</span>}
+                  {/* 시리즈별 개별 이름. 비우면 패널 형식을 따른다.
+                      group by 항목에서는 이 값이 **템플릿으로 해석**되므로
+                      토큰을 쓰면 그룹마다 다른 이름이 된다. */}
+                  <input
+                    type="text"
+                    data-testid={`chart-tsdb-registered-alias-${idx}`}
+                    value={sr.alias ?? ''}
+                    aria-label={t('dashboard.chart.tsdbRegisteredAlias')}
+                    placeholder={t('dashboard.chart.tsdbRegisteredAliasPlaceholder')}
+                    title={t('dashboard.chart.tsdbRegisteredAliasHint')}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      applySelection(
+                        tsdbSource.series.map((x, n) => {
+                          if (n !== idx) return x;
+                          if (v.trim() === '') {
+                            const { alias: _drop, ...rest } = x;
+                            return rest;
+                          }
+                          return { ...x, alias: v };
+                        }),
+                      );
+                    }}
+                    className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[11px]"
+                  />
                 </li>
               );
             })}
