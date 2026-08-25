@@ -4,7 +4,7 @@
 // 선택 전(또는 채널 모드)에는 스타일 확인용 합성 미니 프리뷰를 유지한다.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import type { PanelConfig } from '@/stores/uiStore';
 
@@ -204,5 +204,59 @@ describe('미리보기 게이트 2곳의 독립 판정 특성화 (SPEC-TSDB-002 
     expect(() => renderPanel('line-chart', undefined as never)).not.toThrow();
     expect(lineGateActive()).toBe(false);
     expect(statGateActive()).toBe(false);
+  });
+});
+
+// ===== 실제 데이터 적용 옵션 (SPEC-TSDB-004) =====
+
+describe('PanelSettingsDialog — 실제 데이터 적용 옵션', () => {
+  function activeStore() {
+    return {
+      agent_name: 'store-1',
+      series: [{ key: 'room:temp' }],
+      time_window_ms: 60_000,
+      interval_ms: 10_000,
+      aggregation: 'average',
+    };
+  }
+  function renderPanel(type: string, config: Record<string, unknown>) {
+    storeMock.panel = { id: 'p1', type, title: '패널', config } as unknown as PanelConfig;
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+  }
+
+  /** 실제 패널을 그렸는가(= 합성 미니 프리뷰가 아닌가). 위 describe 의 판정과 같다. */
+  function realRenderActive(): boolean {
+    const wrapper = screen.queryByTestId('line-chart-preview-wrapper');
+    if (!wrapper) return false;
+    return !wrapper.textContent?.includes('dashboard.settings.preview.label');
+  }
+
+  it('토글이 **데이터 소스 설정** 안에 있다 (미리보기 영역이 아니다)', () => {
+    renderPanel('line-chart', { data_source: 'store', store_source: activeStore() });
+    const toggle = screen.getByTestId('preview-real-data-toggle');
+    const dataSource = screen.getByTestId('panel-settings-data-source');
+    // 조회를 낼지 말지를 정하는 옵션이므로 소스 설정에 속한다.
+    expect(dataSource.contains(toggle)).toBe(true);
+
+    const previewWrapper = screen.queryByTestId('line-chart-preview-wrapper');
+    expect(previewWrapper?.contains(toggle) ?? false).toBe(false);
+  });
+
+  it('기본은 켜짐이며 끄면 실제 렌더 대신 합성 미리보기로 내려간다', () => {
+    renderPanel('line-chart', { data_source: 'store', store_source: activeStore() });
+    const toggle = screen.getByTestId('preview-real-data-toggle')
+      .querySelector('input') as HTMLInputElement;
+    // 기본 켜짐 — Store 의 종전 동작을 그대로 둔다.
+    expect(toggle.checked).toBe(true);
+    expect(realRenderActive()).toBe(true);
+
+    fireEvent.click(toggle);
+    expect(realRenderActive()).toBe(false);
+  });
+
+  it('소스가 비활성이면 토글을 노출하지 않는다', () => {
+    // 채널 모드에는 조회 옵션이 성립하지 않는다.
+    renderPanel('line-chart', { channel_name: 'ch1' });
+    expect(screen.queryByTestId('preview-real-data-toggle')).toBeNull();
   });
 });

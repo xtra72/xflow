@@ -922,22 +922,6 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 />
               </div>
             )}
-            {/* 실제 데이터 적용 여부 — 소스가 활성일 때만 의미가 있다.
-                끄면 합성 미리보기로 내려가 조회 없이 스타일만 확인한다. */}
-            {(previewSourceBinding.kind === 'store' || previewSourceBinding.kind === 'tsdb') &&
-              previewSourceBinding.active && (
-                <label
-                  data-testid="preview-real-data-toggle"
-                  className="mb-1 flex items-center gap-1 self-start text-[11px] text-(--color-text-muted)"
-                >
-                  <input
-                    type="checkbox"
-                    checked={previewRealData}
-                    onChange={(e) => setPreviewRealData(e.target.checked)}
-                  />
-                  <span>{t('dashboard.settings.preview.previewRealData')}</span>
-                </label>
-              )}
             {panel.type === 'line-chart' && (
               <div
                 // 실제 LineChartPanel 을 렌더할 때 높이를 물려주려면 flex 컨테이너여야 한다
@@ -1034,6 +1018,24 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
           panel={panel}
           onConfigChange={(c) => handleConfigChange(c)}
         />
+        {/* 실제 데이터 적용 여부 — **데이터 소스 설정** 안에 둔다.
+            미리보기 영역에 두면 "보기 방식" 처럼 읽히지만, 실제로는 소스에
+            질의를 낼지 말지를 정하는 조회 옵션이다. 소스가 활성일 때만
+            의미가 있으므로 그때만 노출한다. */}
+        {(previewSourceBinding.kind === 'store' || previewSourceBinding.kind === 'tsdb') &&
+          previewSourceBinding.active && (
+            <label
+              data-testid="preview-real-data-toggle"
+              className="mt-2 flex items-center gap-1 text-xs text-(--color-text-muted)"
+            >
+              <input
+                type="checkbox"
+                checked={previewRealData}
+                onChange={(e) => setPreviewRealData(e.target.checked)}
+              />
+              <span>{t('dashboard.settings.preview.previewRealData')}</span>
+            </label>
+          )}
       </CollapsibleSection>
     </div>
   ) : null;
