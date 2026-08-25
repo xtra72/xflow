@@ -88,3 +88,92 @@ describe('buildGapOverlay', () => {
     expect(out.gapKeys).toEqual([gapSeriesKey('a')]);
   });
 });
+
+// ===== 행 자체가 없는 결측 (보고된 결함) =====
+//
+// `빈 구간 처리 = 채우지 않음`(기본값)이면 서버가 **빈 버킷을 아예 보내지 않는다**.
+// 그러면 차트 행에 null 이 남지 않고 행이 통째로 없어서, null 만 보는 판정은
+// 결측을 하나도 찾지 못한다. 시간 간격으로 봐야 한다.
+
+describe('buildGapOverlay — 행이 없는 결측', () => {
+  /** 주어진 타임스탬프에만 행이 있는 데이터. */
+  function sparse(points: Array<[number, number]>): Array<Record<string, unknown>> {
+    return points.map(([t, v]) => ({ timestamp: t, [K]: v }));
+  }
+
+  it('간격을 주면 빠진 버킷 수로 판정한다', () => {
+    // 1분 간격인데 0분과 10분만 있다 → 사이 9개가 빠졌다.
+    const { rows, gapKeys } = buildGapOverlay(
+      sparse([
+        [0, 10],
+        [600_000, 50],
+      ]),
+      [K],
+      2,
+      60_000,
+    );
+    expect(gapKeys).toEqual([G]);
+    expect(rows[0]![G]).toBe(10);
+    expect(rows[1]![G]).toBe(50);
+  });
+
+  it('간격만큼만 떨어져 있으면 결측이 아니다', () => {
+    const { gapKeys } = buildGapOverlay(
+      sparse([
+        [0, 10],
+        [60_000, 20],
+        [120_000, 30],
+      ]),
+      [K],
+      2,
+      60_000,
+    );
+    expect(gapKeys).toEqual([]);
+  });
+
+  it('임계 미만으로 빠진 것은 잇지 않는다', () => {
+    // 1개만 빠졌는데 임계가 2다.
+    const { gapKeys } = buildGapOverlay(
+      sparse([
+        [0, 10],
+        [120_000, 30],
+      ]),
+      [K],
+      2,
+      60_000,
+    );
+    expect(gapKeys).toEqual([]);
+  });
+
+  it('간격을 주지 않으면 종전대로 행 인덱스로 센다', () => {
+    // 행이 붙어 있으므로 인덱스 기준으로는 결측이 없다.
+    const { gapKeys } = buildGapOverlay(
+      sparse([
+        [0, 10],
+        [600_000, 50],
+      ]),
+      [K],
+      2,
+    );
+    expect(gapKeys).toEqual([]);
+  });
+
+  it('행이 있는 결측과 없는 결측이 섞여도 각각 처리한다', () => {
+    const rows = [
+      { timestamp: 0, [K]: 0 },
+      { timestamp: 60_000, [K]: null },
+      { timestamp: 120_000, [K]: null },
+      { timestamp: 180_000, [K]: 30 },
+      // 3분 → 13분: 행 없이 9개 빠짐
+      { timestamp: 780_000, [K]: 80 },
+    ];
+    const out = buildGapOverlay(rows, [K], 2, 60_000);
+    expect(out.gapKeys).toEqual([G]);
+    // 앞 구간(행이 있는 null)의 보간
+    expect(out.rows[1]![G]).toBe(10);
+    expect(out.rows[2]![G]).toBe(20);
+    // 뒤 구간(행이 없는 결측)의 양 끝
+    expect(out.rows[3]![G]).toBe(30);
+    expect(out.rows[4]![G]).toBe(80);
+  });
+});

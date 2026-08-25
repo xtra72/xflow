@@ -12,6 +12,11 @@
 // 결측 구간이 둘 이상일 때 **구간 1의 끝과 구간 2의 시작**까지 이어져 실측 구간 위에
 // 가짜 점선이 겹친다. 보간값을 채우고 `connectNulls={false}` 로 두면 각 구간이
 // 독립적으로 그려진다.
+//
+// **결측은 두 모습으로 온다.** 빈 구간 처리를 `비우기(null)` 로 두면 행은 있고 값만
+// null 이지만, 기본값인 `채우지 않음` 이면 서버가 빈 버킷을 **아예 보내지 않아 행이
+// 통째로 없다**. 후자는 null 을 세는 방식으로는 하나도 찾을 수 없다 — 그래서 버킷
+// 간격을 받아 **시간 차이**로 빠진 개수를 센다.
 
 /** 덧그림 시리즈 키의 접두사. 원래 시리즈 키와 절대 겹치지 않아야 한다. */
 export const GAP_SERIES_PREFIX = '__gap__';
@@ -37,7 +42,9 @@ function numAt(row: Row | undefined, key: string): number | null {
  *
  * @param rows      차트 행(시간 오름차순). 원본은 변경하지 않는다.
  * @param keys      대상 시리즈 키.
- * @param threshold 점선으로 표기할 **최소 연속 결측 개수**. 0 이하면 아무것도 하지 않는다.
+ * @param threshold  점선으로 표기할 **최소 연속 결측 개수**. 0 이하면 아무것도 하지 않는다.
+ * @param intervalMs 버킷 간격(ms). 0 이면 행 인덱스로 세고(행이 남아 있는 결측만
+ *                   보인다), 양수이면 시간 차이로 세어 **행이 없는 결측**까지 찾는다.
  * @returns         덧그림 키가 추가된 새 행 배열과, 실제로 덧그림이 생긴 키 목록.
  *
  * 양쪽 끝(맨 앞·맨 뒤)의 결측은 이을 상대가 없으므로 건너뛴다 — 없는 값을 향해
@@ -47,42 +54,48 @@ export function buildGapOverlay(
   rows: readonly Row[],
   keys: readonly string[],
   threshold: number,
+  intervalMs = 0,
 ): { rows: Row[]; gapKeys: string[] } {
   if (threshold <= 0 || rows.length === 0 || keys.length === 0) {
     return { rows: rows as Row[], gapKeys: [] };
   }
   const out: Row[] = rows.map((r) => ({ ...r }));
   const gapKeys: string[] = [];
+  const timeAt = (i: number): number => {
+    const t = out[i]?.['timestamp'];
+    return typeof t === 'number' ? t : 0;
+  };
 
   for (const key of keys) {
     const gk = gapSeriesKey(key);
     let touched = false;
-    let i = 0;
-    while (i < out.length) {
-      if (numAt(out[i], key) !== null) {
-        i++;
-        continue;
+    // 값이 있는 위치만 훑고, 이웃한 두 위치 사이에 몇 개가 빠졌는지 센다.
+    // 행이 남아 있든(null) 통째로 없든 같은 방식으로 다뤄진다.
+    let prev = -1;
+    for (let i = 0; i < out.length; i++) {
+      const v = numAt(out[i], key);
+      if (v === null) continue;
+      if (prev >= 0) {
+        const left = numAt(out[prev], key)!;
+        const missing =
+          intervalMs > 0
+            ? // 간격을 알면 시간 차이로 센다 — 행이 없는 결측은 이 길로만 보인다.
+              Math.max(0, Math.round((timeAt(i) - timeAt(prev)) / intervalMs) - 1)
+            : // 간격을 모르면 사이에 남아 있는 행(null) 개수로 센다.
+              i - prev - 1;
+        if (missing >= threshold) {
+          out[prev]![gk] = left;
+          out[i]![gk] = v;
+          // 사이에 행이 남아 있으면 보간값을 채운다. 채우지 않으면 결측 구간이
+          // 둘 이상일 때 서로 이어져 실측 구간 위에 가짜 점선이 겹친다.
+          const steps = i - prev;
+          for (let n = prev + 1; n < i; n++) {
+            out[n]![gk] = left + ((v - left) * (n - prev)) / steps;
+          }
+          touched = true;
+        }
       }
-      // 결측 구간 [start, end] 을 찾는다.
-      const start = i;
-      let end = i;
-      while (end + 1 < out.length && numAt(out[end + 1], key) === null) end++;
-      i = end + 1;
-
-      const runLength = end - start + 1;
-      if (runLength < threshold) continue;
-      const left = numAt(out[start - 1], key);
-      const right = numAt(out[end + 1], key);
-      // 이을 상대가 한쪽이라도 없으면 건너뛴다(선두·말미 결측).
-      if (left === null || right === null) continue;
-
-      const steps = runLength + 1; // left → right 사이 구간 수
-      out[start - 1]![gk] = left;
-      out[end + 1]![gk] = right;
-      for (let n = 0; n < runLength; n++) {
-        out[start + n]![gk] = left + ((right - left) * (n + 1)) / steps;
-      }
-      touched = true;
+      prev = i;
     }
     if (touched) gapKeys.push(gk);
   }

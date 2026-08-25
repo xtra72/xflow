@@ -519,9 +519,15 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   // 임계가 없으면 `buildGapOverlay` 가 입력을 그대로 돌려주므로, 저장된
   // 대시보드는 계산도 그림도 종전과 같다.
   const gapThreshold = cfg.gap_dash_threshold ?? 0;
+  // 버킷 간격 — **행이 없는 결측**을 찾는 데 쓴다. 빈 구간 처리가 기본값
+  // (`채우지 않음`)이면 서버가 빈 버킷을 아예 보내지 않아 행이 통째로 없고,
+  // null 을 세는 방식으로는 하나도 찾을 수 없다. 채널 모드는 버킷 개념이
+  // 없으므로 0(행 인덱스 기준)으로 둔다.
+  const gapIntervalMs =
+    (cfg.tsdb_source?.interval_ms ?? cfg.store_source?.interval_ms ?? 0) || 0;
   const { rows: chartData, gapKeys } = useMemo(
-    () => buildGapOverlay(rawOrPaused, seriesKeys, gapThreshold),
-    [rawOrPaused, seriesKeys, gapThreshold],
+    () => buildGapOverlay(rawOrPaused, seriesKeys, gapThreshold, gapIntervalMs),
+    [rawOrPaused, seriesKeys, gapThreshold, gapIntervalMs],
   );
   const gapKeySet = useMemo(() => new Set(gapKeys), [gapKeys]);
 
