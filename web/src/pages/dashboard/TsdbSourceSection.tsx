@@ -495,19 +495,20 @@ export function TsdbSourceSection({
       push(measurement, c.field, { ...tagFilters, ...c.combo });
     }
     // 후보에 없는 등록분 — measurement 가 다른 것도 포함한다.
+    //
+    // 배지("다른 조건")는 **검색을 한 뒤에만** 뜻이 있다. 아직 새로고침을 누르지
+    // 않아 후보가 비어 있으면 "후보에 없음" 은 비교 결과가 아니라 비교 대상의
+    // 부재이며, 그 상태에서 배지를 붙이면 같은 조건으로 등록한 시리즈까지
+    // "다른 조건" 이라고 잘못 말하게 된다.
+    const badge = candidates.length > 0 ? t('dashboard.chart.tsdbRowOtherCondition') : undefined;
     for (const sr of tsdbSource.series) {
       const picks = (sr.group_by?.length ?? 0) > 0 ? (sr.group_filter ?? []) : [];
       if (picks.length === 0) {
-        push(sr.key, sr.field, { ...(sr.tags ?? {}) }, t('dashboard.chart.tsdbRowOtherCondition'));
+        push(sr.key, sr.field, { ...(sr.tags ?? {}) }, badge);
         continue;
       }
       for (const combo of picks) {
-        push(
-          sr.key,
-          sr.field,
-          { ...(sr.tags ?? {}), ...combo },
-          t('dashboard.chart.tsdbRowOtherCondition'),
-        );
+        push(sr.key, sr.field, { ...(sr.tags ?? {}), ...combo }, badge);
       }
     }
     return out;

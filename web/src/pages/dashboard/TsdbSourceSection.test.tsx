@@ -1164,6 +1164,26 @@ describe('TsdbSourceSection — 시리즈별 개별 이름', () => {
 // ===== 한 표로 통합 (SPEC-TSDB-004 §2.16) =====
 
 describe('TsdbSourceSection — 검색 표와 등록 목록 통합', () => {
+  it('검색을 아직 하지 않았으면 배지를 붙이지 않는다', async () => {
+    // 후보가 비어 있으면 "후보에 없음" 은 비교 결과가 아니라 비교 대상의 부재다.
+    // 그 상태에서 "다른 조건" 이라고 말하면 틀린 라벨이 된다.
+    render(
+      <Harness
+        initial={tsdbConfig({
+          agent_id: 'ix2',
+          agent_name: 'influx-v2',
+          series: [{ key: 'cpu', field: 'usage' }],
+        })}
+        fetchers={makeFetchers()}
+      />,
+    );
+    const table = await screen.findByTestId('chart-tsdb-series-select');
+    await waitFor(() =>
+      expect(table.querySelectorAll('[data-testid^="series-tr-"]')).toHaveLength(1),
+    );
+    expect(table.querySelectorAll('[data-testid^="series-badge-"]')).toHaveLength(0);
+  });
+
   it('현재 검색 조건에 없는 등록분도 같은 표에 배지와 함께 남는다', async () => {
     render(
       <Harness
@@ -1180,12 +1200,12 @@ describe('TsdbSourceSection — 검색 표와 등록 목록 통합', () => {
       />,
     );
     const table = await screen.findByTestId('chart-tsdb-series-select');
-    await waitFor(() =>
-      expect(table.querySelectorAll('[data-testid^="series-tr-"]')).toHaveLength(2),
-    );
+    await refreshList();
     // 표에서 빼면 해제하거나 이름을 고칠 자리가 사라진다(UB1-20).
     expect(table.textContent).toContain('mem');
-    expect(table.querySelectorAll('[data-testid^="series-badge-"]').length).toBeGreaterThan(0);
+    // cpu 는 검색 후보에 있으므로 배지가 없고, mem 만 붙는다.
+    const badged = table.querySelectorAll('[data-testid^="series-badge-"]');
+    expect(badged).toHaveLength(1);
   });
 
   it('등록된 행에만 이름·색 편집기가 붙는다', async () => {
