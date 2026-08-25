@@ -1256,7 +1256,10 @@
       "tsdbAggregation": "인터벌 집계",
       "tsdbAggregationCountHint": "값이 원본 필드의 단위가 아니라 표본 \"개수\" 입니다. Y축 라벨·단위 설정과 어긋날 수 있습니다.",
       "tsdbInterval": "인터벌 간격",
-      "tsdbIntervalCustomAria": "인터벌 간격(초)"
+      "tsdbIntervalCustomAria": "인터벌 간격(초)",
+      "gapDash": "값이 없는 구간을 점선으로 표시",
+      "gapDashThreshold": "점선으로 볼 최소 결측 개수",
+      "gapDashHint": "연속으로 이만큼 값이 없으면 그 구간을 점선으로 잇습니다. 값이 없는 구간을 0·직전 값으로 채우면 결측이 생기지 않아 적용되지 않습니다."
     },
     "widget": {
       "throughputLabel": "처리량 (msg/s)"

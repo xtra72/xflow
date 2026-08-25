@@ -1021,3 +1021,70 @@ describe('불리언 시리즈 안내 (SPEC-CHART-002 M6.2)', () => {
     expect(screen.getByTestId(COMBO_TESTID)).toBeInTheDocument();
   });
 });
+
+// ===== 결측 구간 점선 표기 (SPEC-TSDB-004 §2.19) =====
+
+describe('LineChartSection — 결측 구간 점선', () => {
+  it('기본은 꺼짐이며 임계 입력이 숨어 있다', () => {
+    render(
+      <LineChartSection panel={makePanel('line-chart', {})} onConfigChange={() => {}} />,
+    );
+    const toggle = screen.getByTestId('line-chart-gap-dash') as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    expect(screen.queryByTestId('line-chart-gap-dash-threshold')).toBeNull();
+  });
+
+  it('켜면 기본 임계로 저장한다', () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', {})}
+        onConfigChange={(p) => patches.push(p)}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('line-chart-gap-dash'));
+    expect(patches.at(-1)?.gap_dash_threshold).toBe(2);
+  });
+
+  it('끄면 값을 지운다 — 0 을 남기면 "켜져 있는데 임계 0" 처럼 읽힌다', () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', { gap_dash_threshold: 3 })}
+        onConfigChange={(p) => patches.push(p)}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('line-chart-gap-dash'));
+    expect(patches.at(-1)?.gap_dash_threshold).toBeUndefined();
+  });
+
+  it('켜져 있으면 임계를 고칠 수 있다', () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', { gap_dash_threshold: 2 })}
+        onConfigChange={(p) => patches.push(p)}
+      />,
+    );
+    const input = screen.getByTestId('line-chart-gap-dash-threshold') as HTMLInputElement;
+    expect(input.value).toBe('2');
+    fireEvent.change(input, { target: { value: '5' } });
+    expect(patches.at(-1)?.gap_dash_threshold).toBe(5);
+  });
+
+  it('1 미만은 반영하지 않는다', () => {
+    const patches: Array<Record<string, unknown>> = [];
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', { gap_dash_threshold: 2 })}
+        onConfigChange={(p) => patches.push(p)}
+      />,
+    );
+    const before = patches.length;
+    fireEvent.change(screen.getByTestId('line-chart-gap-dash-threshold'), {
+      target: { value: '0' },
+    });
+    // 0 은 "끄기" 와 같은 뜻인데 토글은 켜져 있다 — 상태가 모순된다.
+    expect(patches.length).toBe(before);
+  });
+});

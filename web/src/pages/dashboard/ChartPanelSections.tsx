@@ -260,6 +260,14 @@ export function ChartChannelSection({
 
 // --- 1.5 데이터 소스 토글 + Store 소스 선택 (SPEC-WEB-005) ---
 
+/**
+ * 결측 구간 점선 표기의 기본 임계(연속 결측 개수). @spec SPEC-TSDB-004 §2.19
+ *
+ * 1 이 아니라 2 인 이유: 표본 하나가 빠지는 것은 흔한 잡음이라 매번 점선이 되면
+ * 신호가 되지 못한다. 2 부터가 "구간" 으로 읽힌다.
+ */
+const GAP_DASH_DEFAULT = 2;
+
 /** 집계 옵션(UI 표기). tsdb 모달과 동일한 라벨 키를 재사용한다. */
 const STORE_AGG_OPTIONS: { value: StoreSourceConfig['aggregation']; labelKey: string }[] = [
   { value: 'min', labelKey: 'tsdb.aggMin' },
@@ -1695,6 +1703,7 @@ export function LineChartSection({
   const { t } = useTranslation();
   const config = panel.config ?? {};
   const maxPoints = (config.max_points as number | undefined) ?? 100;
+  const gapDashThreshold = (config.gap_dash_threshold as number | undefined) ?? 0;
   const xLabel = (config.x_label as string | undefined) ?? '';
   const yMin = config.y_min as number | undefined;
   const yMax = config.y_max as number | undefined;
@@ -1792,6 +1801,47 @@ export function LineChartSection({
               className={inputClass()}
             />
           </LabeledField>
+        </div>
+
+        {/* 결측 구간 점선 표기 (SPEC-TSDB-004 §2.19).
+            켜면 값이 없는 구간에서 실선을 끊고 그 구간만 점선으로 잇는다 —
+            이은 것과 잰 것을 눈으로 가른다. 끄면 종전대로 조용히 이어 그린다. */}
+        <div className="space-y-1">
+          <label className="flex items-center gap-1.5 text-xs text-(--color-text-muted)">
+            <input
+              type="checkbox"
+              data-testid="line-chart-gap-dash"
+              checked={gapDashThreshold > 0}
+              onChange={(e) =>
+                // 끌 때 0 을 남기지 않는다 — "켜져 있는데 임계 0" 처럼 읽힌다.
+                onConfigChange({
+                  gap_dash_threshold: e.target.checked ? GAP_DASH_DEFAULT : undefined,
+                })
+              }
+            />
+            <span>{t('dashboard.chart.gapDash')}</span>
+          </label>
+          {gapDashThreshold > 0 && (
+            <LabeledField
+              label={t('dashboard.chart.gapDashThreshold')}
+              hint={t('dashboard.chart.gapDashHint')}
+            >
+              <input
+                type="number"
+                min={1}
+                max={10000}
+                data-testid="line-chart-gap-dash-threshold"
+                value={gapDashThreshold}
+                onChange={(e) => {
+                  const n = parseInt(e.target.value, 10);
+                  // 1 미만은 "끄기" 와 같은 뜻인데 토글은 켜져 있다 — 모순된
+                  // 상태를 만들지 않으려면 끄기는 토글로만 한다.
+                  if (!Number.isNaN(n) && n >= 1) onConfigChange({ gap_dash_threshold: n });
+                }}
+                className={inputClass()}
+              />
+            </LabeledField>
+          )}
         </div>
 
         {timeWindowMode === 'points' && (

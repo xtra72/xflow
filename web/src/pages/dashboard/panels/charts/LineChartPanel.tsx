@@ -2,7 +2,7 @@
 // x축=timestamp, y축=display_field.
 // multi_series_field 가 지정되면 label 값별로 line 을 분리한다.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Download, Pause, Play, TrendingUp } from 'lucide-react';
 import {
   CartesianGrid,
@@ -48,6 +48,7 @@ import {
 } from './chartChannelUtils';
 import type { ChartConnectionStatus } from '@/services/ws/chartChannel';
 import { chartDataToCsv, downloadCsv } from './csvExport';
+import { buildGapOverlay, GAP_DASHARRAY, gapSeriesKey } from './gapDash';
 import { useChartChannel } from './useChartChannel';
 import { useChartChannels, type ChannelState } from './useChartChannels';
 import { resolvePanelSourceBinding } from './panelDataSource';
@@ -509,9 +510,20 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   ]);
 
   // 일시정지 시 스냅샷 사용
-  const chartData = pauseSnapshot ? pauseSnapshot.chartData : rawChartData;
+  const rawOrPaused = pauseSnapshot ? pauseSnapshot.chartData : rawChartData;
   const seriesKeys = pauseSnapshot ? pauseSnapshot.seriesKeys : rawSeriesKeys;
   const effectiveNow = pauseSnapshot ? pauseSnapshot.now : now;
+
+  // 결측 구간 점선 덧그림 (SPEC-TSDB-004 §2.19).
+  //
+  // 임계가 없으면 `buildGapOverlay` 가 입력을 그대로 돌려주므로, 저장된
+  // 대시보드는 계산도 그림도 종전과 같다.
+  const gapThreshold = cfg.gap_dash_threshold ?? 0;
+  const { rows: chartData, gapKeys } = useMemo(
+    () => buildGapOverlay(rawOrPaused, seriesKeys, gapThreshold),
+    [rawOrPaused, seriesKeys, gapThreshold],
+  );
+  const gapKeySet = useMemo(() => new Set(gapKeys), [gapKeys]);
 
   // 렌더 중인 시리즈가 모두 boolean 이면 Y축/툴팁을 true/false 로 표시한다.
   // (혼합 시엔 숫자 축을 유지하되 boolean 시리즈 값만 툴팁에서 true/false 로 표기)
@@ -887,18 +899,39 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
                   if (dash) strokeDasharray = dash;
                 }
               }
+              const gapKey = gapSeriesKey(key);
+              const hasGap = gapKeySet.has(gapKey);
               return (
-                <Line
-                  key={key}
-                  type={lineSmooth ? 'monotone' : 'linear'}
-                  dataKey={key}
-                  stroke={stroke}
-                  strokeWidth={strokeWidth}
-                  strokeDasharray={strokeDasharray}
-                  dot={false}
-                  isAnimationActive={false}
-                  connectNulls
-                />
+                <Fragment key={key}>
+                  <Line
+                    type={lineSmooth ? 'monotone' : 'linear'}
+                    dataKey={key}
+                    stroke={stroke}
+                    strokeWidth={strokeWidth}
+                    strokeDasharray={strokeDasharray}
+                    dot={false}
+                    isAnimationActive={false}
+                    // 점선 표기를 켠 패널에서는 결측에서 선을 **끊는다** — 끊지 않으면
+                    // 덧그림 점선 아래에 실선이 그대로 남아 둘이 겹친다.
+                    connectNulls={gapThreshold <= 0}
+                  />
+                  {hasGap && (
+                    <Line
+                      type={lineSmooth ? 'monotone' : 'linear'}
+                      dataKey={gapKey}
+                      stroke={stroke}
+                      strokeWidth={strokeWidth}
+                      strokeDasharray={GAP_DASHARRAY}
+                      dot={false}
+                      isAnimationActive={false}
+                      connectNulls={false}
+                      // 범례·툴팁에는 넣지 않는다 — 새 시리즈가 아니라 같은
+                      // 시리즈의 결측 구간 표기다.
+                      legendType="none"
+                      tooltipType="none"
+                    />
+                  )}
+                </Fragment>
               );
             })}
           </LineChart>

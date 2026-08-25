@@ -1256,7 +1256,10 @@
       "tsdbAggregation": "Interval aggregation",
       "tsdbAggregationCountHint": "Values are sample counts, not the field unit. This may conflict with the Y-axis label and unit settings.",
       "tsdbInterval": "Interval",
-      "tsdbIntervalCustomAria": "Interval in seconds"
+      "tsdbIntervalCustomAria": "Interval in seconds",
+      "gapDash": "Dash the gaps",
+      "gapDashThreshold": "Minimum missing points",
+      "gapDashHint": "A run of this many missing points is drawn as a dashed segment. Filling empty intervals with 0 or the previous value leaves no gaps, so this has no effect."
     },
     "widget": {
       "throughputLabel": "Throughput (msg/s)"

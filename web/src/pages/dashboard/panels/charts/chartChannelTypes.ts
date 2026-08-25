@@ -756,6 +756,22 @@ export interface LineChartPanelConfig extends ChartPanelConfigBase {
   /** 범례 */
   legend?: LegendConfig;
 
+  /**
+   * 값이 없는 구간을 **점선으로 이어** 표기할 최소 연속 결측 개수.
+   * @spec SPEC-TSDB-004 §2.19
+   *
+   * 없거나 0 이하이면 끈다 — 이때 라인은 종전대로 결측을 조용히 이어 그린다
+   * (`connectNulls`), 저장된 대시보드의 그림이 변하지 않는다.
+   *
+   * 켜면 원래 라인은 결측에서 끊기고, 그 구간만 점선 덧그림으로 이어진다.
+   * 이은 것과 잰 것을 눈으로 가를 수 있게 하는 것이 목적이다 — 3시간 정전이
+   * "그렇게 측정된 직선" 과 똑같이 보이면 안 된다.
+   *
+   * 빈 구간 채우기(`fill: 'zero' | 'previous'`)를 쓰면 결측 자체가 생기지 않아
+   * 이 설정은 아무 일도 하지 않는다.
+   */
+  gap_dash_threshold?: number;
+
   /** @deprecated 채널별로 이동됨 — 하위 호환 fallback */
   smooth?: boolean;
   multi_series_field?: string;
