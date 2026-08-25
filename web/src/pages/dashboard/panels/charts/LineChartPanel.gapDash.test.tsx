@@ -10,7 +10,7 @@ import { act, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import type { TsdbSourceConfig } from './chartChannelTypes';
-import { gapSeriesKey, GAP_DASHARRAY } from './gapDash';
+import { gapDotSeriesKey, gapSeriesKey, GAP_DASHARRAY } from './gapDash';
 
 const tsdbMocks = vi.hoisted(() => ({ queryTsdbSourceMatrix: vi.fn() }));
 vi.mock('@/services/api/tsdbSource', async () => {
@@ -104,9 +104,22 @@ describe('LineChartPanel — 결측 구간 점선', () => {
     expect(rendered.get(gk)).toBe(GAP_DASHARRAY);
   });
 
+  it('실선과 점선이 만나는 자리에 점을 찍는다', async () => {
+    await renderPanel({
+      data_source: 'tsdb',
+      tsdb_source: tsdbSource,
+      gap_dash_threshold: 2,
+    });
+    const rendered = lines();
+    const seriesKey = [...rendered.keys()].find(
+      (k) => !k.startsWith('__gap__') && !k.startsWith('__gapdot__'),
+    )!;
+    expect(rendered.has(gapDotSeriesKey(seriesKey))).toBe(true);
+  });
+
   it('꺼져 있으면 덧그림이 없다', async () => {
     await renderPanel({ data_source: 'tsdb', tsdb_source: tsdbSource });
-    expect([...lines().keys()].some((k) => k.startsWith('__gap__'))).toBe(false);
+    expect([...lines().keys()].some((k) => k.startsWith('__gap'))).toBe(false);
   });
 
   it('임계보다 짧은 결측에는 덧그림이 없다', async () => {
@@ -116,6 +129,6 @@ describe('LineChartPanel — 결측 구간 점선', () => {
       // 6개 빠졌는데 임계가 7이다.
       gap_dash_threshold: 7,
     });
-    expect([...lines().keys()].some((k) => k.startsWith('__gap__'))).toBe(false);
+    expect([...lines().keys()].some((k) => k.startsWith('__gap'))).toBe(false);
   });
 });

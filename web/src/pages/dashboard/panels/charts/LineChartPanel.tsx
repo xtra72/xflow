@@ -48,7 +48,12 @@ import {
 } from './chartChannelUtils';
 import type { ChartConnectionStatus } from '@/services/ws/chartChannel';
 import { chartDataToCsv, downloadCsv } from './csvExport';
-import { buildGapOverlay, GAP_DASHARRAY, gapSeriesKey } from './gapDash';
+import {
+  buildGapOverlay,
+  GAP_DASHARRAY,
+  gapDotSeriesKey,
+  gapSeriesKey,
+} from './gapDash';
 import { useChartChannel } from './useChartChannel';
 import { useChartChannels, type ChannelState } from './useChartChannels';
 import { resolvePanelSourceBinding } from './panelDataSource';
@@ -940,6 +945,21 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
                       connectNulls={false}
                       // 범례·툴팁에는 넣지 않는다 — 새 시리즈가 아니라 같은
                       // 시리즈의 결측 구간 표기다.
+                      legendType="none"
+                      tooltipType="none"
+                    />
+                  )}
+                  {hasGap && (
+                    // 실선이 끊기고 점선이 시작되는 자리를 점으로 짚는다.
+                    // 선은 그리지 않는다 — 이미 두 라인이 그 구간을 덮고 있다.
+                    <Line
+                      type="linear"
+                      dataKey={gapDotSeriesKey(key)}
+                      stroke="none"
+                      dot={{ r: 3, fill: stroke, strokeWidth: 0 }}
+                      activeDot={false}
+                      isAnimationActive={false}
+                      connectNulls={false}
                       legendType="none"
                       tooltipType="none"
                     />

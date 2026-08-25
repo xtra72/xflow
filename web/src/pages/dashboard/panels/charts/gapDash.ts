@@ -29,6 +29,21 @@ export function gapSeriesKey(key: string): string {
 /** 덧그림 라인의 점선 패턴. 사용자가 고른 선 모양과 구분되도록 고정한다. */
 export const GAP_DASHARRAY = '3 4';
 
+/** 경계 점 시리즈 키의 접두사. 선 덧그림 키와도 원래 키와도 겹치지 않아야 한다. */
+export const GAP_DOT_PREFIX = '__gapdot__';
+
+/**
+ * 원래 시리즈 키에 대응하는 **경계 점** 키.
+ *
+ * 실선이 끊기고 점선이 시작되는 자리 — 마지막 실측과 다음 실측 — 에만 값이 있다.
+ * 그 두 점은 잰 값이므로 점을 찍어도 거짓이 아니고, 어디까지가 측정이고 어디부터가
+ * 이은 것인지 경계를 눈으로 짚어 준다. 구간 내부에는 찍지 않는다 — 그 자리의 값은
+ * 보간이라 점을 찍으면 잰 것처럼 보인다.
+ */
+export function gapDotSeriesKey(key: string): string {
+  return `${GAP_DOT_PREFIX}${key}`;
+}
+
 type Row = Record<string, unknown>;
 
 /** 숫자면 그 값, 아니면 null. `undefined`·문자열·boolean 을 모두 결측으로 본다. */
@@ -68,6 +83,7 @@ export function buildGapOverlay(
 
   for (const key of keys) {
     const gk = gapSeriesKey(key);
+    const dk = gapDotSeriesKey(key);
     let touched = false;
     // 값이 있는 위치만 훑고, 이웃한 두 위치 사이에 몇 개가 빠졌는지 센다.
     // 행이 남아 있든(null) 통째로 없든 같은 방식으로 다뤄진다.
@@ -86,6 +102,9 @@ export function buildGapOverlay(
         if (missing >= threshold) {
           out[prev]![gk] = left;
           out[i]![gk] = v;
+          // 경계 점은 **양 끝에만** 찍는다(구간 내부는 보간값이다).
+          out[prev]![dk] = left;
+          out[i]![dk] = v;
           // 사이에 행이 남아 있으면 보간값을 채운다. 채우지 않으면 결측 구간이
           // 둘 이상일 때 서로 이어져 실측 구간 위에 가짜 점선이 겹친다.
           const steps = i - prev;

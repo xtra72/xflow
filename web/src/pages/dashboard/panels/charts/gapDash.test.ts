@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 
-import { buildGapOverlay, gapSeriesKey, GAP_SERIES_PREFIX } from './gapDash';
+import {
+  buildGapOverlay,
+  gapDotSeriesKey,
+  gapSeriesKey,
+  GAP_SERIES_PREFIX,
+} from './gapDash';
 
 const K = 'temp';
 const G = gapSeriesKey(K);
@@ -175,5 +180,62 @@ describe('buildGapOverlay — 행이 없는 결측', () => {
     // 뒤 구간(행이 없는 결측)의 양 끝
     expect(out.rows[3]![G]).toBe(30);
     expect(out.rows[4]![G]).toBe(80);
+  });
+});
+
+// ===== 경계 점 표시 (SPEC-TSDB-004 §2.19) =====
+
+describe('buildGapOverlay — 실선/점선 경계 점', () => {
+  const D = gapDotSeriesKey(K);
+
+  it('결측 구간의 양 끝에만 점을 찍는다', () => {
+    // 1,2,3 결측. 경계는 0(마지막 실측)과 4(다음 실측)다.
+    const { rows } = buildGapOverlay(rowsOf([10, null, null, null, 50]), [K], 3);
+    expect(rows[0]![D]).toBe(10);
+    expect(rows[4]![D]).toBe(50);
+    // 구간 내부에는 점이 없다 — 그 자리에는 잰 값이 없다.
+    expect(rows[1]![D]).toBeUndefined();
+    expect(rows[2]![D]).toBeUndefined();
+    expect(rows[3]![D]).toBeUndefined();
+  });
+
+  it('결측이 없으면 점도 없다', () => {
+    const { rows } = buildGapOverlay(rowsOf([1, 2, 3]), [K], 2);
+    expect(rows.every((r) => r[D] === undefined)).toBe(true);
+  });
+
+  it('임계 미만 결측에는 점을 찍지 않는다', () => {
+    const { rows } = buildGapOverlay(rowsOf([1, null, 3]), [K], 2);
+    expect(rows.every((r) => r[D] === undefined)).toBe(true);
+  });
+
+  it('구간이 둘이면 경계가 넷이다', () => {
+    const { rows } = buildGapOverlay(
+      rowsOf([0, null, null, 30, 40, 50, null, null, 80]),
+      [K],
+      2,
+    );
+    const marked = rows.map((r, i) => (r[D] !== undefined ? i : -1)).filter((i) => i >= 0);
+    expect(marked).toEqual([0, 3, 5, 8]);
+  });
+
+  it('행이 없는 결측에서도 경계에 점을 찍는다', () => {
+    const { rows } = buildGapOverlay(
+      [
+        { timestamp: 0, [K]: 10 },
+        { timestamp: 600_000, [K]: 50 },
+      ],
+      [K],
+      2,
+      60_000,
+    );
+    expect(rows[0]![D]).toBe(10);
+    expect(rows[1]![D]).toBe(50);
+  });
+
+  it('점 키는 선 키와도 원래 키와도 겹치지 않는다', () => {
+    expect(gapDotSeriesKey('a')).not.toBe(gapSeriesKey('a'));
+    expect(gapDotSeriesKey('a')).not.toBe('a');
+    expect(gapDotSeriesKey('a').startsWith(GAP_SERIES_PREFIX)).toBe(false);
   });
 });
