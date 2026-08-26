@@ -21,9 +21,14 @@ import type {
   ChartDataSourceKind,
   SeriesReduceFunc,
   StoreSourceConfig,
+  TsdbSourceConfig,
 } from './chartChannelTypes';
 import { DEFAULT_STORE_SOURCE_WINDOW } from './chartChannelTypes';
-import { isStoreSourceActive, resolvePanelSourceBinding } from './panelDataSource';
+import {
+  isStoreSourceActive,
+  isTsdbSourceActive,
+  resolvePanelSourceBinding,
+} from './panelDataSource';
 
 // ---- 레거시 바인딩 형상 ----
 
@@ -55,7 +60,15 @@ export interface GaugeLegacyDataSource {
 
 // ---- 값 소스 판정 ----
 
-/** 게이지가 실제로 값을 읽어 올 경로. */
+/**
+ * 게이지가 실제로 값을 읽어 올 경로.
+ *
+ * `'store-source'` 는 **공용 시리즈 소스 경로 전체**를 가리킨다 — Store 와 TSDB 둘 다다.
+ * 이름이 `store-` 인 것은 그 경로가 `store_source` 하나뿐이던 시절의 잔재이며, 리터럴을
+ * 바꾸면 이 값을 비교하는 두 호출부(`GaugePanel` · `PanelSettingsDialog`)와 진리표
+ * 테스트가 함께 흔들리므로 그대로 둔다. 판정이 보는 것은 "채널이 아닌 소스가 값을 낼 수
+ * 있는가" 이지 소스 종류가 무엇인가가 아니다.
+ */
 export type GaugeValueSource = 'store-source' | 'legacy';
 
 /**
@@ -71,6 +84,14 @@ export interface GaugeValueSourceFlags {
   dataSource: ChartDataSourceKind | undefined;
   /** `config.store_source` 가 실제로 데이터를 낼 수 있는 상태인가. */
   storeSourceActive: boolean;
+  /**
+   * `config.tsdb_source` 가 실제로 데이터를 낼 수 있는 상태인가.
+   *
+   * store 와 **별도 항**인 이유: 두 블록은 공존할 수 있고(소스를 오가며 설정이 남는다),
+   * 어느 쪽이 값을 내는지는 `dataSource` 가 정한다. 하나로 합치면 TSDB 를 고른 게이지가
+   * 남아 있는 store 설정 때문에 활성으로 잘못 판정된다.
+   */
+  tsdbSourceActive: boolean;
   /** `config.series_reduce` 가 지정되어 있는가(값이 아니라 **유무**가 스위치다). */
   hasSeriesReduce: boolean;
 }
@@ -99,6 +120,9 @@ export function gaugeValueSourceFlags(
     storeSourceActive: isGaugeStoreSourceActive(
       config.store_source as StoreSourceConfig | undefined,
     ),
+    tsdbSourceActive: isTsdbSourceActive(
+      config.tsdb_source as TsdbSourceConfig | undefined,
+    ),
     hasSeriesReduce: (config.series_reduce as SeriesReduceFunc | undefined) !== undefined,
   };
 }
@@ -106,31 +130,54 @@ export function gaugeValueSourceFlags(
 /**
  * 값 소스 판정 — plan.md M5 판정 진리표의 단일 정본.
  *
- * | `data_source` | `store_source` 활성 | `series_reduce` | 결과 |
- * |---------------|---------------------|-----------------|------|
+ * | `data_source` | 해당 소스 활성 | `series_reduce` | 결과 |
+ * |---------------|----------------|-----------------|------|
  * | 미지정 / `'channel'` | — | — | `legacy` |
- * | `'store'` | 비활성 | — | `legacy` |
- * | `'store'` | 활성 | 부재 | `legacy` |
- * | `'store'` | 활성 | 있음 | `store-source` |
+ * | `'store'` / `'tsdb'` | 비활성 | — | `legacy` |
+ * | `'store'` / `'tsdb'` | 활성 | 부재 | `legacy` |
+ * | `'store'` / `'tsdb'` | 활성 | 있음 | `store-source` |
  *
  * 세 조건의 논리곱이며, **신규 경로가 실제로 값을 낼 수 있을 때만** 레거시를
- * 밀어낸다(§2.9 [S1] 게이지 추가 조건 / §4.5). `data_source === 'store'` 는 사용자가
- * 토글로 명시한 상태이므로, 그 상태에서 신규 경로가 준비되어 있으면 레거시
+ * 밀어낸다(§2.9 [S1] 게이지 추가 조건 / §4.5). `data_source` 가 채널이 아니라는 것은
+ * 사용자가 토글로 명시한 상태이므로, 그 상태에서 신규 경로가 준비되어 있으면 레거시
  * `chart-emitter` 가 계속 이겨서는 안 된다 — 그러면 토글이 고장난 것으로 보인다.
+ *
+ * TSDB 행은 store 행과 **완전히 같은 모양**이다. 게이지 고유의 규칙은 `series_reduce`
+ * 논리곱 하나뿐이고 그것은 소스 종류와 직교하므로, 종류마다 조건을 덧붙이지 않고
+ * "채널이 아닌 활성 소스" 로 한 번에 받는다.
  */
 export function resolveGaugeValueSource(flags: GaugeValueSourceFlags): GaugeValueSource {
   // SPEC-TSDB-002 §2.3 [U3]: 소스 종류 판정(미지정·인식 불가 → channel 폴백 포함)은
-  // 계약에 위임한다. `flags` 는 종류 원값만 갖고 store 블록을 갖지 않으므로
-  // `data_source` 만 담은 config 로 **종류**를 받고, 활성 항은 `flags.storeSourceActive`
-  // (= 계약의 `isStoreSourceActive`) 를 그대로 쓴다.
+  // 계약에 위임한다. `flags` 는 종류 원값만 갖고 소스 블록을 갖지 않으므로
+  // `data_source` 만 담은 config 로 **종류**를 받고, 활성 항은 종류별 플래그
+  // (= 계약의 `isStoreSourceActive` / `isTsdbSourceActive`) 를 그대로 쓴다.
   //
   // **`hasSeriesReduce` 논리곱은 여기 남는다.** 그것은 소스 활성이 아니라 게이지 고유의
   // 레거시 우선순위 규칙이며 SPEC-CHART-002 §2.9 가 소유한다. `panelDataSource` 로
   // 옮기면 게이지가 아닌 패널의 활성 판정까지 바뀐다.
   const { kind } = resolvePanelSourceBinding({ data_source: flags.dataSource });
-  return kind === 'store' && flags.storeSourceActive && flags.hasSeriesReduce
-    ? 'store-source'
-    : 'legacy';
+  const sourceActive = seriesSourceActive(kind, flags);
+  return sourceActive && flags.hasSeriesReduce ? 'store-source' : 'legacy';
+}
+
+/**
+ * 판정된 종류에 대응하는 활성 플래그. `channel` 은 공용 시리즈 경로가 아니므로 항상 false 다.
+ *
+ * `switch` 로 두어 `ChartDataSourceKind` 가 늘면 컴파일이 먼저 깨지게 한다 — 새 종류를
+ * 빠뜨리면 게이지만 조용히 레거시로 떨어지는데, 그것은 눈에 띄지 않는 회귀다.
+ */
+function seriesSourceActive(
+  kind: ChartDataSourceKind,
+  flags: GaugeValueSourceFlags,
+): boolean {
+  switch (kind) {
+    case 'channel':
+      return false;
+    case 'store':
+      return flags.storeSourceActive;
+    case 'tsdb':
+      return flags.tsdbSourceActive;
+  }
 }
 
 // ---- 레거시 → store_source 이관 ----

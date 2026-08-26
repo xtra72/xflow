@@ -18,6 +18,8 @@ import { persist } from 'zustand/middleware';
 
 import type { Dashboard, DashboardContent, DashboardDetail } from '@/types/dashboard';
 import { generateUUID } from '@/lib/utils/uuid';
+// 신규 차트 패널의 기본 Store 소스 형상(설정 화면의 기본값과 같은 정본).
+import { buildDefaultStoreSource } from '@/pages/dashboard/panels/charts/chartChannelTypes';
 // SPEC-HEATMAP-PANEL-001: 히트맵 패널 기본 config 빌더(파서와 기본값 일치 보장).
 import { buildDefaultHeatmapConfig } from '@/pages/dashboard/panels/heatmap/heatmapConfig';
 
@@ -323,6 +325,24 @@ function panelDefaultSize(type: PanelType): Pick<DashboardLayoutItem, 'w' | 'h' 
   }
 }
 
+/**
+ * 신규 차트 계열 패널의 기본 데이터 소스 — 채널이 아니라 **Store** 로 시작한다.
+ *
+ * 히트맵(`buildDefaultHeatmapConfig`)이 이미 쓰던 방식을 통계/게이지/바/파이로 넓힌 것이다.
+ * 이전에는 생성 위저드가 채널 이름을 **필수**로 물어봐서(`AddPanelDialog` 의 chart-config
+ * 스텝) 신규 패널이 항상 channel 모드로 태어났고, store/tsdb 로 가려면 만든 뒤 설정에서
+ * 소스를 다시 바꿔야 했다. 렌더 경로는 이미 세 소스를 모두 지원하고 있었으므로
+ * (`usePanelSeriesData`) 남은 격차는 이 기본값 하나였다.
+ *
+ * `channel_name: ''` 은 **지우지 않는다.** 기본 store 소스는 시리즈가 비어 있어 비활성이고
+ * (`isStoreSourceActive` false), 그 상태의 패널은 채널 경로로 폴백해 기존과 똑같은
+ * "채널 미설정" 빈 상태를 보여준다. 키를 지우면 설정에서 채널 모드로 되돌렸을 때 편집할
+ * 필드가 사라진다.
+ */
+function defaultChartSourceConfig(): Record<string, unknown> {
+  return { data_source: 'store', store_source: buildDefaultStoreSource() };
+}
+
 /** 패널 타입별 기본값 생성 */
 function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
   switch (type) {
@@ -343,10 +363,33 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
       return {
         type,
         title: '통계',
-        config: { channel_name: '', display_field: 'value', unit: '', decimal_places: 2 },
+        config: {
+          channel_name: '',
+          display_field: 'value',
+          unit: '',
+          decimal_places: 2,
+          ...defaultChartSourceConfig(),
+        },
       };
     case 'gauge':
-      return { type, title: '게이지', config: { value: 75, min: 0, max: 100, unit: '%', gaugeType: 'simple' } };
+      // `series_reduce` 가 함께 있어야 store/tsdb 경로가 실제로 이긴다 — 게이지는
+      // `data_source` + 소스 활성 + `series_reduce` 의 논리곱일 때만 레거시
+      // `dataSources[]` 를 밀어낸다(SPEC-CHART-002 §2.9, `gaugeLegacyBinding.ts` 진리표).
+      // 빠뜨리면 사용자가 시리즈를 골라도 게이지만 조용히 static `value` 를 계속 그린다.
+      // `value: 75` 는 바인딩 이전의 표시값이므로 그대로 둔다(기존 동작 보존).
+      return {
+        type,
+        title: '게이지',
+        config: {
+          value: 75,
+          min: 0,
+          max: 100,
+          unit: '%',
+          gaugeType: 'simple',
+          series_reduce: 'last',
+          ...defaultChartSourceConfig(),
+        },
+      };
     case 'line-chart':
       // SPEC-CHART-001 §4.2.2 line-chart config
       return {
@@ -367,6 +410,7 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
           bin_sec: 60,
           agg_func: 'avg',
           max_points: 20,
+          ...defaultChartSourceConfig(),
         },
       };
     case 'pie-chart':
@@ -382,6 +426,7 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
           show_legend: true,
           show_percentage: true,
           max_points: 20,
+          ...defaultChartSourceConfig(),
         },
       };
     case 'text':

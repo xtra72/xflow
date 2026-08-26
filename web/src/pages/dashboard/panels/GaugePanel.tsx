@@ -24,7 +24,6 @@ import { useAgents } from '@/hooks/useAgent';
 import {
   getByPath,
   type SeriesReduceFunc,
-  type StoreSourceConfig,
 } from './charts/chartChannelTypes';
 import { ConnectionStatusIcon } from './charts/ConnectionStatusIcon';
 import { toNumber } from './charts/chartChannelUtils';
@@ -35,7 +34,7 @@ import {
 import { reduceAllSeries, type ReducedSeries } from './charts/seriesReduce';
 import { SeriesTileGrid } from './charts/SeriesTileGrid';
 import { useChartChannel } from './charts/useChartChannel';
-import { useStoreChartData } from './charts/useStoreChartData';
+import { usePanelSeriesData } from './charts/usePanelSeriesData';
 import { resolveStoreAgentName } from './charts/storeAgentResolve';
 import { usePanelTitleVisible } from '../panelChromeContext';
 
@@ -799,6 +798,15 @@ function GaugeTile({
   );
 }
 
+/**
+ * 판정이 `legacy` 일 때 공용 시리즈 훅에 넘기는 빈 config.
+ *
+ * `data_source` 가 없으므로 계약이 `channel` 로 해석하고, 그러면 store·tsdb 훅 모두
+ * 인자를 받지 못해 구독도 폴링도 일어나지 않는다 — 종전 `useStoreChartData(undefined,
+ * false)` 와 같은 idle 상태다. 모듈 상수로 두어 렌더마다 새 객체가 생기지 않게 한다.
+ */
+const IDLE_SERIES_CONFIG: Record<string, unknown> = Object.freeze({});
+
 // ---- 메인 컴포넌트 ----
 
 /** 게이지 차트 패널 */
@@ -819,7 +827,6 @@ export default function GaugePanel({
   //   2) `store_source` 활성          — keys 모드 시리즈 ≥ 1 또는 tag 모드 태그 ≥ 1
   //   3) `series_reduce` 지정         — 부재는 "기본값 last" 가 아니라 레거시 경로다
   // 즉 **신규 경로가 실제로 값을 낼 수 있을 때만** 레거시를 밀어낸다(§2.9 [S1] / §4.5).
-  const chartStoreSource = config.store_source as StoreSourceConfig | undefined;
   const seriesReduce = config.series_reduce as SeriesReduceFunc | undefined;
   const isStoreSourcePath =
     resolveGaugeValueSource(gaugeValueSourceFlags(config)) === 'store-source';
@@ -839,10 +846,15 @@ export default function GaugePanel({
   const storeSource = isStoreSourcePath ? undefined : pickStoreSource(config);
   const storeValue = useStoreLatestValue(storeSource);
 
-  const storeChart = useStoreChartData(
-    isStoreSourcePath ? chartStoreSource : undefined,
-    isStoreSourcePath,
-  );
+  // 공용 시리즈 훅 하나로 Store 와 TSDB 를 모두 받는다(다른 차트 패널과 같은 배선).
+  // 종전에는 `useStoreChartData` 를 직접 불러 store 만 조회했으므로, 게이지에서 TSDB 를
+  // 고르면 설정 화면에는 토글이 보이는데 값이 오지 않는 상태였다.
+  //
+  // 게이지 고유의 레거시 우선순위(§2.9 진리표)는 **여기서 그대로 유지**한다. config 를
+  // 조건 없이 넘기면 `series_reduce` 없는 store 게이지까지 폴링이 시작되어, 판정이
+  // `legacy` 인데 조회는 도는 상태가 된다. 그래서 판정이 진 경우 빈 config 를 넘겨
+  // 종전 `useStoreChartData(undefined, false)` 와 같은 idle 로 둔다.
+  const storeChart = usePanelSeriesData(isStoreSourcePath ? config : IDLE_SERIES_CONFIG);
 
   // chart-emitter 최신 값
   const chartLiveValue = (() => {

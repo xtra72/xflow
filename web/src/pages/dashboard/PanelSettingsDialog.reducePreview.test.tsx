@@ -156,13 +156,15 @@ describe('stat 라이브 미리보기 (M6.3)', () => {
     expect(query.fn).toHaveBeenCalled();
   });
 
-  it('대표값을 지정하지 않으면(레거시 경로) 미리보기를 렌더하지 않는다', async () => {
+  it('대표값을 지정하지 않아도(레거시 경로) 미리보기를 렌더한다', async () => {
+    // stat 에는 합성 미니 프리뷰가 없다 — 렌더하지 않으면 미리보기 영역이 빈 화면이 된다.
+    // StatPanel 은 대표값 없이도 시리즈 소스 데이터를 그리므로 미리보기도 같은 조건이다.
     await renderDialog('stat', {
       channel_name: 'c1',
       data_source: 'store',
       store_source: f1Store(),
     });
-    expect(screen.queryByTestId('stat-preview-wrapper')).toBeNull();
+    expect(screen.getByTestId('stat-preview-wrapper')).toBeInTheDocument();
   });
 
   it('채널 모드에서는 대표값이 남아 있어도 미리보기를 렌더하지 않는다', async () => {
@@ -176,14 +178,18 @@ describe('stat 라이브 미리보기 (M6.3)', () => {
     expect(screen.queryByTestId('stat-preview-wrapper')).toBeNull();
   });
 
-  it('시리즈를 하나도 고르지 않았으면 미리보기를 렌더하지 않는다', async () => {
+  it('시리즈 미선택이면 실패널의 빈 상태를 렌더한다(빈 화면이 아니다)', async () => {
+    // 신규 통계 패널은 store 기본 소스 + 시리즈 0개로 태어난다. 이때 미리보기를 끄면
+    // 사용자는 소스를 고르기도 전에 빈 화면을 본다. 소스가 비활성이면 조회는 idle 이므로
+    // (`usePanelSeriesData`) 빈 시리즈로 요청이 나가지도 않는다.
     await renderDialog('stat', {
       channel_name: 'c1',
       data_source: 'store',
       store_source: f1Store({ series: [] }),
       series_reduce: 'max',
     });
-    expect(screen.queryByTestId('stat-preview-wrapper')).toBeNull();
+    expect(screen.getByTestId('stat-preview-wrapper')).toBeInTheDocument();
+    expect(query.fn).not.toHaveBeenCalled();
   });
 });
 

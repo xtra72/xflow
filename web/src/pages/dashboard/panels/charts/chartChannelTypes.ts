@@ -221,6 +221,34 @@ export const DEFAULT_STORE_SOURCE_WINDOW = {
 >;
 
 /**
+ * 아무 것도 바인딩되지 않은 **기본 Store 소스**. `DEFAULT_STORE_SOURCE_WINDOW` 를 감싼
+ * 유일한 팩토리이며, 이 형상을 필요로 하는 모든 지점이 여기를 부른다.
+ *
+ *   1. `ChartPanelSections.tsx` 의 `defaultStoreSource()` — 데이터 소스를 처음 Store 로
+ *      토글할 때.
+ *   2. `uiStore.ts` 의 `createDefaultPanel()` — 통계/게이지/바/파이 신규 패널의 기본
+ *      데이터 소스(생성 위저드가 채널 이름을 묻지 않고 곧바로 Store 로 시작한다).
+ *   3. `AddPanelDialog.tsx` 의 Store 라인 차트 프리셋.
+ *
+ * 세 지점이 값을 각자 복제하고 있으면 한 곳만 바뀔 때 "같은 기본값" 이라는 전제가
+ * 조용히 깨진다 — 특히 (2)와 (3)은 사용자가 나란히 만드는 패널이라 어긋남이 바로
+ * 드러난다. 함수로 두는 이유는 `series` 배열이 패널마다 독립이어야 하기 때문이다
+ * (상수를 공유하면 한 패널의 시리즈 추가가 다른 패널로 샌다).
+ *
+ * `selection_mode` 를 넣지 않는 것이 기존 동작이다 — 부재는 `'keys'` 와 동일하게
+ * 해석되며(`panelDataSource.isStoreSourceActive`), 태그 모드는 설정 화면의 태그 피커로
+ * 진입한다.
+ */
+export function buildDefaultStoreSource(): StoreSourceConfig {
+  return {
+    agent_name: '',
+    namespace: 'default',
+    series: [],
+    ...DEFAULT_STORE_SOURCE_WINDOW,
+  };
+}
+
+/**
  * TSDB 소스가 지원하는 백엔드. 확장 지점.
  *
  * 백엔드가 늘어도 `ChartDataSourceKind` 는 늘지 않는다 — 백엔드는 종류가 아니라

@@ -172,7 +172,7 @@ describe('미리보기 게이트 2곳의 독립 판정 특성화 (SPEC-TSDB-002 
     expect(statGateActive()).toBe(false);
   });
 
-  it("CT-14: stat + previewChartConfig.data_source === 'store' + 시리즈 N + series_reduce → `:728` 게이트 참", () => {
+  it("CT-14: stat + previewChartConfig.data_source === 'store' + 시리즈 N → stat 게이트 참", () => {
     renderPanel('stat', {
       data_source: 'store',
       store_source: activeStore(),
@@ -183,11 +183,18 @@ describe('미리보기 게이트 2곳의 독립 판정 특성화 (SPEC-TSDB-002 
     expect(screen.queryByTestId('line-chart-preview-wrapper')).toBeNull();
   });
 
-  it('CT-15: 동일한 data_source/store_source 라도 두 게이트는 독립적으로 판정된다', () => {
-    const store_source = activeStore();
+  it('CT-15: series_reduce 는 더 이상 stat 게이트의 축이 아니다', () => {
+    // 종전에는 `series_reduce` 부재가 stat 게이트를 거짓으로 만들었다. 그러면 대표값을
+    // 지정하지 않은 store 통계 패널이 **미리보기 영역 자체가 빈 화면**이 되는데, stat 에는
+    // 대신 보여줄 합성 미니 프리뷰가 없어 사용자에게는 "미리보기가 안 나온다" 로 보인다.
+    // 실제 StatPanel 은 대표값 없이도 시리즈 소스 데이터를 그리므로, 미리보기도 같은
+    // 조건으로 판정한다(미리보기와 실제 렌더가 갈리지 않게).
+    renderPanel('stat', { data_source: 'store', store_source: activeStore() });
+    expect(statGateActive()).toBe(true);
+  });
 
-    // (a) series_reduce 부재 + stat → `:728` 거짓.
-    renderPanel('stat', { data_source: 'store', store_source });
+  it('CT-15: 채널 모드에서는 stat 게이트가 거짓이다(부가 조건은 소스 종류 축 하나)', () => {
+    renderPanel('stat', { data_source: 'channel', store_source: activeStore() });
     expect(statGateActive()).toBe(false);
   });
 
@@ -205,6 +212,69 @@ describe('미리보기 게이트 2곳의 독립 판정 특성화 (SPEC-TSDB-002 
     expect(lineGateActive()).toBe(false);
     expect(statGateActive()).toBe(false);
   });
+});
+
+// ===== 바/파이 미리보기 =====
+
+describe('PanelSettingsDialog — 바/파이 라이브 미리보기', () => {
+  function activeStore() {
+    return {
+      agent_name: 'store-1',
+      series: [{ key: 'room:temp' }],
+      time_window_ms: 60_000,
+      interval_ms: 10_000,
+      aggregation: 'average',
+    };
+  }
+  function renderPanel(type: string, config: Record<string, unknown>) {
+    storeMock.panel = { id: 'p1', type, title: '패널', config } as unknown as PanelConfig;
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+  }
+
+  for (const [type, testid] of [
+    ['bar-chart', 'bar-chart-preview-wrapper'],
+    ['pie-chart', 'pie-chart-preview-wrapper'],
+  ] as const) {
+    it(`${type}: store 소스를 고르면 실패널을 렌더한다`, () => {
+      renderPanel(type, { data_source: 'store', store_source: activeStore() });
+      expect(screen.getByTestId(testid)).toBeInTheDocument();
+    });
+
+    it(`${type}: 시리즈 미선택(신규 패널 기본값)도 실패널의 빈 상태를 렌더한다`, () => {
+      // 이 두 패널에는 합성 미니 프리뷰가 없다 — 렌더하지 않으면 빈 화면이 된다.
+      renderPanel(type, {
+        data_source: 'store',
+        store_source: { ...activeStore(), series: [] },
+      });
+      expect(screen.getByTestId(testid)).toBeInTheDocument();
+    });
+
+    it(`${type}: tsdb 소스도 같은 자격이다`, () => {
+      renderPanel(type, {
+        data_source: 'tsdb',
+        tsdb_source: {
+          backend: 'influxdb',
+          agent_name: 'influx-1',
+          bucket: 'metrics',
+          series: [{ key: 'room1', field: 'temp' }],
+          time_window_ms: 60_000,
+          interval_ms: 10_000,
+          aggregation: 'average',
+        },
+      });
+      expect(screen.getByTestId(testid)).toBeInTheDocument();
+    });
+
+    it(`${type}: 채널 모드에서는 렌더하지 않는다(종전 동작)`, () => {
+      renderPanel(type, { data_source: 'channel', channel_name: 'c1' });
+      expect(screen.queryByTestId(testid)).toBeNull();
+    });
+
+    it(`${type}: data_source 미지정(구 패널)도 렌더하지 않는다`, () => {
+      renderPanel(type, { channel_name: 'c1' });
+      expect(screen.queryByTestId(testid)).toBeNull();
+    });
+  }
 });
 
 // ===== 실제 데이터 적용 옵션 (SPEC-TSDB-004) =====

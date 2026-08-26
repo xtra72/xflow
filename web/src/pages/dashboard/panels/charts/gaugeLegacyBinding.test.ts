@@ -14,7 +14,7 @@
 
 import { describe, it, expect } from 'vitest';
 
-import type { StoreSourceConfig } from './chartChannelTypes';
+import type { StoreSourceConfig, TsdbSourceConfig } from './chartChannelTypes';
 import { DEFAULT_STORE_SOURCE_WINDOW } from './chartChannelTypes';
 import {
   buildGaugeStoreMigrationPatch,
@@ -64,6 +64,29 @@ function inactiveKeysStore(): StoreSourceConfig {
 /** 비활성 store_source — tag 모드인데 태그 필터가 0개. */
 function inactiveTagStore(): StoreSourceConfig {
   return { ...activeTagStore(), tag_filters: {} };
+}
+
+/** 활성 tsdb_source — 에이전트와 시리즈가 둘 다 있어야 활성이다. */
+function activeTsdb(): TsdbSourceConfig {
+  return {
+    backend: 'influxdb',
+    agent_name: 'influx-1',
+    bucket: 'metrics',
+    series: [{ key: 'room1', field: 'temp' }],
+    time_window_ms: 60_000,
+    interval_ms: 1_000,
+    aggregation: 'average',
+  };
+}
+
+/** 비활성 tsdb_source — 시리즈가 0개. */
+function inactiveTsdb(): TsdbSourceConfig {
+  return { ...activeTsdb(), series: [] };
+}
+
+/** 비활성 tsdb_source — 시리즈는 있으나 에이전트가 비어 있다. */
+function agentlessTsdb(): TsdbSourceConfig {
+  return { ...activeTsdb(), agent_name: '' };
 }
 
 /** F2 의 store 레거시 바인딩 항목(acceptance.md 공통 픽스처). */
@@ -270,6 +293,55 @@ describe('판정 진리표', () => {
   });
 });
 
+describe('resolveGaugeValueSource — TSDB 축 (store 행과 같은 모양)', () => {
+  it('tsdb + 활성 + series_reduce 있음 → store-source(공용 시리즈 경로)', () => {
+    expect(
+      resolveFromConfig({
+        data_source: 'tsdb',
+        tsdb_source: activeTsdb(),
+        series_reduce: 'last',
+      }),
+    ).toBe('store-source');
+  });
+
+  it('tsdb + 활성인데 series_reduce 부재 → legacy', () => {
+    // 게이지 고유의 논리곱은 소스 종류와 직교한다 — store 와 똑같이 레거시로 떨어진다.
+    expect(
+      resolveFromConfig({ data_source: 'tsdb', tsdb_source: activeTsdb() }),
+    ).toBe('legacy');
+  });
+
+  it('tsdb 비활성(시리즈 0 / 에이전트 없음)은 series_reduce 가 있어도 legacy', () => {
+    for (const tsdb_source of [undefined, inactiveTsdb(), agentlessTsdb()]) {
+      expect(
+        resolveFromConfig({ data_source: 'tsdb', tsdb_source, series_reduce: 'last' }),
+      ).toBe('legacy');
+    }
+  });
+
+  it('종류 축이 활성 항을 고른다 — tsdb 를 골랐는데 store 만 활성이면 legacy', () => {
+    // 두 블록은 공존한다(소스를 오가며 설정이 남는다). 활성 판정을 하나로 합치면
+    // 남아 있는 store 설정 때문에 TSDB 게이지가 값을 내는 것처럼 잘못 판정된다.
+    expect(
+      resolveFromConfig({
+        data_source: 'tsdb',
+        store_source: activeKeysStore(),
+        tsdb_source: inactiveTsdb(),
+        series_reduce: 'last',
+      }),
+    ).toBe('legacy');
+    // 반대 방향도 같다.
+    expect(
+      resolveFromConfig({
+        data_source: 'store',
+        store_source: inactiveKeysStore(),
+        tsdb_source: activeTsdb(),
+        series_reduce: 'last',
+      }),
+    ).toBe('legacy');
+  });
+});
+
 describe('gaugeValueSourceFlags — config → 판정 입력 파생', () => {
   it('레거시 dataSources 는 판정 입력에 포함되지 않는다', () => {
     const withLegacy = gaugeValueSourceFlags({
@@ -286,20 +358,26 @@ describe('gaugeValueSourceFlags — config → 판정 입력 파생', () => {
     expect(withLegacy).toEqual(withoutLegacy);
   });
 
-  it('플래그 3종을 config 에서 그대로 파생한다', () => {
+  it('플래그 4종을 config 에서 그대로 파생한다', () => {
     expect(
       gaugeValueSourceFlags({
         data_source: 'store',
         store_source: activeKeysStore(),
         series_reduce: 'delta',
       }),
-    ).toEqual({ dataSource: 'store', storeSourceActive: true, hasSeriesReduce: true });
+    ).toEqual({
+      dataSource: 'store',
+      storeSourceActive: true,
+      tsdbSourceActive: false,
+      hasSeriesReduce: true,
+    });
   });
 
   it('data_source 미지정은 undefined 로 유지된다(채널 해석은 판정 함수가 한다)', () => {
     expect(gaugeValueSourceFlags({})).toEqual({
       dataSource: undefined,
       storeSourceActive: false,
+      tsdbSourceActive: false,
       hasSeriesReduce: false,
     });
   });

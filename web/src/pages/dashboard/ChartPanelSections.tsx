@@ -34,7 +34,7 @@ import type {
   SeriesReduceFunc,
 } from './panels/charts/chartChannelTypes';
 import {
-  DEFAULT_STORE_SOURCE_WINDOW,
+  buildDefaultStoreSource,
   defaultTsdbSource,
   pickSeriesColor,
   REDUCE_PANEL_TYPES,
@@ -280,18 +280,17 @@ const STORE_AGG_OPTIONS: { value: StoreSourceConfig['aggregation']; labelKey: st
 /**
  * 기본 Store 소스 설정(처음 store 모드로 전환 시 사용).
  *
- * 조회 창 기본값(시간창/버킷/집계/폴링)은 `DEFAULT_STORE_SOURCE_WINDOW` 가 단일
- * 정본이다 — 게이지 레거시 이관(`buildGaugeStoreMigrationPatch`)이 spec §2.8 [E2] 1항에
- * 따라 **같은 값**을 써야 하는데, 두 곳에 복제해 두면 한쪽만 바뀔 때 이관 결과가 조용히
- * 어긋난다.
+ * 형상 전체가 `buildDefaultStoreSource()` 단일 정본이다 — 게이지 레거시 이관
+ * (`buildGaugeStoreMigrationPatch`)이 spec §2.8 [E2] 1항에 따라 **같은 값**을 써야 하고,
+ * 신규 통계/게이지/바/파이 패널의 기본 config(`uiStore.createDefaultPanel`)도 같은 값으로
+ * 시작해야 한다. 복제해 두면 한쪽만 바뀔 때 조용히 어긋난다.
+ *
+ * 이 이름을 남겨 두는 이유: spec 과 `gaugeLegacyBinding.ts` 주석이 기본값을
+ * "`defaultStoreSource()`" 로 지목하고 있어, 참조 대상을 없애면 그 문장들이 가리키는
+ * 곳이 사라진다.
  */
 function defaultStoreSource(): StoreSourceConfig {
-  return {
-    agent_name: '',
-    namespace: 'default',
-    series: [],
-    ...DEFAULT_STORE_SOURCE_WINDOW,
-  };
+  return buildDefaultStoreSource();
 }
 
 /**

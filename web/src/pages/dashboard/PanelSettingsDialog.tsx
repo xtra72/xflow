@@ -52,6 +52,7 @@ import {
 import { getDeviceDisplayName, getDeviceTypeLabel, getPropertyLabel } from '@/lib/utils/deviceLabels';
 import {
   buildEnumLabelMap,
+  buildDefaultStoreSource,
   formatEnumValue,
   resolveAxisFont,
   STROKE_DASHARRAY,
@@ -81,7 +82,9 @@ import {
 import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/HeatmapCanvas';
 // 히트맵 프리뷰(설정 다이얼로그 내 실제 패널 렌더 — MODBUS 프리뷰 선례와 동일 방식).
 import HeatmapPanel from './panels/heatmap/HeatmapPanel';
+import BarChartPanel from './panels/charts/BarChartPanel';
 import LineChartPanel from './panels/charts/LineChartPanel';
+import PieChartPanel from './panels/charts/PieChartPanel';
 import StatPanel from './panels/charts/StatPanel';
 import { resolvePanelSourceBinding } from './panels/charts/panelDataSource';
 import {
@@ -135,6 +138,35 @@ import {
 
 /** 차트 계열 패널 타입 집합 (REQ-M5-03) */
 const CHART_PANEL_TYPES = new Set(['stat', 'line-chart', 'bar-chart', 'pie-chart', 'table']);
+
+/**
+ * 단일 `channel_name` 편집 섹션(`ChartChannelSection`)을 노출하는 패널 타입.
+ *
+ * 통계/게이지/바/파이는 시리즈 소스(store/tsdb)로 일원화되어 빠졌다 — 이 4종은 설정 진입
+ * 시 채널 모드가 store 로 자동 이관되므로(`SERIES_SOURCE_PANEL_TYPES`) 채널 이름을 편집할
+ * 자리가 필요 없다. 라인 차트는 `channels` 배열을 쓰므로 원래부터 대상이 아니었고, 테이블은
+ * 이번 정리 범위 밖이라 그대로 남는다.
+ */
+const CHANNEL_SECTION_PANEL_TYPES: ReadonlySet<string> = new Set(['table']);
+
+/**
+ * 채널 모드를 더 이상 기본으로 두지 않는 패널 타입 — 설정 진입 시 store 로 자동 이관된다.
+ *
+ * 신규 패널은 이미 store 기본값으로 태어나지만(`uiStore.createDefaultPanel`), 그 이전에
+ * 만들어진 패널은 `data_source` 가 없거나 `'channel'` 이다. 채널 편집 섹션을 없앤 뒤 그
+ * 패널들을 그대로 두면 채널 이름을 고칠 수단이 사라진 채 채널 모드에 갇힌다.
+ *
+ * **게이지는 제외한다.** 이관의 목적은 "편집 수단을 잃은 패널을 구제" 인데, 게이지는
+ * 애초에 이 채널 섹션의 대상이 아니었다 — 게이지의 채널 바인딩은 레거시 `dataSources[]`
+ * 편집기(`sourceType: 'chart-emitter'`)에 있고 그것은 그대로 남아 있으므로 갇히지 않는다.
+ * 반대로 게이지를 넣으면 SPEC-CHART-002 §2.8 [E2] "저장된 config 를 자동으로 조용히 다시
+ * 쓰지 않는다" 를 깨고(AC-20), §4.5 되돌리기 경로까지 흔든다 — 얻는 것 없이 계약만 잃는다.
+ */
+const SERIES_SOURCE_PANEL_TYPES: ReadonlySet<string> = new Set([
+  'stat',
+  'bar-chart',
+  'pie-chart',
+]);
 
 /** SPEC-MODBUS-012: MODBUS Gateway 패널 6종 집합(설정 섹션/프리뷰 분기용). */
 const MODBUS_PANEL_TYPES = new Set([
@@ -262,6 +294,34 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
         : null,
     [storePanel, draftConfig, draftTitle],
   );
+
+  // 통계/게이지/바/파이의 채널 모드 → store 자동 이관.
+  //
+  // 이 4종은 채널 편집 섹션을 노출하지 않으므로(`CHANNEL_SECTION_PANEL_TYPES`) 채널 모드에
+  // 남겨 두면 채널 이름을 고칠 수단이 없는 상태가 된다. 설정을 여는 시점에 시리즈 소스로
+  // 옮겨 편집 가능한 상태로 만든다.
+  //
+  // **draft 만 바꾼다.** 커밋은 저장 버튼이 하므로(`handleApply`), 설정을 열었다가 저장
+  // 없이 닫으면 패널은 그대로 남고 취소 버튼으로도 되돌아간다. 스토어를 직접 건드리면
+  // 화면만 열어도 대시보드가 변경된 것으로 표시된다.
+  //
+  // `store_source` 는 **있으면 보존한다** — 채널 모드로 되돌려 둔 패널에도 예전 store 설정이
+  // 남아 있을 수 있고, 그것을 기본형으로 덮으면 사용자가 고른 시리즈가 조용히 사라진다.
+  //
+  // `channel_name` 도 지우지 않는다. 갓 이관된 store 소스는 시리즈가 없어 비활성이므로
+  // (`isStoreSourceActive` false) 패널은 채널 경로로 폴백해 **이관 직후에도 종전과 같은 값을
+  // 계속 그린다**. 시리즈를 고르는 순간 store 로 넘어간다.
+  useEffect(() => {
+    if (!storePanel || !SERIES_SOURCE_PANEL_TYPES.has(storePanel.type)) return;
+    // 인식 불가 문자열도 계약이 channel 로 접으므로 함께 이관된다(§2.17-2).
+    if (resolvePanelSourceBinding(draftConfig).kind !== 'channel') return;
+    patchConfig({
+      data_source: 'store',
+      store_source:
+        (draftConfig.store_source as StoreSourceConfig | undefined) ??
+        buildDefaultStoreSource(),
+    });
+  }, [storePanel, draftConfig, patchConfig]);
 
   // 라이브 미리보기용 디바운스 config — 실 store 데이터 패널(heatmap/line/gauge/modbus)의
   // 잦은 편집 재렌더/재조회를 억제한다(T9/AC-13/R3). 옵션 편집은 즉시(panel), 미리보기는
@@ -610,11 +670,13 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
 
             {/*
-              차트 패널 공통: channel_name (line-chart 는 channels 로 통합됨).
-              data_source === 'store' 인 경우에도 채널 설정은 유지된다(공존, 하위 호환).
+              단일 `channel_name` 편집 섹션. 라인 차트는 `channels` 배열로 통합되어 데이터
+              소스 영역의 `ChannelSeriesEditor` 가 대신 편집하고, 통계/게이지/바/파이는
+              store/tsdb 로 일원화되어 이 섹션을 노출하지 않는다(아래 자동 이관 참고).
+              남은 대상은 테이블뿐이다.
               데이터 소스 섹션(StoreSourceSection)은 좌측 프리뷰 아래로 이동했다(SPEC-WEB-005).
             */}
-            {CHART_PANEL_TYPES.has(panel.type) && panel.type !== 'line-chart' && (
+            {CHANNEL_SECTION_PANEL_TYPES.has(panel.type) && (
               <CollapsibleSection title={t('dashboard.settings.channel')}>
                 <ChartChannelSection
                   panel={panel}
@@ -737,13 +799,27 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // 합성 미니 프리뷰를 유지한다.
   const isStoreLinePreview =
     previewRenderPanel.type === 'line-chart' && isPreviewStoreActive;
-  // stat: `StatPanel` 의 활성 조건과 동일(활성 store 소스 + series_reduce 지정).
-  // 레거시 경로(series_reduce 부재)에는 stat 전용 미니 프리뷰가 없으므로 미리보기도 없다 —
-  // 이 SPEC 이 신설하는 것은 신규 경로의 미리보기뿐이다.
-  const isStoreStatPreview =
-    previewRenderPanel.type === 'stat' &&
-    isPreviewStoreActive &&
-    previewChartConfig.series_reduce !== undefined;
+  // stat / bar / pie 라이브 미리보기 게이트.
+  //
+  // 이 3종에는 합성 미니 프리뷰가 없다. 그래서 "실패널을 렌더하지 않는다" = "미리보기 영역이
+  // 빈 화면" 이며, 시리즈 소스를 고르고도 아무것도 안 보이는 상태가 된다. 판정을 **소스 종류
+  // 축 하나**로 좁혀, 채널이 아닌 소스를 고른 순간부터 실패널을 그린다.
+  //
+  // 시리즈 미선택도 렌더한다 — 패널이 스스로 빈 상태를 표시하며, 그것이 대시보드에서 보게 될
+  // 실제 모습이다(히트맵 미리보기와 같은 방식). 조회는 소스가 비활성이면 idle 이므로
+  // (`usePanelSeriesData`) 빈 시리즈로 요청이 나가지도 않는다.
+  //
+  // `series_reduce` 는 게이트에서 빠졌다. StatPanel·BarChartPanel·PieChartPanel 은 대표값
+  // 없이도(레거시 경로) 시리즈 소스 데이터를 그리므로, 대표값 유무로 미리보기를 끄면 실제
+  // 렌더와 미리보기가 서로 다른 조건으로 갈린다 — "설정에서는 안 보이는데 대시보드에서는
+  // 보인다" 가 된다. 게이지는 예외로 남는다(합성 미니 프리뷰가 있고, 대표값이 값 소스
+  // 진리표의 축 자체다 — `resolveGaugeValueSource`).
+  //
+  // 채널 모드는 종전대로 미리보기가 없다. 실제 조회를 끈 경우(previewRealData 해제)도 같다 —
+  // 그 토글의 의미가 "실제 질의를 내지 않는다" 이므로 대신 보여줄 합성 화면이 없다.
+  const isSeriesSourcePreview =
+    previewSourceBinding.kind !== 'channel' && previewRealData;
+  const isStoreStatPreview = previewRenderPanel.type === 'stat' && isSeriesSourcePreview;
   // gauge: 값 소스 판정의 단일 정본(`resolveGaugeValueSource`)을 그대로 쓴다. 레거시 경로가
   // 이기는 동안에는 합성 샘플값 미니 프리뷰가 그대로 남는다(레거시는 실제 값이 없을 수 있다).
   const isStoreGaugePreview =
@@ -904,9 +980,9 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </div>
             )}
             {/*
-              SPEC-CHART-002 M6.3 — stat 라이브 미리보기. stat 에는 미니 프리뷰가 없었으므로
-              신규 경로(Store + 대표값)에서만 실제 StatPanel 을 draft config 로 렌더한다.
-              레거시 경로는 종전대로 미리보기 없음이며, 이 변경은 순수 추가다.
+              stat / bar / pie 라이브 미리보기. 이 3종에는 합성 미니 프리뷰가 없으므로 실패널을
+              draft config 로 렌더한다(히트맵·MODBUS 미리보기와 같은 방식 — 패널이 자체 빈
+              상태를 표시하므로 blank 가 되지 않는다). 게이트는 `isSeriesSourcePreview` 하나다.
             */}
             {isStoreStatPreview && (
               <div
@@ -916,6 +992,39 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 onWheel={handlePreviewWheel}
               >
                 <StatPanel
+                  panelId={previewRenderPanel.id}
+                  title={previewRenderPanel.title}
+                  config={previewRenderPanel.config ?? {}}
+                />
+              </div>
+            )}
+            {previewRenderPanel.type === 'bar-chart' && isSeriesSourcePreview && (
+              <div
+                // 패널 루트가 flex-1 로 부모 높이를 채우므로 wrapper 가 flex 여야 한다
+                // (라인 차트 프리뷰와 같은 이유 — plain block 이면 flex-1 이 no-op 이 되어
+                // 콘텐츠 높이로 축소되고 차트 영역이 0-height 로 붕괴한다).
+                className="flex min-h-0 flex-col"
+                data-testid="bar-chart-preview-wrapper"
+                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('16 / 9')}
+                onWheel={handlePreviewWheel}
+              >
+                <BarChartPanel
+                  panelId={previewRenderPanel.id}
+                  title={previewRenderPanel.title}
+                  config={previewRenderPanel.config ?? {}}
+                />
+              </div>
+            )}
+            {previewRenderPanel.type === 'pie-chart' && isSeriesSourcePreview && (
+              <div
+                className="flex min-h-0 flex-col"
+                data-testid="pie-chart-preview-wrapper"
+                // 파이는 정사각에 가까운 편이 실제 배치를 가늠하기 좋다(게이지 1:1 과 차트
+                // 16:9 사이). 채움 모드에서는 종횡비를 무시하고 영역을 가득 채운다.
+                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('4 / 3')}
+                onWheel={handlePreviewWheel}
+              >
+                <PieChartPanel
                   panelId={previewRenderPanel.id}
                   title={previewRenderPanel.title}
                   config={previewRenderPanel.config ?? {}}
