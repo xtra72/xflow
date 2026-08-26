@@ -209,7 +209,7 @@ describe('StatChartSection', () => {
 });
 
 describe('LineChartSection', () => {
-  it('max_points 편집 (기본 points 모드)', () => {
+  it('구 max_points 는 X축 범위 포인트로 읽히고, 편집은 x_range 로 저장된다', () => {
     const onConfigChange = vi.fn();
     render(
       <LineChartSection
@@ -217,10 +217,13 @@ describe('LineChartSection', () => {
         onConfigChange={onConfigChange}
       />,
     );
-    const label = screen.getByText(/dashboard.chart.maxPoints/);
-    const input = label.parentElement?.querySelector('input[type="number"]') as HTMLInputElement;
+    // 구 필드가 새 어휘(count)로 읽힌다.
+    const input = screen.getByTestId('line-chart-x-range-count') as HTMLInputElement;
+    expect(input.value).toBe('100');
     fireEvent.change(input, { target: { value: '250' } });
-    expect(onConfigChange).toHaveBeenCalledWith({ max_points: 250 });
+    expect(onConfigChange).toHaveBeenCalledWith({
+      x_range: { mode: 'count', count: 250 },
+    });
   });
 
   // --- 다채널 행에 채널 드롭다운 ---
@@ -471,8 +474,8 @@ describe('LineChartSection', () => {
     );
     expect(screen.queryByTestId('line-chart-channels-editor')).toBeNull();
     expect(screen.queryByTestId('line-chart-add-channel')).toBeNull();
-    // 전역 컨트롤(예: maxPoints)은 유지된다.
-    expect(screen.getByText(/dashboard.chart.maxPoints/)).toBeInTheDocument();
+    // 전역 컨트롤(예: X축 범위)은 유지된다.
+    expect(screen.getByTestId('line-chart-x-range-count')).toBeInTheDocument();
   });
 
   it('채널 행 펼치면 라인 스타일 옵션(곡선 체크박스) 노출', () => {
@@ -496,29 +499,23 @@ describe('LineChartSection', () => {
   });
 
   // --- 시간 윈도우 모드 ---
-  it('time_window_mode=points (기본) 이면 max_points 필드가 노출되고 recent/fixed 필드는 숨김', () => {
+  it('구 config 없이 기본은 포인트 범위 — 기간 입력은 숨김', () => {
+    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('line-chart-x-range-count')).toBeInTheDocument();
+    expect(screen.queryByTestId('line-chart-x-range-window')).toBeNull();
+    expect(screen.queryByTestId('line-chart-x-range-start')).toBeNull();
+  });
+
+  it('구 time_window_mode=recent 는 최근(relative) 범위로 읽히고 새로고침 주기가 함께 뜬다', () => {
     render(
       <LineChartSection
-        panel={makePanel('line-chart', {})}
+        panel={makePanel('line-chart', { time_window_mode: 'recent', recent_window_sec: 300 })}
         onConfigChange={vi.fn()}
       />,
     );
-    expect(screen.getByText(/dashboard.chart.maxPoints/)).toBeInTheDocument();
-    expect(screen.queryByText(/dashboard.chart.windowSizeSec/)).toBeNull();
-    expect(screen.queryByText(/dashboard.chart.startMs/)).toBeNull();
-  });
-
-  it('time_window_mode=recent 선택 시 recent_window_sec + time_window_refresh_ms 노출', () => {
-    const onConfigChange = vi.fn();
-    render(
-      <LineChartSection
-        panel={makePanel('line-chart', { time_window_mode: 'recent' })}
-        onConfigChange={onConfigChange}
-      />,
-    );
-    expect(screen.getByText(/dashboard.chart.windowSizeSec/)).toBeInTheDocument();
+    expect(screen.getByTestId('line-chart-x-range-window')).toBeInTheDocument();
     expect(screen.getByText(/dashboard.chart.refreshMs/)).toBeInTheDocument();
-    expect(screen.queryByText(/dashboard.chart.maxPoints/)).toBeNull();
+    expect(screen.queryByTestId('line-chart-x-range-count')).toBeNull();
   });
 
   it('time_window_refresh_ms 편집', () => {
@@ -538,71 +535,181 @@ describe('LineChartSection', () => {
     expect(onConfigChange).toHaveBeenCalledWith({ time_window_refresh_ms: 500 });
   });
 
-  it('time_window_mode=fixed 선택 시 start/end 필드 노출', () => {
-    render(
-      <LineChartSection
-        panel={makePanel('line-chart', { time_window_mode: 'fixed' })}
-        onConfigChange={vi.fn()}
-      />,
-    );
-    expect(screen.getByText(/dashboard.chart.startMs/)).toBeInTheDocument();
-    expect(screen.getByText(/dashboard.chart.endMs/)).toBeInTheDocument();
-  });
-
-  // --- Y축 모드 ---
-  it('y_axis_mode=auto (기본) 이면 y_min/y_max/padding 필드 모두 숨김', () => {
-    render(
-      <LineChartSection
-        panel={makePanel('line-chart', {})}
-        onConfigChange={vi.fn()}
-      />,
-    );
-    expect(screen.queryByText(/dashboard\.chart\.min$/)).toBeNull();
-    expect(screen.queryByText(/dashboard\.chart\.max$/)).toBeNull();
-    expect(screen.queryByText(/dashboard.chart.paddingPct/)).toBeNull();
-  });
-
-  it('y_axis_mode=manual 이면 Y 최소/최대 입력 노출', () => {
-    const onConfigChange = vi.fn();
-    render(
-      <LineChartSection
-        panel={makePanel('line-chart', { y_axis_mode: 'manual', y_min: 0 })}
-        onConfigChange={onConfigChange}
-      />,
-    );
-    expect(screen.getByText(/dashboard\.chart\.min$/)).toBeInTheDocument();
-    expect(screen.getByText(/dashboard\.chart\.max$/)).toBeInTheDocument();
-  });
-
-  it('y_axis_mode=auto_padded 이면 padding_pct 입력 노출 + 편집', () => {
-    const onConfigChange = vi.fn();
+  it('구 time_window_mode=fixed 는 구간(absolute) 범위로 읽힌다', () => {
     render(
       <LineChartSection
         panel={makePanel('line-chart', {
-          y_axis_mode: 'auto_padded',
-          y_axis_padding_pct: 5,
+          time_window_mode: 'fixed',
+          fixed_start_ms: 1000,
+          fixed_end_ms: 2000,
         })}
-        onConfigChange={onConfigChange}
+        onConfigChange={vi.fn()}
       />,
     );
-    const label = screen.getByText(/dashboard.chart.paddingPct/);
-    const input = label.parentElement?.querySelector('input[type="number"]') as HTMLInputElement;
-    fireEvent.change(input, { target: { value: '10' } });
-    expect(onConfigChange).toHaveBeenCalledWith({ y_axis_padding_pct: 10 });
+    expect(screen.getByTestId('line-chart-x-range-start')).toBeInTheDocument();
+    expect(screen.getByTestId('line-chart-x-range-end')).toBeInTheDocument();
   });
 
-  it('y_axis_mode select 변경 → onConfigChange', () => {
+  // --- Y축 모드 ---
+  it('숫자형이면 최소/최대는 항상 노출되고, 비어 있으면 자동을 뜻한다', () => {
+    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={vi.fn()} />);
+    const min = screen.getByTestId('line-chart-y-min') as HTMLInputElement;
+    const max = screen.getByTestId('line-chart-y-max') as HTMLInputElement;
+    expect(min.value).toBe('');
+    expect(max.value).toBe('');
+  });
+
+  it('최소값을 넣으면 방식(manual)이 함께 저장된다', () => {
+    const onConfigChange = vi.fn();
+    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={onConfigChange} />);
+    fireEvent.change(screen.getByTestId('line-chart-y-min'), { target: { value: '3' } });
+    expect(onConfigChange).toHaveBeenCalledWith({ y_min: 3, y_axis_mode: 'manual' });
+  });
+
+  it('최소·최대를 모두 비우면 방식이 자동으로 돌아간다', () => {
     const onConfigChange = vi.fn();
     render(
       <LineChartSection
-        panel={makePanel('line-chart', {})}
+        panel={makePanel('line-chart', { y_axis_mode: 'manual', y_min: 3 })}
         onConfigChange={onConfigChange}
       />,
     );
-    const selects = screen.getAllByRole('combobox');
-    const yModeSelect = selects.find((s) => (s as HTMLSelectElement).value === 'auto')!;
-    fireEvent.change(yModeSelect, { target: { value: 'auto_padded' } });
-    expect(onConfigChange).toHaveBeenCalledWith({ y_axis_mode: 'auto_padded' });
+    fireEvent.change(screen.getByTestId('line-chart-y-min'), { target: { value: '' } });
+    expect(onConfigChange).toHaveBeenCalledWith({ y_min: undefined, y_axis_mode: 'auto' });
+  });
+
+  it('자동 여백은 Y축 디자인 배지 안에 있다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', { y_axis_mode: 'auto_padded', y_axis_padding_pct: 5 })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    // 접혀 있다.
+    expect(screen.queryByTestId('line-chart-y-design-pad-pct')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('line-chart-y-design-button'));
+    const pad = screen.getByTestId('line-chart-y-design-pad-pct') as HTMLInputElement;
+    expect(pad.value).toBe('5');
+
+    fireEvent.change(pad, { target: { value: '10' } });
+    expect(onConfigChange).toHaveBeenCalledWith({
+      y_axis_padding_pct: 10,
+      y_axis_mode: 'auto_padded',
+    });
+  });
+
+  it('자동 여백을 비우면 방식이 자동으로 돌아간다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', { y_axis_mode: 'auto_padded', y_axis_padding_pct: 5 })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('line-chart-y-design-button'));
+    fireEvent.change(screen.getByTestId('line-chart-y-design-pad-pct'), { target: { value: '' } });
+    expect(onConfigChange).toHaveBeenCalledWith({
+      y_axis_padding_pct: undefined,
+      y_axis_mode: 'auto',
+    });
+  });
+
+  it('X축 디자인 배지에는 여백 칸이 없다 — X축에는 없는 개념이다', () => {
+    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('line-chart-x-design-button'));
+    expect(screen.getByTestId('line-chart-x-design-popover')).toBeInTheDocument();
+    expect(screen.queryByTestId('line-chart-x-design-pad-pct')).toBeNull();
+  });
+});
+
+describe('LineChartSection — 툴팁', () => {
+  it('기본은 사용 켬 + 단일 값 끔', () => {
+    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={vi.fn()} />);
+    expect((screen.getByTestId('line-chart-tooltip-enabled') as HTMLInputElement).checked).toBe(
+      true,
+    );
+    expect((screen.getByTestId('line-chart-tooltip-single') as HTMLInputElement).checked).toBe(
+      false,
+    );
+  });
+
+  it('사용을 끄면 단일 값 칸이 사라진다 — 끈 툴팁의 표시 방식은 뜻이 없다', () => {
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', { tooltip: { enabled: false } })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('line-chart-tooltip-single')).toBeNull();
+  });
+
+  it('기본값으로 되돌아오면 tooltip 필드를 지운다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', { tooltip: { enabled: false } })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('line-chart-tooltip-enabled'));
+    expect(onConfigChange).toHaveBeenCalledWith({ tooltip: undefined });
+  });
+
+  it('단일 값을 켜면 tooltip.single 로 저장된다', () => {
+    const onConfigChange = vi.fn();
+    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={onConfigChange} />);
+    fireEvent.click(screen.getByTestId('line-chart-tooltip-single'));
+    expect(onConfigChange).toHaveBeenCalledWith({ tooltip: { single: true } });
+  });
+});
+
+describe('LineChartSection — 라인 스타일 · 소수점', () => {
+  it('패널 전역 곡선을 켜면 smooth 로 저장된다', () => {
+    const onConfigChange = vi.fn();
+    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={onConfigChange} />);
+    fireEvent.click(screen.getByTestId('line-chart-smooth'));
+    expect(onConfigChange).toHaveBeenCalledWith({ smooth: true });
+  });
+
+  it('결측 점선은 라인 스타일 섹션에 있고 개수는 켰을 때만 뜬다', () => {
+    const onConfigChange = vi.fn();
+    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={onConfigChange} />);
+    expect(screen.queryByTestId('line-chart-gap-dash-threshold')).toBeNull();
+    fireEvent.click(screen.getByTestId('line-chart-gap-dash'));
+    // 켜면 기본 임계값이 함께 저장된다(끌 때는 undefined 로 지운다).
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({ gap_dash_threshold: expect.any(Number) }),
+    );
+  });
+
+  it('소수점 이하는 숫자형에서만 노출된다', () => {
+    const { unmount } = render(
+      <LineChartSection panel={makePanel('line-chart', {})} onConfigChange={vi.fn()} />,
+    );
+    expect(screen.getByTestId('line-chart-decimal-places')).toBeInTheDocument();
+    unmount();
+
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', { y_axis_type: 'enum' })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('line-chart-decimal-places')).toBeNull();
+  });
+
+  it('소수점 이하를 비우면 필드를 지운다(자동)', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <LineChartSection
+        panel={makePanel('line-chart', { decimal_places: 2 })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    fireEvent.change(screen.getByTestId('line-chart-decimal-places'), { target: { value: '' } });
+    expect(onConfigChange).toHaveBeenCalledWith({ decimal_places: undefined });
   });
 });
 
@@ -710,6 +817,100 @@ describe('TableChartSection (REQ-M4-08)', () => {
     );
     const delBtn = screen.getByLabelText('dashboard.chart.deleteColumnAria') as HTMLButtonElement;
     expect(delBtn.disabled).toBe(true);
+  });
+
+  // ---- 열 폭 비율 / 순서 / 정렬·필터 허용 ----
+
+  const THREE_COLUMNS = [
+    { field: 'timestamp', header: '시간', format: 'datetime' as const },
+    { field: 'value', header: '값', format: 'number' as const },
+    { field: 'name', header: '이름', format: 'string' as const },
+  ];
+
+  function renderTable(columns: unknown[] = THREE_COLUMNS) {
+    const onConfigChange = vi.fn();
+    render(
+      <TableChartSection
+        panel={makePanel('table', { columns })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    return onConfigChange;
+  }
+
+  it('폭 비율을 입력하면 해당 열의 width 만 갱신한다', () => {
+    const onConfigChange = renderTable();
+    const widthInputs = screen.getAllByLabelText(/dashboard.chart.columnWidth/);
+    fireEvent.change(widthInputs[1]!, { target: { value: '3' } });
+    expect(onConfigChange).toHaveBeenCalledWith({
+      columns: [THREE_COLUMNS[0], { ...THREE_COLUMNS[1], width: 3 }, THREE_COLUMNS[2]],
+    });
+  });
+
+  it('폭을 비우면 width 를 지워 자동으로 되돌린다', () => {
+    const cols = [{ field: 'a', header: 'A', width: 5 }, { field: 'b', header: 'B' }];
+    const onConfigChange = renderTable(cols);
+    const widthInputs = screen.getAllByLabelText(/dashboard.chart.columnWidth/);
+    fireEvent.change(widthInputs[0]!, { target: { value: '' } });
+    expect(onConfigChange).toHaveBeenCalledWith({
+      columns: [{ field: 'a', header: 'A', width: undefined }, { field: 'b', header: 'B' }],
+    });
+  });
+
+  it('0 이하 폭은 무시한다 (열이 사라지지 않게)', () => {
+    const onConfigChange = renderTable();
+    const widthInputs = screen.getAllByLabelText(/dashboard.chart.columnWidth/);
+    fireEvent.change(widthInputs[0]!, { target: { value: '0' } });
+    expect(onConfigChange).not.toHaveBeenCalled();
+  });
+
+  it('아래로 이동 버튼이 인접 열과 자리를 바꾼다', () => {
+    const onConfigChange = renderTable();
+    const downs = screen.getAllByLabelText('dashboard.chart.moveColumnDownAria');
+    fireEvent.click(downs[0]!);
+    expect(onConfigChange).toHaveBeenCalledWith({
+      columns: [THREE_COLUMNS[1], THREE_COLUMNS[0], THREE_COLUMNS[2]],
+    });
+  });
+
+  it('위로 이동 버튼이 인접 열과 자리를 바꾼다', () => {
+    const onConfigChange = renderTable();
+    const ups = screen.getAllByLabelText('dashboard.chart.moveColumnUpAria');
+    fireEvent.click(ups[2]!);
+    expect(onConfigChange).toHaveBeenCalledWith({
+      columns: [THREE_COLUMNS[0], THREE_COLUMNS[2], THREE_COLUMNS[1]],
+    });
+  });
+
+  it('첫 열의 위로 · 마지막 열의 아래로 버튼은 비활성이다', () => {
+    renderTable();
+    const ups = screen.getAllByLabelText('dashboard.chart.moveColumnUpAria') as HTMLButtonElement[];
+    const downs = screen.getAllByLabelText('dashboard.chart.moveColumnDownAria') as HTMLButtonElement[];
+    expect(ups[0]!.disabled).toBe(true);
+    expect(ups[2]!.disabled).toBe(false);
+    expect(downs[2]!.disabled).toBe(true);
+    expect(downs[0]!.disabled).toBe(false);
+  });
+
+  it('정렬 허용 체크박스는 기본 켜짐이고 끄면 sortable:false 를 쓴다', () => {
+    const onConfigChange = renderTable();
+    const boxes = screen.getAllByRole('checkbox') as HTMLInputElement[];
+    // 열마다 [정렬, 필터] 두 개 — 첫 열의 정렬은 index 0.
+    expect(boxes[0]!.checked).toBe(true);
+    fireEvent.click(boxes[0]!);
+    expect(onConfigChange).toHaveBeenCalledWith({
+      columns: [{ ...THREE_COLUMNS[0], sortable: false }, THREE_COLUMNS[1], THREE_COLUMNS[2]],
+    });
+  });
+
+  it('필터 허용 체크박스는 기본 꺼짐이고 켜면 filterable:true 를 쓴다', () => {
+    const onConfigChange = renderTable();
+    const boxes = screen.getAllByRole('checkbox') as HTMLInputElement[];
+    expect(boxes[1]!.checked).toBe(false);
+    fireEvent.click(boxes[1]!);
+    expect(onConfigChange).toHaveBeenCalledWith({
+      columns: [{ ...THREE_COLUMNS[0], filterable: true }, THREE_COLUMNS[1], THREE_COLUMNS[2]],
+    });
   });
 });
 

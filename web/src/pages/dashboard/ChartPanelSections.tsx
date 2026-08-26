@@ -6,7 +6,7 @@
 // 분기하여 해당 Section 을 렌더링한다.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, GripVertical, Info, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronUp, GripVertical, Info, Plus, Trash2 } from 'lucide-react';
 
 import type { PanelConfig } from '@/stores/uiStore';
 import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
@@ -24,7 +24,7 @@ import type {
   YAxisDataType,
   YEnumLabel,
   AxisFontStyle,
-  TimeWindowMode,
+  TooltipConfig,
   YThreshold,
   ChannelRefConfig,
   StrokeStyle,
@@ -33,6 +33,17 @@ import type {
   StoreSourceConfig,
   SeriesReduceFunc,
 } from './panels/charts/chartChannelTypes';
+import { SeriesRangeField } from './SeriesRangeField';
+import {
+  readChartXRange,
+  readSeriesRange,
+  type ChartXRangeSource,
+} from './panels/charts/seriesRange';
+import {
+  INTERVAL_PRESETS_MS,
+  formatIntervalMs,
+  isIntervalPreset,
+} from './panels/charts/intervalPresets';
 import {
   buildDefaultStoreSource,
   defaultTsdbSource,
@@ -50,7 +61,9 @@ import {
   panelSourceCapabilities,
   resolvePanelSourceBinding,
 } from './panels/charts/panelDataSource';
+import { isPanelSeriesSource } from './panels/charts/usePanelSeriesData';
 import { FillStrategyField, TsdbSourceSection } from './TsdbSourceSection';
+import { AliasTokenHelp } from './AliasTokenHelp';
 import { SeriesNameFormatField } from './SeriesNameFormatField';
 import {
   filterStoreKeyObjects,
@@ -521,6 +534,25 @@ export function StoreSourceSection({
         </div>
       )}
 
+      {/* Store 모드: 가져올 데이터 범위 — 기간(상대·절대) 또는 갯수. TSDB 와 같은 편집기다. */}
+      {isStoreMode && (
+        <SeriesRangeField
+          range={readSeriesRange(storeSource.range, storeSource.time_window_ms)}
+          onChange={(range) => patchStore({ range })}
+          testIdPrefix="chart-store"
+        />
+      )}
+
+      {/* Store 모드: 인터벌(버킷) 간격. TSDB 와 같은 눈금·같은 조작이다 — 소스를 바꿔도
+          같은 값을 같은 방식으로 고른다. */}
+      {isStoreMode && (
+        <StoreIntervalField
+          intervalMs={storeSource.interval_ms}
+          timeWindowMs={storeSource.time_window_ms}
+          onChange={(interval_ms) => patchStore({ interval_ms })}
+        />
+      )}
+
       {/* Store 모드: 이름을 지정하지 않은 시리즈의 표시 이름 형식(패널 단위 기본값). */}
       {isStoreMode && (
         <SeriesNameFormatField
@@ -826,6 +858,82 @@ function StoreInfoPopover({
 }
 
 /**
+ * Store 인터벌(버킷) 간격 편집기.
+ *
+ * 지금까지 Store 소스의 인터벌은 정보 팝오버에 **읽기 전용**으로만 있었다 — 기본값
+ * 1분 버킷을 바꿀 방법이 화면에 없었다. TSDB 쪽과 같은 프리셋·같은 표기·같은 "직접
+ * 입력" 경로를 쓴다(`intervalPresets`).
+ *
+ * 0 이하는 저장하지 않는다 — `useStoreChartData` 의 pollKey 가 비어 폴링이 멈춘다.
+ */
+function StoreIntervalField({
+  intervalMs,
+  timeWindowMs,
+  onChange,
+}: {
+  intervalMs: number;
+  timeWindowMs: number;
+  onChange: (intervalMs: number) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const preset = isIntervalPreset(intervalMs);
+  // 인터벌이 시간 윈도우보다 크면 버킷이 하나뿐이라 그래프가 점 하나로 보인다.
+  // 막지는 않는다(의도적으로 그렇게 쓸 수 있다) — 왜 그렇게 보이는지만 알려준다.
+  const tooCoarse = intervalMs > 0 && timeWindowMs > 0 && intervalMs > timeWindowMs;
+
+  return (
+    <div className="space-y-1">
+      <LabeledField label={t('dashboard.chart.storeInterval')}>
+        <select
+          data-testid="chart-store-interval"
+          value={preset ? String(intervalMs) : 'custom'}
+          onChange={(e) => {
+            const v = e.target.value;
+            // "직접 입력" 선택만으로는 값을 바꾸지 않는다 — 아래 입력칸이 열릴 뿐이다.
+            if (v === 'custom') return;
+            onChange(Number(v));
+          }}
+          className={inputClass()}
+        >
+          {INTERVAL_PRESETS_MS.map((ms) => (
+            <option key={ms} value={ms}>
+              {formatIntervalMs(ms)}
+            </option>
+          ))}
+          <option value="custom">{t('tsdb.intervalCustom')}</option>
+        </select>
+      </LabeledField>
+      {!preset && (
+        <label className="flex items-center gap-1 text-[11px] text-(--color-text-muted)">
+          <input
+            type="number"
+            min={1}
+            data-testid="chart-store-interval-custom"
+            value={Math.round(intervalMs / 1000)}
+            aria-label={t('dashboard.chart.storeIntervalCustomAria')}
+            onChange={(e) => {
+              const sec = Number(e.target.value);
+              if (!Number.isFinite(sec) || sec <= 0) return;
+              onChange(Math.round(sec) * 1000);
+            }}
+            className="w-20 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[11px]"
+          />
+          <span>{t('dashboard.chart.storeInfoSecUnit')}</span>
+        </label>
+      )}
+      {tooCoarse && (
+        <p
+          data-testid="chart-store-interval-warning"
+          className="text-[11px] leading-snug text-amber-600 dark:text-amber-400"
+        >
+          {t('dashboard.chart.storeIntervalTooCoarse')}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
  * 태그 자동 선택기 (SPEC-WEB-005 tag 모드).
  *
  * 사용자가 태그 키마다 값을 하나씩 골라 AND 필터(`tag_filters`)를 구성한다. 매칭되는
@@ -1046,16 +1154,13 @@ export function SeriesAliasInput({
 }
 
 /**
- * 시리즈 이름 토큰 삽입 버튼 + 실시간 미리보기 서브행 (SPEC-WEB-005).
+ * 시리즈 이름 토큰 도움말 — 공용 `AliasTokenHelp` 에 삽입 동작을 붙인 얇은 껍데기.
  *
- * - 시리즈 키 / field / 각 태그마다 `{$.…}` 삽입 버튼을 제공하고, 클릭 시
- *   입력 커서 위치(없으면 끝)에 토큰을 삽입한다. 사용자는 토큰과 리터럴 문자열을
- *   섞어 표시 이름을 조립한다(예: "[{$.tags.room}] {$.measurement}/{$.metric}").
- * - 삽입 가능한 토큰이 하나도 없으면(키/필드/태그가 모두 없음) 노출하지 않는다.
- * - 미리보기는 resolveSeriesAlias 결과를 보여준다. alias 가 비어있으면 키명으로
- *   폴백(현재 렌더 동작과 동일).
+ * 팝오버의 생김새·여닫힘은 `AliasTokenHelp` 소관이고, 여기서는 "누르면 이름 입력의
+ * 커서 위치에 넣고 커서를 토큰 끝으로 옮긴다"만 정한다. 이름 형식 입력(SeriesNameFormatField)
+ * 은 커서 복원이 필요 없어 같은 팝오버에 다른 삽입 동작을 붙인다.
  */
-export function SeriesAliasTokens({
+export function SeriesAliasTokenHelp({
   index,
   seriesKey,
   fieldName,
@@ -1072,10 +1177,7 @@ export function SeriesAliasTokens({
   onAliasChange: (alias: string | undefined) => void;
   getInput: () => HTMLInputElement | null;
 }): React.ReactElement | null {
-  const { t } = useTranslation();
-  const aliasCtx = { measurement: seriesKey, metric: fieldName, tags };
-  const tokenPaths = availableAliasTokens(aliasCtx);
-  if (tokenPaths.length === 0) return null;
+  const tokenPaths = availableAliasTokens({ measurement: seriesKey, field: fieldName, tags });
 
   // 커서 위치(없으면 끝)에 토큰을 삽입한다.
   const insertToken = (tokenPath: string): void => {
@@ -1093,8 +1195,7 @@ export function SeriesAliasTokens({
     onAliasChange(next.trim() === '' ? undefined : next);
     // 삽입 후 커서를 토큰 끝으로 이동(가능할 때).
     if (el) {
-      const caret =
-        (el.selectionStart ?? current.length) + token.length;
+      const caret = (el.selectionStart ?? current.length) + token.length;
       requestAnimationFrame(() => {
         try {
           el.focus();
@@ -1106,38 +1207,49 @@ export function SeriesAliasTokens({
     }
   };
 
-  // 미리보기: alias 비어있으면 키명 폴백(렌더 동작과 일치).
+  return (
+    <AliasTokenHelp
+      tokenPaths={tokenPaths}
+      onInsert={insertToken}
+      testIdPrefix={`chart-store-series-${index}`}
+    />
+  );
+}
+
+/**
+ * 시리즈 표시 이름 실시간 미리보기 서브행 (SPEC-WEB-005).
+ *
+ * 토큰 목록과 달리 상시 노출한다 — 토큰을 넣은 결과가 무엇인지는 편집 중 계속
+ * 봐야 하고, 클릭 뒤에 숨기면 "형식이 먹었는지" 확인할 길이 없어진다.
+ * alias 가 비어있으면 키명으로 폴백한다(현재 렌더 동작과 동일).
+ */
+export function SeriesAliasPreview({
+  index,
+  seriesKey,
+  fieldName,
+  alias,
+  tags,
+}: {
+  index: number;
+  seriesKey: string;
+  fieldName?: string;
+  alias: string | undefined;
+  tags: Record<string, string>;
+}): React.ReactElement {
+  const { t } = useTranslation();
   const preview =
-    alias && alias.trim() !== '' ? resolveSeriesAlias(alias, aliasCtx) : seriesKey;
+    alias && alias.trim() !== ''
+      ? resolveSeriesAlias(alias, { measurement: seriesKey, field: fieldName, tags })
+      : seriesKey;
 
   return (
-    <div
-      className="flex flex-wrap items-center gap-1.5 px-1.5 pb-1"
-      data-testid={`chart-store-series-tokens-${index}`}
+    <span
+      className="inline-flex min-w-0 max-w-full items-center gap-0.5 text-xs text-(--color-text-muted)"
+      data-testid={`chart-store-series-preview-${index}`}
     >
-      <span className="text-xs text-(--color-text-muted)">
-        {t('dashboard.chart.storeAliasInsertToken')}
-      </span>
-      {tokenPaths.map((k) => (
-        <button
-          key={k}
-          type="button"
-          onClick={() => insertToken(k)}
-          data-testid={`chart-store-series-token-${index}-${k}`}
-          className="rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-0.5 font-mono text-xs text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
-        >
-          {makeAliasToken(k)}
-        </button>
-      ))}
-      {/* 미리보기: 라벨(i18n) + 해석값(raw). 값은 별도 노드로 두어 항상 확인 가능. */}
-      <span
-        className="ml-1 inline-flex min-w-0 items-center gap-0.5 text-xs text-(--color-text-muted)"
-        data-testid={`chart-store-series-preview-${index}`}
-      >
-        <span>{t('dashboard.chart.storeAliasPreview')}</span>
-        <span className="truncate font-mono text-(--color-text-primary)">{preview}</span>
-      </span>
-    </div>
+      <span>{t('dashboard.chart.storeAliasPreview')}</span>
+      <span className="truncate font-mono text-(--color-text-primary)">{preview}</span>
+    </span>
   );
 }
 
@@ -1180,41 +1292,57 @@ export function SeriesDetailEditor({
   const { t } = useTranslation();
   const aliasInputRef = useRef<HTMLInputElement | null>(null);
   // v0.5.0(REQ-18/19 폐지/AC-20/21): 펼침 상세는 시리즈 편집 필드만 — 이름 위 키·종류·태그 설명
-  // 서브라인 없음(테이블 컬럼 + alias 컬럼 키 에코와 중복). 레이아웃: 이름 옆 색상 입력 제거(색상은
-  // 아래 전용 행), (heatmap)좌표는 이름 뒤 2열(이름 | 좌표). 본문 폰트는 text-sm 이상.
+  // 서브라인 없음(테이블 컬럼 + alias 컬럼 키 에코와 중복). 본문 폰트는 text-sm 이상.
+  //
+  // 레이아웃: 이름·미리보기·색상·(heatmap)좌표·(라인)선 스타일을 **한 줄**에 늘어놓고,
+  // 폭이 모자라면 그룹 단위로 다음 줄로 접는다(flex-wrap). 항목마다 줄을 하나씩 쓰면
+  // 시리즈 한 개가 네 줄을 차지해, 시리즈가 몇 개만 늘어도 목록을 스크롤해야 했다.
+  //
+  // 각 그룹(라벨+컨트롤)은 내부에서 wrap 하지 않는다 — 라벨만 윗줄에 남고 컨트롤이
+  // 아랫줄로 떨어지면 무엇의 라벨인지 읽히지 않는다. 줄바꿈은 항상 그룹 경계에서만
+  // 일어난다. 선 스타일만은 예외로 내부 wrap 을 허용한다(컨트롤 4개가 한 덩어리라
+  // 좁은 폭에서 통째로 밀면 오히려 빈 줄이 생긴다).
   return (
-    <div className="space-y-2 text-sm" data-testid={`series-detail-${index}`}>
-      {/* 이름(name/alias, 편집 가능 텍스트) | (heatmap)좌표 — 2열 레이아웃(이름 뒤 좌표). */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-(--color-text-muted)">
-            {t('dashboard.settings.seriesDetailsName')}
-          </label>
-          <SeriesAliasInput
-            index={index}
-            seriesKey={series.key}
-            alias={series.alias}
-            onAliasChange={(alias) => onPatch({ alias })}
-            inputRef={(el) => {
-              aliasInputRef.current = el;
-            }}
-          />
-        </div>
-        {positionEditor}
+    <div
+      className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm"
+      data-testid={`series-detail-${index}`}
+    >
+      {/* 이름(name/alias, 편집 가능 텍스트) + 토큰 도움말(물음표). */}
+      <div className="flex items-center gap-2">
+        <label className="shrink-0 text-sm font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.seriesDetailsName')}
+        </label>
+        <SeriesAliasInput
+          index={index}
+          seriesKey={series.key}
+          alias={series.alias}
+          onAliasChange={(alias) => onPatch({ alias })}
+          inputRef={(el) => {
+            aliasInputRef.current = el;
+          }}
+        />
+        {/* 이름 템플릿 토큰(키 / field / 태그) — 물음표 뒤 도움말. */}
+        <SeriesAliasTokenHelp
+          index={index}
+          seriesKey={series.key}
+          fieldName={series.field}
+          alias={series.alias}
+          tags={series.tags ?? {}}
+          onAliasChange={(alias) => onPatch({ alias })}
+          getInput={() => aliasInputRef.current}
+        />
       </div>
-      {/* 이름 템플릿 토큰(키 / field / 태그). */}
-      <SeriesAliasTokens
+      {/* 표시 이름 미리보기(상시 노출). */}
+      <SeriesAliasPreview
         index={index}
         seriesKey={series.key}
         fieldName={series.field}
         alias={series.alias}
         tags={series.tags ?? {}}
-        onAliasChange={(alias) => onPatch({ alias })}
-        getInput={() => aliasInputRef.current}
       />
-      {/* 색상(이름 옆에서 이동한 전용 행 — 모든 패널 타입에서 편집 가능, `color` 불변). */}
+      {/* 색상 — 모든 패널 타입에서 편집 가능(`color` 불변). */}
       <div className="flex items-center gap-2">
-        <label className="text-sm font-medium text-(--color-text-muted)">
+        <label className="shrink-0 text-sm font-medium text-(--color-text-muted)">
           {t('dashboard.settings.seriesDetailsColor')}
         </label>
         <input
@@ -1226,6 +1354,7 @@ export function SeriesDetailEditor({
           className="h-7 w-9 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
         />
       </div>
+      {positionEditor}
       {/* 라인 차트: 통합 라인 스타일 편집. */}
       {isLineChart && (
         <LineStyleControls
@@ -1693,6 +1822,136 @@ export function ChannelSeriesEditor({
  * 미지정 필드는 렌더 기본값(size 10, #9ca3af, normal)으로 폴백하므로, 입력 placeholder
  * 로 기본값을 안내한다.
  */
+/**
+ * 설정 한 덩어리 — 제목 줄 + 본문.
+ *
+ * 종전에는 "차트 스타일" 한 덩어리 안에 X축·Y축·라인·범례가 모두 들어 있어,
+ * 무엇이 어느 축의 설정인지 줄 순서로만 구분됐다. 목업대로 축별·주제별로 쪼갠다.
+ *
+ * `design` 은 제목 오른쪽에 붙는 배지다 — 색·크기처럼 "보이는 방식"만 모아 두어
+ * 본문에는 값 설정만 남긴다.
+ */
+function SettingsSection({
+  title,
+  design,
+  children,
+}: {
+  title: string;
+  design?: React.ReactNode;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <div className="space-y-2 border-t border-(--color-border-default) pt-3">
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs font-semibold text-(--color-text-primary)">{title}</span>
+        {design}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * 축 디자인 배지 — 레이블/값 글꼴(크기·색·굵기)과 Y축의 자동 여백을 접어 둔다.
+ *
+ * 글꼴 네 줄(X레이블·X값·Y레이블·Y값)이 본문에 펼쳐져 있으면, 정작 자주 고치는
+ * 레이블·범위보다 자리를 많이 차지한다. 축마다 배지 하나로 접고, 그 축의 것만 담는다.
+ *
+ * `onPadPct` 가 오면 자동 여백 칸을 함께 낸다(Y축 전용). 여백은 최소·최대가 비어
+ * 있을 때 축을 데이터 범위보다 얼마나 넓게 잡을지를 정한다 — 값이 없으면 쓰지 않는다.
+ */
+function AxisDesignPopover({
+  testId,
+  labelFont,
+  tickFont,
+  onLabelFont,
+  onTickFont,
+  padPct,
+  onPadPct,
+}: {
+  testId: string;
+  labelFont: AxisFontStyle | undefined;
+  tickFont: AxisFontStyle | undefined;
+  onLabelFont: (patch: Partial<AxisFontStyle>) => void;
+  onTickFont: (patch: Partial<AxisFontStyle>) => void;
+  padPct?: number;
+  onPadPct?: (next: number | undefined) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent): void => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <span className="relative inline-flex" ref={containerRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="true"
+        aria-expanded={open}
+        data-testid={`${testId}-button`}
+        className="rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-0.5 text-[11px] text-(--color-text-muted) transition-colors hover:text-(--color-text-primary)"
+      >
+        {t('dashboard.chart.designBadge')}
+      </button>
+      {open && (
+        <div
+          data-testid={`${testId}-popover`}
+          className="absolute left-0 top-full z-30 mt-1 w-72 space-y-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2.5 text-left shadow-lg"
+        >
+          <div className="flex items-center gap-2 text-[11px] text-(--color-text-muted)">
+            <span className="w-20 shrink-0">{t('dashboard.chart.axisFont')}</span>
+            <span className="w-14 text-center">{t('dashboard.chart.fontSize')}</span>
+            <span className="w-6 text-center">{t('dashboard.chart.fontColorShort')}</span>
+            <span className="w-6 text-center">{t('dashboard.chart.fontBoldShort')}</span>
+          </div>
+          <AxisFontRow
+            label={t('dashboard.chart.designLabelRow')}
+            font={labelFont}
+            onChange={onLabelFont}
+          />
+          <AxisFontRow
+            label={t('dashboard.chart.designValueRow')}
+            font={tickFont}
+            onChange={onTickFont}
+          />
+          {onPadPct && (
+            <label className="flex items-center gap-2 pt-1 text-[11px] text-(--color-text-muted)">
+              <span className="w-20 shrink-0">{t('dashboard.chart.yAutoPadded')}</span>
+              <input
+                type="number"
+                min={0}
+                max={50}
+                value={padPct ?? ''}
+                placeholder={t('dashboard.chart.notUsedWhenEmpty')}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === '') return onPadPct(undefined);
+                  const n = parseInt(v, 10);
+                  if (!Number.isNaN(n) && n >= 0) onPadPct(n);
+                }}
+                data-testid={`${testId}-pad-pct`}
+                className="w-14 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-center text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
+              />
+              <span>%</span>
+            </label>
+          )}
+        </div>
+      )}
+    </span>
+  );
+}
+
 function AxisFontRow({
   label,
   font,
@@ -1756,7 +2015,6 @@ export function LineChartSection({
 }): React.ReactElement {
   const { t } = useTranslation();
   const config = panel.config ?? {};
-  const maxPoints = (config.max_points as number | undefined) ?? 100;
   const gapDashThreshold = (config.gap_dash_threshold as number | undefined) ?? 0;
   const xLabel = (config.x_label as string | undefined) ?? '';
   const yMin = config.y_min as number | undefined;
@@ -1798,12 +2056,63 @@ export function LineChartSection({
   function patchEnumLabel(idx: number, patch: Partial<YEnumLabel>): void {
     updateEnumLabels(enumLabels.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
   }
-  const timeWindowMode =
-    (config.time_window_mode as TimeWindowMode | undefined) ?? 'points';
-  const recentWindowSec = (config.recent_window_sec as number | undefined) ?? 600;
-  const fixedStartMs = config.fixed_start_ms as number | undefined;
-  const fixedEndMs = config.fixed_end_ms as number | undefined;
+  // X축 범위 — 데이터 소스와 같은 어휘(SeriesRange). 구 time_window_mode 계열은
+  // readChartXRange 안에서 폴백으로 해석되므로 여기서는 새 어휘만 다룬다.
+  const xRange = readChartXRange(config as ChartXRangeSource);
   const refreshMs = (config.time_window_refresh_ms as number | undefined) ?? 1000;
+  const decimalPlaces = config.decimal_places as number | undefined;
+  const tooltipCfg = (config.tooltip as TooltipConfig | undefined) ?? {};
+  const panelSmooth = (config.smooth as boolean | undefined) ?? false;
+  // 소스가 채널이 아니면 X축 범위는 데이터 소스 설정이 정한다 — 조회 범위가 곧
+  // 표시 범위다. 같은 값을 두 곳에서 편집하게 두면 서로 어긋난다.
+  const xRangeOwnedBySource = isPanelSeriesSource(resolvePanelSourceBinding(config));
+
+  /**
+   * Y축 도메인 방식은 저장 필드로 남아 있지만(렌더러가 읽는다), 화면에는 노출하지
+   * 않는다 — 목업의 규약은 "최소·최대가 비면 자동"이다. 사용자가 최소/최대나 자동
+   * 여백을 건드릴 때만 이 함수로 방식을 다시 계산해 함께 저장한다. 건드리지 않은
+   * 패널의 저장값은 그대로 두므로 기존 대시보드의 축이 변하지 않는다.
+   */
+  function deriveYAxisMode(
+    min: number | undefined,
+    max: number | undefined,
+    padPct: number,
+  ): YAxisMode {
+    if (min !== undefined || max !== undefined) return 'manual';
+    return padPct > 0 ? 'auto_padded' : 'auto';
+  }
+  // 저장된 방식이 auto_padded 일 때만 여백이 살아 있다.
+  const padActive = yAxisMode === 'auto_padded';
+  const effectivePadPct = padActive ? yPadPct : 0;
+
+  function setYBound(patch: { y_min?: number; y_max?: number }): void {
+    const nextMin = 'y_min' in patch ? patch.y_min : yMin;
+    const nextMax = 'y_max' in patch ? patch.y_max : yMax;
+    onConfigChange({
+      ...patch,
+      y_axis_mode: deriveYAxisMode(nextMin, nextMax, effectivePadPct),
+    });
+  }
+  function setYPadPct(next: number | undefined): void {
+    onConfigChange({
+      y_axis_padding_pct: next,
+      y_axis_mode: deriveYAxisMode(yMin, yMax, next ?? 0),
+    });
+  }
+
+  function patchLegend(patch: Record<string, unknown>): void {
+    onConfigChange({
+      legend: { ...((config.legend as Record<string, unknown>) ?? {}), ...patch },
+    });
+  }
+  function patchTooltip(patch: Partial<TooltipConfig>): void {
+    const next = { ...tooltipCfg, ...patch };
+    // 기본값(켬 + 전체)으로 되돌아오면 필드를 지운다 — config 를 깔끔히 유지한다.
+    const cleaned: TooltipConfig = {};
+    if (next.enabled === false) cleaned.enabled = false;
+    if (next.single === true) cleaned.single = true;
+    onConfigChange({ tooltip: Object.keys(cleaned).length > 0 ? cleaned : undefined });
+  }
   const multiSeriesField = (config.multi_series_field as string | undefined) ?? '';
   const thresholds = (config.y_thresholds as YThreshold[] | undefined) ?? [];
 
@@ -1827,254 +2136,161 @@ export function LineChartSection({
         이전되었다. 본 섹션은 전역 스타일(X/Y축·임계선·범례·다중시리즈)만 다룬다.
       */}
 
-      {/* ═══ 차트 스타일 ═══ */}
-      <div className="border-t border-(--color-border-default) pt-3">
-        <label className="mb-2 block text-xs font-semibold text-(--color-text-primary)">{t('dashboard.chart.chartStyle')}</label>
+      {/* ═══ X 축 ═══ */}
+      <SettingsSection
+        title={t('dashboard.chart.xAxis')}
+        design={
+          <AxisDesignPopover
+            testId="line-chart-x-design"
+            labelFont={config.x_label_font as AxisFontStyle | undefined}
+            tickFont={config.x_tick_font as AxisFontStyle | undefined}
+            onLabelFont={(p) => patchFont('x_label_font', p)}
+            onTickFont={(p) => patchFont('x_tick_font', p)}
+          />
+        }
+      >
+        <LabeledField label={t('dashboard.chart.label')}>
+          <input
+            type="text"
+            value={xLabel}
+            onChange={(e) => onConfigChange({ x_label: e.target.value || undefined })}
+            placeholder={t('dashboard.chart.xLabelPlaceholder')}
+            data-testid="line-chart-x-label"
+            className={inputClass()}
+          />
+        </LabeledField>
 
-        {/* X축 */}
-        <div className="flex items-end gap-2">
-          <LabeledField label={t('dashboard.chart.xAxis')}>
-            <select
-              value={timeWindowMode}
-              onChange={(e) =>
-                onConfigChange({ time_window_mode: e.target.value as TimeWindowMode })
-              }
-              className={inputClass()}
-            >
-              <option value="points">{t('dashboard.chart.xWindowPoints')}</option>
-              <option value="recent">{t('dashboard.chart.xWindowRecent')}</option>
-              <option value="fixed">{t('dashboard.chart.xWindowFixed')}</option>
-            </select>
-          </LabeledField>
-          <LabeledField label={t('dashboard.chart.label')}>
-            <input
-              type="text"
-              value={xLabel}
-              onChange={(e) => onConfigChange({ x_label: e.target.value || undefined })}
-              placeholder={t('dashboard.chart.xLabelPlaceholder')}
-              className={inputClass()}
+        {/* 범위 — 채널 모드에서만 편집한다. 시리즈 소스는 조회 범위가 곧 표시 범위라
+            데이터 소스 설정이 소유한다(같은 값을 두 곳에서 고치면 어긋난다). */}
+        {xRangeOwnedBySource ? (
+          <p
+            data-testid="line-chart-x-range-owned-note"
+            className="text-[11px] text-(--color-text-muted)"
+          >
+            {t('dashboard.chart.xRangeFromSource')}
+          </p>
+        ) : (
+          <>
+            <SeriesRangeField
+              range={xRange}
+              onChange={(next) => onConfigChange({ x_range: next })}
+              testIdPrefix="line-chart-x"
             />
-          </LabeledField>
-        </div>
-
-        {/* 결측 구간 점선 표기 (SPEC-TSDB-004 §2.19).
-            켜면 값이 없는 구간에서 실선을 끊고 그 구간만 점선으로 잇는다 —
-            이은 것과 잰 것을 눈으로 가른다. 끄면 종전대로 조용히 이어 그린다. */}
-        <div className="space-y-1">
-          <label className="flex items-center gap-1.5 text-xs text-(--color-text-muted)">
-            <input
-              type="checkbox"
-              data-testid="line-chart-gap-dash"
-              checked={gapDashThreshold > 0}
-              onChange={(e) =>
-                // 끌 때 0 을 남기지 않는다 — "켜져 있는데 임계 0" 처럼 읽힌다.
-                onConfigChange({
-                  gap_dash_threshold: e.target.checked ? GAP_DASH_DEFAULT : undefined,
-                })
-              }
-            />
-            <span>{t('dashboard.chart.gapDash')}</span>
-          </label>
-          {gapDashThreshold > 0 && (
-            <LabeledField
-              label={t('dashboard.chart.gapDashThreshold')}
-              hint={t('dashboard.chart.gapDashHint')}
-            >
-              <input
-                type="number"
-                min={1}
-                max={10000}
-                data-testid="line-chart-gap-dash-threshold"
-                value={gapDashThreshold}
-                onChange={(e) => {
-                  const n = parseInt(e.target.value, 10);
-                  // 1 미만은 "끄기" 와 같은 뜻인데 토글은 켜져 있다 — 모순된
-                  // 상태를 만들지 않으려면 끄기는 토글로만 한다.
-                  if (!Number.isNaN(n) && n >= 1) onConfigChange({ gap_dash_threshold: n });
-                }}
-                className={inputClass()}
-              />
-            </LabeledField>
-          )}
-        </div>
-
-        {timeWindowMode === 'points' && (
-          <LabeledField label={t('dashboard.chart.maxPoints')}>
-            <input
-              type="number"
-              min={1}
-              max={10000}
-              value={maxPoints}
-              onChange={(e) => {
-                const n = parseInt(e.target.value, 10);
-                if (!Number.isNaN(n)) onConfigChange({ max_points: n });
-              }}
-              className={inputClass()}
-            />
-          </LabeledField>
+            {xRange.mode === 'relative' && (
+              <LabeledField label={t('dashboard.chart.refreshMs')}>
+                <input
+                  type="number"
+                  min={200}
+                  max={60000}
+                  step={100}
+                  value={refreshMs}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10);
+                    if (!Number.isNaN(n)) onConfigChange({ time_window_refresh_ms: n });
+                  }}
+                  className={inputClass()}
+                />
+              </LabeledField>
+            )}
+          </>
         )}
+      </SettingsSection>
 
-        {timeWindowMode === 'recent' && (
-          <div className="flex gap-2">
-            <LabeledField label={t('dashboard.chart.windowSizeSec')}>
-              <input
-                type="number"
-                min={1}
-                max={86400}
-                value={recentWindowSec}
-                onChange={(e) => {
-                  const n = parseInt(e.target.value, 10);
-                  if (!Number.isNaN(n)) onConfigChange({ recent_window_sec: n });
-                }}
-                className={inputClass()}
-              />
-            </LabeledField>
-            <LabeledField label={t('dashboard.chart.refreshMs')}>
-              <input
-                type="number"
-                min={200}
-                max={60000}
-                step={100}
-                value={refreshMs}
-                onChange={(e) => {
-                  const n = parseInt(e.target.value, 10);
-                  if (!Number.isNaN(n)) onConfigChange({ time_window_refresh_ms: n });
-                }}
-                className={inputClass()}
-              />
-            </LabeledField>
-          </div>
-        )}
+      {/* ═══ Y 축 ═══ */}
+      <SettingsSection
+        title={t('dashboard.chart.yAxis')}
+        design={
+          <AxisDesignPopover
+            testId="line-chart-y-design"
+            labelFont={config.y_label_font as AxisFontStyle | undefined}
+            tickFont={config.y_tick_font as AxisFontStyle | undefined}
+            onLabelFont={(p) => patchFont('y_label_font', p)}
+            onTickFont={(p) => patchFont('y_tick_font', p)}
+            padPct={padActive ? yPadPct : undefined}
+            onPadPct={setYPadPct}
+          />
+        }
+      >
+        <LabeledField label={t('dashboard.chart.label')}>
+          <input
+            type="text"
+            value={yLabel}
+            onChange={(e) => onConfigChange({ y_label: e.target.value || undefined })}
+            placeholder={t('dashboard.chart.yLabelPlaceholder')}
+            data-testid="line-chart-y-label"
+            className={inputClass()}
+          />
+        </LabeledField>
 
-        {timeWindowMode === 'fixed' && (
-          <div className="flex gap-2">
-            <LabeledField label={t('dashboard.chart.startMs')}>
-              <input
-                type="number"
-                value={fixedStartMs ?? ''}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  onConfigChange({
-                    fixed_start_ms: v === '' ? undefined : parseInt(v, 10) || undefined,
-                  });
-                }}
-                className={inputClass()}
-              />
-            </LabeledField>
-            <LabeledField label={t('dashboard.chart.endMs')}>
-              <input
-                type="number"
-                value={fixedEndMs ?? ''}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  onConfigChange({
-                    fixed_end_ms: v === '' ? undefined : parseInt(v, 10) || undefined,
-                  });
-                }}
-                className={inputClass()}
-              />
-            </LabeledField>
-          </div>
-        )}
-
-        {/* Y축 데이터 타입 (숫자형 / 열거형) */}
-        <div className="flex items-end gap-2">
+        {/* 형식 | 소수점 이하(숫자형에서만) */}
+        <div className="flex flex-wrap items-end gap-2">
           <LabeledField label={t('dashboard.chart.yAxisType')}>
             <select
               value={yAxisType}
-              onChange={(e) =>
-                onConfigChange({ y_axis_type: e.target.value as YAxisDataType })
-              }
+              onChange={(e) => onConfigChange({ y_axis_type: e.target.value as YAxisDataType })}
+              data-testid="line-chart-y-type"
               className={inputClass()}
             >
               <option value="numeric">{t('dashboard.chart.yTypeNumeric')}</option>
               <option value="enum">{t('dashboard.chart.yTypeEnum')}</option>
             </select>
           </LabeledField>
-          <LabeledField label={t('dashboard.chart.label')}>
-            <input
-              type="text"
-              value={yLabel}
-              onChange={(e) => onConfigChange({ y_label: e.target.value || undefined })}
-              placeholder={t('dashboard.chart.yLabelPlaceholder')}
-              className={inputClass()}
-            />
-          </LabeledField>
           {yAxisType === 'numeric' && (
-            <LabeledField label={t('dashboard.chart.unit')}>
+            <LabeledField label={t('dashboard.chart.decimalPlaces')}>
               <input
-                type="text"
-                value={yUnit}
-                onChange={(e) => onConfigChange({ y_unit: e.target.value || undefined })}
-                placeholder={t('dashboard.chart.yUnitPlaceholder')}
-                className="w-16 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                type="number"
+                min={0}
+                max={10}
+                value={decimalPlaces ?? ''}
+                placeholder={t('dashboard.chart.autoWhenEmpty')}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === '') return onConfigChange({ decimal_places: undefined });
+                  const n = parseInt(v, 10);
+                  if (!Number.isNaN(n) && n >= 0) onConfigChange({ decimal_places: n });
+                }}
+                data-testid="line-chart-decimal-places"
+                className={inputClass()}
               />
             </LabeledField>
           )}
         </div>
 
-        {/* 숫자형: Y축 범위(자동/수동/자동+여백) */}
+        {/* 최소값 | 최대값 — 비우면 자동. 방식(y_axis_mode)은 여기서 파생 저장한다. */}
         {yAxisType === 'numeric' && (
-          <LabeledField label={t('dashboard.chart.yAxis')}>
-            <select
-              value={yAxisMode}
-              onChange={(e) => onConfigChange({ y_axis_mode: e.target.value as YAxisMode })}
-              className={inputClass()}
-            >
-              <option value="auto">{t('dashboard.chart.yAuto')}</option>
-              <option value="manual">{t('dashboard.chart.yManual')}</option>
-              <option value="auto_padded">{t('dashboard.chart.yAutoPadded')}</option>
-            </select>
-          </LabeledField>
-        )}
-
-        {yAxisType === 'numeric' && yAxisMode === 'manual' && (
-          <div className="flex gap-2">
-            <LabeledField label={t('dashboard.chart.min')}>
+          <div className="flex flex-wrap items-end gap-2">
+            <LabeledField label={t('dashboard.chart.yMin')}>
               <input
                 type="number"
                 value={yMin ?? ''}
+                placeholder={t('dashboard.chart.autoWhenEmpty')}
                 onChange={(e) => {
                   const v = e.target.value;
-                  onConfigChange({ y_min: v === '' ? undefined : parseFloat(v) || undefined });
+                  setYBound({ y_min: v === '' ? undefined : parseFloat(v) });
                 }}
+                data-testid="line-chart-y-min"
                 className={inputClass()}
               />
             </LabeledField>
-            <LabeledField label={t('dashboard.chart.max')}>
+            <LabeledField label={t('dashboard.chart.yMax')}>
               <input
                 type="number"
                 value={yMax ?? ''}
+                placeholder={t('dashboard.chart.autoWhenEmpty')}
                 onChange={(e) => {
                   const v = e.target.value;
-                  onConfigChange({ y_max: v === '' ? undefined : parseFloat(v) || undefined });
+                  setYBound({ y_max: v === '' ? undefined : parseFloat(v) });
                 }}
+                data-testid="line-chart-y-max"
                 className={inputClass()}
               />
             </LabeledField>
           </div>
         )}
 
-        {yAxisType === 'numeric' && yAxisMode === 'auto_padded' && (
-          <LabeledField label={t('dashboard.chart.paddingPct')}>
-            <input
-              type="number"
-              min={0}
-              max={50}
-              step={0.5}
-              value={yPadPct}
-              onChange={(e) => {
-                const n = parseFloat(e.target.value);
-                if (!Number.isNaN(n)) onConfigChange({ y_axis_padding_pct: n });
-              }}
-              className={inputClass()}
-            />
-          </LabeledField>
-        )}
-
-        {/* 열거형: 값→라벨 매핑 편집기 */}
+        {/* 열거형 값→라벨 매핑 */}
         {yAxisType === 'enum' && (
-          <div className="space-y-1.5 rounded-md border border-(--color-border-default) p-2">
+          <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-(--color-text-secondary)">
                 {t('dashboard.chart.enumLabels')}
@@ -2082,14 +2298,14 @@ export function LineChartSection({
               <button
                 type="button"
                 onClick={addEnumLabel}
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-blue-500 hover:bg-blue-500/10"
+                className="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
               >
                 <Plus className="h-3 w-3" />
                 {t('dashboard.chart.enumAdd')}
               </button>
             </div>
             {enumLabels.length === 0 ? (
-              <p className="py-1 text-[11px] text-(--color-text-muted)">
+              <p className="text-[11px] text-(--color-text-muted)">
                 {t('dashboard.chart.enumEmpty')}
               </p>
             ) : (
@@ -2097,12 +2313,10 @@ export function LineChartSection({
                 <div key={i} className="flex items-center gap-1.5">
                   <input
                     type="number"
-                    value={Number.isFinite(row.value) ? row.value : ''}
+                    value={Number.isNaN(row.value) ? '' : row.value}
                     onChange={(e) => {
                       const v = e.target.value;
-                      patchEnumLabel(i, {
-                        value: v === '' ? Number.NaN : parseFloat(v),
-                      });
+                      patchEnumLabel(i, { value: v === '' ? Number.NaN : parseFloat(v) });
                     }}
                     placeholder={t('dashboard.chart.enumValuePlaceholder')}
                     className="w-16 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-center text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
@@ -2129,48 +2343,120 @@ export function LineChartSection({
           </div>
         )}
 
-        {/* 축 폰트 (레이블/값, 축별 독립) */}
-        <div className="space-y-1.5 rounded-md border border-(--color-border-default) p-2">
-          <div className="flex items-center gap-2 text-[11px] text-(--color-text-muted)">
-            <span className="w-20 shrink-0">{t('dashboard.chart.axisFont')}</span>
-            <span className="w-14 text-center">{t('dashboard.chart.fontSize')}</span>
-            <span className="w-6 text-center">{t('dashboard.chart.fontColorShort')}</span>
-            <span className="w-6 text-center">{t('dashboard.chart.fontBoldShort')}</span>
-          </div>
-          <AxisFontRow
-            label={t('dashboard.chart.xAxisLabelFont')}
-            font={config.x_label_font as AxisFontStyle | undefined}
-            onChange={(p) => patchFont('x_label_font', p)}
+        <LabeledField label={t('dashboard.chart.unit')}>
+          <input
+            type="text"
+            value={yUnit}
+            onChange={(e) => onConfigChange({ y_unit: e.target.value || undefined })}
+            placeholder={t('dashboard.chart.yUnitPlaceholder')}
+            data-testid="line-chart-y-unit"
+            className={inputClass()}
           />
-          <AxisFontRow
-            label={t('dashboard.chart.xAxisTickFont')}
-            font={config.x_tick_font as AxisFontStyle | undefined}
-            onChange={(p) => patchFont('x_tick_font', p)}
-          />
-          <AxisFontRow
-            label={t('dashboard.chart.yAxisLabelFont')}
-            font={config.y_label_font as AxisFontStyle | undefined}
-            onChange={(p) => patchFont('y_label_font', p)}
-          />
-          <AxisFontRow
-            label={t('dashboard.chart.yAxisTickFont')}
-            font={config.y_tick_font as AxisFontStyle | undefined}
-            onChange={(p) => patchFont('y_tick_font', p)}
-          />
-        </div>
+        </LabeledField>
+      </SettingsSection>
 
-        {/* 범례 */}
+      {/* ═══ 라인 스타일 ═══ */}
+      <SettingsSection title={t('dashboard.chart.lineStyleSection')}>
+        <label className="flex cursor-pointer items-center gap-1.5 text-xs text-(--color-text-muted)">
+          <input
+            type="checkbox"
+            checked={panelSmooth}
+            onChange={(e) => onConfigChange({ smooth: e.target.checked || undefined })}
+            data-testid="line-chart-smooth"
+          />
+          <span>{t('dashboard.chart.curve')}</span>
+        </label>
+
+        {/* 결측 구간 점선 표기 (SPEC-TSDB-004 §2.19).
+            켜면 값이 없는 구간에서 실선을 끊고 그 구간만 점선으로 잇는다 —
+            이은 것과 잰 것을 눈으로 가른다. 끄면 종전대로 조용히 이어 그린다. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-(--color-text-muted)">
+            <input
+              type="checkbox"
+              data-testid="line-chart-gap-dash"
+              checked={gapDashThreshold > 0}
+              onChange={(e) =>
+                // 끌 때 0 을 남기지 않는다 — "켜져 있는데 임계 0" 처럼 읽힌다.
+                onConfigChange({
+                  gap_dash_threshold: e.target.checked ? GAP_DASH_DEFAULT : undefined,
+                })
+              }
+            />
+            <span>{t('dashboard.chart.gapDash')}</span>
+          </label>
+          {/* 결측 개수는 켰을 때만 낸다 — 꺼진 상태의 임계값은 읽을 뜻이 없다. */}
+          {gapDashThreshold > 0 && (
+            <input
+              type="number"
+              min={1}
+              max={10000}
+              data-testid="line-chart-gap-dash-threshold"
+              aria-label={t('dashboard.chart.gapDashThreshold')}
+              value={gapDashThreshold}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                // 1 미만은 "끄기" 와 같은 뜻인데 토글은 켜져 있다 — 모순된
+                // 상태를 만들지 않으려면 끄기는 토글로만 한다.
+                if (!Number.isNaN(n) && n >= 1) onConfigChange({ gap_dash_threshold: n });
+              }}
+              className="w-20 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500"
+            />
+          )}
+        </div>
+        {/* 숫자의 뜻을 화면에 남긴다. 이 문구가 없으면 "2" 가 무엇의 2인지 알 수
+            없어, 한 칸짜리 결측이 안 걸리는 이유를 짐작할 길이 없다. */}
+        {gapDashThreshold > 0 && (
+          <p
+            data-testid="line-chart-gap-dash-hint"
+            className="text-[11px] leading-snug text-(--color-text-muted)"
+          >
+            {t('dashboard.chart.gapDashHint')}
+          </p>
+        )}
+      </SettingsSection>
+
+      {/* ═══ 범례 ═══ */}
+      <SettingsSection title={t('dashboard.chart.legendSection')}>
+        <div className="space-y-1">
+          <span className="block text-xs font-medium text-(--color-text-muted)">
+            {t('dashboard.chart.legendComposition')}
+          </span>
+          <div className="flex flex-wrap gap-3 text-xs text-(--color-text-muted)">
+            {(['show_name', 'show_line', 'show_last_value'] as const).map((field) => {
+              const labelKeys = {
+                show_name: 'dashboard.chart.legendShowName',
+                show_line: 'dashboard.chart.legendShowLine',
+                show_last_value: 'dashboard.chart.legendShowLastValue',
+              } as const;
+              const defaults = { show_name: true, show_line: true, show_last_value: false };
+              return (
+                <label key={field} className="flex cursor-pointer items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={
+                      ((config.legend as Record<string, unknown> | undefined)?.[
+                        field
+                      ] as boolean) ?? defaults[field]
+                    }
+                    onChange={(e) => patchLegend({ [field]: e.target.checked })}
+                    data-testid={`line-chart-legend-${field}`}
+                    className="h-3 w-3 rounded border-gray-300"
+                  />
+                  {t(labelKeys[field])}
+                </label>
+              );
+            })}
+          </div>
+        </div>
         <LabeledField label={t('dashboard.chart.legendPosition')}>
           <select
-            value={(config.legend as Record<string, unknown> | undefined)?.position as string ?? 'bottom'}
-            onChange={(e) =>
-              onConfigChange({
-                legend: {
-                  ...((config.legend as Record<string, unknown>) ?? {}),
-                  position: e.target.value,
-                },
-              })
+            value={
+              ((config.legend as Record<string, unknown> | undefined)?.position as string) ??
+              'bottom'
             }
+            onChange={(e) => patchLegend({ position: e.target.value })}
+            data-testid="line-chart-legend-position"
             className={inputClass()}
           >
             <option value="bottom">{t('dashboard.chart.legendBottom')}</option>
@@ -2178,37 +2464,43 @@ export function LineChartSection({
             <option value="right">{t('dashboard.chart.legendRight')}</option>
           </select>
         </LabeledField>
-        <div className="flex flex-wrap gap-3 text-xs text-(--color-text-muted)">
-          {(['show_name', 'show_line', 'show_last_value'] as const).map((field) => {
-            const labelKeys = {
-              show_name: 'dashboard.chart.legendShowName',
-              show_line: 'dashboard.chart.legendShowLine',
-              show_last_value: 'dashboard.chart.legendShowLastValue',
-            } as const;
-            const defaults = { show_name: true, show_line: true, show_last_value: false };
-            return (
-              <label key={field} className="flex cursor-pointer items-center gap-1">
-                <input
-                  type="checkbox"
-                  checked={(config.legend as Record<string, unknown> | undefined)?.[field] as boolean ?? defaults[field]}
-                  onChange={(e) =>
-                    onConfigChange({
-                      legend: {
-                        ...((config.legend as Record<string, unknown>) ?? {}),
-                        [field]: e.target.checked,
-                      },
-                    })
-                  }
-                  className="h-3 w-3 rounded border-gray-300"
-                />
-                {t(labelKeys[field])}
-              </label>
-            );
-          })}
-        </div>
+      </SettingsSection>
 
-        {/* 다중 시리즈 */}
-        <LabeledField label={t('dashboard.chart.multiSeriesField')} hint={t('dashboard.chart.multiSeriesHint')}>
+      {/* ═══ 툴팁 ═══ */}
+      <SettingsSection title={t('dashboard.chart.tooltipSection')}>
+        <div className="flex flex-wrap gap-3 text-xs text-(--color-text-muted)">
+          <label className="flex cursor-pointer items-center gap-1">
+            <input
+              type="checkbox"
+              checked={tooltipCfg.enabled !== false}
+              onChange={(e) => patchTooltip({ enabled: e.target.checked })}
+              data-testid="line-chart-tooltip-enabled"
+              className="h-3 w-3 rounded border-gray-300"
+            />
+            {t('dashboard.chart.tooltipEnabled')}
+          </label>
+          {/* 단일 값은 툴팁이 켜져 있을 때만 뜻이 있다. */}
+          {tooltipCfg.enabled !== false && (
+            <label className="flex cursor-pointer items-center gap-1">
+              <input
+                type="checkbox"
+                checked={tooltipCfg.single === true}
+                onChange={(e) => patchTooltip({ single: e.target.checked })}
+                data-testid="line-chart-tooltip-single"
+                className="h-3 w-3 rounded border-gray-300"
+              />
+              {t('dashboard.chart.tooltipSingle')}
+            </label>
+          )}
+        </div>
+      </SettingsSection>
+
+      {/* ═══ 다중 시리즈 ═══ */}
+      <SettingsSection title={t('dashboard.chart.multiSeriesSection')}>
+        <LabeledField
+          label={t('dashboard.chart.multiSeriesField')}
+          hint={t('dashboard.chart.multiSeriesHint')}
+        >
           <input
             type="text"
             value={multiSeriesField}
@@ -2217,7 +2509,7 @@ export function LineChartSection({
             className={inputClass()}
           />
         </LabeledField>
-      </div>
+      </SettingsSection>
 
       {/* ═══ 경계 설정 ═══ */}
       <div data-testid="line-chart-thresholds-editor" className="border-t border-(--color-border-default) pt-3">
@@ -2515,6 +2807,19 @@ export function TableChartSection({
     if (columns.length <= 1) return;
     onConfigChange({ columns: columns.filter((_, idx) => idx !== i) });
   };
+  /**
+   * 열을 한 칸 위/아래로 옮긴다. 배열 순서가 곧 표의 열 순서이므로 인접 교환이면 충분하다
+   * (드래그는 목록이 길어질 때 이득이 나는데, 열은 보통 2~5개다).
+   */
+  const moveColumn = (i: number, delta: -1 | 1): void => {
+    const j = i + delta;
+    if (j < 0 || j >= columns.length) return;
+    const next = columns.slice();
+    const a = next[i]!;
+    next[i] = next[j]!;
+    next[j] = a;
+    onConfigChange({ columns: next });
+  };
 
   return (
     <div className="space-y-3">
@@ -2529,43 +2834,118 @@ export function TableChartSection({
             <Plus className="h-3 w-3" /> {t('dashboard.chart.add')}
           </button>
         </div>
-        <div className="space-y-1.5">
+        {/* 태그 컬럼 표기 안내 — 필드에 무엇을 쓸 수 있는지 화면에서 알 수 있어야 한다. */}
+        <p className="mb-1.5 text-[11px] leading-snug text-(--color-text-muted)">
+          {t('dashboard.chart.tagColumnHint')}
+        </p>
+        <div className="space-y-2">
           {columns.map((c, i) => (
-            <div key={i} className="flex items-center gap-1">
-              <input
-                type="text"
-                value={c.field}
-                onChange={(e) => updateColumn(i, { field: e.target.value })}
-                placeholder={t('dashboard.chart.displayFieldPlaceholder')}
-                className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
-              />
-              <input
-                type="text"
-                value={c.header}
-                onChange={(e) => updateColumn(i, { header: e.target.value })}
-                placeholder={t('dashboard.chart.headerPlaceholder')}
-                className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
-              />
-              <select
-                value={c.format ?? 'string'}
-                onChange={(e) =>
-                  updateColumn(i, { format: e.target.value as TableColumnFormat })
-                }
-                className="shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
-              >
-                <option value="string">string</option>
-                <option value="number">number</option>
-                <option value="datetime">datetime</option>
-              </select>
-              <button
-                type="button"
-                onClick={() => removeColumn(i)}
-                disabled={columns.length <= 1}
-                className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:text-red-500 disabled:opacity-40"
-                aria-label={t('dashboard.chart.deleteColumnAria')}
-              >
-                <Trash2 className="h-3 w-3" />
-              </button>
+            <div
+              key={i}
+              className="space-y-1 rounded border border-(--color-border-default) p-1.5"
+              data-testid={`table-column-row-${i}`}
+            >
+              {/* 1행: 순서 · 필드 · 헤더 · 삭제 */}
+              <div className="flex items-center gap-1">
+                <div className="flex shrink-0 flex-col">
+                  <button
+                    type="button"
+                    onClick={() => moveColumn(i, -1)}
+                    disabled={i === 0}
+                    className="rounded px-0.5 text-(--color-text-muted) transition-colors hover:text-(--color-text-primary) disabled:opacity-30"
+                    aria-label={t('dashboard.chart.moveColumnUpAria')}
+                  >
+                    <ChevronUp className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveColumn(i, 1)}
+                    disabled={i === columns.length - 1}
+                    className="rounded px-0.5 text-(--color-text-muted) transition-colors hover:text-(--color-text-primary) disabled:opacity-30"
+                    aria-label={t('dashboard.chart.moveColumnDownAria')}
+                  >
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={c.field}
+                  onChange={(e) => updateColumn(i, { field: e.target.value })}
+                  placeholder={t('dashboard.chart.displayFieldPlaceholder')}
+                  className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                />
+                <input
+                  type="text"
+                  value={c.header}
+                  onChange={(e) => updateColumn(i, { header: e.target.value })}
+                  placeholder={t('dashboard.chart.headerPlaceholder')}
+                  className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeColumn(i)}
+                  disabled={columns.length <= 1}
+                  className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:text-red-500 disabled:opacity-40"
+                  aria-label={t('dashboard.chart.deleteColumnAria')}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+
+              {/* 2행: 형식 · 폭 비율 · 정렬/필터 허용 */}
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pl-5">
+                <select
+                  value={c.format ?? 'string'}
+                  onChange={(e) =>
+                    updateColumn(i, { format: e.target.value as TableColumnFormat })
+                  }
+                  aria-label={t('dashboard.chart.columnFormatAria')}
+                  className="shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                >
+                  <option value="string">string</option>
+                  <option value="number">number</option>
+                  <option value="datetime">datetime</option>
+                </select>
+                <label className="flex items-center gap-1 text-xs text-(--color-text-muted)">
+                  {t('dashboard.chart.columnWidth')}
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={c.width ?? ''}
+                    placeholder={t('dashboard.chart.columnWidthAuto')}
+                    onChange={(e) => {
+                      const raw = e.target.value.trim();
+                      if (raw === '') {
+                        updateColumn(i, { width: undefined });
+                        return;
+                      }
+                      const n = Number(raw);
+                      // 0 이하/비수치는 무시한다 — 0 비율은 열을 사라지게 만든다.
+                      if (Number.isFinite(n) && n > 0) updateColumn(i, { width: n });
+                    }}
+                    className="w-14 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                  />
+                </label>
+                <label className="flex items-center gap-1 text-xs text-(--color-text-muted)">
+                  <input
+                    type="checkbox"
+                    className="h-3 w-3"
+                    checked={c.sortable !== false}
+                    onChange={(e) => updateColumn(i, { sortable: e.target.checked })}
+                  />
+                  {t('dashboard.chart.columnSortable')}
+                </label>
+                <label className="flex items-center gap-1 text-xs text-(--color-text-muted)">
+                  <input
+                    type="checkbox"
+                    className="h-3 w-3"
+                    checked={c.filterable === true}
+                    onChange={(e) => updateColumn(i, { filterable: e.target.checked })}
+                  />
+                  {t('dashboard.chart.columnFilterable')}
+                </label>
+              </div>
             </div>
           ))}
         </div>

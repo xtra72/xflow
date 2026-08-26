@@ -15,6 +15,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { SingleSeriesTooltipContent } from './SingleSeriesTooltipContent';
 import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
 
@@ -36,6 +37,7 @@ import {
   type YAxisDataType,
   type YEnumLabel,
   type YThreshold,
+  type TooltipConfig,
   type YAxisMode,
 } from './chartChannelTypes';
 import { ChartLegend } from './ChartLegend';
@@ -58,6 +60,12 @@ import { useChartChannel } from './useChartChannel';
 import { useChartChannels, type ChannelState } from './useChartChannels';
 import { resolvePanelSourceBinding } from './panelDataSource';
 import { resolveGroupPageDisplay, resolvePanelSeriesDisplay } from './panelSeriesStatus';
+import {
+  chartXRangePoints,
+  readChartXRange,
+  resolveChartXWindow,
+  type SeriesRange,
+} from './seriesRange';
 import { isPanelSeriesSource, usePanelSeriesData } from './usePanelSeriesData';
 import { usePanelTitleVisible } from '../../panelChromeContext';
 
@@ -69,22 +77,10 @@ interface LineChartPanelProps {
 
 const DEFAULT_MAX_POINTS = 100;
 
-/**
- * 사용자가 max_points 를 명시하지 않았고 시간 윈도우(recent_window_sec) 가 설정된 경우,
- * 1Hz 업데이트를 가정해 윈도우 길이의 2배(안전 마진)를 기본값으로 사용한다.
- * 최대 5,000 으로 캡 — 메모리 폭주 방지.
- *
- * 이전: 항상 DEFAULT_MAX_POINTS(100) 사용 → 10분 윈도우 + 1Hz 업데이트 시
- *       ~1.67분만 버퍼 보유 → 차트가 중간에서 끊겨 보이던 문제 해결.
- */
-function resolveMaxPoints(cfg: LineChartPanelConfig): number {
-  if (cfg.max_points !== undefined && cfg.max_points > 0) return cfg.max_points;
-  if (cfg.time_window_mode === 'recent' && cfg.recent_window_sec && cfg.recent_window_sec > 0) {
-    return Math.min(5000, Math.max(DEFAULT_MAX_POINTS, cfg.recent_window_sec * 2));
-  }
-  return DEFAULT_MAX_POINTS;
-}
-const DEFAULT_RECENT_WINDOW_SEC = 600;
+// 버퍼 크기는 X축 범위가 정한다(`chartXRangePoints`) — 갯수 방식이면 그 값,
+// 최근 기간이면 1Hz 가정으로 기간의 2배. 종전 `resolveMaxPoints` 규약을 그대로
+// 옮겼으므로 저장된 패널의 버퍼 크기는 변하지 않는다.
+
 const DEFAULT_REFRESH_MS = 1000;
 const MIN_REFRESH_MS = 200;
 const MAX_REFRESH_MS = 60_000;
@@ -115,6 +111,9 @@ function parseConfig(config: Record<string, unknown>): LineChartPanelConfig {
     y_label: config.y_label as string | undefined,
     y_unit: config.y_unit as string | undefined,
     y_thresholds: config.y_thresholds as YThreshold[] | undefined,
+    decimal_places: config.decimal_places as number | undefined,
+    tooltip: config.tooltip as TooltipConfig | undefined,
+    x_range: config.x_range as SeriesRange | undefined,
     time_window_mode: config.time_window_mode as TimeWindowMode | undefined,
     recent_window_sec: config.recent_window_sec as number | undefined,
     fixed_start_ms: config.fixed_start_ms as number | undefined,
@@ -182,24 +181,15 @@ function clamp(n: number, lo: number, hi: number): number {
  *
  * entries 는 timestamp 오름차순으로 정렬되어 있다고 가정한다.
  */
-function filterByTimeWindow(
+function filterByXRange(
   entries: ChartEntry[],
-  mode: TimeWindowMode,
+  range: SeriesRange,
   now: number,
-  windowSec: number,
-  startMs: number | undefined,
-  endMs: number | undefined,
 ): ChartEntry[] {
-  if (mode === 'recent') {
-    const start = now - windowSec * 1000;
-    return filterWithLeftAnchor(entries, start, now);
-  }
-  if (mode === 'fixed') {
-    const s = startMs ?? Number.NEGATIVE_INFINITY;
-    const e = endMs ?? Number.POSITIVE_INFINITY;
-    return filterWithLeftAnchor(entries, s, e);
-  }
-  return entries;
+  const win = resolveChartXWindow(range, now);
+  // 갯수 방식(또는 해석 불가)은 시간으로 자르지 않는다 — 버퍼 상한이 이미 잘랐다.
+  if (!win) return entries;
+  return filterWithLeftAnchor(entries, win.startMs, win.endMs);
 }
 
 /**
@@ -253,8 +243,23 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   const sourceBinding = resolvePanelSourceBinding(config);
   const isStore = isPanelSeriesSource(sourceBinding);
   const isMultiMode = !isStore && (cfg.channels?.length ?? 0) > 0;
-  // recent_window_sec 가 있으면 거기에 맞춰 버퍼 크기 자동 결정.
-  const effectiveMaxPoints = resolveMaxPoints(cfg);
+  // X축 범위(구간 · 최근 · 포인트)를 한 곳에서 읽는다. 구 `time_window_mode` 계열은
+  // `readChartXRange` 안에서 폴백으로 해석되므로, 여기부터는 새 어휘만 쓴다.
+  const xRange = useMemo(
+    () => readChartXRange(cfg),
+    // parseConfig 가 매 렌더 새 객체를 만들므로 원시 필드로 memo 한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      cfg.x_range,
+      cfg.time_window_mode,
+      cfg.max_points,
+      cfg.recent_window_sec,
+      cfg.fixed_start_ms,
+      cfg.fixed_end_ms,
+    ],
+  );
+  // 버퍼 크기는 범위가 정한다 — 기간이 버퍼보다 길면 차트가 중간에서 끊겨 보인다.
+  const effectiveMaxPoints = chartXRangePoints(xRange);
 
   // 세 hook 모두 항상 호출 (React hook 규칙). 비활성 경로는 idle 상태로 유지.
   const singleResult = useChartChannel(
@@ -340,9 +345,8 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   const showEmptySelection =
     seriesDisplay.state === 'empty-selection' && !hasChannelFallback;
 
-  // 시간 윈도우 설정
-  const timeWindowMode: TimeWindowMode = cfg.time_window_mode ?? 'points';
-  const recentWindowSec = cfg.recent_window_sec ?? DEFAULT_RECENT_WINDOW_SEC;
+  // 최근 범위에서만 X축 끝(now)이 전진한다 — 그 주기.
+  const isRelativeRange = xRange.mode === 'relative';
   const refreshMs = clamp(
     cfg.time_window_refresh_ms ?? DEFAULT_REFRESH_MS,
     MIN_REFRESH_MS,
@@ -366,10 +370,10 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   // recent 모드 또는 store 모드(설정 윈도우로 X축 고정)에서 현재 시각을 주기 갱신해
   // X축 도메인 끝(now)이 계속 전진하도록 한다.
   useEffect(() => {
-    if ((timeWindowMode !== 'recent' && !isStore) || isPaused) return;
+    if ((!isRelativeRange && !isStore) || isPaused) return;
     const id = window.setInterval(() => setNow(Date.now()), refreshMs);
     return () => window.clearInterval(id);
-  }, [timeWindowMode, isStore, refreshMs, isPaused]);
+  }, [isRelativeRange, isStore, refreshMs, isPaused]);
 
   // raw 데이터 계산 (모드별 분기)
   const {
@@ -378,13 +382,7 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
     booleanKeys,
   } = useMemo(() => {
     const seriesField = cfg.multi_series_field;
-    const filterArgs = [
-      timeWindowMode,
-      now,
-      recentWindowSec,
-      cfg.fixed_start_ms,
-      cfg.fixed_end_ms,
-    ] as const;
+    const filterArgs = [xRange, now] as const;
 
     // 라인 차트 데이터 소스 값 규칙(SPEC): number(int/float 혼합)은 그대로, boolean 은
     // 1/0 으로, string 등 그 외 타입은 제외(NaN). 시리즈별로 boolean/number 원시 타입을
@@ -433,7 +431,7 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
       const rows = new Map<number, Record<string, unknown>>();
       const seen = new Set<string>();
       for (const { ref, state } of channelStates) {
-        const filtered = filterByTimeWindow(state.entries, ...filterArgs);
+        const filtered = filterByXRange(state.entries, ...filterArgs);
         const baseKey = ref.alias ?? ref.name;
         const channelField = ref.display_field ?? cfg.display_field ?? 'value';
         for (const e of filtered) {
@@ -464,10 +462,7 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
     }
 
     // 단일 채널 (기존 동작 유지)
-    const filtered = filterByTimeWindow(
-      channelStates[0]!.state.entries,
-      ...filterArgs,
-    );
+    const filtered = filterByXRange(channelStates[0]!.state.entries, ...filterArgs);
     const displayField = cfg.display_field ?? 'value';
     if (!seriesField) {
       const data = filtered.map((e) => ({
@@ -508,11 +503,8 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
     channelStates,
     cfg.display_field,
     cfg.multi_series_field,
-    timeWindowMode,
+    xRange,
     now,
-    recentWindowSec,
-    cfg.fixed_start_ms,
-    cfg.fixed_end_ms,
   ]);
 
   // 일시정지 시 스냅샷 사용
@@ -583,12 +575,14 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   // 데이터가 윈도우보다 짧으면 좌측에 빈 공간이 생기지만, X축 크기 자체는
   // 사용자가 설정한 시간 범위를 일관되게 유지한다 (스케일 안정성 우선).
   const xDomain = useMemo<[number | 'dataMin', number | 'dataMax']>(() => {
-    if (timeWindowMode === 'recent') {
-      return [effectiveNow - recentWindowSec * 1000, effectiveNow];
+    if (xRange.mode === 'relative') {
+      const w = xRange.window_ms ?? 0;
+      if (w > 0) return [effectiveNow - w, effectiveNow];
     }
-    if (timeWindowMode === 'fixed') {
-      const end = cfg.fixed_end_ms ?? Date.now();
-      const start = cfg.fixed_start_ms ?? end;
+    if (xRange.mode === 'absolute') {
+      // 한쪽만 지정해도 축은 그려야 한다 — 빈 쪽은 현재 시각으로 닫는다.
+      const end = xRange.end_ms ?? Date.now();
+      const start = xRange.start_ms ?? end;
       return [start, end];
     }
     // store 모드(기본): X축을 설정된 시간 윈도우(store_source.time_window_ms)로 고정한다.
@@ -598,15 +592,7 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
       if (windowMs > 0) return [effectiveNow - windowMs, effectiveNow];
     }
     return ['dataMin', 'dataMax'];
-  }, [
-    timeWindowMode,
-    effectiveNow,
-    recentWindowSec,
-    cfg.fixed_start_ms,
-    cfg.fixed_end_ms,
-    isStore,
-    storeSource?.time_window_ms,
-  ]);
+  }, [xRange, effectiveNow, isStore, storeSource?.time_window_ms]);
 
   // X축 도메인이 고정 수치 범위인지(recent/fixed/store 윈도우) — 데이터 오버플로 클립 여부 결정.
   const xDomainFixed =
@@ -629,6 +615,25 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
     return undefined;
   }, [xDomain, chartData]);
 
+  /**
+   * 숫자형 Y축 눈금 포맷터.
+   *
+   * 소수 자릿수도 단위도 없으면 `undefined` 를 돌려준다 — Recharts 기본 표기를
+   * 그대로 두기 위해서다. 여기서 항상 포맷터를 주면 아무 설정도 안 한 패널의
+   * 눈금 글자가 조용히 바뀐다.
+   */
+  const yNumberFormatter = useMemo(() => {
+    const dec = cfg.decimal_places;
+    const unit = cfg.y_unit;
+    if (dec === undefined && !unit) return undefined;
+    return (v: number): string =>
+      `${dec === undefined || !Number.isFinite(v) ? v : v.toFixed(dec)}${unit ?? ''}`;
+  }, [cfg.decimal_places, cfg.y_unit]);
+
+  // 툴팁 — 미지정이 종전 동작(켬 + 전체 시리즈).
+  const tooltipEnabled = cfg.tooltip?.enabled !== false;
+  const tooltipSingle = cfg.tooltip?.single === true;
+
   // Y축 도메인
   const yAxisMode: YAxisMode = cfg.y_axis_mode ?? 'auto';
   const yPadPct = clamp(cfg.y_axis_padding_pct ?? DEFAULT_Y_PAD_PCT, 0, MAX_Y_PAD_PCT);
@@ -650,6 +655,35 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   // 유일한 의미이므로 수동 Y축 범위(manual)도 적용하지 않는다.
   // 단, 명시적 열거형(enumMode)이 설정되면 그쪽이 우선하므로 boolAxis 는 끈다.
   const boolAxis = allBoolean && !enumMode;
+
+  /**
+   * 툴팁 값 표기.
+   *
+   * 소수 자릿수는 **Y축 눈금과 같은 설정**을 쓴다. 축은 12.35 인데 툴팁은
+   * 12.3456 이면 같은 값을 두 자리로 읽게 된다.
+   *
+   * 순서가 있다 — boolean 시리즈는 1/0 이 아니라 true/false 로 읽어야 하고,
+   * 열거형 축은 값 자체가 라벨이므로 자릿수 개념이 없다. 자릿수는 그 둘에
+   * 해당하지 않는 **숫자에만** 적용한다. 다만 열거형 축에서 매핑에 없는 값은
+   * 숫자로 떨어지므로(`formatEnumValue` 의 폴백) 거기에도 자릿수를 적용한다.
+   */
+  const formatTooltipValue = (value: unknown, name: string): React.ReactNode => {
+    const dec = cfg.decimal_places;
+    const asFixed = (v: number): string => (dec === undefined ? String(v) : v.toFixed(dec));
+    const isNum = typeof value === 'number' && Number.isFinite(value);
+
+    if (enumMode && isNum) {
+      const label = enumMap.get(value as number);
+      return label ?? asFixed(value as number);
+    }
+    if (booleanKeys.has(name)) return value === 1 ? 'true' : 'false';
+    if (dec !== undefined && isNum) return asFixed(value as number);
+    // 숫자가 아니면 그대로 — 문자열·null 은 Recharts 가 알아서 표기한다.
+    return value as React.ReactNode;
+  };
+  // 셋 다 없으면 포맷터를 주지 않는다 — Recharts 기본 표기를 그대로 둔다.
+  const tooltipNeedsFormatter =
+    enumMode || booleanKeys.size > 0 || cfg.decimal_places !== undefined;
   const yDomain = useMemo<[number | 'auto', number | 'auto']>(() => {
     // 열거형 축: 매핑된 최소/최대 값 ±0.5 여백으로 고정(모든 눈금이 보이도록).
     if (enumMode && enumTicks && enumTicks.length > 0) {
@@ -805,28 +839,22 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
                   ? (v: number) => formatEnumValue(v, enumMap)
                   : boolAxis
                     ? (v: number) => (v === 1 ? 'true' : v === 0 ? 'false' : '')
-                    : cfg.y_unit
-                      ? (v: number) => `${v}${cfg.y_unit}`
-                      : undefined
+                    : yNumberFormatter
               }
             />
+            {tooltipEnabled && (
             <Tooltip
-              // 열거형 축(패널 단위)이면 모든 시리즈 값을 라벨로 표시한다.
-              // 그 외에는 boolean 시리즈 값만 true/false 로 표시(혼합 차트에서도 시리즈별 적용).
+              // 단일 값: 커서에 가장 가까운 라인 하나만 보여 준다.
+              //
+              // `shared={false}` 로는 되지 않는다 — v3 의 LineChart 는 허용 툴팁
+              // 이벤트 타입이 `['axis']` 뿐이라 그 프롭이 무시된다. 축 모드를
+              // 그대로 두고 payload 를 좁히는 것이 실제로 동작하는 유일한 길이다.
+              {...(tooltipSingle ? { content: SingleSeriesTooltipContent } : {})}
+              // 열거형 라벨 · boolean true/false · 소수 자릿수를 한 함수가 정한다.
               formatter={
-                enumMode
-                  ? (value, name) => [
-                      typeof value === 'number'
-                        ? formatEnumValue(value, enumMap)
-                        : value,
-                      name,
-                    ]
-                  : booleanKeys.size > 0
-                    ? (value, name) =>
-                        booleanKeys.has(String(name))
-                          ? [value === 1 ? 'true' : 'false', name]
-                          : [value, name]
-                    : undefined
+                tooltipNeedsFormatter
+                  ? (value, name) => [formatTooltipValue(value, String(name)), name]
+                  : undefined
               }
               labelFormatter={(v) => {
                 const n = typeof v === 'number' ? v : Number(v);
@@ -844,6 +872,7 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
               labelStyle={{ color: 'var(--color-text-primary)' }}
               itemStyle={{ color: 'var(--color-text-primary)' }}
             />
+            )}
             {cfg.y_thresholds?.map((t, i) => {
               const color = t.color ?? THRESHOLD_DEFAULT_COLORS[t.severity ?? 'info'];
               return (

@@ -194,11 +194,81 @@ describe('Store 조회 설정 정보 "i" 말풍선 (SPEC-PANEL-SETTINGS-001)', (
     return { data_source: 'store', store_source };
   }
 
-  it('인라인 편집 입력(시간 윈도우/인터벌/집계)은 더 이상 렌더되지 않는다', () => {
+  it('시간 윈도우/집계는 여전히 정보 표시 전용이다(인라인 편집 없음)', () => {
     render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
     expect(screen.queryByTestId('chart-store-time-window')).toBeNull();
-    expect(screen.queryByTestId('chart-store-interval')).toBeNull();
     expect(screen.queryByTestId('chart-store-aggregation')).toBeNull();
+  });
+
+  // ---- 인터벌 편집 (Store 도 TSDB 와 같은 조작) ----
+
+  it('Store 모드에서 인터벌 셀렉트를 렌더하고 저장된 값을 선택한다', () => {
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
+    const sel = screen.getByTestId('chart-store-interval') as HTMLSelectElement;
+    expect(sel.value).toBe('60000');
+  });
+
+  it('채널 모드에서는 인터벌 셀렉트를 렌더하지 않는다', () => {
+    render(
+      <StoreSourceSection
+        panel={makePanel({ data_source: 'channel' })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('chart-store-interval')).toBeNull();
+  });
+
+  it('프리셋을 고르면 store_source.interval_ms 만 갱신한다', () => {
+    const onConfigChange = vi.fn();
+    const cfg = infoConfig();
+    render(<StoreSourceSection panel={makePanel(cfg)} onConfigChange={onConfigChange} />);
+    fireEvent.change(screen.getByTestId('chart-store-interval'), { target: { value: '300000' } });
+    expect(onConfigChange).toHaveBeenCalledWith({
+      store_source: { ...(cfg.store_source as object), interval_ms: 300_000 },
+    });
+  });
+
+  it('"직접 입력" 선택만으로는 값을 바꾸지 않는다', () => {
+    const onConfigChange = vi.fn();
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={onConfigChange} />);
+    fireEvent.change(screen.getByTestId('chart-store-interval'), { target: { value: 'custom' } });
+    expect(onConfigChange).not.toHaveBeenCalled();
+  });
+
+  it('프리셋에 없는 값이면 직접 입력칸을 초 단위로 보여준다', () => {
+    const cfg = infoConfig();
+    (cfg.store_source as { interval_ms: number }).interval_ms = 45_000;
+    render(<StoreSourceSection panel={makePanel(cfg)} onConfigChange={vi.fn()} />);
+    expect((screen.getByTestId('chart-store-interval') as HTMLSelectElement).value).toBe('custom');
+    expect((screen.getByTestId('chart-store-interval-custom') as HTMLInputElement).value).toBe('45');
+  });
+
+  it('직접 입력은 초를 ms 로 저장하고, 0 이하는 무시한다', () => {
+    const onConfigChange = vi.fn();
+    const cfg = infoConfig();
+    (cfg.store_source as { interval_ms: number }).interval_ms = 45_000;
+    render(<StoreSourceSection panel={makePanel(cfg)} onConfigChange={onConfigChange} />);
+    const input = screen.getByTestId('chart-store-interval-custom');
+
+    fireEvent.change(input, { target: { value: '0' } });
+    expect(onConfigChange).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: '90' } });
+    expect(onConfigChange).toHaveBeenCalledWith({
+      store_source: { ...(cfg.store_source as object), interval_ms: 90_000 },
+    });
+  });
+
+  it('인터벌이 시간 윈도우보다 크면 경고를 표시한다', () => {
+    const cfg = infoConfig();
+    (cfg.store_source as { interval_ms: number }).interval_ms = 86_400_000; // 1d > 1h
+    render(<StoreSourceSection panel={makePanel(cfg)} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('chart-store-interval-warning')).toBeInTheDocument();
+  });
+
+  it('정상 범위에서는 경고를 표시하지 않는다', () => {
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
+    expect(screen.queryByTestId('chart-store-interval-warning')).toBeNull();
   });
 
   it('Store 모드에서 데이터소스 토글 옆에 "i" 정보 아이콘을 렌더한다', () => {
@@ -254,8 +324,14 @@ describe('시리즈 이름 형식 (패널 옵션)', () => {
     expect(screen.getByTestId('chart-store-series-name-format')).toBeInTheDocument();
   });
 
-  it('선택된 시리즈 기준 토큰 버튼을 제공한다', () => {
+  it('선택된 시리즈 기준 토큰 버튼을 물음표 뒤에 제공한다', () => {
     render(<StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={vi.fn()} />);
+
+    // 토큰은 접혀 있다 — 상시 펼치면 입력·미리보기를 밀어낸다.
+    expect(screen.queryByTestId('chart-store-series-name-format-token-measurement')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('chart-store-series-name-format-token-help'));
+
     expect(
       screen.getByTestId('chart-store-series-name-format-token-measurement'),
     ).toBeInTheDocument();
@@ -438,5 +514,123 @@ describe('소스 전환 비파괴 (SPEC-TSDB-002 §2.12 [E2], AC-36)', () => {
     expect(final.store_source).toEqual(original);
     expect(final.tsdb_source).toBeDefined();
     expect((final.tsdb_source as { backend: string }).backend).toBe('influxdb');
+  });
+});
+
+describe('가져올 데이터 범위 — 기간(상대·절대) / 갯수', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function rangeConfig(range?: Record<string, unknown>): Record<string, unknown> {
+    const store_source = {
+      agent_id: 'store-uuid-1',
+      agent_name: 'store-1',
+      namespace: 'default',
+      series: [],
+      time_window_ms: 3_600_000,
+      interval_ms: 60_000,
+      aggregation: 'last',
+      refresh_interval_ms: 5_000,
+      ...(range ? { range } : {}),
+    } as unknown as StoreSourceConfig;
+    return { data_source: 'store', store_source };
+  }
+
+  it('range 가 없는 구 config 는 상대 기간으로 열리고 창 길이를 그대로 보여준다', () => {
+    render(<StoreSourceSection panel={makePanel(rangeConfig())} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('chart-store-range-mode-relative')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect((screen.getByTestId('chart-store-range-window') as HTMLSelectElement).value)
+      .toBe('3600000');
+  });
+
+  it('세 방식 모두 선택지로 노출된다', () => {
+    render(<StoreSourceSection panel={makePanel(rangeConfig())} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('chart-store-range-mode-relative')).toBeInTheDocument();
+    expect(screen.getByTestId('chart-store-range-mode-absolute')).toBeInTheDocument();
+    expect(screen.getByTestId('chart-store-range-mode-count')).toBeInTheDocument();
+  });
+
+  it('갯수로 바꾸면 기본 갯수를 채워 저장한다', () => {
+    const onConfigChange = vi.fn();
+    render(<StoreSourceSection panel={makePanel(rangeConfig())} onConfigChange={onConfigChange} />);
+    fireEvent.click(screen.getByTestId('chart-store-range-mode-count'));
+    const patch = onConfigChange.mock.calls[0]![0] as { store_source: StoreSourceConfig };
+    expect(patch.store_source.range).toMatchObject({ mode: 'count', count: 100 });
+  });
+
+  it('방식을 바꿔도 다른 방식의 값은 지우지 않는다 (되돌리면 살아난다)', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <StoreSourceSection
+        panel={makePanel(rangeConfig({ mode: 'relative', window_ms: 900_000, count: 42 }))}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('chart-store-range-mode-count'));
+    const patch = onConfigChange.mock.calls[0]![0] as { store_source: StoreSourceConfig };
+    expect(patch.store_source.range).toMatchObject({ mode: 'count', count: 42, window_ms: 900_000 });
+  });
+
+  it('절대 구간에서는 시작/끝 입력을 보여준다', () => {
+    render(
+      <StoreSourceSection
+        panel={makePanel(rangeConfig({ mode: 'absolute', start_ms: 1, end_ms: 2 }))}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('chart-store-range-start')).toBeInTheDocument();
+    expect(screen.getByTestId('chart-store-range-end')).toBeInTheDocument();
+    expect(screen.queryByTestId('chart-store-range-window')).toBeNull();
+  });
+
+  it('절대 구간이 뒤집혔거나 비면 경고를 표시한다', () => {
+    const { unmount } = render(
+      <StoreSourceSection
+        panel={makePanel(rangeConfig({ mode: 'absolute', start_ms: 500, end_ms: 100 }))}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('chart-store-range-absolute-warning')).toBeInTheDocument();
+    unmount();
+
+    render(
+      <StoreSourceSection
+        panel={makePanel(rangeConfig({ mode: 'absolute' }))}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('chart-store-range-absolute-warning')).toBeInTheDocument();
+  });
+
+  it('정상 절대 구간에서는 경고가 없다', () => {
+    render(
+      <StoreSourceSection
+        panel={makePanel(rangeConfig({ mode: 'absolute', start_ms: 100, end_ms: 500 }))}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('chart-store-range-absolute-warning')).toBeNull();
+  });
+
+  it('갯수 입력은 0 이하를 무시하고 상한으로 클램프한다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <StoreSourceSection
+        panel={makePanel(rangeConfig({ mode: 'count', count: 10 }))}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    const input = screen.getByTestId('chart-store-range-count');
+
+    fireEvent.change(input, { target: { value: '0' } });
+    expect(onConfigChange).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: '999999' } });
+    const patch = onConfigChange.mock.calls[0]![0] as { store_source: StoreSourceConfig };
+    expect(patch.store_source.range).toMatchObject({ count: 10_000 });
   });
 });

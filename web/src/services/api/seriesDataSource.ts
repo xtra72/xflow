@@ -96,6 +96,15 @@ export interface SeriesMatrixQuery {
    * TSDB 소스는 백엔드에서 계산한다. Store 소스는 현재 미지원(무시).
    */
   fill?: '' | 'null' | 'zero' | 'previous' | 'avg';
+  /**
+   * `previous` 채우기로 직전값을 이어 쓸 수 있는 **최대 기간(ms)**.
+   * 0 · 미지정이면 제한 없이 이어 쓴다(종전 동작).
+   */
+  fillPreviousMaxMs?: number;
+  /** 사용 기간을 넘긴 버킷의 처리. 미지정이면 비운다(null). */
+  fillPreviousOverflow?: '' | 'value';
+  /** 위가 `'value'` 일 때 채울 값. */
+  fillPreviousOverflowValue?: number;
 }
 
 /**

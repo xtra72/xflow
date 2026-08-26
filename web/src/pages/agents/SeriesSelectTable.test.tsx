@@ -220,3 +220,89 @@ describe('SeriesSelectTable', () => {
     expect(within(tr).getByText('auto')).toBeInTheDocument();
   });
 });
+
+// 필터 팝오버가 표 밖(body)에 그려지는지 — 두 결함의 뿌리였다.
+//
+// 팝오버를 표 안에 그리면 (1) `overflow-auto` 컨테이너에 잘려 아래 항목에 닿을 수
+// 없고, (2) `sticky` + `z-index` 인 thead 가 쌓임 맥락을 만들어 바깥 백드롭이
+// 팝오버를 덮는다 — 항목을 클릭하면 백드롭이 맞아 그대로 닫혔다.
+describe('필터 팝오버 배치 (회귀)', () => {
+  it('팝오버는 표 컨테이너 밖에 그려진다 — 잘리지 않게', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+
+    const popover = screen.getByTestId('series-filter-popover-field');
+    const table = screen.getByRole('table');
+    // 표 안에 있으면 스크롤 컨테이너에 잘린다.
+    expect(table.contains(popover)).toBe(false);
+    expect(document.body.contains(popover)).toBe(true);
+  });
+
+  it('팝오버 자신이 스크롤된다', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+
+    const popover = screen.getByTestId('series-filter-popover-field');
+    expect(popover.className).toContain('overflow-y-auto');
+    expect(popover.className).toContain('max-h-64');
+  });
+
+  it('항목을 클릭해도 닫히지 않는다 — 연속 선택이 된다', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+
+    // 첫 항목 선택 후에도 팝오버가 살아 있어야 두 번째를 고를 수 있다.
+    fireEvent.mouseDown(screen.getByTestId('series-filter-opt-field-temp'));
+    fireEvent.click(screen.getByTestId('series-filter-opt-field-temp'));
+    expect(screen.getByTestId('series-filter-popover-field')).toBeInTheDocument();
+
+    fireEvent.mouseDown(screen.getByTestId('series-filter-opt-field-humid'));
+    fireEvent.click(screen.getByTestId('series-filter-opt-field-humid'));
+    expect(screen.getByTestId('series-filter-popover-field')).toBeInTheDocument();
+  });
+
+  it('바깥을 누르면 닫힌다', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+    expect(screen.getByTestId('series-filter-popover-field')).toBeInTheDocument();
+
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByTestId('series-filter-popover-field')).toBeNull();
+  });
+
+  it('필터 버튼을 다시 누르면 닫힌다', () => {
+    render(<Harness />);
+    const btn = screen.getByTestId('series-filter-field');
+    fireEvent.click(btn);
+    expect(screen.getByTestId('series-filter-popover-field')).toBeInTheDocument();
+
+    fireEvent.mouseDown(btn);
+    fireEvent.click(btn);
+    expect(screen.queryByTestId('series-filter-popover-field')).toBeNull();
+  });
+
+  it('표가 스크롤되면 닫는다 — 앵커가 어긋난 채 떠 있지 않게', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+    expect(screen.getByTestId('series-filter-popover-field')).toBeInTheDocument();
+
+    fireEvent.scroll(window, {});
+    expect(screen.queryByTestId('series-filter-popover-field')).toBeNull();
+  });
+
+  it('다른 컬럼 필터를 열면 이전 것은 닫힌다', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+    fireEvent.mouseDown(screen.getByTestId('series-filter-dataType'));
+    fireEvent.click(screen.getByTestId('series-filter-dataType'));
+
+    expect(screen.queryByTestId('series-filter-popover-field')).toBeNull();
+    expect(screen.getByTestId('series-filter-popover-dataType')).toBeInTheDocument();
+  });
+
+  it('백드롭은 더 이상 쓰지 않는다 — 쌓임 맥락 다툼의 원인이었다', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+    expect(screen.queryByTestId('series-filter-backdrop')).toBeNull();
+  });
+});

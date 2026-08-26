@@ -11,6 +11,7 @@ import (
 	"github.com/xtra/xflow/internal/agent/system"
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
+	"github.com/xtra/xflow/internal/fillpolicy"
 )
 
 // influxSeriesQueryRequest 는 구조화 시리즈 질의의 요청 바디다(§2.6).
@@ -147,6 +148,10 @@ func buildSeriesQuerySpec(req influxSeriesQueryRequest) (system.SeriesQuerySpec,
 	if err != nil {
 		return spec, err
 	}
+	prevLimit, err := parseSeriesFillPreviousLimit(req)
+	if err != nil {
+		return spec, err
+	}
 	if err := validateSeriesBucketCount(req); err != nil {
 		return spec, err
 	}
@@ -163,6 +168,9 @@ func buildSeriesQuerySpec(req influxSeriesQueryRequest) (system.SeriesQuerySpec,
 		IntervalMs:  req.IntervalMs,
 		Aggregation: aggregation,
 		Fill:        fill,
+		// 제한은 `previous` 에서만 뜻이 있다. 파서가 그 밖의 전략에서는 제로값을
+		// 돌려주므로, spec 만 보고도 동작을 예측할 수 있다.
+		FillPreviousLimit: prevLimit,
 	}
 	for _, combo := range req.GroupFilter {
 		if len(combo) == 0 {
@@ -238,6 +246,38 @@ func parseSeriesFill(v string) (system.SeriesFill, error) {
 			"invalid fill: %q (expected one of: \"\", %s, %s, %s)",
 			v, dto.SeriesFillNull, dto.SeriesFillZero, dto.SeriesFillPrevious)
 	}
+}
+
+// parseSeriesFillPreviousLimit 은 `previous` 채우기의 사용 기간 제한을 읽는다.
+//
+// 제한은 `previous` 에서만 의미가 있으므로 그 밖의 전략에서는 제로값을 돌려준다.
+// 음수 기간은 거부한다 — 0(무제한)과 뜻이 겹치므로 조용히 접으면 사용자가 잘못
+// 넣은 값이 "왜 제한이 안 걸리지" 로 나타난다.
+func parseSeriesFillPreviousLimit(req influxSeriesQueryRequest) (fillpolicy.Previous, error) {
+	var out fillpolicy.Previous
+	if req.Fill != dto.SeriesFillPrevious {
+		return out, nil
+	}
+	if req.FillPreviousMaxMs < 0 {
+		return out, fmt.Errorf(
+			"fill_previous_max_ms must be >= 0 (got %d; 0 means unlimited)",
+			req.FillPreviousMaxMs)
+	}
+	out.MaxMs = req.FillPreviousMaxMs
+
+	switch req.FillPreviousOverflow {
+	case dto.SeriesFillPreviousOverflowEmpty:
+		out.Overflow = fillpolicy.OverflowEmpty
+	case dto.SeriesFillPreviousOverflowValue:
+		out.Overflow = fillpolicy.OverflowValue
+		out.Value = req.FillPreviousOverflowValue
+	default:
+		return fillpolicy.Previous{}, fmt.Errorf(
+			"invalid fill_previous_overflow: %q (allowed: %q, %q)",
+			req.FillPreviousOverflow,
+			dto.SeriesFillPreviousOverflowEmpty, dto.SeriesFillPreviousOverflowValue)
+	}
+	return out, nil
 }
 
 // validateSeriesBucketCount 는 버킷 수 상한을 강제한다(§2.9).

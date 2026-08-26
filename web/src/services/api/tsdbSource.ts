@@ -139,6 +139,12 @@ interface InfluxSeriesQueryRequest {
   interval_ms: number;
   aggregation: SeriesMatrixQuery['aggregation'];
   fill?: string;
+  /** `previous` 채우기의 사용 기간 제한(ms). 0·미지정이면 무제한. */
+  fill_previous_max_ms?: number;
+  /** 기간을 넘긴 버킷의 처리. 미지정이면 비움. */
+  fill_previous_overflow?: string;
+  /** 위가 `'value'` 일 때 채울 값. */
+  fill_previous_overflow_value?: number;
 }
 
 /** 응답 엔트리 — Store 의 `chartQueryEntry` 와 같은 평탄 형상이다(UB1-23). */
@@ -176,6 +182,12 @@ export interface TsdbSeriesWindow {
   intervalMs: number;
   aggregation: SeriesMatrixQuery['aggregation'];
   fill?: SeriesMatrixQuery['fill'];
+  /** `previous` 채우기의 사용 기간 제한(ms). 0·미지정이면 무제한. */
+  fillPreviousMaxMs?: number;
+  /** 기간을 넘긴 버킷의 처리. 미지정이면 비움. */
+  fillPreviousOverflow?: '' | 'value';
+  /** 위가 `'value'` 일 때 채울 값. */
+  fillPreviousOverflowValue?: number;
 }
 
 /**
@@ -237,6 +249,19 @@ export async function fetchTsdbSeries(
     // `'avg'` 는 InfluxDB 양쪽 모두 대응물이 없어 백엔드가 400 으로 거부한다.
     // 다른 전략으로 조용히 바꾸지 않는다(UB1-17) — 능력 게이팅은 설정 UI 소관이다.
     ...(params.fill ? { fill: params.fill } : {}),
+    // 사용 기간 제한은 `previous` 에서만 뜻이 있다. 그 밖의 전략에서 실어 보내면
+    // 서버가 무시하긴 하지만, 요청만 보고 동작을 읽을 수 없게 된다.
+    ...(params.fill === 'previous' && params.fillPreviousMaxMs
+      ? {
+          fill_previous_max_ms: params.fillPreviousMaxMs,
+          ...(params.fillPreviousOverflow === 'value'
+            ? {
+                fill_previous_overflow: 'value',
+                fill_previous_overflow_value: params.fillPreviousOverflowValue ?? 0,
+              }
+            : {}),
+        }
+      : {}),
   };
 
   const resp = await post<InfluxSeriesQueryRawResponse>(
@@ -396,6 +421,11 @@ export async function queryTsdbMatrix(
       intervalMs: p.intervalMs,
       aggregation: p.aggregation,
       ...(p.fill ? { fill: p.fill } : {}),
+      ...(p.fillPreviousMaxMs ? { fillPreviousMaxMs: p.fillPreviousMaxMs } : {}),
+      ...(p.fillPreviousOverflow ? { fillPreviousOverflow: p.fillPreviousOverflow } : {}),
+      ...(p.fillPreviousOverflowValue !== undefined
+        ? { fillPreviousOverflowValue: p.fillPreviousOverflowValue }
+        : {}),
     };
     const settled = await Promise.allSettled(
       p.keys.map((key, idx) => {

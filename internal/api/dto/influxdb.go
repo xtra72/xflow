@@ -61,6 +61,16 @@ type InfluxSeriesQueryRequest struct {
 	Aggregation string `json:"aggregation"`
 	// Fill 은 빈 버킷 채우기 전략이다: ""|null|zero|previous.
 	Fill string `json:"fill,omitempty"`
+	// FillPreviousMaxMs 는 `previous` 채우기로 직전값을 이어 쓸 수 있는 최대
+	// 기간(ms)이다. 0 또는 미지정이면 제한 없이 이어 쓴다(종전 동작).
+	//
+	// 버킷 개수가 아니라 시간인 이유는 인터벌을 바꿔도 뜻이 유지되게 하기
+	// 위함이다 — 정본 설명은 fillpolicy.Previous 에 있다.
+	FillPreviousMaxMs int64 `json:"fill_previous_max_ms,omitempty"`
+	// FillPreviousOverflow 는 기간을 넘긴 버킷의 처리다: ""(비움)|value.
+	FillPreviousOverflow string `json:"fill_previous_overflow,omitempty"`
+	// FillPreviousOverflowValue 는 위가 "value" 일 때 채울 값이다.
+	FillPreviousOverflowValue float64 `json:"fill_previous_overflow_value,omitempty"`
 }
 
 // 집계 어휘(§2.7 정본 표의 왼쪽 열). 백엔드 함수 이름이 아니라 HTTP 요청이 쓰는
@@ -94,6 +104,10 @@ const (
 	SeriesFillZero = "zero"
 	// SeriesFillPrevious 는 빈 버킷을 직전 값으로 방출한다.
 	SeriesFillPrevious = "previous"
+	// SeriesFillPreviousOverflowEmpty 는 사용 기간을 넘긴 버킷을 비운다(기본).
+	SeriesFillPreviousOverflowEmpty = ""
+	// SeriesFillPreviousOverflowValue 는 사용 기간을 넘긴 버킷을 지정 값으로 채운다.
+	SeriesFillPreviousOverflowValue = "value"
 	// SeriesFillAvg 는 프런트 계약(SeriesMatrixQuery.fill)에 남아 있으나 InfluxDB
 	// 양쪽 백엔드 모두 대응물이 없다. 조용히 대체하지 않고 400 으로 거부한다.
 	SeriesFillAvg = "avg"

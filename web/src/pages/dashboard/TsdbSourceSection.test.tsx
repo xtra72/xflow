@@ -1265,6 +1265,8 @@ describe('TsdbSourceSection — 이름 형식 토큰', () => {
   it('그룹 축의 태그 키도 토큰으로 제시한다', async () => {
     render(<Harness initial={groupedConfig()} fetchers={makeFetchers()} />);
     const field = await screen.findByTestId('chart-tsdb-series-name-format');
+    // 토큰 목록은 물음표 뒤에 접혀 있다.
+    fireEvent.click(screen.getByTestId('chart-tsdb-series-name-format-token-help'));
     // 줄을 실제로 가르는 키가 dev_eui 인데 종전에는 목록에 없어, 사용자가
     // 없는 토큰(device.id)을 추측하게 됐다.
     expect(field.textContent).toContain('device.dev_eui');

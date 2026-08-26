@@ -132,3 +132,64 @@ describe('LineChartPanel — 결측 구간 점선', () => {
     expect([...lines().keys()].some((k) => k.startsWith('__gap'))).toBe(false);
   });
 });
+
+// 점선이 **뜨지 않는** 두 모양 — 둘 다 의도된 동작이라 회귀 테스트로 못박아 둔다.
+//
+// "값이 없는 구간이 많은데 점선이 안 보인다" 는 보고가 이 두 모양에서 나온다.
+// 배선이 끊긴 것과 구분되지 않으면 매번 처음부터 다시 조사하게 된다.
+describe('LineChartPanel — 점선이 뜨지 않는 모양', () => {
+  /** i번째 버킷에 값이 있는지를 판정 함수로 받아 매트릭스를 만든다. */
+  function matrixWhere(hasValue: (i: number) => boolean, count = 30) {
+    const rows = [];
+    for (let i = 0; i <= count; i++) {
+      rows.push({
+        bucketStartMs: i * INTERVAL,
+        values: [hasValue(i) ? 20 + i * 0.01 : null],
+      });
+    }
+    return {
+      matrix: {
+        columns: ['cpu.usage'],
+        rows,
+        columnOrigins: [0],
+        columnLabels: [{ __field__: 'usage' }],
+      },
+      failures: [],
+    };
+  }
+
+  async function gapKeysFor(
+    hasValue: (i: number) => boolean,
+    threshold: number,
+  ): Promise<string[]> {
+    tsdbMocks.queryTsdbSourceMatrix.mockResolvedValue(matrixWhere(hasValue));
+    await renderPanel({
+      data_source: 'tsdb',
+      tsdb_source: tsdbSource,
+      gap_dash_threshold: threshold,
+    });
+    return [...lines().keys()].filter((k) => k.startsWith('__gap__'));
+  }
+
+  it('연속 결측이 임계보다 짧으면 뜨지 않는다 — 한 칸씩 거르는 데이터가 그렇다', async () => {
+    // 한 칸 걸러 비면 연속 결측은 항상 1개다. 기본 임계(2)로는 하나도 걸리지 않는다.
+    expect(await gapKeysFor((i) => i % 2 === 0, 2)).toHaveLength(0);
+  });
+
+  it('같은 데이터라도 임계를 1로 낮추면 뜬다', async () => {
+    expect((await gapKeysFor((i) => i % 2 === 0, 1)).length).toBeGreaterThan(0);
+  });
+
+  it('빈 구간이 창의 맨 앞이면 뜨지 않는다 — 이을 상대가 없다', async () => {
+    // 15번부터 끝까지 연속으로 값이 있다 → 결측은 앞쪽에만 있다.
+    expect(await gapKeysFor((i) => i >= 15, 2)).toHaveLength(0);
+  });
+
+  it('빈 구간이 창의 맨 뒤여도 뜨지 않는다', async () => {
+    expect(await gapKeysFor((i) => i <= 15, 2)).toHaveLength(0);
+  });
+
+  it('사이가 통째로 비면 뜬다 — 위 두 경우와의 대조군', async () => {
+    expect((await gapKeysFor((i) => i === 0 || i === 30, 2)).length).toBeGreaterThan(0);
+  });
+});

@@ -122,6 +122,49 @@ func (s *Series) QueryRange(start, end time.Time) []DataPoint {
 	return result
 }
 
+// QueryRangeScalar 는 [start,end] 구간에서 field 값만 뽑아 돌려준다.
+//
+// QueryRange 와 달리 DataPoint 를 복사하지 않는다. 집계 경로는 (시각, 값) 두
+// 가지만 쓰는데, 포인트마다 Fields 맵을 통째로 복제하면 구간 크기에 비례해
+// 맵 할당이 발생한다. 읽기 락을 쥔 채로 그 복사를 하므로, 구간이 넓어지면
+// 대기 중인 쓰기 락 뒤로 수집이 밀린다.
+//
+// 반환값:
+//   - pts:     값 추출에 성공한 포인트만. 필드가 없거나 숫자가 아니면 빠진다.
+//   - scanned: 구간에 들어온 **원본** 포인트 수(추출 성공 여부와 무관).
+//   - firstTS: 구간 첫 원본 포인트의 시각. 전체 범위 집계의 결과 시각이
+//     원본 첫 포인트 시각이라는 기존 규약을 지키기 위해 함께 돌려준다.
+//     scanned 가 0 이면 제로값이다.
+func (s *Series) QueryRangeScalar(start, end time.Time, field string) (pts []scalarPoint, scanned int, firstTS time.Time) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(s.points) == 0 {
+		return nil, 0, time.Time{}
+	}
+
+	// start 이상인 첫 번째 인덱스
+	startIdx := sort.Search(len(s.points), func(i int) bool {
+		return !s.points[i].Timestamp.Before(start)
+	})
+
+	// end 초과인 첫 번째 인덱스
+	endIdx := sort.Search(len(s.points), func(i int) bool {
+		return s.points[i].Timestamp.After(end)
+	})
+
+	if startIdx >= endIdx {
+		return nil, 0, time.Time{}
+	}
+
+	window := s.points[startIdx:endIdx]
+	out := make([]scalarPoint, 0, len(window))
+	for _, dp := range window {
+		out = appendScalar(out, dp, field)
+	}
+	return out, len(window), window[0].Timestamp
+}
+
 // Latest 는 마지막 n개의 데이터 포인트를 반환한다.
 func (s *Series) Latest(n int) []DataPoint {
 	s.mu.RLock()

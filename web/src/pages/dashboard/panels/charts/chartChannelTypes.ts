@@ -18,6 +18,8 @@ import { seriesRefDisplayName } from '@/services/api/seriesLabels';
 import { resolveSeriesAlias, type AliasContext } from './aliasTemplate';
 
 /** 단일 차트 항목 (WS 로 전송되는 entry) */
+import type { SeriesRange } from './seriesRange';
+
 export interface ChartEntry {
   /** epoch milliseconds (int64) */
   timestamp: number;
@@ -184,8 +186,19 @@ export interface StoreSourceConfig {
    * 취급한다. `'tag'` 모드에서는 무시되며 키가 동적으로 해석된다.
    */
   series: StoreSeriesRef[];
-  /** 상대 시간 윈도우 길이(ms). now - time_window_ms 가 시작 시각. */
+  /**
+   * 상대 시간 윈도우 길이(ms). now - time_window_ms 가 시작 시각.
+   *
+   * `range` 가 없는 구 config 의 정본이며, `range` 가 있으면 상대 방식의 폴백 값으로만
+   * 쓰인다(`readSeriesRange`). 지우지 않는 이유는 되돌리기 때문이다 — 절대/갯수로
+   * 바꿨다가 상대로 되돌렸을 때 예전 창 길이가 살아나야 한다.
+   */
   time_window_ms: number;
+  /**
+   * 가져올 데이터 범위 — 기간(상대·절대) 또는 갯수. 미지정이면 `time_window_ms` 를
+   * 상대 기간으로 해석한다(구 config 하위 호환).
+   */
+  range?: SeriesRange;
   /** 버킷 크기(ms). */
   interval_ms: number;
   /** 집계 함수(UI 표기 그대로). */
@@ -371,8 +384,10 @@ export interface TsdbSourceConfig {
   /** 조회할 시리즈. 비어 있으면 소스는 비활성이다(§2.3). */
   series: TsdbSeriesRef[];
 
-  /** 상대 시간 윈도우 길이(ms). now - time_window_ms 가 시작 시각. */
+  /** 상대 시간 윈도우 길이(ms). `range` 의 상대 방식 폴백 값이다(Store 와 같은 규칙). */
   time_window_ms: number;
+  /** 가져올 데이터 범위 — 기간(상대·절대) 또는 갯수. Store 와 같은 어휘를 쓴다. */
+  range?: SeriesRange;
   /** 버킷 크기(ms). */
   interval_ms: number;
   /**
@@ -385,6 +400,18 @@ export interface TsdbSourceConfig {
   aggregation: 'min' | 'max' | 'average' | 'first' | 'last' | 'sum' | 'count';
   /** 빈 버킷 처리 전략. `'avg'` 는 InfluxDB 양쪽 모두 대응물이 없어 지원하지 않는다(§2.7). */
   fill?: '' | 'null' | 'zero' | 'previous';
+  /**
+   * `previous` 채우기로 직전값을 이어 쓸 수 있는 **최대 기간(ms)**.
+   *
+   * 없거나 0 이면 제한 없이 계속 이어 쓴다(종전 동작). 버킷 개수가 아니라
+   * 시간이라, 인터벌을 바꿔도 "최대 5분까지 쓴다" 는 뜻이 그대로 유지된다.
+   * `fill === 'previous'` 가 아니면 읽지 않는다.
+   */
+  fill_previous_max_ms?: number;
+  /** 사용 기간을 넘긴 버킷의 처리. 미지정이면 비운다(null). */
+  fill_previous_overflow?: '' | 'value';
+  /** 위가 `'value'` 일 때 채울 값. */
+  fill_previous_overflow_value?: number;
   /** 폴링 주기(ms). 미지정 시 기본값(약 5000ms)을 사용한다. */
   refresh_interval_ms?: number;
   /**
@@ -523,6 +550,22 @@ export interface StatPanelConfig extends ChartPanelConfigBase {
   unit?: string;
   decimal_places?: number;
   threshold_color_rules?: Array<{ min: number; color: string }>;
+}
+
+/**
+ * 툴팁 표시 설정 (line-chart).
+ *
+ * 두 값 모두 미지정이 종전 동작이다 — 툴팁을 켜고, 가리킨 시각의 **모든** 시리즈를
+ * 한 상자에 모아 보여 준다. 저장된 대시보드의 동작이 변하지 않도록 기본값을 그렇게 둔다.
+ */
+export interface TooltipConfig {
+  /** 툴팁을 띄울지. 미지정이면 켬. */
+  enabled?: boolean;
+  /**
+   * 가리킨 **한 시리즈**의 값만 보여줄지. 미지정이면 전체 시리즈를 함께 보여 준다.
+   * 시리즈가 많아 상자가 화면을 덮을 때 쓴다.
+   */
+  single?: boolean;
 }
 
 /** Y축 도메인 결정 방식 (line-chart) */
@@ -784,15 +827,40 @@ export interface LineChartPanelConfig extends ChartPanelConfigBase {
   /** 경계 라인 (threshold) */
   y_thresholds?: YThreshold[];
 
-  // X축 시간 윈도우
+  /**
+   * X축 범위 — 구간(absolute) · 최근(relative) · 포인트(count).
+   *
+   * 데이터 소스(Store · TSDB)가 쓰는 `SeriesRange` 와 **같은 어휘**다. 조회 범위와
+   * 표시 범위는 같은 개념이므로 한 이름으로 쓴다.
+   *
+   * 없으면 아래 구 필드(`time_window_mode` 계열)를 읽어 해석한다 —
+   * `readChartXRange` 가 그 폴백을 담당하므로 저장된 패널은 그대로 동작한다.
+   */
+  x_range?: SeriesRange;
+
+  // X축 시간 윈도우 — `x_range` 로 대체됨. 읽기 폴백으로만 남는다(신규 저장 없음).
+  /** @deprecated `x_range` 사용. `readChartXRange` 가 count/relative/absolute 로 옮긴다. */
   time_window_mode?: TimeWindowMode;
+  /** @deprecated `x_range.window_ms` 사용(초 → ms). */
   recent_window_sec?: number;
+  /** @deprecated `x_range.start_ms` 사용. */
   fixed_start_ms?: number;
+  /** @deprecated `x_range.end_ms` 사용. */
   fixed_end_ms?: number;
+  /** 최근 범위에서 X축 끝(now)을 전진시키는 주기(ms). */
   time_window_refresh_ms?: number;
+
+  /**
+   * Y축 눈금의 소수점 이하 자릿수. 미지정이면 값을 그대로 쓴다(종전 동작).
+   * 숫자형 축에서만 의미가 있다 — 열거형·불리언 축은 눈금이 라벨이다.
+   */
+  decimal_places?: number;
 
   /** 범례 */
   legend?: LegendConfig;
+
+  /** 툴팁 표시 설정. 미지정이면 켬 + 전체 시리즈(종전 동작). */
+  tooltip?: TooltipConfig;
 
   /**
    * 값이 없는 구간을 **점선으로 이어** 표기할 최소 연속 결측 개수.
@@ -850,6 +918,24 @@ export interface TableColumn {
   field: string;
   header: string;
   format?: TableColumnFormat;
+  /**
+   * 열 너비 비율(가중치). 지정한 열끼리의 상대 비율로 폭을 나눈다 — 절대 px 이 아니다.
+   *
+   * 패널은 그리드 안에서 임의 폭으로 늘어나므로 px 로 고정하면 좁은 패널에서 넘치고
+   * 넓은 패널에서 남는다. 비율은 두 경우 모두 자연스럽게 늘어난다.
+   *
+   * 미지정(undefined)은 "자동" 이다 — 지정된 열이 비율만큼 가져가고 나머지 열이 남은
+   * 폭을 균등하게 나눈다. 전 열이 미지정이면 브라우저 기본 테이블 레이아웃과 같다.
+   */
+  width?: number;
+  /**
+   * 헤더 클릭 정렬 허용 여부. 미지정은 `true`(허용) — 기존 동작이 전 열 정렬 가능이었다.
+   */
+  sortable?: boolean;
+  /**
+   * 열 필터 입력 노출 여부. 미지정은 `false` — 필터 행은 자리를 차지하므로 켠 열에만 준다.
+   */
+  filterable?: boolean;
 }
 
 export type SortOrder = 'asc' | 'desc';

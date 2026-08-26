@@ -119,7 +119,7 @@
         "logs": "실시간 로그 스트림",
         "triggerConfig": "트리거 노드의 스케줄과 페이로드를 대시보드에서 직접 편집",
         "facilitySchedule": "설비 제어 예약 — 규칙 테이블로 대상/계획/명령을 예약",
-        "table": "데이터 테이블 뷰",
+        "table": "시리즈를 표로 훑어본다 (채널 · Store · TSDB)",
         "propertiesGrid": "디바이스 속성을 항목별 그리드로 표시",
         "stat": "단일 수치 통계 카드",
         "gauge": "원형 게이지 차트",
@@ -149,7 +149,7 @@
         "modbus": "MODBUS"
       },
       "labels": {
-        "propertiesGrid": "속성 그리드",
+        "propertiesGrid": "디바이스 상태",
         "outdoorControl": "실외기 상태",
         "heatmap": "히트맵"
       }
@@ -194,7 +194,7 @@
       "facilityStation": "설비 역사",
       "facilityDevice": "설비 기기",
       "facilityGroup": "설비 그룹",
-      "modbusRealDevices": "실제 디바이스",
+      "modbusRealDevices": "디바이스 상태",
       "modbusVirtualDevices": "가상 디바이스",
       "modbusSharedRegisters": "공유 레지스터 맵",
       "modbusDeviceRegisters": "가상 디바이스 레지스터",
@@ -463,7 +463,8 @@
       "empty": "등록된 플로우가 없습니다."
     },
     "devicePanel": {
-      "empty": "등록된 디바이스가 없습니다."
+      "empty": "등록된 디바이스가 없습니다.",
+      "noMatch": "검색 조건에 맞는 디바이스가 없습니다."
     },
     "logPanel": {
       "allLevels": "전체 레벨",
@@ -1249,8 +1250,10 @@
       "storeSeriesNameAria": "{key} 표시 이름",
       "storeSeriesColorAria": "{key} 색상",
       "storeSeriesRemoveAria": "{key} 제거",
-      "storeAliasInsertToken": "토큰 삽입:",
       "storeAliasPreview": "미리보기:",
+      "storeAliasTokenHelpAria": "이름 토큰 도움말",
+      "storeAliasTokenHelpTitle": "사용 가능한 토큰",
+      "storeAliasTokenHelpHint": "토큰을 누르면 이름 입력의 커서 위치에 삽입됩니다. 토큰과 일반 문자를 섞어 쓸 수 있습니다.",
       "storeTagPickerLabel": "태그 필터 (AND)",
       "storeTagAnyValue": "(전체)",
       "storeTagMatchCount": "{count}개 키 매칭",
@@ -1265,7 +1268,54 @@
       "gapDashThreshold": "점선으로 볼 최소 결측 개수",
       "gapDashHint": "연속으로 이만큼 값이 없으면 그 구간을 점선으로 잇습니다. 값이 없는 구간을 0·직전 값으로 채우면 결측이 생기지 않아 적용되지 않습니다.",
       "tileRows": "차트 배열 행 수",
-      "tileRowsHint": "리소스가 2개 이상일 때 차트를 몇 행으로 늘어놓을지 (기본 1). 패널 폭이 좁으면 타일이 읽히도록 열이 줄고 행이 더 늘어날 수 있습니다."
+      "tileRowsHint": "리소스가 2개 이상일 때 차트를 몇 행으로 늘어놓을지 (기본 1). 패널 폭이 좁으면 타일이 읽히도록 열이 줄고 행이 더 늘어날 수 있습니다.",
+      "columnWidth": "폭",
+      "columnWidthAuto": "자동",
+      "columnSortable": "정렬",
+      "columnFilterable": "필터",
+      "columnFormatAria": "열 형식",
+      "moveColumnUpAria": "열을 위로 이동",
+      "moveColumnDownAria": "열을 아래로 이동",
+      "rangeFilterAria": "{label} 열 범위 필터",
+      "rangeMin": "최소",
+      "rangeMax": "최대",
+      "rangeClear": "범위 초기화",
+      "tagColumnHint": "필드에 timestamp · value 외에 태그를 쓸 수 있습니다 — $.tags.location 형태로 적으면 그 태그가 열이 됩니다. 수치·시각 열의 필터는 범위, 그 밖은 값 선택입니다.",
+      "storeInterval": "인터벌 간격",
+      "storeIntervalCustomAria": "인터벌 간격 직접 입력(초)",
+      "storeIntervalTooCoarse": "인터벌이 시간 윈도우보다 큽니다 — 버킷이 하나뿐이라 값이 한 점으로 보입니다.",
+      "resizeColumnAria": "{header} 열 폭 조절",
+      "rangeLabel": "가져올 데이터",
+      "rangeModeRelative": "기간(상대)",
+      "rangeModeAbsolute": "기간(절대)",
+      "rangeModeCount": "갯수",
+      "rangeFrom": "시작",
+      "rangeTo": "끝",
+      "rangeWindowCustomAria": "상대 기간 직접 입력(초)",
+      "rangeCountUnit": "개",
+      "rangeCountHint": "가장 최근 버킷 N개를 가져옵니다 — 조회 구간은 인터벌 × N 으로 역산됩니다.",
+      "rangeAbsoluteInvalid": "시작과 끝을 모두 지정해야 하며, 끝이 시작보다 빠를 수 없습니다.",
+      "xRangeFromSource": "범위는 데이터 소스 설정을 따릅니다 — 조회한 구간이 곧 X축 구간입니다.",
+      "autoWhenEmpty": "미정시 자동",
+      "notUsedWhenEmpty": "미사용",
+      "yMin": "최소값",
+      "yMax": "최대값",
+      "designBadge": "디자인",
+      "designLabelRow": "레이블",
+      "designValueRow": "값",
+      "lineStyleSection": "라인 스타일",
+      "legendSection": "범례",
+      "legendComposition": "구성",
+      "tooltipSection": "툴팁",
+      "tooltipEnabled": "사용",
+      "tooltipSingle": "단일 값",
+      "multiSeriesSection": "다중 시리즈",
+      "fillPrevMaxLabel": "직전값 사용 기간",
+      "fillPrevMaxUnlimited": "제한 없음 (계속 사용)",
+      "fillPrevOverflowLabel": "기간 초과 시",
+      "fillPrevOverflowEmpty": "비움",
+      "fillPrevOverflowValue": "지정 값으로 채움",
+      "fillPrevHint": "마지막 실측 이후 이 기간까지만 직전값을 이어 씁니다. 비워 두면 다음 값이 올 때까지 계속 이어 씁니다."
     },
     "widget": {
       "throughputLabel": "처리량 (msg/s)"
@@ -2783,7 +2833,11 @@
       "portOut": "출력",
       "logLevelReset": "{node} 로그 레벨이 기본값으로 리셋되었습니다",
       "logLevelChanged": "{node} 로그 레벨이 \"{level}\"로 변경되었습니다",
-      "logLevelChangeFailed": "로그 레벨 변경에 실패했습니다"
+      "logLevelChangeFailed": "로그 레벨 변경에 실패했습니다",
+      "nodeId": "노드 ID",
+      "searchPlaceholder": "이름 · 타입 · 노드 ID 검색",
+      "noMatch": "검색 조건에 맞는 노드가 없습니다",
+      "copyId": "노드 ID 복사"
     },
     "filter": {
       "searchPlaceholder": "플로우 검색...",

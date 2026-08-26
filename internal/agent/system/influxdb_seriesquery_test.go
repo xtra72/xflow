@@ -213,10 +213,14 @@ func TestSeriesQueryFillMapping(t *testing.T) {
 			influxQL:     "FILL(0)",
 		},
 		{
+			// 직전값 채우기는 DB 에 맡기지 않는다 — 두 방언 모두 "몇 칸까지만
+			// 이어라" 를 표현하지 못해 사용 기간 제한을 걸 수 없다. 빈 버킷만
+			// null 로 받아 오고 이어 쓰기는 응답 후처리(applyPreviousFill)가 한다.
 			name:         "previous",
 			fill:         SeriesFillPrevious,
-			fluxContains: []string{"createEmpty: true", "|> fill(usePrevious: true)"},
-			influxQL:     "FILL(previous)",
+			fluxContains: []string{"createEmpty: true"},
+			fluxAbsent:   []string{"|> fill("},
+			influxQL:     "FILL(null)",
 		},
 		{
 			// 프런트 계약에 남아 있는 값이지만 InfluxDB 양쪽 모두 대응물이 없다.

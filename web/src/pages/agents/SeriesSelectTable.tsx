@@ -10,7 +10,8 @@
 //
 // @spec SPEC-WEB-005
 
-import { Fragment, useCallback, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowDown, ArrowUp, ArrowUpDown, Filter, Search } from 'lucide-react';
 
 import { useTranslation } from '@/lib/i18n';
@@ -121,8 +122,60 @@ export function SeriesSelectTable({
   const [dataTypeSel, setDataTypeSel] = useState<Set<string>>(new Set());
   const [registrationSel, setRegistrationSel] = useState<Set<string>>(new Set());
   const [tagSel, setTagSel] = useState<Set<string>>(new Set());
-  // 현재 열려 있는 필터 팝오버 컬럼(없으면 null).
+  // 현재 열려 있는 필터 팝오버 컬럼(없으면 null)과, 그때 버튼의 화면 위치.
+  //
+  // 팝오버를 **표 바깥(body)** 에 그리기 때문에 위치를 따로 들고 있어야 한다.
+  // 표 안에 그리면 `overflow-auto` 컨테이너에 잘려 아래 항목에 닿을 수 없고,
+  // `sticky` + `z-index` 인 thead 가 쌓임 맥락을 만들어 바깥 백드롭에 덮인다 —
+  // 두 증상("스크롤 안 됨", "클릭하면 사라짐")이 모두 여기서 나왔다.
   const [openFilter, setOpenFilter] = useState<FacetColumn | 'key' | null>(null);
+  const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+
+  const closeFilter = useCallback(() => {
+    setOpenFilter(null);
+    setAnchor(null);
+  }, []);
+
+  /** 필터 버튼 토글 — 열 때 버튼 바로 아래를 앵커로 잡는다. */
+  const toggleFilter = useCallback(
+    (facet: FacetColumn | 'key', btn: HTMLElement) => {
+      setOpenFilter((cur) => {
+        if (cur === facet) {
+          setAnchor(null);
+          return null;
+        }
+        const r = btn.getBoundingClientRect();
+        setAnchor({ left: r.left, top: r.bottom + 4 });
+        return facet;
+      });
+    },
+    [],
+  );
+
+  // 바깥 클릭으로 닫는다. 백드롭 대신 문서 리스너를 쓰는 이유는 쌓임 맥락 때문이다 —
+  // 백드롭은 z-index 로 팝오버 위·아래를 다투지만, 리스너는 그 다툼 자체가 없다.
+  useEffect(() => {
+    if (openFilter === null) return;
+    const onDown = (e: MouseEvent): void => {
+      const target = e.target as Node;
+      if (popoverRef.current?.contains(target)) return;
+      // 필터 버튼 자신의 클릭은 토글이 처리한다 — 여기서 닫으면 열리자마자 닫힌다.
+      if (target instanceof Element && target.closest('[data-series-filter-button]')) return;
+      closeFilter();
+    };
+    // 표가 스크롤되면 앵커가 어긋난다. 따라가게 만드는 대신 닫는다 —
+    // 위치만 맞추면 팝오버가 표 밖 엉뚱한 자리에 떠 있게 된다.
+    const onScrollOrResize = (): void => closeFilter();
+    document.addEventListener('mousedown', onDown);
+    window.addEventListener('resize', onScrollOrResize);
+    window.addEventListener('scroll', onScrollOrResize, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      window.removeEventListener('resize', onScrollOrResize);
+      window.removeEventListener('scroll', onScrollOrResize, true);
+    };
+  }, [openFilter, closeFilter]);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
@@ -262,7 +315,8 @@ export function SeriesSelectTable({
           </button>
           <button
             type="button"
-            onClick={() => setOpenFilter((c) => (c === facet ? null : facet))}
+            data-series-filter-button=""
+            onClick={(e) => toggleFilter(facet, e.currentTarget)}
             className={`rounded p-0.5 hover:bg-(--color-bg-elevated) ${
               facetActive ? 'text-blue-600' : 'text-(--color-text-muted)'
             }`}
@@ -273,38 +327,44 @@ export function SeriesSelectTable({
             <Filter className="h-3 w-3" aria-hidden="true" />
           </button>
         </div>
-        {openFilter === facet && (
-          <div
-            className="absolute left-0 top-full z-20 mt-1 max-h-64 w-56 overflow-y-auto rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) p-2 text-xs shadow-lg"
-            data-testid={`series-filter-popover-${column}`}
-          >
-            {facet === 'key' ? (
-              <div className="relative">
-                <Search
-                  className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-text-muted)"
-                  aria-hidden="true"
+        {openFilter === facet &&
+          // body 에 그린다 — 표의 `overflow-auto` 에 잘리지 않고, sticky thead 의
+          // 쌓임 맥락에도 갇히지 않는다.
+          createPortal(
+            <div
+              ref={popoverRef}
+              style={{ left: anchor?.left ?? 0, top: anchor?.top ?? 0 }}
+              className="fixed z-50 max-h-64 w-56 overflow-y-auto rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) p-2 text-xs shadow-lg"
+              data-testid={`series-filter-popover-${column}`}
+            >
+              {facet === 'key' ? (
+                <div className="relative">
+                  <Search
+                    className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-text-muted)"
+                    aria-hidden="true"
+                  />
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder={t('series.keySearchPlaceholder')}
+                    value={keySearch}
+                    onChange={(e) => setKeySearch(e.target.value)}
+                    data-testid="series-filter-key-input"
+                    className="block w-full rounded border border-(--color-border-strong) bg-(--color-bg-primary) pl-7 pr-2 py-1 text-(--color-text-primary) focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              ) : (
+                <FacetList
+                  column={facet}
+                  options={facetOptions[facet]}
+                  selected={facetState[facet][0]}
+                  onToggle={(v) => toggleFacetValue(facet, v)}
+                  onClear={() => clearFacet(facet)}
                 />
-                <input
-                  type="text"
-                  autoFocus
-                  placeholder={t('series.keySearchPlaceholder')}
-                  value={keySearch}
-                  onChange={(e) => setKeySearch(e.target.value)}
-                  data-testid="series-filter-key-input"
-                  className="block w-full rounded border border-(--color-border-strong) bg-(--color-bg-primary) pl-7 pr-2 py-1 text-(--color-text-primary) focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-            ) : (
-              <FacetList
-                column={facet}
-                options={facetOptions[facet]}
-                selected={facetState[facet][0]}
-                onToggle={(v) => toggleFacetValue(facet, v)}
-                onClear={() => clearFacet(facet)}
-              />
-            )}
-          </div>
-        )}
+              )}
+            </div>,
+            document.body,
+          )}
       </th>
     );
   };
@@ -333,17 +393,6 @@ export function SeriesSelectTable({
         >
           {t('series.clearAll')}
         </button>
-        {openFilter !== null && (
-          // 팝오버 바깥 클릭 닫기용 투명 백드롭.
-          <button
-            type="button"
-            aria-hidden="true"
-            tabIndex={-1}
-            onClick={() => setOpenFilter(null)}
-            className="fixed inset-0 z-10 cursor-default"
-            data-testid="series-filter-backdrop"
-          />
-        )}
       </div>
 
       <div className="max-h-[45vh] overflow-auto rounded-md border border-(--color-border-default) bg-(--color-bg-primary)">

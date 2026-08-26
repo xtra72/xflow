@@ -10,6 +10,7 @@ import { useRef } from 'react';
 
 import { useTranslation } from '@/lib/i18n';
 
+import { AliasTokenHelp } from './AliasTokenHelp';
 import {
   availableAliasTokens,
   makeAliasToken,
@@ -24,15 +25,21 @@ export interface NameFormatSample {
   tags?: Record<string, string>;
 }
 
+// 입력은 폭을 고정한다. w-full 이면 미리보기가 옆에 설 자리가 없어 아랫줄로 밀린다.
+// 형식 문자열은 보통 토큰 두세 개라 이 폭이면 대개 한눈에 들어온다.
 function inputClass(): string {
-  return 'w-full rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs text-(--color-text-primary)';
+  return 'w-56 max-w-full rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs text-(--color-text-primary)';
 }
 
 /**
- * 시리즈 이름 형식 입력 + 토큰 삽입 버튼 + 미리보기.
+ * 시리즈 이름 형식 입력 + 토큰 도움말(물음표) + 미리보기.
  *
  * **미지정이 정상 상태다.** 비워 두면 내장 서술 표기(시리즈 키 + 필드 + 태그)가
  * 쓰이며, 그것이 대부분의 경우에 읽기 좋다. 형식은 그 기본이 부족할 때만 쓴다.
+ *
+ * 레이아웃: `[입력] (?) 미리보기: …` 한 줄. 폭이 모자라면 접힌다. 토큰 목록은
+ * 시리즈 세부 설정과 같은 규약으로 물음표 뒤에 접어 둔다 — 상시 펼쳐 두면 토큰
+ * 여덟 줄이 정작 편집 대상인 입력과 미리보기를 밀어냈다.
  */
 export function SeriesNameFormatField({
   value,
@@ -81,10 +88,11 @@ export function SeriesNameFormatField({
 
   return (
     <div className="space-y-1" data-testid={testIdPrefix}>
-      <div>
-        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-          {label ?? t('dashboard.chart.storeSeriesNameFormat')}
-        </label>
+      <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+        {label ?? t('dashboard.chart.storeSeriesNameFormat')}
+      </label>
+      {/* 입력 | 토큰 도움말 | 미리보기 — 한 줄, 폭이 모자라면 접힌다. */}
+      <div className="flex flex-wrap items-center gap-2">
         <input
           type="text"
           value={value ?? ''}
@@ -94,37 +102,26 @@ export function SeriesNameFormatField({
           className={inputClass()}
           data-testid={`${testIdPrefix}-input`}
         />
-      </div>
-      {hint !== undefined && (
-        <p data-testid={`${testIdPrefix}-hint`} className="px-0.5 text-[11px] text-(--color-text-muted)">
-          {hint}
-        </p>
-      )}
-      <div className="flex flex-wrap items-center gap-1.5 px-0.5">
-        <span className="text-xs text-(--color-text-muted)">
-          {t('dashboard.chart.storeAliasInsertToken')}
-        </span>
-        {tokenPaths.map((k) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => insertToken(k)}
-            data-testid={`${testIdPrefix}-token-${k}`}
-            className="rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-0.5 font-mono text-xs text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
-          >
-            {makeAliasToken(k)}
-          </button>
-        ))}
+        <AliasTokenHelp
+          tokenPaths={tokenPaths}
+          onInsert={insertToken}
+          testIdPrefix={testIdPrefix}
+        />
         {preview !== undefined && (
           <span
             data-testid={`${testIdPrefix}-preview`}
-            className="ml-1 inline-flex min-w-0 items-center gap-0.5 text-xs text-(--color-text-muted)"
+            className="inline-flex min-w-0 max-w-full items-center gap-0.5 text-xs text-(--color-text-muted)"
           >
             <span>{t('dashboard.chart.storeAliasPreview')}</span>
             <span className="truncate font-mono text-(--color-text-primary)">{preview}</span>
           </span>
         )}
       </div>
+      {hint !== undefined && (
+        <p data-testid={`${testIdPrefix}-hint`} className="px-0.5 text-[11px] text-(--color-text-muted)">
+          {hint}
+        </p>
+      )}
       {unknown.length > 0 && (
         <p
           data-testid={`${testIdPrefix}-unknown`}

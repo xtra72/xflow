@@ -119,7 +119,7 @@
         "logs": "Real-time log stream",
         "triggerConfig": "Edit trigger node schedules and payloads from the dashboard",
         "facilitySchedule": "Facility control schedule — reserve target/plan/command via a rule table",
-        "table": "Data table view",
+        "table": "Browse series as a table (channel · Store · TSDB)",
         "propertiesGrid": "Display device properties as a grid",
         "stat": "Single-value stat card",
         "gauge": "Circular gauge chart",
@@ -149,7 +149,7 @@
         "modbus": "MODBUS"
       },
       "labels": {
-        "propertiesGrid": "Properties grid",
+        "propertiesGrid": "Device State",
         "outdoorControl": "Outdoor unit status",
         "heatmap": "Heatmap"
       }
@@ -194,7 +194,7 @@
       "facilityStation": "Facility Station",
       "facilityDevice": "Facility Device",
       "facilityGroup": "Facility Group",
-      "modbusRealDevices": "Real Devices",
+      "modbusRealDevices": "Device State",
       "modbusVirtualDevices": "Virtual Devices",
       "modbusSharedRegisters": "Shared Register Map",
       "modbusDeviceRegisters": "Device Register Map",
@@ -463,7 +463,8 @@
       "empty": "No registered flows."
     },
     "devicePanel": {
-      "empty": "No registered devices."
+      "empty": "No registered devices.",
+      "noMatch": "No devices match your search."
     },
     "logPanel": {
       "allLevels": "All levels",
@@ -1249,8 +1250,10 @@
       "storeSeriesNameAria": "Display name for {key}",
       "storeSeriesColorAria": "Color for {key}",
       "storeSeriesRemoveAria": "Remove {key}",
-      "storeAliasInsertToken": "Insert token:",
       "storeAliasPreview": "Preview:",
+      "storeAliasTokenHelpAria": "Name token help",
+      "storeAliasTokenHelpTitle": "Available tokens",
+      "storeAliasTokenHelpHint": "Click a token to insert it at the cursor in the name field. Tokens can be mixed with plain text.",
       "storeTagPickerLabel": "Tag filter (AND)",
       "storeTagAnyValue": "(any)",
       "storeTagMatchCount": "{count} keys matched",
@@ -1265,7 +1268,54 @@
       "gapDashThreshold": "Minimum missing points",
       "gapDashHint": "A run of this many missing points is drawn as a dashed segment. Filling empty intervals with 0 or the previous value leaves no gaps, so this has no effect.",
       "tileRows": "Chart rows",
-      "tileRowsHint": "How many rows to lay charts out in when there are 2+ resources (default 1). On a narrow panel, columns shrink and rows may exceed this, so tiles stay readable."
+      "tileRowsHint": "How many rows to lay charts out in when there are 2+ resources (default 1). On a narrow panel, columns shrink and rows may exceed this, so tiles stay readable.",
+      "columnWidth": "Width",
+      "columnWidthAuto": "auto",
+      "columnSortable": "Sort",
+      "columnFilterable": "Filter",
+      "columnFormatAria": "Column format",
+      "moveColumnUpAria": "Move column up",
+      "moveColumnDownAria": "Move column down",
+      "rangeFilterAria": "{label} column range filter",
+      "rangeMin": "Min",
+      "rangeMax": "Max",
+      "rangeClear": "Clear range",
+      "tagColumnHint": "Besides timestamp and value, a field can be a tag — write $.tags.location to make that tag a column. Number and datetime columns filter by range; others by value selection.",
+      "storeInterval": "Interval",
+      "storeIntervalCustomAria": "Custom interval (seconds)",
+      "storeIntervalTooCoarse": "Interval is larger than the time window — a single bucket, so values collapse to one point.",
+      "resizeColumnAria": "Resize {header} column",
+      "rangeLabel": "Data to fetch",
+      "rangeModeRelative": "Period (relative)",
+      "rangeModeAbsolute": "Period (absolute)",
+      "rangeModeCount": "Count",
+      "rangeFrom": "From",
+      "rangeTo": "To",
+      "rangeWindowCustomAria": "Custom relative period (seconds)",
+      "rangeCountUnit": "points",
+      "rangeCountHint": "Fetches the most recent N buckets — the query window is derived as interval × N.",
+      "rangeAbsoluteInvalid": "Both start and end are required, and end cannot precede start.",
+      "xRangeFromSource": "Range follows the data source setting — the queried span is the X axis span.",
+      "autoWhenEmpty": "Auto when empty",
+      "notUsedWhenEmpty": "Not used",
+      "yMin": "Min",
+      "yMax": "Max",
+      "designBadge": "Design",
+      "designLabelRow": "Label",
+      "designValueRow": "Value",
+      "lineStyleSection": "Line style",
+      "legendSection": "Legend",
+      "legendComposition": "Composition",
+      "tooltipSection": "Tooltip",
+      "tooltipEnabled": "Enabled",
+      "tooltipSingle": "Single value",
+      "multiSeriesSection": "Multi-series",
+      "fillPrevMaxLabel": "Carry-forward limit",
+      "fillPrevMaxUnlimited": "No limit (carry indefinitely)",
+      "fillPrevOverflowLabel": "After the limit",
+      "fillPrevOverflowEmpty": "Leave empty",
+      "fillPrevOverflowValue": "Fill with a value",
+      "fillPrevHint": "Carries the last measured value forward for at most this long. Leave unset to carry until the next value arrives."
     },
     "widget": {
       "throughputLabel": "Throughput (msg/s)"
@@ -2783,7 +2833,11 @@
       "portOut": "Output",
       "logLevelReset": "{node} log level has been reset to default",
       "logLevelChanged": "{node} log level changed to \"{level}\"",
-      "logLevelChangeFailed": "Failed to change log level"
+      "logLevelChangeFailed": "Failed to change log level",
+      "nodeId": "Node ID",
+      "searchPlaceholder": "Search name, type, or node ID",
+      "noMatch": "No nodes match your search",
+      "copyId": "Copy node ID"
     },
     "filter": {
       "searchPlaceholder": "Search flows...",

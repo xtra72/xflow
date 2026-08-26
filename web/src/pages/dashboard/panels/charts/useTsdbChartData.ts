@@ -20,6 +20,12 @@
 //
 // @spec SPEC-TSDB-002 §2.14 (S2) · §2.18 (U11) · §2.19 (U12)
 
+import {
+  readSeriesRange,
+  resolveSeriesWindow,
+  seriesRangeKey,
+} from './seriesRange';
+
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClient, QueryClientContext, useQuery } from '@tanstack/react-query';
 
@@ -236,7 +242,9 @@ export function useTsdbChartData(
     if (!config.series || config.series.length === 0) return '';
     // 조회 창이 없는 config 는 질의를 만들 수 없다. `<= 0` 이 아니라 `> 0` 의 부정으로
     // 쓰는 이유는 필드 자체가 없는(undefined) 구/부분 config 도 걸러내기 위함이다.
-    if (!(config.time_window_ms > 0) || !(config.interval_ms > 0)) return '';
+    if (!(config.interval_ms > 0)) return '';
+    const rangeSpec = readSeriesRange(config.range, config.time_window_ms);
+    if (!resolveSeriesWindow(rangeSpec, config.interval_ms, 0)) return '';
 
     const selectionPart = config.series
       .map((s) => {
@@ -293,9 +301,14 @@ export function useTsdbChartData(
       // 페이지 크기가 바뀌면 조회 형태가 달라진다(열거 유무 · group_filter).
       config.group_page_size ?? 0,
       config.time_window_ms,
+      seriesRangeKey(rangeSpec),
       config.interval_ms,
       config.aggregation,
       config.fill ?? '',
+      // 사용 기간 제한도 재구독 축이다 — 빠뜨리면 기간을 고쳐도 화면이 그대로다.
+      config.fill_previous_max_ms ?? 0,
+      config.fill_previous_overflow ?? '',
+      config.fill_previous_overflow_value ?? 0,
       config.refresh_interval_ms ?? DEFAULT_REFRESH_MS,
       // 패널 단위 이름 형식도 재구독 축이다. 빠뜨리면 형식을 고쳐도 범례가
       // 그대로다 — selectionPart 의 alias 와 같은 사유(UB1-14 계열)이며,
@@ -345,14 +358,34 @@ export function useTsdbChartData(
       const signal = controller.signal;
 
       const { keys, seriesFilters } = buildKeysAndFilters(config);
+      // Store 와 같은 범위 어휘(상대 기간 / 절대 구간 / 최근 N개)를 쓴다.
+      const win = resolveSeriesWindow(
+        readSeriesRange(config.range, config.time_window_ms),
+        config.interval_ms,
+        now,
+      );
+      if (!win) return;
       const query: TsdbMatrixQuery = {
         keys,
         seriesFilters,
-        startMs: now - config.time_window_ms,
-        endMs: now,
+        startMs: win.startMs,
+        endMs: win.endMs,
         intervalMs: config.interval_ms,
         aggregation: config.aggregation,
         ...(config.fill ? { fill: config.fill } : {}),
+        // 제한은 `previous` 에서만 뜻이 있다. 다른 전략에 실어 보내면 요청만
+        // 보고 동작을 읽을 수 없게 된다.
+        ...(config.fill === 'previous' && config.fill_previous_max_ms
+          ? {
+              fillPreviousMaxMs: config.fill_previous_max_ms,
+              ...(config.fill_previous_overflow === 'value'
+                ? {
+                    fillPreviousOverflow: 'value' as const,
+                    fillPreviousOverflowValue: config.fill_previous_overflow_value ?? 0,
+                  }
+                : {}),
+            }
+          : {}),
       };
       // 페이지 크기가 0 이면 페이지네이션 비활성 — 그룹 전량을 조회한다.
       // 저장된 config 에 group_page_size 가 없으면 이 경로가 그대로 현행이다(§2.9).

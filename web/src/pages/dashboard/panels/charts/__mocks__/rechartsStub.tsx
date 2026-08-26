@@ -152,11 +152,20 @@ export function XAxis({ domain }: { domain?: unknown }) {
   );
 }
 
-export function YAxis({ domain }: { domain?: unknown }) {
+export function YAxis({
+  domain,
+  tickFormatter,
+}: {
+  domain?: unknown;
+  tickFormatter?: (v: number) => string;
+}) {
   return (
     <div
       data-testid="rc-yaxis"
       data-domain={domain !== undefined ? JSON.stringify(domain) : undefined}
+      // 눈금 포맷터를 표본 값에 적용해 노출한다 — 포맷 배선(소수 자릿수·단위)을
+      // 실제 눈금 문자열로 확인할 수 있게 하기 위함. 포맷터가 없으면 속성도 없다.
+      data-tick-sample={tickFormatter ? String(tickFormatter(12.3456)) : undefined}
     />
   );
 }
@@ -165,8 +174,32 @@ export function CartesianGrid() {
   return <div data-testid="rc-grid" />;
 }
 
-export function Tooltip() {
-  return <div data-testid="rc-tooltip" />;
+export function Tooltip({
+  content,
+  formatter,
+}: {
+  // 단일 값 모드는 커스텀 content 로 payload 를 좁힌다 — 그 유무만 노출한다.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  content?: any;
+  // 실제 시그니처보다 좁게 받는다 — 스텁이 쓰는 것은 (값, 이름) 두 개뿐이다.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  formatter?: any;
+}) {
+  // 값 포맷터를 표본에 적용해 노출한다 — 소수 자릿수·열거형 라벨·boolean 표기가
+  // 실제로 배선됐는지 툴팁을 띄우지 않고 확인할 수 있게 하기 위함.
+  const sample = (v: unknown, name: string): string | undefined => {
+    if (!formatter) return undefined;
+    const out = formatter(v, name);
+    return String(Array.isArray(out) ? out[0] : out);
+  };
+  return (
+    <div
+      data-testid="rc-tooltip"
+      data-single={content ? 'true' : undefined}
+      data-fmt-number={sample(12.3456, 'value')}
+      data-fmt-bool={sample(1, '__bool__')}
+    />
+  );
 }
 
 export function Legend(props: {

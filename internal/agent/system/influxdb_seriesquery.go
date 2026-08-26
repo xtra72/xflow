@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/xtra/xflow/internal/fillpolicy"
 )
 
 // SeriesAggregation 은 구조화 시리즈 질의의 집계 연산이다.
@@ -132,6 +134,11 @@ type SeriesQuerySpec struct {
 	Aggregation SeriesAggregation
 	// Fill 은 빈 버킷 채우기 전략이다.
 	Fill SeriesFill
+	// FillPreviousLimit 은 `previous` 채우기의 사용 기간 제한이다.
+	//
+	// 제로값이면 종전대로 제한 없이 이어 쓴다. 쿼리 생성에는 관여하지 않는다 —
+	// 이어 쓰기 자체가 응답 후처리(applyPreviousFill)로 옮겨졌기 때문이다.
+	FillPreviousLimit fillpolicy.Previous
 }
 
 // --- 집계 어휘 매핑 (§2.7 정본 표) ---
@@ -201,7 +208,13 @@ func fluxFillOptions(fill SeriesFill) (createEmpty bool, postPipe string, err er
 	case SeriesFillZero:
 		return true, fluxFillZeroPipe, nil
 	case SeriesFillPrevious:
-		return true, fluxFillPreviousPipe, nil
+		// 직전값 채우기는 **DB 에 맡기지 않는다**. Flux 의 fill(usePrevious:)
+		// 도 InfluxQL 의 FILL(previous) 도 "몇 칸까지만 이어라" 를 표현하지
+		// 못해, 사용 기간 제한을 걸 수 없다. 빈 버킷만 null 로 받아 오고
+		// (createEmpty), 이어 쓰기는 응답을 받은 뒤 Go 에서 한다
+		// (applyPreviousFill). 내장 TSDB 와 같은 판단(fillpolicy)을 쓰므로
+		// 두 소스가 같은 설정에서 같은 그림을 낸다.
+		return true, "", nil
 	case SeriesFillAvg:
 		return false, "", ErrUnsupportedSeriesFill
 	default:
@@ -219,7 +232,8 @@ func influxQLFillArg(fill SeriesFill) (string, error) {
 	case SeriesFillZero:
 		return "0", nil
 	case SeriesFillPrevious:
-		return "previous", nil
+		// Flux 쪽과 같은 이유로 DB 에 맡기지 않는다 — null 로 받아 Go 에서 잇는다.
+		return "null", nil
 	case SeriesFillAvg:
 		return "", ErrUnsupportedSeriesFill
 	default:
@@ -445,8 +459,7 @@ const (
 	// 아니라 "값이 약간 늦는다"이므로 리뷰에서 잡히지 않는다.
 	fluxAggregateWindowTmpl = `  |> aggregateWindow(every: %s, fn: %s, createEmpty: %t, timeSrc: "_start")` + "\n"
 
-	fluxFillZeroPipe     = `  |> fill(value: 0.0)` + "\n"
-	fluxFillPreviousPipe = `  |> fill(usePrevious: true)` + "\n"
+	fluxFillZeroPipe = `  |> fill(value: 0.0)` + "\n"
 
 	// 페이지 선택 술어(SPEC-TSDB-004 §2.7.1). 조합마다 and, 조합 사이는 or.
 	fluxGroupFilterTmpl = `  |> filter(fn: (r) => %s)` + "\n"
