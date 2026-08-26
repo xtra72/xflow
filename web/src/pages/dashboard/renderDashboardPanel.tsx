@@ -272,17 +272,21 @@ function renderPanelBody(
           onTitleChange={onTitle}
         />
       );
-    // SPEC-CHART-001 M4: 5종 차트 패널
+    // SPEC-CHART-001 M4: 5종 차트 패널.
+    //
+    // `title` 은 **5종 모두** 넘긴다. 각 패널 헤더는 `title || channel_name || '채널 미지정'`
+    // 순으로 폴백하므로, 넘기지 않으면 사용자가 지정한 패널 이름 대신 채널 이름이 뜬다.
+    // store/tsdb 소스 패널은 `channel_name` 이 비어 있어 "채널 미지정" 까지 내려간다.
     case 'stat':
-      return <StatPanel panelId={panel.id} config={panel.config} />;
+      return <StatPanel panelId={panel.id} title={panel.title} config={panel.config} />;
     case 'line-chart':
       return <LineChartPanel panelId={panel.id} title={panel.title} config={panel.config} />;
     case 'bar-chart':
-      return <BarChartPanel panelId={panel.id} config={panel.config} />;
+      return <BarChartPanel panelId={panel.id} title={panel.title} config={panel.config} />;
     case 'pie-chart':
-      return <PieChartPanel panelId={panel.id} config={panel.config} />;
+      return <PieChartPanel panelId={panel.id} title={panel.title} config={panel.config} />;
     case 'table':
-      return <TablePanel panelId={panel.id} config={panel.config} />;
+      return <TablePanel panelId={panel.id} title={panel.title} config={panel.config} />;
     // SPEC-HEATMAP-PANEL-001 (MVP): store 태그 바인딩 온도 히트맵 패널.
     case 'heatmap':
       return (

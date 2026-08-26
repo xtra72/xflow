@@ -107,6 +107,50 @@ describe('채널 섹션 노출 대상', () => {
   });
 });
 
+describe('차트 배열 행 수 설정 노출 대상', () => {
+  // 타일 배열을 쓰는 패널에만 의미가 있다 — 바/파이는 시리즈를 한 차트 안의 막대·조각으로
+  // 그리므로 "행" 개념이 없다.
+  for (const type of ['stat', 'gauge'] as const) {
+    it(`${type}: 행 수 컨트롤을 노출한다`, async () => {
+      await renderDialog(type, { data_source: 'store' });
+      expect(screen.getByTestId('chart-tile-rows')).toBeInTheDocument();
+    });
+
+    it(`${type}: 미지정이면 기본값 1 을 표시한다`, async () => {
+      await renderDialog(type, { data_source: 'store' });
+      expect((screen.getByTestId('chart-tile-rows') as HTMLInputElement).value).toBe('1');
+    });
+
+    it(`${type}: 저장된 값을 표시한다`, async () => {
+      await renderDialog(type, { data_source: 'store', tile_rows: 3 });
+      expect((screen.getByTestId('chart-tile-rows') as HTMLInputElement).value).toBe('3');
+    });
+  }
+
+  for (const type of ['bar-chart', 'pie-chart', 'line-chart', 'table'] as const) {
+    it(`${type}: 행 수 컨트롤을 노출하지 않는다`, async () => {
+      await renderDialog(type, { data_source: 'store' });
+      expect(screen.queryByTestId('chart-tile-rows')).toBeNull();
+    });
+  }
+
+  it('기본값(1)로 되돌리면 config 키를 남기지 않는다', async () => {
+    await renderDialog('stat', { data_source: 'store', tile_rows: 3 });
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('chart-tile-rows'), { target: { value: '1' } });
+    });
+    expect((await apply()).tile_rows).toBeUndefined();
+  });
+
+  it('상한을 넘는 입력은 잘라서 저장한다', async () => {
+    await renderDialog('stat', { data_source: 'store' });
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('chart-tile-rows'), { target: { value: '99' } });
+    });
+    expect((await apply()).tile_rows).toBe(12);
+  });
+});
+
 describe('채널 모드 → store 자동 이관', () => {
   for (const type of ['stat', 'bar-chart', 'pie-chart'] as const) {
     it(`${type}: data_source 미지정(구 패널)이 store 로 이관된다`, async () => {

@@ -11,7 +11,7 @@
 // @spec SPEC-CHART-002 AC-11 / AC-17 / AC-14 / AC-18
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, cleanup } from '@testing-library/react';
 
 import type { SeriesMatrix, SeriesMatrixQuery } from '@/services/api/seriesDataSource';
 
@@ -159,6 +159,40 @@ describe('GaugePanel Store 데이터 소스 (SPEC-CHART-002 M4)', () => {
     expect(screen.queryByText('77')).toBeNull();
     // 레거시 store 폴링은 시작되지 않는다.
     expect(mockPost.fn).not.toHaveBeenCalled();
+  });
+
+  it('tile_rows 로 게이지 배열의 행 수를 정한다(기본 1행)', async () => {
+    await renderPanel(panelConfig({ series_reduce: 'last' }));
+    const grid = screen.getByTestId('series-tile-grid');
+    expect(grid.getAttribute('data-rows')).toBe('1');
+    expect(grid.getAttribute('data-columns')).toBe('3');
+
+    cleanup();
+    await renderPanel(panelConfig({ series_reduce: 'last', tile_rows: 2 }));
+    const grid2 = screen.getByTestId('series-tile-grid');
+    expect(grid2.getAttribute('data-rows')).toBe('2');
+    expect(grid2.getAttribute('data-columns')).toBe('2');
+  });
+
+  it('게이지 상자는 폭이 아니라 행 높이를 받는다(낮은 패널 잘림 방지)', async () => {
+    // 종전에는 상자에 `aspect-ratio` 를 주고 폭 기준으로 정사각형을 만들었다. 낮고 넓은
+    // 패널에서 그 높이가 그리드를 넘쳐 `overflow-hidden` 에 위아래가 잘렸다.
+    // jsdom 은 레이아웃을 계산하지 않으므로 **잘림의 원인이던 스타일 계약**을 잠근다.
+    await renderPanel(panelConfig({ series_reduce: 'last' }));
+
+    // 1) 행 높이를 그리드가 먼저 확정한다 — "행 ↔ 내용" 순환을 끊는 지점.
+    expect(screen.getByTestId('series-tile-grid').style.gridAutoRows).toBe(
+      'minmax(0, 1fr)',
+    );
+    // 2) 상자는 종횡비로 높이를 만들지 않는다. 종횡비는 SVG viewBox + preserveAspectRatio
+    //    기본값(meet)이 맞추므로 넓든 좁든 두 축 안으로 축소된다.
+    for (const box of screen.getAllByTestId('gauge-tile-chart')) {
+      expect(box.style.aspectRatio).toBe('');
+      expect(box.className).toContain('flex-1');
+      expect(box.className).toContain('min-h-0');
+      // SVG 에 slice 가 붙어 있으면 meet 이 아니라 잘라내기가 된다.
+      expect(box.querySelector('svg')?.getAttribute('preserveAspectRatio')).toBeNull();
+    }
   });
 
   it('각 게이지는 패널 공통 min/max/unit/gaugeType 을 공유한다', async () => {

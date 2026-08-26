@@ -195,8 +195,13 @@ export default function BarChartPanel({ panelId: _panelId, title, config }: BarC
           </span>
         </div>
       )}
+      {/*
+        부제: 채널 경로에서만 채널 이름을 앞에 붙인다. 시리즈 소스(store/tsdb) 패널은
+        `channel_name` 이 비어 있어 "채널 미지정" 으로 떨어지는데, 그 패널은 애초에 채널을
+        쓰지 않으므로 설정이 빠진 것처럼 읽히는 잘못된 안내가 된다.
+      */}
       <div className="mb-2 truncate pr-6 text-xs font-medium text-(--color-text-muted)">
-        {cfg.channel_name || '채널 미지정'} ·{' '}
+        {!isStore && `${cfg.channel_name || '채널 미지정'} · `}
         {derived.reduce ? cfg.series_reduce : cfg.mode}
       </div>
 

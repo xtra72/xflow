@@ -133,6 +133,21 @@ describe('StatPanel 다중 출력 (SPEC-CHART-002 M3)', () => {
     };
   });
 
+  it('tile_rows 미지정이면 1행 — 시리즈 수만큼 열이 된다', async () => {
+    await renderPanel(panelConfig({ series_reduce: 'max' }));
+    const grid = screen.getByTestId('series-tile-grid');
+    expect(grid.getAttribute('data-rows')).toBe('1');
+    expect(grid.getAttribute('data-columns')).toBe('3');
+  });
+
+  it('tile_rows 를 지정하면 그 행 수를 목표로 열이 줄어든다', async () => {
+    await renderPanel(panelConfig({ series_reduce: 'max', tile_rows: 2 }));
+    const grid = screen.getByTestId('series-tile-grid');
+    expect(grid.getAttribute('data-rows')).toBe('2');
+    // 시리즈 3개 / 2행 → 2열(마지막 행이 덜 찬다).
+    expect(grid.getAttribute('data-columns')).toBe('2');
+  });
+
   it('series_reduce 지정 시 시리즈당 타일 1개를 렌더한다', async () => {
     await renderPanel(panelConfig({ series_reduce: 'max' }));
 

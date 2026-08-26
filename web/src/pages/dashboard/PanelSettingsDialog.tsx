@@ -113,6 +113,7 @@ import {
   BarChartSection,
   PieChartSection,
   TableChartSection,
+  TileRowsField,
 } from './ChartPanelSections';
 import { PanelSettingsDataSource } from './PanelSettingsDataSource';
 import { useDraftPanelConfig } from './useDraftPanelConfig';
@@ -3730,6 +3731,12 @@ function GaugeSection({
           />
         </div>
       </div>
+
+      {/* C-2. 다중 출력 배열 — 시리즈가 2개 이상일 때 게이지를 몇 행으로 늘어놓을지. */}
+      <TileRowsField
+        value={config.tile_rows as number | undefined}
+        onChange={(tile_rows) => onConfigChange({ tile_rows })}
+      />
 
       {/* D. 값 지정 (데이터 소스) */}
       <div>

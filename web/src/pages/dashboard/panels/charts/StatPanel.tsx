@@ -53,6 +53,7 @@ function parseConfig(config: Record<string, unknown>): StatPanelConfig {
     // SPEC-CHART-002 — 유무가 곧 렌더 경로 스위치다. 기본값을 채우지 않는다.
     series_reduce: config.series_reduce as StatPanelConfig['series_reduce'],
     multi_output_limit: config.multi_output_limit as number | undefined,
+    tile_rows: config.tile_rows as number | undefined,
   };
 }
 
@@ -196,6 +197,7 @@ export default function StatPanel({ panelId: _panelId, title, config }: StatPane
           <SeriesTileGrid
             items={tiles}
             limit={cfg.multi_output_limit}
+            rows={cfg.tile_rows}
             itemKey={(tile, i) => `${i}:${tile.name}`}
             renderItem={(tile) => (
               <StatTile tile={tile} cfg={cfg} decimals={decimals} single={tiles.length === 1} />

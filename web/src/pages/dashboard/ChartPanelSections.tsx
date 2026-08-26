@@ -39,6 +39,11 @@ import {
   pickSeriesColor,
   REDUCE_PANEL_TYPES,
 } from './panels/charts/chartChannelTypes';
+import {
+  DEFAULT_TILE_ROWS,
+  MAX_TILE_ROWS,
+  normalizeTileRows,
+} from './panels/charts/multiOutputLimit';
 import { SERIES_REDUCE_FUNCS } from './panels/charts/seriesReduce';
 import {
   CAPABILITY_REASON_KEYS,
@@ -86,6 +91,52 @@ function LabeledField(props: { label: string; children: React.ReactNode; hint?: 
 
 function inputClass(): string {
   return 'w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
+}
+
+/**
+ * 다중 출력 타일 배열의 **행 수** 설정.
+ *
+ * 시리즈가 2개 이상일 때만 의미가 있으므로 통계·게이지 설정에 함께 둔다. 배열을 쓰지 않는
+ * 바·파이는 이 컨트롤을 노출하지 않는다 — 두 패널은 시리즈를 한 차트 안의 막대·조각으로
+ * 그리므로 "행" 이라는 개념이 없다.
+ *
+ * 행 수는 상한이 아니라 **목표**다(`tileColumnCount`). 패널이 좁아 타일 최소 폭을 확보하지
+ * 못하면 열이 줄고 행이 목표보다 늘어난다 — 힌트 문구가 그 사실을 알린다.
+ */
+export function TileRowsField({
+  value,
+  onChange,
+}: {
+  value: number | undefined;
+  onChange: (rows: number | undefined) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  return (
+    <LabeledField
+      label={t('dashboard.chart.tileRows')}
+      hint={t('dashboard.chart.tileRowsHint')}
+    >
+      <input
+        type="number"
+        data-testid="chart-tile-rows"
+        min={DEFAULT_TILE_ROWS}
+        max={MAX_TILE_ROWS}
+        value={normalizeTileRows(value)}
+        onChange={(e) => {
+          const n = parseInt(e.target.value, 10);
+          // 빈 입력·비수치는 기본값으로 되돌린다. 키를 지워 두면 config 가 깔끔하고,
+          // 읽는 쪽(`normalizeTileRows`)이 같은 기본값을 쓴다.
+          if (Number.isNaN(n)) {
+            onChange(undefined);
+            return;
+          }
+          const clamped = normalizeTileRows(n);
+          onChange(clamped === DEFAULT_TILE_ROWS ? undefined : clamped);
+        }}
+        className={inputClass()}
+      />
+    </LabeledField>
+  );
 }
 
 // --- 1. 공통: channel_name 편집 (등록된 채널 드롭다운 + Custom 수동 입력) ---
@@ -1255,6 +1306,10 @@ export function StatChartSection({
           className={inputClass()}
         />
       </LabeledField>
+      <TileRowsField
+        value={config.tile_rows as number | undefined}
+        onChange={(tile_rows) => onConfigChange({ tile_rows })}
+      />
       <div>
         <div className="mb-1.5 flex items-center justify-between">
           <label className="text-xs font-medium text-(--color-text-muted)">

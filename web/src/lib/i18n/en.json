@@ -1259,7 +1259,9 @@
       "tsdbIntervalCustomAria": "Interval in seconds",
       "gapDash": "Dash the gaps",
       "gapDashThreshold": "Minimum missing points",
-      "gapDashHint": "A run of this many missing points is drawn as a dashed segment. Filling empty intervals with 0 or the previous value leaves no gaps, so this has no effect."
+      "gapDashHint": "A run of this many missing points is drawn as a dashed segment. Filling empty intervals with 0 or the previous value leaves no gaps, so this has no effect.",
+      "tileRows": "Chart rows",
+      "tileRowsHint": "How many rows to lay charts out in when there are 2+ resources (default 1). On a narrow panel, columns shrink and rows may exceed this, so tiles stay readable."
     },
     "widget": {
       "throughputLabel": "Throughput (msg/s)"

@@ -739,23 +739,6 @@ function renderGaugeByType(
 }
 
 /**
- * 게이지 타입별 종횡비(각 렌더러의 `viewBox` 와 동일).
- *
- * 그리드 칸은 높이가 내용으로 결정되는데 게이지 SVG 는 `h-full` 이므로, 감싸는 상자에
- * 종횡비를 주지 않으면 높이가 0 으로 접힌다. 단일 출력 경로는 부모가 `flex-1` 로 높이를
- * 주므로 이 문제가 없다 — 다중 출력에서만 필요하다.
- */
-const GAUGE_TILE_ASPECT: Record<GaugeType, string> = {
-  simple: '200 / 200',
-  half: '240 / 140',
-  'multi-ring': '200 / 200',
-  needle: '200 / 200',
-  'needle-rainbow': '220 / 210',
-  'vertical-bar': '140 / 210',
-  'half-rainbow': '240 / 150',
-};
-
-/**
  * 다중 출력 게이지 1개 — 게이지 + 시리즈 이름 캡션.
  *
  * 색상 축 분리(§2.6): **호(arc) 색은 기존 `thresholds` 가 계속 소유**하고 시리즈 색은
@@ -776,10 +759,19 @@ function GaugeTile({
   const parsed = hasValue ? { ...base, value: item.value! } : base;
   return (
     <>
+      {/*
+        게이지 상자는 **행이 준 높이를 그대로 받는다**(`flex-1` + `min-h-0`). 종횡비는 SVG
+        의 `viewBox` + 기본 `preserveAspectRatio`(=meet)가 맞추므로, 상자가 넓든 좁든 그림은
+        두 축 안에 들어가도록 축소되고 남는 쪽에 여백이 생긴다.
+
+        종전에는 상자에 `aspect-ratio` 를 주고 `w-full max-h-full` 로 폭 기준 정사각형을
+        만들었다. 그런데 `max-height: 100%` 는 부모 높이가 확정되어야 의미가 있는데 행 높이가
+        내용으로 결정되던 탓에(순환) 무시됐고, 낮고 넓은 패널에서 상자가 폭만큼 높아져
+        `overflow-hidden` 에 위아래가 잘렸다. 행 높이는 이제 `fillRows` 가 먼저 확정한다.
+      */}
       <div
         data-testid="gauge-tile-chart"
-        className="max-h-full w-full min-w-0"
-        style={{ aspectRatio: GAUGE_TILE_ASPECT[base.gaugeType] ?? '1 / 1' }}
+        className="min-h-0 w-full min-w-0 flex-1"
       >
         {renderGaugeByType(parsed, hasValue)}
       </div>
@@ -942,8 +934,12 @@ export default function GaugePanel({
           <SeriesTileGrid
             items={reduced}
             limit={config.multi_output_limit as number | undefined}
+            rows={config.tile_rows as number | undefined}
             itemKey={(item, i) => `${i}:${item.name}`}
             renderItem={(item) => <GaugeTile item={item} base={parsedBase} />}
+            // 게이지는 내용이 아니라 행이 높이를 정해야 한다 — 그래야 낮은 패널에서
+            // 잘리지 않고 축소된다(stat 타일은 종전대로 내용 높이를 쓴다).
+            fillRows
           />
         </div>
       ) : (

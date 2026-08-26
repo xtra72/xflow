@@ -505,6 +505,16 @@ export interface ChartPanelConfigBase {
    * `series_reduce` 부재(레거시) 경로에서는 읽지 않는다.
    */
   multi_output_limit?: number;
+  /**
+   * 다중 출력 타일 배열의 **목표 행 수**. 미지정이면 `DEFAULT_TILE_ROWS`(= 1) — 한 줄.
+   *
+   * 열 수는 `ceil(N / tile_rows)` 로 파생된다(`tileColumnCount`). 상한이 아니라 목표라서,
+   * 패널이 좁아 타일 최소 폭을 확보하지 못하면 열이 줄고 행이 목표보다 늘어난다.
+   *
+   * 타일 배열을 쓰는 **통계 · 게이지**만 읽는다. 바 · 파이는 시리즈를 한 차트 안의 막대 ·
+   * 조각으로 그리므로 배열 개념이 없고, `series_reduce` 부재(레거시) 경로에서도 읽지 않는다.
+   */
+  tile_rows?: number;
 }
 
 // --- 차트 타입별 config (SPEC-CHART-001 §4.2.2) ---
