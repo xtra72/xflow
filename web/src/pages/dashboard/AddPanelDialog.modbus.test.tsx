@@ -1,11 +1,11 @@
 // SPEC-MODBUS-012 M1 (REQ-01, AC-01/02): AddPanelDialog MODBUS Gateway 스텝.
 //
-// - AC-01: data 카테고리에 6종 옵션이 라벨/설명과 함께 노출된다.
+// - AC-01: 6종 옵션이 각자의 카테고리(콘텐트/기타)에 라벨/설명과 함께 노출된다.
 // - AC-02: 옵션 선택 시 에이전트 선택 스텝(modbus-gateway 필터)으로 진입하고,
 //   완료 시 config.agentId 를 저장한다. 가상 디바이스 레지스터 맵은 unit 2차 선택 후 unitId 도 저장한다.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 
 // modbus-gateway 2개, modbus-client 1개(필터 검증용) + 무관 에이전트.
 vi.mock('@/hooks/useAgent', () => ({
@@ -73,9 +73,25 @@ const MODBUS_TYPES = [
   'modbusSummaryStats',
 ] as const;
 
-function openData() {
+/**
+ * MODBUS 6종의 카테고리 — 실제 디바이스만 기타이고 나머지 5종은 콘텐트의 MODBUS
+ * 하위 그룹에 모인다.
+ */
+const MODBUS_CATEGORY: Record<string, string> = {
+  modbusRealDevices: 'etc',
+  modbusVirtualDevices: 'content',
+  modbusSharedRegisters: 'content',
+  modbusDeviceRegisters: 'content',
+  modbusBusStats: 'content',
+  modbusSummaryStats: 'content',
+};
+
+/** 해당 옵션이 있는 카테고리를 연 상태로 렌더한다. */
+function openFor(key: string) {
   render(<AddPanelDialog open={true} onClose={() => {}} />);
-  fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.data' }));
+  fireEvent.click(
+    screen.getByRole('button', { name: `dashboard.panelCategories.${MODBUS_CATEGORY[key]}` }),
+  );
 }
 
 describe('AddPanelDialog — MODBUS Gateway 패널 (SPEC-MODBUS-012)', () => {
@@ -84,15 +100,16 @@ describe('AddPanelDialog — MODBUS Gateway 패널 (SPEC-MODBUS-012)', () => {
     storeState.addPanelWithConfigCalls = [];
   });
 
-  it('AC-01: data 카테고리에 6종 MODBUS Gateway 옵션이 노출된다', () => {
-    openData();
+  it('AC-01: 6종 MODBUS Gateway 옵션이 각자의 카테고리에 노출된다', () => {
     for (const key of MODBUS_TYPES) {
+      cleanup();
+      openFor(key);
       expect(screen.getByText(`dashboard.panelTypes.${key}`)).toBeInTheDocument();
     }
   });
 
   it('AC-02: 옵션 선택 시 즉시 추가되지 않고 에이전트 스텝으로 진입한다', () => {
-    openData();
+    openFor('modbusVirtualDevices');
     fireEvent.click(screen.getByText('dashboard.panelTypes.modbusVirtualDevices'));
 
     expect(screen.getByTestId('modbus-agent-select')).toBeInTheDocument();
@@ -102,7 +119,7 @@ describe('AddPanelDialog — MODBUS Gateway 패널 (SPEC-MODBUS-012)', () => {
   });
 
   it('AC-02: 에이전트 셀렉트는 modbus-gateway 만 노출한다(modbus-client 제외)', () => {
-    openData();
+    openFor('modbusRealDevices');
     fireEvent.click(screen.getByText('dashboard.panelTypes.modbusRealDevices'));
 
     const sel = screen.getByTestId('modbus-agent-select') as HTMLSelectElement;
@@ -116,7 +133,7 @@ describe('AddPanelDialog — MODBUS Gateway 패널 (SPEC-MODBUS-012)', () => {
   it('AC-02: 비-레지스터 패널은 unit 스텝 없이 {agentId} 저장 + onClose', () => {
     const onClose = vi.fn();
     render(<AddPanelDialog open={true} onClose={onClose} />);
-    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.data' }));
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.content' }));
     fireEvent.click(screen.getByText('dashboard.panelTypes.modbusBusStats'));
 
     // unit 셀렉트는 없어야 한다.
@@ -134,7 +151,7 @@ describe('AddPanelDialog — MODBUS Gateway 패널 (SPEC-MODBUS-012)', () => {
   });
 
   it('AC-02: 가상 레지스터 맵은 에이전트→unit 2차 선택 후 {agentId, unitId} 저장', () => {
-    openData();
+    openFor('modbusDeviceRegisters');
     fireEvent.click(screen.getByText('dashboard.panelTypes.modbusDeviceRegisters'));
 
     // 에이전트 미선택 상태에서는 저장 비활성 + unit 셀렉트 비활성.

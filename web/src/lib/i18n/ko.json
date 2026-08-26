@@ -86,6 +86,7 @@
       "closeAria": "닫기",
       "searchPlaceholder": "패널 검색...",
       "noResults": "검색 결과가 없습니다.",
+      "emptyCategory": "이 그룹에는 추가할 수 있는 패널이 없습니다.",
       "backAria": "뒤로",
       "selectDevice": "디바이스 선택",
       "noDevices": "등록된 디바이스가 없습니다.",
@@ -112,7 +113,7 @@
         "flows": "플로우 목록과 실행 상태",
         "agents": "에이전트 목록과 상태",
         "agentStatus": "단일 에이전트의 상태와 통신 통계를 실시간 표시",
-        "resource": "CPU, 메모리 등 시스템 메트릭",
+        "resource": "프로세스별 CPU · 메모리 등 리소스 상태",
         "devices": "등록된 디바이스 목록과 상태",
         "device": "개별 디바이스 리모컨",
         "logs": "실시간 로그 스트림",
@@ -123,13 +124,12 @@
         "stat": "단일 수치 통계 카드",
         "gauge": "원형 게이지 차트",
         "lineChart": "시계열 라인 차트",
-        "multiChannel": "여러 chart-emitter 채널을 한 라인 차트에서 동시 비교",
         "barChart": "막대 차트",
         "pieChart": "원형 비율 차트",
         "text": "마크다운 텍스트 블록",
         "acControl": "에어컨 온도/모드 제어",
         "hvacControl": "공조기 통합 제어",
-        "outdoorControl": "실외기/제어기 압축기 상태",
+        "outdoorControl": "실외기 운전 상태와 압축기 · 팬 지표",
         "customControl": "사용자 정의 제어",
         "facilityLine": "호선의 역사·기기 상태와 일괄 제어",
         "facilityStation": "역사의 기기 상태와 일괄 제어",
@@ -141,14 +141,16 @@
         "modbusDeviceRegisters": "선택 가상 디바이스의 레지스터 맵 그리드",
         "modbusBusStats": "reads·writes/min, 지연 등 버스 통계 미니차트",
         "modbusSummaryStats": "커넥션·클라이언트·디바이스·오류 종합 통계",
-        "storeLineChart": "스토어 키 또는 태그의 이력을 시계열 라인 차트로 표시",
         "heatmap": "공간 온도 센서를 IDW 로 보간한 히트맵(온도장)"
+      },
+      "groups": {
+        "hvacr": "HVACR (냉난방 공조)",
+        "facility": "지하철 역사 설비 관리",
+        "modbus": "MODBUS"
       },
       "labels": {
         "propertiesGrid": "속성 그리드",
-        "multiChannel": "다채널 비교",
-        "outdoorControl": "실외기 모니터링",
-        "storeLineChart": "Store 라인 차트",
+        "outdoorControl": "실외기 상태",
         "heatmap": "히트맵"
       }
     },
@@ -164,13 +166,15 @@
       "data": "데이터",
       "chart": "차트",
       "content": "콘텐츠",
-      "control": "제어"
+      "status": "상태",
+      "system": "시스템",
+      "etc": "기타"
     },
     "panelTypes": {
       "flows": "플로우 현황",
       "agents": "에이전트 현황",
       "agentStatus": "에이전트 상태",
-      "resource": "프로세스 리소스",
+      "resource": "프로세스 상태",
       "devices": "디바이스 목록",
       "device": "디바이스 제어",
       "logs": "로그",

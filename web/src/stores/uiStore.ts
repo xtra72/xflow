@@ -230,7 +230,7 @@ const DEFAULT_PANELS: PanelConfig[] = [
   {
     id: 'resource-default',
     type: 'resource',
-    title: '프로세스 리소스',
+    title: '프로세스 상태',
     config: { visibleMetrics: ['cpu', 'memory', 'throughput', 'errorRate'] },
   },
 ];
@@ -351,7 +351,7 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
     case 'agents':
       return { type, title: '에이전트 현황', config: { visibleColumns: [...ALL_AGENT_COLUMNS] } };
     case 'resource':
-      return { type, title: '프로세스 리소스', config: { visibleMetrics: [...ALL_METRIC_KEYS] } };
+      return { type, title: '프로세스 상태', config: { visibleMetrics: [...ALL_METRIC_KEYS] } };
     case 'devices':
       return { type, title: '디바이스', config: {} };
     case 'device':
@@ -1078,7 +1078,7 @@ export const useUIStore = create<UIState & UIActions>()(
                 {
                   id: 'resource-default',
                   type: 'resource' as PanelType,
-                  title: (state.resourcePanelTitle as string) || '프로세스 리소스',
+                  title: (state.resourcePanelTitle as string) || '프로세스 상태',
                   config: {
                     visibleMetrics:
                       (state.dashboardVisibleMetrics as string[]) ||

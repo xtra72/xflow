@@ -86,6 +86,7 @@
       "closeAria": "Close",
       "searchPlaceholder": "Search panels...",
       "noResults": "No results found.",
+      "emptyCategory": "No panels available in this group.",
       "backAria": "Back",
       "selectDevice": "Select device",
       "noDevices": "No devices registered.",
@@ -112,7 +113,7 @@
         "flows": "Flow list and run status",
         "agents": "Agent list and status",
         "agentStatus": "Real-time status and message stats for a single agent",
-        "resource": "System metrics such as CPU and memory",
+        "resource": "Per-process CPU, memory and other resource status",
         "devices": "Registered device list and status",
         "device": "Individual device remote",
         "logs": "Real-time log stream",
@@ -123,13 +124,12 @@
         "stat": "Single-value stat card",
         "gauge": "Circular gauge chart",
         "lineChart": "Time-series line chart",
-        "multiChannel": "Compare multiple chart-emitter channels in one line chart",
         "barChart": "Bar chart",
         "pieChart": "Circular ratio chart",
         "text": "Markdown text block",
         "acControl": "AC temperature/mode control",
         "hvacControl": "Integrated HVAC control",
-        "outdoorControl": "Outdoor unit/controller compressor status",
+        "outdoorControl": "Outdoor unit operating state, compressor and fan metrics",
         "customControl": "User-defined control",
         "facilityLine": "Station and device status with bulk control for a line",
         "facilityStation": "Device status with bulk control for a station",
@@ -141,14 +141,16 @@
         "modbusDeviceRegisters": "Register map grid for the selected virtual device",
         "modbusBusStats": "Bus statistics mini-chart (reads·writes/min, latency)",
         "modbusSummaryStats": "Summary of connections, clients, devices and errors",
-        "storeLineChart": "Plot a store key or tag history as a time-series line chart",
         "heatmap": "IDW-interpolated heatmap (temperature field) of spatial sensors"
+      },
+      "groups": {
+        "hvacr": "HVACR",
+        "facility": "Station facilities",
+        "modbus": "MODBUS"
       },
       "labels": {
         "propertiesGrid": "Properties grid",
-        "multiChannel": "Multi-channel comparison",
-        "outdoorControl": "Outdoor monitoring",
-        "storeLineChart": "Store line chart",
+        "outdoorControl": "Outdoor unit status",
         "heatmap": "Heatmap"
       }
     },
@@ -164,13 +166,15 @@
       "data": "Data",
       "chart": "Charts",
       "content": "Content",
-      "control": "Control"
+      "status": "Status",
+      "system": "System",
+      "etc": "Other"
     },
     "panelTypes": {
       "flows": "Flow Status",
       "agents": "Agent Status",
       "agentStatus": "Single Agent Status",
-      "resource": "Process Resources",
+      "resource": "Process status",
       "devices": "Device List",
       "device": "Device Control",
       "logs": "Logs",
