@@ -96,7 +96,7 @@ describe('CreateAgentModal 2열 레이아웃 분기', () => {
 
   it('chirpstack 은 넓은 모달 + 연결|운영 2열 그리드로 렌더한다', () => {
     render(<CreateAgentModal open onClose={vi.fn()} />);
-    selectType('chirpstack');
+    selectType('chirpstack-client');
 
     const container = getModalContainer();
     expect(container.className).toContain('max-w-4xl');
@@ -113,7 +113,7 @@ describe('CreateAgentModal 2열 레이아웃 분기', () => {
   });
 
   it('chirpstack 좌측(연결) 컬럼은 연결 노브만, 운영 노브는 우측에 둔다', () => {
-    const entry = TWO_COL_CONFIG['chirpstack'];
+    const entry = TWO_COL_CONFIG['chirpstack-client'];
     expect(entry).toBeDefined();
     const left = entry!.left;
     for (const k of ['broker', 'client_id', 'username', 'password', 'keep_alive_sec', 'connect_timeout_sec', 'auto_reconnect', 'clean_session']) {

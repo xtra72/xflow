@@ -17,6 +17,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, Filter, Search } from 'lucide-react';
 import { useTranslation } from '@/lib/i18n';
 import { MetadataChips } from '@/components/property/MetadataChips';
 import { SERIES_ID_SEPARATOR } from '@/services/api/seriesLabels';
+import TablePagination from './TablePagination';
 import type {
   DataType,
   RegistrationSource,
@@ -71,6 +72,13 @@ export interface SeriesSelectTableProps {
 }
 
 /** tags 를 정렬/표시용으로 결정적 직렬화한다(키 사전순). */
+/**
+ * 기본 페이지 크기.
+ *
+ * `TablePagination` 의 선택지(10/25/50/100) 중 하나여야 select 가 현재 값을 표시한다.
+ */
+const DEFAULT_PAGE_SIZE = 25;
+
 function serializeTags(tags: Record<string, string>): string {
   const keys = Object.keys(tags).sort();
   return keys.map((k) => `${k}=${tags[k]}`).join(',');
@@ -103,6 +111,31 @@ function columnValue(row: SeriesRow, col: SortColumn): string {
   }
 }
 
+/**
+ * 앵커 버튼이 아직 화면에 보이는가 — 뷰포트와 스크롤 조상들의 클립 영역 기준.
+ *
+ * 팝오버는 `position: fixed` 라 표가 스크롤돼도 그 자리에 남는다. 위치만 따라가게
+ * 만들면 버튼이 표 밖으로 밀려난 뒤에도 팝오버가 엉뚱한 자리에 떠 있으므로, 버튼이
+ * 클립된 순간을 닫는 신호로 쓴다.
+ *
+ * `overflow: hidden` 도 클립 대상이다 — 스크롤은 안 되지만 잘라내는 것은 같다.
+ */
+function anchorVisible(el: HTMLElement): boolean {
+  const r = el.getBoundingClientRect();
+  const clipped = (box: { top: number; bottom: number; left: number; right: number }): boolean =>
+    r.bottom <= box.top || r.top >= box.bottom || r.right <= box.left || r.left >= box.right;
+
+  if (clipped({ top: 0, bottom: window.innerHeight, left: 0, right: window.innerWidth })) {
+    return false;
+  }
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const style = getComputedStyle(p);
+    if (!/(auto|scroll|hidden)/.test(`${style.overflowY} ${style.overflowX}`)) continue;
+    if (clipped(p.getBoundingClientRect())) return false;
+  }
+  return true;
+}
+
 export function SeriesSelectTable({
   rows,
   selectedIds,
@@ -131,10 +164,13 @@ export function SeriesSelectTable({
   const [openFilter, setOpenFilter] = useState<FacetColumn | 'key' | null>(null);
   const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  // 열려 있는 필터 버튼. 스크롤 때 위치를 다시 재려면 요소 자체가 필요하다.
+  const anchorElRef = useRef<HTMLElement | null>(null);
 
   const closeFilter = useCallback(() => {
     setOpenFilter(null);
     setAnchor(null);
+    anchorElRef.current = null;
   }, []);
 
   /** 필터 버튼 토글 — 열 때 버튼 바로 아래를 앵커로 잡는다. */
@@ -146,6 +182,7 @@ export function SeriesSelectTable({
           return null;
         }
         const r = btn.getBoundingClientRect();
+        anchorElRef.current = btn;
         setAnchor({ left: r.left, top: r.bottom + 4 });
         return facet;
       });
@@ -164,9 +201,26 @@ export function SeriesSelectTable({
       if (target instanceof Element && target.closest('[data-series-filter-button]')) return;
       closeFilter();
     };
-    // 표가 스크롤되면 앵커가 어긋난다. 따라가게 만드는 대신 닫는다 —
-    // 위치만 맞추면 팝오버가 표 밖 엉뚱한 자리에 떠 있게 된다.
-    const onScrollOrResize = (): void => closeFilter();
+    // 스크롤은 세 갈래로 나뉜다.
+    //
+    //   1. **팝오버 자신의 목록** — 값이 많으면 팝오버가 `overflow-y-auto` 로
+    //      스크롤된다. 이것까지 닫힘 신호로 읽으면 긴 목록에서 아래 항목을 고를 수
+    //      없다. 캡처 단계 리스너라 이 스크롤도 여기 걸리므로 먼저 걸러낸다.
+    //   2. **버튼이 아직 보이는 바깥 스크롤** — 앵커를 다시 재서 따라간다.
+    //   3. **버튼이 클립되어 사라진 경우** — 닫는다. 따라가기만 하면 팝오버가
+    //      표 밖 엉뚱한 자리에 떠 있게 된다.
+    const onScrollOrResize = (e: Event): void => {
+      const target = e.target;
+      if (target instanceof Node && popoverRef.current?.contains(target)) return;
+
+      const btn = anchorElRef.current;
+      if (!btn || !anchorVisible(btn)) {
+        closeFilter();
+        return;
+      }
+      const r = btn.getBoundingClientRect();
+      setAnchor({ left: r.left, top: r.bottom + 4 });
+    };
     document.addEventListener('mousedown', onDown);
     window.addEventListener('resize', onScrollOrResize);
     window.addEventListener('scroll', onScrollOrResize, true);
@@ -176,6 +230,15 @@ export function SeriesSelectTable({
       window.removeEventListener('scroll', onScrollOrResize, true);
     };
   }, [openFilter, closeFilter]);
+
+  // 페이지네이션 — 표는 **스크롤하지 않는다**.
+  //
+  // 이 표는 데이터 소스 설정 패널 안에 있고 그 패널이 이미 세로로 스크롤된다.
+  // 표에 `max-height + overflow` 를 주면 스크롤 안에 스크롤이 생겨, 휠이 어느 쪽을
+  // 움직일지 예측할 수 없고 바깥 스크롤로 표의 끝을 볼 수도 없다. 대신 페이지로
+  // 나눠 표 자체는 늘 내용 높이만큼만 차지하게 한다.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
@@ -369,6 +432,19 @@ export function SeriesSelectTable({
     );
   };
 
+  // 필터·정렬이 바뀌면 첫 페이지로. 2페이지에 있다가 결과가 줄면 빈 페이지가 남는다.
+  useEffect(() => {
+    setPage(1);
+  }, [keySearch, metricSel, dataTypeSel, registrationSel, tagSel, sort]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  // 렌더 시점에 죈다 — 행이 줄어드는 것과 setPage 가 한 프레임 어긋나면 빈 표가 깜빡인다.
+  const safePage = Math.min(page, totalPages);
+  const pageRows = useMemo(
+    () => filteredRows.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [filteredRows, safePage, pageSize],
+  );
+
   const colCount = 2 + 3 + (showRegistration ? 1 : 0); // checkbox + key + field + dataType + tags (+registration)
 
   return (
@@ -395,9 +471,15 @@ export function SeriesSelectTable({
         </button>
       </div>
 
-      <div className="max-h-[45vh] overflow-auto rounded-md border border-(--color-border-default) bg-(--color-bg-primary)">
+      {/* 세로 스크롤을 만들지 않는다(위 페이지네이션 주석 참고). 가로는 컬럼이 많아
+          좁은 설정 패널에서 넘칠 수 있으므로 남긴다. thead 의 sticky 는 뗐다 —
+          스크롤 조상이 바깥 패널이라 어차피 붙지 않고, 껍데기만 남는다. */}
+      <div
+        data-testid="series-table-scroll"
+        className="overflow-x-auto rounded-md border border-(--color-border-default) bg-(--color-bg-primary)"
+      >
         <table className="w-full border-collapse text-xs">
-          <thead className="sticky top-0 z-[1] bg-(--color-bg-surface)">
+          <thead className="bg-(--color-bg-surface)">
             <tr className="border-b border-(--color-border-default)">
               <th scope="col" className="w-8 px-2 py-1.5" aria-label={t('series.colSelect')} />
               {headerCell('key', t('series.seriesKey'), 'key')}
@@ -408,7 +490,7 @@ export function SeriesSelectTable({
             </tr>
           </thead>
           <tbody>
-            {filteredRows.length === 0 ? (
+            {pageRows.length === 0 ? (
               <tr>
                 <td
                   colSpan={colCount}
@@ -418,7 +500,7 @@ export function SeriesSelectTable({
                 </td>
               </tr>
             ) : (
-              filteredRows.map((r) => {
+              pageRows.map((r) => {
                 const checked = selectedSet.has(r.id);
                 const tagEntries = Object.entries(r.tags);
                 // SeriesID 의 NUL 구분자를 '~' 로 치환한 testid (같은 key 다중 시리즈 충돌 방지).
@@ -512,6 +594,22 @@ export function SeriesSelectTable({
           </tbody>
         </table>
       </div>
+
+      {/* 한 페이지에 다 들어가면 페이저는 군더더기다. 다만 사용자가 페이지 크기를
+          직접 바꿨다면 남겨 둔다 — 100 으로 키워 한 페이지가 된 순간 컨트롤이
+          사라지면 되돌릴 방법이 없다. */}
+      {(totalPages > 1 || pageSize !== DEFAULT_PAGE_SIZE) && (
+        <TablePagination
+          page={safePage}
+          pageSize={pageSize}
+          totalItems={filteredRows.length}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setPage(1);
+          }}
+        />
+      )}
     </div>
   );
 }

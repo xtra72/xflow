@@ -2,7 +2,7 @@
 // 에이전트 목록을 테이블로 표시하며, 행 클릭으로 상세 패널을 토글한다.
 // 검색, 상태 필터, 페이지네이션을 지원한다.
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
@@ -30,6 +30,7 @@ import { useAgentsTarget } from '@/hooks/useResourceTargets';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTargetParam } from '@/hooks/useTargetParam';
 import { useTranslation } from '@/lib/i18n';
+import { useNameDeepLink } from '@/hooks/useNameDeepLink';
 import { omitMaskedSecrets } from '@/lib/remote/secretOmission';
 import { TargetProvider } from '@/lib/remote/TargetProvider';
 import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
@@ -145,6 +146,15 @@ export default function AgentListPage({
   const [pageSize, setPageSize] = useState(10);
 
   const allAgents: AgentInfo[] = useMemo(() => data?.data ?? [], [data?.data]);
+
+  // 시스템 로그에서 `/agents?name=...` 로 넘어온 경우 그 이름으로 목록을 좁히고
+  // 일치하는 에이전트를 펼친다. 이름이 중복되면 검색어가 남아 사용자가 고를 수 있다.
+  const applyNameLink = useCallback((name: string, matchedId: string | null) => {
+    setSearch(name);
+    setPage(1);
+    setExpandedId(matchedId);
+  }, []);
+  useNameDeepLink(allAgents, (a) => a.name, (a) => a.id, applyNameLink);
 
   /** 에이전트의 표시 상태를 결정한다 (connected/disconnected/error). */
   const getDisplayStatus = (agent: AgentInfo): string => {

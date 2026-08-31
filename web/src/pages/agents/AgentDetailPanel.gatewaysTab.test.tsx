@@ -1,5 +1,5 @@
 // AgentDetailPanel — "게이트웨이" 탭의 에이전트 타입 게이트 테스트
-// (SPEC-CHIRPSTACK-003 AC-8: HAS_GATEWAYS_TAB = {'chirpstack'}).
+// (SPEC-CHIRPSTACK-003 AC-8: HAS_GATEWAYS_TAB = {'chirpstack-client'}).
 //
 // 범위: chirpstack 에이전트에서만 탭 버튼이 노출되고, 다른 타입(xsfm / mqtt-client)에서는
 // 노출되지 않는다. 탭 본문 렌더는 ChirpstackGatewaysTab.test.tsx 가 담당한다.
@@ -16,7 +16,7 @@ import type { AgentInfo } from '@/types/agent';
 const AGENT: AgentInfo = {
   id: 'a-1',
   name: 'chirp-agent',
-  type: 'chirpstack',
+  type: 'chirpstack-client',
   status: 'running',
   connected: true,
   uptime: '5m',
@@ -93,7 +93,7 @@ beforeEach(() => {
 
 describe('AgentDetailPanel — 게이트웨이 탭 게이트', () => {
   it('chirpstack 에이전트에서는 게이트웨이 탭이 노출된다', () => {
-    renderPanel('chirpstack');
+    renderPanel('chirpstack-client');
     expect(screen.getByRole('button', { name: GATEWAYS_TAB })).toBeTruthy();
   });
 
