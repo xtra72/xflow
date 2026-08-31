@@ -58,7 +58,7 @@ func newE2EAgent(t *testing.T, name string, opts map[string]any) *chirpstack.Chi
 	raw, err := chirpstack.NewChirpStackAgent(agent.AgentConfig{
 		ID:        "id-" + name,
 		Name:      name,
-		Type:      "chirpstack",
+		Type:      "chirpstack-client",
 		Enabled:   &disabled,
 		Transport: agent.TransportConfig{Options: opts},
 	})

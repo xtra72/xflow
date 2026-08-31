@@ -16,7 +16,7 @@ func newTestConfig(id, name string) agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:      id,
 		Name:    name,
-		Type:    "chirpstack",
+		Type:    "chirpstack-client",
 		Enabled: &disabled,
 	}
 }
@@ -32,8 +32,8 @@ func TestNewChirpStackAgent_ImplementsAgent(t *testing.T) {
 	}
 	var _ agent.Agent = a
 
-	if got := a.Type(); got != "chirpstack" {
-		t.Errorf("Type() = %q, want %q", got, "chirpstack")
+	if got := a.Type(); got != "chirpstack-client" {
+		t.Errorf("Type() = %q, want %q", got, "chirpstack-client")
 	}
 	if got := a.Name(); got != "cs-1" {
 		t.Errorf("Name() = %q, want %q", got, "cs-1")
@@ -88,7 +88,7 @@ func TestRegisterChirpStackTypes_ManagerCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("manager Create(chirpstack): %v", err)
 	}
-	if a.Type() != "chirpstack" {
+	if a.Type() != "chirpstack-client" {
 		t.Errorf("Type() = %q, want chirpstack", a.Type())
 	}
 	_ = context.Background()

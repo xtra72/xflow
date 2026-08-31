@@ -67,19 +67,19 @@ func resetNameRegistryForTest() {
 // RegisterChirpStackTypes 는 ChirpStack LoRaWAN 에이전트 타입을 agent.DefaultManager
 // 에 등록한다 (REQ-M1-01/02, AC-8).
 //
-// 등록 이름은 "chirpstack" 이다. 부트스트랩 호출 예시:
+// 등록 이름은 "chirpstack-client" 이다. 부트스트랩 호출 예시:
 //
 //	if err := chirpstack.RegisterChirpStackTypes(agentMgr); err != nil {
 //	    return fmt.Errorf("register chirpstack: %w", err)
 //	}
 //
 // (cmd/xflowd/main.go 의 에이전트 타입 등록 블록에서 호출 + import 를 추가해야
-// 인스턴스화가 가능하다 — 누락 시 manager.Create("chirpstack", ...) 가 실패한다.)
+// 인스턴스화가 가능하다 — 누락 시 manager.Create("chirpstack-client", ...) 가 실패한다.)
 //
 // @MX:ANCHOR: main.go 등록 블록(cmd/xflowd/main.go)이 이 함수를 호출해야 한다.
 // @MX:REASON: 미호출 시 chirpstack 타입 미등록으로 플로우 인스턴스화 불가(REQ-M1-02).
 func RegisterChirpStackTypes(mgr *agent.DefaultManager) error {
-	return mgr.RegisterType("chirpstack", func(config agent.AgentConfig) (agent.Agent, error) {
+	return mgr.RegisterType("chirpstack-client", func(config agent.AgentConfig) (agent.Agent, error) {
 		return NewChirpStackAgent(config)
 	})
 }

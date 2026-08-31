@@ -24,7 +24,7 @@ func newCommAgent(t *testing.T, name string, extra map[string]any) *ChirpStackAg
 	cfg := agent.AgentConfig{
 		ID:        "id-" + name,
 		Name:      name,
-		Type:      "chirpstack",
+		Type:      "chirpstack-client",
 		Enabled:   &disabled,
 		Transport: agent.TransportConfig{Options: opts},
 	}

@@ -45,7 +45,7 @@ func (f *fakeReceiverAgent) Health() agent.HealthStatus          { return agent.
 func (f *fakeReceiverAgent) Configure(_ agent.AgentConfig) error { return nil }
 func (f *fakeReceiverAgent) ID() string                          { return f.name }
 func (f *fakeReceiverAgent) Name() string                        { return f.name }
-func (f *fakeReceiverAgent) Type() string                        { return "chirpstack" }
+func (f *fakeReceiverAgent) Type() string                        { return "chirpstack-client" }
 func (f *fakeReceiverAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
 func (f *fakeReceiverAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
 func (f *fakeReceiverAgent) Process(_ []byte) ([]byte, error)    { return nil, nil }

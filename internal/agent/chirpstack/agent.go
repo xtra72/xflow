@@ -162,7 +162,7 @@ func NewChirpStackAgent(config agent.AgentConfig) (agent.Agent, error) {
 	cc := parseChirpStackConfig(config)
 
 	a := &ChirpStackAgent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("chirpstack")),
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("chirpstack-client")),
 		recvCh:        make(chan []byte, cc.BufferSize),
 		done:          make(chan struct{}),
 		devices:       make(map[string]*deviceState),
@@ -759,7 +759,7 @@ func (a *ChirpStackAgent) Name() string {
 
 // Type 은 에이전트 타입을 반환한다.
 func (a *ChirpStackAgent) Type() string {
-	return "chirpstack"
+	return "chirpstack-client"
 }
 
 // Health 는 에이전트의 건강 상태를 반환한다.
@@ -795,7 +795,7 @@ func (a *ChirpStackAgent) Info() agent.AgentInfo {
 	return agent.AgentInfo{
 		ID:        cfg.ID,
 		Name:      cfg.Name,
-		Type:      "chirpstack",
+		Type:      "chirpstack-client",
 		State:     state,
 		Health:    a.Health(),
 		Config:    cfg,

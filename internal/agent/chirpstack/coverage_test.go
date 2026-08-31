@@ -36,7 +36,7 @@ func TestChirpStackAgent_Accessors(t *testing.T) {
 		t.Error("Health().Status empty")
 	}
 	info := a.Info()
-	if info.Type != "chirpstack" || info.Name != "acc-cs" {
+	if info.Type != "chirpstack-client" || info.Name != "acc-cs" {
 		t.Errorf("Info = %+v", info)
 	}
 	_ = a.Stats() // 스냅샷 접근이 panic 없이 동작하는지.
@@ -53,7 +53,7 @@ func TestChirpStackAgent_EnabledDegradedLifecycle(t *testing.T) {
 	cfg := agent.AgentConfig{
 		ID:      "deg-id",
 		Name:    "deg-cs",
-		Type:    "chirpstack",
+		Type:    "chirpstack-client",
 		Enabled: &enabled,
 		Transport: agent.TransportConfig{
 			Options: map[string]any{
@@ -119,7 +119,7 @@ func TestChirpStackAgent_EnqueueDrop(t *testing.T) {
 	resetNameRegistryForTest()
 	disabled := false
 	cfg := agent.AgentConfig{
-		ID: "drop-id", Name: "drop-cs", Type: "chirpstack", Enabled: &disabled,
+		ID: "drop-id", Name: "drop-cs", Type: "chirpstack-client", Enabled: &disabled,
 		Transport: agent.TransportConfig{Options: map[string]any{"buffer_size": 1}},
 	}
 	raw, err := NewChirpStackAgent(cfg)
