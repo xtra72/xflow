@@ -358,7 +358,7 @@ describe('gaugeValueSourceFlags — config → 판정 입력 파생', () => {
     expect(withLegacy).toEqual(withoutLegacy);
   });
 
-  it('플래그 4종을 config 에서 그대로 파생한다', () => {
+  it('플래그 5종을 config 에서 그대로 파생한다', () => {
     expect(
       gaugeValueSourceFlags({
         data_source: 'store',
@@ -369,6 +369,7 @@ describe('gaugeValueSourceFlags — config → 판정 입력 파생', () => {
       dataSource: 'store',
       storeSourceActive: true,
       tsdbSourceActive: false,
+      sysmetricsSourceActive: false,
       hasSeriesReduce: true,
     });
   });
@@ -378,6 +379,7 @@ describe('gaugeValueSourceFlags — config → 판정 입력 파생', () => {
       dataSource: undefined,
       storeSourceActive: false,
       tsdbSourceActive: false,
+      sysmetricsSourceActive: false,
       hasSeriesReduce: false,
     });
   });

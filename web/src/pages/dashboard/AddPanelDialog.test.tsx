@@ -3,7 +3,7 @@
 // 2) SPEC-CHART-001 M5 신규 기능 (차트 패널 channel_name 선택/검증)
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 
 // listChartChannels 를 hoisted vi.fn 으로 mock
 const listChartChannelsMock = vi.hoisted(() => vi.fn());
@@ -142,177 +142,6 @@ describe('AddPanelDialog', () => {
     });
   });
 
-  // ---- Chart panel new behavior (REQ-M5-01/02/04) ----
-
-  // 채널 이름 스텝은 이제 테이블에만 남는다. 통계/게이지/바/파이는 store 기본 소스로 즉시
-  // 추가되고(아래 'store 기본 데이터 소스'), 라인 차트도 store 프리셋으로 즉시 추가된다.
-  describe('차트 패널 channel_name 단계 (REQ-M5-01/02/04)', () => {
-    it('차트 타입 선택 시 채널 선택 step 으로 진입 (REQ-M5-01)', async () => {
-      render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.etc' }));
-      fireEvent.click(screen.getByText('dashboard.panelTypes.table'));
-
-      await waitFor(() => {
-        expect(screen.getByText(/dashboard\.addPanel\.channelSuffix$/)).toBeInTheDocument();
-      });
-      expect(screen.getByTestId('chart-channel-select')).toBeInTheDocument();
-      // 즉시 addPanel 호출되지 않음
-      expect(storeState.addPanelCalls).toEqual([]);
-    });
-
-    it('드롭다운이 listChartChannels 결과로 채워진다 (REQ-M5-02)', async () => {
-      listChartChannelsMock.mockResolvedValue([
-        {
-          name: 'demo_temp',
-          flow_id: 'flow-1',
-          node_id: 'node-a',
-          buffer_size: 100,
-          retention_sec: 3600,
-          subscriber_count: 3,
-          last_message_ms: 0,
-        },
-        {
-          name: 'another_ch',
-          flow_id: 'flow-2',
-          node_id: 'node-b',
-          buffer_size: 50,
-          retention_sec: 600,
-          subscriber_count: 0,
-          last_message_ms: 0,
-        },
-      ]);
-
-      render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.etc' }));
-      fireEvent.click(screen.getByText('dashboard.panelTypes.table'));
-
-      await waitFor(() => {
-        expect(listChartChannelsMock).toHaveBeenCalledTimes(1);
-      });
-      const select = await screen.findByTestId('chart-channel-select');
-      await waitFor(() => {
-        expect((select as HTMLSelectElement).options.length).toBeGreaterThan(2);
-      });
-      expect(screen.getByText(/demo_temp — flow flow-1/)).toBeInTheDocument();
-      expect(screen.getByText(/another_ch — flow flow-2/)).toBeInTheDocument();
-    });
-
-    it('"Custom..." 선택 시 수동 입력 필드 표시 (REQ-M5-02)', async () => {
-      render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.etc' }));
-      fireEvent.click(screen.getByText('dashboard.panelTypes.table'));
-
-      const select = await screen.findByTestId('chart-channel-select');
-      fireEvent.change(select, { target: { value: '__custom__' } });
-      expect(screen.getByTestId('chart-channel-custom-input')).toBeInTheDocument();
-    });
-
-    it('유효하지 않은 channel_name 은 에러 메시지 + 저장 비활성 (REQ-M5-04)', async () => {
-      render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.etc' }));
-      fireEvent.click(screen.getByText('dashboard.panelTypes.table'));
-
-      const select = await screen.findByTestId('chart-channel-select');
-      fireEvent.change(select, { target: { value: '__custom__' } });
-      const input = screen.getByTestId('chart-channel-custom-input');
-      fireEvent.change(input, { target: { value: 'abc/def' } });
-
-      expect(screen.getByTestId('chart-channel-error')).toHaveTextContent(
-        '유효한 채널 이름이 아닙니다',
-      );
-      const save = screen.getByTestId('chart-channel-save') as HTMLButtonElement;
-      expect(save.disabled).toBe(true);
-    });
-
-    it('유효한 channel_name 입력 후 저장 시 addPanelWithConfig 호출 + onClose', async () => {
-      const onClose = vi.fn();
-      render(<AddPanelDialog open={true} onClose={onClose} />);
-      // table 은 카탈로그 상 '기타' 카테고리에 있음 (UI 분류).
-      // 하지만 isChartPanelType(table) === true 이므로 chart-config 스텝으로 라우팅된다.
-      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.etc' }));
-      fireEvent.click(screen.getByText('dashboard.panelTypes.table'));
-
-      const select = await screen.findByTestId('chart-channel-select');
-      fireEvent.change(select, { target: { value: '__custom__' } });
-      const input = screen.getByTestId('chart-channel-custom-input');
-      fireEvent.change(input, { target: { value: 'room1_temp' } });
-
-      const save = screen.getByTestId('chart-channel-save') as HTMLButtonElement;
-      expect(save.disabled).toBe(false);
-      fireEvent.click(save);
-
-      expect(storeState.addPanelWithConfigCalls).toEqual([
-        { type: 'table', config: { channel_name: 'room1_temp' }, title: undefined },
-      ]);
-      expect(onClose).toHaveBeenCalledTimes(1);
-    });
-
-    it('빈 입력은 에러 메시지 숨김 + 저장 비활성 (초기 상태)', async () => {
-      render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.etc' }));
-      fireEvent.click(screen.getByText('dashboard.panelTypes.table'));
-
-      const select = await screen.findByTestId('chart-channel-select');
-      // 초기 빈 상태
-      expect(select).toHaveValue('');
-      expect(screen.queryByTestId('chart-channel-error')).toBeNull();
-      const save = screen.getByTestId('chart-channel-save') as HTMLButtonElement;
-      expect(save.disabled).toBe(true);
-    });
-
-    it('드롭다운에서 기존 채널 선택 → 저장 (REQ-M5-02)', async () => {
-      listChartChannelsMock.mockResolvedValue([
-        {
-          name: 'demo_temp',
-          flow_id: 'flow-1',
-          node_id: 'n',
-          buffer_size: 100,
-          retention_sec: 3600,
-          subscriber_count: 1,
-          last_message_ms: 0,
-        },
-      ]);
-
-      render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.etc' }));
-      fireEvent.click(screen.getByText('dashboard.panelTypes.table'));
-
-      const select = await screen.findByTestId('chart-channel-select');
-      await waitFor(() => {
-        expect((select as HTMLSelectElement).options.length).toBeGreaterThan(2);
-      });
-      fireEvent.change(select, { target: { value: 'demo_temp' } });
-
-      const save = screen.getByTestId('chart-channel-save') as HTMLButtonElement;
-      expect(save.disabled).toBe(false);
-      fireEvent.click(save);
-
-      expect(storeState.addPanelWithConfigCalls).toEqual([
-        { type: 'table', config: { channel_name: 'demo_temp' }, title: undefined },
-      ]);
-    });
-
-    it('API 실패 시 경고 + Custom 으로는 계속 진행 가능', async () => {
-      listChartChannelsMock.mockRejectedValueOnce(new Error('network down'));
-
-      render(<AddPanelDialog open={true} onClose={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.etc' }));
-      fireEvent.click(screen.getByText('dashboard.panelTypes.table'));
-
-      await waitFor(() => {
-        expect(screen.getByText(/dashboard\.addPanel\.loadErrorCustom/)).toBeInTheDocument();
-      });
-      // Custom 경로는 여전히 사용 가능
-      const select = await screen.findByTestId('chart-channel-select');
-      fireEvent.change(select, { target: { value: '__custom__' } });
-      const input = screen.getByTestId('chart-channel-custom-input');
-      fireEvent.change(input, { target: { value: 'manual_ch' } });
-
-      const save = screen.getByTestId('chart-channel-save') as HTMLButtonElement;
-      expect(save.disabled).toBe(false);
-    });
-  });
-
   // ---- store 기본 데이터 소스 (통계/게이지/바/파이) ----
 
   describe('store 기본 데이터 소스 — 통계/게이지/바/파이', () => {
@@ -365,8 +194,12 @@ describe('AddPanelDialog', () => {
         'dashboard.panelTypes.flows',
         'dashboard.panelTypes.agents',
         'dashboard.panelTypes.agentStatus',
-        'dashboard.panelTypes.resource',
+        // 'resource'(프로세스 상태)는 모니터링 패널 4종이 덮으므로 카탈로그에서 내렸다.
+        // 타입/렌더 경로는 살아 있어 이미 배치된 패널은 계속 동작한다.
+        'dashboard.panelTypes.devices',
+        'dashboard.addPanel.labels.propertiesGrid',
       ]],
+      ['data', ['dashboard.panelTypes.table']],
       ['chart', [
         'dashboard.panelTypes.stat',
         'dashboard.panelTypes.gauge',
@@ -375,7 +208,18 @@ describe('AddPanelDialog', () => {
         'dashboard.panelTypes.pieChart',
         'dashboard.addPanel.labels.heatmap',
       ]],
-      ['system', ['dashboard.panelTypes.logs']],
+      // 시스템 카테고리는 모니터링 패널 4종으로 교체됐다('logs' 는 monitor-logs 가 대체).
+      ['system', [
+        'dashboard.panelTypes.monitorStats',
+        'dashboard.panelTypes.monitorMetrics',
+        'dashboard.panelTypes.monitorNetwork',
+        'dashboard.panelTypes.monitorLogs',
+        'dashboard.panelTypes.monitorEvents',
+        // SPEC-SYSMETRICS-PANEL-001: 같은 카테고리의 두 번째 그룹(호스트 지표).
+        'dashboard.panelTypes.sysmetricsSystem',
+        'dashboard.panelTypes.sysmetricsNetwork',
+        'dashboard.panelTypes.sysmetricsStorage',
+      ]],
       ['content', [
         'dashboard.panelTypes.acControl',
         'dashboard.panelTypes.hvacControl',
@@ -384,6 +228,7 @@ describe('AddPanelDialog', () => {
         'dashboard.panelTypes.facilityGroup',
         'dashboard.panelTypes.facilityDevice',
         'dashboard.panelTypes.facilitySchedule',
+        'dashboard.panelTypes.modbusRealDevices',
         'dashboard.panelTypes.modbusVirtualDevices',
         'dashboard.panelTypes.modbusSharedRegisters',
         'dashboard.panelTypes.modbusDeviceRegisters',
@@ -392,12 +237,8 @@ describe('AddPanelDialog', () => {
       ]],
       ['etc', [
         'dashboard.panelTypes.text',
-        'dashboard.panelTypes.devices',
         'dashboard.panelTypes.device',
-        'dashboard.addPanel.labels.propertiesGrid',
         'dashboard.panelTypes.triggerConfig',
-        'dashboard.panelTypes.table',
-        'dashboard.panelTypes.modbusRealDevices',
         'dashboard.panelTypes.customControl',
       ]],
     ];
@@ -414,12 +255,10 @@ describe('AddPanelDialog', () => {
       });
     }
 
-    it('데이터 카테고리는 비어 있고 안내 문구를 보여준다', () => {
-      // 요청 사양에 배정된 항목이 없다. 빈 화면 대신 사유를 표시한다.
+    it('데이터 카테고리에는 테이블이 있다(더 이상 빈 카테고리가 아니다)', () => {
       open('data');
-      expect(screen.getByTestId('add-panel-empty')).toHaveTextContent(
-        'dashboard.addPanel.emptyCategory',
-      );
+      expect(screen.getByText('dashboard.panelTypes.table')).toBeInTheDocument();
+      expect(screen.queryByTestId('add-panel-empty')).toBeNull();
     });
 
     it('콘텐트는 하위 그룹 제목 3종으로 나뉜다', () => {
@@ -443,7 +282,7 @@ describe('AddPanelDialog', () => {
       render(<AddPanelDialog open={true} onClose={() => {}} />);
       const search = screen.getByPlaceholderText('dashboard.addPanel.searchPlaceholder');
       fireEvent.change(search, { target: { value: 'modbus' } });
-      // 콘텐트(MODBUS 5종) + 기타(실제 디바이스)가 함께 나온다.
+      // 콘텐트 MODBUS 그룹 6종이 한 묶음으로 나온다.
       expect(screen.getByText('dashboard.panelTypes.modbusBusStats')).toBeInTheDocument();
       expect(screen.getByText('dashboard.panelTypes.modbusVirtualDevices')).toBeInTheDocument();
       expect(screen.getByText('dashboard.panelTypes.modbusRealDevices')).toBeInTheDocument();
@@ -479,7 +318,7 @@ describe('AddPanelDialog', () => {
 
       expect(storeState.addPanelWithConfigCalls).toHaveLength(1);
       const call = storeState.addPanelWithConfigCalls[0]!;
-      expect(call.type).toBe('line-chart');
+      expect(call.type).toBe('graph-chart');
       expect(call.config).toMatchObject({
         data_source: 'store',
         store_source: { agent_name: '', namespace: 'default', series: [] },

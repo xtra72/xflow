@@ -78,7 +78,8 @@ const MODBUS_TYPES = [
  * 하위 그룹에 모인다.
  */
 const MODBUS_CATEGORY: Record<string, string> = {
-  modbusRealDevices: 'etc',
+  // 실제 디바이스('디바이스 상태')도 콘텐트-MODBUS 그룹으로 이동했다.
+  modbusRealDevices: 'content',
   modbusVirtualDevices: 'content',
   modbusSharedRegisters: 'content',
   modbusDeviceRegisters: 'content',

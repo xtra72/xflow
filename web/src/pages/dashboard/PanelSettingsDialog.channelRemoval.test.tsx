@@ -94,16 +94,17 @@ beforeEach(() => {
 });
 
 describe('채널 섹션 노출 대상', () => {
-  for (const type of ['stat', 'bar-chart', 'pie-chart', 'gauge'] as const) {
+  for (const type of ['stat', 'bar-chart', 'pie-chart', 'gauge', 'table'] as const) {
     it(`${type}: 단일 channel_name 편집 섹션을 노출하지 않는다`, async () => {
       await renderDialog(type, { channel_name: 'c1' });
       expect(screen.queryByText(CHANNEL_SECTION_LABEL)).toBeNull();
     });
   }
 
-  it('table: 이번 정리 범위 밖이므로 채널 섹션이 그대로 남는다', async () => {
+  it('table: 채널 모드 config 로 열어도 store 로 이관되어 채널 섹션이 없다', async () => {
     await renderDialog('table', { channel_name: 'c1' });
-    expect(screen.getByText(CHANNEL_SECTION_LABEL)).toBeInTheDocument();
+    expect(screen.queryByText(CHANNEL_SECTION_LABEL)).toBeNull();
+    expect((await apply()).data_source).toBe('store');
   });
 });
 
@@ -127,7 +128,7 @@ describe('차트 배열 행 수 설정 노출 대상', () => {
     });
   }
 
-  for (const type of ['bar-chart', 'pie-chart', 'line-chart', 'table'] as const) {
+  for (const type of ['bar-chart', 'pie-chart', 'graph-chart', 'table'] as const) {
     it(`${type}: 행 수 컨트롤을 노출하지 않는다`, async () => {
       await renderDialog(type, { data_source: 'store' });
       expect(screen.queryByTestId('chart-tile-rows')).toBeNull();

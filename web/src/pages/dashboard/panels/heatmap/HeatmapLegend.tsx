@@ -21,6 +21,8 @@ import { cn } from '@/lib/utils/cn';
 import type { ColorStop, LegendConfig, SensorPosition } from './heatmapConfig';
 import { DEFAULT_COLOR_TABLE } from './idw';
 import { clamp01 } from './placement';
+// 값 표기 자릿수는 차트 계열 공용 규칙을 따른다.
+import { formatDecimal } from '@/pages/dashboard/panels/charts/decimalPlaces';
 
 /** 크기 프리셋(막대 길이/두께/폰트, px). */
 const SIZE_PRESETS: Record<LegendConfig['size'], { length: number; thickness: number; font: number }> = {
@@ -51,11 +53,22 @@ interface HeatmapLegendProps {
   draggable?: boolean;
   /** 드래그 결과 자유 위치(정규화 0..1) 저장. draggable 일 때만 호출된다. */
   onOffsetChange?: (offset: SensorPosition) => void;
+  /**
+   * 눈금 자릿수. 사용자가 패널 설정에서 **직접 지정했을 때만** 전달된다.
+   * `undefined` 면 종전 표기(소수 1자리)를 유지한다.
+   */
+  decimals?: number;
 }
 
-/** 눈금 값 표시(소수 1자리). */
-function formatTick(v: number): string {
-  return v.toFixed(1);
+/**
+ * 눈금 값 표시.
+ *
+ * 범례는 색 눈금자이지 값 읽기가 아니므로 **자릿수 기본값(2)을 따르지 않는다** — 기본을
+ * 걸면 아무 설정도 안 한 패널의 눈금이 `20.00 · 22.00` 이 되어 읽기만 나빠진다. 사용자가
+ * 자릿수를 직접 지정하면 그때 따라간다(`decimalPlaces.ts` 머리말의 축 규칙과 같다).
+ */
+function formatTick(v: number, decimals: number | undefined): string {
+  return decimals === undefined ? v.toFixed(1) : formatDecimal(v, decimals);
 }
 
 export default function HeatmapLegend({
@@ -64,6 +77,7 @@ export default function HeatmapLegend({
   legend,
   draggable = false,
   onOffsetChange,
+  decimals,
 }: HeatmapLegendProps) {
   const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -143,8 +157,8 @@ export default function HeatmapLegend({
     : { width: preset.length, height: preset.thickness, background: gradient };
 
   const ariaLabel = t('dashboard.heatmap.legendAria')
-    .replace('{min}', formatTick(min))
-    .replace('{max}', formatTick(max));
+    .replace('{min}', formatTick(min, decimals))
+    .replace('{max}', formatTick(max, decimals));
 
   // 자유 위치(드래그로 옮긴 좌표)가 있으면 모서리 프리셋 대신 % 배치를 쓴다. 정규화 좌표라
   // 패널 리사이즈/도면 교체에 불변이다(센서 마커와 동일 규약).
@@ -201,7 +215,7 @@ export default function HeatmapLegend({
               )}
               style={posStyle}
             >
-              {formatTick(v)}
+              {formatTick(v, decimals)}
             </span>
           );
         })}

@@ -7,7 +7,9 @@ import { Download, Pause, Play, TrendingUp } from 'lucide-react';
 import {
   CartesianGrid,
   Line,
-  LineChart,
+  Area,
+  Bar,
+  ComposedChart,
   ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
@@ -16,6 +18,18 @@ import {
   YAxis,
 } from 'recharts';
 import { SingleSeriesTooltipContent } from './SingleSeriesTooltipContent';
+import { resolveXAxisHeight, resolveYAxisWidth } from './axisSize';
+import { resolveFillBand } from './thresholdFill';
+import { CandleShape } from './CandleShape';
+import { candleRows } from './candle';
+import { useCandleSeriesData } from './useCandleSeriesData';
+import {
+  effectiveStacked,
+  hasGapDash,
+  readGraphStyle,
+  resolveSeriesStyle,
+  type GraphStyle,
+} from './graphStyle';
 import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
 
@@ -58,7 +72,13 @@ import {
 } from './gapDash';
 import { useChartChannel } from './useChartChannel';
 import { useChartChannels, type ChannelState } from './useChartChannels';
-import { resolvePanelSourceBinding } from './panelDataSource';
+import { panelSourceWindowMs, resolvePanelSourceBinding } from './panelDataSource';
+import {
+  formatDecimal,
+  hasExplicitDecimalPlaces,
+  readDecimalPlaces,
+} from './decimalPlaces';
+import { formatTickValue } from './unitOptions';
 import { resolveGroupPageDisplay, resolvePanelSeriesDisplay } from './panelSeriesStatus';
 import {
   chartXRangePoints,
@@ -111,6 +131,8 @@ function parseConfig(config: Record<string, unknown>): LineChartPanelConfig {
     y_label: config.y_label as string | undefined,
     y_unit: config.y_unit as string | undefined,
     y_thresholds: config.y_thresholds as YThreshold[] | undefined,
+    graph_style: config.graph_style as GraphStyle | undefined,
+    stacked: config.stacked as boolean | undefined,
     decimal_places: config.decimal_places as number | undefined,
     tooltip: config.tooltip as TooltipConfig | undefined,
     x_range: config.x_range as SeriesRange | undefined,
@@ -242,6 +264,8 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   // 이 조건을 만족하며, 이름만 store 시절의 것이 남아 있다(호출부 무변경의 대가).
   const sourceBinding = resolvePanelSourceBinding(config);
   const isStore = isPanelSeriesSource(sourceBinding);
+  // X축 고정 창 — 활성 소스의 블록에서 읽는다(store / tsdb / sysmetrics 공통 필드).
+  const sourceWindowMs = panelSourceWindowMs(config);
   const isMultiMode = !isStore && (cfg.channels?.length ?? 0) > 0;
   // X축 범위(구간 · 최근 · 포인트)를 한 곳에서 읽는다. 구 `time_window_mode` 계열은
   // `readChartXRange` 안에서 폴백으로 해석되므로, 여기부터는 새 어휘만 쓴다.
@@ -533,7 +557,46 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
     () => buildGapOverlay(rawOrPaused, seriesKeys, gapThreshold, gapIntervalMs),
     [rawOrPaused, seriesKeys, gapThreshold, gapIntervalMs],
   );
+  // 그래프 스타일 — 패널 기본값. 시리즈가 개별로 덮어쓴다.
+  const panelGraphStyle = readGraphStyle(cfg.graph_style);
+  const panelStacked = cfg.stacked === true;
+  // 캔들이 하나라도 쓰이면 OHLC 를 따로 조회한다. 패널 기본이 캔들이거나,
+  // 시리즈 하나라도 캔들로 덮어썼으면 참이다.
+  // 시리즈별 덮어쓰기는 시리즈 소스(store · tsdb)에만 있다 — 채널 모드는 패널 값만 본다.
+  const anyCandle =
+    panelGraphStyle === 'candle' ||
+    (isStore &&
+      [...storeResult.seriesStyles.values()].some((st) => st.graph_style === 'candle'));
+  const candleSeries = useCandleSeriesData(config, anyCandle);
+
   const gapKeySet = useMemo(() => new Set(gapKeys), [gapKeys]);
+
+  /**
+   * 캔들 축 값을 차트 행에 얹는다.
+   *
+   * 캔들은 버킷마다 네 값을 쓰므로 행에 축별 키를 더 싣는다(`__o__`·`__h__`…).
+   * 원래 시리즈 키에는 몸통 범위 `[아래, 위]` 를 넣어 Bar 가 그 구간에 막대를
+   * 세우고, 모양 함수가 꼬리를 마저 그린다. 캔들이 없으면 원본을 그대로 둔다.
+   */
+  const chartDataWithCandles = useMemo(() => {
+    if (candleSeries.size === 0) return chartData;
+    const byTs = new Map<number, Record<string, unknown>>();
+    for (const row of chartData) {
+      const ts = row.timestamp as number;
+      byTs.set(ts, { ...row });
+    }
+    for (const [name, candles] of candleSeries) {
+      for (const row of candleRows(name, candles)) {
+        const ts = row.timestamp as number;
+        const target = byTs.get(ts);
+        if (target) Object.assign(target, row);
+        else byTs.set(ts, row);
+      }
+    }
+    return Array.from(byTs.values()).sort(
+      (a, b) => (a.timestamp as number) - (b.timestamp as number),
+    );
+  }, [chartData, candleSeries]);
 
   // 렌더 중인 시리즈가 모두 boolean 이면 Y축/툴팁을 true/false 로 표시한다.
   // (혼합 시엔 숫자 축을 유지하되 boolean 시리즈 값만 툴팁에서 true/false 로 표기)
@@ -585,14 +648,17 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
       const start = xRange.start_ms ?? end;
       return [start, end];
     }
-    // store 모드(기본): X축을 설정된 시간 윈도우(store_source.time_window_ms)로 고정한다.
-    // 데이터가 윈도우보다 짧아도 X축 범위는 설정값을 일관되게 유지한다(스케일 안정성 우선).
-    if (isStore) {
-      const windowMs = storeSource?.time_window_ms ?? 0;
-      if (windowMs > 0) return [effectiveNow - windowMs, effectiveNow];
+    // 시리즈 소스(기본): X축을 **활성 소스의** 시간 윈도우로 고정한다. 데이터가 윈도우보다
+    // 짧아도 X축 범위는 설정값을 일관되게 유지한다(스케일 안정성 우선).
+    //
+    // 창을 어느 블록에서 읽을지는 계약이 정한다(`panelSourceWindowMs`). 종전에는
+    // `store_source` 를 하드코딩해 store 가 아닌 소스에서는 축이 데이터 범위로 떨어졌고,
+    // 라이브로 쌓는 sysmetrics 는 점이 0~1개인 동안 축이 한 점으로 접혀 선이 보이지 않았다.
+    if (isStore && sourceWindowMs !== undefined) {
+      return [effectiveNow - sourceWindowMs, effectiveNow];
     }
     return ['dataMin', 'dataMax'];
-  }, [xRange, effectiveNow, isStore, storeSource?.time_window_ms]);
+  }, [xRange, effectiveNow, isStore, sourceWindowMs]);
 
   // X축 도메인이 고정 수치 범위인지(recent/fixed/store 윈도우) — 데이터 오버플로 클립 여부 결정.
   const xDomainFixed =
@@ -621,14 +687,22 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
    * 소수 자릿수도 단위도 없으면 `undefined` 를 돌려준다 — Recharts 기본 표기를
    * 그대로 두기 위해서다. 여기서 항상 포맷터를 주면 아무 설정도 안 한 패널의
    * 눈금 글자가 조용히 바뀐다.
+   *
+   * **자릿수의 기본값(2)은 축에 적용하지 않는다.** 눈금은 값 읽기가 아니라 눈금자이고
+   * Recharts 가 이미 보기 좋은 수(0 · 25 · 50)를 고르는데, 거기에 기본값을 걸면 아무
+   * 설정도 안 한 패널의 축이 `0.00 · 25.00 · 50.00` 이 된다. 사용자가 자릿수를 **직접
+   * 지정하면** 그때는 축도 따라간다 — 축과 툴팁이 같은 값을 다른 자릿수로 보여 주지
+   * 않아야 한다는 규약은 그대로다(`decimalPlaces.ts` 머리말).
    */
   const yNumberFormatter = useMemo(() => {
-    const dec = cfg.decimal_places;
+    const dec = hasExplicitDecimalPlaces(config) ? readDecimalPlaces(config) : undefined;
     const unit = cfg.y_unit;
     if (dec === undefined && !unit) return undefined;
-    return (v: number): string =>
-      `${dec === undefined || !Number.isFinite(v) ? v : v.toFixed(dec)}${unit ?? ''}`;
-  }, [cfg.decimal_places, cfg.y_unit]);
+    // 눈금은 눈금자다 — 단위를 붙이고 자릿수는 그 눈금의 크기가 정한다.
+    // 사용자가 자릿수를 명시했으면(`dec`) 그 값이 이긴다.
+    return (v: number): string => formatTickValue(v, unit, dec);
+  }, [config, cfg.y_unit]);
+
 
   // 툴팁 — 미지정이 종전 동작(켬 + 전체 시리즈).
   const tooltipEnabled = cfg.tooltip?.enabled !== false;
@@ -668,22 +742,22 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
    * 숫자로 떨어지므로(`formatEnumValue` 의 폴백) 거기에도 자릿수를 적용한다.
    */
   const formatTooltipValue = (value: unknown, name: string): React.ReactNode => {
-    const dec = cfg.decimal_places;
-    const asFixed = (v: number): string => (dec === undefined ? String(v) : v.toFixed(dec));
+    const dec = readDecimalPlaces(config);
     const isNum = typeof value === 'number' && Number.isFinite(value);
 
     if (enumMode && isNum) {
       const label = enumMap.get(value as number);
-      return label ?? asFixed(value as number);
+      return label ?? formatDecimal(value as number, dec);
     }
     if (booleanKeys.has(name)) return value === 1 ? 'true' : 'false';
-    if (dec !== undefined && isNum) return asFixed(value as number);
+    if (isNum) return formatDecimal(value as number, dec);
     // 숫자가 아니면 그대로 — 문자열·null 은 Recharts 가 알아서 표기한다.
     return value as React.ReactNode;
   };
-  // 셋 다 없으면 포맷터를 주지 않는다 — Recharts 기본 표기를 그대로 둔다.
-  const tooltipNeedsFormatter =
-    enumMode || booleanKeys.size > 0 || cfg.decimal_places !== undefined;
+  // 값 표기 자릿수는 기본값이 있으므로 툴팁 포맷터는 **항상** 필요하다. 종전에는
+  // 자릿수 미지정 + enum/boolean 아님이면 포맷터를 주지 않아 원값(21.533333333333335)이
+  // 그대로 나왔다.
+  const tooltipNeedsFormatter = true;
   const yDomain = useMemo<[number | 'auto', number | 'auto']>(() => {
     // 열거형 축: 매핑된 최소/최대 값 ±0.5 여백으로 고정(모든 눈금이 보이도록).
     if (enumMode && enumTicks && enumTicks.length > 0) {
@@ -729,6 +803,43 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
   const xLabelFont = resolveAxisFont(cfg.x_label_font);
   const yTickFont = resolveAxisFont(cfg.y_tick_font);
   const yLabelFont = resolveAxisFont(cfg.y_label_font);
+
+  /**
+   * 축 폭·높이 — 내용에서 산출한다.
+   *
+   * 종전에는 Y축이 56px 고정이라, 축 제목 글꼴을 키우거나 눈금에 단위·소수를
+   * 붙이면 제목이 잘렸다. 눈금 글자와 제목이 같은 고정 폭을 나눠 쓰고 있었기
+   * 때문이다. 이제 둘을 **더해서** 잡는다.
+   *
+   * 눈금 표본은 실제로 찍힐 문자열을 만든다 — 도메인 양끝을 그대로 포맷터에
+   * 통과시키고, 열거형·불리언 축은 라벨 자체를 쓴다. 추정이라 정확하진 않지만
+   * "무엇이 커지면 폭도 큰다" 는 관계는 지켜진다.
+   */
+  const yTickSamples = useMemo(() => {
+    if (enumMode) return [...enumMap.values()];
+    if (boolAxis) return ['false', 'true'];
+    const fmt = yNumberFormatter ?? ((v: number) => String(v));
+    const [lo, hi] = yDomain;
+    return [lo, hi]
+      .filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
+      .map(fmt);
+  }, [enumMode, enumMap, boolAxis, yNumberFormatter, yDomain]);
+
+  const yAxisTitle =
+    [cfg.y_label, cfg.y_unit ? `(${cfg.y_unit})` : ''].filter(Boolean).join(' ') || undefined;
+
+  const yAxisWidth = resolveYAxisWidth({
+    tickTexts: yTickSamples,
+    tickFontSize: yTickFont.fontSize,
+    label: yAxisTitle,
+    labelFontSize: yLabelFont.fontSize,
+  });
+  const xAxisHeight = resolveXAxisHeight({
+    tickFontSize: xTickFont.fontSize,
+    label: cfg.x_label,
+    labelFontSize: xLabelFont.fontSize,
+  });
+
 
   const criticalBreached = useMemo(
     () =>
@@ -807,8 +918,12 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
       >
         <div className="min-h-0 min-w-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart
-            data={chartData.length > 0 ? chartData : [{ timestamp: Date.now() }]}
+          <ComposedChart
+            data={
+              chartDataWithCandles.length > 0
+                ? chartDataWithCandles
+                : [{ timestamp: Date.now() }]
+            }
             margin={{ top: 8, right: 16, left: 0, bottom: 0 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -824,14 +939,27 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
               // insideBottom 은 y = 축상단 + height - offset (verticalAnchor 'end') 로 계산되므로
               // offset 을 양수로 주어 텍스트를 축 하단(=SVG 경계)에서 위로 띄워 잘림을 방지한다.
               label={cfg.x_label ? { value: cfg.x_label, position: 'insideBottom', offset: 6, style: { textAnchor: 'middle', fontSize: xLabelFont.fontSize, fill: xLabelFont.fill, fontWeight: xLabelFont.fontWeight } } : undefined}
-              height={cfg.x_label ? 48 : 30}
+              height={xAxisHeight}
             />
             <YAxis
               domain={yDomain}
               tick={{ fontSize: yTickFont.fontSize, fill: yTickFont.fill, fontWeight: yTickFont.fontWeight }}
               stroke="#9ca3af"
-              width={cfg.y_label || cfg.y_unit ? 56 : 50}
-              label={cfg.y_label || cfg.y_unit ? { value: [cfg.y_label, cfg.y_unit ? `(${cfg.y_unit})` : ''].filter(Boolean).join(' '), angle: -90, position: 'insideLeft', style: { fontSize: yLabelFont.fontSize, fill: yLabelFont.fill, fontWeight: yLabelFont.fontWeight } } : undefined}
+              width={yAxisWidth}
+              label={
+                yAxisTitle
+                  ? {
+                      value: yAxisTitle,
+                      angle: -90,
+                      position: 'insideLeft',
+                      style: {
+                        fontSize: yLabelFont.fontSize,
+                        fill: yLabelFont.fill,
+                        fontWeight: yLabelFont.fontWeight,
+                      },
+                    }
+                  : undefined
+              }
               // 열거형 축은 매핑된 값 눈금을 라벨로, boolean 축은 0/1 을 false/true 로 표시한다.
               ticks={enumMode ? enumTicks : boolAxis ? [0, 1] : undefined}
               tickFormatter={
@@ -889,32 +1017,27 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
                 />
               );
             })}
-            {cfg.y_thresholds
-              ?.filter((t) => t.fill_direction || t.fill_to != null)
-              .map((t, i) => {
-                let y1: number;
-                let y2: number;
-                if (t.fill_direction === 'below') {
-                  y1 = -1e9;
-                  y2 = t.value;
-                } else if (t.fill_direction === 'above') {
-                  y1 = t.value;
-                  y2 = 1e9;
-                } else {
-                  y1 = Math.min(t.value, t.fill_to!);
-                  y2 = Math.max(t.value, t.fill_to!);
-                }
-                return (
-                  <ReferenceArea
-                    key={`fill-${i}`}
-                    y1={y1}
-                    y2={y2}
-                    fill={t.color}
-                    fillOpacity={0.1}
-                    strokeOpacity={0}
-                  />
-                );
-              })}
+            {cfg.y_thresholds?.map((t, i) => {
+              // 채울 구간을 축 도메인 안으로 좁힌다. recharts 의 ReferenceArea 는
+              // 기본값이 `ifOverflow: 'discard'` 라, 한 끝이라도 도메인 밖이면
+              // 통째로 그리지 않는다 — 종전의 ±1e9 표현이 그래서 안 보였다.
+              const band = resolveFillBand(t, yDomain);
+              if (!band) return null;
+              // 선과 같은 색 규칙을 쓴다. 색을 지정하지 않은 경계도 채워져야 한다.
+              const fill = t.color ?? THRESHOLD_DEFAULT_COLORS[t.severity ?? 'info'];
+              return (
+                <ReferenceArea
+                  key={`fill-${i}`}
+                  y1={band.y1}
+                  y2={band.y2}
+                  fill={fill}
+                  fillOpacity={0.1}
+                  strokeOpacity={0}
+                  // 도메인을 모르는 경우(auto)의 안전망 — 버리는 대신 잘라 낸다.
+                  ifOverflow="hidden"
+                />
+              );
+            })}
             {seriesKeys.map((key, i) => {
               let stroke = SERIES_COLORS[i % SERIES_COLORS.length]!;
               let strokeDasharray: string | undefined;
@@ -946,22 +1069,60 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
                   if (dash) strokeDasharray = dash;
                 }
               }
+              // 이 시리즈의 실제 모양. 시리즈 지정이 없으면 패널 기본값을 따른다.
+              const seriesStyle: GraphStyle = resolveSeriesStyle(
+                isStore ? storeResult.seriesStyles.get(key)?.graph_style : undefined,
+                panelGraphStyle,
+              );
+              // 스택킹은 영역·바에서만 뜻이 있다. 같은 stackId 를 공유해야 쌓인다.
+              const stackId = effectiveStacked(seriesStyle, panelStacked) ? 'stack' : undefined;
+              // 결측 점선은 라인·영역에서만 그린다 — 바에 그으면 없는 막대를 잇는 선이 된다.
               const gapKey = gapSeriesKey(key);
-              const hasGap = gapKeySet.has(gapKey);
+              const hasGap = gapKeySet.has(gapKey) && hasGapDash(seriesStyle);
+              const common = {
+                dataKey: key,
+                isAnimationActive: false,
+                stackId,
+              } as const;
               return (
                 <Fragment key={key}>
+                  {seriesStyle === 'candle' ? (
+                    // 캔들은 몸통 구간에 Bar 를 세우고 모양 함수가 꼬리를 마저 그린다.
+                    // 스택킹은 붙지 않는다 — 네 값이 한 덩어리라 쌓을 수 없다.
+                    <Bar
+                      dataKey={key}
+                      isAnimationActive={false}
+                      shape={(p: object) => (
+                        <CandleShape {...p} seriesKey={key} />
+                      )}
+                    />
+                  ) : seriesStyle === 'bar' ? (
+                    <Bar {...common} fill={stroke} />
+                  ) : seriesStyle === 'area' ? (
+                    <Area
+                      {...common}
+                      type={lineSmooth ? 'monotone' : 'linear'}
+                      stroke={stroke}
+                      strokeWidth={strokeWidth}
+                      strokeDasharray={strokeDasharray}
+                      fill={stroke}
+                      fillOpacity={0.25}
+                      dot={false}
+                      connectNulls={gapThreshold <= 0}
+                    />
+                  ) : (
                   <Line
+                    {...common}
                     type={lineSmooth ? 'monotone' : 'linear'}
-                    dataKey={key}
                     stroke={stroke}
                     strokeWidth={strokeWidth}
                     strokeDasharray={strokeDasharray}
                     dot={false}
-                    isAnimationActive={false}
                     // 점선 표기를 켠 패널에서는 결측에서 선을 **끊는다** — 끊지 않으면
                     // 덧그림 점선 아래에 실선이 그대로 남아 둘이 겹친다.
                     connectNulls={gapThreshold <= 0}
                   />
+                  )}
                   {hasGap && (
                     <Line
                       type={lineSmooth ? 'monotone' : 'linear'}
@@ -996,7 +1157,7 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
                 </Fragment>
               );
             })}
-          </LineChart>
+          </ComposedChart>
         </ResponsiveContainer>
         </div>
 
@@ -1023,12 +1184,13 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
           isMultiMode={isMultiMode}
           legendCfg={legendCfg}
           chartData={chartData}
-          // 범례 마지막값도 축/툴팁과 동일하게 표시한다.
-          // enum 축이면 라벨로, boolean 시리즈면 true/false, 그 외는 소수 1자리.
+          // 범례 마지막값도 툴팁과 동일하게 표시한다 — 같은 값이 범례와 툴팁에서
+          // 다른 자릿수로 읽히면 어느 쪽이 맞는지 알 수 없다. 종전에는 1자리 고정이었다.
+          // enum 축이면 라벨로, boolean 시리즈면 true/false, 그 외는 설정 자릿수.
           formatValue={(key: string, v: number) => {
             if (enumMode) return formatEnumValue(v, enumMap);
             if (booleanKeys.has(key)) return v === 1 ? 'true' : v === 0 ? 'false' : String(v);
-            return v.toFixed(1);
+            return formatDecimal(v, readDecimalPlaces(config));
           }}
         />
       </div>

@@ -18,7 +18,11 @@
 //
 // @spec SPEC-TSDB-002 §2.3 (U3) · §2.4 (U4)
 
-import type { StoreSourceConfig, TsdbSourceConfig } from './chartChannelTypes';
+import type {
+  StoreSourceConfig,
+  SysmetricsSourceConfig,
+  TsdbSourceConfig,
+} from './chartChannelTypes';
 import {
   resolvePanelSourceBinding,
   type PanelSourceBinding,
@@ -31,6 +35,7 @@ import {
 } from './useStoreChartData';
 import type { TsdbGroupInfo } from '@/services/api/tsdbSource';
 import { useTsdbChartData, type UseTsdbChartDataOptions } from './useTsdbChartData';
+import { toStoreShapedConfig, useSysmetricsQueryFn } from './useSysMetricsChartData';
 
 /**
  * 패널 시리즈 훅 결과 — `UseStoreChartDataResult` + TSDB 전용 상태 신호(가산).
@@ -66,6 +71,13 @@ export interface UsePanelSeriesDataOptions extends ResolvePanelSourceOptions {
   storeOptions?: UseStoreChartDataOptions;
   /** `useTsdbChartData` 로 그대로 전달되는 테스트 주입 통로. */
   tsdbOptions?: UseTsdbChartDataOptions;
+  /**
+   * sysmetrics 경로의 테스트 주입 통로.
+   *
+   * 이 소스는 Store 훅을 그대로 타므로 옵션 형상도 같다 — 다만 `queryMatrixFn` 을
+   * 주지 않으면 이력 조회 함수가 기본으로 꽂힌다.
+   */
+  sysmetricsOptions?: UseStoreChartDataOptions;
 }
 
 /**
@@ -89,6 +101,7 @@ export function isPanelSeriesSource(binding: PanelSourceBinding): boolean {
  * |-------------|------|------|
  * | `store` | 예 | Store 훅 결과 |
  * | `tsdb` | 예 | TSDB 훅 결과(부분 실패 신호를 함께 실은 확장 형상) |
+ * | `sysmetrics` | 예 | 에이전트 이력을 Store 훅으로 조회한 결과(형상 동일) |
  * | 그 외 / 비활성 | — | idle(= 종전 `useStoreChartData(undefined, false)` 와 동일) |
  *
  * 마지막 행이 하위 호환의 핵심이다. 종전 패널들은 채널 모드에서도 store 훅을 비활성
@@ -100,14 +113,32 @@ export function usePanelSeriesData(
 ): UsePanelSeriesDataResult {
   const binding = resolvePanelSourceBinding(config, options);
 
-  // Store 분기 — 활성일 때만 config 를 넘기고, 그 외에는 undefined 로 idle 을 유지한다.
+  // Store · sysmetrics 분기 — **같은 훅을 한 번만** 호출한다.
+  //
+  // sysmetrics 는 config 형상을 Store 로 옮기고(`toStoreShapedConfig`) 조회 함수만
+  // 갈아끼우면 Store 경로 그대로다. 두 소스가 각자 `useStoreChartData` 를 부르면 진
+  // 쪽이 idle 이라도 훅이 중복되고, 어느 호출이 실제 조회인지 읽기 어려워진다.
   const storeActive = binding.kind === 'store' && binding.active;
+  const sysmetricsActive = binding.kind === 'sysmetrics' && binding.active;
+
   const storeSource =
     options?.storeSourceOverride ?? (config.store_source as StoreSourceConfig | undefined);
+  const sysmetricsSource = config.sysmetrics_source as SysmetricsSourceConfig | undefined;
+
+  const sysmetricsQueryFn = useSysmetricsQueryFn(sysmetricsSource?.agent_id ?? '');
+  const seriesSource = sysmetricsActive
+    ? toStoreShapedConfig(sysmetricsSource)
+    : storeActive
+      ? storeSource
+      : undefined;
+  const seriesOptions = sysmetricsActive
+    ? { queryMatrixFn: sysmetricsQueryFn, ...options?.sysmetricsOptions }
+    : options?.storeOptions;
+
   const storeResult = useStoreChartData(
-    storeActive ? storeSource : undefined,
-    storeActive,
-    options?.storeOptions,
+    seriesSource,
+    storeActive || sysmetricsActive,
+    seriesOptions,
   );
 
   // TSDB 분기 — Store 와 같은 규칙으로 조건 없이 호출하고, 진 쪽은 config 를 넘기지

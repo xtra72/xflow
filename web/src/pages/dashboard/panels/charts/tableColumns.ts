@@ -7,8 +7,27 @@ import { isColumnFilterActive, type ColumnFilter } from '@/pages/agents/storeEnt
 
 import { getByPath, type ChartEntry, type TableColumn } from './chartChannelTypes';
 import { formatTimestamp } from './chartChannelUtils';
+import { DEFAULT_DECIMAL_PLACES } from './decimalPlaces';
+import { TAG_FIELD_PREFIX } from './panelTagKeys';
+import { resolveSeriesValue, seriesNameOfField } from './tablePivot';
+import { formatValueWithUnit } from './unitOptions';
 
-export function formatCell(value: unknown, format: TableColumn['format']): string {
+/**
+ * 셀 표시 문자열.
+ *
+ * `decimals` 와 `unit` 은 `format: 'number'` 열에만 쓰인다. 종전에는 `String(n)` 이라
+ * `21.533333333333335` 가 그대로 나왔다.
+ *
+ * **필터·목록도 이 함수를 쓴다.** "보이는 값 = 고르는 값 = 걸러지는 값" 이 표의 규약이라,
+ * 자릿수를 표시에만 걸면 필터 드롭다운의 항목과 셀 글자가 어긋나 아무것도 걸리지 않는다.
+ * 그래서 `uniqueTableColumnValues` · `applyTableColumnFilters` 도 같은 값을 받는다.
+ */
+export function formatCell(
+  value: unknown,
+  format: TableColumn['format'],
+  decimals: number = DEFAULT_DECIMAL_PLACES,
+  unit?: string,
+): string {
   if (value == null) return '';
   if (format === 'datetime') {
     const n = typeof value === 'number' ? value : Number(value);
@@ -17,7 +36,8 @@ export function formatCell(value: unknown, format: TableColumn['format']): strin
   }
   if (format === 'number') {
     const n = typeof value === 'number' ? value : Number(value);
-    return Number.isFinite(n) ? String(n) : String(value);
+    // 수로 볼 수 없는 값에는 단위를 붙이지 않는다 — `abckW` 는 값도 단위도 아니다.
+    return Number.isFinite(n) ? formatValueWithUnit(n, decimals, unit) : String(value);
   }
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
@@ -64,16 +84,15 @@ export function isRangeFilterColumn(column: TableColumn): boolean {
   return column.format === 'number' || column.format === 'datetime';
 }
 
-/** `$.tags.` 접두 — 태그 컬럼 표기. */
-const TAG_FIELD_PREFIX = '$.tags.';
-
 /**
  * 열 `field` 로 엔트리에서 원시 값을 뽑는다.
  *
- * 두 가지 표기를 지원한다:
+ * 세 가지 표기를 지원한다:
  *   - `$.tags.<키>` — 시리즈 태그. 저장 위치는 `entry.labels` 이지만 사용자에게는
  *     "태그" 라는 어휘가 익숙하므로(데이터 소스 화면·store 엔트리 표가 모두 태그라 부른다)
  *     표기는 태그로 두고 여기서 매핑한다.
+ *   - `$.series.<이름>` — 시각 기준 행(피벗)에서의 시리즈 값. 이름에 점·공백이 들어갈
+ *     수 있어 점 경로로는 읽을 수 없다(`tablePivot.ts` 머리말).
  *   - 그 밖 — 기존 점 경로(`timestamp` / `value` / `labels.name` / `meta.x` …).
  */
 export function resolveCellValue(entry: ChartEntry, field: string): unknown {
@@ -82,6 +101,8 @@ export function resolveCellValue(entry: ChartEntry, field: string): unknown {
     if (key === '') return undefined;
     return entry.labels?.[key];
   }
+  const seriesName = seriesNameOfField(field);
+  if (seriesName !== undefined) return resolveSeriesValue(entry, seriesName);
   return getByPath(entry, field);
 }
 
@@ -110,10 +131,11 @@ export function numericCellValue(entry: ChartEntry, column: TableColumn): number
 export function uniqueTableColumnValues(
   entries: readonly ChartEntry[],
   column: TableColumn,
+  decimals: number = DEFAULT_DECIMAL_PLACES,
 ): string[] {
   const set = new Set<string>();
   for (const e of entries) {
-    set.add(formatCell(resolveCellValue(e, column.field), column.format));
+    set.add(formatCell(resolveCellValue(e, column.field), column.format, decimals, column.unit));
   }
   return Array.from(set).sort((a, b) => a.localeCompare(b));
 }
@@ -150,6 +172,7 @@ export function applyTableColumnFilters(
   entries: ChartEntry[],
   columns: TableColumn[],
   filters: ColumnFilters,
+  decimals: number = DEFAULT_DECIMAL_PLACES,
 ): ChartEntry[] {
   const active = columns
     .map((col) => ({ col, filter: filters[col.field] }))
@@ -159,7 +182,7 @@ export function applyTableColumnFilters(
   if (active.length === 0) return entries;
   return entries.filter((entry) =>
     active.every(({ col, filter }) => {
-      const shown = formatCell(resolveCellValue(entry, col.field), col.format);
+      const shown = formatCell(resolveCellValue(entry, col.field), col.format, decimals, col.unit);
       const text = filter.text.trim().toLowerCase();
       if (text !== '' && !shown.toLowerCase().includes(text)) return false;
       if (filter.values.size > 0 && !filter.values.has(shown)) return false;

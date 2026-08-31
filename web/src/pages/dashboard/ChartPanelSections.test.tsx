@@ -92,7 +92,7 @@ describe('ChartChannelSection (REQ-M5-02/04: 드롭다운 + Custom)', () => {
     const onConfigChange = vi.fn();
     render(
       <ChartChannelSection
-        panel={makePanel('line-chart', { channel_name: '' })}
+        panel={makePanel('graph-chart', { channel_name: '' })}
         onConfigChange={onConfigChange}
         fetchChannels={emptyChannels}
       />,
@@ -110,7 +110,7 @@ describe('ChartChannelSection (REQ-M5-02/04: 드롭다운 + Custom)', () => {
     const onConfigChange = vi.fn();
     render(
       <ChartChannelSection
-        panel={makePanel('line-chart', { channel_name: '' })}
+        panel={makePanel('graph-chart', { channel_name: '' })}
         onConfigChange={onConfigChange}
         fetchChannels={emptyChannels}
       />,
@@ -186,10 +186,56 @@ describe('StatChartSection', () => {
         onConfigChange={onConfigChange}
       />,
     );
-    // unit 변경 (placeholder 는 i18n 키로 렌더됨)
-    const unitInput = screen.getByPlaceholderText(/dashboard.chart.unitPlaceholder/);
-    fireEvent.change(unitInput, { target: { value: 'kWh' } });
+    // unit 은 목록에서 고른다 — 자유 텍스트 칸은 "직접 입력" 을 골랐을 때만 나타난다.
+    fireEvent.change(screen.getByTestId('stat-unit'), { target: { value: 'kWh' } });
     expect(onConfigChange).toHaveBeenCalledWith({ unit: 'kWh' });
+  });
+
+  it('단위 "직접 입력" 을 고르면 입력칸이 나타나고 적은 값이 저장된다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <StatChartSection panel={makePanel('stat', { unit: '' })} onConfigChange={onConfigChange} />,
+    );
+    // 처음에는 목록만 있다 — 종전처럼 늘 떠 있는 좁은 텍스트 칸은 없다.
+    expect(screen.queryByTestId('stat-unit-custom')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId('stat-unit'), { target: { value: '__custom__' } });
+    const custom = screen.getByTestId('stat-unit-custom');
+    fireEvent.change(custom, { target: { value: 'sccm' } });
+    fireEvent.blur(custom);
+    expect(onConfigChange).toHaveBeenCalledWith({ unit: 'sccm' });
+  });
+
+  it('목록에 없는 단위로 열리면 직접 입력 상태를 유지한다', () => {
+    render(<StatChartSection panel={makePanel('stat', { unit: 'sccm' })} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('stat-unit-custom')).toHaveValue('sccm');
+  });
+
+  it('현재값 크기 배율을 편집한다', () => {
+    const onConfigChange = vi.fn();
+    render(<StatChartSection panel={makePanel('stat', {})} onConfigChange={onConfigChange} />);
+    const slider = screen.getByTestId('stat-value-scale') as HTMLInputElement;
+    // 미지정이면 1(기본 크기)에서 시작한다.
+    expect(slider.value).toBe('1');
+
+    fireEvent.change(slider, { target: { value: '1.5' } });
+    expect(onConfigChange).toHaveBeenCalledWith({ value_scale: 1.5 });
+  });
+
+  it('초기화하면 config 에서 지운다 — 기본값을 저장해 두지 않는다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <StatChartSection panel={makePanel('stat', { value_scale: 2 })} onConfigChange={onConfigChange} />,
+    );
+    expect((screen.getByTestId('stat-value-scale') as HTMLInputElement).value).toBe('2');
+
+    fireEvent.click(screen.getByTestId('stat-value-scale-reset'));
+    expect(onConfigChange).toHaveBeenCalledWith({ value_scale: undefined });
+  });
+
+  it('범위를 벗어난 저장값도 죄여서 보여준다', () => {
+    render(<StatChartSection panel={makePanel('stat', { value_scale: 99 })} onConfigChange={vi.fn()} />);
+    expect((screen.getByTestId('stat-value-scale') as HTMLInputElement).value).toBe('3');
   });
 
   it('threshold_color_rules 추가/제거', () => {
@@ -213,7 +259,7 @@ describe('LineChartSection', () => {
     const onConfigChange = vi.fn();
     render(
       <LineChartSection
-        panel={makePanel('line-chart', { max_points: 100 })}
+        panel={makePanel('graph-chart', { max_points: 100 })}
         onConfigChange={onConfigChange}
       />,
     );
@@ -231,7 +277,7 @@ describe('LineChartSection', () => {
     it('채널 추가 시 행에 채널 드롭다운 노출', async () => {
       render(
         <ChannelSeriesEditor
-          panel={makePanel('line-chart', { channels: [{ name: '' }] })}
+          panel={makePanel('graph-chart', { channels: [{ name: '' }] })}
           onConfigChange={vi.fn()}
           fetchChannels={twoChannels}
         />,
@@ -248,7 +294,7 @@ describe('LineChartSection', () => {
       const onConfigChange = vi.fn();
       render(
         <ChannelSeriesEditor
-          panel={makePanel('line-chart', {
+          panel={makePanel('graph-chart', {
             channels: [
               { name: '', alias: 'A' },
               { name: 'pump_rpm', alias: 'B' },
@@ -280,7 +326,7 @@ describe('LineChartSection', () => {
     it('Custom 옵션 선택 시 수동 입력 input 표시', async () => {
       render(
         <ChannelSeriesEditor
-          panel={makePanel('line-chart', { channels: [{ name: '' }] })}
+          panel={makePanel('graph-chart', { channels: [{ name: '' }] })}
           onConfigChange={vi.fn()}
           fetchChannels={twoChannels}
         />,
@@ -297,7 +343,7 @@ describe('LineChartSection', () => {
       const onConfigChange = vi.fn();
       render(
         <ChannelSeriesEditor
-          panel={makePanel('line-chart', { channels: [{ name: '', alias: 'X' }] })}
+          panel={makePanel('graph-chart', { channels: [{ name: '', alias: 'X' }] })}
           onConfigChange={onConfigChange}
           fetchChannels={emptyChannels}
         />,
@@ -317,7 +363,7 @@ describe('LineChartSection', () => {
     it('각 행에 drag handle 노출', async () => {
       render(
         <ChannelSeriesEditor
-          panel={makePanel('line-chart', {
+          panel={makePanel('graph-chart', {
             channels: [{ name: 'a' }, { name: 'b' }],
           })}
           onConfigChange={vi.fn()}
@@ -332,7 +378,7 @@ describe('LineChartSection', () => {
       const onConfigChange = vi.fn();
       render(
         <ChannelSeriesEditor
-          panel={makePanel('line-chart', {
+          panel={makePanel('graph-chart', {
             channels: [
               { name: 'a', alias: 'A' },
               { name: 'b', alias: 'B' },
@@ -374,7 +420,7 @@ describe('LineChartSection', () => {
       const onConfigChange = vi.fn();
       render(
         <ChannelSeriesEditor
-          panel={makePanel('line-chart', {
+          panel={makePanel('graph-chart', {
             channels: [{ name: 'a' }, { name: 'b' }],
           })}
           onConfigChange={onConfigChange}
@@ -401,7 +447,7 @@ describe('LineChartSection', () => {
     it('현재 row name 이 활성 목록에 없으면 (비활성) 옵션으로 표시', async () => {
       render(
         <ChannelSeriesEditor
-          panel={makePanel('line-chart', {
+          panel={makePanel('graph-chart', {
             channels: [{ name: 'undeployed_ch' }],
           })}
           onConfigChange={vi.fn()}
@@ -420,7 +466,7 @@ describe('LineChartSection', () => {
       const onConfigChange = vi.fn();
       render(
         <ChannelSeriesEditor
-          panel={makePanel('line-chart', { channels: [{ name: 'a', alias: 'A' }] })}
+          panel={makePanel('graph-chart', { channels: [{ name: 'a', alias: 'A' }] })}
           onConfigChange={onConfigChange}
           fetchChannels={emptyChannels}
         />,
@@ -437,7 +483,7 @@ describe('LineChartSection', () => {
       const onConfigChange = vi.fn();
       render(
         <ChannelSeriesEditor
-          panel={makePanel('line-chart', {
+          panel={makePanel('graph-chart', {
             channels: [{ name: 'a', alias: 'A' }, { name: 'b', alias: 'B' }],
           })}
           onConfigChange={onConfigChange}
@@ -455,7 +501,7 @@ describe('LineChartSection', () => {
     it('channel_name 만 있는 기존 패널은 channels[] 로 마이그레이션된다(하위 호환)', async () => {
       render(
         <ChannelSeriesEditor
-          panel={makePanel('line-chart', { channel_name: 'legacy_ch' })}
+          panel={makePanel('graph-chart', { channel_name: 'legacy_ch' })}
           onConfigChange={vi.fn()}
           fetchChannels={emptyChannels}
         />,
@@ -468,7 +514,7 @@ describe('LineChartSection', () => {
   it('LineChartSection 은 채널 편집기를 더 이상 렌더하지 않는다(전역 스타일만)', () => {
     render(
       <LineChartSection
-        panel={makePanel('line-chart', { channels: [{ name: 'a' }] })}
+        panel={makePanel('graph-chart', { channels: [{ name: 'a' }] })}
         onConfigChange={vi.fn()}
       />,
     );
@@ -482,7 +528,7 @@ describe('LineChartSection', () => {
     const onConfigChange = vi.fn();
     render(
       <ChannelSeriesEditor
-        panel={makePanel('line-chart', {
+        panel={makePanel('graph-chart', {
           channels: [{ name: 'a', smooth: false }],
         })}
         onConfigChange={onConfigChange}
@@ -500,7 +546,7 @@ describe('LineChartSection', () => {
 
   // --- 시간 윈도우 모드 ---
   it('구 config 없이 기본은 포인트 범위 — 기간 입력은 숨김', () => {
-    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={vi.fn()} />);
+    render(<LineChartSection panel={makePanel('graph-chart', {})} onConfigChange={vi.fn()} />);
     expect(screen.getByTestId('line-chart-x-range-count')).toBeInTheDocument();
     expect(screen.queryByTestId('line-chart-x-range-window')).toBeNull();
     expect(screen.queryByTestId('line-chart-x-range-start')).toBeNull();
@@ -509,7 +555,7 @@ describe('LineChartSection', () => {
   it('구 time_window_mode=recent 는 최근(relative) 범위로 읽히고 새로고침 주기가 함께 뜬다', () => {
     render(
       <LineChartSection
-        panel={makePanel('line-chart', { time_window_mode: 'recent', recent_window_sec: 300 })}
+        panel={makePanel('graph-chart', { time_window_mode: 'recent', recent_window_sec: 300 })}
         onConfigChange={vi.fn()}
       />,
     );
@@ -522,7 +568,7 @@ describe('LineChartSection', () => {
     const onConfigChange = vi.fn();
     render(
       <LineChartSection
-        panel={makePanel('line-chart', {
+        panel={makePanel('graph-chart', {
           time_window_mode: 'recent',
           time_window_refresh_ms: 1000,
         })}
@@ -538,7 +584,7 @@ describe('LineChartSection', () => {
   it('구 time_window_mode=fixed 는 구간(absolute) 범위로 읽힌다', () => {
     render(
       <LineChartSection
-        panel={makePanel('line-chart', {
+        panel={makePanel('graph-chart', {
           time_window_mode: 'fixed',
           fixed_start_ms: 1000,
           fixed_end_ms: 2000,
@@ -552,7 +598,7 @@ describe('LineChartSection', () => {
 
   // --- Y축 모드 ---
   it('숫자형이면 최소/최대는 항상 노출되고, 비어 있으면 자동을 뜻한다', () => {
-    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={vi.fn()} />);
+    render(<LineChartSection panel={makePanel('graph-chart', {})} onConfigChange={vi.fn()} />);
     const min = screen.getByTestId('line-chart-y-min') as HTMLInputElement;
     const max = screen.getByTestId('line-chart-y-max') as HTMLInputElement;
     expect(min.value).toBe('');
@@ -561,7 +607,7 @@ describe('LineChartSection', () => {
 
   it('최소값을 넣으면 방식(manual)이 함께 저장된다', () => {
     const onConfigChange = vi.fn();
-    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={onConfigChange} />);
+    render(<LineChartSection panel={makePanel('graph-chart', {})} onConfigChange={onConfigChange} />);
     fireEvent.change(screen.getByTestId('line-chart-y-min'), { target: { value: '3' } });
     expect(onConfigChange).toHaveBeenCalledWith({ y_min: 3, y_axis_mode: 'manual' });
   });
@@ -570,7 +616,7 @@ describe('LineChartSection', () => {
     const onConfigChange = vi.fn();
     render(
       <LineChartSection
-        panel={makePanel('line-chart', { y_axis_mode: 'manual', y_min: 3 })}
+        panel={makePanel('graph-chart', { y_axis_mode: 'manual', y_min: 3 })}
         onConfigChange={onConfigChange}
       />,
     );
@@ -582,7 +628,7 @@ describe('LineChartSection', () => {
     const onConfigChange = vi.fn();
     render(
       <LineChartSection
-        panel={makePanel('line-chart', { y_axis_mode: 'auto_padded', y_axis_padding_pct: 5 })}
+        panel={makePanel('graph-chart', { y_axis_mode: 'auto_padded', y_axis_padding_pct: 5 })}
         onConfigChange={onConfigChange}
       />,
     );
@@ -604,7 +650,7 @@ describe('LineChartSection', () => {
     const onConfigChange = vi.fn();
     render(
       <LineChartSection
-        panel={makePanel('line-chart', { y_axis_mode: 'auto_padded', y_axis_padding_pct: 5 })}
+        panel={makePanel('graph-chart', { y_axis_mode: 'auto_padded', y_axis_padding_pct: 5 })}
         onConfigChange={onConfigChange}
       />,
     );
@@ -617,7 +663,7 @@ describe('LineChartSection', () => {
   });
 
   it('X축 디자인 배지에는 여백 칸이 없다 — X축에는 없는 개념이다', () => {
-    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={vi.fn()} />);
+    render(<LineChartSection panel={makePanel('graph-chart', {})} onConfigChange={vi.fn()} />);
     fireEvent.click(screen.getByTestId('line-chart-x-design-button'));
     expect(screen.getByTestId('line-chart-x-design-popover')).toBeInTheDocument();
     expect(screen.queryByTestId('line-chart-x-design-pad-pct')).toBeNull();
@@ -626,7 +672,7 @@ describe('LineChartSection', () => {
 
 describe('LineChartSection — 툴팁', () => {
   it('기본은 사용 켬 + 단일 값 끔', () => {
-    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={vi.fn()} />);
+    render(<LineChartSection panel={makePanel('graph-chart', {})} onConfigChange={vi.fn()} />);
     expect((screen.getByTestId('line-chart-tooltip-enabled') as HTMLInputElement).checked).toBe(
       true,
     );
@@ -638,7 +684,7 @@ describe('LineChartSection — 툴팁', () => {
   it('사용을 끄면 단일 값 칸이 사라진다 — 끈 툴팁의 표시 방식은 뜻이 없다', () => {
     render(
       <LineChartSection
-        panel={makePanel('line-chart', { tooltip: { enabled: false } })}
+        panel={makePanel('graph-chart', { tooltip: { enabled: false } })}
         onConfigChange={vi.fn()}
       />,
     );
@@ -649,7 +695,7 @@ describe('LineChartSection — 툴팁', () => {
     const onConfigChange = vi.fn();
     render(
       <LineChartSection
-        panel={makePanel('line-chart', { tooltip: { enabled: false } })}
+        panel={makePanel('graph-chart', { tooltip: { enabled: false } })}
         onConfigChange={onConfigChange}
       />,
     );
@@ -659,7 +705,7 @@ describe('LineChartSection — 툴팁', () => {
 
   it('단일 값을 켜면 tooltip.single 로 저장된다', () => {
     const onConfigChange = vi.fn();
-    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={onConfigChange} />);
+    render(<LineChartSection panel={makePanel('graph-chart', {})} onConfigChange={onConfigChange} />);
     fireEvent.click(screen.getByTestId('line-chart-tooltip-single'));
     expect(onConfigChange).toHaveBeenCalledWith({ tooltip: { single: true } });
   });
@@ -668,14 +714,14 @@ describe('LineChartSection — 툴팁', () => {
 describe('LineChartSection — 라인 스타일 · 소수점', () => {
   it('패널 전역 곡선을 켜면 smooth 로 저장된다', () => {
     const onConfigChange = vi.fn();
-    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={onConfigChange} />);
+    render(<LineChartSection panel={makePanel('graph-chart', {})} onConfigChange={onConfigChange} />);
     fireEvent.click(screen.getByTestId('line-chart-smooth'));
     expect(onConfigChange).toHaveBeenCalledWith({ smooth: true });
   });
 
   it('결측 점선은 라인 스타일 섹션에 있고 개수는 켰을 때만 뜬다', () => {
     const onConfigChange = vi.fn();
-    render(<LineChartSection panel={makePanel('line-chart', {})} onConfigChange={onConfigChange} />);
+    render(<LineChartSection panel={makePanel('graph-chart', {})} onConfigChange={onConfigChange} />);
     expect(screen.queryByTestId('line-chart-gap-dash-threshold')).toBeNull();
     fireEvent.click(screen.getByTestId('line-chart-gap-dash'));
     // 켜면 기본 임계값이 함께 저장된다(끌 때는 undefined 로 지운다).
@@ -686,14 +732,14 @@ describe('LineChartSection — 라인 스타일 · 소수점', () => {
 
   it('소수점 이하는 숫자형에서만 노출된다', () => {
     const { unmount } = render(
-      <LineChartSection panel={makePanel('line-chart', {})} onConfigChange={vi.fn()} />,
+      <LineChartSection panel={makePanel('graph-chart', {})} onConfigChange={vi.fn()} />,
     );
     expect(screen.getByTestId('line-chart-decimal-places')).toBeInTheDocument();
     unmount();
 
     render(
       <LineChartSection
-        panel={makePanel('line-chart', { y_axis_type: 'enum' })}
+        panel={makePanel('graph-chart', { y_axis_type: 'enum' })}
         onConfigChange={vi.fn()}
       />,
     );
@@ -704,7 +750,7 @@ describe('LineChartSection — 라인 스타일 · 소수점', () => {
     const onConfigChange = vi.fn();
     render(
       <LineChartSection
-        panel={makePanel('line-chart', { decimal_places: 2 })}
+        panel={makePanel('graph-chart', { decimal_places: 2 })}
         onConfigChange={onConfigChange}
       />,
     );
@@ -786,6 +832,112 @@ describe('TableChartSection (REQ-M4-08)', () => {
     expect(onConfigChange).toHaveBeenCalledWith({
       columns: [...initialColumns, { field: 'value', header: 'dashboard.chart.newColumn' }],
     });
+  });
+
+  it('태그 열 추가 — 소스 설정의 태그를 골라 $.tags.<키> 열을 만든다', () => {
+    const onConfigChange = vi.fn();
+    const initialColumns = [{ field: 'value', header: '값', format: 'number' as const }];
+    render(
+      <TableChartSection
+        panel={makePanel('table', {
+          columns: initialColumns,
+          store_source: {
+            agent_name: 'a',
+            series: [{ key: 'LAI', tags: { room: '1', floor: '3' } }],
+          },
+        })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    fireEvent.change(screen.getByTestId('table-add-tag-column'), { target: { value: 'room' } });
+    expect(onConfigChange).toHaveBeenCalledWith({
+      columns: [...initialColumns, { field: '$.tags.room', header: 'room', format: 'string' }],
+    });
+  });
+
+  it('이미 열로 쓰는 태그는 후보에서 빠진다', () => {
+    render(
+      <TableChartSection
+        panel={makePanel('table', {
+          columns: [{ field: '$.tags.room', header: 'room' }],
+          store_source: {
+            agent_name: 'a',
+            series: [{ key: 'LAI', tags: { room: '1', floor: '3' } }],
+          },
+        })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    const select = screen.getByTestId('table-add-tag-column');
+    const values = Array.from(select.querySelectorAll('option')).map((o) => o.getAttribute('value'));
+    // 안내 항목('') + 남은 후보만 남는다.
+    expect(values).toEqual(['', 'floor']);
+  });
+
+  it('태그 후보가 없으면 셀렉트 자체를 내린다', () => {
+    render(
+      <TableChartSection
+        panel={makePanel('table', { columns: [{ field: 'value', header: '값' }] })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('table-add-tag-column')).not.toBeInTheDocument();
+  });
+
+  it('행 기준을 시각 기준으로 바꾸면 열 편집기 대신 피벗 설정이 나온다', () => {
+    const onConfigChange = vi.fn();
+    const { rerender } = render(
+      <TableChartSection
+        panel={makePanel('table', { columns: [{ field: 'value', header: '값' }] })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    expect(screen.queryByTestId('table-pivot-settings')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId('table-row-mode'), { target: { value: 'timestamp' } });
+    expect(onConfigChange).toHaveBeenCalledWith({ row_mode: 'timestamp' });
+
+    rerender(
+      <TableChartSection
+        panel={makePanel('table', {
+          columns: [{ field: 'value', header: '값' }],
+          row_mode: 'timestamp',
+        })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    expect(screen.getByTestId('table-pivot-settings')).toBeInTheDocument();
+    // 파생 열을 목록으로 띄우지 않는다 — 고쳐도 다음 렌더에 되돌아가기 때문이다.
+    expect(screen.queryByTestId('table-column-row-0')).not.toBeInTheDocument();
+  });
+
+  it('엔트리별로 되돌리면 기본값이라 config 에 남기지 않는다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <TableChartSection
+        panel={makePanel('table', { columns: [{ field: 'value', header: '값' }], row_mode: 'timestamp' })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    fireEvent.change(screen.getByTestId('table-row-mode'), { target: { value: 'entry' } });
+    expect(onConfigChange).toHaveBeenCalledWith({ row_mode: undefined });
+  });
+
+  it('시각 기준 행의 시각 열 이름과 공통 단위를 편집한다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <TableChartSection
+        panel={makePanel('table', { columns: [{ field: 'value', header: '값' }], row_mode: 'timestamp' })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    fireEvent.change(screen.getByTestId('table-pivot-time-header'), {
+      target: { value: '측정 시각' },
+    });
+    expect(onConfigChange).toHaveBeenCalledWith({ pivot_time_header: '측정 시각' });
+
+    fireEvent.change(screen.getByTestId('table-pivot-unit'), { target: { value: '°C' } });
+    expect(onConfigChange).toHaveBeenCalledWith({ pivot_unit: '°C' });
   });
 
   it('columns 수정 (field 변경)', () => {
@@ -953,7 +1105,7 @@ describe('대표값 선택기 (SPEC-CHART-002 U3)', () => {
   });
 
   it('line-chart/table/heatmap 에서는 노출되지 않는다', () => {
-    for (const type of ['line-chart', 'table', 'heatmap'] as const) {
+    for (const type of ['graph-chart', 'table', 'heatmap'] as const) {
       const view = render(
         <StoreSourceSection panel={makePanel(type, storeModeConfig())} onConfigChange={vi.fn()} />,
       );
@@ -1228,7 +1380,7 @@ describe('불리언 시리즈 안내 (SPEC-CHART-002 M6.2)', () => {
 describe('LineChartSection — 결측 구간 점선', () => {
   it('기본은 꺼짐이며 임계 입력이 숨어 있다', () => {
     render(
-      <LineChartSection panel={makePanel('line-chart', {})} onConfigChange={() => {}} />,
+      <LineChartSection panel={makePanel('graph-chart', {})} onConfigChange={() => {}} />,
     );
     const toggle = screen.getByTestId('line-chart-gap-dash') as HTMLInputElement;
     expect(toggle.checked).toBe(false);
@@ -1239,7 +1391,7 @@ describe('LineChartSection — 결측 구간 점선', () => {
     const patches: Array<Record<string, unknown>> = [];
     render(
       <LineChartSection
-        panel={makePanel('line-chart', {})}
+        panel={makePanel('graph-chart', {})}
         onConfigChange={(p) => patches.push(p)}
       />,
     );
@@ -1251,7 +1403,7 @@ describe('LineChartSection — 결측 구간 점선', () => {
     const patches: Array<Record<string, unknown>> = [];
     render(
       <LineChartSection
-        panel={makePanel('line-chart', { gap_dash_threshold: 3 })}
+        panel={makePanel('graph-chart', { gap_dash_threshold: 3 })}
         onConfigChange={(p) => patches.push(p)}
       />,
     );
@@ -1263,7 +1415,7 @@ describe('LineChartSection — 결측 구간 점선', () => {
     const patches: Array<Record<string, unknown>> = [];
     render(
       <LineChartSection
-        panel={makePanel('line-chart', { gap_dash_threshold: 2 })}
+        panel={makePanel('graph-chart', { gap_dash_threshold: 2 })}
         onConfigChange={(p) => patches.push(p)}
       />,
     );
@@ -1277,7 +1429,7 @@ describe('LineChartSection — 결측 구간 점선', () => {
     const patches: Array<Record<string, unknown>> = [];
     render(
       <LineChartSection
-        panel={makePanel('line-chart', { gap_dash_threshold: 2 })}
+        panel={makePanel('graph-chart', { gap_dash_threshold: 2 })}
         onConfigChange={(p) => patches.push(p)}
       />,
     );
@@ -1287,5 +1439,155 @@ describe('LineChartSection — 결측 구간 점선', () => {
     });
     // 0 은 "끄기" 와 같은 뜻인데 토글은 켜져 있다 — 상태가 모순된다.
     expect(patches.length).toBe(before);
+  });
+});
+
+describe('LineChartSection — 그래프 스타일', () => {
+  it('기본은 라인 — 저장된 패널의 동작', () => {
+    render(<LineChartSection panel={makePanel('graph-chart', {})} onConfigChange={vi.fn()} />);
+    expect((screen.getByTestId('line-chart-graph-style') as HTMLSelectElement).value).toBe('line');
+  });
+
+  it('스타일을 고르면 graph_style 로 저장된다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <LineChartSection panel={makePanel('graph-chart', {})} onConfigChange={onConfigChange} />,
+    );
+    fireEvent.change(screen.getByTestId('line-chart-graph-style'), { target: { value: 'bar' } });
+    expect(onConfigChange).toHaveBeenCalledWith({ graph_style: 'bar' });
+  });
+
+  it('라인에서는 스택킹을 묻지 않는다 — 쌓아도 누적으로 읽히지 않는다', () => {
+    render(<LineChartSection panel={makePanel('graph-chart', {})} onConfigChange={vi.fn()} />);
+    expect(screen.queryByTestId('line-chart-stacked')).toBeNull();
+  });
+
+  it('영역·바에서만 스택킹이 나타난다', () => {
+    for (const style of ['area', 'bar']) {
+      const { unmount } = render(
+        <LineChartSection
+          panel={makePanel('graph-chart', { graph_style: style })}
+          onConfigChange={vi.fn()}
+        />,
+      );
+      expect(screen.getByTestId('line-chart-stacked')).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it('캔들도 스택킹을 묻지 않는다 — 네 값이 한 덩어리다', () => {
+    render(
+      <LineChartSection
+        panel={makePanel('graph-chart', { graph_style: 'candle' })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('line-chart-stacked')).toBeNull();
+  });
+
+  it('스택킹을 끄면 필드를 지운다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <LineChartSection
+        panel={makePanel('graph-chart', { graph_style: 'bar', stacked: true })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('line-chart-stacked'));
+    expect(onConfigChange).toHaveBeenCalledWith({ stacked: undefined });
+  });
+
+  it.each(['line', 'area'])('%s 에서는 곡선·결측 점선을 묻는다', (style) => {
+    render(
+      <LineChartSection
+        panel={makePanel('graph-chart', { graph_style: style })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('line-chart-smooth')).toBeInTheDocument();
+    expect(screen.getByTestId('line-chart-gap-dash')).toBeInTheDocument();
+  });
+
+  it.each(['bar', 'candle'])('%s 에서는 곡선·결측 점선을 묻지 않는다', (style) => {
+    // 구부릴 선이 없고, 막대가 서지 않아 결측이 이미 눈에 보인다 — 골라도 그림이
+    // 바뀌지 않는 설정을 내면 "켰는데 왜 안 되지" 를 찾아 헤매게 된다.
+    render(
+      <LineChartSection
+        panel={makePanel('graph-chart', { graph_style: style })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('line-chart-smooth')).toBeNull();
+    expect(screen.queryByTestId('line-chart-gap-dash')).toBeNull();
+  });
+
+  it('바에서는 저장된 결측 임계값이 있어도 입력·힌트를 내지 않는다', () => {
+    // 스타일을 바꾸며 남은 값이다. 쓰이지 않는 설정을 계속 보여 주면 그림에
+    // 반영되고 있다고 읽힌다.
+    render(
+      <LineChartSection
+        panel={makePanel('graph-chart', { graph_style: 'bar', gap_dash_threshold: 3 })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('line-chart-gap-dash-threshold')).toBeNull();
+    expect(screen.queryByTestId('line-chart-gap-dash-hint')).toBeNull();
+  });
+
+  it('캔들에서는 스타일 옵션이 하나도 뜨지 않는다', () => {
+    render(
+      <LineChartSection
+        panel={makePanel('graph-chart', { graph_style: 'candle' })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    for (const id of ['line-chart-stacked', 'line-chart-smooth', 'line-chart-gap-dash']) {
+      expect(screen.queryByTestId(id)).toBeNull();
+    }
+  });
+});
+
+describe('LineChartSection — 캔들 게이팅', () => {
+  it('채널 모드에서는 캔들 선택지가 비활성이다', () => {
+    render(<LineChartSection panel={makePanel('graph-chart', {})} onConfigChange={vi.fn()} />);
+    const select = screen.getByTestId('line-chart-graph-style') as HTMLSelectElement;
+    const candle = [...select.options].find((o) => o.value === 'candle')!;
+    expect(candle.disabled).toBe(true);
+    // 나머지는 고를 수 있다.
+    for (const v of ['line', 'area', 'bar']) {
+      expect([...select.options].find((o) => o.value === v)!.disabled).toBe(false);
+    }
+  });
+
+  it('채널 모드에서 캔들이 이미 저장돼 있으면 이유를 알린다', () => {
+    render(
+      <LineChartSection
+        panel={makePanel('graph-chart', { graph_style: 'candle' })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('line-chart-candle-unsupported')).toBeInTheDocument();
+  });
+
+  it('시리즈 소스(TSDB)에서는 캔들을 고를 수 있다', () => {
+    render(
+      <LineChartSection
+        panel={makePanel('graph-chart', {
+          data_source: 'tsdb',
+          tsdb_source: {
+            backend: 'influxdb',
+            agent_name: 'ix',
+            series: [{ key: 'cpu', field: 'usage' }],
+            time_window_ms: 3_600_000,
+            interval_ms: 60_000,
+            aggregation: 'average',
+          },
+        })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    const select = screen.getByTestId('line-chart-graph-style') as HTMLSelectElement;
+    expect([...select.options].find((o) => o.value === 'candle')!.disabled).toBe(false);
+    expect(screen.queryByTestId('line-chart-candle-unsupported')).toBeNull();
   });
 });

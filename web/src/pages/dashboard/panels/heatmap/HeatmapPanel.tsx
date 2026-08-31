@@ -22,6 +22,12 @@ import { normalizeStoreSeriesAlias } from '../charts/chartChannelTypes';
 import type { StoreSeriesRef, StoreSourceConfig } from '../charts/chartChannelTypes';
 import { usePanelSeriesData } from '../charts/usePanelSeriesData';
 import { parseHeatmapConfig } from './heatmapConfig';
+// 히트맵에는 값 읽기(툴팁·타일)가 없고 범례 눈금과 등고선 라벨만 있다. 둘 다 눈금자이므로
+// 자릿수 기본값(2)은 걸지 않고, 사용자가 직접 지정했을 때만 따른다.
+import {
+  hasExplicitDecimalPlaces,
+  readDecimalPlaces,
+} from '@/pages/dashboard/panels/charts/decimalPlaces';
 import { joinSensorPoints, resolveSensorSeries } from './heatmapJoin';
 import { heatmapSensorId, sensorSeriesLabel } from './sensorIdentity';
 import { DEFAULT_COLOR_TABLE, interpolateIDW } from './idw';
@@ -75,6 +81,9 @@ export default function HeatmapPanel({
   const { t } = useTranslation();
   const showTitle = usePanelTitleVisible();
   const cfg = parseHeatmapConfig(config);
+  const explicitDecimals = hasExplicitDecimalPlaces(config)
+    ? readDecimalPlaces(config)
+    : undefined;
 
   // 배치 편집 모드(런타임 상태, 비영속 — REQ-03/T7). onConfigChange 가 있을 때만 진입 가능.
   const [editing, setEditing] = useState(false);
@@ -375,6 +384,7 @@ export default function HeatmapPanel({
               gridH={grid}
               bounds={bounds}
               contour={cfg.contour}
+              decimals={explicitDecimals}
             />
           )}
           {placementActive && (
@@ -427,6 +437,7 @@ export default function HeatmapPanel({
               // 센서 마커 배치와 동일한 게이팅이라 뷰어 동작은 그대로다.
               draggable={placementActive && canEdit}
               onOffsetChange={handleLegendOffsetChange}
+              decimals={explicitDecimals}
             />
           )}
         </div>

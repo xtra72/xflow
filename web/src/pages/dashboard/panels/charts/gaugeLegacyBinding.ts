@@ -21,11 +21,13 @@ import type {
   ChartDataSourceKind,
   SeriesReduceFunc,
   StoreSourceConfig,
+  SysmetricsSourceConfig,
   TsdbSourceConfig,
 } from './chartChannelTypes';
 import { DEFAULT_STORE_SOURCE_WINDOW } from './chartChannelTypes';
 import {
   isStoreSourceActive,
+  isSysmetricsSourceActive,
   isTsdbSourceActive,
   resolvePanelSourceBinding,
 } from './panelDataSource';
@@ -92,6 +94,13 @@ export interface GaugeValueSourceFlags {
    * 남아 있는 store 설정 때문에 활성으로 잘못 판정된다.
    */
   tsdbSourceActive: boolean;
+  /**
+   * `config.sysmetrics_source` 가 실제로 데이터를 낼 수 있는 상태인가.
+   *
+   * store/tsdb 와 같은 이유로 **별도 항**이다 — 세 블록은 공존할 수 있고, 어느 쪽이
+   * 값을 내는지는 `dataSource` 가 정한다.
+   */
+  sysmetricsSourceActive: boolean;
   /** `config.series_reduce` 가 지정되어 있는가(값이 아니라 **유무**가 스위치다). */
   hasSeriesReduce: boolean;
 }
@@ -123,6 +132,9 @@ export function gaugeValueSourceFlags(
     tsdbSourceActive: isTsdbSourceActive(
       config.tsdb_source as TsdbSourceConfig | undefined,
     ),
+    sysmetricsSourceActive: isSysmetricsSourceActive(
+      config.sysmetrics_source as SysmetricsSourceConfig | undefined,
+    ),
     hasSeriesReduce: (config.series_reduce as SeriesReduceFunc | undefined) !== undefined,
   };
 }
@@ -136,6 +148,9 @@ export function gaugeValueSourceFlags(
  * | `'store'` / `'tsdb'` | 비활성 | — | `legacy` |
  * | `'store'` / `'tsdb'` | 활성 | 부재 | `legacy` |
  * | `'store'` / `'tsdb'` | 활성 | 있음 | `store-source` |
+ *
+ * `'sysmetrics'` 행은 `'store'` / `'tsdb'` 와 **완전히 같은 모양**이다 — 게이지 고유의
+ * 규칙은 `series_reduce` 논리곱 하나뿐이고 그것은 소스 종류와 직교한다.
  *
  * 세 조건의 논리곱이며, **신규 경로가 실제로 값을 낼 수 있을 때만** 레거시를
  * 밀어낸다(§2.9 [S1] 게이지 추가 조건 / §4.5). `data_source` 가 채널이 아니라는 것은
@@ -177,6 +192,8 @@ function seriesSourceActive(
       return flags.storeSourceActive;
     case 'tsdb':
       return flags.tsdbSourceActive;
+    case 'sysmetrics':
+      return flags.sysmetricsSourceActive;
   }
 }
 

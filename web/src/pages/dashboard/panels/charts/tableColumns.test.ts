@@ -95,8 +95,12 @@ describe('uniqueTableColumnValues — 필터 드롭다운 값 목록', () => {
     expect(uniqueTableColumnValues(rows, COLS[2]!)).toEqual(['alpha', 'bravo']);
   });
 
-  it('표시 문자열 기준이다 (number 열은 포맷된 값)', () => {
-    expect(uniqueTableColumnValues(rows, COLS[1]!)).toEqual(['10', '25', '30']);
+  it('표시 문자열 기준이다 (number 열은 기본 2자리로 포맷된 값)', () => {
+    expect(uniqueTableColumnValues(rows, COLS[1]!)).toEqual(['10.00', '25.00', '30.00']);
+  });
+
+  it('자릿수를 지정하면 목록도 그 자릿수로 만들어진다 (보이는 값 = 고르는 값)', () => {
+    expect(uniqueTableColumnValues(rows, COLS[1]!, 0)).toEqual(['10', '25', '30']);
   });
 
   it('엔트리가 없으면 빈 목록', () => {
@@ -142,11 +146,26 @@ describe('applyTableColumnFilters — 열 필터', () => {
   });
 
   it('여러 열 필터도 AND 로 결합된다', () => {
-    const out = applyTableColumnFilters(rows, COLS, {
-      name: valueFilter('alpha', 'Alpha-2'),
-      value: valueFilter('30'),
-    });
+    // 자릿수를 0 으로 두어 값 문자열을 정수로 고정한다 — 이 테스트의 관심사는 결합
+    // 규칙이지 포맷이 아니다. 표시·목록·판정이 같은 자릿수를 쓰는지는 아래 테스트가 본다.
+    const out = applyTableColumnFilters(
+      rows,
+      COLS,
+      {
+        name: valueFilter('alpha', 'Alpha-2'),
+        value: valueFilter('30'),
+      },
+      0,
+    );
     expect(names(out)).toEqual(['Alpha-2']);
+  });
+
+  it('값 선택은 표시 자릿수와 같은 문자열로 판정된다', () => {
+    // 기본 자릿수(2)에서는 셀이 '30.00' 이므로 '30' 은 걸리지 않고 '30.00' 이 걸린다.
+    expect(names(applyTableColumnFilters(rows, COLS, { value: valueFilter('30') }))).toEqual([]);
+    expect(names(applyTableColumnFilters(rows, COLS, { value: valueFilter('30.00') }))).toEqual([
+      'Alpha-2',
+    ]);
   });
 
   it('표시 문자열 기준으로 거른다 (datetime 열을 포맷된 값으로 검색)', () => {
@@ -273,9 +292,12 @@ describe('범위 필터', () => {
   });
 
   it('범위와 값 선택은 AND 로 결합된다', () => {
-    const out = applyTableColumnFilters(rows, [valueCol], {
-      value: { text: '', values: new Set(['30']), min: 20 },
-    });
+    const out = applyTableColumnFilters(
+      rows,
+      [valueCol],
+      { value: { text: '', values: new Set(['30']), min: 20 } },
+      0,
+    );
     expect(values(out)).toEqual([30]);
   });
 });

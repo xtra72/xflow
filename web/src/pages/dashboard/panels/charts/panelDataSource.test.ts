@@ -243,10 +243,11 @@ describe('활성 조건 술어', () => {
 // ---- E. 능력 표 (AC-37) ----
 
 describe('panelSourceCapabilities — 능력 표 (§2.13)', () => {
-  it('능력 표가 3종 전부를 갖는다', () => {
+  it('능력 표가 소스 종류 전부를 갖는다', () => {
     expect(Object.keys(PANEL_SOURCE_CAPABILITIES).sort()).toEqual([
       'channel',
       'store',
+      'sysmetrics',
       'tsdb',
     ]);
     expect(panelSourceCapabilities('channel')).toBe(PANEL_SOURCE_CAPABILITIES.channel);
@@ -254,9 +255,13 @@ describe('panelSourceCapabilities — 능력 표 (§2.13)', () => {
     expect(panelSourceCapabilities('tsdb')).toBe(PANEL_SOURCE_CAPABILITIES.tsdb);
   });
 
-  it('store 는 fill:null/zero/previous 를 지원하지 않는다', () => {
-    expect(panelSourceCapabilities('store').fillStrategies).toBe(false);
+  it('store 도 fill:null/zero/previous 를 지원한다 (서버가 빈 버킷을 채운다)', () => {
+    expect(panelSourceCapabilities('store').fillStrategies).toBe(true);
     expect(panelSourceCapabilities('tsdb').fillStrategies).toBe(true);
+  });
+
+  it('시스템 지표는 여전히 fill 을 지원하지 않는다', () => {
+    expect(panelSourceCapabilities('sysmetrics').fillStrategies).toBe(false);
   });
 
   it('tsdb 는 fill:avg 를 지원하지 않는다', () => {
@@ -403,6 +408,152 @@ describe('buildPreviewSeries — TSDB 등록 시리즈로 구성', () => {
         time_window_ms: 60_000,
         interval_ms: 10_000,
         aggregation: 'average',
+      },
+    });
+    expect(r).toHaveLength(1);
+    expect(r[0]!.key).toBe('sample');
+  });
+});
+
+describe('sysmetrics 소스 — 판정 계약', () => {
+  const active = {
+    data_source: 'sysmetrics',
+    sysmetrics_source: {
+      agent_id: 'a1',
+      agent_name: 'host',
+      series: [{ key: 'cpu.usage_percent' }],
+    },
+  };
+
+  it('agent_id 와 값이 둘 다 있으면 활성이다', () => {
+    expect(resolvePanelSourceBinding(active)).toEqual({ kind: 'sysmetrics', active: true });
+  });
+
+  it('agent_id 가 없으면 비활성이다 (agent_name 만으로는 활성이 아니다)', () => {
+    expect(
+      resolvePanelSourceBinding({
+        data_source: 'sysmetrics',
+        sysmetrics_source: { agent_name: 'host', series: [{ key: 'cpu.usage_percent' }] },
+      }),
+    ).toEqual({ kind: 'sysmetrics', active: false });
+  });
+
+  it('값이 하나도 없으면 비활성이다', () => {
+    expect(
+      resolvePanelSourceBinding({
+        data_source: 'sysmetrics',
+        sysmetrics_source: { agent_id: 'a1', agent_name: 'host', series: [] },
+      }),
+    ).toEqual({ kind: 'sysmetrics', active: false });
+  });
+
+  it('대상 없는 시리즈(종합)도 활성이다', () => {
+    expect(
+      resolvePanelSourceBinding({
+        ...active,
+        sysmetrics_source: {
+          ...active.sysmetrics_source,
+          series: [{ key: 'network.bytes_recv' }],
+        },
+      }).active,
+    ).toBe(true);
+  });
+
+  it('소스 블록이 없어도 channel 로 조용히 폴백하지 않는다', () => {
+    expect(resolvePanelSourceBinding({ data_source: 'sysmetrics' })).toEqual({
+      kind: 'sysmetrics',
+      active: false,
+    });
+  });
+
+  it('능력 표는 집계·fill 없이 에이전트 필수로 선언된다', () => {
+    const caps = panelSourceCapabilities('sysmetrics');
+    // 폴링 주기가 곧 표본 간격이라 버킷 집계 축이 없다.
+    expect(caps.aggregationBasic).toBe(false);
+    expect(caps.aggregationFirstLast).toBe(false);
+    // 표본이 없는 구간에는 점 자체가 없으므로 채울 대상이 없다.
+    expect(caps.fillStrategies).toBe(false);
+    // 어느 호스트의 지표인지 알아야 한다.
+    expect(caps.agentSelection).toBe(true);
+    expect(caps.agentRequired).toBe(true);
+    // 구간 대표값은 소스와 직교한다 — 통계·게이지가 쓴다.
+    expect(caps.seriesReduce).toBe(true);
+  });
+});
+
+describe('buildPreviewSeries — sysmetrics 등록 값으로 구성', () => {
+  const base = {
+    dataSource: 'sysmetrics',
+    storeSource: undefined,
+    channels: [],
+    channelName: '',
+    globalSmooth: false,
+    strokeDasharray: { solid: '', dashed: '6 4', dotted: '2 3' } as Record<
+      'solid' | 'dashed' | 'dotted',
+      string
+    >,
+    palette: ['#p0', '#p1', '#p2'],
+    sampleName: 'sample',
+    channelFallbackName: (i: number) => `ch${i}`,
+  };
+
+  it('고른 시리즈가 그대로 미리보기 줄이 된다 (설정과 대시보드가 갈리지 않는다)', () => {
+    const r = buildPreviewSeries({
+      ...base,
+      sysmetricsSource: {
+        agent_id: 'a1',
+        agent_name: 'host',
+        time_window_ms: 60 * 60_000,
+        interval_ms: 60_000,
+        aggregation: 'average' as const,
+        series: [
+          { key: 'network.bytes_recv', target: 'en0' },
+          { key: 'network.bytes_recv', target: 'en1' },
+        ],
+      },
+    });
+    expect(r.map((x) => x.key)).toEqual([
+      'bytes_recv · {category=network, interface=en0}',
+      'bytes_recv · {category=network, interface=en1}',
+    ]);
+    expect(r.map((x) => x.color)).toEqual(['#p0', '#p1']);
+  });
+
+  it('항목 색·선 모양을 그대로 반영한다', () => {
+    const r = buildPreviewSeries({
+      ...base,
+      sysmetricsSource: {
+        agent_id: 'a1',
+        agent_name: 'host',
+        time_window_ms: 60 * 60_000,
+        interval_ms: 60_000,
+        aggregation: 'average' as const,
+        series: [
+          { key: 'cpu.usage_percent', color: '#abc', stroke_style: 'dashed', stroke_width: 3 },
+        ],
+      },
+    });
+    expect(r).toEqual([
+      {
+        key: 'usage_percent · {category=cpu}',
+        color: '#abc',
+        smooth: false,
+        strokeWidth: 3,
+        strokeDasharray: '6 4',
+      },
+    ]);
+  });
+
+  it('고른 값이 없으면 sample 한 줄로 폴백한다 (빈 차트는 고장처럼 보인다)', () => {
+    const r = buildPreviewSeries({
+      ...base,
+      sysmetricsSource: {
+        agent_id: 'a1',
+        agent_name: 'host',
+        series: [],
+        time_window_ms: 60 * 60_000,
+        interval_ms: 60_000,
+        aggregation: 'average' as const,
       },
     });
     expect(r).toHaveLength(1);

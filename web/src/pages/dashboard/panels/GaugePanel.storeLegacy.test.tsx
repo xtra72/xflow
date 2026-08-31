@@ -121,7 +121,7 @@ describe('GaugePanel store 레거시 폴링 특성화 (SPEC-CHART-002 M2)', () =
       mode: 'latest',
       namespace: 'default',
     });
-    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(screen.getByText('42.00')).toBeInTheDocument();
     expect(screen.getByText('%')).toBeInTheDocument();
   });
 
@@ -204,8 +204,8 @@ describe('GaugePanel store 레거시 폴링 특성화 (SPEC-CHART-002 M2)', () =
 
     expect(mockPost.fn).toHaveBeenCalled();
     expect(screen.getByText('--')).toBeInTheDocument();
-    expect(screen.queryByText('42')).toBeNull();
-    expect(screen.queryByText('77')).toBeNull(); // static 폴백 없음
+    expect(screen.queryByText('42.00')).toBeNull();
+    expect(screen.queryByText('77.00')).toBeNull(); // static 폴백 없음
   });
 
   it('CH-14: 에이전트 이름을 해석할 수 없으면 폴링하지 않고 -- 를 표시한다', async () => {
@@ -223,7 +223,7 @@ describe('GaugePanel store 레거시 폴링 특성화 (SPEC-CHART-002 M2)', () =
 
     expect(mockPost.fn).not.toHaveBeenCalled();
     expect(screen.getByText('--')).toBeInTheDocument();
-    expect(screen.queryByText('77')).toBeNull();
+    expect(screen.queryByText('77.00')).toBeNull();
   });
 
   it('CH-18: 폴링이 실패해도 마지막 성공 값을 유지한다', async () => {
@@ -237,19 +237,19 @@ describe('GaugePanel store 레거시 폴링 특성화 (SPEC-CHART-002 M2)', () =
       dataSources: [F2_STORE_SOURCE],
     });
     await flush();
-    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(screen.getByText('42.00')).toBeInTheDocument();
 
     // 2회차 실패(네트워크 오류) → catch 로 삼키고 이전 값 유지.
     mockPost.fn.mockRejectedValue(new Error('network down'));
     await advance(5_000);
     expect(mockPost.fn).toHaveBeenCalledTimes(2);
-    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(screen.getByText('42.00')).toBeInTheDocument();
     expect(screen.queryByText('--')).toBeNull();
 
     // 3회차도 실패 — 여전히 유지된다.
     await advance(5_000);
     expect(mockPost.fn).toHaveBeenCalledTimes(3);
-    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(screen.getByText('42.00')).toBeInTheDocument();
   });
 
   it('CH-18: 응답에 entries 가 비어 있어도 이전 값을 유지한다', async () => {
@@ -263,12 +263,12 @@ describe('GaugePanel store 레거시 폴링 특성화 (SPEC-CHART-002 M2)', () =
       dataSources: [F2_STORE_SOURCE],
     });
     await flush();
-    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(screen.getByText('42.00')).toBeInTheDocument();
 
     // 성공했지만 entries 0개 → setValue 를 호출하지 않아 이전 값이 남는다.
     mockPost.fn.mockResolvedValue({ entries: [] });
     await advance(5_000);
-    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(screen.getByText('42.00')).toBeInTheDocument();
   });
 
   it('CH-18: 성공 폴링이 비수치 값을 주면 이전 값이 지워진다(실패와 구분된다)', async () => {
@@ -282,13 +282,13 @@ describe('GaugePanel store 레거시 폴링 특성화 (SPEC-CHART-002 M2)', () =
       dataSources: [F2_STORE_SOURCE],
     });
     await flush();
-    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(screen.getByText('42.00')).toBeInTheDocument();
 
     // "실패 → 유지" 와 달리 "성공 + 비수치 → undefined" 로 값이 사라진다.
     mockPost.fn.mockResolvedValue({ entries: [{ value: 'abc', timestamp: 2 }] });
     await advance(5_000);
     expect(screen.getByText('--')).toBeInTheDocument();
-    expect(screen.queryByText('42')).toBeNull();
+    expect(screen.queryByText('42.00')).toBeNull();
   });
 
   it('CH-18: 언마운트하면 인터벌이 정리되어 추가 폴링이 없다', async () => {

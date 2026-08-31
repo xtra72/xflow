@@ -18,8 +18,19 @@ async function flushMicrotasks(): Promise<void> {
   });
 }
 
+/** 빈 매트릭스 — "조회가 일어났는가" 만 볼 때 쓴다. */
+const emptyMatrix: SeriesMatrix = { columns: [], rows: [] };
+
 vi.mock('@/hooks/useAgent', () => ({
-  useAgents: () => ({ data: { data: [{ id: 'store-1', name: 'store-1', type: 'store' }] } }),
+  // sysmetrics 경로도 같은 Store 훅을 타므로 id → 이름 해석에 에이전트가 있어야 한다.
+  useAgents: () => ({
+    data: {
+      data: [
+        { id: 'store-1', name: 'store-1', type: 'store' },
+        { id: 'sys-1', name: 'host', type: 'sysmetrics' },
+      ],
+    },
+  }),
 }));
 
 import type { SeriesMatrix } from '@/services/api/seriesDataSource';
@@ -429,5 +440,64 @@ describe('usePanelSeriesData — 상태 4종 (§2.14)', () => {
     expect(result.current.state).toBe('error');
     expect(result.current.backendMismatch).toBe(true);
     expect(tsdbFn).not.toHaveBeenCalled();
+  });
+});
+
+describe('usePanelSeriesData — sysmetrics 분기 배선', () => {
+  const sysConfig = {
+    data_source: 'sysmetrics',
+    sysmetrics_source: {
+      agent_id: 'sys-1',
+      agent_name: 'host',
+      series: [{ key: 'cpu.usage_percent' }],
+      time_window_ms: 60 * 60_000,
+      interval_ms: 60_000,
+      aggregation: 'average',
+    },
+  };
+
+  it('sysmetrics 활성 config 는 이력 조회 함수로 라우팅된다', () => {
+    // store 조회 함수는 부르지 않아야 한다 — 같은 Store 훅을 타지만 매트릭스 출처가 다르다.
+    const sysFn = vi.fn(async () => emptyMatrix);
+    const storeFn = vi.fn(async () => emptyMatrix);
+    renderHook(() =>
+      usePanelSeriesData(sysConfig, {
+        sysmetricsOptions: { queryMatrixFn: sysFn as unknown as QueryMatrixFn },
+        storeOptions: { queryMatrixFn: storeFn as unknown as QueryMatrixFn },
+      }),
+    );
+
+    expect(sysFn).toHaveBeenCalled();
+    expect(storeFn).not.toHaveBeenCalled();
+    expect(isPanelSeriesSource(resolvePanelSourceBinding(sysConfig))).toBe(true);
+  });
+
+  it('sysmetrics 비활성 config 는 idle 이며 조회를 부르지 않는다', () => {
+    const sysFn = vi.fn();
+    const { result } = renderHook(() =>
+      usePanelSeriesData(
+        { data_source: 'sysmetrics', sysmetrics_source: { agent_name: 'host', series: [] } },
+        { sysmetricsOptions: { queryMatrixFn: sysFn as unknown as QueryMatrixFn } },
+      ),
+    );
+
+    expect(result.current.status).toBe('idle');
+    expect(result.current.seriesNames).toEqual([]);
+    expect(sysFn).not.toHaveBeenCalled();
+  });
+
+  it('소스를 channel → sysmetrics 로 바꿔도 훅 순서가 깨지지 않는다', () => {
+    const sysFn = vi.fn(async () => emptyMatrix);
+    const { result, rerender } = renderHook(
+      (props: { config: Record<string, unknown> }) =>
+        usePanelSeriesData(props.config, {
+          sysmetricsOptions: { queryMatrixFn: sysFn as unknown as QueryMatrixFn },
+        }),
+      { initialProps: { config: { data_source: 'channel' } as Record<string, unknown> } },
+    );
+    expect(result.current.status).toBe('idle');
+
+    expect(() => rerender({ config: sysConfig })).not.toThrow();
+    expect(sysFn).toHaveBeenCalled();
   });
 });

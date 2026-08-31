@@ -60,6 +60,7 @@ import type { SensorPosition } from './panels/heatmap/heatmapConfig';
 import { migrateSensorPositions } from './panels/heatmap/sensorIdentity';
 import { SeriesDetailEditor, StoreSourceSection } from './ChartPanelSections';
 import { resolvePanelSourceBinding } from './panels/charts/panelDataSource';
+import type { ChartDataSourceKind } from './panels/charts/chartChannelTypes';
 import {
   loadPanelStoreTablePrefs,
   savePanelStoreTablePrefs,
@@ -86,10 +87,8 @@ export function PanelSettingsDataSource({
   // 바인딩 모드의 단일 소스 오브 트루스는 `config.data_source` 다(@spec SPEC-TSDB-002 §2.11).
   // 초기값은 판정 계약에서 파생하고(인식 불가 값은 channel 로 접힌다), 이후 StoreSourceSection
   // 의 콜백으로 동기화한다.
-  const initialMode: 'channel' | 'store' | 'tsdb' = resolvePanelSourceBinding(
-    panel.config ?? {},
-  ).kind;
-  const [mode, setMode] = useState<'channel' | 'store' | 'tsdb'>(initialMode);
+  const initialMode: ChartDataSourceKind = resolvePanelSourceBinding(panel.config ?? {}).kind;
+  const [mode, setMode] = useState<ChartDataSourceKind>(initialMode);
 
   return (
     <div className="space-y-3" data-testid="panel-datasource">
@@ -496,7 +495,7 @@ function PanelStoreSelectTable({
   // 선택 상한 초과 안내(AC-15). 상한 도달 상태에서 추가 시도 시 표시한다.
   const [overLimitNotice, setOverLimitNotice] = useState(false);
 
-  const isLineChart = panel.type === 'line-chart';
+  const isLineChart = panel.type === 'graph-chart';
 
   // 인라인 상세 편집 → 해당 시리즈(store_source.series[idx])에 patch 를 draft 반영한다.
   // 이름(alias)/색상/선 스타일 → StoreSeriesRef. keys 모드는 명시 series[] 에 직접 영속되고,

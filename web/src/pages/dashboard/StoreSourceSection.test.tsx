@@ -194,10 +194,77 @@ describe('Store 조회 설정 정보 "i" 말풍선 (SPEC-PANEL-SETTINGS-001)', (
     return { data_source: 'store', store_source };
   }
 
-  it('시간 윈도우/집계는 여전히 정보 표시 전용이다(인라인 편집 없음)', () => {
+  it('시간 윈도우는 여전히 정보 표시 전용이다(인라인 편집 없음)', () => {
     render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
     expect(screen.queryByTestId('chart-store-time-window')).toBeNull();
-    expect(screen.queryByTestId('chart-store-aggregation')).toBeNull();
+  });
+
+  it('집계 함수는 저장된 값을 선택한 셀렉트로 편집한다', () => {
+    // 종전에는 config 에만 있고 조작 통로가 없어 `average` 로 고정이었다.
+    const onConfigChange = vi.fn();
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={onConfigChange} />);
+    const sel = screen.getByTestId('chart-store-aggregation') as HTMLSelectElement;
+    expect(sel.value).toBe('last');
+
+    fireEvent.change(sel, { target: { value: 'min' } });
+    const patch = onConfigChange.mock.calls.at(-1)?.[0] as {
+      store_source: StoreSourceConfig;
+    };
+    expect(patch.store_source.aggregation).toBe('min');
+  });
+
+  // ---- 빈 버킷 채우기 (Store 도 서버가 계산한다) ----
+
+  it('채우기 셀렉트가 활성이고 고른 전략이 저장된다', () => {
+    // 종전에는 "Store 백엔드가 지원하지 않는다" 사유와 함께 통째로 비활성이었다.
+    const onConfigChange = vi.fn();
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={onConfigChange} />);
+    const sel = screen.getByTestId('chart-store-fill') as HTMLSelectElement;
+    expect(sel.disabled).toBe(false);
+
+    fireEvent.change(sel, { target: { value: 'zero' } });
+    const patch = onConfigChange.mock.calls.at(-1)?.[0] as { store_source: StoreSourceConfig };
+    expect(patch.store_source.fill).toBe('zero');
+  });
+
+  it('채우지 않음을 고르면 config 에서 지운다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <StoreSourceSection
+        panel={makePanel({
+          data_source: 'store',
+          store_source: { ...(infoConfig().store_source as StoreSourceConfig), fill: 'zero' },
+        })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    fireEvent.change(screen.getByTestId('chart-store-fill'), { target: { value: '' } });
+    const patch = onConfigChange.mock.calls.at(-1)?.[0] as { store_source: StoreSourceConfig };
+    expect(patch.store_source.fill).toBeUndefined();
+  });
+
+  it('avg 선택지는 남기되 비활성이다 — 없애면 "왜 없지" 가 된다', () => {
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
+    const avg = screen.getByTestId('chart-store-fill-avg') as HTMLOptionElement;
+    expect(avg.disabled).toBe(true);
+  });
+
+  it('사용 기간 제한은 직전값 사용을 골랐을 때만 나온다', () => {
+    const { rerender } = render(
+      <StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />,
+    );
+    expect(screen.queryByTestId('chart-store-fill-prev-max')).toBeNull();
+
+    rerender(
+      <StoreSourceSection
+        panel={makePanel({
+          data_source: 'store',
+          store_source: { ...(infoConfig().store_source as StoreSourceConfig), fill: 'previous' },
+        })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('chart-store-fill-prev-max')).toBeInTheDocument();
   });
 
   // ---- 인터벌 편집 (Store 도 TSDB 와 같은 조작) ----

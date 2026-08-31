@@ -138,7 +138,7 @@ export async function execAgent(
  * 따라서 이 목록을 고칠 때는 반드시 서버 화이트리스트를 함께 고쳐야 한다.
  *
  * 목록이 서버와 어긋나는 것을 조용히 넘기지 않도록 agentService.query.test.ts 가
- * 이 배열을 10개 이름으로 고정(pin)한다.
+ * 이 배열을 12개 이름으로 고정(pin)한다.
  */
 export const AGENT_QUERY_COMMANDS = [
   'list_devices',
@@ -148,9 +148,13 @@ export const AGENT_QUERY_COMMANDS = [
   'list_groups',
   'list_gateways',
   'list_connections',
+  'list_models',
   'get_status',
   'get_map',
   'get_device_status',
+  // sysmetrics 에이전트의 표본 이력 조회. 메모리 버퍼를 읽기만 하며 상태를 바꾸지
+  // 않는다 — 대시보드 차트 패널이 이 커맨드로 시계열을 가져온다.
+  'get_history',
 ] as const;
 
 /** queryAgent 가 허용하는 커맨드 이름(위 목록에서 파생). */

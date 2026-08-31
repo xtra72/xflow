@@ -29,6 +29,9 @@ import { applyMultiOutputLimit } from './multiOutputLimit';
 import { useChartChannel } from './useChartChannel';
 import { type StoreSeriesStyle } from './useStoreChartData';
 import { resolvePanelSourceBinding } from './panelDataSource';
+// 값 표기 자릿수는 차트 계열 공용 규칙을 따른다.
+import { readDecimalPlaces } from './decimalPlaces';
+import { formatValueWithUnit } from './unitOptions';
 import { isPanelSeriesSource, usePanelSeriesData } from './usePanelSeriesData';
 import { usePanelTitleVisible } from '../../panelChromeContext';
 import { useTranslation } from '@/lib/i18n';
@@ -85,6 +88,10 @@ export default function PieChartPanel({ panelId: _panelId, title, config }: PieC
   const { t } = useTranslation();
   const showTitle = usePanelTitleVisible();
   const cfg = parseConfig(config);
+  const decimals = readDecimalPlaces(config);
+  // 조각 라벨은 전체 대비 비중(%)이라 단위와 축이 다르다 — 단위는 툴팁의 실제 값에만
+  // 붙인다. 두 자리에 다 붙이면 `35%` 라는 비중 옆에 `12.3kW` 가 같은 뜻처럼 보인다.
+  const unit = config.unit as string | undefined;
   // SPEC-WEB-005: data_source 에 따라 Store 소스 또는 채널 소스를 사용한다(공존).
   // SPEC-TSDB-002 §2.3 [U3]: 소스 판정은 `panelDataSource` 계약이 소유한다. 패널은
   // `data_source` 를 직접 비교하지 않는다 — 소스 종류가 늘어도 이 지점이 종류만큼
@@ -152,7 +159,14 @@ export default function PieChartPanel({ panelId: _panelId, title, config }: PieC
       cfg.agg_func ?? 'sum',
     );
     return {
-      slices: out.map((r) => ({ name: r.label, value: r.value })),
+      // 조각 라벨이 시리즈 표시 이름이면(Store 계열 소스의 기본) 그 시리즈에 고른 색을
+      // 쓴다. 색을 고르지 않은 조각은 `fill` 이 undefined 로 남아 종전 팔레트 순환을
+      // 그대로 따른다(CH-09).
+      slices: out.map((r) => ({
+        name: r.label,
+        value: r.value,
+        fill: seriesStyles.get(r.label)?.color,
+      })),
       truncated: 0,
       negativeOmitted: 0,
       reduce: false,
@@ -207,17 +221,27 @@ export default function PieChartPanel({ panelId: _panelId, title, config }: PieC
               isAnimationActive={false}
             >
               {/*
-                레거시 경로는 기존 PIE_COLORS 순환 배정을 그대로 쓴다(CH-09).
-                다중 출력 경로에서만 시리즈 색(미지정 시 팔레트)으로 대체한다.
+                조각 색은 **그 조각에 색이 있으면** 그 색으로, 없으면 종전 PIE_COLORS
+                순환 배정으로 그린다(CH-09). 다중 출력 경로는 언제나 색이 실리므로
+                종전과 같고, 카테고리 경로는 시리즈에 고른 색만 반영된다.
               */}
               {chartData.map((slice, i) => (
-                <Cell
-                  key={i}
-                  fill={derived.reduce ? slice.fill : PIE_COLORS[i % PIE_COLORS.length]}
-                />
+                <Cell key={i} fill={slice.fill ?? PIE_COLORS[i % PIE_COLORS.length]} />
               ))}
             </Pie>
-            <Tooltip contentStyle={{ fontSize: '0.75rem' }} />
+            {/*
+              조각 라벨(`show_percentage`)은 **전체 대비 비중**이라 이 설정과 다른 축이다.
+              비중까지 기본 2자리로 바꾸면 `45%` 가 `45.00%` 가 되어 읽기만 나빠진다.
+              자릿수는 값 툴팁에만 적용한다 — 종전에는 포맷터가 없어 원값이 그대로 나왔다.
+            */}
+            <Tooltip
+              contentStyle={{ fontSize: '0.75rem' }}
+              formatter={(v: unknown) =>
+                typeof v === 'number'
+                  ? formatValueWithUnit(v, decimals, unit)
+                  : (v as React.ReactNode)
+              }
+            />
             {cfg.show_legend && <Legend wrapperStyle={{ fontSize: '0.75rem' }} />}
           </PieChart>
         </ResponsiveContainer>

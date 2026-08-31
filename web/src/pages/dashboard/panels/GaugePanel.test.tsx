@@ -71,7 +71,7 @@ describe('GaugePanel', () => {
   describe('chart-emitter 바인딩 없음', () => {
     it('config.value 가 그대로 표시됨 (simple 게이지)', () => {
       renderPanel({ gaugeType: 'simple', value: 42, min: 0, max: 100, unit: '%' });
-      expect(screen.getByText('42')).toBeInTheDocument();
+      expect(screen.getByText('42.00')).toBeInTheDocument();
       expect(screen.getByText('%')).toBeInTheDocument();
     });
 
@@ -104,7 +104,7 @@ describe('GaugePanel', () => {
         { timestamp: 2000, value: 27 },
       ];
       renderPanel(baseConfig);
-      expect(screen.getByText('27')).toBeInTheDocument();
+      expect(screen.getByText('27.00')).toBeInTheDocument();
       expect(screen.getByText('°C')).toBeInTheDocument();
     });
 
@@ -128,7 +128,7 @@ describe('GaugePanel', () => {
           },
         ],
       });
-      expect(screen.getByText('42')).toBeInTheDocument();
+      expect(screen.getByText('42.00')).toBeInTheDocument();
     });
 
     it('entries 비어있으면 값 -- 로 표시 (바늘 없음)', () => {
@@ -199,7 +199,7 @@ describe('GaugePanel', () => {
     });
   });
 
-  describe('showThresholdZones (옵션 — 파이 sector 영역)', () => {
+  describe('showThresholdZones (옵션 — 임계 구간 표시)', () => {
     it('미설정 + thresholds 존재: 기본 ON 으로 sector 렌더', () => {
       const { container } = renderPanel({
         gaugeType: 'needle',
@@ -242,6 +242,8 @@ describe('GaugePanel', () => {
           { name: '위험', from: 80, to: 100, color: '#ef4444' },
         ],
       });
+      // 바늘은 **구간 방식**이라 값과 무관하게 세 구간이 모두 채워진다
+      // (값은 니들이 가리킨다). 진행 방식인 도넛·반원·세로 바와는 다르다.
       expect(container.querySelector('path[fill="#10b981"]')).not.toBeNull();
       expect(container.querySelector('path[fill="#f59e0b"]')).not.toBeNull();
       expect(container.querySelector('path[fill="#ef4444"]')).not.toBeNull();
@@ -296,7 +298,7 @@ describe('GaugePanel 레거시 바인딩 특성화 (SPEC-CHART-002 M2)', () => {
 
     // GaugePanel 에는 resource 를 읽는 경로가 없다(pickChartEmitterSource /
     // pickStoreSource 뿐). 따라서 hasBinding=false → static config.value 가 그대로 표시된다.
-    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(screen.getByText('42.00')).toBeInTheDocument();
     expect(screen.getByText('%')).toBeInTheDocument();
     expect(screen.queryByText('--')).toBeNull();
     // 채널 구독도, store 폴링도 일어나지 않는다.
@@ -316,7 +318,7 @@ describe('GaugePanel 레거시 바인딩 특성화 (SPEC-CHART-002 M2)', () => {
       dataSources: [{ sourceType: 'flow', flowId: 'f1', dataField: 'x' }],
     });
 
-    expect(screen.getByText('63')).toBeInTheDocument();
+    expect(screen.getByText('63.00')).toBeInTheDocument();
     expect(screen.queryByText('--')).toBeNull();
     expect(mockChannel.lastCalledWith).toBeUndefined();
     expect(mockPost.fn).not.toHaveBeenCalled();
@@ -338,7 +340,7 @@ describe('GaugePanel 레거시 바인딩 특성화 (SPEC-CHART-002 M2)', () => {
       ],
     });
     // 마지막 entry 의 labels.temp = '42' (문자열도 toNumber 로 변환된다).
-    expect(screen.getByText('42')).toBeInTheDocument();
+    expect(screen.getByText('42.00')).toBeInTheDocument();
     expect(mockChannel.lastCalledWith).toBe('ch1');
     dot.unmount();
 
@@ -351,7 +353,7 @@ describe('GaugePanel 레거시 바인딩 특성화 (SPEC-CHART-002 M2)', () => {
       max: 100,
       dataSources: [{ sourceType: 'chart-emitter', channelName: 'ch1', displayField: '' }],
     });
-    expect(screen.getByText('37')).toBeInTheDocument();
+    expect(screen.getByText('37.00')).toBeInTheDocument();
     empty.unmount();
 
     // displayField 미지정도 'value' 로 폴백한다.
@@ -363,7 +365,7 @@ describe('GaugePanel 레거시 바인딩 특성화 (SPEC-CHART-002 M2)', () => {
       max: 100,
       dataSources: [{ sourceType: 'chart-emitter', channelName: 'ch1' }],
     });
-    expect(screen.getByText('38')).toBeInTheDocument();
+    expect(screen.getByText('38.00')).toBeInTheDocument();
   });
 
   it('CH-15: 우선순위는 chart-emitter > store(latest) > static config.value 다', async () => {
@@ -389,8 +391,8 @@ describe('GaugePanel 레거시 바인딩 특성화 (SPEC-CHART-002 M2)', () => {
       dataSources: bothSources,
     });
     await waitFor(() => expect(mockPost.fn).toHaveBeenCalled());
-    expect(screen.getByText('27')).toBeInTheDocument();
-    expect(screen.queryByText('88')).toBeNull();
+    expect(screen.getByText('27.00')).toBeInTheDocument();
+    expect(screen.queryByText('88.00')).toBeNull();
     win.unmount();
 
     // (b) chart-emitter 가 바인딩되어 있어도 값을 못 내면(entries 0개) store 로 내려간다.
@@ -404,7 +406,7 @@ describe('GaugePanel 레거시 바인딩 특성화 (SPEC-CHART-002 M2)', () => {
       max: 100,
       dataSources: bothSources,
     });
-    await waitFor(() => expect(screen.getByText('88')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('88.00')).toBeInTheDocument());
     fall.unmount();
 
     // (c) 둘 다 바인딩되었지만 어느 쪽도 값을 못 내면 static 으로 폴백하지 않고 -- 다.
@@ -419,12 +421,12 @@ describe('GaugePanel 레거시 바인딩 특성화 (SPEC-CHART-002 M2)', () => {
     });
     await waitFor(() => expect(mockPost.fn).toHaveBeenCalled());
     expect(screen.getByText('--')).toBeInTheDocument();
-    expect(screen.queryByText('55')).toBeNull();
+    expect(screen.queryByText('55.00')).toBeNull();
     none.unmount();
 
     // (d) 바인딩이 하나도 없을 때만 static config.value 가 쓰인다.
     renderPanel({ gaugeType: 'simple', value: 55, min: 0, max: 100 });
-    expect(screen.getByText('55')).toBeInTheDocument();
+    expect(screen.getByText('55.00')).toBeInTheDocument();
   });
 
   it('CH-16: 복수 dataSources 에서 타입별 첫 유효 항목만 사용한다', async () => {
@@ -478,7 +480,7 @@ describe('GaugePanel 레거시 바인딩 특성화 (SPEC-CHART-002 M2)', () => {
       dataSources: [{ sourceType: 'chart-emitter', channelName: 'ch1' }],
     });
     expect(screen.getByText('--')).toBeInTheDocument();
-    expect(screen.queryByText('77')).toBeNull();
+    expect(screen.queryByText('77.00')).toBeNull();
     // 값이 없으면 단위도 렌더되지 않는다.
     expect(screen.queryByText('°C')).toBeNull();
     empty.unmount();
@@ -508,7 +510,7 @@ describe('GaugePanel 레거시 바인딩 특성화 (SPEC-CHART-002 M2)', () => {
     });
     await waitFor(() => expect(mockPost.fn).toHaveBeenCalled());
     expect(screen.getByText('--')).toBeInTheDocument();
-    expect(screen.queryByText('77')).toBeNull();
+    expect(screen.queryByText('77.00')).toBeNull();
   });
 
   it('CH-17: 연결 상태 아이콘은 chart-emitter 바인딩일 때만 노출된다(store 는 미노출)', async () => {
@@ -522,7 +524,7 @@ describe('GaugePanel 레거시 바인딩 특성화 (SPEC-CHART-002 M2)', () => {
         { sourceType: 'store', storeAgent: 'store-a', storeKey: 'k1' },
       ],
     });
-    await waitFor(() => expect(screen.getByText('30')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('30.00')).toBeInTheDocument());
     expect(screen.queryByTestId('chart-status-icon')).toBeNull();
   });
 });

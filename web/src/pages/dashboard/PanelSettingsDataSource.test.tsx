@@ -182,7 +182,7 @@ describe('T4 — 단일 데이터소스 토글 [채널 | Store | TSDB]', () => {
   it('채널 모드에서는 공용 선택 테이블을 렌더하지 않는다', () => {
     const channelPanel = {
       id: 'p1',
-      type: 'line-chart',
+      type: 'graph-chart',
       title: 'l',
       config: { data_source: 'channel' },
     } as unknown as PanelConfig;
@@ -445,7 +445,7 @@ describe('heatmap 시리즈 위치 — 체크박스 선택이 sensor_positions �
     const onConfigChange = vi.fn();
     const linePanel = {
       id: 'p1',
-      type: 'line-chart',
+      type: 'graph-chart',
       title: 'l',
       config: { data_source: 'store', store_source: { ...STORE_SOURCE } },
     } as unknown as PanelConfig;
@@ -774,7 +774,7 @@ describe('이름 컬럼 — 시리즈를 구분하는 표기', () => {
   it('비-heatmap 패널(라인 차트)도 같은 표기를 쓴다 — 화면마다 다른 이름이 되지 않는다', () => {
     const linePanel = {
       id: 'p1',
-      type: 'line-chart',
+      type: 'graph-chart',
       title: 'l',
       config: { data_source: 'store', store_source: { ...STORE_SOURCE } },
     } as unknown as PanelConfig;
@@ -938,7 +938,7 @@ describe('REQ-18/19/20/21 — 선택 행 인라인 펼침 세부 정보', () => 
   it('AC-23 (Edge) — 비-heatmap 패널: 인라인 상세에 센서 좌표 필드가 없다', () => {
     const linePanel = {
       id: 'p1',
-      type: 'line-chart',
+      type: 'graph-chart',
       title: 'l',
       config: {
         data_source: 'store',
@@ -962,7 +962,7 @@ describe('REQ-18/19/20/21 — 선택 행 인라인 펼침 세부 정보', () => 
     const onConfigChange = vi.fn();
     const panel = {
       id: 'p1',
-      type: 'line-chart',
+      type: 'graph-chart',
       title: 'l',
       config: {
         data_source: 'store',

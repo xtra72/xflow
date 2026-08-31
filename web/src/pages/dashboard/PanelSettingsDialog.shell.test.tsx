@@ -82,7 +82,7 @@ describe('PanelSettingsDialog 3분할 셸 (AC-01)', () => {
   });
 
   it('line-chart 패널: 3영역이 모두 존재하고 편집 슬롯이 각 영역에 배치된다', () => {
-    storeMock.panel = { id: 'p1', type: 'line-chart', title: '라인', config: {} };
+    storeMock.panel = { id: 'p1', type: 'graph-chart', title: '라인', config: {} };
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
 
     const preview = screen.getByTestId('panel-settings-preview');
@@ -99,7 +99,7 @@ describe('PanelSettingsDialog 3분할 셸 (AC-01)', () => {
   });
 
   it('기본 배치: 미리보기·데이터소스는 좌측 컬럼(order-1), 옵션은 우측(order-3)', () => {
-    storeMock.panel = { id: 'p1', type: 'line-chart', title: '라인', config: {} };
+    storeMock.panel = { id: 'p1', type: 'graph-chart', title: '라인', config: {} };
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
 
     // 좌측 컬럼(미리보기+데이터소스)은 order-1, 우측 옵션 컬럼은 order-3 클래스를 갖는다.
@@ -198,6 +198,49 @@ describe('PanelSettingsDialog 특성화 (SPEC-CHART-002 M2)', () => {
     expect(screen.getByTestId('panel-settings-data-source')).toBeInTheDocument();
   });
 
+  it('반원 RB 를 고르면 반원 방향 선택이 나온다', async () => {
+    storeMock.panel = {
+      id: 'p1',
+      type: 'gauge',
+      title: '게이지',
+      config: { gaugeType: 'half-rainbow' },
+    };
+    await act(async () => {
+      render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    });
+    for (const dir of ['up', 'down', 'left', 'right']) {
+      expect(screen.getByTestId(`gauge-half-rainbow-direction-${dir}`)).toBeInTheDocument();
+    }
+    // 미지정이면 위쪽이 눌린 상태다.
+    expect(
+      screen.getByTestId('gauge-half-rainbow-direction-up').getAttribute('aria-pressed'),
+    ).toBe('true');
+  });
+
+  it('다른 게이지 타입에서는 방향 선택을 내린다 — 효과 없는 칸을 두지 않는다', async () => {
+    storeMock.panel = { id: 'p1', type: 'gauge', title: '게이지', config: { gaugeType: 'half' } };
+    await act(async () => {
+      render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    });
+    expect(screen.queryByTestId('gauge-half-rainbow-direction-up')).toBeNull();
+  });
+
+  it('방향을 고르면 config 에 저장된다', async () => {
+    storeMock.panel = {
+      id: 'p1',
+      type: 'gauge',
+      title: '게이지',
+      config: { gaugeType: 'half-rainbow' },
+    };
+    await act(async () => {
+      render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    });
+    fireEvent.click(screen.getByTestId('gauge-half-rainbow-direction-left'));
+    expect(
+      screen.getByTestId('gauge-half-rainbow-direction-left').getAttribute('aria-pressed'),
+    ).toBe('true');
+  });
+
   it('CH-19 [M4 반전]: gauge 는 Store 모드에서 데이터소스 섹션 + 대표값 선택기를 갖는다', async () => {
     // 반전 전: 설정이 저장될 수는 있어도(불투명 JSON) 편집 surface 가 없었다.
     // 반전 후: 섹션이 렌더되고, gauge 가 REDUCE_PANEL_TYPES 에 속하므로 Store 모드에서
@@ -215,7 +258,7 @@ describe('PanelSettingsDialog 특성화 (SPEC-CHART-002 M2)', () => {
   it('CH-20: line-chart / table / heatmap 은 Store 모드에서도 대표값 선택기를 갖지 않는다', async () => {
     // spec.md §2.3 / UB1-10: REDUCE_PANEL_TYPES 는 stat/gauge/bar-chart/pie-chart 뿐이며
     // 이 3종은 같은 StoreSourceSection 을 써도 선택기가 노출되지 않아야 한다.
-    for (const type of ['line-chart', 'table', 'heatmap'] as const) {
+    for (const type of ['graph-chart', 'table', 'heatmap'] as const) {
       storeMock.panel = { id: 'p1', type, title: type, config: { ...STORE_CONFIG } };
       // 공용 시리즈 선택 테이블이 마운트 시 비동기 상태를 갱신하므로 flush 한다.
       let view!: ReturnType<typeof render>;

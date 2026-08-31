@@ -27,6 +27,14 @@ import AgentStatusPanel from './panels/AgentStatusPanel';
 import DevicePanel from './panels/DevicePanel';
 import FlowPanel from './panels/FlowPanel';
 import LogPanel from './panels/LogPanel';
+import MonitorStatsPanel from './panels/monitor/MonitorStatsPanel';
+import MonitorMetricsPanel from './panels/monitor/MonitorMetricsPanel';
+import MonitorNetworkPanel from './panels/monitor/MonitorNetworkPanel';
+import SysMetricsSystemPanel from './panels/sysmetrics/SysMetricsSystemPanel';
+import SysMetricsNetworkPanel from './panels/sysmetrics/SysMetricsNetworkPanel';
+import SysMetricsStoragePanel from './panels/sysmetrics/SysMetricsStoragePanel';
+import MonitorLogsPanel from './panels/monitor/MonitorLogsPanel';
+import MonitorEventsPanel from './panels/monitor/MonitorEventsPanel';
 import SingleDevicePanel from './panels/SingleDevicePanel';
 import AcControlPanel from './panels/AcControlPanel';
 import GaugePanel from './panels/GaugePanel';
@@ -57,7 +65,7 @@ import { PanelChromeProvider } from './PanelChromeProvider';
 const PANEL_TYPE_ICONS: Partial<Record<PanelType, React.ReactNode>> = {
   stat: <Hash className="h-6 w-6 text-(--color-text-muted)" />,
   gauge: <Gauge className="h-6 w-6 text-(--color-text-muted)" />,
-  'line-chart': <LineChart className="h-6 w-6 text-(--color-text-muted)" />,
+  'graph-chart': <LineChart className="h-6 w-6 text-(--color-text-muted)" />,
   'bar-chart': <BarChart3 className="h-6 w-6 text-(--color-text-muted)" />,
   'pie-chart': <PieChart className="h-6 w-6 text-(--color-text-muted)" />,
   text: <Type className="h-6 w-6 text-(--color-text-muted)" />,
@@ -148,6 +156,72 @@ function renderPanelBody(
     case 'logs':
       return (
         <LogPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    // 모니터링 패널 4종. 실시간 스트림은 monitorStream 단일 구독을 공유하므로
+    // 한 대시보드에 여러 개를 올려도 버퍼가 한 벌만 생긴다.
+    case 'monitor-stats':
+      return (
+        <MonitorStatsPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    case 'monitor-metrics':
+      return (
+        <MonitorMetricsPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    case 'monitor-network':
+      return (
+        <MonitorNetworkPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    // SPEC-SYSMETRICS-PANEL-001: sysmetrics 에이전트 바인딩 호스트 지표 패널.
+    // 위 monitor-* 와 출처가 다르다 — 이쪽은 호스트 전체, 저쪽은 xflowd 런타임이다.
+    case 'sysmetrics-system':
+      return (
+        <SysMetricsSystemPanel panelId={panel.id} title={panel.title} config={panel.config} />
+      );
+    case 'sysmetrics-network':
+      return (
+        <SysMetricsNetworkPanel panelId={panel.id} title={panel.title} config={panel.config} />
+      );
+    case 'sysmetrics-storage':
+      return (
+        <SysMetricsStoragePanel panelId={panel.id} title={panel.title} config={panel.config} />
+      );
+    case 'monitor-logs':
+      return (
+        <MonitorLogsPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    case 'monitor-events':
+      return (
+        <MonitorEventsPanel
           panelId={panel.id}
           title={panel.title}
           config={panel.config}
@@ -279,7 +353,7 @@ function renderPanelBody(
     // store/tsdb 소스 패널은 `channel_name` 이 비어 있어 "채널 미지정" 까지 내려간다.
     case 'stat':
       return <StatPanel panelId={panel.id} title={panel.title} config={panel.config} />;
-    case 'line-chart':
+    case 'graph-chart':
       return <LineChartPanel panelId={panel.id} title={panel.title} config={panel.config} />;
     case 'bar-chart':
       return <BarChartPanel panelId={panel.id} title={panel.title} config={panel.config} />;

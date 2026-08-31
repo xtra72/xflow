@@ -27,8 +27,11 @@ import {
 } from './seriesRange';
 
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { QueryClient, QueryClientContext, useQuery } from '@tanstack/react-query';
+import { QueryClientContext, useQuery } from '@tanstack/react-query';
 
+import { startVisiblePolling } from './visiblePolling';
+// Provider 부재 대응 싱글턴. sysmetrics 소스 경로도 같은 것을 쓴다.
+import { inertQueryClient } from '@/hooks/inertQueryClient';
 import * as agentService from '@/services/api/agentService';
 import type {
   SeriesMatrixQuery,
@@ -115,20 +118,6 @@ const EMPTY_RESULT: UseTsdbChartDataResult = {
 const defaultQueryTsdb: QueryTsdbMatrixFn = (ref, agents, params, signal) =>
   queryTsdbSourceMatrix(ref, agents, params, signal);
 
-/**
- * `QueryClientProvider` 가 없을 때 쓰는 **비활성 대체 클라이언트**.
- *
- * 이 훅은 `usePanelSeriesData` 가 소스 종류와 무관하게 **항상** 호출한다(훅 규칙).
- * 그런데 패널 단위 테스트 다수는 `useStoreChartData` 를 모킹해 데이터 계층을 통째로
- * 걷어내고 Provider 없이 렌더한다 — 그 자리에서 react-query 컨텍스트를 요구하면
- * 소스와 무관한 패널 렌더가 전부 깨진다. 컨텍스트가 없으면 이 클라이언트를 쓰되
- * `enabled: false` 로 두어 **어떤 요청도 나가지 않는다**.
- */
-let inertClient: QueryClient | undefined;
-function inertQueryClient(): QueryClient {
-  inertClient ??= new QueryClient();
-  return inertClient;
-}
 
 /**
  * 백엔드 파생용 에이전트 목록.
@@ -435,16 +424,22 @@ export function useTsdbChartData(
     };
 
     // 즉시 1회 + 인터벌 폴링. 재시도 간격이 폴링 주기를 넘지 않는다(§2.17-3).
+    //
+    // 탭이 숨으면 인터벌이 멈추고, 다시 보이면 즉시 1회 돈 뒤 재개한다 —
+    // 아무도 보지 않는 동안의 조회를 내지 않으면서, 돌아왔을 때 옛 값이 떠
+    // 있는 시간도 없앤다.
     setResult((prev) => ({ ...prev, status: 'connecting' }));
-    void run();
-    const intervalId = window.setInterval(() => {
-      void run();
-    }, refreshMs);
+    const stopPolling = startVisiblePolling({
+      intervalMs: refreshMs,
+      run: () => {
+        void run();
+      },
+    });
 
     return () => {
       cancelled = true;
       controller?.abort();
-      window.clearInterval(intervalId);
+      stopPolling();
     };
     // pollKey 가 변경될 때만 재구독한다(config 객체 참조 변화는 무시).
     // eslint-disable-next-line react-hooks/exhaustive-deps

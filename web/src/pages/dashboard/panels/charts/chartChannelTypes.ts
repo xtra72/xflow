@@ -19,6 +19,8 @@ import { resolveSeriesAlias, type AliasContext } from './aliasTemplate';
 
 /** 단일 차트 항목 (WS 로 전송되는 entry) */
 import type { SeriesRange } from './seriesRange';
+import type { GraphStyle } from './graphStyle';
+import type { SysMetricsCounterMode } from '@/pages/dashboard/panels/sysmetrics/sysMetricsItemOptions';
 
 export interface ChartEntry {
   /** epoch milliseconds (int64) */
@@ -46,6 +48,9 @@ export type ChartConnectionStatus =
  * - `channel`: 기존 chart-emitter WebSocket 채널 경로(기본값).
  * - `store`: Store 에이전트(인메모리 TSDB)의 시리즈 매트릭스 폴링 경로.
  * - `tsdb`: **에이전트를 통해 접근하는 외부 시계열 DB**(InfluxDB 가 첫 백엔드).
+ * - `sysmetrics`: **sysmetrics 에이전트의 라이브 스냅샷을 클라이언트가 누적**한 시계열.
+ *   에이전트는 이력을 보관하지 않으므로 패널이 마운트된 이후 구간만 그려진다 —
+ *   과거 구간이 필요하면 `sysmetrics-in` 노드로 Store 에 쌓고 `store` 소스를 쓴다.
  *
  * memTSDB(`internal/tsdb/` · `/api/v1/tsdb/*`)는 플로우 노드 · WS 구독자용 내부
  * 설비이며 **패널 데이터소스가 아니다** — 이 유니온에 대응 값이 없다.
@@ -53,7 +58,7 @@ export type ChartConnectionStatus =
  *
  * @spec SPEC-WEB-005 · SPEC-TSDB-002 §2.1 (U1)
  */
-export type ChartDataSourceKind = 'channel' | 'store' | 'tsdb';
+export type ChartDataSourceKind = 'channel' | 'store' | 'tsdb' | 'sysmetrics';
 
 /**
  * Store 소스에서 조회할 단일 시리즈 참조.
@@ -110,6 +115,13 @@ export interface StoreSeriesRef {
    */
   /** 라인 스타일(solid/dashed/dotted). 기본 'solid'. */
   stroke_style?: StrokeStyle;
+  /**
+   * 이 시리즈를 그리는 모양. 미지정이면 **패널 기본값을 따른다**.
+   *
+   * `undefined` 와 `'line'` 은 다르다 — 전자는 패널 기본값이 바뀌면 같이 바뀌고,
+   * 후자는 고정이다. 온도는 라인, 가동량은 바처럼 한 차트 안에서 섞어 그릴 때 쓴다.
+   */
+  graph_style?: GraphStyle;
   /** 라인 두께(px). 기본 2. */
   stroke_width?: number;
   /** 부드러운 곡선. 기본 false. */
@@ -203,6 +215,20 @@ export interface StoreSourceConfig {
   interval_ms: number;
   /** 집계 함수(UI 표기 그대로). */
   aggregation: 'min' | 'max' | 'average' | 'first' | 'last';
+  /**
+   * 빈 버킷 채우기 전략(인터벌 구간에 값이 없을 때). 미지정/'' 이면 빈 버킷을 생략한다.
+   *
+   * 어휘와 의미는 {@link TsdbSourceConfig.fill} 와 **같은 정본**이다 — 소스를 갈아탄
+   * 사용자가 같은 설정에서 다른 그림을 보지 않아야 한다. 계산은 서버(store `/query`)가
+   * 한다. `'avg'` 는 어느 백엔드에도 대응물이 없어 어휘에 없다.
+   */
+  fill?: '' | 'null' | 'zero' | 'previous';
+  /** `previous` 로 직전값을 이어 쓸 수 있는 최대 기간(ms). 0/미지정이면 무제한. */
+  fill_previous_max_ms?: number;
+  /** 사용 기간을 넘긴 버킷의 처리. 미지정이면 비운다(null). */
+  fill_previous_overflow?: '' | 'value';
+  /** 위가 `'value'` 일 때 채울 값. */
+  fill_previous_overflow_value?: number;
   /** 폴링 주기(ms). 미지정 시 기본값(약 5000ms)을 사용한다. */
   refresh_interval_ms?: number;
 }
@@ -440,6 +466,139 @@ export interface TsdbSourceConfig {
 export function defaultTsdbSource(): TsdbSourceConfig {
   return {
     backend: 'influxdb',
+    agent_name: '',
+    series: [],
+    ...DEFAULT_STORE_SOURCE_WINDOW,
+  };
+}
+
+// ---- sysmetrics 소스 ----
+
+/**
+ * sysmetrics 시리즈 참조 — 그릴 **값 하나**를 가리킨다.
+ *
+ * `key` 는 값 카탈로그(`sysmetrics/sysMetricsFields.ts` 의 `SYSMETRIC_CHART_FIELDS`)의
+ * 키이며 스냅샷 경로와 같다(`cpu.usage_percent` · `network.bytes_recv`). 인스턴스 축이
+ * 있는 값(storage · disk_io · network)은 소스 수준의 대상 목록과 곱해져 대상마다 한
+ * 줄이 된다 — 참조 자체에는 대상을 담지 않는다.
+ *
+ * 표시 축(`alias` · `color` · 선 모양)은 `StoreSeriesRef` 와 **같은 이름**을 쓴다.
+ * 라인 차트의 per-line 스타일 편집기가 세 소스를 하나의 어휘로 다루기 때문이다.
+ */
+export interface SysmetricsSeriesRef {
+  /** 값 카탈로그 키 (`cpu.usage_percent`). Store 어휘의 **measurement** 다. */
+  key: string;
+  /**
+   * 인스턴스 대상 이름(`en0` · `disk0` · `/data`). Store 어휘의 **tag 값**이다.
+   *
+   * 인스턴스 축이 있는 값(storage · disk_io · network)에서만 뜻이 있고, **미지정은
+   * 종합**(모든 인스턴스 합)을 뜻한다. 시리즈 하나가 대상 하나를 가리키므로 (값, 대상)
+   * 조합을 자유롭게 고를 수 있다 — 값 목록과 대상 목록의 곱으로 두면 "값 A 는 en0,
+   * 값 B 는 en1" 같은 조합을 표현할 수 없다.
+   */
+  target?: string;
+  /** 표시 별칭. 미지정이면 내장 표기(`measurement · {k=v}`). */
+  alias?: string;
+  /** 선/카테고리 색. 미지정이면 자동 팔레트. */
+  color?: string;
+  /** 라인 스타일(solid/dashed/dotted). 기본 'solid'. */
+  stroke_style?: StrokeStyle;
+  /** 이 시리즈를 그리는 모양. 미지정이면 패널 기본값을 따른다. */
+  graph_style?: GraphStyle;
+  /** 라인 두께(px). 기본 2. */
+  stroke_width?: number;
+  /** 부드러운 곡선. 기본 false. */
+  smooth?: boolean;
+  /**
+   * 누적 카운터의 표현 — `rate`(초당 증가량, 기본) · `total`(부팅 이후 누적 원값).
+   *
+   * `rate: false` 인 값(비율·용량)에는 뜻이 없다. 두 표현은 **다른 시리즈**이므로
+   * 태그의 `mode` 축으로 갈리며, 같은 (값, 대상)을 두 줄로 고르면 증가량과 총량을
+   * 나란히 그릴 수 있다.
+   */
+  mode?: SysMetricsCounterMode;
+}
+
+/**
+ * 차트 패널 sysmetrics 소스 설정 블록.
+ *
+ * **이력이 없는 소스다.** 에이전트는 `State()` 로 그 시점 스냅샷 하나만 주므로, 훅이
+ * 폴링하며 창(window)에 점을 쌓는다. 패널이 언마운트되면 계열도 사라진다 — 이것은
+ * 결함이 아니라 소스의 성질이며, 과거 구간이 필요하면 저장 경로를 거쳐 `store` 소스를
+ * 쓰는 것이 옳은 해법이다(`sysmetrics-in` → storage-write).
+ *
+ * 대상 목록(`interfaces` / `devices` / `mountpoints`)의 규약은 sysmetrics 전용 패널과
+ * **같다**: 빈 배열은 "종합"이며 기본값이다. 두 계열이 나란히 놓이는데 같은 설정이
+ * 다른 뜻을 가지면 사용자가 매번 다시 배워야 한다.
+ */
+export interface SysmetricsSourceConfig {
+  /**
+   * sysmetrics 에이전트의 안정적 ID. **조회의 유일한 정본**이며 없으면 비활성이다.
+   * 이름이 바뀌어도 연결이 끊기지 않는다(@spec SPEC-WEB-006 과 같은 규약).
+   */
+  agent_id?: string;
+  /**
+   * 표시용 이름 스냅샷. 조회에는 쓰지 않는다.
+   *
+   * Store · TSDB 는 이름만 있는 구 config 를 위해 이름 폴백을 두지만, 이 소스에는
+   * 그런 config 가 없어 폴백을 두지 않는다(`isSysmetricsSourceActive` 주석 참조).
+   */
+  agent_name: string;
+  /**
+   * 그릴 시리즈 목록. 비어 있으면 소스는 비활성이다.
+   *
+   * **한 항목이 한 줄**이다. 종전에는 값 목록과 대상 목록을 따로 두고 곱했는데, 그
+   * 모델로는 "값 A 는 en0, 값 B 는 en1" 을 표현할 수 없고 설정 화면도 Store 처럼
+   * 시리즈 표로 그릴 수 없었다(표의 한 행이 곧 한 시리즈여야 한다).
+   */
+  series: SysmetricsSeriesRef[];
+  /**
+   * 조회 창 · 인터벌 · 집계 · 폴링 주기 — **Store 와 같은 이름, 같은 뜻**이다.
+   *
+   * 에이전트가 이력을 들고 있으므로(`sysmetrics_history.go`) 패널은 Store 처럼 구간을
+   * 질의하고 버킷으로 접기만 한다. 종전의 `unit_time`(증가량 단위)은 없어졌다 —
+   * 누적 카운터는 에이전트가 저장 시점에 **초당 증가량**으로 환산해 두므로 패널이
+   * 환산할 것이 없고, 그래서 이 소스 전용 축이 화면에 남지 않는다.
+   *
+   * 질의 구간이 에이전트의 보관 기간보다 길면 앞쪽이 비어 나온다. 그것은 오류가 아니라
+   * 버퍼가 거기까지밖에 없다는 사실이며, 더 긴 이력이 필요하면 저장 경로를 쓴다.
+   */
+  time_window_ms: number;
+  /** 조회 범위(상대·절대·개수). `range` 가 있으면 `time_window_ms` 보다 우선한다. */
+  range?: SeriesRange;
+  /** 버킷 크기(ms). */
+  interval_ms: number;
+  /** 버킷 집계. Store 와 같은 어휘이며 같은 함수(`aggregateValues`)로 계산한다. */
+  aggregation: 'min' | 'max' | 'average' | 'first' | 'last';
+  /** 폴링 주기(ms). 미지정 시 5000. */
+  refresh_interval_ms?: number;
+  /**
+   * 이름을 지정하지 않은 시리즈의 표시 이름 형식(템플릿).
+   *
+   * 토큰 어휘는 **Store 와 같다** — 소스를 갈아탄 사용자가 형식을 다시 배우지 않는다.
+   *
+   *   `{$.measurement}`     → 필드 이름(`bytes_recv`)
+   *   `{$.tags.category}`   → 지표 분류(`network` · `cpu` · `disk_io`)
+   *   `{$.tags.interface}`  → 네트워크 인터페이스(`en0`)
+   *   `{$.tags.device}`     → 디스크 장치(`disk0`)
+   *   `{$.tags.mountpoint}` → 스토리지 마운트(`/data`)
+   *
+   * 미지정이면 내장 표기(`measurement · {k=v}`)로 폴백한다.
+   */
+  series_name_format?: string;
+}
+
+/**
+ * 아무 것도 바인딩되지 않은 **기본 sysmetrics 소스**.
+ *
+ * `agent_name` 이 비고 `series` 가 비어 있으므로 **비활성**이다 — 에이전트와 값을
+ * 고르기 전에는 폴링하지 않는다.
+ *
+ * 조회 창은 `DEFAULT_STORE_SOURCE_WINDOW` 를 **전개**한다. 값을 복제하면 한쪽만 바뀔 때,
+ * 소스를 갈아탄 사용자가 조용히 다른 창을 보게 된다(Store · TSDB 와 같은 규칙).
+ */
+export function defaultSysmetricsSource(): SysmetricsSourceConfig {
+  return {
     agent_name: '',
     series: [],
     ...DEFAULT_STORE_SOURCE_WINDOW,
@@ -851,6 +1010,17 @@ export interface LineChartPanelConfig extends ChartPanelConfigBase {
   time_window_refresh_ms?: number;
 
   /**
+   * 패널 기본 그래프 스타일. 미지정이면 라인(종전 동작)이다.
+   * 시리즈가 개별로 덮어쓸 수 있다(`StoreSeriesRef.graph_style`).
+   */
+  graph_style?: GraphStyle;
+  /**
+   * 시리즈를 쌓아 누적으로 볼지. 영역·바에서만 뜻이 있다 —
+   * 라인은 쌓아도 겹친 선이 되고, 캔들은 네 값이 한 덩어리라 쌓을 수 없다.
+   */
+  stacked?: boolean;
+
+  /**
    * Y축 눈금의 소수점 이하 자릿수. 미지정이면 값을 그대로 쓴다(종전 동작).
    * 숫자형 축에서만 의미가 있다 — 열거형·불리언 축은 눈금이 라벨이다.
    */
@@ -933,6 +1103,14 @@ export interface TableColumn {
    */
   sortable?: boolean;
   /**
+   * 값 단위. `format: 'number'` 열에만 붙는다 — 시각·문자열 열에 단위를 붙이면
+   * 뜻이 없다.
+   *
+   * 표는 열마다 지표가 다르므로(온도 열 · 전력 열이 한 표에 있다) 단위를 패널이
+   * 아니라 **열**이 갖는다. 미지정은 단위 없음이다.
+   */
+  unit?: string;
+  /**
    * 열 필터 입력 노출 여부. 미지정은 `false` — 필터 행은 자리를 차지하므로 켠 열에만 준다.
    */
   filterable?: boolean;
@@ -944,7 +1122,23 @@ export interface TablePanelConfig extends ChartPanelConfigBase {
   columns: TableColumn[];
   rows_per_page?: number;
   default_sort?: { field: string; order: SortOrder };
+  /**
+   * 행을 무엇으로 세는가. @see tablePivot.ts
+   *
+   * - `'entry'`(기본): 엔트리 하나가 행 하나 — 종전 동작.
+   * - `'timestamp'`: 시각 하나가 행 하나이고 시리즈마다 열이 하나(넓은 형식).
+   *
+   * 미지정은 `'entry'` 다 — 기존 패널의 표는 달라지지 않는다.
+   */
+  row_mode?: TableRowMode;
+  /** 시각 기준 행에서 시각 열의 이름. 미지정이면 기본 문구. */
+  pivot_time_header?: string;
+  /** 시각 기준 행에서 시리즈 열에 공통으로 붙는 단위. */
+  pivot_unit?: string;
 }
+
+/** 표의 행 기준. @see TablePanelConfig.row_mode */
+export type TableRowMode = 'entry' | 'timestamp';
 
 /**
  * 유효한 열거형 매핑만 추려 값→라벨 Map 을 만든다.

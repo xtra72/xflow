@@ -1181,9 +1181,15 @@ describe('LineChartPanel', () => {
 // @spec SPEC-TSDB-002 §2.3 (U3) · §2.4 (U4) — plan.md §3.1 CT-01 ~ CT-05 / AC-09
 // ---------------------------------------------------------------------------
 describe('LineChartPanel 소스 활성 판정 특성화 (SPEC-TSDB-002 M2, CT-01~CT-05)', () => {
-  /** store 훅이 마지막으로 받은 (소스, 활성) 쌍. */
+  /**
+   * store 훅이 **실제 소스를 받은** 호출.
+   *
+   * 캔들 OHLC 조회가 같은 훅을 집계별로 더 부른다(쓰지 않을 때는 source=undefined
+   * 로 idle). 마지막 호출을 보면 그 idle 호출이 잡히므로, 소스를 받은 호출을 찾는다.
+   */
   function lastStoreCall(): { source: unknown; enabled: unknown } {
-    return hookCalls.store.at(-1)!;
+    const withSource = hookCalls.store.filter((c) => c.source !== undefined);
+    return (withSource.at(-1) ?? hookCalls.store.at(-1))!;
   }
 
   beforeEach(() => {

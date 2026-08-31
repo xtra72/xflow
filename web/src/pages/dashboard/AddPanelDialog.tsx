@@ -35,6 +35,8 @@ import {
   Grid3x3,
   PlugZap,
   Gauge,
+  Radio,
+  Network,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -48,37 +50,14 @@ import { useNodeTypeInstances } from '@/hooks/useNodeTypeInstances';
 import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
 import { getDeviceDisplayName, getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
-import {
-  listChartChannels,
-  type ChartChannelSummary,
-} from '@/services/api/charts';
 import { buildDefaultStoreSource } from '@/pages/dashboard/panels/charts/chartChannelTypes';
 
 // ---- 차트 패널 공통 ----
 
-/** SPEC-CHART-001 REQ-M1-02 / REQ-M5-04: channel_name 정규식 */
-const CHANNEL_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
-
-/** 채널 이름 검증 에러 메시지 키 (렌더 시 t() 로 변환) */
-const CHANNEL_NAME_ERROR_KEY = 'dashboard.chart.channelNameError';
-
-/**
- * 생성 시 **채널 이름 입력 스텝**(`ChartConfigStep`)을 거치는 패널 타입.
- *
- * 통계/게이지/바/파이는 여기서 빠졌다 — 이 4종은 히트맵과 같이 기본 config 가
- * `data_source: 'store'` 이므로(`uiStore.createDefaultPanel`) 채널 이름을 묻지 않고 곧바로
- * 추가되고, 에이전트·시리즈는 패널 설정 화면의 데이터 소스 섹션에서 고른다. 렌더 경로는
- * 이미 channel/store/tsdb 를 모두 지원하므로(`usePanelSeriesData`) 생성 시 채널을 강제할
- * 이유가 없었다.
- *
- * 라인 차트도 빠졌다 — 목록의 라인 차트 항목이 store 프리셋을 들고 있어 채널 이름을 묻는
- * 스텝에 도달하지 않는다. 남은 대상은 테이블뿐이며 이번 정리 범위 밖이다.
- */
-const CHART_PANEL_TYPES: ReadonlySet<PanelType> = new Set<PanelType>(['table']);
-
-function isChartPanelType(type: PanelType): boolean {
-  return CHART_PANEL_TYPES.has(type);
-}
+// 채널 이름 입력 스텝은 없어졌다. 차트 계열(통계/게이지/라인/바/파이/테이블)은 모두 기본
+// config 가 `data_source: 'store'` 이므로(`uiStore.createDefaultPanel`) 생성 시 채널을 묻지
+// 않고 곧바로 추가되며, 채널/Store/TSDB 전환은 패널 설정의 데이터 소스 섹션에서 한다.
+// 렌더 경로는 세 소스를 모두 지원한다(`usePanelSeriesData`).
 
 // ---- 패널 유형 정의 ----
 
@@ -102,6 +81,8 @@ interface PanelOption {
   needsAgent?: boolean;
   /** 전체 타입(필터 없음) 에이전트 선택 스텝이 필요한 유형 (SPEC-DASHBOARD-002). */
   needsAgentStatus?: boolean;
+  /** sysmetrics 에이전트 선택 스텝이 필요한 유형 (SPEC-SYSMETRICS-PANEL-001 M5). */
+  needsSysMetricsAgent?: boolean;
   /**
    * 차트 채널 선택 스텝을 건너뛰고 곧바로 추가할 prefilled config.
    * 다채널 비교 등 단일 채널 입력만으로 부족한 프리셋용.
@@ -146,7 +127,10 @@ const PANEL_GROUPS_BY_CATEGORY: Record<Category, PanelGroup[]> = {
         { type: 'agents', icon: Bot, labelKey: 'dashboard.panelTypes.agents', descriptionKey: 'dashboard.addPanel.descriptions.agents' },
         // SPEC-DASHBOARD-002: 단일 에이전트(타입 무관) 상태·통계 패널. 전체 타입 에이전트 선택 스텝을 거친다.
         { type: 'agent-status', icon: Bot, labelKey: 'dashboard.panelTypes.agentStatus', descriptionKey: 'dashboard.addPanel.descriptions.agentStatus', needsAgentStatus: true },
-        { type: 'resource', icon: Activity, labelKey: 'dashboard.panelTypes.resource', descriptionKey: 'dashboard.addPanel.descriptions.resource' },
+        { type: 'devices', icon: HardDrive, labelKey: 'dashboard.panelTypes.devices', descriptionKey: 'dashboard.addPanel.descriptions.devices' },
+        // 속성 그리드 → '디바이스 상태'. 한 디바이스의 상태 속성을 그리드로 보는 패널이므로
+        // 상태 카테고리에 속한다(기타에 있으면 성격이 드러나지 않는다).
+        { type: 'properties-grid', icon: LayoutGrid, labelKey: 'dashboard.addPanel.labels.propertiesGrid', descriptionKey: 'dashboard.addPanel.descriptions.propertiesGrid', needsDevice: true },
       ],
     },
   ],
@@ -162,7 +146,7 @@ const PANEL_GROUPS_BY_CATEGORY: Record<Category, PanelGroup[]> = {
         // 남아 있으므로(설정의 데이터 소스 토글 · `channels` 배열) 기존 패널은 그대로 동작하고,
         // 새로 만든 라인 차트도 설정에서 채널로 되돌릴 수 있다.
         {
-          type: 'line-chart',
+          type: 'graph-chart',
           icon: TrendingUp,
           labelKey: 'dashboard.panelTypes.lineChart',
           descriptionKey: 'dashboard.addPanel.descriptions.lineChart',
@@ -178,12 +162,45 @@ const PANEL_GROUPS_BY_CATEGORY: Record<Category, PanelGroup[]> = {
       ],
     },
   ],
-  // 데이터: 현재 배정된 항목이 없다. 탭은 유지하되 빈 상태 안내를 보여준다.
-  data: [],
-  system: [
+  // 데이터: 시리즈를 표 형태로 훑어보는 패널.
+  data: [
     {
       options: [
-        { type: 'logs', icon: ScrollText, labelKey: 'dashboard.panelTypes.logs', descriptionKey: 'dashboard.addPanel.descriptions.logs' },
+        // 테이블은 통계/게이지/바/파이와 같이 store 기본 소스로 즉시 추가된다
+        // (`uiStore.createDefaultPanel`). 채널/Store/TSDB 전환은 패널 설정의 데이터 소스
+        // 섹션에서 한다 — 렌더 경로는 이미 3종을 모두 지원한다(`usePanelSeriesData`).
+        { type: 'table', icon: Table, labelKey: 'dashboard.panelTypes.table', descriptionKey: 'dashboard.addPanel.descriptions.table' },
+      ],
+    },
+  ],
+  // 시스템: 두 그룹으로 나눈다. 출처가 다르기 때문이다 — 모니터링 패널은 xflowd
+  // 런타임을, sysmetrics 패널은 호스트 전체를 본다. 한 줄에 늘어놓으면 CPU 항목이
+  // 두 군데 있는 이유를 설명할 자리가 없다.
+  system: [
+    {
+      // 모니터링 패널 5종 — 모니터링 페이지(사이드 메뉴)와 같은 항목 어휘를 쓰며,
+      // 패널 설정에서 표시 항목을 고른다.
+      //
+      // 선행 패널 'resource'(프로세스 상태) 와 'logs'(로그) 는 이 5종이 덮으므로
+      // 카탈로그에서 내렸다. 타입과 렌더 경로는 그대로 살아 있어 이미 배치된
+      // 패널은 계속 동작한다 — 'line-chart' → 'graph-chart' 때와 같은 방식이다.
+      labelKey: 'dashboard.addPanel.groups.monitor',
+      options: [
+        { type: 'monitor-stats', icon: Activity, labelKey: 'dashboard.panelTypes.monitorStats', descriptionKey: 'dashboard.addPanel.descriptions.monitorStats' },
+        { type: 'monitor-metrics', icon: TrendingUp, labelKey: 'dashboard.panelTypes.monitorMetrics', descriptionKey: 'dashboard.addPanel.descriptions.monitorMetrics' },
+        { type: 'monitor-network', icon: Network, labelKey: 'dashboard.panelTypes.monitorNetwork', descriptionKey: 'dashboard.addPanel.descriptions.monitorNetwork' },
+        { type: 'monitor-logs', icon: ScrollText, labelKey: 'dashboard.panelTypes.monitorLogs', descriptionKey: 'dashboard.addPanel.descriptions.monitorLogs' },
+        { type: 'monitor-events', icon: Radio, labelKey: 'dashboard.panelTypes.monitorEvents', descriptionKey: 'dashboard.addPanel.descriptions.monitorEvents' },
+      ],
+    },
+    {
+      // SPEC-SYSMETRICS-PANEL-001: sysmetrics 에이전트가 관측한 호스트 지표.
+      // 세 패널 모두 대상(인터페이스·마운트) 선택이 비면 종합, 고르면 개별을 그린다.
+      labelKey: 'dashboard.addPanel.groups.sysmetrics',
+      options: [
+        { type: 'sysmetrics-system', icon: Cpu, labelKey: 'dashboard.panelTypes.sysmetricsSystem', descriptionKey: 'dashboard.addPanel.descriptions.sysmetricsSystem', needsSysMetricsAgent: true },
+        { type: 'sysmetrics-network', icon: Network, labelKey: 'dashboard.panelTypes.sysmetricsNetwork', descriptionKey: 'dashboard.addPanel.descriptions.sysmetricsNetwork', needsSysMetricsAgent: true },
+        { type: 'sysmetrics-storage', icon: HardDrive, labelKey: 'dashboard.panelTypes.sysmetricsStorage', descriptionKey: 'dashboard.addPanel.descriptions.sysmetricsStorage', needsSysMetricsAgent: true },
       ],
     },
   ],
@@ -214,6 +231,9 @@ const PANEL_GROUPS_BY_CATEGORY: Record<Category, PanelGroup[]> = {
       // SPEC-MODBUS-012 M1: MODBUS Gateway 패널(모두 modbus-gateway 에이전트에 바인딩).
       labelKey: 'dashboard.addPanel.groups.modbus',
       options: [
+        // 실제 디바이스 → '디바이스 상태'. 상류(upstream) 연결 디바이스의 상태를 보는 패널이라
+        // 다른 MODBUS Gateway 패널들과 같은 그룹에 둔다.
+        { type: 'modbus-real-devices', icon: PlugZap, labelKey: 'dashboard.panelTypes.modbusRealDevices', descriptionKey: 'dashboard.addPanel.descriptions.modbusRealDevices', needsAgent: true },
         { type: 'modbus-virtual-devices', icon: Cpu, labelKey: 'dashboard.panelTypes.modbusVirtualDevices', descriptionKey: 'dashboard.addPanel.descriptions.modbusVirtualDevices', needsAgent: true },
         { type: 'modbus-shared-registers', icon: Grid3x3, labelKey: 'dashboard.panelTypes.modbusSharedRegisters', descriptionKey: 'dashboard.addPanel.descriptions.modbusSharedRegisters', needsAgent: true },
         { type: 'modbus-device-registers', icon: LayoutGrid, labelKey: 'dashboard.panelTypes.modbusDeviceRegisters', descriptionKey: 'dashboard.addPanel.descriptions.modbusDeviceRegisters', needsAgent: true },
@@ -227,13 +247,9 @@ const PANEL_GROUPS_BY_CATEGORY: Record<Category, PanelGroup[]> = {
     {
       options: [
         { type: 'text', icon: FileText, labelKey: 'dashboard.panelTypes.text', descriptionKey: 'dashboard.addPanel.descriptions.text' },
-        { type: 'devices', icon: HardDrive, labelKey: 'dashboard.panelTypes.devices', descriptionKey: 'dashboard.addPanel.descriptions.devices' },
         { type: 'device', icon: HardDrive, labelKey: 'dashboard.panelTypes.device', descriptionKey: 'dashboard.addPanel.descriptions.device', needsDevice: true },
-        { type: 'properties-grid', icon: LayoutGrid, labelKey: 'dashboard.addPanel.labels.propertiesGrid', descriptionKey: 'dashboard.addPanel.descriptions.propertiesGrid', needsDevice: true },
         // SPEC-TRIGGER-PANEL-001 M2: trigger 노드 스케줄/페이로드 설정 패널.
         { type: 'trigger-config', icon: AlarmClock, labelKey: 'dashboard.panelTypes.triggerConfig', descriptionKey: 'dashboard.addPanel.descriptions.triggerConfig', needsTriggerNode: true },
-        { type: 'table', icon: Table, labelKey: 'dashboard.panelTypes.table', descriptionKey: 'dashboard.addPanel.descriptions.table' },
-        { type: 'modbus-real-devices', icon: PlugZap, labelKey: 'dashboard.panelTypes.modbusRealDevices', descriptionKey: 'dashboard.addPanel.descriptions.modbusRealDevices', needsAgent: true },
         { type: 'custom-control', icon: Settings, labelKey: 'dashboard.panelTypes.customControl', descriptionKey: 'dashboard.addPanel.descriptions.customControl', needsDevice: true },
       ],
     },
@@ -257,7 +273,14 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
   const addPanel = useUIStore((s) => s.addPanel);
   const addPanelWithConfig = useUIStore((s) => s.addPanelWithConfig);
   const [step, setStep] = useState<
-    'type' | 'device' | 'chart-config' | 'facility' | 'trigger-node' | 'facility-schedule' | 'modbus-agent' | 'agent-status-agent'
+    | 'type'
+    | 'device'
+    | 'facility'
+    | 'trigger-node'
+    | 'facility-schedule'
+    | 'modbus-agent'
+    | 'agent-status-agent'
+    | 'sysmetrics-agent'
   >('type');
   const [selectedType, setSelectedType] = useState<PanelType | null>(null);
 
@@ -276,12 +299,12 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
       if (e.key === 'Escape') {
         if (
           step === 'device' ||
-          step === 'chart-config' ||
           step === 'facility' ||
           step === 'trigger-node' ||
           step === 'facility-schedule' ||
           step === 'modbus-agent' ||
-          step === 'agent-status-agent'
+          step === 'agent-status-agent' ||
+          step === 'sysmetrics-agent'
         ) {
           setStep('type');
           setSelectedType(null);
@@ -328,15 +351,16 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
       setStep('agent-status-agent');
       return;
     }
-    if (option.presetConfig) {
-      // 프리셋이 채널 정보를 미리 주므로 chart-config 스텝 건너뜀
-      addPanelWithConfig(option.type, option.presetConfig);
-      onClose();
+    // SPEC-SYSMETRICS-PANEL-001 M5: sysmetrics 타입으로 좁힌 에이전트 선택 스텝.
+    if (option.needsSysMetricsAgent) {
+      setSelectedType(option.type);
+      setStep('sysmetrics-agent');
       return;
     }
-    if (isChartPanelType(option.type)) {
-      setSelectedType(option.type);
-      setStep('chart-config');
+    if (option.presetConfig) {
+      // 프리셋이 소스 설정을 미리 주므로 그대로 추가한다.
+      addPanelWithConfig(option.type, option.presetConfig);
+      onClose();
       return;
     }
     addPanel(option.type);
@@ -395,12 +419,16 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
     onClose();
   };
 
-  // 차트 설정 완료 처리
-  const handleChartConfirm = (channelName: string) => {
+  // sysmetrics 패널 대상 선택 완료 처리 (SPEC-SYSMETRICS-PANEL-001 M5).
+  // 정본은 agent_id 이고 agent_name 은 표시용 스냅샷이다 — 이름만 저장하면
+  // 에이전트를 리네임했을 때 패널이 조용히 끊긴다.
+  const handleSysMetricsConfirm = (agentId: string, agentName?: string) => {
     if (!selectedType) return;
-    // panelDefaultSize + createDefaultPanel 이 이미 channel_name: '' 을 주므로
-    // addPanelWithConfig 로 channel_name 을 덮어쓴다.
-    addPanelWithConfig(selectedType, { channel_name: channelName });
+    addPanelWithConfig(
+      selectedType,
+      { agent_id: agentId, agent_name: agentName ?? '' },
+      agentName,
+    );
     onClose();
   };
 
@@ -418,17 +446,6 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
         {step === 'device' && (
           <DeviceStep
             onSelect={handleDeviceSelect}
-            onBack={() => {
-              setStep('type');
-              setSelectedType(null);
-            }}
-            onClose={onClose}
-          />
-        )}
-        {step === 'chart-config' && selectedType && (
-          <ChartConfigStep
-            panelType={selectedType}
-            onConfirm={handleChartConfirm}
             onBack={() => {
               setStep('type');
               setSelectedType(null);
@@ -481,6 +498,19 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
         {step === 'agent-status-agent' && (
           <AgentStatusAgentStep
             onConfirm={handleAgentStatusConfirm}
+            onBack={() => {
+              setStep('type');
+              setSelectedType(null);
+            }}
+            onClose={onClose}
+          />
+        )}
+        {step === 'sysmetrics-agent' && (
+          <AgentStatusAgentStep
+            agentType="sysmetrics"
+            titleKey="dashboard.addPanel.selectSysMetricsAgent"
+            testIdPrefix="sysmetrics-agent"
+            onConfirm={handleSysMetricsConfirm}
             onBack={() => {
               setStep('type');
               setSelectedType(null);
@@ -728,214 +758,6 @@ function DeviceStep({
             ))}
           </div>
         )}
-      </div>
-    </>
-  );
-}
-
-// ---- Step 3: 차트 채널 이름 설정 (SPEC-CHART-001 REQ-M5-01/02/04) ----
-
-/** "Custom..." 수동 입력 표시용 sentinel */
-const CUSTOM_CHANNEL_SENTINEL = '__custom__';
-
-/** 차트 패널 타입별 표시 라벨 키 (기존 dashboard.panelTypes 재사용) */
-// 이 스텝에 도달하는 타입만 담는다 — `CHART_PANEL_TYPES` 와 같은 집합이다.
-const CHART_TYPE_LABEL_KEY: Partial<Record<PanelType, string>> = {
-  table: 'dashboard.panelTypes.table',
-};
-
-function ChartConfigStep({
-  panelType,
-  onConfirm,
-  onBack,
-  onClose,
-}: {
-  panelType: PanelType;
-  onConfirm: (channelName: string) => void;
-  onBack: () => void;
-  onClose: () => void;
-}) {
-  const { t } = useTranslation();
-  // 드롭다운 선택 상태: 채널 이름 OR '__custom__' OR '' (초기)
-  const [selectedOption, setSelectedOption] = useState<string>('');
-  // Custom 모드일 때 수동 입력 값
-  const [customName, setCustomName] = useState<string>('');
-  const [channels, setChannels] = useState<ChartChannelSummary[]>([]);
-  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('loading');
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  // 활성 채널 목록 조회 (마운트 시 1회)
-  useEffect(() => {
-    let cancelled = false;
-    setLoadState('loading');
-    setLoadError(null);
-    listChartChannels()
-      .then((result) => {
-        if (cancelled) return;
-        setChannels(result);
-        setLoadState('idle');
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        const msg = err instanceof Error ? err.message : String(err);
-        setLoadError(msg);
-        setLoadState('error');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // 실제로 사용할 채널 이름 계산
-  const effectiveName =
-    selectedOption === CUSTOM_CHANNEL_SENTINEL ? customName : selectedOption;
-
-  // 검증 (REQ-M5-04)
-  const trimmed = effectiveName.trim();
-  const isEmpty = trimmed.length === 0;
-  const isValidFormat = !isEmpty && CHANNEL_NAME_REGEX.test(trimmed);
-  const showError = !isEmpty && !isValidFormat;
-  const canSave = isValidFormat;
-
-  const handleConfirm = () => {
-    if (!canSave) return;
-    onConfirm(trimmed);
-  };
-
-  return (
-    <>
-      {/* 헤더 */}
-      <div className="flex items-center justify-between border-b border-(--color-border-default) px-5 py-4">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onBack}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
-            aria-label={t('dashboard.addPanel.backAria')}
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
-          <h2
-            id="add-panel-dialog-title"
-            className="text-lg font-semibold text-(--color-text-primary)"
-          >
-            {(CHART_TYPE_LABEL_KEY[panelType] ? t(CHART_TYPE_LABEL_KEY[panelType]!) : t('dashboard.addPanel.chartFallback'))} {t('dashboard.addPanel.channelSuffix')}
-          </h2>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
-          aria-label={t('dashboard.addPanel.closeAria')}
-        >
-          <X className="h-5 w-5" />
-        </button>
-      </div>
-
-      {/* 본문 */}
-      <div className="space-y-4 px-5 py-4">
-        {/* 드롭다운: 활성 채널 목록 + Custom */}
-        <div>
-          <label
-            htmlFor="chart-channel-select"
-            className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
-          >
-            {t('dashboard.addPanel.channelNameLabel')} <span className="text-red-500">*</span>
-          </label>
-          <select
-            id="chart-channel-select"
-            data-testid="chart-channel-select"
-            value={selectedOption}
-            onChange={(e) => {
-              setSelectedOption(e.target.value);
-              if (e.target.value !== CUSTOM_CHANNEL_SENTINEL) {
-                setCustomName('');
-              }
-            }}
-            disabled={loadState === 'loading'}
-            className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-60"
-          >
-            <option value="">
-              {loadState === 'loading'
-                ? t('dashboard.addPanel.loadingChannels')
-                : channels.length === 0
-                  ? t('dashboard.addPanel.noActiveChannelsCustom')
-                  : t('dashboard.addPanel.selectChannel')}
-            </option>
-            {channels.map((ch) => (
-              <option key={ch.name} value={ch.name}>
-                {t('dashboard.addPanel.channelOption')
-                  .replace('{name}', ch.name)
-                  .replace('{flow}', String(ch.flow_id))
-                  .replace('{count}', String(ch.subscriber_count))}
-              </option>
-            ))}
-            <option value={CUSTOM_CHANNEL_SENTINEL}>{t('dashboard.addPanel.customOption')}</option>
-          </select>
-          {loadState === 'error' && (
-            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-              {t('dashboard.addPanel.loadErrorCustom')}
-              {loadError ? ` (${loadError})` : ''}
-            </p>
-          )}
-        </div>
-
-        {/* Custom 모드: 수동 입력 필드 */}
-        {selectedOption === CUSTOM_CHANNEL_SENTINEL && (
-          <div>
-            <label
-              htmlFor="chart-channel-custom"
-              className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
-            >
-              {t('dashboard.addPanel.customLabel')}
-            </label>
-            <input
-              id="chart-channel-custom"
-              data-testid="chart-channel-custom-input"
-              type="text"
-              value={customName}
-              onChange={(e) => setCustomName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && canSave) handleConfirm();
-              }}
-              placeholder={t('dashboard.addPanel.customPlaceholder')}
-              autoFocus
-              className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
-        )}
-
-        {/* 인라인 에러 (REQ-M5-04) */}
-        {showError && (
-          <p data-testid="chart-channel-error" className="text-xs text-red-500">
-            {t(CHANNEL_NAME_ERROR_KEY)}
-          </p>
-        )}
-      </div>
-
-      {/* 푸터 */}
-      <div className="flex justify-end gap-2 border-t border-(--color-border-default) px-5 py-3">
-        <button
-          type="button"
-          onClick={onBack}
-          className="rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-4 py-1.5 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-border-default)"
-        >
-          {t('dashboard.addPanel.previous')}
-        </button>
-        <button
-          type="button"
-          data-testid="chart-channel-save"
-          onClick={handleConfirm}
-          disabled={!canSave}
-          className={cn(
-            'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
-            canSave
-              ? 'bg-blue-600 text-white hover:bg-blue-700'
-              : 'cursor-not-allowed bg-gray-300 text-gray-500 dark:bg-gray-700 dark:text-gray-500',
-          )}
-        >
-          {t('dashboard.addPanel.save')}
-        </button>
       </div>
     </>
   );
@@ -1500,17 +1322,34 @@ function AgentStatusAgentStep({
   onConfirm,
   onBack,
   onClose,
+  agentType,
+  titleKey = 'dashboard.addPanel.selectAgentStatus',
+  testIdPrefix = 'agent-status',
 }: {
   onConfirm: (agentId: string, title?: string) => void;
   onBack: () => void;
   onClose: () => void;
+  /**
+   * 목록을 좁힐 에이전트 타입. 생략하면 전체를 제시한다.
+   *
+   * 유형마다 불리언 플래그(needsAgent / needsAgentStatus / ...)를 늘리는 대신
+   * 필터를 파라미터로 받는다 — 플래그 방식은 세 번째부터 무너진다.
+   */
+  agentType?: string;
+  /** 헤더 제목 i18n 키 */
+  titleKey?: string;
+  /** 테스트 훅 접두사 (select / save 버튼) */
+  testIdPrefix?: string;
 }) {
   const { t } = useTranslation();
   const [agentId, setAgentId] = useState('');
 
   const { data: agentsResult } = useAgents();
-  // 타입 필터 없음 — 전체 연결 에이전트를 제시한다(ModbusAgentStep 과의 핵심 차이).
-  const agents = useMemo(() => agentsResult?.data ?? [], [agentsResult]);
+  // agentType 이 없으면 전체 연결 에이전트를 제시한다(ModbusAgentStep 과의 핵심 차이).
+  const agents = useMemo(() => {
+    const all = agentsResult?.data ?? [];
+    return agentType ? all.filter((a) => a.type === agentType) : all;
+  }, [agentsResult, agentType]);
 
   const selectedAgentName = agents.find((a) => a.id === agentId)?.name;
   const canSave = agentId.length > 0;
@@ -1534,7 +1373,7 @@ function AgentStatusAgentStep({
             <ArrowLeft className="h-4 w-4" />
           </button>
           <h2 className="text-lg font-semibold text-(--color-text-primary)">
-            {t('dashboard.addPanel.selectAgentStatus')}
+            {t(titleKey)}
           </h2>
         </div>
         <button
@@ -1551,14 +1390,14 @@ function AgentStatusAgentStep({
       <div className="space-y-4 px-5 py-4">
         <div>
           <label
-            htmlFor="agent-status-select"
+            htmlFor={`${testIdPrefix}-select`}
             className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
           >
             {t('dashboard.settings.agent')} <span className="text-red-500">*</span>
           </label>
           <select
-            id="agent-status-select"
-            data-testid="agent-status-select"
+            id={`${testIdPrefix}-select`}
+            data-testid={`${testIdPrefix}-select`}
             value={agentId}
             onChange={(e) => setAgentId(e.target.value)}
             className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
@@ -1584,7 +1423,7 @@ function AgentStatusAgentStep({
         </button>
         <button
           type="button"
-          data-testid="agent-status-save"
+          data-testid={`${testIdPrefix}-save`}
           onClick={handleConfirm}
           disabled={!canSave}
           className={cn(

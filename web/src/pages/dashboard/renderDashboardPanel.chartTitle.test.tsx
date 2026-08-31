@@ -31,7 +31,7 @@ const handlers = () => ({ onConfigChange: vi.fn(), onTitleChange: vi.fn() });
 
 const CASES = [
   { type: 'stat', testid: 'stub-stat' },
-  { type: 'line-chart', testid: 'stub-line' },
+  { type: 'graph-chart', testid: 'stub-line' },
   { type: 'bar-chart', testid: 'stub-bar' },
   { type: 'pie-chart', testid: 'stub-pie' },
   { type: 'table', testid: 'stub-table' },

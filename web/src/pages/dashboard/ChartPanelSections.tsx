@@ -17,6 +17,7 @@ import { useTranslation } from '@/lib/i18n';
 import type {
   TableColumn,
   TableColumnFormat,
+  TableRowMode,
   BarChartMode,
   AggFunc,
   SortOrder,
@@ -46,6 +47,7 @@ import {
 } from './panels/charts/intervalPresets';
 import {
   buildDefaultStoreSource,
+  defaultSysmetricsSource,
   defaultTsdbSource,
   pickSeriesColor,
   REDUCE_PANEL_TYPES,
@@ -57,12 +59,42 @@ import {
 } from './panels/charts/multiOutputLimit';
 import { SERIES_REDUCE_FUNCS } from './panels/charts/seriesReduce';
 import {
+  DEFAULT_DECIMAL_PLACES,
+  MAX_DECIMAL_PLACES,
+} from './panels/charts/decimalPlaces';
+import {
+  readValueScale,
+  VALUE_SCALE_MAX,
+  VALUE_SCALE_MIN,
+} from './panels/charts/valueScale';
+import {
+  CUSTOM_UNIT_SENTINEL,
+  isPresetUnit,
+  UNIT_OPTIONS,
+} from './panels/charts/unitOptions';
+import {
+  panelTagKeys,
+  tagFieldPath,
+  tagKeyOfField,
+} from './panels/charts/panelTagKeys';
+import {
   CAPABILITY_REASON_KEYS,
   panelSourceCapabilities,
   resolvePanelSourceBinding,
 } from './panels/charts/panelDataSource';
 import { isPanelSeriesSource } from './panels/charts/usePanelSeriesData';
 import { FillStrategyField, TsdbSourceSection } from './TsdbSourceSection';
+import { FillPreviousLimitField } from './FillPreviousLimitField';
+import { SysmetricsSourceSection } from './SysmetricsSourceSection';
+import {
+  GRAPH_STYLES,
+  hasGapDash,
+  hasStrokeStyle,
+  isStackable,
+  readGraphStyle,
+  requiresBuckets,
+  type GraphStyle,
+} from './panels/charts/graphStyle';
 import { AliasTokenHelp } from './AliasTokenHelp';
 import { SeriesNameFormatField } from './SeriesNameFormatField';
 import {
@@ -74,6 +106,20 @@ import {
   makeAliasToken,
   resolveSeriesAlias,
 } from './panels/charts/aliasTemplate';
+
+/**
+ * 데이터 소스 종류 → 토글 버튼 라벨 i18n 키.
+ *
+ * `Record<ChartDataSourceKind, string>` 로 두어 **컴파일러가 전수성을 강제**하게 한다 —
+ * 삼항 사슬로 두면 종류가 늘 때 마지막 가지가 조용히 새 종류를 삼킨다(TSDB 라벨이
+ * sysmetrics 버튼에 붙는 식).
+ */
+const DATA_SOURCE_LABEL_KEYS: Record<ChartDataSourceKind, string> = {
+  channel: 'dashboard.chart.dataSourceChannel',
+  store: 'dashboard.chart.dataSourceStore',
+  tsdb: 'dashboard.chart.dataSourceTsdb',
+  sysmetrics: 'dashboard.chart.dataSourceSysmetrics',
+};
 
 /** REQ-M5-04: channel_name 정규식 */
 const CHANNEL_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
@@ -101,6 +147,221 @@ function LabeledField(props: { label: string; children: React.ReactNode; hint?: 
     </div>
   );
 }
+
+/**
+ * 값 표기 소수점 자릿수 입력 — 차트 계열 패널이 공유한다.
+ *
+ * 비우면 `decimal_places` 를 지워 기본값({@link DEFAULT_DECIMAL_PLACES})으로 되돌린다.
+ * "지움" 과 "0 으로 지정" 은 다르다 — 후자는 정수 표기를 고정한다.
+ *
+ * 자리마다 입력칸을 다시 만들지 않는 이유: 종전에는 통계와 라인만 각자 만들어 두었고
+ * 두 칸의 동작이 이미 달랐다(통계는 비울 수 없고, 라인은 placeholder 가 "자동").
+ */
+export function DecimalPlacesField({
+  config,
+  onConfigChange,
+  testId,
+}: {
+  config: Record<string, unknown>;
+  onConfigChange: OnConfig;
+  testId: string;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const raw = config.decimal_places;
+  const value = typeof raw === 'number' && Number.isFinite(raw) ? String(raw) : '';
+  return (
+    <LabeledField
+      label={t('dashboard.chart.decimalPlaces')}
+      hint={t('dashboard.chart.decimalPlacesHint')}
+    >
+      <input
+        type="number"
+        min={0}
+        max={MAX_DECIMAL_PLACES}
+        value={value}
+        placeholder={String(DEFAULT_DECIMAL_PLACES)}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === '') return onConfigChange({ decimal_places: undefined });
+          const n = parseInt(v, 10);
+          if (!Number.isNaN(n) && n >= 0) onConfigChange({ decimal_places: n });
+        }}
+        data-testid={testId}
+        className={inputClass()}
+      />
+    </LabeledField>
+  );
+}
+
+/**
+ * 값 단위 선택 — 목록에서 고르거나 직접 적는다.
+ *
+ * 종전에는 이 UI 가 게이지 설정 안에만 있었고, 통계·라인은 자유 텍스트 한 칸이었다.
+ * 같은 온도 시리즈가 패널마다 `°C` · `C` · `degC` 로 갈리는 이유가 그것이다. 목록을
+ * 공유하면 대시보드 안에서 표기가 저절로 맞는다.
+ *
+ * **"직접 입력" 은 모드다.** 종전 게이지는 목록 옆에 좁은 텍스트 칸을 늘 띄워 두고
+ * 목록의 "직접 입력" 항목은 고르면 아무 일도 하지 않았다(`return`). 무엇을 눌러야
+ * 커스텀 단위를 넣을 수 있는지 화면에 드러나지 않았다. 여기서는 "직접 입력" 을 고르면
+ * 입력칸이 나타나고 포커스가 간다 — 고른 것이 곧 일어난다.
+ */
+export function UnitField({
+  value,
+  onChange,
+  testId,
+  label,
+}: {
+  value: string;
+  onChange: (unit: string) => void;
+  testId: string;
+  /** 라벨 문구 키. 미지정이면 "단위". */
+  label?: string;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  return (
+    <LabeledField label={t(label ?? 'dashboard.chart.unit')}>
+      <UnitControl value={value} onChange={onChange} testId={testId} />
+    </LabeledField>
+  );
+}
+
+/**
+ * 현재값 글자 **크기 배율**.
+ *
+ * 패널마다 기본 크기가 다르므로(통계 본값 36 · 타일 24) 절대 크기가 아니라 배율로 둔다 —
+ * 배율이면 타일이 하나일 때와 여럿일 때 모두 같은 뜻으로 걸린다. 게이지와 **같은 config
+ * 키**(`value_scale`)라 패널 유형을 바꿔도 "조금 크게" 가 유지된다.
+ */
+export function ValueScaleField({
+  config,
+  onConfigChange,
+  testId,
+}: {
+  config: Record<string, unknown>;
+  onConfigChange: OnConfig;
+  testId: string;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const scale = readValueScale(config.value_scale);
+  return (
+    <LabeledField label={t('dashboard.chart.valueScale')}>
+      <div className="flex items-center gap-2">
+        <input
+          type="range"
+          min={VALUE_SCALE_MIN}
+          max={VALUE_SCALE_MAX}
+          step={0.05}
+          value={scale}
+          onChange={(e) => onConfigChange({ value_scale: Number(e.target.value) })}
+          data-testid={testId}
+          className="flex-1"
+        />
+        <span className="w-10 shrink-0 text-right text-xs tabular-nums text-(--color-text-muted)">
+          {scale.toFixed(2)}
+        </span>
+        <button
+          type="button"
+          onClick={() => onConfigChange({ value_scale: undefined })}
+          data-testid={`${testId}-reset`}
+          className="shrink-0 rounded-md bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)/80"
+        >
+          {t('dashboard.chart.valueScaleReset')}
+        </button>
+      </div>
+    </LabeledField>
+  );
+}
+
+/**
+ * 라벨 없는 단위 컨트롤. 표의 열 편집기처럼 이미 좁은 행 안에 들어가는 자리에서 쓴다.
+ *
+ * `compact` 는 글자·여백만 줄인다 — 동작(직접 입력 모드 전환)은 두 크기가 같다.
+ */
+export function UnitControl({
+  value,
+  onChange,
+  testId,
+  compact = false,
+}: {
+  value: string;
+  onChange: (unit: string) => void;
+  testId: string;
+  compact?: boolean;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  // 목록에 없는 값으로 열렸다면 이미 커스텀이다 — 사용자가 적어 둔 값을 목록으로
+  // 되돌려 놓으면 안 된다.
+  const [custom, setCustom] = useState(() => !isPresetUnit(value));
+  const [draft, setDraft] = useState(value);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // 외부에서 config 가 바뀌면(다른 패널을 열거나 되돌리기) 초안을 맞춘다.
+  useEffect(() => {
+    setDraft(value);
+    if (isPresetUnit(value)) setCustom(false);
+  }, [value]);
+
+  const smallBox =
+    'rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500';
+
+  return (
+    <div className={compact ? 'flex items-center gap-1' : 'flex gap-2'}>
+      <select
+        value={custom ? CUSTOM_UNIT_SENTINEL : value}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === CUSTOM_UNIT_SENTINEL) {
+            setCustom(true);
+            // 입력칸이 나타난 뒤에 포커스를 준다.
+            requestAnimationFrame(() => inputRef.current?.focus());
+            return;
+          }
+          setCustom(false);
+          setDraft(v);
+          if (v !== value) onChange(v);
+        }}
+        aria-label={t('dashboard.chart.unit')}
+        data-testid={testId}
+        className={
+          compact
+            ? `w-24 shrink-0 ${smallBox}`
+            : custom
+              ? 'w-28 shrink-0 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500'
+              : inputClass()
+        }
+      >
+        {UNIT_OPTIONS.map((group) => (
+          <optgroup key={group.labelKey} label={t(group.labelKey)}>
+            {group.units.map((u) => (
+              <option key={u.value} value={u.value}>
+                {u.labelKey ? t(u.labelKey) : u.value}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+        <option value={CUSTOM_UNIT_SENTINEL}>{t('dashboard.settings.gaugeSection.custom')}</option>
+      </select>
+      {custom && (
+        <input
+          ref={inputRef}
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => {
+            if (draft !== value) onChange(draft);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          }}
+          data-testid={`${testId}-custom`}
+          placeholder={t('dashboard.settings.gaugeSection.customInput')}
+          className={compact ? `w-16 ${smallBox}` : inputClass()}
+        />
+      )}
+    </div>
+  );
+}
+
 
 function inputClass(): string {
   return 'w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
@@ -360,6 +621,20 @@ function defaultStoreSource(): StoreSourceConfig {
 /**
  * 차트 패널 공통 데이터 소스 섹션.
  *
+ * ## 설정 순서 (세 소스 공통 · 정본)
+ *
+ * Store · TSDB · 시스템 지표가 **같은 순서**로 늘어선다. 소스를 갈아탄 사용자가 같은
+ * 설정을 같은 자리에서 찾게 하려는 것이며, 순서가 갈라지면 소스 수만큼 화면을 다시
+ * 익혀야 한다. 새 소스를 붙일 때도 이 순서를 따른다.
+ *
+ *   1. 에이전트 선택
+ *   2. 소스 고유 축      TSDB: bucket · 드릴다운 · 그룹 기준 / 시스템 지표: 이력 없음 고지
+ *   3. 조회 창           범위 → 인터벌 → 집계 → 빈 구간 처리 (없는 축은 건너뛴다)
+ *   4. 구간 대표값       해당 패널(stat/gauge/bar/pie)에서만
+ *   5. 시리즈 이름 형식
+ *   6. 시리즈 표         Store 는 `PanelSettingsDataSource` 가 이 섹션 **뒤에** 렌더한다
+ *   7. 선택 요약
+ *
  * - 데이터 소스 토글(채널 / Store)을 제공한다.
  * - store 선택 시: Store 에이전트 선택 → 키 필터(이름/field/tag/data_type)
  *   → 키 멀티셀렉트로 store_source.series[] 를 채운다.
@@ -385,14 +660,14 @@ export function StoreSourceSection({
    * (PanelSettingsDataSource)에 알린다 — 상위는 Store 모드에서만 선택 테이블을 렌더한다.
    * @spec SPEC-PANEL-SETTINGS-001 (데이터소스 토글 단일화)
    */
-  onModeChange?: (mode: 'channel' | 'store' | 'tsdb') => void;
+  onModeChange?: (mode: ChartDataSourceKind) => void;
 }): React.ReactElement {
   const { t } = useTranslation();
   const config = panel.config ?? {};
   const storeSource =
     (config.store_source as StoreSourceConfig | undefined) ?? defaultStoreSource();
   // 라인 차트 패널은 per-line 스타일 통합 편집(채널/스토어 시리즈 양쪽)을 노출한다.
-  const isLineChart = panel.type === 'line-chart';
+  const isLineChart = panel.type === 'graph-chart';
 
   // SPEC-TSDB-002 §2.11 [E1]: 모드의 단일 소스 오브 트루스가 로컬 `useState` 에서
   // `config.data_source` 로 이동했다. 세 모드 모두 config 에 영속되므로 TSDB 는 더
@@ -416,6 +691,12 @@ export function StoreSourceSection({
       // 처음 TSDB 로 전환 시 기본 블록을 함께 채운다(§2.11 [E1]). 이미 `tsdb_source` 가
       // 있으면 종류만 기록해 기존 선택을 덮어쓰지 않는다 — store 쪽과 같은 규칙이다.
       onConfigChange({ data_source: 'tsdb', tsdb_source: defaultTsdbSource() });
+    } else if (kind === 'sysmetrics' && !config.sysmetrics_source) {
+      // store/tsdb 와 같은 규칙 — 처음 전환할 때만 기본 블록을 함께 채운다.
+      onConfigChange({
+        data_source: 'sysmetrics',
+        sysmetrics_source: defaultSysmetricsSource(),
+      });
     } else {
       onConfigChange({ data_source: kind });
     }
@@ -457,7 +738,7 @@ export function StoreSourceSection({
           role="tablist"
           aria-label={t('dashboard.chart.dataSourceLabel')}
         >
-          {(['channel', 'store', 'tsdb'] as const).map((kind) => {
+          {(['channel', 'store', 'tsdb', 'sysmetrics'] as const).map((kind) => {
             const selected = mode === kind;
             return (
               <button
@@ -473,11 +754,7 @@ export function StoreSourceSection({
                     : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
                 }`}
               >
-                {kind === 'channel'
-                  ? t('dashboard.chart.dataSourceChannel')
-                  : kind === 'store'
-                    ? t('dashboard.chart.dataSourceStore')
-                    : t('dashboard.chart.dataSourceTsdb')}
+                {t(DATA_SOURCE_LABEL_KEYS[kind])}
               </button>
             );
           })}
@@ -553,15 +830,62 @@ export function StoreSourceSection({
         />
       )}
 
-      {/* Store 모드: 이름을 지정하지 않은 시리즈의 표시 이름 형식(패널 단위 기본값). */}
+      {/* Store 모드: 인터벌 집계 — 버킷 하나를 대표하는 값을 무엇으로 삼을지.
+          종전에는 이 값이 config 에만 있고 조작 통로가 없어 `average` 로 고정이었다.
+          TSDB 모드의 같은 컨트롤과 같은 어휘·같은 자리를 쓴다. */}
       {isStoreMode && (
-        <SeriesNameFormatField
-          value={storeSource.series_name_format}
-          onChange={(series_name_format) => patchStore({ series_name_format })}
-          sample={storeSource.series?.[0]}
-        />
+        <LabeledField label={t('dashboard.chart.tsdbAggregation')}>
+          <select
+            data-testid="chart-store-aggregation"
+            value={storeSource.aggregation}
+            onChange={(e) =>
+              patchStore({ aggregation: e.target.value as StoreSourceConfig['aggregation'] })
+            }
+            className={inputClass()}
+          >
+            {STORE_AGG_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {t(o.labelKey)}
+              </option>
+            ))}
+          </select>
+        </LabeledField>
       )}
 
+      {/*
+        Store 모드: 빈 버킷 처리 전략. 서버(`/store/{agent}/query`)가 집계 결과의 빈
+        버킷을 채운다 — 직전값 사용 기간 제한 판단은 TSDB 와 같은 정본(fillpolicy)을
+        쓰므로 소스를 갈아타도 같은 설정이 같은 그림을 낸다. `avg` 만 비활성이며,
+        선택지를 지우지 않고 남기는 이유는 §2.13 [S1] 이다.
+      */}
+      {isStoreMode && (
+        <FillStrategyField
+          value={storeSource.fill ?? ''}
+          onChange={(fill) => patchStore({ fill: fill === '' ? undefined : fill })}
+          supported={panelSourceCapabilities('store').fillStrategies}
+          avgSupported={panelSourceCapabilities('store').fillAvg}
+          reasonKey={CAPABILITY_REASON_KEYS.fillAvg}
+          testId="chart-store-fill"
+        />
+      )}
+      {/* 사용 기간 제한은 `직전값 사용` 에서만 뜻이 있다. */}
+      {isStoreMode && storeSource.fill === 'previous' && (
+        <FillPreviousLimitField
+          value={{
+            maxMs: storeSource.fill_previous_max_ms,
+            overflow: storeSource.fill_previous_overflow,
+            overflowValue: storeSource.fill_previous_overflow_value,
+          }}
+          onChange={(next) =>
+            patchStore({
+              fill_previous_max_ms: next.maxMs,
+              fill_previous_overflow: next.overflow,
+              fill_previous_overflow_value: next.overflowValue,
+            })
+          }
+          testIdPrefix="chart-store-fill-prev"
+        />
+      )}
       {/*
         Store 모드 + 대표값 대상 패널(stat/gauge/bar-chart/pie-chart)에서만 구간 대표값
         선택기를 노출한다. line-chart/table/heatmap 은 같은 섹션을 쓰지만 선택기가 없다
@@ -576,29 +900,24 @@ export function StoreSourceSection({
         />
       )}
 
-      {/*
-        Store 모드: 빈 버킷 처리 전략은 Store 백엔드가 지원하지 않으므로 **비활성 + 사유**로
-        표시한다. 숨기지 않는 이유는 §2.13 [S1] 이다 — 선택지가 없으면 사용자는 "이 소스에는
-        없는 기능" 인지 "내가 못 찾는 것" 인지 구분할 수 없다. TSDB 모드의 같은 컨트롤과
-        **같은 컴포넌트**를 쓰므로 두 소스의 차이가 화면에서 그대로 드러난다.
-      */}
+
+      {/* Store 모드: 이름을 지정하지 않은 시리즈의 표시 이름 형식(패널 단위 기본값). */}
       {isStoreMode && (
-        <FillStrategyField
-          // 셀렉트가 통째로 비활성이므로 값도 핸들러도 도달하지 않는다. Store config 에
-          // `fill` 을 기록하지 않는 것이 의도다 — 백엔드가 무시하는 값을 저장하면
-          // 나중에 "설정했는데 왜 안 되지" 가 된다.
-          value=""
-          onChange={() => {}}
-          supported={panelSourceCapabilities('store').fillStrategies}
-          avgSupported={panelSourceCapabilities('store').fillAvg}
-          reasonKey={CAPABILITY_REASON_KEYS.fillStore}
-          testId="chart-store-fill"
+        <SeriesNameFormatField
+          value={storeSource.series_name_format}
+          onChange={(series_name_format) => patchStore({ series_name_format })}
+          sample={storeSource.series?.[0]}
         />
       )}
 
       {/* TSDB 모드: 에이전트 · bucket · measurement→field→tag 드릴다운 선택 UI(§2.11 ~ §2.15). */}
       {mode === 'tsdb' && (
         <TsdbSourceSection panel={panel} onConfigChange={onConfigChange} />
+      )}
+
+      {/* sysmetrics 모드: 에이전트 · 값 · 대상 선택 UI(이력 없는 라이브 누적 소스). */}
+      {mode === 'sysmetrics' && (
+        <SysmetricsSourceSection panel={panel} onConfigChange={onConfigChange} />
       )}
 
       {/*
@@ -860,20 +1179,29 @@ function StoreInfoPopover({
 /**
  * Store 인터벌(버킷) 간격 편집기.
  *
+ * sysmetrics 소스도 같은 컴포넌트를 쓴다 — 두 소스가 인터벌을 다른 눈금·다른 조작으로
+ * 고르면 소스를 갈아탄 사용자가 같은 설정을 다시 배운다.
+ *
  * 지금까지 Store 소스의 인터벌은 정보 팝오버에 **읽기 전용**으로만 있었다 — 기본값
  * 1분 버킷을 바꿀 방법이 화면에 없었다. TSDB 쪽과 같은 프리셋·같은 표기·같은 "직접
  * 입력" 경로를 쓴다(`intervalPresets`).
  *
  * 0 이하는 저장하지 않는다 — `useStoreChartData` 의 pollKey 가 비어 폴링이 멈춘다.
  */
-function StoreIntervalField({
+export function StoreIntervalField({
   intervalMs,
   timeWindowMs,
   onChange,
+  testIdPrefix = 'chart-store',
 }: {
   intervalMs: number;
   timeWindowMs: number;
   onChange: (intervalMs: number) => void;
+  /**
+   * testid 접두사. 소스별로 갈라야 같은 화면에 두 소스 절이 있어도 질의가 겹치지 않는다.
+   * `SeriesRangeField` 와 같은 규약이다.
+   */
+  testIdPrefix?: string;
 }): React.ReactElement {
   const { t } = useTranslation();
   const preset = isIntervalPreset(intervalMs);
@@ -885,7 +1213,7 @@ function StoreIntervalField({
     <div className="space-y-1">
       <LabeledField label={t('dashboard.chart.storeInterval')}>
         <select
-          data-testid="chart-store-interval"
+          data-testid={`${testIdPrefix}-interval`}
           value={preset ? String(intervalMs) : 'custom'}
           onChange={(e) => {
             const v = e.target.value;
@@ -908,7 +1236,7 @@ function StoreIntervalField({
           <input
             type="number"
             min={1}
-            data-testid="chart-store-interval-custom"
+            data-testid={`${testIdPrefix}-interval-custom`}
             value={Math.round(intervalMs / 1000)}
             aria-label={t('dashboard.chart.storeIntervalCustomAria')}
             onChange={(e) => {
@@ -923,7 +1251,7 @@ function StoreIntervalField({
       )}
       {tooCoarse && (
         <p
-          data-testid="chart-store-interval-warning"
+          data-testid={`${testIdPrefix}-interval-warning`}
           className="text-[11px] leading-snug text-amber-600 dark:text-amber-400"
         >
           {t('dashboard.chart.storeIntervalTooCoarse')}
@@ -1049,6 +1377,8 @@ export function StoreTagSelectionEditor({
  * 이미 단일 숫자 값을 제공하므로 표시는 되지만 렌더 결과에는 영향을 주지 않는다.
  */
 interface LineStyleValue {
+  /** 이 시리즈의 모양. 비우면 패널 기본값을 따른다(`'line'` 고정과 다르다). */
+  graph_style?: GraphStyle;
   stroke_style?: StrokeStyle;
   stroke_width?: number;
   smooth?: boolean;
@@ -1067,6 +1397,23 @@ export function LineStyleControls({
   const { t } = useTranslation();
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid={`${testIdPrefix}-line-style`}>
+      {/* 이 시리즈의 모양. 비우면 패널 기본값을 따른다 — 패널을 바꾸면 같이 바뀐다. */}
+      <select
+        value={value.graph_style ?? ''}
+        onChange={(e) =>
+          onPatch({ graph_style: (e.target.value || undefined) as GraphStyle | undefined })
+        }
+        aria-label={t('dashboard.chart.graphStyleSeries')}
+        data-testid={`${testIdPrefix}-graph-style`}
+        className="rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1.5 text-sm"
+      >
+        <option value="">{t('dashboard.chart.graphStyleFollowPanel')}</option>
+        {GRAPH_STYLES.map((g) => (
+          <option key={g} value={g}>
+            {t(`dashboard.chart.graphStyle_${g}`)}
+          </option>
+        ))}
+      </select>
       <select
         value={value.stroke_style ?? 'solid'}
         onChange={(e) => onPatch({ stroke_style: e.target.value as StrokeStyle })}
@@ -1380,7 +1727,6 @@ export function StatChartSection({
   const config = panel.config ?? {};
   const displayField = (config.display_field as string | undefined) ?? 'value';
   const unit = (config.unit as string | undefined) ?? '';
-  const decimalPlaces = (config.decimal_places as number | undefined) ?? 2;
   const rules =
     (config.threshold_color_rules as Array<{ min: number; color: string }> | undefined) ?? [];
 
@@ -1413,28 +1759,21 @@ export function StatChartSection({
           className={inputClass()}
         />
       </LabeledField>
-      <LabeledField label={t('dashboard.chart.unit')}>
-        <input
-          type="text"
-          value={unit}
-          onChange={(e) => onConfigChange({ unit: e.target.value })}
-          placeholder={t('dashboard.chart.unitPlaceholder')}
-          className={inputClass()}
-        />
-      </LabeledField>
-      <LabeledField label={t('dashboard.chart.decimalPlaces')}>
-        <input
-          type="number"
-          min={0}
-          max={10}
-          value={decimalPlaces}
-          onChange={(e) => {
-            const n = parseInt(e.target.value, 10);
-            if (!Number.isNaN(n)) onConfigChange({ decimal_places: n });
-          }}
-          className={inputClass()}
-        />
-      </LabeledField>
+      <UnitField
+        value={unit}
+        onChange={(v) => onConfigChange({ unit: v })}
+        testId="stat-unit"
+      />
+      <DecimalPlacesField
+        config={config}
+        onConfigChange={onConfigChange}
+        testId="stat-decimal-places"
+      />
+      <ValueScaleField
+        config={config}
+        onConfigChange={onConfigChange}
+        testId="stat-value-scale"
+      />
       <TileRowsField
         value={config.tile_rows as number | undefined}
         onChange={(tile_rows) => onConfigChange({ tile_rows })}
@@ -2060,9 +2399,13 @@ export function LineChartSection({
   // readChartXRange 안에서 폴백으로 해석되므로 여기서는 새 어휘만 다룬다.
   const xRange = readChartXRange(config as ChartXRangeSource);
   const refreshMs = (config.time_window_refresh_ms as number | undefined) ?? 1000;
-  const decimalPlaces = config.decimal_places as number | undefined;
   const tooltipCfg = (config.tooltip as TooltipConfig | undefined) ?? {};
   const panelSmooth = (config.smooth as boolean | undefined) ?? false;
+  const panelGraphStyle = readGraphStyle(config.graph_style);
+  const panelStacked = config.stacked === true;
+  // 스타일의 옵션 줄을 낼지 — 셋 다 뜻이 없으면(캔들) 빈 줄만 남아 간격이 어긋난다.
+  const styleOptionsVisible =
+    isStackable(panelGraphStyle) || hasStrokeStyle(panelGraphStyle) || hasGapDash(panelGraphStyle);
   // 소스가 채널이 아니면 X축 범위는 데이터 소스 설정이 정한다 — 조회 범위가 곧
   // 표시 범위다. 같은 값을 두 곳에서 편집하게 두면 서로 어긋난다.
   const xRangeOwnedBySource = isPanelSeriesSource(resolvePanelSourceBinding(config));
@@ -2236,23 +2579,11 @@ export function LineChartSection({
             </select>
           </LabeledField>
           {yAxisType === 'numeric' && (
-            <LabeledField label={t('dashboard.chart.decimalPlaces')}>
-              <input
-                type="number"
-                min={0}
-                max={10}
-                value={decimalPlaces ?? ''}
-                placeholder={t('dashboard.chart.autoWhenEmpty')}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (v === '') return onConfigChange({ decimal_places: undefined });
-                  const n = parseInt(v, 10);
-                  if (!Number.isNaN(n) && n >= 0) onConfigChange({ decimal_places: n });
-                }}
-                data-testid="line-chart-decimal-places"
-                className={inputClass()}
-              />
-            </LabeledField>
+            <DecimalPlacesField
+              config={config}
+              onConfigChange={onConfigChange}
+              testId="line-chart-decimal-places"
+            />
           )}
         </div>
 
@@ -2343,70 +2674,127 @@ export function LineChartSection({
           </div>
         )}
 
-        <LabeledField label={t('dashboard.chart.unit')}>
-          <input
-            type="text"
-            value={yUnit}
-            onChange={(e) => onConfigChange({ y_unit: e.target.value || undefined })}
-            placeholder={t('dashboard.chart.yUnitPlaceholder')}
-            data-testid="line-chart-y-unit"
-            className={inputClass()}
-          />
-        </LabeledField>
+        <UnitField
+          value={yUnit}
+          onChange={(v) => onConfigChange({ y_unit: v || undefined })}
+          testId="line-chart-y-unit"
+        />
       </SettingsSection>
 
-      {/* ═══ 라인 스타일 ═══ */}
+      {/* ═══ 그래프 스타일 ═══ */}
       <SettingsSection title={t('dashboard.chart.lineStyleSection')}>
-        <label className="flex cursor-pointer items-center gap-1.5 text-xs text-(--color-text-muted)">
-          <input
-            type="checkbox"
-            checked={panelSmooth}
-            onChange={(e) => onConfigChange({ smooth: e.target.checked || undefined })}
-            data-testid="line-chart-smooth"
-          />
-          <span>{t('dashboard.chart.curve')}</span>
-        </label>
-
-        {/* 결측 구간 점선 표기 (SPEC-TSDB-004 §2.19).
-            켜면 값이 없는 구간에서 실선을 끊고 그 구간만 점선으로 잇는다 —
-            이은 것과 잰 것을 눈으로 가른다. 끄면 종전대로 조용히 이어 그린다. */}
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-(--color-text-muted)">
-            <input
-              type="checkbox"
-              data-testid="line-chart-gap-dash"
-              checked={gapDashThreshold > 0}
-              onChange={(e) =>
-                // 끌 때 0 을 남기지 않는다 — "켜져 있는데 임계 0" 처럼 읽힌다.
-                onConfigChange({
-                  gap_dash_threshold: e.target.checked ? GAP_DASH_DEFAULT : undefined,
-                })
-              }
-            />
-            <span>{t('dashboard.chart.gapDash')}</span>
-          </label>
-          {/* 결측 개수는 켰을 때만 낸다 — 꺼진 상태의 임계값은 읽을 뜻이 없다. */}
-          {gapDashThreshold > 0 && (
-            <input
-              type="number"
-              min={1}
-              max={10000}
-              data-testid="line-chart-gap-dash-threshold"
-              aria-label={t('dashboard.chart.gapDashThreshold')}
-              value={gapDashThreshold}
-              onChange={(e) => {
-                const n = parseInt(e.target.value, 10);
-                // 1 미만은 "끄기" 와 같은 뜻인데 토글은 켜져 있다 — 모순된
-                // 상태를 만들지 않으려면 끄기는 토글로만 한다.
-                if (!Number.isNaN(n) && n >= 1) onConfigChange({ gap_dash_threshold: n });
-              }}
-              className="w-20 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500"
-            />
+        {/* 패널 기본 모양. 시리즈 세부 설정에서 개별로 덮어쓸 수 있다. */}
+        <div className="flex flex-wrap items-end gap-2">
+          <LabeledField label={t('dashboard.chart.graphStyle')}>
+            <select
+              value={panelGraphStyle}
+              onChange={(e) => onConfigChange({ graph_style: e.target.value as GraphStyle })}
+              data-testid="line-chart-graph-style"
+              className={inputClass()}
+            >
+              {GRAPH_STYLES.map((g) => (
+                <option
+                  key={g}
+                  value={g}
+                  // 캔들은 버킷마다 시·고·저·종이 필요해 집계 소스에서만 그릴 수 있다.
+                  // 숨기지 않고 비활성으로 두어 "왜 없지" 대신 "왜 못 쓰지" 를 답한다.
+                  disabled={requiresBuckets(g) && !xRangeOwnedBySource}
+                >
+                  {t(`dashboard.chart.graphStyle_${g}`)}
+                </option>
+              ))}
+            </select>
+          </LabeledField>
+          {requiresBuckets(panelGraphStyle) && !xRangeOwnedBySource && (
+            <p
+              data-testid="line-chart-candle-unsupported"
+              className="w-full text-[11px] text-amber-500"
+            >
+              {t('dashboard.chart.candleNeedsBuckets')}
+            </p>
           )}
         </div>
+
+        {/* 스타일의 옵션들 — 셋 다 "그 스타일에서만 뜻이 있는" 같은 성격이라 한 줄에 모은다.
+            스택킹만 스타일 옆에 두고 나머지를 아래에 두면, 스타일을 바꿀 때 체크박스가
+            두 자리에서 따로 나타나고 사라져 무엇이 무엇에 딸린 설정인지 읽히지 않는다.
+
+            판정은 `graphStyle.ts` 의 함수를 그대로 부른다 — 여기서 다시 적으면 렌더러와
+            설정 화면이 다른 답을 내어 "설정은 켰는데 그림은 안 바뀐다" 가 된다. */}
+        {styleOptionsVisible && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            {/* 스택킹은 영역·바에서만 뜻이 있다 — 라인은 쌓아도 겹친 선이고,
+                캔들은 네 값이 한 덩어리라 쌓을 수 없다. */}
+            {isStackable(panelGraphStyle) && (
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-(--color-text-muted)">
+                <input
+                  type="checkbox"
+                  checked={panelStacked}
+                  onChange={(e) => onConfigChange({ stacked: e.target.checked || undefined })}
+                  data-testid="line-chart-stacked"
+                />
+                <span>{t('dashboard.chart.stacked')}</span>
+              </label>
+            )}
+
+            {/* 곡선은 선이 있어야 뜻이 있다 — 바·캔들에는 구부릴 선이 없다. */}
+            {hasStrokeStyle(panelGraphStyle) && (
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-(--color-text-muted)">
+                <input
+                  type="checkbox"
+                  checked={panelSmooth}
+                  onChange={(e) => onConfigChange({ smooth: e.target.checked || undefined })}
+                  data-testid="line-chart-smooth"
+                />
+                <span>{t('dashboard.chart.curve')}</span>
+              </label>
+            )}
+
+            {/* 결측 구간 점선 표기 (SPEC-TSDB-004 §2.19).
+                켜면 값이 없는 구간에서 실선을 끊고 그 구간만 점선으로 잇는다 —
+                이은 것과 잰 것을 눈으로 가른다. 끄면 종전대로 조용히 이어 그린다.
+                바·캔들은 값이 없으면 막대가 서지 않아 결측이 이미 눈에 보인다. */}
+            {hasGapDash(panelGraphStyle) && (
+              <>
+                <label className="flex cursor-pointer items-center gap-1.5 text-xs text-(--color-text-muted)">
+                  <input
+                    type="checkbox"
+                    data-testid="line-chart-gap-dash"
+                    checked={gapDashThreshold > 0}
+                    onChange={(e) =>
+                      // 끌 때 0 을 남기지 않는다 — "켜져 있는데 임계 0" 처럼 읽힌다.
+                      onConfigChange({
+                        gap_dash_threshold: e.target.checked ? GAP_DASH_DEFAULT : undefined,
+                      })
+                    }
+                  />
+                  <span>{t('dashboard.chart.gapDash')}</span>
+                </label>
+                {/* 결측 개수는 켰을 때만 낸다 — 꺼진 상태의 임계값은 읽을 뜻이 없다. */}
+                {gapDashThreshold > 0 && (
+                  <input
+                    type="number"
+                    min={1}
+                    max={10000}
+                    data-testid="line-chart-gap-dash-threshold"
+                    aria-label={t('dashboard.chart.gapDashThreshold')}
+                    value={gapDashThreshold}
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      // 1 미만은 "끄기" 와 같은 뜻인데 토글은 켜져 있다 — 모순된
+                      // 상태를 만들지 않으려면 끄기는 토글로만 한다.
+                      if (!Number.isNaN(n) && n >= 1) onConfigChange({ gap_dash_threshold: n });
+                    }}
+                    className="w-20 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-2 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500"
+                  />
+                )}
+              </>
+            )}
+          </div>
+        )}
         {/* 숫자의 뜻을 화면에 남긴다. 이 문구가 없으면 "2" 가 무엇의 2인지 알 수
             없어, 한 칸짜리 결측이 안 걸리는 이유를 짐작할 길이 없다. */}
-        {gapDashThreshold > 0 && (
+        {hasGapDash(panelGraphStyle) && gapDashThreshold > 0 && (
           <p
             data-testid="line-chart-gap-dash-hint"
             className="text-[11px] leading-snug text-(--color-text-muted)"
@@ -2613,6 +3001,7 @@ export function BarChartSection({
   const binSec = (config.bin_sec as number | undefined) ?? 60;
   const aggFunc = (config.agg_func as AggFunc | undefined) ?? 'avg';
   const maxPoints = (config.max_points as number | undefined) ?? 20;
+  const unit = (config.unit as string | undefined) ?? '';
 
   return (
     <div className="space-y-3">
@@ -2624,6 +3013,16 @@ export function BarChartSection({
           className={inputClass()}
         />
       </LabeledField>
+      <UnitField
+        value={unit}
+        onChange={(v) => onConfigChange({ unit: v || undefined })}
+        testId="bar-chart-unit"
+      />
+      <DecimalPlacesField
+        config={config}
+        onConfigChange={onConfigChange}
+        testId="bar-chart-decimal-places"
+      />
       <LabeledField label={t('dashboard.chart.modeField')}>
         <select
           value={mode}
@@ -2705,6 +3104,7 @@ export function PieChartSection({
   const showLegend = (config.show_legend as boolean | undefined) ?? true;
   const showPercentage = (config.show_percentage as boolean | undefined) ?? true;
   const maxPoints = (config.max_points as number | undefined) ?? 20;
+  const unit = (config.unit as string | undefined) ?? '';
 
   return (
     <div className="space-y-3">
@@ -2716,6 +3116,16 @@ export function PieChartSection({
           className={inputClass()}
         />
       </LabeledField>
+      <UnitField
+        value={unit}
+        onChange={(v) => onConfigChange({ unit: v || undefined })}
+        testId="pie-chart-unit"
+      />
+      <DecimalPlacesField
+        config={config}
+        onConfigChange={onConfigChange}
+        testId="pie-chart-decimal-places"
+      />
       <LabeledField
         label={t('dashboard.chart.labelField')}
         hint={t('dashboard.chart.labelFieldHintPie')}
@@ -2794,6 +3204,9 @@ export function TableChartSection({
   const maxPoints = (config.max_points as number | undefined) ?? 200;
   const defaultSort =
     (config.default_sort as { field: string; order: SortOrder } | undefined) ?? undefined;
+  const rowMode = (config.row_mode as TableRowMode | undefined) ?? 'entry';
+  const pivotTimeHeader = (config.pivot_time_header as string | undefined) ?? '';
+  const pivotUnit = (config.pivot_unit as string | undefined) ?? '';
 
   const updateColumn = (i: number, patch: Partial<TableColumn>): void => {
     onConfigChange({
@@ -2803,6 +3216,21 @@ export function TableChartSection({
   const addColumn = (): void => {
     onConfigChange({ columns: [...columns, { field: 'value', header: t('dashboard.chart.newColumn') }] });
   };
+  /**
+   * 태그를 열로 추가한다. 헤더는 태그 키를 그대로 쓴다 — 사용자가 고른 이름이 곧
+   * 열 이름인 편이 예측 가능하고, 바꾸고 싶으면 헤더 칸에서 고치면 된다.
+   */
+  const addTagColumn = (tagKey: string): void => {
+    onConfigChange({
+      columns: [...columns, { field: tagFieldPath(tagKey), header: tagKey, format: 'string' as TableColumnFormat }],
+    });
+  };
+  // 이미 열로 쓰고 있는 태그는 후보에서 뺀다 — 같은 태그를 두 번 넣을 이유가 없고,
+  // 목록에 남아 있으면 "눌렀는데 아무 일도 안 일어난다" 로 읽힌다.
+  const usedTagKeys = new Set(
+    columns.map((c) => tagKeyOfField(c.field)).filter((k): k is string => k !== undefined),
+  );
+  const tagCandidates = panelTagKeys(config).filter((k) => !usedTagKeys.has(k));
   const removeColumn = (i: number): void => {
     if (columns.length <= 1) return;
     onConfigChange({ columns: columns.filter((_, idx) => idx !== i) });
@@ -2823,16 +3251,96 @@ export function TableChartSection({
 
   return (
     <div className="space-y-3">
+      {/* 행 기준 — 표의 형상을 정하는 설정이라 열 편집기보다 위에 둔다. */}
+      <LabeledField
+        label={t('dashboard.chart.rowMode')}
+        hint={
+          rowMode === 'timestamp'
+            ? t('dashboard.chart.rowModeTimestampHint')
+            : t('dashboard.chart.rowModeEntryHint')
+        }
+      >
+        <select
+          value={rowMode}
+          onChange={(e) => {
+            const v = e.target.value as TableRowMode;
+            // 기본값은 저장하지 않는다 — 기존 패널 config 와 같은 모양을 유지한다.
+            onConfigChange({ row_mode: v === 'entry' ? undefined : v });
+          }}
+          data-testid="table-row-mode"
+          className={inputClass()}
+        >
+          <option value="entry">{t('dashboard.chart.rowModeEntry')}</option>
+          <option value="timestamp">{t('dashboard.chart.rowModeTimestamp')}</option>
+        </select>
+      </LabeledField>
+      {/* 자릿수는 `format: 'number'` 열에만 적용된다 — 시각·문자열 열은 영향이 없다. */}
+      <DecimalPlacesField
+        config={config}
+        onConfigChange={onConfigChange}
+        testId="table-decimal-places"
+      />
+      {/* 시각 기준 행에서는 열이 데이터에서 파생되므로 열 목록 편집기를 내리고,
+          사용자가 정할 수 있는 것(시각 열 이름 · 값 단위)만 남긴다. 파생 열을 목록으로
+          띄우면 필드 칸에 `$.series.<이름>` 이 노출되고, 고쳐도 다음 렌더에 되돌아간다. */}
+      {rowMode === 'timestamp' ? (
+        <div className="space-y-3" data-testid="table-pivot-settings">
+          <LabeledField label={t('dashboard.chart.pivotTimeHeader')}>
+            <input
+              type="text"
+              value={pivotTimeHeader}
+              onChange={(e) => onConfigChange({ pivot_time_header: e.target.value || undefined })}
+              placeholder={t('dashboard.chart.colTime')}
+              data-testid="table-pivot-time-header"
+              className={inputClass()}
+            />
+          </LabeledField>
+          <UnitField
+            value={pivotUnit}
+            onChange={(v) => onConfigChange({ pivot_unit: v || undefined })}
+            testId="table-pivot-unit"
+          />
+          <p className="text-[11px] leading-snug text-(--color-text-muted)">
+            {t('dashboard.chart.pivotColumnsHint')}
+          </p>
+        </div>
+      ) : (
       <div>
-        <div className="mb-1.5 flex items-center justify-between">
+        <div className="mb-1.5 flex items-center justify-between gap-2">
           <label className="text-xs font-medium text-(--color-text-muted)">{t('dashboard.chart.columns')}</label>
-          <button
-            type="button"
-            onClick={addColumn}
-            className="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
-          >
-            <Plus className="h-3 w-3" /> {t('dashboard.chart.add')}
-          </button>
+          <div className="flex items-center gap-1.5">
+            {/* 태그 열 추가 — 데이터 소스 설정에 적힌 태그를 골라 바로 열로 만든다.
+                종전에는 `$.tags.<키>` 를 손으로 적는 것 말고는 방법이 없었다. 후보가
+                하나도 없으면(태그를 걸지 않은 소스) 셀렉트를 내린다 — 고를 것이 없는
+                빈 목록은 안내가 아니라 방해다. 필드 직접 입력은 그대로 남아 있고,
+                아래 안내 문구가 그 통로를 설명한다. */}
+            {tagCandidates.length > 0 && (
+              <select
+                value=""
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v !== '') addTagColumn(v);
+                }}
+                data-testid="table-add-tag-column"
+                aria-label={t('dashboard.chart.addTagColumn')}
+                className="rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-0.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+              >
+                <option value="">{t('dashboard.chart.addTagColumn')}</option>
+                {tagCandidates.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              type="button"
+              onClick={addColumn}
+              className="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
+            >
+              <Plus className="h-3 w-3" /> {t('dashboard.chart.add')}
+            </button>
+          </div>
         </div>
         {/* 태그 컬럼 표기 안내 — 필드에 무엇을 쓸 수 있는지 화면에서 알 수 있어야 한다. */}
         <p className="mb-1.5 text-[11px] leading-snug text-(--color-text-muted)">
@@ -2906,6 +3414,16 @@ export function TableChartSection({
                   <option value="number">number</option>
                   <option value="datetime">datetime</option>
                 </select>
+                {/* 단위는 수치 열에만 뜻이 있다 — 시각·문자열 열에서는 컨트롤 자체를
+                    내린다(있는데 아무 효과가 없는 칸이 가장 헷갈린다). */}
+                {c.format === 'number' && (
+                  <UnitControl
+                    value={c.unit ?? ''}
+                    onChange={(v) => updateColumn(i, { unit: v || undefined })}
+                    testId={`table-column-unit-${i}`}
+                    compact
+                  />
+                )}
                 <label className="flex items-center gap-1 text-xs text-(--color-text-muted)">
                   {t('dashboard.chart.columnWidth')}
                   <input
@@ -2950,6 +3468,7 @@ export function TableChartSection({
           ))}
         </div>
       </div>
+      )}
       <LabeledField label={t('dashboard.chart.rowsPerPage')}>
         <input
           type="number"

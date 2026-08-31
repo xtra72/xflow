@@ -106,8 +106,17 @@ export function Line({
   );
 }
 
-export function Bar({ dataKey }: { dataKey?: string | number }) {
-  return <div data-testid="rc-bar" data-bar-key={String(dataKey)} className="recharts-bar" />;
+export function Bar({ dataKey, stackId }: { dataKey?: string | number; stackId?: string }) {
+  return (
+    <div
+      data-testid="rc-bar"
+      data-bar-key={String(dataKey)}
+      // 그래프 차트가 시리즈를 바로 그릴 때 쓰는 축 — 라인/영역과 같은 키 이름을 쓴다.
+      data-line-key={dataKey === undefined ? undefined : String(dataKey)}
+      data-stack-id={stackId}
+      className="recharts-bar"
+    />
+  );
 }
 
 export function Pie({
@@ -155,13 +164,21 @@ export function XAxis({ domain }: { domain?: unknown }) {
 export function YAxis({
   domain,
   tickFormatter,
+  width,
+  label,
 }: {
   domain?: unknown;
   tickFormatter?: (v: number) => string;
+  width?: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  label?: any;
 }) {
   return (
     <div
       data-testid="rc-yaxis"
+      // 축 제목이 잘리는지는 폭이 정한다 — 그 값을 노출해 테스트가 관계를 볼 수 있게 한다.
+      data-width={width === undefined ? undefined : String(width)}
+      data-label={typeof label?.value === 'string' ? label.value : undefined}
       data-domain={domain !== undefined ? JSON.stringify(domain) : undefined}
       // 눈금 포맷터를 표본 값에 적용해 노출한다 — 포맷 배선(소수 자릿수·단위)을
       // 실제 눈금 문자열로 확인할 수 있게 하기 위함. 포맷터가 없으면 속성도 없다.
@@ -169,6 +186,16 @@ export function YAxis({
     />
   );
 }
+
+/** ComposedChart 는 LineChart 와 같은 자리를 쓴다 — 스텁도 같은 동작을 준다. */
+export const ComposedChart = LineChart;
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+export function Area({ dataKey, stackId }: any) {
+  return <div data-testid="rc-area" data-line-key={dataKey} data-stack-id={stackId} />;
+}
+
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 export function CartesianGrid() {
   return <div data-testid="rc-grid" />;
@@ -233,6 +260,7 @@ export function ReferenceArea({
   fill?: string;
   fillOpacity?: number;
   strokeOpacity?: number;
+  ifOverflow?: string;
 }) {
   return (
     <div
