@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/node"
@@ -1285,6 +1287,41 @@ func debugPortLog(ctx context.Context, logger observe.ComponentLogger, direction
 	)
 }
 
+// errorMessageSummaryLimit 는 에러 로그에 싣는 원인 메시지 요약의 바이트 상한이다.
+// 에러가 메시지 단위로 반복될 때 대용량 payload 가 로그를 잠식하지 않도록 자른다.
+const errorMessageSummaryLimit = 2048
+
+// errorMessageSummary 는 노드 처리 에러 로그에 붙일 원인 메시지 요약을 만든다.
+//
+// 에러 문구만으로는 "어떤 메시지가 터졌는지" 알 수 없어 재현이 어렵다 — 특히 같은
+// 노드에 형태가 다른 메시지가 섞여 들어오는 경우(예: metadata 키가 있는 메시지와
+// 없는 메시지). 그래서 metadata 와 payload 를 함께 싣는다.
+//
+// 출력은 디버그 노드와 같은 모양(epoch ms timestamp)의 단일 JSON 문자열이므로
+// 로그에서 그대로 복사해 재현에 쓸 수 있다.
+func errorMessageSummary(msg message.Message) string {
+	b, err := json.Marshal(map[string]any{
+		"id":        msg.ID(),
+		"type":      msg.Type(),
+		"timestamp": msg.Timestamp().UnixMilli(),
+		"metadata":  msg.Metadata().Raw(),
+		"payload":   msg.Payload().ToMap(),
+	})
+	if err != nil {
+		return fmt.Sprintf("<message marshal failed: %v>", err)
+	}
+	if len(b) <= errorMessageSummaryLimit {
+		return string(b)
+	}
+	// 멀티바이트 문자(한글 디바이스 이름 등) 중간에서 잘려 깨진 UTF-8 이 남지
+	// 않도록 유효한 경계까지 뒤로 물러선다.
+	cut := b[:errorMessageSummaryLimit]
+	for len(cut) > 0 && !utf8.Valid(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return string(cut) + "...(truncated)"
+}
+
 // sendToWires 는 메시지를 와이어 목록으로 fan-out 전송한다.
 // 마지막 와이어에는 원본을, 나머지에는 Clone을 전송한다.
 // sendToWires 는 메시지를 매칭된 와이어들로 전송(fan-out)하고,
@@ -1704,6 +1741,8 @@ func (e *Engine) runNode(
 					e.logger.Error("node process error",
 						"nodeID", n.ID(),
 						"error", err,
+						"msgID", msg.ID(),
+						"msg", errorMessageSummary(msg),
 					)
 				}
 				// 에러 포트 디버그 로깅
