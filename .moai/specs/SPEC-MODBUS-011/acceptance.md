@@ -9,14 +9,14 @@ Given/When/Then 형식. 모든 AC는 프론트엔드 단위 테스트(`vitest`) 
 ### AC-01 — 다중 행 그룹핑 및 방출 형상
 - **Given** client 일괄 등록 텍스트(2개 그룹, 1개 디바이스)
   ```
-  host,port,unit_id,fc,address,count,data_type,polling_interval,comment
-  192.168.0.10,502,1,3,0,10,uint16,5s,온도
-  ,,,1,0,8,uint16,,도어
+  id,host,port,unit_id,fc,address,count,data_type,polling_interval,comment
+  plc-1,192.168.0.10,502,1,3,0,10,uint16,5s,온도
+  ,,,,1,0,8,uint16,,도어
   ```
 - **When** `parseModbusClientBulk(text)`를 호출하면
 - **Then** 첫 줄은 헤더로 스킵되고, 2행이 디바이스를 시작하며 3행(빈 신원)이 그룹을 이어 붙여 1개의 유효
   `EmittedDevice`가 산출된다.
-  - `{ host:'192.168.0.10', port:502, unit_id:1, register_groups:[{function_code:3,start_address:0,quantity:10,data_type:'uint16',poll_interval:'5s',name:'온도'},{function_code:1,start_address:0,quantity:8,data_type:'uint16',name:'도어'}] }` (id 키 없음).
+  - `{ id:'plc-1', host:'192.168.0.10', port:502, unit_id:1, register_groups:[{function_code:3,start_address:0,quantity:10,data_type:'uint16',poll_interval:'5s',name:'온도'},{function_code:1,start_address:0,quantity:8,data_type:'uint16',name:'도어'}] }` (id 는 백엔드 add_device 필수).
 - **And** `failures`(BulkFailure)는 비어 있다.
 
 ### AC-02 — 필수/무효 필드 행 실패 집계

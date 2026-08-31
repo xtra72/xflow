@@ -56,6 +56,8 @@ export interface SegmentRow {
   dataType: string;
   pollInterval: string; // Go duration 문자열
   name: string; // "설명"
+  /** 사용 여부(SPEC-MODBUS-013 REQ-01). 기본 true. false 면 백엔드가 폴링에서 제외한다. */
+  enabled: boolean;
   typeMap: TypeMapRow[];
   /** 고급 type_map 섹션 펼침(UI 전용, 방출 제외). */
   advancedOpen: boolean;
@@ -91,6 +93,8 @@ export interface EmittedGroup {
   quantity: number;
   data_type?: string;
   poll_interval?: string;
+  /** 미사용일 때만 방출한다(false). 사용 중이면 키를 생략해 기존 설정과 바이트 동일하게 유지한다. */
+  enabled?: boolean;
   type_map?: EmittedTypeMap[];
 }
 
@@ -104,6 +108,52 @@ export interface EmittedDevice {
   serial_port?: string;
   share_session?: boolean;
   register_groups: EmittedGroup[];
+}
+
+/** list_models exec 응답의 레지스터 1건(SPEC-MODBUS-013 REQ-04/REQ-05). */
+export interface DeviceModelRegister {
+  fc: number;
+  address: number;
+  count: number;
+  data_type?: string;
+  poll_interval?: string;
+  name?: string;
+  enabled?: boolean;
+}
+
+/** list_models exec 응답의 모델 1건. */
+export interface DeviceModelOption {
+  id: string;
+  name: string;
+  vendor?: string;
+  description?: string;
+  transport?: string;
+  max_block_registers?: number;
+  register_count: number;
+  registers: DeviceModelRegister[];
+}
+
+/**
+ * 모델의 레지스터 정의 → 영역별 SegmentRow 맵(SPEC-MODBUS-013 REQ-05 / AC-20).
+ * fc 1-4 외에는 holding_registers 로 폴백한다(toAreas 와 동일 규약).
+ */
+export function modelToAreas(model: DeviceModelOption): Record<AreaKey, SegmentRow[]> {
+  const areas = emptyAreas();
+  for (const r of model.registers) {
+    const area = FC_TO_AREA[String(r.fc)] ?? 'holding_registers';
+    areas[area].push({
+      key: nextKey('seg'),
+      address: r.address,
+      quantity: r.count,
+      dataType: r.data_type ?? DEFAULT_DATA_TYPE,
+      pollInterval: r.poll_interval ?? '',
+      name: r.name ?? '',
+      enabled: r.enabled !== false,
+      typeMap: [],
+      advancedOpen: false,
+    });
+  }
+  return areas;
 }
 
 // ---- Props ----
@@ -171,6 +221,8 @@ export function toSegmentRow(group: unknown): SegmentRow {
     dataType: asString(o.data_type) || DEFAULT_DATA_TYPE,
     pollInterval: asString(o.poll_interval),
     name: asString(o.name),
+    // 백엔드는 미지정을 사용(true)으로 해석한다. 프론트도 동일 규약을 따른다.
+    enabled: o.enabled !== false,
     typeMap,
     advancedOpen: typeMap.length > 0,
   };
@@ -236,6 +288,7 @@ export function newSegment(): SegmentRow {
     dataType: DEFAULT_DATA_TYPE,
     pollInterval: '',
     name: '',
+    enabled: true,
     typeMap: [],
     advancedOpen: false,
   };
@@ -285,6 +338,8 @@ export function toEmitGroup(area: AreaKey, seg: SegmentRow): EmittedGroup {
   const dt = seg.dataType.trim();
   if (dt !== '') out.data_type = dt;
   if (seg.pollInterval.trim() !== '') out.poll_interval = seg.pollInterval.trim();
+  // 사용 중이면 키를 생략한다(하위 호환 — 기존 설정과 바이트 동일 방출).
+  if (!seg.enabled) out.enabled = false;
   if (seg.typeMap.length > 0) out.type_map = toEmitTypeMap(seg.typeMap);
   return out;
 }
@@ -336,6 +391,8 @@ export interface BulkGroup {
   dataType: string;
   pollInterval: string;
   name: string;
+  /** 사용 여부(7번째 열). 열이 없거나 비면 true. */
+  enabled: boolean;
 }
 
 /** 파싱 오류. line 은 원본 1-based 줄 번호, code 는 i18n bulkError.<code> 키. */
@@ -360,12 +417,32 @@ export function isNonNegInt(s: string): boolean {
   return /^\d+$/.test(s);
 }
 
+/** 일괄등록 "사용" 열의 참 값들(대소문자 무시). */
+const ENABLED_TRUE_TOKENS = new Set(['1', 'true', 'y', 'yes', 'on']);
+/** 일괄등록 "사용" 열의 거짓 값들(대소문자 무시). */
+const ENABLED_FALSE_TOKENS = new Set(['0', 'false', 'n', 'no', 'off']);
+
+/**
+ * "사용" 셀 → boolean. 빈 셀은 사용(true)으로 본다.
+ * 해석할 수 없는 값이면 null 을 돌려주고, 호출부가 invalidEnabled 로 집계한다.
+ */
+export function parseEnabledCell(cell: string): boolean | null {
+  if (cell === '') return true;
+  const v = cell.toLowerCase();
+  if (ENABLED_TRUE_TOKENS.has(v)) return true;
+  if (ENABLED_FALSE_TOKENS.has(v)) return false;
+  return null;
+}
+
 /**
  * 붙여넣기 텍스트 → fc 기반 register_group 파싱(순수 함수, 단위 테스트 대상).
  *
  * 한 줄 = 한 register_group. 콤마 또는 탭 구분(자동 감지), 셀 트림.
- * 컬럼: `fc, address, quantity, data_type, poll_interval, 설명`
- *  - 5열 또는 6열(설명 생략 시 5열). 그 외 열 개수 → wrongColumnCount.
+ * 컬럼: `fc, address, quantity, data_type, poll_interval, 설명, 사용`
+ *  - 5열/6열/7열 허용. 그 외 열 개수 → wrongColumnCount.
+ *    5열=설명·사용 생략, 6열=사용 생략(기존 포맷 그대로 동작), 7열=전체.
+ *  - 사용(7번째)은 1/0·true/false·y/n·on/off(대소문자 무시), 빈 셀이면 사용.
+ *    해석 불가 값 → invalidEnabled.
  *  - fc 1-4 → coils/discrete_inputs/holding_registers/input_registers, 그 외 → invalidFc.
  *  - address(int ≥0), quantity(int ≥1). data_type 은 MODBUS_DATA_TYPE_OPTIONS 중 하나
  *    (빈 셀이면 uint16). poll_interval 은 자유 텍스트(비어도 됨, 검증하지 않음).
@@ -393,7 +470,7 @@ export function parseBulkGroups(text: string): BulkParseResult {
 
     const lineNo = i + 1;
     const n = cells.length;
-    if (n !== 5 && n !== 6) {
+    if (n !== 5 && n !== 6 && n !== 7) {
       errors.push({ line: lineNo, code: 'wrongColumnCount' });
       continue;
     }
@@ -409,6 +486,7 @@ export function parseBulkGroups(text: string): BulkParseResult {
     const dtCell = cells[3] ?? '';
     const pollCell = cells[4] ?? '';
     const nameCell = cells[5] ?? '';
+    const enabledCell = cells[6] ?? '';
 
     if (!isNonNegInt(addrCell)) {
       errors.push({ line: lineNo, code: 'invalidAddress' });
@@ -424,6 +502,12 @@ export function parseBulkGroups(text: string): BulkParseResult {
       continue;
     }
 
+    const enabled = parseEnabledCell(enabledCell);
+    if (enabled === null) {
+      errors.push({ line: lineNo, code: 'invalidEnabled' });
+      continue;
+    }
+
     groups.push({
       area,
       address: Number(addrCell),
@@ -431,6 +515,7 @@ export function parseBulkGroups(text: string): BulkParseResult {
       dataType,
       pollInterval: pollCell,
       name: nameCell,
+      enabled,
     });
   }
 

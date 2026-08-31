@@ -19,8 +19,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 
-import { ModbusDevicesEditor } from './ModbusDevicesEditor';
-import { parseBulkGroups } from './modbusDevicesModel';
+import { DeviceEditDialog, ModbusDevicesEditor } from './ModbusDevicesEditor';
+import { parseBulkGroups, toDeviceRow, toEmitDevice } from './modbusDevicesModel';
 
 vi.mock('@/lib/i18n', async () => {
   const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;
@@ -340,6 +340,7 @@ describe('parseBulkGroups (fc 기반)', () => {
         dataType: 'int16',
         pollInterval: '5s',
         name: 'temp',
+        enabled: true,
       },
     ]);
   });
@@ -374,13 +375,67 @@ describe('parseBulkGroups (fc 기반)', () => {
     expect(r.errors).toEqual([{ line: 1, code: 'invalidFc' }]);
   });
 
-  it('열 개수 오류(4열/7열) → wrongColumnCount', () => {
+  it('열 개수 오류(4열/8열) → wrongColumnCount', () => {
     expect(parseBulkGroups('3,0,8,uint16').errors).toEqual([
       { line: 1, code: 'wrongColumnCount' },
     ]);
-    expect(parseBulkGroups('3,0,8,uint16,5s,x,extra').errors).toEqual([
+    // 7열까지 유효(SPEC-MODBUS-013 REQ-06)이므로 오류 경계는 8열이다.
+    expect(parseBulkGroups('3,0,8,uint16,5s,x,1,extra').errors).toEqual([
       { line: 1, code: 'wrongColumnCount' },
     ]);
+  });
+
+  // ---- SPEC-MODBUS-013 REQ-06 — 사용(enabled) 열 ----
+
+  it('7열: 사용 열을 파싱한다 (AC-22)', () => {
+    const r = parseBulkGroups('4,4,2,float32,2s,상전압 R상,1\n4,32,2,float32,2s,총 역률,0');
+    expect(r.errors).toEqual([]);
+    expect(r.groups.map((g) => g.enabled)).toEqual([true, false]);
+    expect(r.groups[1]).toMatchObject({ address: 32, name: '총 역률', enabled: false });
+  });
+
+  it('5열·6열은 enabled=true 로 하위 호환 (AC-23)', () => {
+    expect(parseBulkGroups('3,0,10,uint16,5s,온도').groups[0]).toMatchObject({
+      name: '온도',
+      enabled: true,
+    });
+    expect(parseBulkGroups('1,0,8,uint16,').groups[0]).toMatchObject({
+      name: '',
+      enabled: true,
+    });
+  });
+
+  it('사용 열 허용 값(대소문자 무시, 빈값=사용) (AC-24)', () => {
+    const cases: Array<[string, boolean]> = [
+      ['1', true],
+      ['0', false],
+      ['true', true],
+      ['false', false],
+      ['y', true],
+      ['n', false],
+      ['on', true],
+      ['off', false],
+      ['TRUE', true],
+      ['Off', false],
+      ['', true],
+    ];
+    for (const [cell, want] of cases) {
+      const r = parseBulkGroups(`3,0,2,uint16,,desc,${cell}`);
+      expect(r.errors, `cell=${JSON.stringify(cell)}`).toEqual([]);
+      expect(r.groups[0]?.enabled, `cell=${JSON.stringify(cell)}`).toBe(want);
+    }
+  });
+
+  it('해석 불가 사용 값 → invalidEnabled (AC-25)', () => {
+    const r = parseBulkGroups('4,4,2,float32,2s,설명,maybe');
+    expect(r.groups).toEqual([]);
+    expect(r.errors).toEqual([{ line: 1, code: 'invalidEnabled' }]);
+  });
+
+  it('탭 구분에서도 사용 열이 동작한다', () => {
+    const r = parseBulkGroups('3\t0\t2\tuint16\t\t설명, 콤마 포함\t0');
+    expect(r.errors).toEqual([]);
+    expect(r.groups[0]).toMatchObject({ name: '설명, 콤마 포함', enabled: false });
   });
 
   it('잘못된 data_type → invalidDataType', () => {
@@ -397,5 +452,87 @@ describe('parseBulkGroups (fc 기반)', () => {
     const r = parseBulkGroups('1,0,4,uint16,,a\n\nbad\n3,8,2,uint16,,b');
     expect(r.groups.map((g) => g.area)).toEqual(['coils', 'holding_registers']);
     expect(r.errors).toEqual([{ line: 3, code: 'wrongColumnCount' }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-MODBUS-013 REQ-01 — 사용 여부 일괄 선택/해제
+// ---------------------------------------------------------------------------
+
+describe('DeviceEditDialog — 사용 일괄 선택/해제', () => {
+  // i18n 은 실제 ko.json 을 해석하므로 라벨은 한국어 문자열이다.
+  // 컬럼 헤더(마스터 체크박스 포함)는 그룹이 있는 영역에만 렌더되므로,
+  // fc3 그룹만 넣은 이 픽스처에서는 holding_registers 하나만 존재한다.
+
+  function renderDialog() {
+    const onSave = vi.fn();
+    render(
+      <DeviceEditDialog
+        initial={toDeviceRow({
+          id: 'd1',
+          host: '10.0.0.1',
+          port: 502,
+          unit_id: 1,
+          register_groups: [
+            { function_code: 3, start_address: 0, quantity: 2, name: 'g0' },
+            { function_code: 3, start_address: 10, quantity: 2, name: 'g1' },
+            { function_code: 3, start_address: 20, quantity: 2, name: 'g2' },
+          ],
+        })}
+        transport="tcp"
+        onSave={onSave}
+        onClose={vi.fn()}
+      />,
+    );
+    return { onSave };
+  }
+
+  /** 저장 후 방출된 register_group 들의 사용 여부를 뽑는다(enabled 미방출 = 사용). */
+  function savedEnabled(onSave: ReturnType<typeof vi.fn>): boolean[] {
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const row = onSave.mock.calls[0]![0] as Parameters<typeof toEmitDevice>[0];
+    return toEmitDevice(row, 'tcp').register_groups.map((g) => g.enabled !== false);
+  }
+
+  const masterCheckbox = () => screen.getByLabelText('이 영역 전체 사용/해제');
+  const save = () => fireEvent.click(within(dialog()).getByRole('button', { name: '저장' }));
+
+  it('마스터 체크박스로 영역 전체를 한 번에 해제한다', () => {
+    const { onSave } = renderDialog();
+    expect((masterCheckbox() as HTMLInputElement).checked, '초기값은 전체 사용').toBe(true);
+
+    fireEvent.click(masterCheckbox());
+    save();
+
+    expect(savedEnabled(onSave)).toEqual([false, false, false]);
+  });
+
+  it('행을 선택한 뒤 해제 버튼을 누르면 선택 행만 해제된다', () => {
+    const { onSave } = renderDialog();
+
+    fireEvent.click(screen.getAllByLabelText('행 선택')[0]!);
+    fireEvent.click(within(dialog()).getByRole('button', { name: /^해제 \(1\)$/ }));
+    save();
+
+    const enabled = savedEnabled(onSave);
+    expect(enabled[0], '선택한 행만 해제되어야 한다').toBe(false);
+    expect(enabled.slice(1), '선택하지 않은 행은 그대로 사용').toEqual([true, true]);
+  });
+
+  it('전체 해제 후 일부만 다시 선택해 사용으로 되돌린다', () => {
+    const { onSave } = renderDialog();
+
+    fireEvent.click(masterCheckbox()); // 전체 해제
+    fireEvent.click(screen.getAllByLabelText('행 선택')[1]!);
+    fireEvent.click(within(dialog()).getByRole('button', { name: /^사용 \(1\)$/ }));
+    save();
+
+    expect(savedEnabled(onSave)).toEqual([false, true, false]);
+  });
+
+  it('선택이 없으면 일괄 사용/해제 버튼이 나타나지 않는다', () => {
+    renderDialog();
+    expect(within(dialog()).queryByRole('button', { name: /^해제 \(/ })).toBeNull();
+    expect(within(dialog()).queryByRole('button', { name: /^사용 \(/ })).toBeNull();
   });
 });

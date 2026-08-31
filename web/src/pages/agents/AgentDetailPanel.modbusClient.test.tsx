@@ -25,6 +25,8 @@ const LOCAL_TARGET: ResourceTarget = { type: 'local' };
 let currentAgent: AgentInfo;
 // listResponse 는 exec list_devices 가 반환할 응답(백엔드 F1 형상 { data: [...] })이다.
 let listResponse: { data: unknown[] };
+// modelsFail 이 true 면 list_models 가 오류로 응답한다(fail-open 검증용).
+let modelsFail: boolean;
 
 // exec(쓰기) 명령 스파이. add/update/remove_device 는 성공을 즉시 콜백한다(refetch 유발).
 const execMutate = vi.hoisted(() =>
@@ -40,16 +42,31 @@ const execMutate = vi.hoisted(() =>
 
 // query(읽기) 명령 스파이. list_devices 는 읽기 전용이라 useQueryAgent 경로로 나간다
 // (POST /agents/{id}/query — agent.read 만 필요).
+//
+// 커맨드별로 응답을 나눈다. list_models 가 디바이스 응답을 되돌려 받는 스텁은
+// 실제 백엔드와 다르고, 두 조회가 서로를 밀어내는 버그도 감춘다.
 const queryMutate = vi.hoisted(() =>
   vi.fn(
     (
-      _vars: { id: string; req: { command: string; params?: Record<string, unknown> } },
+      vars: { id: string; req: { command: string; params?: Record<string, unknown> } },
       opts?: { onSuccess?: (res: unknown) => void; onError?: (e: unknown) => void },
     ) => {
+      if (vars.req.command === 'list_models') {
+        if (modelsFail) opts?.onError?.(new Error('models unavailable'));
+        else opts?.onSuccess?.({ data: [], model_count: 0 });
+        return;
+      }
       opts?.onSuccess?.(listResponse);
     },
   ),
 );
+
+// useQueryAgent() 호출마다 **별도 인스턴스**를 돌려준다. 실제 useMutation 도 호출마다
+// 독립 observer 를 만들며, 한 인스턴스에 mutate 를 연속 호출하면 앞선 호출의
+// per-call 콜백이 사라진다(@tanstack/query-core mutationObserver.ts: mutate() 가
+// #mutateOptions 를 덮어쓰고 이전 mutation 에서 removeObserver 한다).
+// 인스턴스를 공유하는 스텁은 그 사고를 재현하지 못해 회귀를 통과시킨다.
+const queryAgentInstances = vi.hoisted(() => [] as Array<{ mutate: ReturnType<typeof vi.fn> }>);
 
 vi.mock('@/hooks/useDetailTargets', () => ({
   useAgentDetailTarget: () => ({ data: currentAgent, isLoading: false, error: null }),
@@ -60,7 +77,20 @@ vi.mock('@/hooks/useAgent', () => ({
   useAgent: () => ({ data: currentAgent, isLoading: false }),
   useConfigureAgent: () => ({ isPending: false, isError: false, mutateAsync: vi.fn() }),
   useExecAgent: () => ({ isPending: false, mutate: execMutate }),
-  useQueryAgent: () => ({ isPending: false, mutate: queryMutate }),
+  useQueryAgent: () => {
+    // 인스턴스마다 고유 mutate 스파이를 부여하되, 집계용 queryMutate 로도 함께 기록한다.
+    const inst = {
+      isPending: false,
+      mutate: vi.fn(
+        (
+          vars: { id: string; req: { command: string; params?: Record<string, unknown> } },
+          opts?: { onSuccess?: (res: unknown) => void; onError?: (e: unknown) => void },
+        ) => queryMutate(vars, opts),
+      ),
+    };
+    queryAgentInstances.push(inst);
+    return inst;
+  },
 }));
 
 vi.mock('@/hooks/useDevice', () => ({
@@ -138,7 +168,9 @@ function lastQueryCall(command: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  queryAgentInstances.length = 0;
   listResponse = { data: [] };
+  modelsFail = false;
 });
 
 describe('M3 / AC-05 — 설정 탭 modbus-client devices 숨김', () => {
@@ -282,5 +314,139 @@ describe('M4 / AC-06,07 — 장치 탭 modbus-client 전용 섹션', () => {
     const call = lastExecCall('remove_device');
     expect(call).toBeDefined();
     expect((call!.req.params as Record<string, unknown>).device_id).toBe('dev-1');
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// SPEC-MODBUS-013 회귀 — 모델 카탈로그 조회가 디바이스 목록 조회를 밀어내지 않는다
+// ---------------------------------------------------------------------------
+//
+// 사고: 두 조회가 하나의 useQueryAgent() 인스턴스를 공유하면, 두 번째 mutate 가
+// MutationObserver 의 #mutateOptions 를 덮어쓰고 이전 mutation 에서 removeObserver 한다.
+// 그러면 먼저 보낸 list_devices 의 per-call onSuccess 가 실행되지 않아 isLoading 이
+// true 로 굳고, 장치 탭은 animate-pulse 스켈레톤만 반복 렌더한다(화면이 "깜박"인다).
+
+describe('SPEC-MODBUS-013 — 모델 카탈로그 조회 격리', () => {
+  const CLIENT_AGENT: AgentInfo = {
+    id: 'mc-1',
+    name: 'modbus-client-1',
+    type: 'modbus-client',
+    status: 'running',
+    connected: true,
+    uptime: '1m',
+    config: { transport: 'tcp' },
+    stats: undefined,
+  };
+
+  beforeEach(() => {
+    currentAgent = { ...CLIENT_AGENT };
+  });
+
+  it('list_devices 와 list_models 를 서로 다른 mutation 인스턴스로 보낸다', () => {
+    renderPanel();
+    openDevicesTab();
+
+    const owner = (command: string) =>
+      queryAgentInstances.findIndex((inst) =>
+        inst.mutate.mock.calls.some((c) => c[0]?.req?.command === command),
+      );
+
+    expect(owner('list_devices'), 'list_devices 가 발행되어야 한다').toBeGreaterThanOrEqual(0);
+    expect(owner('list_models'), 'list_models 가 발행되어야 한다').toBeGreaterThanOrEqual(0);
+    expect(
+      owner('list_devices'),
+      '두 조회가 같은 mutation 인스턴스를 쓰면 앞선 조회의 per-call 콜백이 유실된다',
+    ).not.toBe(owner('list_models'));
+  });
+
+  it('모델 조회가 함께 나가도 디바이스 목록이 렌더된다(스켈레톤에 갇히지 않음)', () => {
+    listResponse = {
+      data: [{ device_id: 'plc-1', id: 'plc-1', host: '10.0.0.1', port: 502, unit_id: 1 }],
+    };
+    renderPanel();
+    openDevicesTab();
+
+    expect(screen.getByText('plc-1')).toBeTruthy();
+  });
+
+  it('모델 조회가 실패해도 디바이스 목록은 정상 렌더된다(fail-open)', () => {
+    modelsFail = true;
+    listResponse = {
+      data: [{ device_id: 'plc-2', id: 'plc-2', host: '10.0.0.2', port: 502, unit_id: 2 }],
+    };
+    renderPanel();
+    openDevicesTab();
+
+    expect(screen.getByText('plc-2')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-MODBUS-013 M7 — 편집 폼에서 host/port 변경
+// ---------------------------------------------------------------------------
+
+describe('SPEC-MODBUS-013 — 디바이스 편집 host/port 변경', () => {
+  const CLIENT_AGENT: AgentInfo = {
+    id: 'mc-1',
+    name: 'modbus-client-1',
+    type: 'modbus-client',
+    status: 'running',
+    connected: true,
+    uptime: '1m',
+    config: { transport: 'tcp' },
+    stats: undefined,
+  };
+
+  beforeEach(() => {
+    currentAgent = { ...CLIENT_AGENT };
+    listResponse = {
+      data: [
+        {
+          device_id: 'plc-1',
+          id: 'plc-1',
+          host: '10.0.0.1',
+          port: 502,
+          unit_id: 1,
+          register_groups: [
+            { name: 'g', function_code: 3, start_address: 0, quantity: 2, enabled: true },
+          ],
+        },
+      ],
+    };
+  });
+
+  /** 목록의 편집 버튼을 눌러 수정 다이얼로그를 연다. i18n 목은 키를 그대로 돌려준다. */
+  async function openEdit() {
+    renderPanel();
+    openDevicesTab();
+    await act(async () => {});
+    fireEvent.click(
+      screen.getByRole('button', { name: 'agents.detail.devices.modbusEditTooltip' }),
+    );
+  }
+
+  it('편집 폼에 host/port 입력이 노출된다', async () => {
+    await openEdit();
+    expect(screen.getByDisplayValue('10.0.0.1')).toBeTruthy();
+    expect(screen.getByDisplayValue('502')).toBeTruthy();
+  });
+
+  it('host/port 를 바꿔 저장하면 update_device params 에 실려 나간다', async () => {
+    await openEdit();
+
+    fireEvent.change(screen.getByDisplayValue('10.0.0.1'), {
+      target: { value: '192.168.0.50' },
+    });
+    fireEvent.change(screen.getByDisplayValue('502'), { target: { value: '5020' } });
+    fireEvent.click(screen.getByRole('button', { name: 'property.modbusDevices.save' }));
+
+    const call = lastExecCall('update_device');
+    expect(call, 'update_device 가 발행되어야 한다').toBeTruthy();
+    expect(call!.req.params).toMatchObject({
+      device_id: 'plc-1',
+      host: '192.168.0.50',
+      port: 5020,
+    });
   });
 });

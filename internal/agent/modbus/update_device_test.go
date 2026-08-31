@@ -154,8 +154,12 @@ func TestUpdateDevice_NonexistentID_AtomicReject(t *testing.T) {
 
 // TestUpdateDevice_InitOnlyField_Rejected 는 update_device 가 transport 전환·RTU 시리얼 하드웨어
 // 파라미터 등 init 전용 필드 변경을 rejectInitOnlyFields 규칙으로 거부함을 검증한다(AC-04).
+//
+// "port" 는 이 목록에서 빠졌다. TCP 디바이스의 접속 포트 변경을 지원하게 되면서(SPEC-MODBUS-013 M7)
+// 별도 경로로 파싱·검증되며, RTU 디바이스에 대해서는 applyEndpointChangeLocked 가 거부한다.
+// 무효 port 값이 여전히 원자적으로 거부되는지는 아래 TestUpdateDevice_InvalidPort_RejectedAtomically 가 본다.
 func TestUpdateDevice_InitOnlyField_Rejected(t *testing.T) {
-	initOnlyKeys := []string{"transport", "serial_port", "baud_rate", "data_bits", "stop_bits", "parity", "port", "baud"}
+	initOnlyKeys := []string{"transport", "serial_port", "baud_rate", "data_bits", "stop_bits", "parity", "baud"}
 	for _, key := range initOnlyKeys {
 		t.Run(key, func(t *testing.T) {
 			mt := &mockModbusTransport{connected: true, response: buildFC03Response(0, 1, 10)}
@@ -178,6 +182,27 @@ func TestUpdateDevice_InitOnlyField_Rejected(t *testing.T) {
 			assert.Equal(t, lifecycle.StateRunning, a.CurrentState())
 		})
 	}
+}
+
+// TestUpdateDevice_InvalidPort_RejectedAtomically 는 무효한 port 값이 init 전용 목록에서
+// 빠진 뒤에도 여전히 원자적으로 거부됨을 검증한다(부분 적용 없음, 연결 유지).
+func TestUpdateDevice_InvalidPort_RejectedAtomically(t *testing.T) {
+	mt := &mockModbusTransport{connected: true, response: buildFC03Response(0, 1, 10)}
+	a, _ := newTestModbusAgent(t, oneGroupWithIntervalConfig("100ms"), mt)
+	require.NoError(t, a.Start(context.Background()))
+	defer func() { _ = a.Stop(context.Background()) }()
+
+	dev, err := a.findDevice("plc-1")
+	require.NoError(t, err)
+	transportBefore := dev.transport
+	portBefore := dev.config.Port
+
+	_, err = a.Process(updateDeviceJSON(t, "plc-1", map[string]any{"port": "some-value"}))
+	require.Error(t, err, "숫자가 아닌 port 는 거부되어야 한다")
+
+	assert.Same(t, transportBefore, dev.transport, "거부 시 트랜스포트가 재생성되지 않아야 한다")
+	assert.Equal(t, portBefore, dev.config.Port, "거부 시 포트가 바뀌지 않아야 한다")
+	assert.Equal(t, lifecycle.StateRunning, a.CurrentState())
 }
 
 // TestUpdateDevice_MissingDeviceID_Rejected 는 device_id 없는 update_device 가 ErrMissingDeviceID 로

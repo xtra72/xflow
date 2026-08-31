@@ -1,0 +1,564 @@
+{
+  "id": "gipam-115fi",
+  "name": "GIPAM-115FI",
+  "vendor": "LS ELECTRIC",
+  "description": "디지털 복합 계전기 (for GMPC-V). 계측 21종 + DI/DO·Fault 상태 비트맵 + 보호 정정치.",
+  "transport": "rtu",
+  "defaults": {
+    "max_block_registers": 56,
+    "poll_interval": "2s"
+  },
+  "registers": [
+    {
+      "fc": 4,
+      "address": 0,
+      "count": 1,
+      "data_type": "uint16",
+      "name": "DI 상태 비트맵 F090"
+    },
+    {
+      "fc": 4,
+      "address": 1,
+      "count": 1,
+      "data_type": "uint16",
+      "name": "DO 상태 비트맵 F091"
+    },
+    {
+      "fc": 4,
+      "address": 2,
+      "count": 1,
+      "data_type": "uint16",
+      "name": "Fault 상태 비트맵 F092"
+    },
+    {
+      "fc": 4,
+      "address": 3,
+      "count": 1,
+      "data_type": "uint16",
+      "name": "Fault 상태 비트맵 F093"
+    },
+    {
+      "fc": 4,
+      "address": 4,
+      "count": 2,
+      "data_type": "float32",
+      "name": "상전압 R상 [V]"
+    },
+    {
+      "fc": 4,
+      "address": 6,
+      "count": 2,
+      "data_type": "float32",
+      "name": "상전압 S상 [V]"
+    },
+    {
+      "fc": 4,
+      "address": 8,
+      "count": 2,
+      "data_type": "float32",
+      "name": "상전압 T상 [V]"
+    },
+    {
+      "fc": 4,
+      "address": 10,
+      "count": 2,
+      "data_type": "float32",
+      "name": "선간전압 RS상 [V]"
+    },
+    {
+      "fc": 4,
+      "address": 12,
+      "count": 2,
+      "data_type": "float32",
+      "name": "선간전압 ST상 [V]"
+    },
+    {
+      "fc": 4,
+      "address": 14,
+      "count": 2,
+      "data_type": "float32",
+      "name": "선간전압 TR상 [V]"
+    },
+    {
+      "fc": 4,
+      "address": 16,
+      "count": 2,
+      "data_type": "float32",
+      "name": "영상전압 [V]"
+    },
+    {
+      "fc": 4,
+      "address": 18,
+      "count": 2,
+      "data_type": "float32",
+      "name": "전류 R상 [A]"
+    },
+    {
+      "fc": 4,
+      "address": 20,
+      "count": 2,
+      "data_type": "float32",
+      "name": "전류 S상 [A]"
+    },
+    {
+      "fc": 4,
+      "address": 22,
+      "count": 2,
+      "data_type": "float32",
+      "name": "전류 T상 [A]"
+    },
+    {
+      "fc": 4,
+      "address": 24,
+      "count": 2,
+      "data_type": "float32",
+      "name": "주파수 [Hz]"
+    },
+    {
+      "fc": 4,
+      "address": 26,
+      "count": 2,
+      "data_type": "float32",
+      "name": "영상전압 최대값 [V]"
+    },
+    {
+      "fc": 4,
+      "address": 28,
+      "count": 2,
+      "data_type": "float32",
+      "name": "총 유효전력 [W]"
+    },
+    {
+      "fc": 4,
+      "address": 30,
+      "count": 2,
+      "data_type": "float32",
+      "name": "총 무효전력 [Var]"
+    },
+    {
+      "fc": 4,
+      "address": 32,
+      "count": 2,
+      "data_type": "float32",
+      "name": "총 역률 (- LEAD / + LAG)"
+    },
+    {
+      "fc": 4,
+      "address": 34,
+      "count": 2,
+      "data_type": "float32",
+      "name": "전체 유효전력량 [WH]"
+    },
+    {
+      "fc": 4,
+      "address": 36,
+      "count": 2,
+      "data_type": "float32",
+      "name": "전체 무효전력량 [VarH]"
+    },
+    {
+      "fc": 4,
+      "address": 38,
+      "count": 2,
+      "data_type": "float32",
+      "name": "위상차 ∠VR-∠IR [deg]"
+    },
+    {
+      "fc": 4,
+      "address": 40,
+      "count": 2,
+      "data_type": "float32",
+      "name": "위상차 ∠VS-∠IS [deg]"
+    },
+    {
+      "fc": 4,
+      "address": 42,
+      "count": 2,
+      "data_type": "float32",
+      "name": "위상차 ∠VT-∠IT [deg]"
+    },
+    {
+      "fc": 4,
+      "address": 44,
+      "count": 2,
+      "data_type": "float32",
+      "name": "영상위상차 ∠Vo-∠Io [deg]"
+    },
+    {
+      "fc": 3,
+      "address": 1002,
+      "count": 2,
+      "data_type": "uint32",
+      "poll_interval": "300s",
+      "name": "차단기 통전 시간 [Hour]"
+    },
+    {
+      "fc": 3,
+      "address": 1004,
+      "count": 2,
+      "data_type": "uint32",
+      "poll_interval": "300s",
+      "name": "PT 1차 전압 [V]"
+    },
+    {
+      "fc": 3,
+      "address": 1006,
+      "count": 2,
+      "data_type": "uint32",
+      "poll_interval": "300s",
+      "name": "PT 2차 전압 [V]"
+    },
+    {
+      "fc": 3,
+      "address": 2000,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "CT 1차 전류 [A]"
+    },
+    {
+      "fc": 3,
+      "address": 2001,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "CT 2차 전류 [A]"
+    },
+    {
+      "fc": 3,
+      "address": 2010,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OCR 사용 여부"
+    },
+    {
+      "fc": 3,
+      "address": 2011,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OCR 순시 동작치"
+    },
+    {
+      "fc": 3,
+      "address": 2012,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OCR 순시 동작시간"
+    },
+    {
+      "fc": 3,
+      "address": 2013,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OCR 한시 동작치"
+    },
+    {
+      "fc": 3,
+      "address": 2014,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OCR 한시 동작시간 · 한시 동작 특성곡선"
+    },
+    {
+      "fc": 3,
+      "address": 2015,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OCR 접점 출력 Mode"
+    },
+    {
+      "fc": 3,
+      "address": 2020,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OCGR 사용 여부"
+    },
+    {
+      "fc": 3,
+      "address": 2021,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OCGR 순시 동작치"
+    },
+    {
+      "fc": 3,
+      "address": 2022,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OCGR 순시 동작시간"
+    },
+    {
+      "fc": 3,
+      "address": 2023,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OCGR 한시 동작치 · Block 사용 여부"
+    },
+    {
+      "fc": 3,
+      "address": 2024,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OCGR 한시 동작시간"
+    },
+    {
+      "fc": 3,
+      "address": 2025,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OCGR 한시동작 특성곡선 · 접점출력 Mode"
+    },
+    {
+      "fc": 3,
+      "address": 2026,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OCGR Block 지속시간"
+    },
+    {
+      "fc": 3,
+      "address": 2027,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OCGR 접점 출력 Mode"
+    },
+    {
+      "fc": 3,
+      "address": 2040,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OVR 사용 여부 · 순시 동작치"
+    },
+    {
+      "fc": 3,
+      "address": 2041,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OVR 순시 동작시간"
+    },
+    {
+      "fc": 3,
+      "address": 2042,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OVR 한시 동작치"
+    },
+    {
+      "fc": 3,
+      "address": 2043,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OVR 한시 동작시간"
+    },
+    {
+      "fc": 3,
+      "address": 2044,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OVR 접점 출력 Mode"
+    },
+    {
+      "fc": 3,
+      "address": 2050,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "UVR 사용 여부 · 순시 동작치"
+    },
+    {
+      "fc": 3,
+      "address": 2051,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "UVR 순시 동작시간"
+    },
+    {
+      "fc": 3,
+      "address": 2052,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "UVR 한시 동작치 · 저전압 Lock 사용 여부"
+    },
+    {
+      "fc": 3,
+      "address": 2053,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "UVR 한시 동작시간"
+    },
+    {
+      "fc": 3,
+      "address": 2054,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "UVR 접점 출력 Mode"
+    },
+    {
+      "fc": 3,
+      "address": 2060,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OVGR 사용 여부 · 순시 동작치"
+    },
+    {
+      "fc": 3,
+      "address": 2061,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OVGR 순시 동작시간"
+    },
+    {
+      "fc": 3,
+      "address": 2062,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OVGR 한시 동작치"
+    },
+    {
+      "fc": 3,
+      "address": 2063,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OVGR 한시 동작시간"
+    },
+    {
+      "fc": 3,
+      "address": 2064,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "OVGR 접점 출력 Mode"
+    },
+    {
+      "fc": 3,
+      "address": 2070,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "SGR 사용 여부 · GR 사용 여부"
+    },
+    {
+      "fc": 3,
+      "address": 2071,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "SGR 전압 정정치"
+    },
+    {
+      "fc": 3,
+      "address": 2072,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "SGR 전류 정정치"
+    },
+    {
+      "fc": 3,
+      "address": 2073,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "SGR 위상각 정정치"
+    },
+    {
+      "fc": 3,
+      "address": 2074,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "SGR 한시 동작시간"
+    },
+    {
+      "fc": 3,
+      "address": 2075,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "SGR 접점 출력 Mode"
+    },
+    {
+      "fc": 3,
+      "address": 2080,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "POR 사용 여부"
+    },
+    {
+      "fc": 3,
+      "address": 2081,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "POR 순시 동작치"
+    },
+    {
+      "fc": 3,
+      "address": 2082,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "POR 순시 동작시간"
+    },
+    {
+      "fc": 3,
+      "address": 2083,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "POR 한시 동작치"
+    },
+    {
+      "fc": 3,
+      "address": 2084,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "POR 한시 동작시간"
+    },
+    {
+      "fc": 3,
+      "address": 2085,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "POR 접점 출력 Mode"
+    },
+    {
+      "fc": 3,
+      "address": 3000,
+      "count": 1,
+      "data_type": "uint16",
+      "poll_interval": "300s",
+      "name": "CB 동작 횟수 [회]"
+    }
+  ]
+}

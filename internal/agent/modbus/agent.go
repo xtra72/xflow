@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -467,11 +468,7 @@ func (a *ModbusAgent) Start(ctx context.Context) error {
 			// 하나도 없으면 루프는 만들어지지 않아 기존 단일-티커 동작과 동일하다(AC-03).
 			// Start 는 단일 스레드 초기화이므로 groupStops 접근에 락이 불필요하다.
 			for _, dev := range a.devices {
-				for i := range dev.config.RegisterGroups {
-					if dev.config.RegisterGroups[i].PollInterval > 0 {
-						a.startGroupLoop(dev, dev.config.RegisterGroups[i])
-					}
-				}
+				a.startDeviceBlockLoops(dev)
 			}
 		}
 
@@ -704,34 +701,58 @@ func (a *ModbusAgent) pollDevice(ctx context.Context, dev *ModbusDevice, forceFu
 	// dev.config.RegisterGroups 를 통째로 교체하므로, 스냅샷된 헤더는 안정적이다(-race).
 	a.mu.RLock()
 	groups := dev.config.RegisterGroups
+	maxBlock := effectiveMaxBlock(dev.config, a.config)
 	a.mu.RUnlock()
+
+	// 기본 케이던스 코호트(PollInterval == 0)만 이 루프가 담당한다.
+	// poll_interval 이 지정된 그룹은 전용 블록 스케줄러가 읽는다(M5).
+	// 미사용 그룹 제외는 buildReadPlan 이 담당한다(SPEC-MODBUS-013 REQ-01/REQ-02).
+	base := make([]RegisterGroupConfig, 0, len(groups))
 	for _, rg := range groups {
-		if rg.PollInterval > 0 {
-			// 그룹별 독립 케이던스 — 전용 스케줄러가 폴링하므로 기본 루프에서 제외(M5).
-			continue
+		if rg.PollInterval == 0 {
+			base = append(base, rg)
 		}
-		a.pollGroupRead(ctx, dev, rg, forceFullSend)
+	}
+	for _, block := range buildReadPlan(base, maxBlock) {
+		a.pollBlockRead(ctx, dev, block, forceFullSend)
 	}
 }
 
-// pollGroupRead 는 단일 (디바이스, 그룹)의 레지스터를 1회 읽어 캐시 갱신·이벤트 전송·통계 기록을 수행한다.
-// 기본 케이던스 pollDevice 와 그룹별 스케줄러 groupPollLoop 양쪽에서 호출된다(M5).
+// pollBlockRead 는 단일 읽기 블록을 1회 물리 읽기 하고, 그 결과를 멤버 그룹 경계로
+// 잘라 캐시 갱신·이벤트 전송·통계 기록을 **그룹 단위로** 수행한다(SPEC-MODBUS-013 REQ-02).
+// 병합은 트랜스포트 계층에만 적용되므로 방출 메시지 형상은 병합 이전과 동일하다.
+// 기본 케이던스 pollDevice 와 블록별 스케줄러 blockPollLoop 양쪽에서 호출된다.
 // 트랜스포트(turnaround mutex)·캐시(mutex)·통계(atomic)가 모두 스레드 안전하므로
-// 서로 다른 그룹의 동시 폴링에도 경합이 없다(-race).
-func (a *ModbusAgent) pollGroupRead(ctx context.Context, dev *ModbusDevice, rg RegisterGroupConfig, forceFullSend bool) {
+// 서로 다른 블록의 동시 폴링에도 경합이 없다(-race).
+func (a *ModbusAgent) pollBlockRead(ctx context.Context, dev *ModbusDevice, block ReadBlock, forceFullSend bool) {
 	a.mu.RLock()
 	mode := a.config.Mode
 	caches := a.caches
 	a.mu.RUnlock()
 
 	start := time.Now()
-	data, err := dev.ReadRegisters(ctx, rg)
-	// 요청 완료 통계(디바이스별·그룹별) — 성공/오류 모두 기록(M7, AC-06).
-	a.recordRequestStat(dev.config.ID, rg.Name, err == nil, time.Since(start))
+	data, err := dev.ReadRegisters(ctx, RegisterGroupConfig{
+		FunctionCode: block.FunctionCode,
+		StartAddress: block.StartAddress,
+		Quantity:     block.Quantity,
+	})
+	elapsed := time.Since(start)
+
+	// 요청 완료 통계는 **멤버 그룹마다** 기록한다. 물리 읽기는 1회지만 그룹별 통계의
+	// 의미(해당 그룹이 이번 주기에 성공적으로 갱신되었는가)를 병합 이전과 동일하게 유지한다(M7, AC-06).
+	for _, m := range block.Members {
+		a.recordRequestStat(dev.config.ID, m.Name, err == nil, elapsed)
+	}
+
 	if err != nil {
+		// 블록 읽기 1회 실패는 그 블록에 속한 모든 그룹의 실패이다(AC-09).
 		a.logger.Warn("modbus: 레지스터 읽기 실패",
 			"device", dev.config.ID,
-			"group", rg.Name,
+			"group", block.Members[0].Name,
+			"members", len(block.Members),
+			"function_code", block.FunctionCode,
+			"start_address", block.StartAddress,
+			"quantity", block.Quantity,
 			"error", err,
 		)
 		a.stats.IncrExternalMessagesErrored()
@@ -747,60 +768,104 @@ func (a *ModbusAgent) pollGroupRead(ctx context.Context, dev *ModbusDevice, rg R
 		return
 	}
 
-	switch mode {
-	case "interval":
-		// Interval 모드: 항상 전체 데이터 전송
-		cache.UpdateFromRead(rg.FunctionCode, rg.StartAddress, data, rg.Quantity)
-		a.sendRegisterEvent(dev, rg, data, "interval")
+	for _, rg := range block.Members {
+		slice, ok := sliceMemberData(block, data, rg)
+		if !ok {
+			// 응답이 기대 길이보다 짧다 — 해당 멤버만 건너뛰고 나머지는 계속 처리한다.
+			a.logger.Warn("modbus: 블록 응답이 그룹 구간을 담지 못함",
+				"device", dev.config.ID,
+				"group", rg.Name,
+				"block_start", block.StartAddress,
+				"block_quantity", block.Quantity,
+				"response_bytes", len(data),
+			)
+			continue
+		}
 
-	case "event":
-		if forceFullSend {
-			// Heartbeat: 변경 여부와 무관하게 전체 데이터 전송
-			cache.UpdateFromRead(rg.FunctionCode, rg.StartAddress, data, rg.Quantity)
-			a.sendRegisterEvent(dev, rg, data, "event_heartbeat")
-		} else {
-			// 변경 감지: 변경된 데이터만 전송
-			changed, changedData := cache.CompareAndUpdate(rg.FunctionCode, rg.StartAddress, data, rg.Quantity)
-			if changed {
-				a.sendChangedEvent(dev, rg, changedData)
+		switch mode {
+		case "interval":
+			// Interval 모드: 항상 전체 데이터 전송
+			cache.UpdateFromRead(rg.FunctionCode, rg.StartAddress, slice, rg.Quantity)
+			a.sendRegisterEvent(dev, rg, slice, "interval")
+
+		case "event":
+			if forceFullSend {
+				// Heartbeat: 변경 여부와 무관하게 전체 데이터 전송
+				cache.UpdateFromRead(rg.FunctionCode, rg.StartAddress, slice, rg.Quantity)
+				a.sendRegisterEvent(dev, rg, slice, "event_heartbeat")
+			} else {
+				// 변경 감지: 변경된 데이터만 전송
+				changed, changedData := cache.CompareAndUpdate(rg.FunctionCode, rg.StartAddress, slice, rg.Quantity)
+				if changed {
+					a.sendChangedEvent(dev, rg, changedData)
+				}
 			}
 		}
 	}
 }
 
-// startGroupLoop 는 (디바이스, 그룹) 전용 폴링 goroutine 을 시작하고 개별 종료 채널을 등록한다(M5/M9).
+// startDeviceBlockLoops 는 디바이스의 poll_interval 지정 그룹들을 케이던스 코호트별로
+// 병합한 뒤, 블록마다 전용 폴링 goroutine 을 시작한다(M5/M9 + SPEC-MODBUS-013 REQ-02).
 // 호출자는 Start(단일 스레드) 이거나 a.mu.Lock() 을 보유해야 한다(groupStops 보호).
-// M9 런타임 재구성(processSetConfig)이 개별 그룹 루프만 정지·재시작할 때 재사용한다.
-func (a *ModbusAgent) startGroupLoop(dev *ModbusDevice, rg RegisterGroupConfig) {
-	key := groupStatKey(dev.config.ID, rg.Name)
-	stop := make(chan struct{})
-	a.groupStops[key] = stop
-	a.pollWg.Add(1)
-	go a.groupPollLoop(dev, rg, stop)
-}
+//
+// 블록 스케줄러의 종료 채널 키는 **리더(첫 멤버) 그룹명** 기준이다. 단일 그룹 블록에서는
+// 기존 그룹 키와 동일해 하위 호환이 유지되고, 다중 멤버 블록에서도 디바이스 내에서
+// 고유하다(그룹명 고유성은 groupStats 가 이미 전제하는 성질).
+// 미사용 그룹은 buildReadPlan 이 제외하므로 스케줄러가 뜨지 않는다(REQ-01).
+func (a *ModbusAgent) startDeviceBlockLoops(dev *ModbusDevice) {
+	groups := dev.config.RegisterGroups
+	cadence := make([]RegisterGroupConfig, 0, len(groups))
+	for _, rg := range groups {
+		if rg.PollInterval > 0 {
+			cadence = append(cadence, rg)
+		}
+	}
+	if len(cadence) == 0 {
+		return
+	}
 
-// stopGroupLoop 는 (디바이스, 그룹) 전용 폴링 goroutine 에 개별 종료 시그널을 보내고 등록을 해제한다(M9).
-// 호출자는 a.mu.Lock() 을 보유해야 한다. 대상 루프가 없으면 no-op.
-func (a *ModbusAgent) stopGroupLoop(deviceID, groupName string) {
-	key := groupStatKey(deviceID, groupName)
-	if stop, ok := a.groupStops[key]; ok {
-		close(stop)
-		delete(a.groupStops, key)
+	for _, block := range buildReadPlan(cadence, effectiveMaxBlock(dev.config, a.config)) {
+		key := groupStatKey(dev.config.ID, block.Members[0].Name)
+		if _, exists := a.groupStops[key]; exists {
+			continue // 이미 실행 중인 블록 루프는 중복 기동하지 않는다.
+		}
+		stop := make(chan struct{})
+		a.groupStops[key] = stop
+		a.pollWg.Add(1)
+		go a.blockPollLoop(dev, block, stop)
 	}
 }
 
-// groupPollLoop 는 poll_interval 이 지정된 단일 (디바이스, 그룹)을 자신의 케이던스로 독립 폴링한다(M5).
-// 티커 수명은 이 goroutine 이 소유하며 전역 stopCh 종료, 개별 stop 종료, 또는 반환 시 반드시 정지된다
-// (누수 방지, plan.md §5). 개별 stop 은 M9 런타임 재구성에서 이 그룹 루프만 재시작할 때 사용된다.
-func (a *ModbusAgent) groupPollLoop(dev *ModbusDevice, rg RegisterGroupConfig, stop <-chan struct{}) {
+// stopDeviceBlockLoops 는 해당 디바이스의 모든 블록 폴링 goroutine 에 종료 시그널을 보내고
+// 등록을 해제한다(M9). 호출자는 a.mu.Lock() 을 보유해야 한다. 대상 루프가 없으면 no-op.
+//
+// 그룹 단위가 아니라 디바이스 단위로 정지하는 이유: 블록 구성은 그룹 집합이 바뀌면 통째로
+// 달라지므로, 개별 그룹명으로 정지를 시도하면 재구성 후 고아 goroutine 이 남는다.
+// 세 호출부(add_device / remove_device / update_device·set_config)가 모두 디바이스 스코프로
+// 재구성하므로 의미도 일치한다.
+func (a *ModbusAgent) stopDeviceBlockLoops(deviceID string) {
+	prefix := deviceID + "\x1f"
+	for key, stop := range a.groupStops {
+		if strings.HasPrefix(key, prefix) {
+			close(stop)
+			delete(a.groupStops, key)
+		}
+	}
+}
+
+// blockPollLoop 는 poll_interval 코호트의 단일 블록을 자신의 케이던스로 독립 폴링한다(M5).
+// 티커 수명은 이 goroutine 이 소유하며 전역 stopCh 종료, 개별 stop 종료, 또는 반환 시 반드시
+// 정지된다(누수 방지). 개별 stop 은 M9 런타임 재구성에서 이 디바이스의 루프를 재시작할 때 쓰인다.
+func (a *ModbusAgent) blockPollLoop(dev *ModbusDevice, block ReadBlock, stop <-chan struct{}) {
 	defer a.pollWg.Done()
-	ticker := time.NewTicker(rg.PollInterval)
+	ticker := time.NewTicker(block.PollInterval)
 	defer ticker.Stop()
 
 	a.logger.Info("modbus: 그룹별 폴링 스케줄러 시작",
 		"device", dev.config.ID,
-		"group", rg.Name,
-		"interval", rg.PollInterval,
+		"group", block.Members[0].Name,
+		"members", len(block.Members),
+		"interval", block.PollInterval,
 	)
 
 	for {
@@ -808,17 +873,17 @@ func (a *ModbusAgent) groupPollLoop(dev *ModbusDevice, rg RegisterGroupConfig, s
 		case <-a.stopCh:
 			return
 		case <-stop:
-			// M9: 이 그룹 루프만 개별 정지(런타임 재구성으로 케이던스 변경/그룹 제거).
+			// M9: 이 디바이스의 블록 루프 개별 정지(런타임 재구성으로 케이던스 변경/그룹 제거).
 			return
 		case <-ticker.C:
-			a.pollGroupTick(dev, rg)
+			a.pollBlockTick(dev, block)
 		}
 	}
 }
 
-// pollGroupTick 는 그룹 스케줄러의 1회 폴을 수행한다: paused 확인, 온라인/재연결, 읽기(M5).
-// 기본 pollDevices 의 디바이스 단위 온라인/재연결 로직과 동일한 규약을 그룹 단위로 적용한다.
-func (a *ModbusAgent) pollGroupTick(dev *ModbusDevice, rg RegisterGroupConfig) {
+// pollBlockTick 는 블록 스케줄러의 1회 폴을 수행한다: paused 확인, 온라인/재연결, 읽기(M5).
+// 기본 pollDevices 의 디바이스 단위 온라인/재연결 로직과 동일한 규약을 블록 단위로 적용한다.
+func (a *ModbusAgent) pollBlockTick(dev *ModbusDevice, block ReadBlock) {
 	a.mu.RLock()
 	paused := a.paused
 	reqTimeout := a.config.RequestTimeout
@@ -836,7 +901,7 @@ func (a *ModbusAgent) pollGroupTick(dev *ModbusDevice, rg RegisterGroupConfig) {
 			return
 		}
 	}
-	a.pollGroupRead(ctx, dev, rg, false)
+	a.pollBlockRead(ctx, dev, block, false)
 }
 
 // sendRegisterEvent 는 전체 레지스터 데이터 이벤트를 전송한다.
@@ -978,6 +1043,8 @@ func (a *ModbusAgent) Process(data []byte) ([]byte, error) {
 		return a.processListDevices()
 	case "update_device":
 		return a.processUpdateDevice(&req)
+	case "list_models":
+		return a.processListModels()
 	default:
 		return nil, ErrInvalidCommand
 	}

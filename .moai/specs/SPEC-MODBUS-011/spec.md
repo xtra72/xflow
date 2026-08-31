@@ -1,7 +1,7 @@
 ---
 id: SPEC-MODBUS-011
 title: "MODBUS Client·Gateway 장치 일괄 등록 (텍스트/CSV 붙여넣기)"
-version: "0.2.0"
+version: "0.3.0"
 status: draft
 created: 2026-08-04
 updated: 2026-08-04
@@ -21,6 +21,7 @@ tier: M
 | 버전  | 날짜       | 변경 내용                                                                 |
 | ----- | ---------- | ------------------------------------------------------------------------- |
 | 0.1.0 | 2026-08-04 | 최초 작성. 두 장치탭(client·gateway) 텍스트/CSV 붙여넣기 일괄 등록 명세.   |
+| 0.3.0 | 2026-08-27 | **결함 수정.** client 붙여넣기 포맷 맨 앞에 `id` 열을 추가해 10열로 바꾼다. 백엔드 `add_device` 는 SPEC-MODBUS-008 부터 device id 를 필수로 요구(`runtime_device.go` `ErrMissingDeviceID`)하는데 v0.2.0 파서는 `id` 를 방출하지 않아, client 일괄 등록이 출시 이후 항상 `modbus: device id is required` 로 실패했다. v0.2.0 의 AC-01 이 `(id 키 없음)` 을 고정한 것이 결함의 원인이며, 백엔드를 목으로 대체한 테스트가 이를 감췄다. id 가 빈 신원 행은 `EMPTY_REQUIRED` 로 사전 실패한다. |
 | 0.2.0 | 2026-08-04 | 붙여넣기 포맷을 "한 행=디바이스"에서 "한 행=레지스터 그룹/세그먼트"로 변경. 신원 컬럼(host/port/unit_id · unit_id/name)이 채워진 행이 디바이스를 시작하고, 신원 컬럼이 모두 빈 행은 직전 디바이스에 그룹/세그먼트를 이어 붙인다. 서브 구분자(`;`/`:`) 제거, 그룹/세그먼트 필드를 인라인 컬럼으로 평탄화. gateway shared 세그먼트를 `shared,<주소>` 두 셀 삽입으로 지원. sentinel `INVALID_FC`·`INVALID_SHARED_ADDRESS`·`NO_CURRENT_DEVICE` 추가. |
 
 ---

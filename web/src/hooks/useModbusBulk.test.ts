@@ -38,9 +38,9 @@ describe('parseModbusClientBulk (REQ-01)', () => {
   it('AC-01 — 헤더 스킵 + 다중 행 그룹핑(신원 행 시작, 빈 신원 행 이어붙임)', () => {
     // 2개 그룹, 1개 디바이스: 1행 헤더, 2행 신원+그룹1, 3행 이어붙임 그룹2.
     const text = [
-      'host,port,unit_id,fc,address,count,data_type,polling_interval,comment',
-      '192.168.0.10,502,1,3,0,10,uint16,5s,온도',
-      ',,,1,0,8,uint16,,도어',
+      'id,host,port,unit_id,fc,address,count,data_type,polling_interval,comment',
+      'plc-1,192.168.0.10,502,1,3,0,10,uint16,5s,온도',
+      ',,,,1,0,8,uint16,,도어',
     ].join('\n');
 
     const { devices, failures } = parseModbusClientBulk(text);
@@ -48,6 +48,7 @@ describe('parseModbusClientBulk (REQ-01)', () => {
     expect(failures).toEqual([]);
     expect(devices).toHaveLength(1);
     expect(devices[0]).toEqual({
+      id: 'plc-1',
       host: '192.168.0.10',
       port: 502,
       unit_id: 1,
@@ -60,8 +61,8 @@ describe('parseModbusClientBulk (REQ-01)', () => {
 
   it('port 공란(→502 기본 생략), data_type 공란(방출 생략), 다중 디바이스 경계', () => {
     const text = [
-      '192.168.0.10,502,1,3,0,10',
-      '192.168.0.11,,2,4,100,4',
+      'a,192.168.0.10,502,1,3,0,10',
+      'b,192.168.0.11,,2,4,100,4',
     ].join('\n');
     const { devices, failures } = parseModbusClientBulk(text);
 
@@ -69,12 +70,14 @@ describe('parseModbusClientBulk (REQ-01)', () => {
     expect(devices).toHaveLength(2);
     // data_type 공란 → 방출 생략, port 공란 → 방출 생략.
     expect(devices[0]).toEqual({
+      id: 'a',
       host: '192.168.0.10',
       port: 502,
       unit_id: 1,
       register_groups: [{ function_code: 3, start_address: 0, quantity: 10 }],
     });
     expect(devices[1]).toEqual({
+      id: 'b',
       host: '192.168.0.11',
       unit_id: 2,
       register_groups: [{ function_code: 4, start_address: 100, quantity: 4 }],
@@ -85,7 +88,7 @@ describe('parseModbusClientBulk (REQ-01)', () => {
 
   it('AC-02 — host 누락 / unit_id 범위 초과 / 무효 fc 를 원본 줄 번호로 실패 집계', () => {
     // 1행 host 공란(선행 콤마)이라 신원 행이지만 host 필수 위반, 2행 unit_id>247, 3행 무효 fc(9).
-    const t = [',502,1,3,0,1', '192.168.0.20,502,999,3,0,1', '192.168.0.21,502,3,9,0,1'].join('\n');
+    const t = ['a,,502,1,3,0,1', 'b,192.168.0.20,502,999,3,0,1', 'c,192.168.0.21,502,3,9,0,1'].join('\n');
     const { devices, failures } = parseModbusClientBulk(t);
 
     expect(devices).toEqual([]);
@@ -97,12 +100,13 @@ describe('parseModbusClientBulk (REQ-01)', () => {
 
   it('선행 이어붙임 행(현재 디바이스 없음)은 NO_CURRENT_DEVICE 실패', () => {
     // 헤더 없이 첫 데이터 행이 빈 신원(이어붙임) → 현재 디바이스 없음.
-    const t = [',,,3,0,4', '192.168.0.30,502,5,3,0,4'].join('\n');
+    const t = [',,,,3,0,4', 'd1,192.168.0.30,502,5,3,0,4'].join('\n');
     const { devices, failures } = parseModbusClientBulk(t);
     expect(devices).toHaveLength(1);
     expect(failures).toHaveLength(1);
     expect(failures[0]).toMatchObject({ line: 1, reason: NO_CURRENT_DEVICE });
     expect(devices[0]).toEqual({
+      id: 'd1',
       host: '192.168.0.30',
       port: 502,
       unit_id: 5,
@@ -111,22 +115,34 @@ describe('parseModbusClientBulk (REQ-01)', () => {
   });
 
   it('탭 구분자 자동 감지 + rtu 상속 시 host 미요구/미방출', () => {
-    const tab = '192.168.0.30\t502\t5\t3\t0\t4';
+    const tab = 'd1\t192.168.0.30\t502\t5\t3\t0\t4';
     const { devices } = parseModbusClientBulk(tab);
     expect(devices[0]).toEqual({
+      id: 'd1',
       host: '192.168.0.30',
       port: 502,
       unit_id: 5,
       register_groups: [{ function_code: 3, start_address: 0, quantity: 4 }],
     });
 
-    // rtu: host 공란 허용, unit_id 로 신원 시작.
-    const rtu = parseModbusClientBulk(',,7,3,0,4', 'rtu');
+    // rtu: host 공란 허용, id + unit_id 로 신원 시작.
+    const rtu = parseModbusClientBulk('rtu-7,,,7,3,0,4', 'rtu');
     expect(rtu.failures).toEqual([]);
     expect(rtu.devices[0]).toEqual({
+      id: 'rtu-7',
       unit_id: 7,
       register_groups: [{ function_code: 3, start_address: 0, quantity: 4 }],
     });
+  });
+
+  it('id 누락 신원 행은 EMPTY_REQUIRED 로 사전 실패한다(백엔드 add_device 필수)', () => {
+    // 백엔드 runtime_device.go 가 device id 를 필수로 요구하므로 파서가 먼저 막는다.
+    const t = [',192.168.0.40,502,1,3,0,4', 'ok-1,192.168.0.41,502,2,3,0,4'].join('\n');
+    const { devices, failures } = parseModbusClientBulk(t);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({ line: 1, reason: EMPTY_REQUIRED });
+    expect(devices).toHaveLength(1);
+    expect(devices[0]!.id).toBe('ok-1');
   });
 });
 
@@ -209,9 +225,9 @@ describe('useModbusClientBulkAdd (REQ-03)', () => {
   it('AC-05 — 전량 성공: 디바이스별 add_device 3회 순차 호출, BulkResult{total:3,ok:3,failed:[]}', async () => {
     execAgentMock.mockResolvedValue({});
     const text = [
-      '192.168.0.1,502,1,3,0,4',
-      '192.168.0.2,502,2,3,0,4',
-      '192.168.0.3,502,3,3,0,4',
+      'd1,192.168.0.1,502,1,3,0,4',
+      'd2,192.168.0.2,502,2,3,0,4',
+      'd3,192.168.0.3,502,3,3,0,4',
     ].join('\n');
 
     const { result } = renderHook(() => useModbusClientBulkAdd('agent-x'), { wrapper: wrapper() });
@@ -219,9 +235,10 @@ describe('useModbusClientBulkAdd (REQ-03)', () => {
 
     expect(res).toEqual({ total: 3, ok: 3, failed: [] });
     expect(execAgentMock).toHaveBeenCalledTimes(3);
+    // params 에 id 가 실려야 백엔드 add_device 가 ErrMissingDeviceID 로 거부하지 않는다.
     expect(execAgentMock).toHaveBeenNthCalledWith(1, 'agent-x', {
       command: 'add_device',
-      params: { unit_id: 1, register_groups: [{ function_code: 3, start_address: 0, quantity: 4 }], host: '192.168.0.1', port: 502 },
+      params: { id: 'd1', unit_id: 1, register_groups: [{ function_code: 3, start_address: 0, quantity: 4 }], host: '192.168.0.1', port: 502 },
     });
   });
 
@@ -231,9 +248,9 @@ describe('useModbusClientBulkAdd (REQ-03)', () => {
       .mockRejectedValueOnce(new Error('duplicate device id'))
       .mockResolvedValueOnce({});
     const text = [
-      '192.168.0.1,502,1,3,0,4',
-      '192.168.0.2,502,2,3,0,4',
-      '192.168.0.3,502,3,3,0,4',
+      'd1,192.168.0.1,502,1,3,0,4',
+      'd2,192.168.0.2,502,2,3,0,4',
+      'd3,192.168.0.3,502,3,3,0,4',
     ].join('\n');
 
     const { result } = renderHook(() => useModbusClientBulkAdd('agent-x'), { wrapper: wrapper() });
@@ -250,9 +267,9 @@ describe('useModbusClientBulkAdd (REQ-03)', () => {
     // 1행 무효(unit_id 999) → 파서 실패. 2·3행 유효, 3행 백엔드 실패.
     execAgentMock.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('backend rejected'));
     const text = [
-      '192.168.0.1,502,999,3,0,4',
-      '192.168.0.2,502,2,3,0,4',
-      '192.168.0.3,502,3,3,0,4',
+      'd1,192.168.0.1,502,999,3,0,4',
+      'd2,192.168.0.2,502,2,3,0,4',
+      'd3,192.168.0.3,502,3,3,0,4',
     ].join('\n');
 
     const { result } = renderHook(() => useModbusClientBulkAdd('agent-x'), { wrapper: wrapper() });
