@@ -994,7 +994,9 @@ func TestAgentHandler_AgentInfoSerialization_EnabledFalseIncluded(t *testing.T) 
 // queryReadOnlyCommands 화이트리스트와 1:1 로 대응해야 한다.
 var queryReadCommands = []string{
 	"list_devices", "list_clients", "list_stations", "list_lines", "list_groups",
-	"list_gateways", "list_connections", "get_status", "get_map", "get_device_status",
+	"list_gateways", "list_connections", "list_models", "get_status", "get_map", "get_device_status",
+	// get_history 는 sysmetrics 에이전트의 표본 이력 조회이다 — 메모리 버퍼를 읽기만 한다.
+	"get_history",
 }
 
 // queryWriteCommands 는 상태를 변경하므로 /query 로는 절대 통과해서는 안 되는 커맨드이다.
@@ -1016,7 +1018,7 @@ func TestAgentHandler_QueryAllowlistIsExplicit(t *testing.T) {
 	assert.ElementsMatch(t, queryReadCommands, got)
 }
 
-// TestAgentHandler_QueryAcceptsEveryReadCommand 는 읽기 커맨드 10종이 모두 에이전트에
+// TestAgentHandler_QueryAcceptsEveryReadCommand 는 읽기 커맨드 12종이 모두 에이전트에
 // 도달함을 검증한다.
 func TestAgentHandler_QueryAcceptsEveryReadCommand(t *testing.T) {
 	for _, cmd := range queryReadCommands {

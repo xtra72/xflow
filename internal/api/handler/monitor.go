@@ -92,6 +92,8 @@ func NewMonitorHandler(monitor MonitorManager, logger *slog.Logger) *MonitorHand
 // Routes:
 //
 //	GET    /monitor/metrics                -> Metrics
+//	GET    /monitor/network                -> NetworkStats
+//	GET    /monitor/sysresources           -> SysResources
 //	GET    /monitor/loglevel               -> ListLogLevels
 //	PUT    /monitor/loglevel               -> SetLogLevel (글로벌)
 //	PUT    /monitor/loglevel/{component}   -> SetComponentLogLevel
@@ -103,6 +105,10 @@ func (h *MonitorHandler) RegisterRoutes(g *api.RouteGroup) {
 	// 카탈로그의 monitoring 은 read 만 정의되어 있으므로(spec.md §2.1) 로그 레벨·스타일
 	// 변경처럼 서버 동작을 바꾸는 쓰기는 system.update 로 매핑한다.
 	g.GETPerm("/monitor/metrics", "monitoring.read", h.Metrics)
+	// 네트워크 인터페이스 통계도 관측 전용이므로 metrics 와 같은 권한을 쓴다.
+	g.GETPerm("/monitor/network", "monitoring.read", h.NetworkStats)
+	// 설정 화면이 마운트·장치·인터페이스를 골라 쓰도록 목록만 돌려준다.
+	g.GETPerm("/monitor/sysresources", "monitoring.read", h.SysResources)
 	g.GETPerm("/monitor/loglevel", "monitoring.read", h.ListLogLevels)
 	g.PUTPerm("/monitor/loglevel", "system.update", h.SetLogLevel)
 	g.PUTPerm("/monitor/loglevel/{component}", "system.update", h.SetComponentLogLevel)
