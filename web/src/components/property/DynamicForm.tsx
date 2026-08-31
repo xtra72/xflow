@@ -15,7 +15,7 @@ import {
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import type { ConfigSchema } from '@/types/node';
-import { isFieldVisible } from '@/types/node';
+import { isFieldRequired, isFieldVisible } from '@/types/node';
 
 import { FormField } from './FormField';
 
@@ -202,8 +202,8 @@ export function DynamicForm({ nodeId, data, schema, onChange, readOnly }: Dynami
 
       setLocalData(updated);
 
-      // 필수 필드 검증
-      if (field?.required) {
+      // 필수 필드 검증 (requiredWhen 설정 시 다른 필드 값에 따라 필수 여부가 갈린다)
+      if (field && isFieldRequired(field, updated)) {
         const checkValue =
           field.type === 'agent_select' && typeof value === 'object' && value !== null
             ? (value as Record<string, unknown>).agent_id

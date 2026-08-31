@@ -18,6 +18,7 @@ import { useTargetContext } from '@/lib/remote/TargetContext';
 import { useEditorStore } from '@/stores/editorStore';
 import type { ManagedNode } from '@/types/remote';
 import type { ConfigField } from '@/types/node';
+import { isFieldRequired } from '@/types/node';
 import { cn } from '@/lib/utils/cn';
 import { RegisterMapEditor } from './RegisterMapEditor';
 import { ModbusDevicesEditor } from './ModbusDevicesEditor';
@@ -31,6 +32,7 @@ import { TransformPipelineEditor } from './TransformPipelineEditor';
 import { KeyValueMapEditor } from './KeyValueMapEditor';
 import { TypedKeyValueMapEditor } from './TypedKeyValueMapEditor';
 import { StringListEditor } from './StringListEditor';
+import { SysResourceSelector } from './SysResourceSelector';
 import { TriggerScheduleEditor } from './TriggerScheduleEditor';
 import { FieldHelp } from './FieldHelp';
 import { CompareFieldsEditor } from './CompareFieldsEditor';
@@ -105,7 +107,7 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
           className="block text-xs font-medium text-(--color-text-secondary)"
         >
           {field.label}
-          {field.required && (
+          {isFieldRequired(field, formData ?? {}) && (
             <span className="ml-0.5 text-red-500" aria-hidden="true">
               *
             </span>
@@ -422,6 +424,15 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
           onChange={onChange}
           readOnly={readOnly}
           placeholder={field.description}
+        />
+      )}
+
+      {field.type === 'sysresource_select' && (
+        <SysResourceSelector
+          kind={field.resourceKind ?? 'mountpoints'}
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
         />
       )}
 

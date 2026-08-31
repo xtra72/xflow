@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { getAgentConfigDefaults, getAgentConfigSchema } from './agentSchemas';
+import { AGENT_TYPES, getAgentConfigDefaults, getAgentConfigSchema } from './agentSchemas';
 import type { ConfigField } from '@/types/node';
 import { isFieldVisible } from '@/types/node';
 
@@ -144,7 +144,7 @@ describe('samsung_hvacr01 미러 동기화 스키마 (SPEC-HVACR-SYNC-001)', () 
 // 바이트 동일해야 한다(무회귀, REQ-FROZEN-01/02).
 describe('chirpstack 측정치 방출 모드 스키마', () => {
   const chirpField = (name: string): ConfigField | undefined =>
-    getAgentConfigSchema('chirpstack')?.fields.find((f) => f.name === name);
+    getAgentConfigSchema('chirpstack-client')?.fields.find((f) => f.name === name);
 
   it('measurement_emit_mode 가 select 위젯으로 노출된다', () => {
     const mode = chirpField('measurement_emit_mode');
@@ -159,7 +159,7 @@ describe('chirpstack 측정치 방출 모드 스키마', () => {
   });
 
   it('기본값이 현행 동작과 동일하다(측정치별 fan-out — 무회귀)', () => {
-    const defaults = getAgentConfigDefaults('chirpstack');
+    const defaults = getAgentConfigDefaults('chirpstack-client');
     expect(defaults.measurement_emit_mode).toBe('per_measurement');
   });
 
@@ -188,7 +188,7 @@ describe('chirpstack 측정치 방출 모드 스키마', () => {
 // (무회귀, REQ-FROZEN-02 / REQ-FROZEN-A).
 describe('chirpstack 타임스탬프 소스 스키마', () => {
   const chirpField = (name: string): ConfigField | undefined =>
-    getAgentConfigSchema('chirpstack')?.fields.find((f) => f.name === name);
+    getAgentConfigSchema('chirpstack-client')?.fields.find((f) => f.name === name);
 
   it('timestamp_source 가 select 위젯으로 노출된다', () => {
     const src = chirpField('timestamp_source');
@@ -203,7 +203,7 @@ describe('chirpstack 타임스탬프 소스 스키마', () => {
   });
 
   it('기본값이 현행 동작과 동일하다(업링크 time 필드 — 무회귀)', () => {
-    const defaults = getAgentConfigDefaults('chirpstack');
+    const defaults = getAgentConfigDefaults('chirpstack-client');
     expect(defaults.timestamp_source).toBe('uplink');
   });
 
@@ -212,5 +212,114 @@ describe('chirpstack 타임스탬프 소스 스키마', () => {
     expect(desc).toContain('uplink');
     expect(desc).toContain('server');
     expect(desc).toContain('시계');
+  });
+});
+
+describe('sysmetrics 에이전트 스키마', () => {
+  /** 등록된 필드 목록 (미등록이면 테스트가 즉시 실패한다) */
+  function fields() {
+    const schema = getAgentConfigSchema('sysmetrics');
+    expect(schema, 'sysmetrics 스키마가 등록되어야 한다').toBeDefined();
+    return schema!.fields;
+  }
+
+  it('에이전트 타입 목록에 등록되어 있다', () => {
+    expect(AGENT_TYPES.map((t) => t.value)).toContain('sysmetrics');
+  });
+
+  it('요청된 다섯 지표 토글을 모두 갖는다', () => {
+    const names = fields().map((f) => f.name);
+
+    for (const key of [
+      'collect_cpu',
+      'collect_memory',
+      'collect_storage',
+      'collect_disk_io',
+      'collect_network',
+    ]) {
+      expect(names, `${key} 토글이 있어야 한다`).toContain(key);
+    }
+  });
+
+  it('지표 토글은 기본으로 모두 켜져 있다', () => {
+    // 만든 직후 아무 값도 안 나오면 설정 화면을 찾아 헤매게 된다.
+    const toggles = fields().filter((f) => f.name.startsWith('collect_'));
+
+    expect(toggles).toHaveLength(5);
+    for (const f of toggles) {
+      expect(f.type, `${f.name} 은 boolean 이어야 한다`).toBe('boolean');
+      expect(f.default, `${f.name} 기본값`).toBe(true);
+    }
+  });
+
+  it('표본 주기 기본값이 백엔드 기본값과 같다', () => {
+    // 백엔드 defaultSysMetricsInterval(5s) 과 어긋나면 화면과 실제 동작이 달라진다.
+    expect(getAgentConfigDefaults('sysmetrics').interval).toBe('5s');
+  });
+
+  it('대상 목록 필드는 필수가 아니다 (비우면 전체)', () => {
+    for (const name of ['mountpoints', 'devices', 'interfaces']) {
+      const f = fields().find((x) => x.name === name);
+      expect(f, `${name} 필드가 있어야 한다`).toBeDefined();
+      expect(f?.required ?? false, `${name} 은 선택 항목`).toBe(false);
+    }
+  });
+
+  it('대상 목록은 호스트 목록에서 고르는 위젯을 쓴다', () => {
+    // 손으로 적게 두면 오타 하나로 조용히 아무것도 관측하지 않는다.
+    const expected: Record<string, string> = {
+      mountpoints: 'mountpoints',
+      devices: 'devices',
+      interfaces: 'interfaces',
+    };
+
+    for (const [name, kind] of Object.entries(expected)) {
+      const f = fields().find((x) => x.name === name);
+      expect(f?.type, `${name} 위젯 타입`).toBe('sysresource_select');
+      expect(f?.resourceKind, `${name} 조회 축`).toBe(kind);
+    }
+  });
+
+  it('대상 목록에는 기본값이 없다 (기본 = 전체)', () => {
+    // 기본값을 넣으면 만들자마자 특정 대상만 관측하게 되어 규약과 어긋난다.
+    const defaults = getAgentConfigDefaults('sysmetrics');
+    for (const name of ['mountpoints', 'devices', 'interfaces']) {
+      expect(defaults[name], `${name} 기본값`).toBeUndefined();
+    }
+  });
+
+  it.each([
+    ['mountpoints', 'collect_storage'],
+    ['devices', 'collect_disk_io'],
+    ['interfaces', 'collect_network'],
+  ])('%s 는 %s 를 켰을 때만 보인다', (target, toggle) => {
+    const f = fields().find((x) => x.name === target)!;
+    expect(isFieldVisible(f, { [toggle]: true })).toBe(true);
+    expect(isFieldVisible(f, { [toggle]: false })).toBe(false);
+  });
+
+  it.each([
+    ['mountpoints', 'collect_storage'],
+    ['devices', 'collect_disk_io'],
+    ['interfaces', 'collect_network'],
+  ])('%s 는 %s 키가 아예 없는 config 에서도 보인다', (target, toggle) => {
+    // 설정 파일·API 로 만든 에이전트에는 키가 없을 수 있다. 백엔드는 없는 키를
+    // 기본값 true 로 읽으므로(defaultSysMetricsConfig), 여기서 숨기면 수집은 도는데
+    // 대상만 고를 수 없는 상태가 된다.
+    const f = fields().find((x) => x.name === target)!;
+    expect(isFieldVisible(f, {})).toBe(true);
+    void toggle;
+  });
+
+  it('대상 선택기는 그 지표 토글 바로 다음에 온다', () => {
+    // 떨어져 있으면 어느 토글에 딸린 목록인지 읽히지 않는다.
+    const names = fields().map((f) => f.name);
+    for (const [toggle, target] of [
+      ['collect_storage', 'mountpoints'],
+      ['collect_disk_io', 'devices'],
+      ['collect_network', 'interfaces'],
+    ]) {
+      expect(names.indexOf(target!), `${target} 위치`).toBe(names.indexOf(toggle!) + 1);
+    }
   });
 });

@@ -1924,6 +1924,32 @@ export const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   // 3종 모두 노출 필드는 agent_ref(필수) + emit_metadata 평탄 토글뿐이다.
   // 버퍼 크기(chirpStackDefaultBufferSize=256) / 다운링크 QoS(0) 는 백엔드 상수이며
   // 대상 디바이스·명령은 설정이 아니라 입력 메시지 payload 의 런타임 값이다.
+  'sysmetrics-in': {
+    description:
+      '시스템 모니터링 에이전트가 수집한 호스트 리소스를 수신합니다. 표본 1개를 메시지 1개로 묶어 방출하는 소스 노드입니다. CPU 사용률, 호스트 메모리, 마운트별 스토리지, 장치별 디스크 I/O, 인터페이스별 네트워크를 한 메시지에 담습니다. 하류에 storage-write / tsdb-write 를 연결하면 대시보드 패널이 기존 Store · TSDB 데이터 소스로 조회할 수 있습니다.',
+    inputDesc: '없음 (소스 노드). 에이전트의 표본 주기마다 자동 수신',
+    outputDesc:
+      'payload: 그룹별로 중첩된 측정값 묶음. metadata: measurement = sysmetrics (항상 고정) + agent:{type,id,name} 그룹 (기본) + node_id (옵션). timestamp 는 표본 시각.\n\n중첩 형태: cpu / memory 는 {필드: 값}, storage / disk_io / network 는 {인스턴스: {필드: 값}} 입니다.\n\n예: {"cpu":{"usage_percent":42.5}, "memory":{"used_bytes":8000,"usage_percent":50}, "storage":{"/":{"used_bytes":10},"/data":{"used_bytes":25}}, "disk_io":{"disk0":{"read_bytes":30}}, "network":{"en0":{"bytes_recv":200}}}\n\n필드 이름: cpu.usage_percent / memory.{total_bytes,used_bytes,available_bytes,usage_percent} / storage.{total_bytes,used_bytes,free_bytes,usage_percent} / disk_io.{read_bytes,write_bytes,read_count,write_count} / network.{bytes_sent,bytes_recv,packets_sent,packets_recv,err_in,err_out,drop_in,drop_out}. 값이 없는 그룹은 payload 에서 아예 빠집니다.\n\n네트워크와 디스크 I/O 는 부팅 이후 누적 카운터입니다 — 단위시간당 증가량이 필요하면 하류에서 두 표본의 차이로 계산하세요.\n\n하류 참조 경로: $.payload.cpu.usage_percent, $.payload.network.en0.bytes_recv, $.metadata.measurement, $.timestamp.\n\n저장 시 주의: storage-write 의 payload 키 처리는 한 단계만 폅니다. cpu / memory 는 split 모드로 바로 기록되지만(measurement = cpu, 필드 = usage_percent), storage / disk_io / network 는 인스턴스가 한 단계 더 깊어 그대로는 기록되지 않습니다 — 그룹을 골라 평탄화하는 노드를 사이에 두세요.',
+    configSchema: {
+      fields: [
+        {
+          name: 'agent_ref',
+          type: 'agent_select',
+          label: '에이전트',
+          required: true,
+          options: ['sysmetrics'],
+          description: '연결할 시스템 모니터링 에이전트를 선택합니다',
+        },
+        { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
+        { name: 'emit_agent', type: 'boolean', label: '메타데이터: agent 그룹', default: true, description: '메시지 metadata 에 agent:{type,id} 그룹 포함 (기본 ON)', advanced: true },
+        { name: 'emit_detail', type: 'boolean', label: '메타데이터: 상세 정보', default: true, description: 'OFF 로 두면 agent 그룹이 agent.id 만 남습니다. measurement, tags, timestamp, payload 는 그대로 유지됩니다 (기본 ON)', advanced: true },
+      ],
+    },
+    defaultPorts: [
+      { name: 'out', direction: 'output' },
+    ],
+  },
+
   'chirpstack-in': {
     description:
       'ChirpStack LoRaWAN 업링크를 수신합니다. 에이전트가 measurement 당 1개로 fan-out 한 레코드를 그대로 메시지로 방출하는 소스 노드입니다. 에이전트에 emit_comm_state 가 켜져 있으면 통신 상태 변화 시 device_state.* 메시지도 함께 방출합니다.',
@@ -1937,7 +1963,7 @@ export const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'agent_select',
           label: '에이전트',
           required: true,
-          options: ['chirpstack'],
+          options: ['chirpstack-client'],
           description: '연결할 ChirpStack 에이전트를 선택합니다',
         },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
@@ -1967,7 +1993,7 @@ export const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'agent_select',
           label: '에이전트',
           required: true,
-          options: ['chirpstack'],
+          options: ['chirpstack-client'],
           description: '다운링크를 발행할 ChirpStack 에이전트를 선택합니다',
         },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
@@ -1998,7 +2024,7 @@ export const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           type: 'agent_select',
           label: '에이전트',
           required: true,
-          options: ['chirpstack'],
+          options: ['chirpstack-client'],
           description: '통신 상태를 조회할 ChirpStack 에이전트를 선택합니다 (에이전트의 emit_comm_state 활성 필요)',
         },
         { name: 'emit_node_id', type: 'boolean', label: '메타데이터: node_id', default: false, description: '메시지 metadata 에 emit 한 flow 노드 UUID 포함', advanced: true },
@@ -2217,27 +2243,41 @@ export const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
           name: 'payload_mode',
           type: 'select',
           label: 'payload 키 처리',
-          options: ['fields', 'split'],
+          options: ['fields', 'split', 'auto', 'object'],
           default: 'fields',
           description:
-            'payload 의 키/값을 어떻게 배치할지 고릅니다.\n· fields — 모든 키/값을 measurement 하나 아래 여러 측정값으로 기록합니다.\n· split — 키마다 별도 시리즈로 분리하고 값을 그 시리즈의 값으로 기록합니다. 시리즈 이름이 곧 payload 키이므로 measurement 를 쓰지 않으며, 디바이스 구분은 metadata 태그가 담당합니다.',
+            'payload 의 키/값을 어떻게 배치할지 고릅니다.\n· fields — 모든 키/값을 measurement 하나 아래 여러 측정값으로 기록합니다.\n· split — 키마다 별도 시리즈로 분리하고 값을 그 시리즈의 값으로 기록합니다. 시리즈 이름이 곧 payload 키이므로 measurement 를 쓰지 않으며, 디바이스 구분은 metadata 태그가 담당합니다.\n· auto — 메시지마다 위 둘 중 하나를 고릅니다. measurement 템플릿이 그 메시지에서 해석되면 fields, 해석되지 않으면 split 으로 기록합니다. 시리즈 이름을 실어 오는 소스와 그렇지 않은 소스가 한 노드로 함께 들어올 때 씁니다.\n· object — 쪼개지 않고 payload 전체를 measurement 시리즈의 단일 오브젝트 값으로 기록합니다. 원본 구조를 한 덩어리로 남길 때 씁니다. 이 모드에서만 키 이름 규칙을 적용하지 않아 마운트 경로 같은 키도 보존됩니다. store 는 오브젝트 그대로, influxdb 는 JSON 문자열로 저장하며, 집계·차트에는 쓸 수 없습니다.',
         },
         {
           name: 'measurement',
           type: 'string',
           label: 'Measurement',
-          required: true,
+          // fields / object 모드에서 필수. auto 모드는 비우면 기본 템플릿이 적용된다.
+          requiredWhen: { field: 'payload_mode', value: ['fields', '', undefined, 'object'] },
           // payload_mode 미설정(신규 노드)은 기본값 fields 와 같으므로 함께 표시한다.
-          visibleWhen: { field: 'payload_mode', value: ['fields', '', undefined] },
+          visibleWhen: {
+            field: 'payload_mode',
+            value: ['fields', '', undefined, 'auto', 'object'],
+          },
           description:
-            '기록할 시리즈 이름. {…} 안의 경로를 메시지 값으로 치환합니다 (예: {$.metadata.device.id}). store 는 저장 키, influxdb 는 measurement 가 됩니다.',
+            '기록할 시리즈 이름. {…} 안의 경로를 메시지 값으로 치환합니다 (예: {$.metadata.device.id}). store 는 저장 키, influxdb 는 measurement 가 됩니다.\nauto 모드에서는 선택 항목이며, 비우면 {$.metadata.measurement} 가 적용됩니다.',
           placeholder: '{$.metadata.device.id}',
+        },
+        {
+          name: 'object_key',
+          type: 'string',
+          label: '오브젝트 값 이름 (object 전용)',
+          default: 'object',
+          visibleWhen: { field: 'payload_mode', value: 'object' },
+          description:
+            'object 모드에서 payload 오브젝트에 부여할 값 이름. store 의 field, influxdb 의 field 이름이 됩니다. 영문자·숫자·_·- 만 쓸 수 있습니다.',
         },
         {
           name: 'exclude_keys',
           type: 'string_list',
           label: '제외 키',
-          description: '측정값으로 쓰지 않을 payload 키 목록. 식별자나 라벨처럼 값이 아닌 키를 걸러냅니다.',
+          description:
+            '측정값으로 쓰지 않을 payload 키 목록. 식별자나 라벨처럼 값이 아닌 키를 걸러냅니다. object 모드에서는 오브젝트에서 해당 top-level 키를 뺍니다.',
           advanced: true,
         },
         {
