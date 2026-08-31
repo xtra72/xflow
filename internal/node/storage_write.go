@@ -48,11 +48,38 @@ const (
 	// payloadModeSplit 는 payload 의 각 키를 개별 시리즈로 분리하고
 	// 값을 그 시리즈의 단일 측정값으로 기록한다.
 	payloadModeSplit = "split"
+	// payloadModeAuto 는 메시지마다 두 모드 중 하나를 고른다.
+	// measurement 템플릿이 그 메시지에서 해석되면 fields 로, 해석되지 않으면 split 으로
+	// 기록한다. 시리즈 이름을 메시지가 실어 오는 소스(예: chirpstack 단일 레코드의
+	// metadata.measurement)와 그렇지 않은 소스(device_state.report 등)가 한 노드로
+	// 함께 들어올 때 쓴다.
+	payloadModeAuto = "auto"
+	// payloadModeObject 는 payload 전체를 쪼개지 않고 하나의 오브젝트 값으로
+	// 기록한다 (시리즈 이름은 measurement, 값 이름은 object_key).
+	//
+	// 다른 세 모드는 모두 payload 의 top-level 키를 측정값 단위로 보므로,
+	// 원본 구조를 한 덩어리로 남기려면 앞단에서 payload 를 단일 키 아래로
+	// 감싸야 했다. object 모드는 그 감싸기를 노드 설정으로 흡수한다.
+	//
+	// 이 모드에서만 payload 키에 이름 규칙(fieldPattern)을 적용하지 않는다 —
+	// 키가 field 이름이 아니라 오브젝트 값의 일부이기 때문이다. 그래서
+	// 마운트 경로("/System/Volumes/Data")처럼 규칙을 벗어난 키도 보존된다.
+	payloadModeObject = "object"
 )
+
+// defaultAutoMeasurement 는 auto 모드에서 measurement 를 비워 둔 경우의 기본 템플릿이다.
+// "메시지가 실어 온 시리즈 이름을 그대로 쓴다" 는 관례를 기본값으로 굳힌다.
+const defaultAutoMeasurement = "{$.metadata.measurement}"
 
 // splitValueName 은 split 모드에서 측정값에 부여하는 고정 이름이다.
 // split 모드에서는 시리즈 이름이 이미 측정 종류를 나타내므로 값 이름은 관례상 "value" 다.
 const splitValueName = "value"
+
+// defaultObjectKey 는 object 모드에서 payload 오브젝트에 부여하는 기본 값 이름이다.
+// split 모드의 "value" 와 구분되는 이름을 쓴다 — 값이 스칼라 측정값이 아니라
+// payload 오브젝트 한 덩어리임을 저장된 데이터만 보고도 알 수 있어야 하기 때문이다.
+// object_key 로 바꿀 수 있다.
+const defaultObjectKey = "object"
 
 // storageWriteConfig 는 storage-write 노드의 파싱된 설정이다.
 // 백엔드 중립 필드와 백엔드 전용 필드가 함께 들어 있으며, 해당 없는 백엔드는
@@ -60,8 +87,9 @@ const splitValueName = "value"
 type storageWriteConfig struct {
 	// --- 백엔드 중립 ---
 	payloadMode string
-	measurement string          // fields 모드의 시리즈 이름 ({…} 보간 지원)
+	measurement string          // fields / object 모드의 시리즈 이름 ({…} 보간 지원)
 	excludeKeys map[string]bool // 측정값으로 쓰지 않을 payload 키
+	objectKey   string          // object 모드에서 payload 오브젝트에 부여할 값 이름
 
 	// --- 백엔드 전용 (해당 없는 백엔드는 무시) ---
 	namespace string        // store
@@ -87,6 +115,10 @@ type agentTyper interface {
 //
 //	fields 모드 — 모든 키/값을 measurement 하나 아래 여러 측정값으로.
 //	split  모드 — 키마다 별도 시리즈로 분리하고 값을 그 시리즈의 값으로.
+//	auto   모드 — 메시지마다 위 둘 중 하나를 고른다. measurement 템플릿이 그
+//	              메시지에서 해석되면 fields, 아니면 split.
+//	object 모드 — 쪼개지 않고 payload 전체를 measurement 시리즈의 단일 오브젝트
+//	              값(이름은 object_key)으로. 원본 구조를 한 덩어리로 남길 때 쓴다.
 //
 // 백엔드는 agent_ref 가 가리키는 에이전트의 타입으로 결정되므로, 설정을 그대로
 // 둔 채 에이전트만 교체하면 저장 대상이 바뀐다.
@@ -207,9 +239,12 @@ func newStorageBackend(underlying any) (storageBackend, error) {
 // Configure 는 storage-write 의 설정을 파싱·검증한다.
 //
 // 백엔드 중립 키:
-//   - "payload_mode": "fields" | "split" (기본 "fields")
-//   - "measurement": string - fields 모드의 시리즈 이름. {…} 보간 지원. fields 모드에서 필수
+//   - "payload_mode": "fields" | "split" | "auto" | "object" (기본 "fields")
+//   - "measurement": string - 시리즈 이름. {…} 보간 지원. fields / object 모드에서
+//     필수이고, auto 모드에서는 선택이다(비우면 defaultAutoMeasurement).
 //   - "exclude_keys": []string - 측정값으로 쓰지 않을 payload 키
+//   - "object_key": string - object 모드에서 payload 오브젝트에 부여할 값 이름
+//     (기본 defaultObjectKey). 이름 규칙은 field 와 같다.
 //
 // 백엔드 전용 키 (해당 없는 백엔드는 무시):
 //   - "namespace", "ttl" (store) / "bool_to_int" (influxdb)
@@ -220,11 +255,25 @@ func (n *StorageWriteNode) Configure(config map[string]any) error {
 
 	if v, ok := config["payload_mode"]; ok {
 		if s, ok := v.(string); ok && s != "" {
-			if s != payloadModeFields && s != payloadModeSplit {
+			if s != payloadModeFields && s != payloadModeSplit &&
+				s != payloadModeAuto && s != payloadModeObject {
 				return fmt.Errorf(
-					"storage-write: invalid payload_mode %q (must be one of: fields, split)", s)
+					"storage-write: invalid payload_mode %q (must be one of: fields, split, auto, object)", s)
 			}
 			n.cfg.payloadMode = s
+		}
+	}
+
+	// object_key 는 object 모드에서만 쓰이지만 파싱은 모드와 무관하게 한다 —
+	// 모드를 바꾸는 것만으로 설정이 무효가 되지 않도록 검증을 한 곳에 모은다.
+	n.cfg.objectKey = defaultObjectKey
+	if v, ok := config["object_key"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			if !fieldPattern.MatchString(s) {
+				return fmt.Errorf(
+					"storage-write: invalid object_key %q (allowed: letters, digits, '_', '-')", s)
+			}
+			n.cfg.objectKey = s
 		}
 	}
 
@@ -235,8 +284,16 @@ func (n *StorageWriteNode) Configure(config map[string]any) error {
 	}
 	// fields 모드는 시리즈 이름을 설정에서 받아야 한다.
 	// split 모드는 payload 키가 시리즈 이름이므로 measurement 를 쓰지 않는다.
+	// auto 모드는 비워 두면 기본 템플릿(메시지가 실어 온 이름)을 적용한다.
+	if n.cfg.payloadMode == payloadModeAuto && n.cfg.measurement == "" {
+		n.cfg.measurement = defaultAutoMeasurement
+	}
 	if n.cfg.payloadMode == payloadModeFields && n.cfg.measurement == "" {
 		return fmt.Errorf("storage-write: measurement 는 fields 모드에서 필수입니다")
+	}
+	// object 모드도 시리즈 이름을 payload 에서 얻지 못하므로 설정에서 받아야 한다.
+	if n.cfg.payloadMode == payloadModeObject && n.cfg.measurement == "" {
+		return fmt.Errorf("storage-write: measurement 는 object 모드에서 필수입니다")
 	}
 
 	if v, ok := config["exclude_keys"]; ok {
@@ -327,8 +384,10 @@ func (n *StorageWriteNode) Process(ctx context.Context, msg message.Message) ([]
 //
 //	fields 모드 → 배치 1개 (measurement 시리즈에 payload 키들이 측정값으로)
 //	split  모드 → payload 키마다 배치 1개 (키가 시리즈 이름, 값 이름은 "value")
+//	auto   모드 → 이 메시지에서 measurement 템플릿이 해석되면 fields, 아니면 split
+//	object 모드 → 배치 1개 (measurement 시리즈에 payload 전체가 단일 오브젝트 값으로)
 //
-// 두 모드 모두 태그는 metadata, 시각은 msg.timestamp 로 동일하게 채운다.
+// 모든 모드에서 태그는 metadata, 시각은 msg.timestamp 로 동일하게 채운다.
 // 결과 순서는 payload 키 정렬 순서로 고정하여 결정적이다.
 func (n *StorageWriteNode) buildBatches(msg message.Message) ([]storageBatch, error) {
 	tags := metadataTags(msg)
@@ -336,6 +395,11 @@ func (n *StorageWriteNode) buildBatches(msg message.Message) ([]storageBatch, er
 
 	// payload 에서 측정값 후보를 뽑는다 (제외 키 / 이름 규칙 위반 키는 건너뛴다).
 	payload := msg.Payload().ToMap()
+
+	// object 모드는 payload 를 쪼개지 않으므로 키 필터링 경로를 타지 않는다.
+	if n.cfg.payloadMode == payloadModeObject {
+		return n.objectBatches(msg, payload, tags, ts)
+	}
 	names := make([]string, 0, len(payload))
 	for k := range payload {
 		if n.cfg.excludeKeys[k] {
@@ -352,25 +416,19 @@ func (n *StorageWriteNode) buildBatches(msg message.Message) ([]storageBatch, er
 	}
 	sort.Strings(names)
 
-	if n.cfg.payloadMode == payloadModeSplit {
-		// 키마다 별도 measurement. 값 모양에 따라 필드를 정한다:
-		//   스칼라  → 필드 하나, 이름은 관례상 "value" (measurement 가 이미 종류를 나타냄).
-		//   오브젝트 → 오브젝트의 각 키가 필드가 된다 (예: radio{count, rssi}).
-		// 오브젝트를 통째로 "value" 에 넣으면 JSON 문자열로 뭉개져 집계·차트가 쓸 수 없다.
-		batches := make([]storageBatch, 0, len(names))
-		for _, k := range names {
-			values := splitValues(payload[k])
-			if len(values) == 0 {
-				continue
-			}
-			batches = append(batches, storageBatch{
-				seriesKey: k,
-				tags:      tags,
-				values:    values,
-				timestamp: ts,
-			})
+	switch n.cfg.payloadMode {
+	case payloadModeSplit:
+		return splitBatches(names, payload, tags, ts), nil
+
+	case payloadModeAuto:
+		// 이 메시지가 시리즈 이름을 실어 왔는지로 모드를 고른다.
+		// 해석 실패(키 없음)나 빈 이름은 "이름 없음"으로 보고 split 으로 내린다 —
+		// auto 는 폴백이 정상 경로이므로 fields 모드처럼 에러로 끊지 않는다.
+		seriesKey, err := resolveKeyTemplate(n.cfg.measurement, msg)
+		if err != nil || seriesKey == "" {
+			return splitBatches(names, payload, tags, ts), nil
 		}
-		return batches, nil
+		return []storageBatch{fieldsBatch(seriesKey, names, payload, tags, ts)}, nil
 	}
 
 	// fields 모드: 하나의 시리즈에 모든 키/값을 측정값으로 담는다.
@@ -378,16 +436,87 @@ func (n *StorageWriteNode) buildBatches(msg message.Message) ([]storageBatch, er
 	if err != nil {
 		return nil, fmt.Errorf("storage-write: measurement %q: %w", n.cfg.measurement, err)
 	}
-	values := make([]storageValue, 0, len(names))
-	for _, k := range names {
-		values = append(values, storageValue{name: k, value: payload[k]})
+	return []storageBatch{fieldsBatch(seriesKey, names, payload, tags, ts)}, nil
+}
+
+// objectBatches 는 payload 전체를 하나의 오브젝트 값으로 담은 배치를 만든다 (object 모드).
+//
+// 다른 모드와 달리 payload 키에 이름 규칙(fieldPattern)을 적용하지 않는다 — 키가
+// field 이름이 아니라 오브젝트 값의 일부이기 때문이다. exclude_keys 는 그대로
+// 적용되어 오브젝트에서 해당 top-level 키를 뺀다.
+//
+// 남은 키가 없으면 기록할 것이 없으므로 배치를 만들지 않는다(다른 모드와 동일).
+func (n *StorageWriteNode) objectBatches(
+	msg message.Message, payload map[string]any, tags map[string]string, ts int64,
+) ([]storageBatch, error) {
+	obj := payload
+	if len(n.cfg.excludeKeys) > 0 {
+		obj = make(map[string]any, len(payload))
+		for k, v := range payload {
+			if n.cfg.excludeKeys[k] {
+				continue
+			}
+			obj[k] = v
+		}
+	}
+	if len(obj) == 0 {
+		return nil, nil
+	}
+
+	seriesKey, err := resolveKeyTemplate(n.cfg.measurement, msg)
+	if err != nil {
+		return nil, fmt.Errorf("storage-write: measurement %q: %w", n.cfg.measurement, err)
 	}
 	return []storageBatch{{
 		seriesKey: seriesKey,
 		tags:      tags,
-		values:    values,
+		values:    []storageValue{{name: n.cfg.objectKey, value: obj}},
 		timestamp: ts,
 	}}, nil
+}
+
+// splitBatches 는 payload 키마다 별도 시리즈 배치를 만든다 (split 모드 / auto 폴백).
+//
+// 키마다 별도 measurement 이고, 값 모양에 따라 필드를 정한다:
+//
+//	스칼라   → 필드 하나, 이름은 관례상 "value" (measurement 가 이미 종류를 나타냄).
+//	오브젝트 → 오브젝트의 각 키가 필드가 된다 (예: radio{count, rssi}).
+//
+// 오브젝트를 통째로 "value" 에 넣으면 JSON 문자열로 뭉개져 집계·차트가 쓸 수 없다.
+func splitBatches(
+	names []string, payload map[string]any, tags map[string]string, ts int64,
+) []storageBatch {
+	batches := make([]storageBatch, 0, len(names))
+	for _, k := range names {
+		values := splitValues(payload[k])
+		if len(values) == 0 {
+			continue
+		}
+		batches = append(batches, storageBatch{
+			seriesKey: k,
+			tags:      tags,
+			values:    values,
+			timestamp: ts,
+		})
+	}
+	return batches
+}
+
+// fieldsBatch 는 하나의 시리즈에 payload 키들을 측정값으로 담은 배치를 만든다
+// (fields 모드 / auto 에서 시리즈 이름이 해석된 경우).
+func fieldsBatch(
+	seriesKey string, names []string, payload map[string]any, tags map[string]string, ts int64,
+) storageBatch {
+	values := make([]storageValue, 0, len(names))
+	for _, k := range names {
+		values = append(values, storageValue{name: k, value: payload[k]})
+	}
+	return storageBatch{
+		seriesKey: seriesKey,
+		tags:      tags,
+		values:    values,
+		timestamp: ts,
+	}
 }
 
 // splitValues 는 split 모드에서 payload 값 하나를 그 measurement 의 필드 목록으로 편다.
