@@ -490,6 +490,81 @@ describe('queryStoreMatrix: server aggregation and fallback', () => {
     expect((body as { interval_ms: number }).interval_ms).toBe(10_000);
   });
 
+  it('first/last 도 서버로 보낸다 — 클라이언트 버킷 경로에는 채우기가 걸리지 않는다', async () => {
+    for (const agg of ['first', 'last'] as const) {
+      postMock.mockReset();
+      postMock.mockResolvedValueOnce({ entries: [] });
+      await queryStoreMatrix('agent', {
+        keys: ['k'],
+        startMs: 0,
+        endMs: 60_000,
+        intervalMs: 10_000,
+        aggregation: agg,
+      });
+      expect(postMock).toHaveBeenCalledTimes(1);
+      expect((postMock.mock.calls[0]![1] as { aggregation: string }).aggregation).toBe(agg);
+    }
+  });
+
+  it('채우기를 지정하지 않으면 요청 바디에 fill 을 싣지 않는다', async () => {
+    postMock.mockResolvedValueOnce({ entries: [] });
+    await queryStoreMatrix('agent', {
+      keys: ['k'],
+      startMs: 0,
+      endMs: 60_000,
+      intervalMs: 10_000,
+      aggregation: 'average',
+    });
+    expect(postMock.mock.calls[0]![1] as Record<string, unknown>).not.toHaveProperty('fill');
+  });
+
+  it('채우기 전략을 요청 바디에 싣는다', async () => {
+    postMock.mockResolvedValueOnce({ entries: [] });
+    await queryStoreMatrix('agent', {
+      keys: ['k'],
+      startMs: 0,
+      endMs: 60_000,
+      intervalMs: 10_000,
+      aggregation: 'average',
+      fill: 'zero',
+    });
+    expect((postMock.mock.calls[0]![1] as { fill: string }).fill).toBe('zero');
+  });
+
+  it('사용 기간 제한은 직전값 채우기에서만 싣는다', async () => {
+    postMock.mockResolvedValueOnce({ entries: [] });
+    await queryStoreMatrix('agent', {
+      keys: ['k'],
+      startMs: 0,
+      endMs: 60_000,
+      intervalMs: 10_000,
+      aggregation: 'average',
+      fill: 'zero',
+      fillPreviousMaxMs: 60_000,
+    });
+    expect(postMock.mock.calls[0]![1] as Record<string, unknown>).not.toHaveProperty(
+      'fill_previous_max_ms',
+    );
+
+    postMock.mockReset();
+    postMock.mockResolvedValueOnce({ entries: [] });
+    await queryStoreMatrix('agent', {
+      keys: ['k'],
+      startMs: 0,
+      endMs: 60_000,
+      intervalMs: 10_000,
+      aggregation: 'average',
+      fill: 'previous',
+      fillPreviousMaxMs: 60_000,
+      fillPreviousOverflow: 'value',
+      fillPreviousOverflowValue: -1,
+    });
+    const body = postMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(body.fill_previous_max_ms).toBe(60_000);
+    expect(body.fill_previous_overflow).toBe('value');
+    expect(body.fill_previous_overflow_value).toBe(-1);
+  });
+
   it('서버 4xx (aggregation 미지원) 시 interval_ms/aggregation 없이 재요청 후 클라이언트 집계', async () => {
     // 1차: 서버 집계 시도 → 400
     // 2차: 폴백 요청 → 원본 엔트리 반환 → 클라이언트가 (10+20)/2=15 계산

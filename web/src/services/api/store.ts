@@ -148,8 +148,26 @@ interface StoreQueryRequest {
   /** 서버 집계 버킷 크기 (ms). > 0 + aggregation 동시 지정 시 서버 집계 경로 활성화. */
   interval_ms?: number;
   /** 서버 집계 함수. UI `average` 는 백엔드 `avg` 로 변환해 전달한다. */
-  aggregation?: 'min' | 'max' | 'avg';
+  aggregation?: StoreBackendAggregation;
+  /** 빈 버킷 채우기. 어휘는 TSDB 소스와 같다(`'' | null | zero | previous`). */
+  fill?: string;
+  /** `previous` 로 직전값을 이어 쓸 수 있는 최대 기간(ms). 0/미지정이면 무제한. */
+  fill_previous_max_ms?: number;
+  /** 사용 기간을 넘긴 버킷의 처리(`'' | value`). */
+  fill_previous_overflow?: string;
+  /** 위가 `value` 일 때 채울 값. */
+  fill_previous_overflow_value?: number;
 }
+
+/**
+ * 백엔드가 받는 집계 어휘.
+ *
+ * `average` 만 `avg` 로 어긋나고 나머지는 UI 표기와 같다. 종전에는 min/max/avg
+ * 셋뿐이라 first/last 는 클라이언트가 원시 엔트리를 버킷으로 나눠 계산했는데,
+ * 그 경로에는 서버의 빈 버킷 채우기가 걸리지 않아 같은 fill 설정이 집계 함수에
+ * 따라 되기도 하고 안 되기도 했다. 다섯 종을 모두 서버로 보낸다.
+ */
+type StoreBackendAggregation = 'min' | 'max' | 'avg' | 'first' | 'last';
 
 /**
  * 개별 엔트리 (값 타입은 런타임에 검증).
@@ -372,12 +390,16 @@ export function bucketAndAggregate(
 }
 
 /**
- * UI `aggregation` (average/min/max) 을 백엔드 문자열(`avg`/`min`/`max`) 로 변환한다.
- * `average` 만 `avg` 로 치환되며, 나머지는 동일하다.
+ * UI `aggregation` 을 백엔드 어휘로 변환한다. `average` 만 `avg` 로 치환된다.
+ *
+ * `sum`/`count` 는 store 백엔드가 받지 않으므로 `null` 을 돌려 클라이언트 버킷
+ * 경로(`bucketAndAggregate`)로 내린다. 그 경로에는 서버 채우기가 걸리지 않지만,
+ * 두 집계는 store 소스의 설정 UI 에 노출되지 않으므로 도달하지 않는다 — 계약이
+ * 넓어 타입상 가능할 뿐이다.
  */
 function toBackendAggregation(
   aggregation: SeriesMatrixQuery['aggregation'],
-): 'min' | 'max' | 'avg' | null {
+): StoreBackendAggregation | null {
   switch (aggregation) {
     case 'average':
       return 'avg';
@@ -385,9 +407,11 @@ function toBackendAggregation(
       return 'min';
     case 'max':
       return 'max';
+    case 'first':
+      return 'first';
+    case 'last':
+      return 'last';
     default:
-      // first/last 는 store 백엔드 서버 집계가 미지원 → null 반환하여
-      // 클라이언트 측 bucketAndAggregate(aggregateValues) 경로를 사용한다.
       return null;
   }
 }
@@ -518,6 +542,18 @@ async function fetchKeySeries(
       namespace: 'default',
       interval_ms: params.intervalMs,
       aggregation: backendAgg,
+      // 채우기는 값이 있을 때만 싣는다 — 빈 문자열을 보내도 뜻은 같지만,
+      // 요청 본문이 종전과 바이트로 같아야 구버전 서버 폴백 판정이 흔들리지 않는다.
+      ...(params.fill ? { fill: params.fill } : {}),
+      ...(params.fill === 'previous' && params.fillPreviousMaxMs
+        ? { fill_previous_max_ms: params.fillPreviousMaxMs }
+        : {}),
+      ...(params.fill === 'previous' && params.fillPreviousOverflow
+        ? {
+            fill_previous_overflow: params.fillPreviousOverflow,
+            fill_previous_overflow_value: params.fillPreviousOverflowValue ?? 0,
+          }
+        : {}),
     };
 
     try {
