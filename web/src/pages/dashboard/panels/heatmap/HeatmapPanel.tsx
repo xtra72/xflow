@@ -166,7 +166,11 @@ export default function HeatmapPanel({
   // 레이어 이미지 해석(자산 id → data-URL, 레거시 인라인 이미지는 그대로).
   const floorPlanSources = useFloorPlanSources(cfg.floor_plans);
   const baseLayer = cfg.floor_plans[0];
-  const baseAspect = useFloorPlanAspect(baseLayer, floorPlanSources[0]);
+  // 실제로 그려진 <img> 가 알려 준 종횡비(마지막 보루). config 저장값도 별도 실측도 실패할 수
+  // 있는데(자산 URL·인증·캐시), 그때 스테이지가 패널 전체로 퇴화하면 도면만 안에서 다시
+  // 레터박스되어 마커는 패널을, 도면은 자기 비율을 따르게 된다 — 보고된 어긋남의 정체다.
+  const [renderedAspect, setRenderedAspect] = useState<number | undefined>(undefined);
+  const baseAspect = useFloorPlanAspect(baseLayer, floorPlanSources[0]) ?? renderedAspect;
   // stage_fit: 여백(contain, 기본) / 잘림(cover) / 왜곡(stretch) 중 무엇을 감수할지의 선택.
   // fit 으로 기본 박스를 구한 뒤 사용자가 직접 옮기고 키운 변형을 얹는다. 마커는 스테이지
   // 정규화 좌표라 변형을 따로 반영할 필요 없이 도면 위 같은 지점에 그대로 붙어 따라온다.
@@ -198,7 +202,12 @@ export default function HeatmapPanel({
     positions: Record<string, NormalizedPos>;
   } | null>(null);
   const isLegacySpace = cfg.sensor_space !== 'stage';
-  const measured = stage.width > 0 && stage.height > 0;
+  // 종횡비를 아직 모르면 스테이지가 패널 전체다 — 그 상태의 환산은 항등이라 "환산했다" 는
+  // 표식만 남기고 좌표는 컨테이너 기준 그대로 굳는다. 나중에 종횡비가 도착해 스테이지가
+  // 레터박스되면 그 좌표가 스테이지 좌표로 재해석되어 마커가 도면에서 어긋난 채 고정된다.
+  // 도면이 아예 없으면 스테이지 = 컨테이너가 정상이므로 기다릴 이유가 없다.
+  const stageAnchored = cfg.floor_plans.length === 0 || baseAspect !== undefined;
+  const measured = stage.width > 0 && stage.height > 0 && stageAnchored;
   if (isLegacySpace && measured && migrationRef.current?.src !== rawPositions) {
     migrationRef.current = {
       src: rawPositions,
@@ -428,6 +437,7 @@ export default function HeatmapPanel({
             layers={cfg.floor_plans}
             sources={floorPlanSources}
             stretch={cfg.stage_fit === 'stretch'}
+            onBaseAspect={setRenderedAspect}
           />
           <div className="absolute inset-0 z-10 flex" style={heatmapLayerStyle}>
             {/* 온도장은 배치 센서점이 있을 때만 렌더(편집 중 빈 좌표 공간 위 배치도 허용, AC-E1). */}

@@ -31,10 +31,25 @@ interface FloorPlanBackgroundProps {
    * 이미지가 'contain' 이면 이미지 안에서 다시 레터박스가 생겨 여백이 그대로 돌아온다.
    */
   stretch?: boolean;
+  /**
+   * 기준 레이어(index 0)가 실제로 그려졌을 때 그 원본 종횡비(폭/높이)를 알린다.
+   *
+   * 스테이지는 기준 도면과 같은 종횡비여야 마커의 정규화 좌표가 도면에 고정된다. 종횡비를
+   * 못 구하면 스테이지가 패널 전체로 퇴화하고, 그러면 도면만 `object-fit` 으로 안에서 다시
+   * 레터박스되어 **마커는 패널을, 도면은 자기 비율을 따르는** 어긋남이 생긴다(보고된 증상).
+   * config 에 저장된 크기도, 별도 `new Image()` 실측도 실패할 수 있으므로(자산 URL·인증·캐시)
+   * **브라우저가 이미 그린 그 이미지**에서 받아오는 이 경로를 마지막 보루로 둔다.
+   */
+  onBaseAspect?: (aspect: number) => void;
 }
 
 /** 도면 이미지 배경. 그릴 레이어가 없으면 null(AC-E1). */
-export default function FloorPlanBackground({ layers, sources, stretch }: FloorPlanBackgroundProps) {
+export default function FloorPlanBackground({
+  layers,
+  sources,
+  stretch,
+  onBaseAspect,
+}: FloorPlanBackgroundProps) {
   // 레이어가 없거나 아직 해석된 src 가 하나도 없으면 배경을 렌더하지 않는다.
   if (layers.length === 0 || sources.every((s) => !s)) return null;
   return (
@@ -47,6 +62,15 @@ export default function FloorPlanBackground({ layers, sources, stretch }: FloorP
           alt=""
           aria-hidden="true"
           data-testid={i === 0 ? 'floor-plan-background' : `floor-plan-layer-${i}`}
+          // 기준 레이어만 스테이지 종횡비를 정한다(나머지는 그 위에 얹히는 겹판이다).
+          onLoad={
+            i === 0 && onBaseAspect
+              ? (e) => {
+                  const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+                  if (w > 0 && h > 0) onBaseAspect(w / h);
+                }
+              : undefined
+          }
           // 스테이지 정규화 박스에 % 배치. 포인터 이벤트는 위 레이어(canvas/오버레이)로 통과.
           className="pointer-events-none absolute"
           style={{

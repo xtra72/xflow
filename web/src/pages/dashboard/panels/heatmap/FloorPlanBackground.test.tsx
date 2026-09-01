@@ -1,8 +1,8 @@
 // FloorPlanBackground 렌더 테스트 (SPEC-HEATMAP-PANEL-002 T3 + 다중 레이어).
 // 레이어 미첨부 시 null(AC-E1), 첨부 시 object-fit/박스/불투명도 렌더를 커버한다.
 
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import FloorPlanBackground from './FloorPlanBackground';
 import type { FloorPlanLayer } from './heatmapConfig';
@@ -113,5 +113,52 @@ describe('FloorPlanBackground — stretch 오버라이드', () => {
     render(<FloorPlanBackground layers={layers} sources={srcsOf(layers)} />);
 
     expect((screen.getByTestId('floor-plan-background') as HTMLImageElement).style.objectFit).toBe('contain');
+  });
+});
+
+describe('FloorPlanBackground — 기준 레이어 종횡비 보고', () => {
+  it('기준 레이어가 뜨면 원본 종횡비를 알린다(스테이지를 도면에 고정하는 마지막 보루)', () => {
+    const onBaseAspect = vi.fn();
+    const { getByTestId } = render(
+      <FloorPlanBackground
+        layers={[layer(), layer({ image: 'data:image/png;base64,BBBB' })]}
+        sources={['data:image/png;base64,AAAA', 'data:image/png;base64,BBBB']}
+        onBaseAspect={onBaseAspect}
+      />,
+    );
+    const img = getByTestId('floor-plan-background') as HTMLImageElement;
+    Object.defineProperty(img, 'naturalWidth', { value: 800, configurable: true });
+    Object.defineProperty(img, 'naturalHeight', { value: 400, configurable: true });
+    fireEvent.load(img);
+    expect(onBaseAspect).toHaveBeenCalledWith(2);
+  });
+
+  it('겹판(비기준) 레이어는 종횡비를 정하지 않는다', () => {
+    const onBaseAspect = vi.fn();
+    const { getByTestId } = render(
+      <FloorPlanBackground
+        layers={[layer(), layer({ image: 'data:image/png;base64,BBBB' })]}
+        sources={['data:image/png;base64,AAAA', 'data:image/png;base64,BBBB']}
+        onBaseAspect={onBaseAspect}
+      />,
+    );
+    const img = getByTestId('floor-plan-layer-1') as HTMLImageElement;
+    Object.defineProperty(img, 'naturalWidth', { value: 100, configurable: true });
+    Object.defineProperty(img, 'naturalHeight', { value: 100, configurable: true });
+    fireEvent.load(img);
+    expect(onBaseAspect).not.toHaveBeenCalled();
+  });
+
+  it('원본 크기를 못 읽으면(0) 알리지 않는다(0 나눗셈·엉뚱한 비율 방지)', () => {
+    const onBaseAspect = vi.fn();
+    const { getByTestId } = render(
+      <FloorPlanBackground
+        layers={[layer()]}
+        sources={['data:image/png;base64,AAAA']}
+        onBaseAspect={onBaseAspect}
+      />,
+    );
+    fireEvent.load(getByTestId('floor-plan-background'));
+    expect(onBaseAspect).not.toHaveBeenCalled();
   });
 });
