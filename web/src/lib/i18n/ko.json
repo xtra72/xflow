@@ -141,10 +141,7 @@
         "modbusBusStats": "reads·writes/min, 지연 등 버스 통계 미니차트",
         "modbusSummaryStats": "커넥션·클라이언트·디바이스·오류 종합 통계",
         "heatmap": "공간 온도 센서를 IDW 로 보간한 히트맵(온도장)",
-        "monitorLogs": "실시간 시스템 로그를 레벨·소스·컴포넌트 필터와 함께 봅니다.",
-        "sysmetricsSystem": "sysmetrics 에이전트가 관측한 호스트의 CPU·메모리·디스크 I/O·네트워크 종합을 한 화면에 봅니다.",
-        "sysmetricsNetwork": "인터페이스별 송수신량을 그립니다. 대상을 고르지 않으면 전체 합산만 그립니다.",
-        "sysmetricsStorage": "마운트별 디스크 사용량을 봅니다. 대상을 고르지 않으면 전체 합계를 봅니다."
+        "monitorLogs": "실시간 시스템 로그를 레벨·소스·컴포넌트 필터와 함께 봅니다."
       },
       "groups": {
         "hvacr": "HVACR (냉난방 공조)",
@@ -155,8 +152,7 @@
         "propertiesGrid": "디바이스 상태",
         "outdoorControl": "실외기 상태",
         "heatmap": "히트맵"
-      },
-      "selectSysMetricsAgent": "sysmetrics 에이전트 선택"
+      }
     },
     "addDashboard": "새 대시보드 추가",
     "resetLayout": "초기화",
@@ -171,7 +167,6 @@
       "chart": "차트",
       "content": "콘텐츠",
       "status": "상태",
-      "system": "시스템",
       "etc": "기타"
     },
     "panelTypes": {

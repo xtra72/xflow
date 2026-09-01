@@ -141,10 +141,7 @@
         "modbusBusStats": "Bus statistics mini-chart (reads·writes/min, latency)",
         "modbusSummaryStats": "Summary of connections, clients, devices and errors",
         "heatmap": "IDW-interpolated heatmap (temperature field) of spatial sensors",
-        "monitorLogs": "Live system logs with level, source and component filters.",
-        "sysmetricsSystem": "Host CPU, memory, disk I/O and network totals observed by a sysmetrics agent.",
-        "sysmetricsNetwork": "Per-interface throughput. Without targets it draws the total only.",
-        "sysmetricsStorage": "Per-mount disk usage. Without targets it draws the combined total."
+        "monitorLogs": "Live system logs with level, source and component filters."
       },
       "groups": {
         "hvacr": "HVACR",
@@ -155,8 +152,7 @@
         "propertiesGrid": "Device State",
         "outdoorControl": "Outdoor unit status",
         "heatmap": "Heatmap"
-      },
-      "selectSysMetricsAgent": "Select a sysmetrics agent"
+      }
     },
     "addDashboard": "Add New Dashboard",
     "resetLayout": "Reset",
@@ -171,7 +167,6 @@
       "chart": "Charts",
       "content": "Content",
       "status": "Status",
-      "system": "System",
       "etc": "Other"
     },
     "panelTypes": {

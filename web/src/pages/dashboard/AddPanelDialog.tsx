@@ -35,7 +35,6 @@ import {
   Grid3x3,
   PlugZap,
   Gauge,
-  Network,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -80,8 +79,6 @@ interface PanelOption {
   needsAgent?: boolean;
   /** 전체 타입(필터 없음) 에이전트 선택 스텝이 필요한 유형 (SPEC-DASHBOARD-002). */
   needsAgentStatus?: boolean;
-  /** sysmetrics 에이전트 선택 스텝이 필요한 유형 (SPEC-SYSMETRICS-PANEL-001 M5). */
-  needsSysMetricsAgent?: boolean;
   /**
    * 차트 채널 선택 스텝을 건너뛰고 곧바로 추가할 prefilled config.
    * 다채널 비교 등 단일 채널 입력만으로 부족한 프리셋용.
@@ -90,16 +87,15 @@ interface PanelOption {
 }
 
 /** 카테고리 정의 (안정적인 식별자, 표시 라벨은 t() 로 변환) */
-type Category = 'status' | 'chart' | 'data' | 'system' | 'content' | 'etc';
+type Category = 'status' | 'chart' | 'data' | 'content' | 'etc';
 
-const CATEGORIES: Category[] = ['status', 'chart', 'data', 'system', 'content', 'etc'];
+const CATEGORIES: Category[] = ['status', 'chart', 'data', 'content', 'etc'];
 
 /** 카테고리 표시 라벨 키 */
 const CATEGORY_LABEL_KEY: Record<Category, string> = {
   status: 'dashboard.panelCategories.status',
   chart: 'dashboard.panelCategories.chart',
   data: 'dashboard.panelCategories.data',
-  system: 'dashboard.panelCategories.system',
   content: 'dashboard.panelCategories.content',
   etc: 'dashboard.panelCategories.etc',
 };
@@ -169,30 +165,6 @@ const PANEL_GROUPS_BY_CATEGORY: Record<Category, PanelGroup[]> = {
         // (`uiStore.createDefaultPanel`). 채널/Store/TSDB 전환은 패널 설정의 데이터 소스
         // 섹션에서 한다 — 렌더 경로는 이미 3종을 모두 지원한다(`usePanelSeriesData`).
         { type: 'table', icon: Table, labelKey: 'dashboard.panelTypes.table', descriptionKey: 'dashboard.addPanel.descriptions.table' },
-      ],
-    },
-  ],
-  // 시스템: sysmetrics 에이전트가 관측한 호스트 지표만 남는다.
-  //
-  // 모니터링 패널(시스템 통계·실시간 메트릭·네트워크·시스템 이벤트)은 카탈로그에서 내렸다.
-  // 넷 다 xflowd 런타임 자신을 보는 패널이라 모니터링 페이지(사이드 메뉴)와 보는 것이 같고,
-  // 대시보드에 다시 늘어놓을 이유가 없다. 시스템 로그만 성격이 달라(런타임과 무관하게 로그를
-  // 읽는 뷰어) '기타' 로 옮겼다.
-  //
-  // 타입과 렌더 경로는 그대로 살아 있어 **이미 배치된 패널은 계속 동작한다** — 선행 패널
-  // 'resource'/'logs' 를 내릴 때와, 'line-chart' → 'graph-chart' 때와 같은 방식이다.
-  //
-  // 그룹이 하나만 남았으므로 제목을 붙이지 않는다(다른 단일 그룹 카테고리와 같은 규칙).
-  // 두 그룹으로 나눴던 이유가 "CPU 항목이 두 군데 있는 이유를 설명할 자리" 였는데, 모니터링
-  // 쪽이 사라져 그 이유 자체가 없어졌다.
-  system: [
-    {
-      // SPEC-SYSMETRICS-PANEL-001: 세 패널 모두 대상(인터페이스·마운트) 선택이 비면 종합,
-      // 고르면 개별을 그린다.
-      options: [
-        { type: 'sysmetrics-system', icon: Cpu, labelKey: 'dashboard.panelTypes.sysmetricsSystem', descriptionKey: 'dashboard.addPanel.descriptions.sysmetricsSystem', needsSysMetricsAgent: true },
-        { type: 'sysmetrics-network', icon: Network, labelKey: 'dashboard.panelTypes.sysmetricsNetwork', descriptionKey: 'dashboard.addPanel.descriptions.sysmetricsNetwork', needsSysMetricsAgent: true },
-        { type: 'sysmetrics-storage', icon: HardDrive, labelKey: 'dashboard.panelTypes.sysmetricsStorage', descriptionKey: 'dashboard.addPanel.descriptions.sysmetricsStorage', needsSysMetricsAgent: true },
       ],
     },
   ],
@@ -275,7 +247,6 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
     | 'facility-schedule'
     | 'modbus-agent'
     | 'agent-status-agent'
-    | 'sysmetrics-agent'
   >('type');
   const [selectedType, setSelectedType] = useState<PanelType | null>(null);
 
@@ -298,8 +269,7 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
           step === 'trigger-node' ||
           step === 'facility-schedule' ||
           step === 'modbus-agent' ||
-          step === 'agent-status-agent' ||
-          step === 'sysmetrics-agent'
+          step === 'agent-status-agent'
         ) {
           setStep('type');
           setSelectedType(null);
@@ -344,12 +314,6 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
     if (option.needsAgentStatus) {
       setSelectedType(option.type);
       setStep('agent-status-agent');
-      return;
-    }
-    // SPEC-SYSMETRICS-PANEL-001 M5: sysmetrics 타입으로 좁힌 에이전트 선택 스텝.
-    if (option.needsSysMetricsAgent) {
-      setSelectedType(option.type);
-      setStep('sysmetrics-agent');
       return;
     }
     if (option.presetConfig) {
@@ -417,16 +381,6 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
   // sysmetrics 패널 대상 선택 완료 처리 (SPEC-SYSMETRICS-PANEL-001 M5).
   // 정본은 agent_id 이고 agent_name 은 표시용 스냅샷이다 — 이름만 저장하면
   // 에이전트를 리네임했을 때 패널이 조용히 끊긴다.
-  const handleSysMetricsConfirm = (agentId: string, agentName?: string) => {
-    if (!selectedType) return;
-    addPanelWithConfig(
-      selectedType,
-      { agent_id: agentId, agent_name: agentName ?? '' },
-      agentName,
-    );
-    onClose();
-  };
-
   if (!open) return null;
 
   // 모달 → 페이지: 배경 오버레이 제거, AppLayout 콘텐츠 영역을 채우는 전체화면
@@ -493,19 +447,6 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
         {step === 'agent-status-agent' && (
           <AgentStatusAgentStep
             onConfirm={handleAgentStatusConfirm}
-            onBack={() => {
-              setStep('type');
-              setSelectedType(null);
-            }}
-            onClose={onClose}
-          />
-        )}
-        {step === 'sysmetrics-agent' && (
-          <AgentStatusAgentStep
-            agentType="sysmetrics"
-            titleKey="dashboard.addPanel.selectSysMetricsAgent"
-            testIdPrefix="sysmetrics-agent"
-            onConfirm={handleSysMetricsConfirm}
             onBack={() => {
               setStep('type');
               setSelectedType(null);

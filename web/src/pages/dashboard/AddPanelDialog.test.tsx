@@ -115,9 +115,9 @@ describe('AddPanelDialog', () => {
       expect(screen.queryByText('dashboard.addPanel.title')).toBeNull();
     });
 
-    it('카테고리 탭 6종이 표시됨 (상태·차트·데이터·시스템·콘텐트·기타)', () => {
+    it('카테고리 탭 5종이 표시됨 (상태·차트·데이터·콘텐트·기타)', () => {
       render(<AddPanelDialog open={true} onClose={() => {}} />);
-      for (const cat of ['status', 'chart', 'data', 'system', 'content', 'etc']) {
+      for (const cat of ['status', 'chart', 'data', 'content', 'etc']) {
         expect(
           screen.getByRole('button', { name: `dashboard.panelCategories.${cat}` }),
         ).toBeInTheDocument();
@@ -125,6 +125,11 @@ describe('AddPanelDialog', () => {
       // '제어' 카테고리는 사라지고 제어성 패널은 콘텐트 하위 그룹으로 옮겼다.
       expect(
         screen.queryByRole('button', { name: 'dashboard.panelCategories.control' }),
+      ).toBeNull();
+      // '시스템' 카테고리는 항목이 하나도 남지 않아 탭째 내렸다 — 빈 탭은 고른 뒤에야
+      // 비어 있다는 것을 알게 되므로 없는 편이 낫다.
+      expect(
+        screen.queryByRole('button', { name: 'dashboard.panelCategories.system' }),
       ).toBeNull();
     });
 
@@ -208,15 +213,6 @@ describe('AddPanelDialog', () => {
         'dashboard.panelTypes.pieChart',
         'dashboard.addPanel.labels.heatmap',
       ]],
-      // 시스템 카테고리에는 호스트 지표(sysmetrics)만 남는다. 모니터링 패널 4종
-      // (통계·실시간 메트릭·네트워크·이벤트)은 모니터링 페이지와 보는 것이 같아 카탈로그에서
-      // 내렸고, 시스템 로그만 성격이 달라 '기타' 로 옮겼다. 타입/렌더 경로는 살아 있어
-      // 이미 배치된 패널은 계속 동작한다.
-      ['system', [
-        'dashboard.panelTypes.sysmetricsSystem',
-        'dashboard.panelTypes.sysmetricsNetwork',
-        'dashboard.panelTypes.sysmetricsStorage',
-      ]],
       ['content', [
         'dashboard.panelTypes.acControl',
         'dashboard.panelTypes.hvacControl',
@@ -249,7 +245,7 @@ describe('AddPanelDialog', () => {
           expect(screen.getByText(label)).toBeInTheDocument();
         }
         // 이 카테고리에 없어야 하는 항목이 섞이지 않았는지 총 개수로 확인한다.
-        expect(screen.getAllByRole('button').length - 6 /* 카테고리 탭 */ - 2 /* 뒤로/닫기 */)
+        expect(screen.getAllByRole('button').length - 5 /* 카테고리 탭 */ - 2 /* 뒤로/닫기 */)
           .toBe(labels.length);
       });
     }
