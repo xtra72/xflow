@@ -11,7 +11,7 @@
 //   - 폴링 실패 시 useStoreChartData 가 직전 시리즈(entries)를 보존한 채 status='error' 만
 //     세팅하므로, 마지막 렌더(온도장)를 파괴하지 않고 오류 배지만 덧띄운다(AC-E3).
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Move, Thermometer } from 'lucide-react';
 
 import { useTranslation } from '@/lib/i18n';
@@ -183,16 +183,36 @@ export default function HeatmapPanel({
   // 레거시 좌표(컨테이너 기준) → 스테이지 기준 환산. 실측 rect 로 환산하므로 **보이던 위치가
   // 그대로 보존**된다(스테이지 도입으로 마커가 소리 없이 움직이지 않는다). 이미 'stage' 로
   // 승격된 config 는 그대로 쓴다. 측정 전(0×0)에는 환산할 수 없으므로 원본을 그대로 둔다.
-  const needsSpaceMigration =
-    cfg.sensor_space !== 'stage' && stage.width > 0 && stage.height > 0 &&
-    (stage.width !== bodySize.width || stage.height !== bodySize.height);
-  const sensorPositions = useMemo(
-    () =>
-      needsSpaceMigration
-        ? migratePositionsToStage(cfg.sensor_positions, bodySize, stage)
-        : cfg.sensor_positions,
-    [needsSpaceMigration, cfg.sensor_positions, bodySize, stage],
-  );
+  //
+  // 환산은 **한 번만** 한다. 렌더마다 그때의 실측으로 다시 풀면, 같은 레거시 좌표가 패널
+  // 종횡비에 따라 다른 스테이지 좌표가 된다 — 레거시 좌표는 "패널 본문의 몇 %" 라는 뜻이라
+  // 도면이 어디에 레터박스되는지를 모르기 때문이다. 그래서 패널 크기를 바꿀 때마다 마커가
+  // 도면 위에서 미끄러졌다(보고된 "이미지와 패널이 따로 논다"). 첫 실측 결과를 고정하고,
+  // 아래 승격 효과가 그 결과를 config 에 적어 다음 세션에도 같은 자리를 쓰게 한다.
+  //
+  // 캐시 키는 **파싱 전 원본 맵의 참조**다. `cfg.sensor_positions` 는 파서가 매 렌더 새로
+  // 만드는 객체라 키로 쓰면 고정이 풀린다. 원본 참조가 바뀌면(외부 편집) 다시 환산한다.
+  const rawPositions = config.sensor_positions;
+  const migrationRef = useRef<{
+    src: unknown;
+    positions: Record<string, NormalizedPos>;
+  } | null>(null);
+  const isLegacySpace = cfg.sensor_space !== 'stage';
+  const measured = stage.width > 0 && stage.height > 0;
+  if (isLegacySpace && measured && migrationRef.current?.src !== rawPositions) {
+    migrationRef.current = {
+      src: rawPositions,
+      positions:
+        stage.width !== bodySize.width || stage.height !== bodySize.height
+          ? migratePositionsToStage(cfg.sensor_positions, bodySize, stage)
+          : cfg.sensor_positions,
+    };
+  }
+  const frozen = migrationRef.current;
+  const migratedPositions =
+    isLegacySpace && frozen !== null && frozen.src === rawPositions ? frozen.positions : undefined;
+  const sensorPositions: Record<string, NormalizedPos> =
+    migratedPositions ?? cfg.sensor_positions;
 
   // 센서 최신값(시리즈별) 추출 + 좌표 결합(T6). 좌표 미지정 센서는 보간 입력에서 제외(AC-E2).
   const { points, autoBounds } = useMemo(
@@ -281,6 +301,22 @@ export default function HeatmapPanel({
     },
     [onConfigChange],
   );
+  // 레거시 공간 승격을 config 에 **한 번 적어 둔다**. 화면에서 고정하는 것만으로는 이번 세션
+  // 안에서만 자리가 유지되고, 다시 열면 그때의 패널 크기로 새로 풀려 또 다른 자리에 놓인다.
+  //
+  // 설정 미리보기(forcePlacement)에서는 적지 않는다 — 미리보기 상자는 대시보드 셀과 크기가
+  // 달라 같은 레거시 좌표를 다른 스테이지 좌표로 푼다. 둘 다 쓰면 나중에 연 쪽이 이기며,
+  // 그것이 곧 "설정을 열었다 닫았더니 마커가 옮겨졌다" 가 된다. 실제로 보이는 자리를 정하는
+  // 것은 대시보드 패널이므로 그쪽 실측만 권위로 삼는다.
+  useEffect(() => {
+    if (forcePlacement || !canEdit) return;
+    if (cfg.sensor_space === 'stage') return;
+    const promoted = migrationRef.current;
+    if (!promoted || promoted.src !== rawPositions) return;
+    onConfigChange?.({ sensor_positions: promoted.positions, sensor_space: 'stage' });
+    // 승격 후에는 cfg.sensor_space 가 'stage' 가 되어 이 효과가 다시 쓰지 않는다.
+  }, [forcePlacement, canEdit, cfg.sensor_space, rawPositions, sensorPositions, onConfigChange]);
+
   // 좌표 갱신(드래그 미리보기 + 드롭). 부분 config 병합으로 sensor_positions 만 쓴다(additive).
   const handlePositionChange = (key: string, pos: NormalizedPos) => {
     writePositions({ ...sensorPositions, [key]: pos });
