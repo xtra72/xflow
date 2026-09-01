@@ -27,6 +27,7 @@ import { Info } from 'lucide-react';
 
 import { useAgents, useAgent } from '@/hooks/useAgent';
 import { useTranslation } from '@/lib/i18n';
+import { cn } from '@/lib/utils/cn';
 import { SeriesSelectTable, type SeriesRow } from '@/pages/agents/SeriesSelectTable';
 import type { PanelConfig } from '@/stores/uiStore';
 
@@ -115,6 +116,9 @@ export function SysmetricsSourceSection({
     defaultSysmetricsSource();
   // 조회 경로와 같은 헬퍼로 읽는다(옛 config 는 이 필드들이 비어 있다).
   const queryWindow = sysmetricsWindow(source);
+  // 조회 방식. 미지정은 이력이다 — 이 축이 생기기 전에 저장된 패널의 동작이 곧 기본값이다.
+  const queryMode = source.query_mode ?? 'history';
+  const isLive = queryMode === 'live';
 
   // --- 에이전트 선택 (필수) ---
 
@@ -304,66 +308,106 @@ export function SysmetricsSourceSection({
         </div>
       </div>
 
-      {/* 이력 없음 고지 — 감추면 과거 구간이 안 보이는 이유를 찾아 헤맨다. */}
+      {/* 조회 방식 — 무엇을 그릴지가 아니라 **언제 것을 그릴지**를 고른다.
+          이력은 에이전트 버퍼를 구간 질의하고, 실시간은 스냅샷을 오는 대로 이어 붙인다.
+          아래 창·인터벌·집계는 이력에서만 뜻이 있으므로 실시간에서는 내린다 — 남겨 두면
+          "고쳤는데 아무 일도 안 일어나는" 칸이 된다. */}
+      <LabeledField label={t('dashboard.chart.sysmetricsQueryMode')}>
+        <div className="flex gap-1" role="radiogroup">
+          {(['history', 'live'] as const).map((m) => {
+            const selected = queryMode === m;
+            return (
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                data-testid={`chart-sysmetrics-query-mode-${m}`}
+                onClick={() => patch({ query_mode: m })}
+                className={cn(
+                  'rounded-md border px-2.5 py-1 text-xs transition-colors',
+                  selected
+                    ? 'border-blue-500 bg-blue-500/10 text-blue-600 dark:text-blue-400'
+                    : 'border-(--color-border-default) text-(--color-text-secondary) hover:bg-(--color-bg-elevated)',
+                )}
+              >
+                {t(`dashboard.chart.sysmetricsQueryMode${m === 'history' ? 'History' : 'Live'}`)}
+              </button>
+            );
+          })}
+        </div>
+      </LabeledField>
+
+      {/* 모드가 감수하는 것을 고지한다 — 감추면 이력에서는 과거가 안 보이는 이유를,
+          실시간에서는 패널을 닫으면 선이 사라지는 이유를 찾아 헤맨다. */}
       <div className="flex items-start gap-2 rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2">
         <Info className="mt-0.5 size-3.5 shrink-0 text-(--color-text-muted)" />
-        <p className="text-[11px] leading-snug text-(--color-text-muted)">
-          {t('dashboard.chart.sysmetricsLiveNotice')}
+        <p
+          data-testid="chart-sysmetrics-mode-notice"
+          className="text-[11px] leading-snug text-(--color-text-muted)"
+        >
+          {t(isLive ? 'dashboard.chart.sysmetricsLiveNotice' : 'dashboard.chart.sysmetricsHistoryNotice')}
         </p>
       </div>
 
-      {/* 조회 창 — Store 와 **같은 컴포넌트**를 같은 차례로 쓴다. 에이전트가 이력을
-          들고 있으므로 이 소스도 "구간을 질의해 버킷으로 접는" 같은 모델이다.
-          값은 조회 경로와 **같은 헬퍼**로 읽는다 — 이 필드들이 생기기 전에 저장된
-          패널에는 값이 없고, 화면과 조회가 서로 다른 기본값을 쓰면 설정에 보이는
-          창과 실제 조회 구간이 어긋난다. */}
-      <SeriesRangeField
-        range={readSeriesRange(source.range, queryWindow.time_window_ms)}
-        onChange={(range) => patch({ range })}
-        testIdPrefix="chart-sysmetrics"
-      />
+      {/* 창·인터벌·집계·빈 버킷은 **이력에서만** 뜻이 있다. 실시간에는 버킷이 없고
+          표시 창은 오래된 점을 버리는 기준일 뿐이라, 같은 칸을 두면 뜻이 갈린다. */}
+      {!isLive && (
+        <>
+        {/* 조회 창 — Store 와 **같은 컴포넌트**를 같은 차례로 쓴다. 에이전트가 이력을
+            들고 있으므로 이 소스도 "구간을 질의해 버킷으로 접는" 같은 모델이다.
+            값은 조회 경로와 **같은 헬퍼**로 읽는다 — 이 필드들이 생기기 전에 저장된
+            패널에는 값이 없고, 화면과 조회가 서로 다른 기본값을 쓰면 설정에 보이는
+            창과 실제 조회 구간이 어긋난다. */}
+        <SeriesRangeField
+          range={readSeriesRange(source.range, queryWindow.time_window_ms)}
+          onChange={(range) => patch({ range })}
+          testIdPrefix="chart-sysmetrics"
+        />
 
-      <StoreIntervalField
-        intervalMs={queryWindow.interval_ms}
-        timeWindowMs={queryWindow.time_window_ms}
-        onChange={(interval_ms) => patch({ interval_ms })}
-        testIdPrefix="chart-sysmetrics"
-      />
+        <StoreIntervalField
+          intervalMs={queryWindow.interval_ms}
+          timeWindowMs={queryWindow.time_window_ms}
+          onChange={(interval_ms) => patch({ interval_ms })}
+          testIdPrefix="chart-sysmetrics"
+        />
 
-      {/* 인터벌 집계 — 버킷 하나를 대표하는 값. Store·TSDB 와 같은 어휘를 같은 자리에서
-          고른다. 종전에는 config 에만 있고 조작 통로가 없어 저장된 값이 무엇이든
-          바꿀 수 없었다. */}
-      <div>
-        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-          {t('dashboard.chart.tsdbAggregation')}
-        </label>
-        <select
-          data-testid="chart-sysmetrics-aggregation"
-          value={queryWindow.aggregation}
-          onChange={(e) =>
-            patch({ aggregation: e.target.value as SysmetricsSourceConfig['aggregation'] })
-          }
-          className={inputClass()}
-        >
-          {SYSMETRICS_AGG_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {t(o.labelKey)}
-            </option>
-          ))}
-        </select>
-      </div>
+        {/* 인터벌 집계 — 버킷 하나를 대표하는 값. Store·TSDB 와 같은 어휘를 같은 자리에서
+            고른다. 종전에는 config 에만 있고 조작 통로가 없어 저장된 값이 무엇이든
+            바꿀 수 없었다. */}
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+            {t('dashboard.chart.tsdbAggregation')}
+          </label>
+          <select
+            data-testid="chart-sysmetrics-aggregation"
+            value={queryWindow.aggregation}
+            onChange={(e) =>
+              patch({ aggregation: e.target.value as SysmetricsSourceConfig['aggregation'] })
+            }
+            className={inputClass()}
+          >
+            {SYSMETRICS_AGG_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {t(o.labelKey)}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      {/* 빈 버킷 처리 — 이 소스도 지원하지 않으므로 **비활성 + 사유**로 표시한다.
-          숨기지 않는 이유는 Store 쪽과 같다: 선택지가 없으면 사용자는 "이 소스에는
-          없는 기능" 인지 "내가 못 찾는 것" 인지 구분할 수 없다. */}
-      <FillStrategyField
-        value=""
-        onChange={() => {}}
-        supported={panelSourceCapabilities('sysmetrics').fillStrategies}
-        avgSupported={panelSourceCapabilities('sysmetrics').fillAvg}
-        reasonKey={CAPABILITY_REASON_KEYS.fillSysmetrics}
-        testId="chart-sysmetrics-fill"
-      />
+        {/* 빈 버킷 처리 — 이 소스도 지원하지 않으므로 **비활성 + 사유**로 표시한다.
+            숨기지 않는 이유는 Store 쪽과 같다: 선택지가 없으면 사용자는 "이 소스에는
+            없는 기능" 인지 "내가 못 찾는 것" 인지 구분할 수 없다. */}
+        <FillStrategyField
+          value=""
+          onChange={() => {}}
+          supported={panelSourceCapabilities('sysmetrics').fillStrategies}
+          avgSupported={panelSourceCapabilities('sysmetrics').fillAvg}
+          reasonKey={CAPABILITY_REASON_KEYS.fillSysmetrics}
+          testId="chart-sysmetrics-fill"
+        />
+        </>
+      )}
 
       {/* 시리즈 이름 형식 — store/tsdb 와 같은 편집기, 토큰 표본도 같은 어휘다. */}
       <SeriesNameFormatField

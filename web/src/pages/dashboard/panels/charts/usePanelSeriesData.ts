@@ -36,6 +36,7 @@ import {
 import type { TsdbGroupInfo } from '@/services/api/tsdbSource';
 import { useTsdbChartData, type UseTsdbChartDataOptions } from './useTsdbChartData';
 import { toStoreShapedConfig, useSysmetricsQueryFn } from './useSysMetricsChartData';
+import { useSysmetricsLiveSeries } from './useSysmetricsLiveSeries';
 
 /**
  * 패널 시리즈 훅 결과 — `UseStoreChartDataResult` + TSDB 전용 상태 신호(가산).
@@ -119,7 +120,14 @@ export function usePanelSeriesData(
   // 갈아끼우면 Store 경로 그대로다. 두 소스가 각자 `useStoreChartData` 를 부르면 진
   // 쪽이 idle 이라도 훅이 중복되고, 어느 호출이 실제 조회인지 읽기 어려워진다.
   const storeActive = binding.kind === 'store' && binding.active;
-  const sysmetricsActive = binding.kind === 'sysmetrics' && binding.active;
+  const sysmetricsBound = binding.kind === 'sysmetrics' && binding.active;
+  // 시스템 지표는 조회 방식이 둘이다. 이력은 Store 훅을 그대로 타고, 실시간은 스냅샷을
+  // 쌓는 별도 훅을 탄다 — 두 모델은 창·인터벌·집계의 뜻이 서로 달라 한 경로로 합칠 수 없다.
+  // 미지정은 이력이다(이 축이 생기기 전에 저장된 패널의 동작).
+  const sysmetricsLive =
+    sysmetricsBound &&
+    (config.sysmetrics_source as SysmetricsSourceConfig | undefined)?.query_mode === 'live';
+  const sysmetricsActive = sysmetricsBound && !sysmetricsLive;
 
   const storeSource =
     options?.storeSourceOverride ?? (config.store_source as StoreSourceConfig | undefined);
@@ -151,7 +159,12 @@ export function usePanelSeriesData(
     options?.tsdbOptions,
   );
 
+  // 실시간 분기 — Store · TSDB 와 같은 규칙으로 조건 없이 호출하고, 진 쪽은 enabled=false
+  // 로 두어 폴링하지 않는다.
+  const liveResult = useSysmetricsLiveSeries(sysmetricsSource, sysmetricsLive);
+
   if (tsdbActive) return tsdbResult;
+  if (sysmetricsLive) return liveResult;
   // storeResult 는 비활성일 때 idle 형상을 반환하므로 채널 경로도 이 값으로 덮인다.
   return storeResult;
 }

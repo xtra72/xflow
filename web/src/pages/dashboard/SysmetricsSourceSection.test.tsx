@@ -335,3 +335,46 @@ describe('SysmetricsSourceSection — 인터벌 집계', () => {
     expect(sel.value).not.toBe('');
   });
 });
+
+describe('조회 방식 — 이력 / 실시간', () => {
+  it('미지정이면 이력이 선택돼 있다(이 축이 생기기 전 저장된 패널의 동작)', () => {
+    render(<Harness initial={baseConfig()} onDraft={() => {}} />);
+    expect(
+      screen.getByTestId('chart-sysmetrics-query-mode-history').getAttribute('aria-checked'),
+    ).toBe('true');
+    expect(
+      screen.getByTestId('chart-sysmetrics-query-mode-live').getAttribute('aria-checked'),
+    ).toBe('false');
+  });
+
+  it('실시간을 고르면 query_mode 가 저장된다', () => {
+    let latest: Record<string, unknown> = {};
+    render(<Harness initial={baseConfig()} onDraft={(c) => (latest = c)} />);
+    fireEvent.click(screen.getByTestId('chart-sysmetrics-query-mode-live'));
+    expect(
+      (latest.sysmetrics_source as { query_mode?: string }).query_mode,
+    ).toBe('live');
+  });
+
+  it('실시간에서는 창·인터벌·집계·빈버킷 칸을 내린다(뜻이 없는 칸은 고쳐도 아무 일이 없다)', () => {
+    render(
+      <Harness
+        initial={baseConfig()}
+        onDraft={() => {}}
+      />,
+    );
+    // 이력에서는 보인다.
+    expect(screen.getByTestId('chart-sysmetrics-aggregation')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('chart-sysmetrics-query-mode-live'));
+    expect(screen.queryByTestId('chart-sysmetrics-aggregation')).toBeNull();
+    expect(screen.queryByTestId('chart-sysmetrics-fill')).toBeNull();
+  });
+
+  it('모드마다 감수하는 것을 다른 문구로 고지한다', () => {
+    render(<Harness initial={baseConfig()} onDraft={() => {}} />);
+    const notice = () => screen.getByTestId('chart-sysmetrics-mode-notice').textContent;
+    expect(notice()).toBe('dashboard.chart.sysmetricsHistoryNotice');
+    fireEvent.click(screen.getByTestId('chart-sysmetrics-query-mode-live'));
+    expect(notice()).toBe('dashboard.chart.sysmetricsLiveNotice');
+  });
+});
