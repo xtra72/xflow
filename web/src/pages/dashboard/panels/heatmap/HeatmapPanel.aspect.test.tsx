@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, act, cleanup } from '@testing-library/react';
+import { useState } from 'react';
 
 import type { ChartEntry } from '../charts/chartChannelTypes';
 import type { UseStoreChartDataResult } from '../charts/useStoreChartData';
@@ -173,6 +174,53 @@ describe('HeatmapPanel — 종횡비를 모르는 동안에는 레거시 좌표�
     expect(onConfigChange).toHaveBeenCalledWith({
       sensor_positions: { [sid('s1')]: { x: 0.2, y: 0.8 } },
       sensor_space: 'stage',
+    });
+  });
+});
+
+describe('HeatmapPanel — 캐시된 도면(load 이벤트 없음)도 대시보드·미리보기 모두에서 맞는다', () => {
+  /** 마운트 시점에 이미 로드가 끝난 이미지(대시보드를 다시 여는 흔한 경로). */
+  function withCachedImage(w: number, h: number, run: () => void) {
+    const proto = HTMLImageElement.prototype as unknown as Record<string, unknown>;
+    Object.defineProperty(proto, 'complete', { value: true, configurable: true });
+    Object.defineProperty(proto, 'naturalWidth', { value: w, configurable: true });
+    Object.defineProperty(proto, 'naturalHeight', { value: h, configurable: true });
+    try {
+      run();
+    } finally {
+      for (const k of ['complete', 'naturalWidth', 'naturalHeight']) delete proto[k];
+    }
+  }
+
+  /** config 를 shallow merge 로 보관하는 부모(대시보드 `updatePanelConfig` 와 같은 규칙). */
+  function Host({ force }: { force: boolean }) {
+    const [cfg, setCfg] = useState(config());
+    return (
+      <HeatmapPanel
+        panelId="p"
+        config={cfg}
+        forcePlacement={force}
+        onConfigChange={(c) => setCfg((prev) => ({ ...prev, ...c }))}
+      />
+    );
+  }
+
+  /** 400x400 본문 + 2:1 도면 → 스테이지는 400x200, 세로 가운데. */
+  const EXPECTED = '0px 100px 400px 200px';
+
+  it('대시보드 경로(config 쓰기가 실제로 반영되는 경로)', () => {
+    withCachedImage(800, 400, () => {
+      const { getByTestId } = render(<Host force={false} />);
+      const s = getByTestId('heatmap-stage') as HTMLElement;
+      expect(`${s.style.left} ${s.style.top} ${s.style.width} ${s.style.height}`).toBe(EXPECTED);
+    });
+  });
+
+  it('설정 미리보기 경로(config 를 쓰지 않는 경로)', () => {
+    withCachedImage(800, 400, () => {
+      const { getByTestId } = render(<Host force />);
+      const s = getByTestId('heatmap-stage') as HTMLElement;
+      expect(`${s.style.left} ${s.style.top} ${s.style.width} ${s.style.height}`).toBe(EXPECTED);
     });
   });
 });
