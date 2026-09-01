@@ -13,9 +13,10 @@
 //
 // @spec SPEC-HEATMAP-PANEL-002
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 import type { FloorPlanLayer } from './heatmapConfig';
+import { stretchedSvgSrc, svgSrcIntrinsicSize } from './svgAsset';
 
 interface FloorPlanBackgroundProps {
   /** 도면 레이어 목록(그리기 순서). 비면 배경 없음(null 렌더). */
@@ -58,13 +59,28 @@ export default function FloorPlanBackground({
   // 마운트/`src` 변경 시점에 직접 읽는다(이벤트와 중복 호출돼도 같은 값이라 무해하다).
   const baseImgRef = useRef<HTMLImageElement | null>(null);
   const baseSrc = sources[0] ?? '';
+  // SVG 는 문서에서 직접 읽는다. sizeless SVG 의 `naturalWidth/Height` 는 원본 크기가 아니라
+  // 대체 요소 기본값이라(브라우저에 따라 0 또는 300x150) 스테이지 종횡비가 틀어진다.
+  const svgSize = useMemo(() => (baseSrc ? svgSrcIntrinsicSize(baseSrc) : undefined), [baseSrc]);
   useEffect(() => {
+    if (!onBaseSize) return;
+    if (svgSize) {
+      onBaseSize(svgSize.width, svgSize.height);
+      return;
+    }
     const img = baseImgRef.current;
-    if (!img || !onBaseSize) return;
+    if (!img) return;
     if (img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
       onBaseSize(img.naturalWidth, img.naturalHeight);
     }
-  }, [baseSrc, onBaseSize]);
+  }, [baseSrc, svgSize, onBaseSize]);
+
+  // 늘려서 채우기 + SVG: 문서의 `preserveAspectRatio` 를 `none` 으로 바꾼 src 로 갈아 끼운다.
+  // CSS `object-fit: fill` 은 상자만 늘릴 뿐, 그림을 가두는 것은 SVG 자신의 이 속성이다.
+  const stretchedSources = useMemo(
+    () => (stretch ? sources.map((src) => (src ? (stretchedSvgSrc(src) ?? src) : src)) : sources),
+    [stretch, sources],
+  );
 
   // 레이어가 없거나 아직 해석된 src 가 하나도 없으면 배경을 렌더하지 않는다.
   if (layers.length === 0 || sources.every((s) => !s)) return null;
@@ -74,7 +90,7 @@ export default function FloorPlanBackground({
         !sources[i] ? null : (
         <img
           key={i}
-          src={sources[i]}
+          src={stretchedSources[i]}
           alt=""
           aria-hidden="true"
           data-testid={i === 0 ? 'floor-plan-background' : `floor-plan-layer-${i}`}

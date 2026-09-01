@@ -184,3 +184,56 @@ describe('FloorPlanBackground — 기준 레이어 원본 크기 보고', () => 
     }
   });
 });
+
+describe('FloorPlanBackground — SVG 도면', () => {
+  /** URL 인코딩 SVG data-URL. */
+  function svgUrl(body: string): string {
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(body)}`;
+  }
+  const PLAN = '<svg viewBox="0 0 1200 400"><rect /></svg>';
+
+  it('늘려서 채우기: SVG 는 문서의 preserveAspectRatio 를 none 으로 바꿔 그린다', () => {
+    // CSS object-fit: fill 은 상자만 늘린다. 그림을 가두는 것은 SVG 자신의 이 속성이라,
+    // 재작성하지 않으면 상자만 커지고 도면은 가운데 레터박스된 채 남는다(보고된 증상).
+    const { getByTestId } = render(
+      <FloorPlanBackground layers={[layer({ image: svgUrl(PLAN) })]} sources={[svgUrl(PLAN)]} stretch />,
+    );
+    const img = getByTestId('floor-plan-background') as HTMLImageElement;
+    expect(decodeURIComponent(img.getAttribute('src') ?? '')).toContain(
+      'preserveAspectRatio="none"',
+    );
+    expect(img.style.objectFit).toBe('fill');
+  });
+
+  it('여백 맞춤에서는 SVG 문서를 손대지 않는다(비율 유지가 목적이다)', () => {
+    const { getByTestId } = render(
+      <FloorPlanBackground layers={[layer({ image: svgUrl(PLAN) })]} sources={[svgUrl(PLAN)]} />,
+    );
+    const img = getByTestId('floor-plan-background') as HTMLImageElement;
+    expect(decodeURIComponent(img.getAttribute('src') ?? '')).not.toContain(
+      'preserveAspectRatio',
+    );
+  });
+
+  it('SVG 원본 크기는 viewBox 에서 읽는다(브라우저 보고값을 믿지 않는다)', () => {
+    // sizeless SVG 의 naturalWidth/Height 는 원본이 아니라 대체 요소 기본값이라 비율이 틀어진다.
+    const proto = HTMLImageElement.prototype as unknown as Record<string, unknown>;
+    Object.defineProperty(proto, 'complete', { value: true, configurable: true });
+    Object.defineProperty(proto, 'naturalWidth', { value: 300, configurable: true });
+    Object.defineProperty(proto, 'naturalHeight', { value: 150, configurable: true });
+    try {
+      const onBaseSize = vi.fn();
+      render(
+        <FloorPlanBackground
+          layers={[layer({ image: svgUrl(PLAN) })]}
+          sources={[svgUrl(PLAN)]}
+          onBaseSize={onBaseSize}
+        />,
+      );
+      expect(onBaseSize).toHaveBeenCalledWith(1200, 400);
+      expect(onBaseSize).not.toHaveBeenCalledWith(300, 150);
+    } finally {
+      for (const k of ['complete', 'naturalWidth', 'naturalHeight']) delete proto[k];
+    }
+  });
+});
