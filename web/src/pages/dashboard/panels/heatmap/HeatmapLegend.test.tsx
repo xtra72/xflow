@@ -1,8 +1,9 @@
 // HeatmapLegend 렌더 테스트 (색표 범례, additive).
 //
 // 그라디언트 막대(히트맵과 동일 color_table), 등간 눈금 라벨(값/개수/방향별 배치),
-// 위치(4모서리)/크기(S/M/L), 퇴화(min==max) 방어, colorTable 폴백, 접근성(role/aria)을
-// 컴포넌트 레벨에서 커버한다.
+// 자리(모서리 프리셋 + 드래그 자유 위치)/크기(치수 저장값 + 프리셋 파생), 눈금 라벨이
+// 막대를 침범하지 않는 여백·정렬, 글자 서식, 퇴화(min==max) 방어, colorTable 폴백,
+// 접근성(role/aria)을 컴포넌트 레벨에서 커버한다.
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup, within, fireEvent } from '@testing-library/react';
@@ -272,5 +273,193 @@ describe('HeatmapLegend — 드래그 이동(편집모드 한정)', () => {
     expect(el.className).toContain('top-2');
     expect(el.className).toContain('left-2');
     expect(el.style.left).toBe('');
+  });
+});
+
+describe('HeatmapLegend — 눈금 라벨이 막대와 겹치지 않는다', () => {
+  it('라벨 상자가 실제 크기를 가져 범례 배경이 라벨까지 감싼다', () => {
+    // 라벨은 전부 absolute 라 상자를 비워 두면 폭이 0 이 되고, 글자가 배경 밖으로 흘러
+    // 히트맵 위에 떠서 막대와 뒤엉켜 보인다(보고된 겹침).
+    const { getByTestId } = render(
+      <HeatmapLegend
+        bounds={{ min: -12.5, max: 133.5 }}
+        colorTable={TABLE}
+        legend={legendCfg({ orientation: 'vertical' })}
+      />,
+    );
+    const box = getByTestId('heatmap-legend-ticks');
+    expect(parseFloat(box.style.width)).toBeGreaterThan(0);
+  });
+
+  it('막대와 라벨 사이 여백이 글자 크기를 따라 커진다(고정 여백은 큰 글자에서 붙어 보인다)', () => {
+    const small = render(
+      <HeatmapLegend
+        bounds={{ min: 0, max: 10 }}
+        colorTable={TABLE}
+        legend={legendCfg({ font_size: 8 })}
+      />,
+    ).getByTestId('heatmap-legend');
+    const smallGap = parseFloat(small.style.gap);
+    cleanup();
+    const large = render(
+      <HeatmapLegend
+        bounds={{ min: 0, max: 10 }}
+        colorTable={TABLE}
+        legend={legendCfg({ font_size: 32 })}
+      />,
+    ).getByTestId('heatmap-legend');
+    expect(parseFloat(large.style.gap)).toBeGreaterThan(smallGap);
+  });
+
+  it('양 끝 라벨은 가운데 정렬을 버려 막대 범위 밖으로 나가지 않는다(가로)', () => {
+    const { getByTestId } = render(
+      <HeatmapLegend
+        bounds={{ min: 0, max: 10 }}
+        colorTable={TABLE}
+        legend={legendCfg({ orientation: 'horizontal', tick_count: 3 })}
+      />,
+    );
+    // 첫 라벨은 왼쪽 끝에 맞추고, 마지막 라벨은 오른쪽 끝에 맞춘다. 가운데만 -50%.
+    expect(getByTestId('heatmap-legend-tick-0').style.transform).toBe('translateX(0%)');
+    expect(getByTestId('heatmap-legend-tick-1').style.transform).toBe('translateX(-50%)');
+    expect(getByTestId('heatmap-legend-tick-2').style.transform).toBe('translateX(-100%)');
+  });
+
+  it('양 끝 라벨은 세로에서도 막대 범위 안에 남는다(위치축이 반대다)', () => {
+    const { getByTestId } = render(
+      <HeatmapLegend
+        bounds={{ min: 0, max: 10 }}
+        colorTable={TABLE}
+        legend={legendCfg({ orientation: 'vertical', tick_count: 3 })}
+      />,
+    );
+    // i=0(min)은 아래 끝이라 위로 올려 붙이고, i=last(max)는 위 끝이라 내려 붙인다.
+    expect(getByTestId('heatmap-legend-tick-0').style.transform).toBe('translateY(-100%)');
+    expect(getByTestId('heatmap-legend-tick-1').style.transform).toBe('translateY(-50%)');
+    expect(getByTestId('heatmap-legend-tick-2').style.transform).toBe('translateY(0%)');
+  });
+});
+
+describe('HeatmapLegend — 크기와 글자 서식', () => {
+  it('치수 저장값이 막대 크기를 정한다(세로: 두께=폭, 길이=높이)', () => {
+    const { getByTestId } = render(
+      <HeatmapLegend
+        bounds={{ min: 0, max: 10 }}
+        colorTable={TABLE}
+        legend={legendCfg({ bar_length: 200, bar_thickness: 24 })}
+      />,
+    );
+    const bar = getByTestId('heatmap-legend').firstElementChild as HTMLElement;
+    expect(bar.style.width).toBe('24px');
+    expect(bar.style.height).toBe('200px');
+  });
+
+  it('치수가 없으면 기존 프리셋에서 파생한다(프리셋으로 저장된 패널의 그림 보존)', () => {
+    const { getByTestId } = render(
+      <HeatmapLegend bounds={{ min: 0, max: 10 }} colorTable={TABLE} legend={legendCfg({ size: 'lg' })} />,
+    );
+    const bar = getByTestId('heatmap-legend').firstElementChild as HTMLElement;
+    expect(bar.style.width).toBe('14px');
+    expect(bar.style.height).toBe('140px');
+  });
+
+  it('글자 크기·색 지정이 눈금에 반영된다', () => {
+    const { getByTestId } = render(
+      <HeatmapLegend
+        bounds={{ min: 0, max: 10 }}
+        colorTable={TABLE}
+        legend={legendCfg({ font_size: 20, font_color: '#ff0000' })}
+      />,
+    );
+    const box = getByTestId('heatmap-legend-ticks');
+    expect(box.style.fontSize).toBe('20px');
+    expect(box.style.color).toBe('rgb(255, 0, 0)');
+  });
+
+  it('글자 색 미지정이면 색을 강제하지 않는다(테마 상속)', () => {
+    const { getByTestId } = render(
+      <HeatmapLegend bounds={{ min: 0, max: 10 }} colorTable={TABLE} legend={legendCfg()} />,
+    );
+    expect(getByTestId('heatmap-legend-ticks').style.color).toBe('');
+  });
+});
+
+describe('HeatmapLegend — 손잡이로 크기 조절', () => {
+  it('뷰어(draggable=false)에는 손잡이가 없다', () => {
+    const { queryByTestId } = render(
+      <HeatmapLegend bounds={{ min: 0, max: 10 }} colorTable={TABLE} legend={legendCfg()} />,
+    );
+    expect(queryByTestId('heatmap-legend-resize')).toBeNull();
+  });
+
+  it('세로 막대: 아래로 끌면 길어지고 옆으로 끌면 두꺼워진다', () => {
+    const onSizeChange = vi.fn();
+    const { getByTestId } = render(
+      <HeatmapLegend
+        bounds={{ min: 0, max: 10 }}
+        colorTable={TABLE}
+        legend={legendCfg({ bar_length: 100, bar_thickness: 10 })}
+        draggable
+        onOffsetChange={vi.fn()}
+        onSizeChange={onSizeChange}
+      />,
+    );
+    const handle = getByTestId('heatmap-legend-resize');
+    fireEvent.pointerDown(handle, { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(handle, { clientX: 6, clientY: 40 });
+    expect(onSizeChange).toHaveBeenLastCalledWith({ bar_length: 140, bar_thickness: 16 });
+  });
+
+  it('가로 막대: 축이 바뀐다(오른쪽=길이, 아래=두께)', () => {
+    const onSizeChange = vi.fn();
+    const { getByTestId } = render(
+      <HeatmapLegend
+        bounds={{ min: 0, max: 10 }}
+        colorTable={TABLE}
+        legend={legendCfg({ orientation: 'horizontal', bar_length: 100, bar_thickness: 10 })}
+        draggable
+        onOffsetChange={vi.fn()}
+        onSizeChange={onSizeChange}
+      />,
+    );
+    const handle = getByTestId('heatmap-legend-resize');
+    fireEvent.pointerDown(handle, { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(handle, { clientX: 40, clientY: 6 });
+    expect(onSizeChange).toHaveBeenLastCalledWith({ bar_length: 140, bar_thickness: 16 });
+  });
+
+  it('안쪽으로 끝까지 끌어도 하한 아래로는 줄지 않는다(다시 잡을 수 없게 되는 것을 막는다)', () => {
+    const onSizeChange = vi.fn();
+    const { getByTestId } = render(
+      <HeatmapLegend
+        bounds={{ min: 0, max: 10 }}
+        colorTable={TABLE}
+        legend={legendCfg({ bar_length: 100, bar_thickness: 10 })}
+        draggable
+        onOffsetChange={vi.fn()}
+        onSizeChange={onSizeChange}
+      />,
+    );
+    const handle = getByTestId('heatmap-legend-resize');
+    fireEvent.pointerDown(handle, { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(handle, { clientX: -9999, clientY: -9999 });
+    expect(onSizeChange).toHaveBeenLastCalledWith({ bar_length: 24, bar_thickness: 4 });
+  });
+
+  it('손잡이 누름은 이동 드래그를 시작시키지 않는다(같은 누름을 나눠 갖지 않는다)', () => {
+    const onOffsetChange = vi.fn();
+    const { getByTestId } = render(
+      <HeatmapLegend
+        bounds={{ min: 0, max: 10 }}
+        colorTable={TABLE}
+        legend={legendCfg()}
+        draggable
+        onOffsetChange={onOffsetChange}
+        onSizeChange={vi.fn()}
+      />,
+    );
+    fireEvent.pointerDown(getByTestId('heatmap-legend-resize'), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(getByTestId('heatmap-legend'), { clientX: 50, clientY: 50 });
+    expect(onOffsetChange).not.toHaveBeenCalled();
   });
 });

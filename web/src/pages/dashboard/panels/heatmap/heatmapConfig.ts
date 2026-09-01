@@ -32,6 +32,19 @@ export const DEFAULT_LEGEND_TICK_COUNT = 5;
 export const MIN_LEGEND_TICK_COUNT = 2;
 /** 색표 범례 눈금 개수 상한(과밀 방지). */
 export const MAX_LEGEND_TICK_COUNT = 10;
+/**
+ * 색표 범례 막대 크기·글자 크기의 허용 범위(px).
+ *
+ * 크기를 프리셋(sm/md/lg)이 아니라 **드래그로 정하는** 값으로 바꾸면서 필요해진 죔쇠다.
+ * 하한이 없으면 손이 미끄러진 순간 막대가 0px 가 되어 다시 잡을 수 없고, 상한이 없으면
+ * 패널을 통째로 덮어 히트맵이 보이지 않는다.
+ */
+export const MIN_LEGEND_BAR_LENGTH = 24;
+export const MAX_LEGEND_BAR_LENGTH = 600;
+export const MIN_LEGEND_BAR_THICKNESS = 4;
+export const MAX_LEGEND_BAR_THICKNESS = 80;
+export const MIN_LEGEND_FONT_SIZE = 6;
+export const MAX_LEGEND_FONT_SIZE = 48;
 
 /** 센서 배치 좌표(정규화 0..1 권장). */
 export interface SensorPosition {
@@ -162,10 +175,29 @@ export interface LegendConfig {
   enabled: boolean;
   /** 막대 방향. 기본 'vertical'. */
   orientation: 'vertical' | 'horizontal';
-  /** 오버레이 모서리 위치. 기본 'bottom-right'. `offset` 이 있으면 그쪽이 우선한다. */
+  /**
+   * 오버레이 모서리 위치. 기본 'bottom-right'. `offset` 이 있으면 그쪽이 우선한다.
+   *
+   * 설정 UI 에서는 더 이상 고르지 않는다 — 자리는 드래그로 정한다. 이미 다른 모서리로
+   * 저장된 패널이 조용히 움직이지 않도록 렌더는 이 값을 계속 존중한다(하위호환).
+   */
   position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
-  /** 크기 프리셋. 기본 'md'. */
+  /**
+   * 크기 프리셋. 기본 'md'.
+   *
+   * 설정 UI 에서는 더 이상 고르지 않는다 — 크기는 드래그(모서리 손잡이)로 정한다.
+   * `bar_length`/`bar_thickness`/`font_size` 가 없을 때의 **파생 원본**으로만 남아,
+   * 프리셋으로 저장된 기존 패널이 같은 크기로 계속 보이게 한다(하위호환).
+   */
   size: 'sm' | 'md' | 'lg';
+  /** 막대 길이(px, 주축). 미지정이면 `size` 프리셋에서 파생. 드래그로 저장된다. */
+  bar_length?: number;
+  /** 막대 두께(px, 교차축). 미지정이면 `size` 프리셋에서 파생. 드래그로 저장된다. */
+  bar_thickness?: number;
+  /** 눈금 글자 크기(px). 미지정이면 `size` 프리셋에서 파생. */
+  font_size?: number;
+  /** 눈금 글자 색(CSS 색 문자열). 미지정이면 테마 보조 텍스트색. */
+  font_color?: string;
   /** 등간 눈금 개수(2..10 clamp). 기본 5. */
   tick_count: number;
   /**
@@ -483,6 +515,18 @@ function parseContour(raw: unknown): ContourConfig | undefined {
 }
 
 /**
+ * 유한 숫자면 정수화 후 [lo, hi] 로 죄고, 아니면 undefined(미지정)를 돌려준다.
+ *
+ * `tick_count` 처럼 기본값으로 폴백하지 **않는다** — 이 값들은 "미지정 = 프리셋에서 파생"
+ * 이라는 뜻이 있어야 하므로, 손상 입력을 기본값으로 채우면 그 구분이 사라진다.
+ */
+function clampOptional(raw: unknown, lo: number, hi: number): number | undefined {
+  if (!isFiniteNumber(raw)) return undefined;
+  const n = Math.round(raw);
+  return n < lo ? lo : n > hi ? hi : n;
+}
+
+/**
  * raw.legend 를 파싱한다(additive). floor_plan/contour 선례와 동일하게 raw 가 객체가 아니면
  * undefined 를 반환한다(범례 없음). 객체이면 enum 화이트리스트(orientation/position/size)와
  * tick_count 2..10 clamp 로 기본값을 보정한다(enabled=false, vertical, bottom-right, md, 5).
@@ -515,6 +559,23 @@ function parseLegend(raw: unknown): LegendConfig | undefined {
     size,
     tick_count,
   };
+  // 드래그로 정해지는 치수 + 글자 서식. 미지정은 그대로 비워 둔다 — 여기서 프리셋 값을
+  // 채워 넣으면 "프리셋에서 파생" 과 "사용자가 직접 정함" 을 구분할 수 없어진다.
+  const barLength = clampOptional(l.bar_length, MIN_LEGEND_BAR_LENGTH, MAX_LEGEND_BAR_LENGTH);
+  if (barLength !== undefined) result.bar_length = barLength;
+  const barThickness = clampOptional(
+    l.bar_thickness,
+    MIN_LEGEND_BAR_THICKNESS,
+    MAX_LEGEND_BAR_THICKNESS,
+  );
+  if (barThickness !== undefined) result.bar_thickness = barThickness;
+  const fontSize = clampOptional(l.font_size, MIN_LEGEND_FONT_SIZE, MAX_LEGEND_FONT_SIZE);
+  if (fontSize !== undefined) result.font_size = fontSize;
+  // 색은 CSS 문자열이라 값 검증을 하지 않는다(무효 색은 브라우저가 무시해 상속색이 된다).
+  // 빈 문자열은 "지정 안 함" 과 같으므로 걸러 낸다.
+  if (typeof l.font_color === 'string' && l.font_color.trim() !== '') {
+    result.font_color = l.font_color;
+  }
   // 자유 위치: x/y 가 모두 유한 숫자일 때만 인정하고 0..1 로 clamp 한다(좌표 손상 시 프리셋 폴백).
   const off = l.offset;
   if (off && typeof off === 'object') {

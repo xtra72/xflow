@@ -119,6 +119,8 @@ import {
   parseHeatmapConfig,
   DEFAULT_CONTOUR_LEVEL_COUNT,
   DEFAULT_LEGEND_TICK_COUNT,
+  MAX_LEGEND_FONT_SIZE,
+  MIN_LEGEND_FONT_SIZE,
   type ColorStop,
   type ContourConfig,
   type FloorPlanLayer,
@@ -2675,6 +2677,13 @@ function HeatmapSettingsSection({
 
         {(legendCfg?.enabled ?? false) && (
           <div className="mt-2 space-y-2 border-l-2 border-(--color-border-default) pl-2">
+            {/* 자리와 크기는 여기에 없다 — 미리보기에서 범례를 끌어 옮기고, 오른쪽 아래
+                손잡이를 끌어 키운다. 화면을 보면서 맞추는 일을 설정 창의 드롭박스로 밀어내면
+                고른 값이 화면에서 어떻게 보일지 매번 상상해야 한다. */}
+            <p className="text-[11px] leading-tight text-(--color-text-muted)">
+              {t('dashboard.settings.heatmapLegendDragHint')}
+            </p>
+
             <div className="grid grid-cols-2 gap-2">
               {/* 방향(가로/세로). */}
               <div>
@@ -2697,57 +2706,6 @@ function HeatmapSettingsSection({
                   </option>
                 </select>
               </div>
-              {/* 위치(4모서리). */}
-              <div>
-                <label className="mb-1 block text-[11px] text-(--color-text-muted)">
-                  {t('dashboard.settings.heatmapLegendPosition')}
-                </label>
-                <select
-                  value={legendCfg?.position ?? 'bottom-right'}
-                  data-testid="heatmap-legend-position"
-                  onChange={(e) =>
-                    // 모서리를 다시 고르면 드래그로 저장된 자유 위치(offset)를 버린다 — 남겨두면
-                    // offset 이 우선하므로 select 를 바꿔도 범례가 움직이지 않아 고장으로 보인다.
-                    setLegend({
-                      position: e.target.value as LegendConfig['position'],
-                      offset: undefined,
-                    })
-                  }
-                  className={inputCls}
-                >
-                  <option value="top-left">
-                    {t('dashboard.settings.heatmapLegendPositionTopLeft')}
-                  </option>
-                  <option value="top-right">
-                    {t('dashboard.settings.heatmapLegendPositionTopRight')}
-                  </option>
-                  <option value="bottom-left">
-                    {t('dashboard.settings.heatmapLegendPositionBottomLeft')}
-                  </option>
-                  <option value="bottom-right">
-                    {t('dashboard.settings.heatmapLegendPositionBottomRight')}
-                  </option>
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              {/* 크기(S/M/L). */}
-              <div>
-                <label className="mb-1 block text-[11px] text-(--color-text-muted)">
-                  {t('dashboard.settings.heatmapLegendSize')}
-                </label>
-                <select
-                  value={legendCfg?.size ?? 'md'}
-                  data-testid="heatmap-legend-size"
-                  onChange={(e) => setLegend({ size: e.target.value as LegendConfig['size'] })}
-                  className={inputCls}
-                >
-                  <option value="sm">{t('dashboard.settings.heatmapLegendSizeSm')}</option>
-                  <option value="md">{t('dashboard.settings.heatmapLegendSizeMd')}</option>
-                  <option value="lg">{t('dashboard.settings.heatmapLegendSizeLg')}</option>
-                </select>
-              </div>
               {/* 눈금 개수(2..10). */}
               <div>
                 <label className="mb-1 block text-[11px] text-(--color-text-muted)">
@@ -2766,6 +2724,61 @@ function HeatmapSettingsSection({
                   }}
                   className={inputCls}
                 />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              {/* 글자 크기(px). 미지정이면 막대 크기에서 파생된 값이 쓰이므로 placeholder 로
+                  "자동" 을 알린다 — 0 이나 기본 숫자를 채우면 지정 여부를 구분할 수 없다. */}
+              <div>
+                <label className="mb-1 block text-[11px] text-(--color-text-muted)">
+                  {t('dashboard.settings.heatmapLegendFontSize')}
+                </label>
+                <input
+                  type="number"
+                  min={MIN_LEGEND_FONT_SIZE}
+                  max={MAX_LEGEND_FONT_SIZE}
+                  step={1}
+                  value={legendCfg?.font_size !== undefined ? String(legendCfg.font_size) : ''}
+                  placeholder={t('dashboard.settings.heatmapLegendFontSizeAuto')}
+                  data-testid="heatmap-legend-font-size"
+                  onChange={(e) => {
+                    const raw = e.target.value.trim();
+                    if (raw === '') {
+                      setLegend({ font_size: undefined });
+                      return;
+                    }
+                    const n = Number(raw);
+                    if (Number.isFinite(n)) setLegend({ font_size: Math.trunc(n) });
+                  }}
+                  className={inputCls}
+                />
+              </div>
+              {/* 글자 색. 체크를 끄면 지정을 지워 테마 보조색으로 돌아간다 — 색 입력만 두면
+                  한 번 고른 색을 "안 고른 상태" 로 되돌릴 방법이 없다(게이지 바늘색과 같은 규칙). */}
+              <div>
+                <label className="mb-1 block text-[11px] text-(--color-text-muted)">
+                  {t('dashboard.settings.heatmapLegendFontColor')}
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={legendCfg?.font_color !== undefined}
+                    data-testid="heatmap-legend-font-color-enabled"
+                    onChange={(e) =>
+                      setLegend({ font_color: e.target.checked ? '#334155' : undefined })
+                    }
+                  />
+                  {legendCfg?.font_color !== undefined && (
+                    <input
+                      type="color"
+                      value={legendCfg.font_color}
+                      data-testid="heatmap-legend-font-color"
+                      onChange={(e) => setLegend({ font_color: e.target.value })}
+                      className="h-7 w-10 cursor-pointer rounded border border-(--color-border-default) bg-transparent"
+                    />
+                  )}
+                </div>
               </div>
             </div>
           </div>

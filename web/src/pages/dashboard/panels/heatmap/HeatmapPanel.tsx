@@ -306,6 +306,12 @@ export default function HeatmapPanel({
     // 새 좌표는 패널 공간이다 — 표식을 함께 남겨 다음 렌더에서 다시 환산되지 않게 한다.
     onConfigChange?.({ legend: { ...cfg.legend, offset, offset_space: 'panel' } });
   };
+  // 범례 크기 조절(모서리 손잡이) → 막대 치수만 부분 갱신한다. 크기는 설정 항목이 아니라
+  // 조작 결과이므로 저장 경로도 드래그 이동과 같다(legend 키 병합).
+  const handleLegendSizeChange = (size: { bar_length: number; bar_thickness: number }) => {
+    if (!cfg.legend) return;
+    onConfigChange?.({ legend: { ...cfg.legend, ...size } });
+  };
 
   // 배치 활성 = 런타임 편집 토글(대시보드) OR forcePlacement(설정 미리보기). 후자는
   // dashboardEditMode 에 의존하지 않는다(설정 다이얼로그에서 드래그 배치 허용).
@@ -462,6 +468,7 @@ export default function HeatmapPanel({
               // 센서 마커 배치와 동일한 게이팅이라 뷰어 동작은 그대로다.
               draggable={placementActive && canEdit}
               onOffsetChange={handleLegendOffsetChange}
+              onSizeChange={handleLegendSizeChange}
               decimals={explicitDecimals}
             />
           )}
