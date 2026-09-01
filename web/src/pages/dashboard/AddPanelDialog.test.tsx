@@ -208,14 +208,11 @@ describe('AddPanelDialog', () => {
         'dashboard.panelTypes.pieChart',
         'dashboard.addPanel.labels.heatmap',
       ]],
-      // 시스템 카테고리는 모니터링 패널 4종으로 교체됐다('logs' 는 monitor-logs 가 대체).
+      // 시스템 카테고리에는 호스트 지표(sysmetrics)만 남는다. 모니터링 패널 4종
+      // (통계·실시간 메트릭·네트워크·이벤트)은 모니터링 페이지와 보는 것이 같아 카탈로그에서
+      // 내렸고, 시스템 로그만 성격이 달라 '기타' 로 옮겼다. 타입/렌더 경로는 살아 있어
+      // 이미 배치된 패널은 계속 동작한다.
       ['system', [
-        'dashboard.panelTypes.monitorStats',
-        'dashboard.panelTypes.monitorMetrics',
-        'dashboard.panelTypes.monitorNetwork',
-        'dashboard.panelTypes.monitorLogs',
-        'dashboard.panelTypes.monitorEvents',
-        // SPEC-SYSMETRICS-PANEL-001: 같은 카테고리의 두 번째 그룹(호스트 지표).
         'dashboard.panelTypes.sysmetricsSystem',
         'dashboard.panelTypes.sysmetricsNetwork',
         'dashboard.panelTypes.sysmetricsStorage',
@@ -240,6 +237,8 @@ describe('AddPanelDialog', () => {
         'dashboard.panelTypes.device',
         'dashboard.panelTypes.triggerConfig',
         'dashboard.panelTypes.customControl',
+        // 시스템 카테고리에서 옮겨 왔다(로그 뷰어라 호스트 지표와 성격이 다르다).
+        'dashboard.panelTypes.monitorLogs',
       ]],
     ];
 

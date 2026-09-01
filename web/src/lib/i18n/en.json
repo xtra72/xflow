@@ -141,11 +141,7 @@
         "modbusBusStats": "Bus statistics mini-chart (reads·writes/min, latency)",
         "modbusSummaryStats": "Summary of connections, clients, devices and errors",
         "heatmap": "IDW-interpolated heatmap (temperature field) of spatial sensors",
-        "monitorStats": "Server runtime statistics — CPU, memory, goroutines, uptime — alongside flow, ingest and connection state, shown as cards.",
-        "monitorMetrics": "Live line charts of CPU, memory, throughput and error rate over the last 5 minutes.",
         "monitorLogs": "Live system logs with level, source and component filters.",
-        "monitorEvents": "System events — status changes, deployments, errors — on a chronological timeline.",
-        "monitorNetwork": "Per-interface bytes and packets, as per-unit-time rates and cumulative totals.",
         "sysmetricsSystem": "Host CPU, memory, disk I/O and network totals observed by a sysmetrics agent.",
         "sysmetricsNetwork": "Per-interface throughput. Without targets it draws the total only.",
         "sysmetricsStorage": "Per-mount disk usage. Without targets it draws the combined total."
@@ -153,9 +149,7 @@
       "groups": {
         "hvacr": "HVACR",
         "facility": "Station facilities",
-        "modbus": "MODBUS",
-        "monitor": "Monitoring",
-        "sysmetrics": "Host metrics"
+        "modbus": "MODBUS"
       },
       "labels": {
         "propertiesGrid": "Device State",

@@ -35,7 +35,6 @@ import {
   Grid3x3,
   PlugZap,
   Gauge,
-  Radio,
   Network,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -173,30 +172,23 @@ const PANEL_GROUPS_BY_CATEGORY: Record<Category, PanelGroup[]> = {
       ],
     },
   ],
-  // 시스템: 두 그룹으로 나눈다. 출처가 다르기 때문이다 — 모니터링 패널은 xflowd
-  // 런타임을, sysmetrics 패널은 호스트 전체를 본다. 한 줄에 늘어놓으면 CPU 항목이
-  // 두 군데 있는 이유를 설명할 자리가 없다.
+  // 시스템: sysmetrics 에이전트가 관측한 호스트 지표만 남는다.
+  //
+  // 모니터링 패널(시스템 통계·실시간 메트릭·네트워크·시스템 이벤트)은 카탈로그에서 내렸다.
+  // 넷 다 xflowd 런타임 자신을 보는 패널이라 모니터링 페이지(사이드 메뉴)와 보는 것이 같고,
+  // 대시보드에 다시 늘어놓을 이유가 없다. 시스템 로그만 성격이 달라(런타임과 무관하게 로그를
+  // 읽는 뷰어) '기타' 로 옮겼다.
+  //
+  // 타입과 렌더 경로는 그대로 살아 있어 **이미 배치된 패널은 계속 동작한다** — 선행 패널
+  // 'resource'/'logs' 를 내릴 때와, 'line-chart' → 'graph-chart' 때와 같은 방식이다.
+  //
+  // 그룹이 하나만 남았으므로 제목을 붙이지 않는다(다른 단일 그룹 카테고리와 같은 규칙).
+  // 두 그룹으로 나눴던 이유가 "CPU 항목이 두 군데 있는 이유를 설명할 자리" 였는데, 모니터링
+  // 쪽이 사라져 그 이유 자체가 없어졌다.
   system: [
     {
-      // 모니터링 패널 5종 — 모니터링 페이지(사이드 메뉴)와 같은 항목 어휘를 쓰며,
-      // 패널 설정에서 표시 항목을 고른다.
-      //
-      // 선행 패널 'resource'(프로세스 상태) 와 'logs'(로그) 는 이 5종이 덮으므로
-      // 카탈로그에서 내렸다. 타입과 렌더 경로는 그대로 살아 있어 이미 배치된
-      // 패널은 계속 동작한다 — 'line-chart' → 'graph-chart' 때와 같은 방식이다.
-      labelKey: 'dashboard.addPanel.groups.monitor',
-      options: [
-        { type: 'monitor-stats', icon: Activity, labelKey: 'dashboard.panelTypes.monitorStats', descriptionKey: 'dashboard.addPanel.descriptions.monitorStats' },
-        { type: 'monitor-metrics', icon: TrendingUp, labelKey: 'dashboard.panelTypes.monitorMetrics', descriptionKey: 'dashboard.addPanel.descriptions.monitorMetrics' },
-        { type: 'monitor-network', icon: Network, labelKey: 'dashboard.panelTypes.monitorNetwork', descriptionKey: 'dashboard.addPanel.descriptions.monitorNetwork' },
-        { type: 'monitor-logs', icon: ScrollText, labelKey: 'dashboard.panelTypes.monitorLogs', descriptionKey: 'dashboard.addPanel.descriptions.monitorLogs' },
-        { type: 'monitor-events', icon: Radio, labelKey: 'dashboard.panelTypes.monitorEvents', descriptionKey: 'dashboard.addPanel.descriptions.monitorEvents' },
-      ],
-    },
-    {
-      // SPEC-SYSMETRICS-PANEL-001: sysmetrics 에이전트가 관측한 호스트 지표.
-      // 세 패널 모두 대상(인터페이스·마운트) 선택이 비면 종합, 고르면 개별을 그린다.
-      labelKey: 'dashboard.addPanel.groups.sysmetrics',
+      // SPEC-SYSMETRICS-PANEL-001: 세 패널 모두 대상(인터페이스·마운트) 선택이 비면 종합,
+      // 고르면 개별을 그린다.
       options: [
         { type: 'sysmetrics-system', icon: Cpu, labelKey: 'dashboard.panelTypes.sysmetricsSystem', descriptionKey: 'dashboard.addPanel.descriptions.sysmetricsSystem', needsSysMetricsAgent: true },
         { type: 'sysmetrics-network', icon: Network, labelKey: 'dashboard.panelTypes.sysmetricsNetwork', descriptionKey: 'dashboard.addPanel.descriptions.sysmetricsNetwork', needsSysMetricsAgent: true },
@@ -251,6 +243,9 @@ const PANEL_GROUPS_BY_CATEGORY: Record<Category, PanelGroup[]> = {
         // SPEC-TRIGGER-PANEL-001 M2: trigger 노드 스케줄/페이로드 설정 패널.
         { type: 'trigger-config', icon: AlarmClock, labelKey: 'dashboard.panelTypes.triggerConfig', descriptionKey: 'dashboard.addPanel.descriptions.triggerConfig', needsTriggerNode: true },
         { type: 'custom-control', icon: Settings, labelKey: 'dashboard.panelTypes.customControl', descriptionKey: 'dashboard.addPanel.descriptions.customControl', needsDevice: true },
+        // 시스템 카테고리에서 옮겨 왔다. 나머지 모니터링 패널과 달리 xflowd 런타임 지표가
+        // 아니라 로그를 읽는 뷰어라, 호스트 지표만 남은 시스템 카테고리에 두면 성격이 어긋난다.
+        { type: 'monitor-logs', icon: ScrollText, labelKey: 'dashboard.panelTypes.monitorLogs', descriptionKey: 'dashboard.addPanel.descriptions.monitorLogs' },
       ],
     },
   ],
