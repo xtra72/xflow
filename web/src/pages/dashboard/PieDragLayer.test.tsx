@@ -49,8 +49,17 @@ function stubSize(testId: string, width: number, height: number): void {
   } as DOMRect);
 }
 
-/** 범례의 죄기 기준은 부모(본문)다. */
-const stubBodySize = (w: number, h: number): void => stubSize('body', w, h);
+/**
+ * 범례 드래그의 기준.
+ *
+ * 죄기 범위는 **범례 자신의 크기**까지 함께 본다 — 모서리가 상자 가장자리에 닿는 곳이
+ * 한계이기 때문이다. jsdom 은 레이아웃을 하지 않으므로 둘 다 심어야 한다.
+ */
+function stubBodySize(w: number, h: number): void {
+  stubSize('body', w, h);
+  // 본문의 10% × 10% 짜리 범례.
+  stubSize('legend', w * 0.1, h * 0.1);
+}
 
 function pointer(type: string, x: number, y: number): PointerEvent {
   return new MouseEvent(type, { clientX: x, clientY: y, bubbles: true }) as unknown as PointerEvent;
@@ -64,17 +73,18 @@ async function nextFrame(): Promise<void> {
 }
 
 describe('정해진 대상에서만 시작한다', () => {
-  it('범례를 잡고 끌면 픽셀 이동량이 그대로 오프셋이 된다', async () => {
+  it('범례를 잡고 끌면 담는 상자 대비 백분율이 된다', async () => {
     const onChange = vi.fn();
     render(<Fixture onChange={onChange} />);
     stubBodySize(400, 300);
 
     fireEvent(screen.getByTestId('legend'), pointer('pointerdown', 100, 100));
-    fireEvent(document, pointer('pointermove', 140, 120));
+    fireEvent(document, pointer('pointermove', 140, 70));
     await nextFrame();
 
-    // HTML 요소라 환산이 없다(게이지는 viewBox 배율을 되돌린다).
-    expect(onChange).toHaveBeenLastCalledWith({ x: 40, y: 20 });
+    // 40/400 = 10%, -30/300 = -10%. 픽셀로 두면 미리보기와 실제 패널에서 자리가 갈린다.
+    // 아래에 붙인 범례라 위로만 움직인다(아래로 더 가면 상자를 벗어난다).
+    expect(onChange).toHaveBeenLastCalledWith({ x: 10, y: -10 });
   });
 
   it('차트 영역을 잡으면 범례가 아니라 파이가 움직인다', async () => {
@@ -125,11 +135,11 @@ describe('정해진 대상에서만 시작한다', () => {
 
     fireEvent(screen.getByTestId('legend'), pointer('pointerdown', 100, 100));
     fireEvent(document, pointer('pointermove', 110, 100));
-    fireEvent(document, pointer('pointermove', 130, 100));
+    fireEvent(document, pointer('pointermove', 140, 100));
     await nextFrame();
 
     expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange).toHaveBeenLastCalledWith({ x: 30, y: 0 });
+    expect(onChange).toHaveBeenLastCalledWith({ x: 10, y: 0 });
   });
 
   it('손을 뗄 때 대기 중인 마지막 이동을 흘리지 않는다', () => {
@@ -138,13 +148,13 @@ describe('정해진 대상에서만 시작한다', () => {
     stubBodySize(400, 300);
 
     fireEvent(screen.getByTestId('legend'), pointer('pointerdown', 100, 100));
-    fireEvent(document, pointer('pointermove', 130, 100));
-    fireEvent(document, pointer('pointerup', 130, 100));
+    fireEvent(document, pointer('pointermove', 140, 100));
+    fireEvent(document, pointer('pointerup', 140, 100));
 
-    expect(onChange).toHaveBeenLastCalledWith({ x: 30, y: 0 });
+    expect(onChange).toHaveBeenLastCalledWith({ x: 10, y: 0 });
   });
 
-  it('본문 절반을 넘겨 끌어도 죄인다 — 다시 잡을 수 있어야 한다', async () => {
+  it('모서리가 가장자리에 닿는 곳까지만 간다 — 여백을 남기고 멈추지 않는다', async () => {
     const onChange = vi.fn();
     render(<Fixture onChange={onChange} />);
     stubBodySize(400, 300);
@@ -153,7 +163,9 @@ describe('정해진 대상에서만 시작한다', () => {
     fireEvent(document, pointer('pointermove', 5000, 5000));
     await nextFrame();
 
-    expect(onChange).toHaveBeenLastCalledWith({ x: 200, y: 150 });
+    // 폭 10% 짜리 범례 → 중심이 45% 까지 가면 오른쪽 모서리가 가장자리에 닿는다.
+    // 아래로는 이미 붙어 있으므로 0.
+    expect(onChange).toHaveBeenLastCalledWith({ x: 45, y: 0 });
   });
 
   it('크기를 잴 수 없으면 시작하지 않는다', async () => {

@@ -28,13 +28,12 @@ import {
   SysResourceSelector,
   type SysResourceKind,
 } from '@/components/property/SysResourceSelector';
-import { GaugeDragLayer } from './GaugeDragLayer';
 import {
   PANEL_SIZE_MAX,
   PANEL_SIZE_MIN,
   readPanelSize,
 } from './panels/charts/panelGeometry';
-import { PieDragLayer } from './PieDragLayer';
+import { FONT_FAMILY_OPTIONS } from './panels/charts/textStyle';
 import {
   DEFAULT_TRACK_FILL,
   defaultGaugeThresholds,
@@ -45,7 +44,6 @@ import {
   readHalfRainbowDirection,
 } from '@/pages/dashboard/panels/gauge/gaugeShapes';
 import {
-  readValueOffset,
   readValueScale,
   VALUE_SCALE_MAX,
   VALUE_SCALE_MIN,
@@ -1093,18 +1091,8 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               >
                 {/* 값 글자를 끌어 자리를 잡는다. 두 미리보기 경로(실 패널 · 미니)가 같은
                     레이어를 쓰므로 어느 쪽이 떠 있어도 조작이 같다. */}
-                <GaugeDragLayer
-                  value={{
-                    offsetX: readValueOffset(panel.config?.value_offset_x),
-                    offsetY: readValueOffset(panel.config?.value_offset_y),
-                    onChange: ({ x, y }) => patchConfig({ value_offset_x: x, value_offset_y: y }),
-                  }}
-                  body={{
-                    offsetX: readValueOffset(panel.config?.gauge_offset_x),
-                    offsetY: readValueOffset(panel.config?.gauge_offset_y),
-                    onChange: ({ x, y }) => patchConfig({ gauge_offset_x: x, gauge_offset_y: y }),
-                  }}
-                >
+                {/* 드래그 배치는 패널 자신이 갖는다 — 미리보기는 항상 편집(`forceEdit`). */}
+                <>
                   {isStoreGaugePreview ? (
                     // Store 소스 + 대표값 지정: 합성 샘플값이 아니라 **실제 패널**을 draft
                     // config 로 렌더한다(§2.11 [O1] / M6.3, 라인 차트 isStoreLinePreview 선례).
@@ -1112,13 +1100,14 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                       panelId={previewRenderPanel.id}
                       title={previewRenderPanel.title}
                       config={previewRenderPanel.config ?? {}}
-                      onConfigChange={() => {}}
+                      onConfigChange={patchConfig}
                       onTitleChange={() => {}}
+                      forceEdit
                     />
                   ) : (
                     <GaugeMiniPreview panel={previewRenderPanel} />
                   )}
-                </GaugeDragLayer>
+                </>
               </div>
             )}
             {/*
@@ -1186,29 +1175,18 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('4 / 3')}
                 onWheel={handlePreviewWheel}
               >
-                {/* 범례를 끌어 자리를 잡는다. 게이지 값 드래그와 같은 규칙이다 —
-                    미리보기에서만 끌리고, 대시보드 패널은 오프셋만 반영한다. */}
-                <PieDragLayer
-                  legend={{
-                    offsetX: readValueOffset(panel.config?.legend_offset_x),
-                    offsetY: readValueOffset(panel.config?.legend_offset_y),
-                    onChange: ({ x, y }) => patchConfig({ legend_offset_x: x, legend_offset_y: y }),
-                  }}
-                  chart={{
-                    offsetX: readValueOffset(panel.config?.pie_offset_x),
-                    offsetY: readValueOffset(panel.config?.pie_offset_y),
-                    onChange: ({ x, y }) => patchConfig({ pie_offset_x: x, pie_offset_y: y }),
-                  }}
-                >
-                  <PieChartPanel
-                    panelId={previewRenderPanel.id}
-                    title={previewRenderPanel.title}
-                    // 범례 배치는 시각 설정이라 재조회를 트리거하지 않는다 — 디바운스된
-                    // previewPanel 이 아니라 draft(panel)로 렌더해야 드래그가 지연 없이
-                    // 따라온다(표 열 폭 조절과 같은 이유).
-                    config={panel.config ?? {}}
-                  />
-                </PieDragLayer>
+                {/* 드래그 배치는 패널 자신이 갖는다(대시보드와 같은 구현). 미리보기는
+                    `forceEdit` 로 토글 없이 항상 편집이다 — 끌 수 있다는 사실이 화면
+                    맥락으로 이미 드러나 있고, 토글이 미리보기를 가린다.
+                    config 는 디바운스된 previewPanel 이 아니라 draft(panel)를 쓴다 —
+                    시각 설정이라 재조회를 트리거하지 않고, 드래그가 지연 없이 따라온다. */}
+                <PieChartPanel
+                  panelId={previewRenderPanel.id}
+                  title={previewRenderPanel.title}
+                  config={panel.config ?? {}}
+                  onConfigChange={patchConfig}
+                  forceEdit
+                />
               </div>
             )}
             {panel.type === 'graph-chart' && (
@@ -4353,6 +4331,8 @@ const PREVIEW_LIVE_KEYS = [
   'gauge_size',
   'gauge_offset_x',
   'gauge_offset_y',
+  'threshold_legend_offset_x',
+  'threshold_legend_offset_y',
 ] as const;
 
 /** 니들(바늘)이 있는 유형 — 니들 색 설정을 노출하는 자리다. */
@@ -4600,6 +4580,84 @@ function AccentGroupControls({
  * (`gaugeLegacyBinding.resolveGaugeValueSource`). 이미 그 방식으로 묶인 게이지는
  * 계속 같은 값을 그리며, 공용 데이터 소스를 설정하면 그쪽이 이긴다.
  */
+/**
+ * 게이지 설정의 글자 스타일 3칸 — 글꼴 · 크기 · 색.
+ *
+ * `prefix` 로 config 키를 만든다(`caption` → `caption_font_family` …). 시리즈 이름과
+ * 임계값 범례가 같은 컨트롤을 쓰므로 두 곳의 조작이 갈리지 않는다. 셋 다 비우면 상속.
+ */
+function GaugeTextStyleFields({
+  prefix,
+  config,
+  onConfigChange,
+  testIdPrefix,
+  label,
+}: {
+  prefix: string;
+  config: Record<string, unknown>;
+  onConfigChange: (patch: Record<string, unknown>) => void;
+  testIdPrefix: string;
+  label: string;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const familyKey = `${prefix}_font_family`;
+  const sizeKey = `${prefix}_font_size`;
+  const colorKey = `${prefix}_font_color`;
+  const color = config[colorKey] as string | undefined;
+  return (
+    <>
+      <select
+        value={(config[familyKey] as string | undefined) ?? ''}
+        onChange={(e) => onConfigChange({ [familyKey]: e.target.value || undefined })}
+        data-testid={`${testIdPrefix}-family`}
+        aria-label={`${label} ${t('dashboard.chart.fontFamily')}`}
+        className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+      >
+        <option value="">{t('dashboard.chart.inherit')}</option>
+        {FONT_FAMILY_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {t(o.labelKey)}
+          </option>
+        ))}
+      </select>
+      <input
+        type="number"
+        min={6}
+        max={40}
+        value={(config[sizeKey] as number | undefined) ?? ''}
+        placeholder={t('dashboard.chart.inherit')}
+        onChange={(e) => {
+          const v = e.target.value;
+          onConfigChange({ [sizeKey]: v === '' ? undefined : parseInt(v, 10) || undefined });
+        }}
+        data-testid={`${testIdPrefix}-size`}
+        aria-label={`${label} ${t('dashboard.chart.fontSize')}`}
+        className="w-14 shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-center text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+      />
+      <input
+        type="color"
+        value={color ?? '#9ca3af'}
+        onChange={(e) => onConfigChange({ [colorKey]: e.target.value })}
+        data-testid={`${testIdPrefix}-color`}
+        aria-label={`${label} ${t('dashboard.chart.fontColor')}`}
+        className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+      />
+      {color !== undefined && (
+        <button
+          type="button"
+          onClick={() => onConfigChange({ [colorKey]: undefined })}
+          data-testid={`${testIdPrefix}-color-reset`}
+          aria-label={`${label} ${t('dashboard.chart.fontColorReset')}`}
+          title={t('dashboard.chart.fontColorReset')}
+          className="h-7 w-7 shrink-0 rounded border border-(--color-border-default) text-xs text-(--color-text-muted) hover:bg-(--color-bg-elevated)"
+        >
+          x
+        </button>
+      )}
+    </>
+  );
+}
+
 function GaugeSection({
   panel,
   onConfigChange,
@@ -4688,6 +4746,109 @@ function GaugeSection({
             </button>
           ))}
         </div>
+      </div>
+
+      {/* A-3.4. 시리즈 이름(타일 캡션) — 다중 시리즈에서 각 타일 아래(또는 위)에 붙는
+          이름이다. 글자 스타일은 파이 범례와 같은 어휘를 쓴다. */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.gaugeSection.captionStyle')}
+        </label>
+        <div className="flex items-center gap-1.5">
+          <select
+            value={(config.caption_position as string) === 'top' ? 'top' : 'bottom'}
+            onChange={(e) => onConfigChange({ caption_position: e.target.value })}
+            data-testid="gauge-caption-position"
+            aria-label={t('dashboard.settings.gaugeSection.captionPosition')}
+            className="rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+          >
+            <option value="bottom">{t('dashboard.settings.gaugeSection.captionBottom')}</option>
+            <option value="top">{t('dashboard.settings.gaugeSection.captionTop')}</option>
+          </select>
+          <GaugeTextStyleFields
+            prefix="caption"
+            config={config}
+            onConfigChange={onConfigChange}
+            testIdPrefix="gauge-caption"
+            label={t('dashboard.settings.gaugeSection.captionStyle')}
+          />
+        </div>
+      </div>
+
+      {/* A-3.6. 임계값 범례 — 색이 무엇을 뜻하는지 화면에 남긴다. 설정을 열지 않고는
+          구간 색의 의미를 알 수 없기 때문이다. */}
+      <div>
+        <label className="flex cursor-pointer items-center gap-2 text-xs text-(--color-text-secondary)">
+          <input
+            type="checkbox"
+            checked={config.show_threshold_legend === true}
+            onChange={(e) => onConfigChange({ show_threshold_legend: e.target.checked })}
+            data-testid="gauge-threshold-legend-show"
+            className="h-3.5 w-3.5 rounded border-gray-300"
+          />
+          {t('dashboard.settings.gaugeSection.thresholdLegend')}
+        </label>
+        {config.show_threshold_legend === true && (
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <select
+              value={
+                (config.threshold_legend_position as string) === 'top' ? 'top' : 'bottom'
+              }
+              onChange={(e) => onConfigChange({ threshold_legend_position: e.target.value })}
+              data-testid="gauge-threshold-legend-position"
+              aria-label={t('dashboard.settings.gaugeSection.captionPosition')}
+              className="rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+            >
+              <option value="bottom">{t('dashboard.settings.gaugeSection.captionBottom')}</option>
+              <option value="top">{t('dashboard.settings.gaugeSection.captionTop')}</option>
+            </select>
+            <select
+              value={
+                config.threshold_legend_orientation === 'vertical' ? 'vertical' : 'horizontal'
+              }
+              onChange={(e) => onConfigChange({ threshold_legend_orientation: e.target.value })}
+              data-testid="gauge-threshold-legend-orientation"
+              aria-label={t('dashboard.settings.gaugeSection.thresholdLegendOrientation')}
+              className="rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+            >
+              <option value="horizontal">
+                {t('dashboard.settings.gaugeSection.orientationHorizontal')}
+              </option>
+              <option value="vertical">
+                {t('dashboard.settings.gaugeSection.orientationVertical')}
+              </option>
+            </select>
+            <GaugeTextStyleFields
+              prefix="threshold_legend"
+              config={config}
+              onConfigChange={onConfigChange}
+              testIdPrefix="gauge-threshold-legend"
+              label={t('dashboard.settings.gaugeSection.thresholdLegend')}
+            />
+          </div>
+        )}
+        {config.show_threshold_legend === true && (
+          <p className="mt-1 text-[11px] leading-snug text-(--color-text-muted)">
+            {t('dashboard.settings.gaugeSection.thresholdLegendDragHint')}
+          </p>
+        )}
+        {/* 끌어 옮긴 자리를 되돌리는 유일한 출구다 — 드래그는 미리보기에서만 된다. */}
+        {config.show_threshold_legend === true &&
+        (config.threshold_legend_offset_x || config.threshold_legend_offset_y) ? (
+          <button
+            type="button"
+            data-testid="gauge-threshold-legend-reset-offset"
+            onClick={() =>
+              onConfigChange({
+                threshold_legend_offset_x: undefined,
+                threshold_legend_offset_y: undefined,
+              })
+            }
+            className="mt-1.5 rounded border border-(--color-border-default) px-2 py-1 text-xs text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
+          >
+            {t('dashboard.chart.legendResetOffset')}
+          </button>
+        ) : null}
       </div>
 
       {/* A-3.5. 게이지 크기·위치 — 그림 전체를 줄이고 옮긴다. 값(A-4)과 다른 축이다:

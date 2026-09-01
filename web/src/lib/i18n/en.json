@@ -337,7 +337,9 @@
       "offline": "Offline",
       "connected": "Connected",
       "disconnected": "Disconnected",
-      "loadingAria": "Loading"
+      "loadingAria": "Loading",
+      "editEnter": "Edit layout",
+      "editExit": "Done"
     },
     "facility": {
       "notConfigured": "Panel not configured.",
@@ -824,10 +826,24 @@
         "modeIndividual": "Individual",
         "modeContinuous": "Continuous",
         "halfRainbowDirection": "Arc direction",
-        "directions": {"up": "Up", "down": "Down", "left": "Left", "right": "Right"},
+        "directions": {
+          "up": "Up",
+          "down": "Down",
+          "left": "Left",
+          "right": "Right"
+        },
+        "captionStyle": "Series name text",
+        "captionPosition": "Series name position",
+        "captionTop": "Above gauge",
+        "captionBottom": "Below gauge",
+        "thresholdLegendOrientation": "Threshold legend layout",
+        "orientationHorizontal": "Horizontal",
+        "orientationVertical": "Vertical",
+        "thresholdLegendDragHint": "Drag the legend in the settings preview to move it.",
+        "thresholdLegend": "Show threshold legend",
         "gaugeSize": "Gauge size",
-      "gaugeDragHint": "Drag the gauge in the settings preview to move it. Grabbing the value text moves only the value.",
-      "valueSize": "Value size",
+        "gaugeDragHint": "Drag the gauge in the settings preview to move it. Grabbing the value text moves only the value.",
+        "valueSize": "Value size",
         "valueReset": "Reset",
         "valueDragHint": "Drag the value text in the preview to move it.",
         "needleColor": "Needle color",

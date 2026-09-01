@@ -45,6 +45,22 @@ import {
   readPanelOffset,
   readPanelSize,
 } from './charts/panelGeometry';
+import {
+  resolveFontColor,
+  resolveFontFamily,
+  resolveFontSize,
+  type ChartFontFamily,
+} from './charts/textStyle';
+import { readValueOffset } from './charts/valueScale';
+import { usePanelEditMode } from './PanelEditToggle';
+import { GaugeDragLayer } from '../GaugeDragLayer';
+import {
+  GaugeThresholdLegend,
+  type ThresholdLegendOrientation,
+  type ThresholdLegendPosition,
+} from './gauge/GaugeThresholdLegend';
+import { thresholdLegendItems } from './gauge/thresholdLegend';
+import { clampStoredLegendOffset } from './charts/legendOverlay';
 
 // ---- 타입 정의 ----
 
@@ -57,6 +73,8 @@ interface GaugePanelProps {
   config: Record<string, unknown>;
   onConfigChange?: (config: Record<string, unknown>) => void;
   onTitleChange?: (title: string) => void;
+  /** 설정 미리보기처럼 **항상** 편집인 자리인가(토글을 감춘다). */
+  forceEdit?: boolean;
 }
 
 /** GaugeSection 에서 저장하는 데이터 소스 바인딩 형상 (PanelSettingsDialog 와 동일) */
@@ -187,20 +205,48 @@ function GaugeBox({
   );
 }
 
+/** 시리즈 이름(타일 캡션)의 글자 스타일과 자리. */
+interface CaptionStyle {
+  family?: ChartFontFamily;
+  size?: number;
+  color?: string;
+  position: 'top' | 'bottom';
+}
+
+function readCaptionStyle(config: Record<string, unknown>): CaptionStyle {
+  return {
+    family: config.caption_font_family as ChartFontFamily | undefined,
+    size: resolveFontSize(config.caption_font_size),
+    color: resolveFontColor(config.caption_font_color),
+    position: config.caption_position === 'top' ? 'top' : 'bottom',
+  };
+}
+
 function GaugeTile({
   item,
   base,
   config,
+  caption,
 }: {
   item: ReducedSeries;
   base: ReturnType<typeof parseConfig>;
   /** 크기·자리를 얹기 위한 원본 config(타일마다 같은 규칙이 걸린다). */
   config: Record<string, unknown>;
+  caption: CaptionStyle;
 }): ReactElement {
   const hasValue = item.value !== undefined && Number.isFinite(item.value);
   const parsed = hasValue ? withGaugeValue(base, item.value!) : base;
   return (
-    <>
+    <div
+      className={cn(
+        'flex min-h-0 w-full min-w-0 flex-1 flex-col',
+        // 이름을 위에 두려면 열 순서를 뒤집는다 — 두 요소의 순서만 바뀌고 각자의
+        // 레이아웃(게이지가 남는 높이를 차지)은 그대로다.
+        caption.position === 'top' && 'flex-col-reverse',
+      )}
+      data-testid="gauge-tile-body"
+      data-caption-position={caption.position}
+    >
       {/*
         게이지 상자는 **행이 준 높이를 그대로 받는다**(`flex-1` + `min-h-0`). 종횡비는 SVG
         의 `viewBox` + 기본 `preserveAspectRatio`(=meet)가 맞추므로, 상자가 넓든 좁든 그림은
@@ -221,14 +267,23 @@ function GaugeTile({
         data-testid="gauge-tile-caption"
         title={item.name}
         className={cn(
-          'w-full truncate text-center text-xs font-medium',
-          !item.color && 'text-(--color-text-muted)',
+          'w-full truncate text-center font-medium',
+          // 크기를 지정하지 않았을 때만 기본 클래스가 산다 — 두 곳이 함께 걸리면
+          // 지정한 크기가 클래스에 덮인다.
+          caption.size === undefined && 'text-xs',
+          // 색 우선순위: 지정색 > 시리즈 색 > 흐린 테마색. 시리즈 색은 그 시리즈를
+          // 가리키는 표시이므로 지정색이 없을 때만 이긴다.
+          !caption.color && !item.color && 'text-(--color-text-muted)',
         )}
-        style={item.color ? { color: item.color } : undefined}
+        style={{
+          fontFamily: resolveFontFamily(caption.family),
+          fontSize: caption.size === undefined ? undefined : `${caption.size}px`,
+          color: caption.color ?? item.color,
+        }}
       >
         {item.name}
       </span>
-    </>
+    </div>
   );
 }
 
@@ -248,8 +303,9 @@ export default function GaugePanel({
   panelId: _panelId,
   title,
   config,
-  onConfigChange: _onConfigChange,
+  onConfigChange,
   onTitleChange: _onTitleChange,
+  forceEdit = false,
 }: GaugePanelProps) {
   const showTitle = usePanelTitleVisible();
 
@@ -339,6 +395,46 @@ export default function GaugePanel({
   );
   const showGauges = reduced !== null && reduced.length > 0;
 
+  const caption = readCaptionStyle(config);
+
+  // 대시보드 패널에서도 값·범례·게이지를 끌어 배치한다(히트맵과 같은 규칙).
+  const edit = usePanelEditMode({
+    canEdit: typeof onConfigChange === 'function',
+    forced: forceEdit,
+    testId: 'gauge-edit-toggle',
+    below: showTitle,
+  });
+
+  // 임계값 범례 — 패널에 하나만. 임계값은 패널 설정이라 타일마다 붙이면 같은 문구가
+  // 시리즈 수만큼 반복되면서 게이지 자리를 잡아먹는다.
+  const thresholdLegend = useMemo(() => {
+    if (config.show_threshold_legend !== true) return null;
+    const items = thresholdLegendItems(
+      parsedBase.thresholds,
+      parsedBase.unit,
+      config.decimal_places as number | undefined,
+    );
+    return items.length > 0 ? items : null;
+  }, [config.show_threshold_legend, config.decimal_places, parsedBase.thresholds, parsedBase.unit]);
+  const thresholdLegendNode = thresholdLegend && (
+    <GaugeThresholdLegend
+      items={thresholdLegend}
+      position={
+        (config.threshold_legend_position === 'top' ? 'top' : 'bottom') as ThresholdLegendPosition
+      }
+      orientation={
+        (config.threshold_legend_orientation === 'vertical'
+          ? 'vertical'
+          : 'horizontal') as ThresholdLegendOrientation
+      }
+      fontFamily={config.threshold_legend_font_family as ChartFontFamily | undefined}
+      fontSize={resolveFontSize(config.threshold_legend_font_size)}
+      fontColor={resolveFontColor(config.threshold_legend_font_color)}
+      offsetX={clampStoredLegendOffset(config.threshold_legend_offset_x)}
+      offsetY={clampStoredLegendOffset(config.threshold_legend_offset_y)}
+    />
+  );
+
   return (
     <div className={cn(
       'relative flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-4',
@@ -365,7 +461,32 @@ export default function GaugePanel({
           <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
         </div>
       )}
-      {/* 게이지 SVG */}
+      {/*
+        게이지 영역. 임계값 범례가 이 안에 **겹쳐** 뜨므로 기준 상자가 필요하다 —
+        흐름에 끼워 넣으면 범례가 자리를 나눠 가져 게이지가 그만큼 작아지고, 끌어 옮긴
+        오프셋과 레이아웃이 서로를 밀어낸다.
+      */}
+      {edit.toggle}
+      <GaugeDragLayer
+        enabled={edit.active}
+        value={{
+          offsetX: readValueOffset(config.value_offset_x),
+          offsetY: readValueOffset(config.value_offset_y),
+          onChange: ({ x, y }) => onConfigChange?.({ value_offset_x: x, value_offset_y: y }),
+        }}
+        legend={{
+          offsetX: clampStoredLegendOffset(config.threshold_legend_offset_x),
+          offsetY: clampStoredLegendOffset(config.threshold_legend_offset_y),
+          onChange: ({ x, y }) =>
+            onConfigChange?.({ threshold_legend_offset_x: x, threshold_legend_offset_y: y }),
+        }}
+        body={{
+          offsetX: readPanelOffset(config.gauge_offset_x),
+          offsetY: readPanelOffset(config.gauge_offset_y),
+          onChange: ({ x, y }) => onConfigChange?.({ gauge_offset_x: x, gauge_offset_y: y }),
+        }}
+      >
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       {showGauges ? (
         <div
           data-testid="gauge-tiles"
@@ -376,7 +497,9 @@ export default function GaugePanel({
             limit={config.multi_output_limit as number | undefined}
             rows={config.tile_rows as number | undefined}
             itemKey={(item, i) => `${i}:${item.name}`}
-            renderItem={(item) => <GaugeTile item={item} base={parsedBase} config={config} />}
+            renderItem={(item) => (
+              <GaugeTile item={item} base={parsedBase} config={config} caption={caption} />
+            )}
             // 게이지는 내용이 아니라 행이 높이를 정해야 한다 — 그래야 낮은 패널에서
             // 잘리지 않고 축소된다(stat 타일은 종전대로 내용 높이를 쓴다).
             fillRows
@@ -391,6 +514,9 @@ export default function GaugePanel({
           </GaugeBox>
         </div>
       )}
+      {thresholdLegendNode}
+      </div>
+      </GaugeDragLayer>
     </div>
   );
 }

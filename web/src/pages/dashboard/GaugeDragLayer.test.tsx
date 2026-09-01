@@ -13,22 +13,30 @@ import { GaugeDragLayer } from './GaugeDragLayer';
 function Fixture({
   onChange,
   onBodyChange = () => {},
+  onLegendChange = () => {},
 }: {
   onChange: (n: { x: number; y: number }) => void;
   onBodyChange?: (n: { x: number; y: number }) => void;
+  onLegendChange?: (n: { x: number; y: number }) => void;
 }) {
   return (
     <GaugeDragLayer
       value={{ offsetX: 0, offsetY: 0, onChange }}
+      legend={{ offsetX: 0, offsetY: 0, onChange: onLegendChange }}
       body={{ offsetX: 0, offsetY: 0, onChange: onBodyChange }}
     >
-      <div data-gauge-body="" data-testid="body">
-        <svg viewBox="0 0 200 200" data-testid="svg">
-          <text data-gauge-value-text="" data-testid="value">
-            50
-          </text>
-          <circle data-testid="ring" cx={100} cy={100} r={80} />
-        </svg>
+      <div data-testid="area">
+        <div data-gauge-body="" data-testid="body">
+          <svg viewBox="0 0 200 200" data-testid="svg">
+            <text data-gauge-value-text="" data-testid="value">
+              50
+            </text>
+            <circle data-testid="ring" cx={100} cy={100} r={80} />
+          </svg>
+        </div>
+        <div data-gauge-threshold-legend="" data-testid="legend">
+          legend
+        </div>
       </div>
     </GaugeDragLayer>
   );
@@ -189,5 +197,27 @@ describe('정해진 대상에서만 시작한다', () => {
     await nextFrame();
 
     expect(onChange).toHaveBeenLastCalledWith({ x: 100, y: 100 });
+  });
+
+  it('임계값 범례를 잡으면 범례만 백분율만큼 움직인다', async () => {
+    const onChange = vi.fn();
+    const onBodyChange = vi.fn();
+    const onLegendChange = vi.fn();
+    render(
+      <Fixture onChange={onChange} onBodyChange={onBodyChange} onLegendChange={onLegendChange} />,
+    );
+    // 범례의 죄기 기준은 담긴 상자(게이지 영역)와 **범례 자신의 크기**다 — 모서리가
+    // 가장자리에 닿는 곳이 한계이기 때문이다.
+    stubSize('area', 400, 300);
+    stubSize('legend', 40, 30);
+
+    fireEvent(screen.getByTestId('legend'), pointer('pointerdown', 100, 100));
+    fireEvent(document, pointer('pointermove', 140, 70));
+    await nextFrame();
+
+    // 40/400 = 10%, -30/300 = -10%. 픽셀이면 패널 크기에 따라 자리가 갈린다.
+    expect(onLegendChange).toHaveBeenLastCalledWith({ x: 10, y: -10 });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onBodyChange).not.toHaveBeenCalled();
   });
 });

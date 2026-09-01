@@ -14,7 +14,7 @@
 
 import { cn } from '@/lib/utils/cn';
 
-import { legendTransform } from './pieDrag';
+import { legendOverlayStyle } from './legendOverlay';
 import { resolveFontFamily } from './textStyle';
 import { formatPiePercent, pieLegendValueText } from './pieLabel';
 import type { ChartFontFamily } from './textStyle';
@@ -52,13 +52,14 @@ export function PieLegend({
   fontColor?: string;
   decimals: number;
   unit?: string;
+  /** 끌어 옮긴 오프셋(담는 상자 대비 %). 기준 자리에서 얼마나 밀렸는지. */
   offsetX: number;
   offsetY: number;
 }): React.ReactElement | null {
   if (items.length === 0) return null;
 
   const isVert = position === 'left' || position === 'right';
-  const transform = legendTransform(position, offsetX, offsetY);
+  const place = legendOverlayStyle(position, offsetX, offsetY);
 
   // 세로 나열에서만 칸을 맞춘다(표처럼). 가로 나열은 항목이 줄바꿈으로 흘러가므로
   // 열을 맞출 기준선 자체가 없다 — 억지로 맞추면 한 줄에 한 항목만 남는다.
@@ -83,17 +84,14 @@ export function PieLegend({
           // 행은 제 높이만 차지하고, 덩어리째 세로 가운데에 놓는다.
           ? 'grid content-center items-center gap-x-3 gap-y-1'
           : 'flex flex-wrap items-center justify-center gap-x-4 gap-y-1',
-        // 기준 자리. 되물림(가운데 정렬)은 transform 이 맡는다.
-        position === 'bottom' ? 'bottom-0 left-1/2' : 'top-1/2',
-        position === 'left' ? 'left-0' : position === 'right' ? 'right-0' : undefined,
       )}
       style={{
+        ...place,
         fontSize: `${fontSize}px`,
         fontFamily: resolveFontFamily(fontFamily),
         // 색을 지정하면 이름·비율·값이 함께 따라간다 — 한 범례 안에서 색이 갈리면
         // 어느 칸이 강조인지 읽히지 않는다(비율·값의 흐린 톤은 불투명도로 남긴다).
         color: fontColor,
-        transform,
         ...(isVert ? { gridTemplateColumns: columns } : null),
       }}
     >

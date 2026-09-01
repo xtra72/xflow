@@ -358,7 +358,16 @@ function renderPanelBody(
     case 'bar-chart':
       return <BarChartPanel panelId={panel.id} title={panel.title} config={panel.config} />;
     case 'pie-chart':
-      return <PieChartPanel panelId={panel.id} title={panel.title} config={panel.config} />;
+      return (
+        <PieChartPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          // 대시보드에서도 파이·범례를 끌어 배치한다(히트맵과 같은 규칙 — 편집모드
+          // + 패널 안 토글로 두 겹 게이팅).
+          onConfigChange={onCfg}
+        />
+      );
     case 'table':
       return <TablePanel panelId={panel.id} title={panel.title} config={panel.config} />;
     // SPEC-HEATMAP-PANEL-001 (MVP): store 태그 바인딩 온도 히트맵 패널.

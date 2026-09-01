@@ -337,7 +337,9 @@
       "offline": "오프라인",
       "connected": "연결됨",
       "disconnected": "연결 해제",
-      "loadingAria": "로딩 중"
+      "loadingAria": "로딩 중",
+      "editEnter": "배치 편집",
+      "editExit": "편집 종료"
     },
     "facility": {
       "notConfigured": "패널이 설정되지 않았습니다.",
@@ -824,10 +826,24 @@
         "modeIndividual": "개별 지정",
         "modeContinuous": "연속 컬러",
         "halfRainbowDirection": "반원 방향",
-        "directions": {"up": "위쪽", "down": "아래쪽", "left": "왼쪽", "right": "오른쪽"},
+        "directions": {
+          "up": "위쪽",
+          "down": "아래쪽",
+          "left": "왼쪽",
+          "right": "오른쪽"
+        },
+        "captionStyle": "시리즈 이름 글자",
+        "captionPosition": "시리즈 이름 위치",
+        "captionTop": "게이지 위",
+        "captionBottom": "게이지 아래",
+        "thresholdLegendOrientation": "임계값 범례 방향",
+        "orientationHorizontal": "가로형",
+        "orientationVertical": "세로형",
+        "thresholdLegendDragHint": "설정 미리보기에서 범례를 끌어 자리를 옮길 수 있다.",
+        "thresholdLegend": "임계값 범례 표시",
         "gaugeSize": "게이지 크기",
-      "gaugeDragHint": "설정 미리보기에서 게이지를 끌어 위치를 옮길 수 있다. 값 글자를 잡으면 값만 움직인다.",
-      "valueSize": "현재값 크기",
+        "gaugeDragHint": "설정 미리보기에서 게이지를 끌어 위치를 옮길 수 있다. 값 글자를 잡으면 값만 움직인다.",
+        "valueSize": "현재값 크기",
         "valueReset": "초기화",
         "valueDragHint": "위치는 미리보기에서 값 글자를 끌어 옮깁니다.",
         "needleColor": "니들 색",

@@ -86,11 +86,14 @@ describe('PieLegend', () => {
     ]);
   });
 
-  it('글자 크기와 오프셋이 스타일로 실린다', () => {
+  it('글자 크기와 오프셋이 스타일로 실린다 — 오프셋은 담는 상자 대비 %', () => {
     renderLegend({ fontSize: 18, offsetX: 10, offsetY: -6 });
     const style = screen.getByTestId('pie-chart-legend').getAttribute('style') ?? '';
     expect(style).toContain('font-size: 18px');
-    expect(style).toContain('translate(calc(-50% + 10px), -6px)');
+    // 하단 기준: 가로는 가운데+10%, 세로는 아래에서 6% 위로.
+    expect(style).toContain('left: calc(60%)');
+    expect(style).toContain('bottom: 6%');
+    expect(style).toContain('translateX(-50%)');
   });
 
   it('글꼴은 지정했을 때만 싣는다 — 미지정은 상속', () => {

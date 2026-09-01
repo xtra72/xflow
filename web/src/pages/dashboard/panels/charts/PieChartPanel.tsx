@@ -27,6 +27,7 @@ import {
 } from './pieLabel';
 import { resolveFontColor, resolveFontFamily, resolveFontSize } from './textStyle';
 import { clampPercentOffset, readPanelSize } from './panelGeometry';
+import { clampStoredLegendOffset } from './legendOverlay';
 import { ConnectionStatusIcon } from './ConnectionStatusIcon';
 import { aggregateByLabel } from './chartChannelUtils';
 import { reduceAllSeries } from './seriesReduce';
@@ -40,12 +41,21 @@ import { readDecimalPlaces } from './decimalPlaces';
 import { formatValueWithUnit } from './unitOptions';
 import { isPanelSeriesSource, usePanelSeriesData } from './usePanelSeriesData';
 import { usePanelTitleVisible } from '../../panelChromeContext';
+import { usePanelEditMode } from '../PanelEditToggle';
+import { PieDragLayer } from '../../PieDragLayer';
 import { useTranslation } from '@/lib/i18n';
 
 interface PieChartPanelProps {
   panelId: string;
   title?: string;
   config: Record<string, unknown>;
+  /**
+   * 배치 편집으로 바뀐 값을 쓸 콜백. 없으면 편집 모드에 들어갈 수 없다 —
+   * 끌어도 저장할 곳이 없기 때문이다.
+   */
+  onConfigChange?: (config: Record<string, unknown>) => void;
+  /** 설정 미리보기처럼 **항상** 편집인 자리인가(토글을 감춘다). */
+  forceEdit?: boolean;
 }
 
 const DEFAULT_MAX_POINTS = 20;
@@ -101,8 +111,10 @@ function parseConfig(config: Record<string, unknown>): PiePanelConfig {
     legend_font_size: resolveFontSize(config.legend_font_size) ?? DEFAULT_PIE_LEGEND_FONT_SIZE,
     legend_font_family: config.legend_font_family as PiePanelConfig['legend_font_family'],
     legend_font_color: resolveFontColor(config.legend_font_color),
-    legend_offset_x: readOffset(config.legend_offset_x),
-    legend_offset_y: readOffset(config.legend_offset_y),
+    // 저장값에는 성긴 안전 상한만 건다 — 정확한 죄기는 요소 크기를 알아야 하는데 그
+    // 값은 레이아웃 후에만 나오므로 드래그 시점에 한다.
+    legend_offset_x: clampStoredLegendOffset(config.legend_offset_x),
+    legend_offset_y: clampStoredLegendOffset(config.legend_offset_y),
     pie_size: readPanelSize(config.pie_size),
     pie_offset_x: clampPercentOffset(readOffset(config.pie_offset_x)),
     pie_offset_y: clampPercentOffset(readOffset(config.pie_offset_y)),
@@ -133,9 +145,22 @@ interface PieSlice {
   fill?: string;
 }
 
-export default function PieChartPanel({ panelId: _panelId, title, config }: PieChartPanelProps) {
+export default function PieChartPanel({
+  panelId: _panelId,
+  title,
+  config,
+  onConfigChange,
+  forceEdit = false,
+}: PieChartPanelProps) {
   const { t } = useTranslation();
   const showTitle = usePanelTitleVisible();
+  // 대시보드 패널에서도 파이·범례를 끌어 배치한다(히트맵과 같은 규칙).
+  const edit = usePanelEditMode({
+    canEdit: typeof onConfigChange === 'function',
+    forced: forceEdit,
+    testId: 'pie-chart-edit-toggle',
+    below: showTitle,
+  });
   const cfg = parseConfig(config);
   const decimals = readDecimalPlaces(config);
   // 조각 라벨은 전체 대비 비중(%)이라 단위와 축이 다르다 — 단위는 툴팁의 실제 값에만
@@ -376,6 +401,7 @@ export default function PieChartPanel({ panelId: _panelId, title, config }: PieC
       <div className="absolute right-3 top-3 z-10">
         <ConnectionStatusIcon status={status} />
       </div>
+      {edit.toggle}
 
       {showTitle && (
         <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
@@ -392,6 +418,19 @@ export default function PieChartPanel({ panelId: _panelId, title, config }: PieC
         움직였다 — 파이 자리를 옮기려고 범례를 건드리게 되는 결합이다. 겹치는 자리에서는
         범례가 위에 보인다.
       */}
+      <PieDragLayer
+        enabled={edit.active}
+        legend={{
+          offsetX: cfg.legend_offset_x ?? 0,
+          offsetY: cfg.legend_offset_y ?? 0,
+          onChange: ({ x, y }) => onConfigChange?.({ legend_offset_x: x, legend_offset_y: y }),
+        }}
+        chart={{
+          offsetX: cfg.pie_offset_x ?? 0,
+          offsetY: cfg.pie_offset_y ?? 0,
+          onChange: ({ x, y }) => onConfigChange?.({ pie_offset_x: x, pie_offset_y: y }),
+        }}
+      >
       <div className="relative min-h-0 min-w-0 flex-1">
       <div
         className="absolute inset-0"
@@ -454,6 +493,7 @@ export default function PieChartPanel({ panelId: _panelId, title, config }: PieC
         />
       )}
       </div>
+      </PieDragLayer>
 
       {/* 음수 대표값으로 생략된 조각의 사유 안내(§4.4 — 조각이 사라진 이유가 화면에 남는다). */}
       {derived.negativeOmitted > 0 && (

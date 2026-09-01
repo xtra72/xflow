@@ -2,8 +2,8 @@
 // chart-emitter 데이터 소스 바인딩의 live value 반영 + fallback 동작을 검증한다.
 // 실제 SVG 경로 수식까지는 검증하지 않고 value 가 DOM 에 반영되는지만 확인한다.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 import type { ChartEntry } from './charts/chartChannelTypes';
 
@@ -50,6 +50,7 @@ vi.mock('@/services/api/client', () => ({
 }));
 
 import GaugePanel from './GaugePanel';
+import { useUIStore } from '@/stores/uiStore';
 
 function renderPanel(config: Record<string, unknown>) {
   return render(
@@ -571,6 +572,151 @@ describe('GaugePanel 레거시 바인딩 특성화 (SPEC-CHART-002 M2)', () => {
     it('드래그 레이어가 잡을 수 있도록 표식을 남긴다', () => {
       renderPanel({ gaugeType: 'simple', value: 50, min: 0, max: 100 });
       expect(box().hasAttribute('data-gauge-body')).toBe(true);
+    });
+  });
+
+  describe('임계값 범례', () => {
+    const base = { gaugeType: 'simple', value: 50, min: 0, max: 100 } as const;
+
+    it('기본은 그리지 않는다 — 켠 사람만 본다', () => {
+      renderPanel({ ...base });
+      expect(screen.queryByTestId('gauge-threshold-legend')).toBeNull();
+    });
+
+    it('켜면 구간마다 한 줄씩 — 이름이 없으면 범위를 적는다', () => {
+      renderPanel({ ...base, show_threshold_legend: true });
+      const items = screen.getAllByTestId('gauge-threshold-legend-item');
+      // 기본 3구간(0~60 / 60~80 / 80~100), 이름은 비어 있다.
+      expect(items.map((e) => e.textContent)).toEqual(['0~60', '60~80', '80~100']);
+    });
+
+    it('이름을 붙이면 이름이 이긴다', () => {
+      renderPanel({
+        ...base,
+        show_threshold_legend: true,
+        thresholds: [{ name: '정상', color: '#10b981', from: 0, to: 100 }],
+      });
+      expect(screen.getByTestId('gauge-threshold-legend-item').textContent).toBe('정상');
+    });
+
+    it('기본은 가로형 — 항목이 한 줄로 흐른다', () => {
+      renderPanel({ ...base, show_threshold_legend: true });
+      const el = screen.getByTestId('gauge-threshold-legend');
+      expect(el.getAttribute('data-orientation')).toBe('horizontal');
+      expect(el.className).toContain('flex-wrap');
+    });
+
+    it('세로형이면 한 칸씩 쌓는다', () => {
+      renderPanel({
+        ...base,
+        show_threshold_legend: true,
+        threshold_legend_orientation: 'vertical',
+      });
+      const el = screen.getByTestId('gauge-threshold-legend');
+      expect(el.getAttribute('data-orientation')).toBe('vertical');
+      expect(el.className).toContain('flex-col');
+    });
+
+    it('게이지 위에 겹쳐 뜬다 — 자리를 나눠 가지지 않는다', () => {
+      renderPanel({ ...base, show_threshold_legend: true });
+      const cls = screen.getByTestId('gauge-threshold-legend').className;
+      expect(cls).toContain('absolute');
+      expect(cls).toContain('z-10');
+      // 겹친 자리에서 글자가 읽히도록 옅은 판을 깐다.
+      expect(cls).toContain('bg-(--color-bg-surface)/80');
+    });
+
+    it('오프셋은 담는 상자 대비 % — 패널 크기가 달라도 같은 자리를 가리킨다', () => {
+      renderPanel({
+        ...base,
+        show_threshold_legend: true,
+        threshold_legend_offset_x: 12,
+        threshold_legend_offset_y: -8,
+      });
+      const style = screen.getByTestId('gauge-threshold-legend').getAttribute('style') ?? '';
+      // 픽셀이던 시절에는 미리보기(≈1870px)와 패널(≈1500px 이하)에서 자리가 갈렸다.
+      expect(style).toContain('left: calc(62%)');
+      expect(style).toContain('bottom: 8%');
+      expect(style).toContain('translateX(-50%)');
+    });
+
+    it('드래그 레이어가 잡을 수 있도록 표식을 남긴다', () => {
+      renderPanel({ ...base, show_threshold_legend: true });
+      expect(
+        screen.getByTestId('gauge-threshold-legend').hasAttribute('data-gauge-threshold-legend'),
+      ).toBe(true);
+    });
+
+    it('위치와 글자 스타일이 실린다', () => {
+      renderPanel({
+        ...base,
+        show_threshold_legend: true,
+        threshold_legend_position: 'top',
+        threshold_legend_font_size: 15,
+        threshold_legend_font_color: '#ff0000',
+        threshold_legend_font_family: 'mono',
+      });
+      const el = screen.getByTestId('gauge-threshold-legend');
+      expect(el.getAttribute('data-position')).toBe('top');
+      const style = el.getAttribute('style') ?? '';
+      expect(style).toContain('font-size: 15px');
+      expect(style).toContain('color: rgb(255, 0, 0)');
+      expect(style).toContain('monospace');
+    });
+  });
+
+  describe('시리즈 이름(타일 캡션)', () => {
+    it('기본은 게이지 아래', () => {
+      renderPanel({ gaugeType: 'simple', value: 50, min: 0, max: 100 });
+      // 단일 게이지 경로에는 타일이 없다 — 위치 규칙은 타일 경로에서 확인한다.
+      expect(screen.queryByTestId('gauge-tile-body')).toBeNull();
+    });
+  });
+
+  describe('패널 편집 모드 (히트맵과 같은 규칙)', () => {
+    const base = { gaugeType: 'simple', value: 50, min: 0, max: 100 } as const;
+
+    afterEach(() => {
+      useUIStore.getState().setDashboardEditMode(false);
+    });
+
+    it('편집모드가 아니면 토글을 표시하지 않는다 — gear/삭제 버튼과 같은 게이팅', () => {
+      useUIStore.getState().setDashboardEditMode(false);
+      render(
+        <GaugePanel panelId="p1" title="t" config={{ ...base }} onConfigChange={vi.fn()} />,
+      );
+      expect(screen.queryByTestId('gauge-edit-toggle')).toBeNull();
+    });
+
+    it('config 를 쓸 콜백이 없으면 토글을 표시하지 않는다 — 끌어도 저장할 곳이 없다', () => {
+      useUIStore.getState().setDashboardEditMode(true);
+      render(<GaugePanel panelId="p1" title="t" config={{ ...base }} />);
+      expect(screen.queryByTestId('gauge-edit-toggle')).toBeNull();
+    });
+
+    it('편집모드 + 콜백이면 토글이 뜨고, 누르면 눌린 상태가 된다', () => {
+      useUIStore.getState().setDashboardEditMode(true);
+      render(
+        <GaugePanel panelId="p1" title="t" config={{ ...base }} onConfigChange={vi.fn()} />,
+      );
+      const btn = screen.getByTestId('gauge-edit-toggle');
+      expect(btn.getAttribute('aria-pressed')).toBe('false');
+      fireEvent.click(btn);
+      expect(btn.getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('forceEdit(설정 미리보기)는 토글을 감춘다 — 끌 수 있다는 것이 맥락으로 드러난다', () => {
+      useUIStore.getState().setDashboardEditMode(true);
+      render(
+        <GaugePanel
+          panelId="p1"
+          title="t"
+          config={{ ...base }}
+          onConfigChange={vi.fn()}
+          forceEdit
+        />,
+      );
+      expect(screen.queryByTestId('gauge-edit-toggle')).toBeNull();
     });
   });
 });

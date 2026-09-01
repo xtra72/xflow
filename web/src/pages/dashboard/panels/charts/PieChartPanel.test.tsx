@@ -1,7 +1,7 @@
 // PieChartPanel 테스트.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 
 import type { ChartEntry } from './chartChannelTypes';
 
@@ -76,6 +76,7 @@ vi.mock('recharts', async () => {
 });
 
 import PieChartPanel from './PieChartPanel';
+import { useUIStore } from '@/stores/uiStore';
 
 describe('PieChartPanel', () => {
   beforeEach(() => {
@@ -158,6 +159,54 @@ describe('PieChartPanel', () => {
     mockResult.current.entries = [{ timestamp: 1, value: 1, labels: { name: 'A' } }];
     render(<PieChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
     expect(screen.getByTestId('pie-chart-legend')).toBeTruthy();
+  });
+
+  describe('패널 편집 모드 (히트맵과 같은 규칙)', () => {
+    afterEach(() => {
+      useUIStore.getState().setDashboardEditMode(false);
+    });
+
+    beforeEach(() => {
+      mockResult.current.entries = [{ timestamp: 1, value: 1, labels: { name: 'A' } }];
+    });
+
+    it('편집모드가 아니면 토글을 표시하지 않는다', () => {
+      useUIStore.getState().setDashboardEditMode(false);
+      render(
+        <PieChartPanel panelId="p1" config={{ channel_name: 'c' }} onConfigChange={vi.fn()} />,
+      );
+      expect(screen.queryByTestId('pie-chart-edit-toggle')).toBeNull();
+    });
+
+    it('config 를 쓸 콜백이 없으면 토글을 표시하지 않는다', () => {
+      useUIStore.getState().setDashboardEditMode(true);
+      render(<PieChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+      expect(screen.queryByTestId('pie-chart-edit-toggle')).toBeNull();
+    });
+
+    it('편집모드 + 콜백이면 토글이 뜨고, 누르면 눌린 상태가 된다', () => {
+      useUIStore.getState().setDashboardEditMode(true);
+      render(
+        <PieChartPanel panelId="p1" config={{ channel_name: 'c' }} onConfigChange={vi.fn()} />,
+      );
+      const btn = screen.getByTestId('pie-chart-edit-toggle');
+      expect(btn.getAttribute('aria-pressed')).toBe('false');
+      fireEvent.click(btn);
+      expect(btn.getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('forceEdit(설정 미리보기)는 토글을 감춘다', () => {
+      useUIStore.getState().setDashboardEditMode(true);
+      render(
+        <PieChartPanel
+          panelId="p1"
+          config={{ channel_name: 'c' }}
+          onConfigChange={vi.fn()}
+          forceEdit
+        />,
+      );
+      expect(screen.queryByTestId('pie-chart-edit-toggle')).toBeNull();
+    });
   });
 
   describe('조각 라벨', () => {
@@ -446,15 +495,17 @@ describe('PieChartPanel', () => {
       );
       const style = screen.getByTestId('pie-chart-legend').getAttribute('style') ?? '';
       expect(style).toContain('font-size: 18px');
-      // 하단 배치는 가운데 정렬 보정과 오프셋이 한 transform 에 합쳐진다.
-      expect(style).toContain('translate(calc(-50% + 12px), -4px)');
+      // 오프셋은 담는 상자 대비 % 다 — 픽셀이면 미리보기와 실제 패널에서 자리가 갈린다.
+      expect(style).toContain('left: calc(62%)');
+      expect(style).toContain('bottom: 4%');
     });
 
     it('오프셋이 0이어도 기준 자리 보정 transform 은 남는다', () => {
       render(<PieChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
       const style = screen.getByTestId('pie-chart-legend').getAttribute('style') ?? '';
       // 가운데 정렬은 자기 폭의 절반을 되물려야 하므로 오프셋과 무관하게 필요하다.
-      expect(style).toContain('translate(calc(-50% + 0px), 0px)');
+      expect(style).toContain('translateX(-50%)');
+      expect(style).toContain('left: calc(50%)');
     });
 
     it('파이 위에 겹쳐 뜬다 — 범례 위치를 바꿔도 파이가 따라 움직이지 않는다', () => {
