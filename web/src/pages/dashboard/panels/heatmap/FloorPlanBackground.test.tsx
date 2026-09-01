@@ -116,52 +116,52 @@ describe('FloorPlanBackground — stretch 오버라이드', () => {
   });
 });
 
-describe('FloorPlanBackground — 기준 레이어 종횡비 보고', () => {
-  it('기준 레이어가 뜨면 원본 종횡비를 알린다(스테이지를 도면에 고정하는 마지막 보루)', () => {
-    const onBaseAspect = vi.fn();
+describe('FloorPlanBackground — 기준 레이어 원본 크기 보고', () => {
+  it('기준 레이어가 뜨면 원본 크기를 알린다(스테이지를 도면에 고정하는 마지막 보루)', () => {
+    const onBaseSize = vi.fn();
     const { getByTestId } = render(
       <FloorPlanBackground
         layers={[layer(), layer({ image: 'data:image/png;base64,BBBB' })]}
         sources={['data:image/png;base64,AAAA', 'data:image/png;base64,BBBB']}
-        onBaseAspect={onBaseAspect}
+        onBaseSize={onBaseSize}
       />,
     );
     const img = getByTestId('floor-plan-background') as HTMLImageElement;
     Object.defineProperty(img, 'naturalWidth', { value: 800, configurable: true });
     Object.defineProperty(img, 'naturalHeight', { value: 400, configurable: true });
     fireEvent.load(img);
-    expect(onBaseAspect).toHaveBeenCalledWith(2);
+    expect(onBaseSize).toHaveBeenCalledWith(800, 400);
   });
 
-  it('겹판(비기준) 레이어는 종횡비를 정하지 않는다', () => {
-    const onBaseAspect = vi.fn();
+  it('겹판(비기준) 레이어는 크기를 알리지 않는다', () => {
+    const onBaseSize = vi.fn();
     const { getByTestId } = render(
       <FloorPlanBackground
         layers={[layer(), layer({ image: 'data:image/png;base64,BBBB' })]}
         sources={['data:image/png;base64,AAAA', 'data:image/png;base64,BBBB']}
-        onBaseAspect={onBaseAspect}
+        onBaseSize={onBaseSize}
       />,
     );
     const img = getByTestId('floor-plan-layer-1') as HTMLImageElement;
     Object.defineProperty(img, 'naturalWidth', { value: 100, configurable: true });
     Object.defineProperty(img, 'naturalHeight', { value: 100, configurable: true });
     fireEvent.load(img);
-    expect(onBaseAspect).not.toHaveBeenCalled();
+    expect(onBaseSize).not.toHaveBeenCalled();
   });
 
   it('원본 크기를 못 읽으면(0) 알리지 않는다(0 나눗셈·엉뚱한 비율 방지)', () => {
-    const onBaseAspect = vi.fn();
+    const onBaseSize = vi.fn();
     const { getByTestId } = render(
       <FloorPlanBackground
         layers={[layer()]}
         sources={['data:image/png;base64,AAAA']}
-        onBaseAspect={onBaseAspect}
+        onBaseSize={onBaseSize}
       />,
     );
     fireEvent.load(getByTestId('floor-plan-background'));
-    expect(onBaseAspect).not.toHaveBeenCalled();
+    expect(onBaseSize).not.toHaveBeenCalled();
   });
-  it('이미 캐시돼 load 이벤트가 오지 않는 이미지도 종횡비를 알린다', () => {
+  it('이미 캐시돼 load 이벤트가 오지 않는 이미지도 원본 크기를 알린다', () => {
     // React 가 onLoad 를 붙이기 전에 로드가 끝난 이미지는 load 이벤트를 다시 내지 않는다.
     // 같은 도면을 쓰는 패널이 여럿이거나 대시보드를 다시 여는 흔한 경로가 전부 이 경우다.
     const proto = HTMLImageElement.prototype as unknown as Record<string, unknown>;
@@ -169,15 +169,15 @@ describe('FloorPlanBackground — 기준 레이어 종횡비 보고', () => {
     Object.defineProperty(proto, 'naturalWidth', { value: 1200, configurable: true });
     Object.defineProperty(proto, 'naturalHeight', { value: 400, configurable: true });
     try {
-      const onBaseAspect = vi.fn();
+      const onBaseSize = vi.fn();
       render(
         <FloorPlanBackground
           layers={[layer()]}
           sources={['data:image/png;base64,AAAA']}
-          onBaseAspect={onBaseAspect}
+          onBaseSize={onBaseSize}
         />,
       );
-      expect(onBaseAspect).toHaveBeenCalledWith(3);
+      expect(onBaseSize).toHaveBeenCalledWith(1200, 400);
     } finally {
       // 프로토타입 오염을 되돌린다(다른 테스트는 크기 0 을 기대한다).
       for (const k of ['complete', 'naturalWidth', 'naturalHeight']) delete proto[k];

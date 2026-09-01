@@ -169,8 +169,12 @@ export default function HeatmapPanel({
   // 실제로 그려진 <img> 가 알려 준 종횡비(마지막 보루). config 저장값도 별도 실측도 실패할 수
   // 있는데(자산 URL·인증·캐시), 그때 스테이지가 패널 전체로 퇴화하면 도면만 안에서 다시
   // 레터박스되어 마커는 패널을, 도면은 자기 비율을 따르게 된다 — 보고된 어긋남의 정체다.
-  const [renderedAspect, setRenderedAspect] = useState<number | undefined>(undefined);
-  const baseAspect = useFloorPlanAspect(baseLayer, floorPlanSources[0]) ?? renderedAspect;
+  const [renderedSize, setRenderedSize] = useState<{ w: number; h: number } | undefined>(
+    undefined,
+  );
+  const baseAspect =
+    useFloorPlanAspect(baseLayer, floorPlanSources[0]) ??
+    (renderedSize ? renderedSize.w / renderedSize.h : undefined);
   // stage_fit: 여백(contain, 기본) / 잘림(cover) / 왜곡(stretch) 중 무엇을 감수할지의 선택.
   // fit 으로 기본 박스를 구한 뒤 사용자가 직접 옮기고 키운 변형을 얹는다. 마커는 스테이지
   // 정규화 좌표라 변형을 따로 반영할 필요 없이 도면 위 같은 지점에 그대로 붙어 따라온다.
@@ -326,6 +330,31 @@ export default function HeatmapPanel({
     // 승격 후에는 cfg.sensor_space 가 'stage' 가 되어 이 효과가 다시 쓰지 않는다.
   }, [forcePlacement, canEdit, cfg.sensor_space, rawPositions, sensorPositions, onConfigChange]);
 
+  // 읽어 낸 도면 원본 크기를 config 에 **한 번 적어 둔다**.
+  //
+  // 런타임 실측은 매번 이미지 로드에 기댄다 — 자산 조회, 캐시, 인증, 디코드 실패 중 어느 하나만
+  // 어긋나도 종횡비가 미상이 되고, 그러면 스테이지가 패널 전체로 퇴화한 채 남아 마커가 도면이
+  // 아니라 패널을 따라간다. 한 번이라도 실제 크기를 읽었으면 그것을 남겨, 다음부터는 **첫
+  // 페인트부터** 스테이지가 도면에 맞도록 한다(useFloorPlanAspect 의 저장값 경로).
+  //
+  // 승격을 쓰는 조건은 좌표 공간 승격과 같다 — 설정 미리보기는 쓰지 않는다(같은 config 를 두
+  // 곳에서 쓰면 나중에 연 쪽이 이긴다). 한 번만 쓰도록 래치를 둔다.
+  const sizePersistedRef = useRef(false);
+  useEffect(() => {
+    if (forcePlacement || !canEdit || sizePersistedRef.current) return;
+    if (!renderedSize) return;
+    const base = cfg.floor_plans[0];
+    if (!base || base.natural_width !== undefined) return;
+    sizePersistedRef.current = true;
+    onConfigChange?.({
+      floor_plans: cfg.floor_plans.map((layer, i) =>
+        i === 0
+          ? { ...layer, natural_width: renderedSize.w, natural_height: renderedSize.h }
+          : layer,
+      ),
+    });
+  }, [forcePlacement, canEdit, renderedSize, cfg.floor_plans, onConfigChange]);
+
   // 좌표 갱신(드래그 미리보기 + 드롭). 부분 config 병합으로 sensor_positions 만 쓴다(additive).
   const handlePositionChange = (key: string, pos: NormalizedPos) => {
     writePositions({ ...sensorPositions, [key]: pos });
@@ -437,7 +466,9 @@ export default function HeatmapPanel({
             layers={cfg.floor_plans}
             sources={floorPlanSources}
             stretch={cfg.stage_fit === 'stretch'}
-            onBaseAspect={setRenderedAspect}
+            onBaseSize={(w, h) =>
+              setRenderedSize((prev) => (prev?.w === w && prev.h === h ? prev : { w, h }))
+            }
           />
           <div className="absolute inset-0 z-10 flex" style={heatmapLayerStyle}>
             {/* 온도장은 배치 센서점이 있을 때만 렌더(편집 중 빈 좌표 공간 위 배치도 허용, AC-E1). */}

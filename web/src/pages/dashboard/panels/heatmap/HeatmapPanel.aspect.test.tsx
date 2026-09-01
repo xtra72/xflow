@@ -120,12 +120,49 @@ describe('HeatmapPanel — 종횡비를 모르는 동안에는 레거시 좌표�
     expect(onConfigChange).not.toHaveBeenCalled();
 
     loadBaseImage(getByTestId('floor-plan-background') as HTMLImageElement, 800, 400);
-    expect(onConfigChange).toHaveBeenCalledTimes(1);
     // 400x400 본문 안의 400x200 스테이지 → (0.2, 0.8) 은 스테이지 기준 (0.2, 1.0) 이다.
     expect(onConfigChange).toHaveBeenCalledWith({
       sensor_positions: { [sid('s1')]: { x: 0.2, y: 1 } },
       sensor_space: 'stage',
     });
+  });
+
+  it('읽어 낸 도면 원본 크기를 config 에 한 번 남긴다(다음 세션은 첫 페인트부터 맞는다)', () => {
+    // 런타임 실측은 매번 이미지 로드에 기댄다 — 캐시·자산 조회·디코드 중 하나만 어긋나도
+    // 종횡비가 미상이 되어 스테이지가 패널 전체로 퇴화한다. 한 번 읽었으면 남겨 둔다.
+    const onConfigChange = vi.fn();
+    const { getByTestId } = render(
+      <HeatmapPanel panelId="p" config={config()} onConfigChange={onConfigChange} />,
+    );
+    loadBaseImage(getByTestId('floor-plan-background') as HTMLImageElement, 800, 400);
+    const sizeWrite = onConfigChange.mock.calls
+      .map(([c]) => c as Record<string, unknown>)
+      .find((c) => 'floor_plans' in c);
+    expect(sizeWrite).toBeDefined();
+    expect(sizeWrite!.floor_plans).toEqual([
+      expect.objectContaining({ natural_width: 800, natural_height: 400 }),
+    ]);
+  });
+
+  it('이미 저장된 원본 크기가 있으면 다시 쓰지 않는다', () => {
+    const onConfigChange = vi.fn();
+    const { getByTestId } = render(
+      <HeatmapPanel
+        panelId="p"
+        config={config({
+          floor_plan: {
+            image: 'data:image/png;base64,AAAA',
+            natural_width: 800,
+            natural_height: 400,
+          },
+        })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    loadBaseImage(getByTestId('floor-plan-background') as HTMLImageElement, 800, 400);
+    expect(
+      onConfigChange.mock.calls.map(([c]) => c as Record<string, unknown>).some((c) => 'floor_plans' in c),
+    ).toBe(false);
   });
 
   it('도면이 없으면 기다리지 않는다(스테이지 = 컨테이너가 정상이다)', () => {

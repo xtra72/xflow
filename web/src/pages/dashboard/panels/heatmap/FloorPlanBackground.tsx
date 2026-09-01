@@ -34,7 +34,7 @@ interface FloorPlanBackgroundProps {
    */
   stretch?: boolean;
   /**
-   * 기준 레이어(index 0)가 실제로 그려졌을 때 그 원본 종횡비(폭/높이)를 알린다.
+   * 기준 레이어(index 0)가 실제로 그려졌을 때 그 **원본 픽셀 크기**를 알린다.
    *
    * 스테이지는 기준 도면과 같은 종횡비여야 마커의 정규화 좌표가 도면에 고정된다. 종횡비를
    * 못 구하면 스테이지가 패널 전체로 퇴화하고, 그러면 도면만 `object-fit` 으로 안에서 다시
@@ -42,7 +42,7 @@ interface FloorPlanBackgroundProps {
    * config 에 저장된 크기도, 별도 `new Image()` 실측도 실패할 수 있으므로(자산 URL·인증·캐시)
    * **브라우저가 이미 그린 그 이미지**에서 받아오는 이 경로를 마지막 보루로 둔다.
    */
-  onBaseAspect?: (aspect: number) => void;
+  onBaseSize?: (width: number, height: number) => void;
 }
 
 /** 도면 이미지 배경. 그릴 레이어가 없으면 null(AC-E1). */
@@ -50,7 +50,7 @@ export default function FloorPlanBackground({
   layers,
   sources,
   stretch,
-  onBaseAspect,
+  onBaseSize,
 }: FloorPlanBackgroundProps) {
   // 캐시된 이미지는 React 가 onLoad 를 붙이기 전에 이미 로드가 끝나 **load 이벤트가 오지
   // 않는다**. 같은 도면을 쓰는 패널이 여럿이거나 대시보드를 다시 열면 늘 이 경로다. 그때
@@ -60,11 +60,11 @@ export default function FloorPlanBackground({
   const baseSrc = sources[0] ?? '';
   useEffect(() => {
     const img = baseImgRef.current;
-    if (!img || !onBaseAspect) return;
+    if (!img || !onBaseSize) return;
     if (img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
-      onBaseAspect(img.naturalWidth / img.naturalHeight);
+      onBaseSize(img.naturalWidth, img.naturalHeight);
     }
-  }, [baseSrc, onBaseAspect]);
+  }, [baseSrc, onBaseSize]);
 
   // 레이어가 없거나 아직 해석된 src 가 하나도 없으면 배경을 렌더하지 않는다.
   if (layers.length === 0 || sources.every((s) => !s)) return null;
@@ -81,10 +81,10 @@ export default function FloorPlanBackground({
           ref={i === 0 ? baseImgRef : undefined}
           // 기준 레이어만 스테이지 종횡비를 정한다(나머지는 그 위에 얹히는 겹판이다).
           onLoad={
-            i === 0 && onBaseAspect
+            i === 0 && onBaseSize
               ? (e) => {
                   const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
-                  if (w > 0 && h > 0) onBaseAspect(w / h);
+                  if (w > 0 && h > 0) onBaseSize(w, h);
                 }
               : undefined
           }
