@@ -20,6 +20,7 @@ import { resolveSeriesAlias, type AliasContext } from './aliasTemplate';
 /** 단일 차트 항목 (WS 로 전송되는 entry) */
 import type { SeriesRange } from './seriesRange';
 import type { GraphStyle } from './graphStyle';
+import type { ChartFontFamily } from './textStyle';
 import type { SysMetricsCounterMode } from '@/pages/dashboard/panels/sysmetrics/sysMetricsItemOptions';
 
 export interface ChartEntry {
@@ -1076,10 +1077,81 @@ export interface BarChartPanelConfig extends ChartPanelConfigBase {
   agg_func?: AggFunc;
 }
 
+/**
+ * 파이 범례 위치. 그래프 차트(`legend.position`)와 같은 어휘를 쓴다 — 같은 개념이
+ * 패널마다 다른 값을 갖지 않게 한다.
+ */
+export type PieLegendPosition = 'bottom' | 'left' | 'right';
+
+/** 조각 라벨을 조각 안쪽에 적을지 바깥에 적을지. */
+export type PieLabelPosition = 'inside' | 'outside';
+
+/** 범례 기본 글자 크기(px) — 종전 `0.75rem` 과 같다. */
+export const DEFAULT_PIE_LEGEND_FONT_SIZE = 12;
+
 export interface PiePanelConfig extends ChartPanelConfigBase {
   agg_func?: AggFunc;
-  show_legend?: boolean;
+
+  // --- 조각 라벨 ---
   show_percentage?: boolean;
+  /** 조각에 값을 함께 적는다. 미지정은 끔 — 종전에는 비율만 적었다. */
+  show_value?: boolean;
+  /**
+   * 조각 라벨 글자 크기(px). **미지정은 상속**이다(종전 동작) — 기본값을 채우면
+   * 저장된 패널의 글자 크기가 조용히 바뀐다.
+   */
+  label_font_size?: number;
+  /** 조각 라벨 글꼴(토큰). 미지정은 상속. */
+  label_font_family?: ChartFontFamily;
+  /**
+   * 조각 라벨 글자색. 미지정이면 위치에 따라 고른다 — 안쪽은 조각 색과 대비되는 색,
+   * 바깥은 테마 글자색. 지정하면 위치와 무관하게 그 색을 쓴다.
+   */
+  label_font_color?: string;
+  /**
+   * 조각 라벨 위치. 미지정은 `'inside'`.
+   *
+   * 안쪽은 패널 경계에서 잘리지 않지만 좁은 조각에는 글자가 들어가지 않고, 바깥은
+   * 좁은 조각도 적을 수 있지만 지시선 + 글자 폭만큼 영역을 더 쓴다. 어느 쪽이 나은지는
+   * 조각 구성에 달렸으므로 고르게 한다.
+   */
+  label_position?: PieLabelPosition;
+  /**
+   * 라벨을 적을 최소 비중(%). 이보다 작은 조각은 라벨과 지시선을 그리지 않는다 —
+   * 안쪽에서는 글자가 조각을 넘치고, 바깥에서는 나란한 라벨끼리 겹친다.
+   */
+  label_min_percent?: number;
+
+  // --- 파이 자체 ---
+  /**
+   * 파이 반지름(차트 영역 대비 %). 미지정이면 라벨 위치에 따라 자동으로 정한다 —
+   * 안쪽 라벨은 80%, 바깥 라벨은 지시선과 글자가 들어갈 자리를 내느라 62%.
+   */
+  pie_size?: number;
+  /**
+   * 파이 중심의 오프셋(차트 영역 대비 백분율 포인트). 기본 중심(50%, 50%)에서
+   * 얼마나 밀렸는지를 뜻하며, 백분율이라야 패널 크기가 바뀌어도 상대 위치가 유지된다.
+   */
+  pie_offset_x?: number;
+  pie_offset_y?: number;
+
+  // --- 범례 ---
+  show_legend?: boolean;
+  /** 미지정은 `'bottom'` — 종전 recharts 기본 배치와 같다(하위 호환). */
+  legend_position?: PieLegendPosition;
+  legend_show_percentage?: boolean;
+  legend_show_value?: boolean;
+  legend_font_size?: number;
+  /** 범례 글꼴(토큰). 미지정은 상속. */
+  legend_font_family?: ChartFontFamily;
+  /** 범례 글자색. 미지정은 테마 글자색. */
+  legend_font_color?: string;
+  /**
+   * 범례를 끌어 옮긴 오프셋(px). 위치(`legend_position`)가 정하는 자리를 기준으로
+   * 한 **미세 조정**이며, 위치를 바꾸면 그 자리에서 다시 같은 만큼 밀린다.
+   */
+  legend_offset_x?: number;
+  legend_offset_y?: number;
 }
 
 export type TableColumnFormat = 'datetime' | 'number' | 'string';

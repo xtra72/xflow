@@ -119,10 +119,46 @@ export function Bar({ dataKey, stackId }: { dataKey?: string | number; stackId?:
   );
 }
 
+/**
+ * 조각 라벨 렌더러에 넘길 기하 props 를 만든다.
+ *
+ * 스텁은 실제 파이를 그리지 않으므로 recharts 가 계산해 주는 값이 없다. 그래도
+ * **라벨을 호출은 해야** 한다 — 호출하지 않으면 "작은 조각은 라벨을 접는다" 같은
+ * 규칙이 테스트에 전혀 걸리지 않는다(실제로 그 공백에서 결함이 났다).
+ *
+ * 비중(`percent`)은 실제와 같은 규칙(값 / 합계)으로, 나머지는 고정 기하로 채운다.
+ */
+function pieLabelProps(
+  rows: Array<{ name?: string; value?: number }>,
+  index: number,
+): Record<string, unknown> {
+  const total = rows.reduce((a, r) => a + (r.value ?? 0), 0);
+  const row = rows[index];
+  return {
+    // 바깥 배치에서 recharts 가 계산해 주는 자리(안쪽 계산값과 구분되도록 다른 값).
+    x: 180,
+    y: 100,
+    textAnchor: 'start',
+    cx: 100,
+    cy: 100,
+    innerRadius: 0,
+    outerRadius: 50,
+    midAngle: 0,
+    percent: total > 0 ? (row?.value ?? 0) / total : 0,
+    value: row?.value ?? 0,
+    name: row?.name,
+    index,
+  };
+}
+
 export function Pie({
   data,
   dataKey,
   children,
+  label,
+  cx,
+  cy,
+  outerRadius,
 }: {
   data?: Array<{ name?: string; value?: number }>;
   dataKey?: string | number;
@@ -130,10 +166,21 @@ export function Pie({
   children?: React.ReactNode;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   label?: any;
+  cx?: string | number;
+  cy?: string | number;
+  outerRadius?: string | number;
 }) {
   const rows = data ?? [];
   return (
-    <div data-testid="rc-pie" data-pie-key={String(dataKey)}>
+    <div
+      data-testid="rc-pie"
+      data-pie-key={String(dataKey)}
+      // 파이 기하(중심·반지름)는 그려진 결과가 아니라 recharts 에 넘긴 값으로만
+      // 관측할 수 있다(스텁은 실제 파이를 그리지 않는다).
+      data-cx={cx === undefined ? undefined : String(cx)}
+      data-cy={cy === undefined ? undefined : String(cy)}
+      data-outer-radius={outerRadius === undefined ? undefined : String(outerRadius)}
+    >
       {rows.map((r, i) => (
         <div
           key={i}
@@ -143,6 +190,13 @@ export function Pie({
           data-value={r.value}
         />
       ))}
+      {typeof label === 'function' && (
+        <svg data-testid="rc-pie-labels">
+          {rows.map((_, i) => (
+            <React.Fragment key={i}>{label(pieLabelProps(rows, i))}</React.Fragment>
+          ))}
+        </svg>
+      )}
       {children}
     </div>
   );

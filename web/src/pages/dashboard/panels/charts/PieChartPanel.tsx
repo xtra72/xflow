@@ -7,20 +7,26 @@
 
 import { useMemo } from 'react';
 import { PieChart as PieChartIcon } from 'lucide-react';
-import {
-  Cell,
-  Legend,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-} from 'recharts';
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 
 import {
+  DEFAULT_PIE_LEGEND_FONT_SIZE,
   pickSeriesColor,
   type ChartEntry,
+  type PieLegendPosition,
   type PiePanelConfig,
 } from './chartChannelTypes';
+import { PieLegend, type PieLegendItem } from './PieLegend';
+import {
+  DEFAULT_PIE_LABEL_MIN_PERCENT,
+  insideLabelPoint,
+  isPieLabelVisible,
+  pieSliceLabelText,
+  piePercents,
+  sliceLabelTextColor,
+} from './pieLabel';
+import { resolveFontColor, resolveFontFamily, resolveFontSize } from './textStyle';
+import { clampPercentOffset, readPanelSize } from './panelGeometry';
 import { ConnectionStatusIcon } from './ConnectionStatusIcon';
 import { aggregateByLabel } from './chartChannelUtils';
 import { reduceAllSeries } from './seriesReduce';
@@ -57,6 +63,22 @@ const PIE_COLORS = [
   '#14b8a6',
 ];
 
+/** 고를 수 있는 범례 위치 — 인식 불가 값을 접기 위한 목록. */
+const LEGEND_POSITIONS: Record<PieLegendPosition, true> = {
+  bottom: true,
+  left: true,
+  right: true,
+};
+
+function isPieLegendPosition(v: unknown): v is PieLegendPosition {
+  return typeof v === 'string' && v in LEGEND_POSITIONS;
+}
+
+/** 드래그 오프셋. 수가 아니면 0 — 구 config 에는 이 키가 없다. */
+function readOffset(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
+
 /** 시리즈 축이 없는 경로(채널 모드)에서 쓰는 빈 기본값 — 매 렌더 새 객체를 만들지 않는다. */
 const EMPTY_SERIES_ENTRIES: ReadonlyMap<string, ChartEntry[]> = new Map();
 const EMPTY_SERIES_STYLES: ReadonlyMap<string, StoreSeriesStyle> = new Map();
@@ -69,7 +91,34 @@ function parseConfig(config: Record<string, unknown>): PiePanelConfig {
     label_field: (config.label_field as string) ?? 'labels.name',
     agg_func: (config.agg_func as PiePanelConfig['agg_func']) ?? 'sum',
     show_legend: (config.show_legend as boolean | undefined) ?? true,
+    // 인식 불가 값은 기본 배치로 접는다 — 구 config 나 손으로 고친 값이 범례를
+    // 통째로 날려버리지 않게 한다.
+    legend_position: isPieLegendPosition(config.legend_position)
+      ? config.legend_position
+      : 'bottom',
+    legend_show_percentage: (config.legend_show_percentage as boolean | undefined) ?? false,
+    legend_show_value: (config.legend_show_value as boolean | undefined) ?? false,
+    legend_font_size: resolveFontSize(config.legend_font_size) ?? DEFAULT_PIE_LEGEND_FONT_SIZE,
+    legend_font_family: config.legend_font_family as PiePanelConfig['legend_font_family'],
+    legend_font_color: resolveFontColor(config.legend_font_color),
+    legend_offset_x: readOffset(config.legend_offset_x),
+    legend_offset_y: readOffset(config.legend_offset_y),
+    pie_size: readPanelSize(config.pie_size),
+    pie_offset_x: clampPercentOffset(readOffset(config.pie_offset_x)),
+    pie_offset_y: clampPercentOffset(readOffset(config.pie_offset_y)),
     show_percentage: (config.show_percentage as boolean | undefined) ?? true,
+    show_value: (config.show_value as boolean | undefined) ?? false,
+    // 미지정은 상속 — 기본값을 채우면 저장된 패널의 글자 크기가 조용히 바뀐다.
+    label_font_size: resolveFontSize(config.label_font_size),
+    label_font_family: config.label_font_family as PiePanelConfig['label_font_family'],
+    label_font_color: resolveFontColor(config.label_font_color),
+    label_position: config.label_position === 'outside' ? 'outside' : 'inside',
+    label_min_percent:
+      typeof config.label_min_percent === 'number' &&
+      Number.isFinite(config.label_min_percent) &&
+      config.label_min_percent >= 0
+        ? config.label_min_percent
+        : DEFAULT_PIE_LABEL_MIN_PERCENT,
     max_points: (config.max_points as number) ?? DEFAULT_MAX_POINTS,
     // SPEC-CHART-002 — 유무가 곧 렌더 경로 스위치다. 기본값을 채우지 않는다.
     series_reduce: config.series_reduce as PiePanelConfig['series_reduce'],
@@ -187,6 +236,141 @@ export default function PieChartPanel({ panelId: _panelId, title, config }: PieC
 
   const chartData = derived.slices;
 
+  // 비율은 조각 라벨과 범례가 **같은 값**을 써야 한다 — 각자 계산하면 recharts 의
+  // 내부 반올림과 어긋나 조각에는 34%, 범례에는 33% 가 적힌다.
+  const percents = useMemo(() => piePercents(chartData.map((s) => s.value)), [chartData]);
+
+  const legendItems = useMemo<PieLegendItem[]>(
+    () =>
+      chartData.map((slice, i) => ({
+        name: slice.name,
+        value: slice.value,
+        percent: percents[i] ?? 0,
+        color: slice.fill ?? PIE_COLORS[i % PIE_COLORS.length]!,
+      })),
+    [chartData, percents],
+  );
+
+  const minPercent = cfg.label_min_percent ?? DEFAULT_PIE_LABEL_MIN_PERCENT;
+  const labelOutside = cfg.label_position === 'outside';
+  // 지정 크기가 이긴다. 미지정이면 라벨 위치가 정한다 — 바깥 라벨은 지시선 + 글자
+  // 폭만큼 파이 밖을 쓰므로, 그만큼 줄이지 않으면 패널 경계에서 잘린다
+  // (`96% 418.65GB` 가 `6% GB` 로 보였다).
+  const pieSize =
+    cfg.pie_size ?? (labelOutside && (cfg.show_percentage || cfg.show_value) ? 62 : 80);
+
+  /**
+   * 조각 라벨. 위치에 따라 자리와 기본 글자색이 갈린다.
+   *
+   * - **안쪽**: 조각이 곧 경계라 패널 밖으로 잘리지 않지만, 좁은 조각에는 글자가
+   *   들어가지 않는다. 기본 글자색은 조각 색과 대비되는 색이다.
+   * - **바깥**: 좁은 조각도 적을 수 있지만 지시선 + 글자 폭만큼 영역을 더 써서,
+   *   파이를 그만큼 줄이지 않으면 패널 경계에서 잘린다. 기본 글자색은 테마 글자색이다.
+   *
+   * 어느 쪽이든 비율·값은 **한 줄**로 잇는다. 두 줄로 쌓으면 라벨의 세로 높이가 두
+   * 배가 되어 나란한 조각의 라벨과 훨씬 쉽게 겹친다.
+   *
+   * 문자열이 아니라 `<text>` 를 직접 돌려주는 것은 자리·글꼴·크기·색을 모두 지정해야
+   * 하기 때문이다. 미지정 항목은 속성을 붙이지 않아 상속된다.
+   */
+  const renderSliceLabel = useMemo(() => {
+    if (!cfg.show_percentage && !cfg.show_value) return undefined;
+    return function SliceLabel(props: {
+      x?: number;
+      y?: number;
+      cx?: number;
+      cy?: number;
+      innerRadius?: number;
+      outerRadius?: number;
+      midAngle?: number;
+      percent?: number;
+      value?: number;
+      index?: number;
+      textAnchor?: 'start' | 'middle' | 'end' | 'inherit';
+    }): React.ReactElement | null {
+      // 작은 조각은 적지 않는다 — 안쪽에서는 글자가 조각을 넘치고, 바깥에서는 나란한
+      // 라벨끼리 겹친다. 값은 범례로 볼 수 있다.
+      if (!isPieLabelVisible(props.percent ?? 0, minPercent)) return null;
+      const text = pieSliceLabelText(props.percent ?? 0, props.value ?? 0, {
+        showPercentage: cfg.show_percentage === true,
+        showValue: cfg.show_value === true,
+        decimals,
+        unit,
+      });
+      if (text === '') return null;
+
+      // 바깥은 recharts 가 계산해 준 자리를 그대로 쓴다 — 지시선 끝과 글자가 어긋나면
+      // 선이 엉뚱한 곳을 가리킨다.
+      const at = labelOutside
+        ? { x: props.x ?? 0, y: props.y ?? 0 }
+        : insideLabelPoint({
+            cx: props.cx ?? 0,
+            cy: props.cy ?? 0,
+            innerRadius: props.innerRadius ?? 0,
+            outerRadius: props.outerRadius ?? 0,
+            midAngle: props.midAngle ?? 0,
+          });
+      // 지정색이 이긴다. 미지정이면 배경이 무엇이냐로 갈린다 — 안쪽은 조각 색 위,
+      // 바깥은 패널 배경 위다. 조각 색은 범례와 같은 배열에서 읽는다(색 근거를 하나로).
+      const fill =
+        cfg.label_font_color ??
+        (labelOutside ? 'currentColor' : sliceLabelTextColor(legendItems[props.index ?? -1]?.color));
+      return (
+        <text
+          x={at.x}
+          y={at.y}
+          textAnchor={labelOutside ? (props.textAnchor ?? 'middle') : 'middle'}
+          dominantBaseline="central"
+          fontFamily={resolveFontFamily(cfg.label_font_family)}
+          fontSize={cfg.label_font_size}
+          fill={fill}
+          data-pie-slice-label=""
+        >
+          {text}
+        </text>
+      );
+    };
+  }, [
+    cfg.show_percentage,
+    cfg.show_value,
+    cfg.label_font_size,
+    cfg.label_font_family,
+    cfg.label_font_color,
+    labelOutside,
+    minPercent,
+    decimals,
+    unit,
+    legendItems,
+  ]);
+
+  /**
+   * 라벨 지시선(바깥 배치 전용). 라벨을 접은 조각은 선도 함께 접는다 — 가리키는
+   * 글자 없이 선만 남으면 조각에서 허공으로 뻗은 선이 된다.
+   *
+   * 접을 때 `null` 대신 빈 `<g>` 를 돌려주는 것은 이 prop 의 타입이 요소를 요구하기
+   * 때문이다. 안쪽 배치에서는 `false` 로 두어 선 자체를 만들지 않는다.
+   */
+  const renderLabelLine = useMemo(() => {
+    if (!labelOutside || renderSliceLabel === undefined) return false;
+    return function SliceLabelLine(props: {
+      points?: Array<{ x: number; y: number }>;
+      percent?: number;
+      stroke?: string;
+    }): React.ReactElement<SVGElement> {
+      if (!isPieLabelVisible(props.percent ?? 0, minPercent) || !props.points?.length) {
+        return <g /> as React.ReactElement<SVGElement>;
+      }
+      return (
+        <polyline
+          className="recharts-pie-label-line"
+          points={props.points.map((p) => `${p.x},${p.y}`).join(' ')}
+          stroke={props.stroke}
+          fill="none"
+        />
+      ) as React.ReactElement<SVGElement>;
+    };
+  }, [labelOutside, renderSliceLabel, minPercent]);
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-4 ring-1 ring-(--color-border-default)">
       <div className="absolute right-3 top-3 z-10">
@@ -202,22 +386,30 @@ export default function PieChartPanel({ panelId: _panelId, title, config }: PieC
         </div>
       )}
 
-      <div className="min-h-0 flex-1" data-testid="pie-chart-container">
+      {/*
+        파이는 **패널 본문 전체**를 쓰고 범례가 그 위에 겹쳐 뜬다. 종전처럼 flex 로
+        자리를 나눠 가지면 범례 위치(하단/좌/우)에 따라 남는 폭이 달라져 파이가 따라
+        움직였다 — 파이 자리를 옮기려고 범례를 건드리게 되는 결합이다. 겹치는 자리에서는
+        범례가 위에 보인다.
+      */}
+      <div className="relative min-h-0 min-w-0 flex-1">
+      <div
+        className="absolute inset-0"
+        data-testid="pie-chart-container"
+        data-pie-chart-area=""
+      >
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
               data={chartData}
               dataKey="value"
               nameKey="name"
-              cx="50%"
-              cy="50%"
-              outerRadius="80%"
-              label={
-                cfg.show_percentage
-                  ? ({ percent }: { percent?: number }) =>
-                      `${((percent ?? 0) * 100).toFixed(0)}%`
-                  : undefined
-              }
+              // 중심은 기본 한가운데에서 오프셋만큼 민다(백분율이라 패널 크기와 무관).
+              cx={`${50 + (cfg.pie_offset_x ?? 0)}%`}
+              cy={`${50 + (cfg.pie_offset_y ?? 0)}%`}
+              outerRadius={`${pieSize}%`}
+              label={renderSliceLabel}
+              labelLine={renderLabelLine}
               isAnimationActive={false}
             >
               {/*
@@ -242,9 +434,25 @@ export default function PieChartPanel({ panelId: _panelId, title, config }: PieC
                   : (v as React.ReactNode)
               }
             />
-            {cfg.show_legend && <Legend wrapperStyle={{ fontSize: '0.75rem' }} />}
           </PieChart>
         </ResponsiveContainer>
+      </div>
+
+      {cfg.show_legend && (
+        <PieLegend
+          items={legendItems}
+          position={cfg.legend_position ?? 'bottom'}
+          showPercentage={cfg.legend_show_percentage === true}
+          showValue={cfg.legend_show_value === true}
+          fontSize={cfg.legend_font_size ?? DEFAULT_PIE_LEGEND_FONT_SIZE}
+          fontFamily={cfg.legend_font_family}
+          fontColor={cfg.legend_font_color}
+          decimals={decimals}
+          unit={unit}
+          offsetX={cfg.legend_offset_x ?? 0}
+          offsetY={cfg.legend_offset_y ?? 0}
+        />
+      )}
       </div>
 
       {/* 음수 대표값으로 생략된 조각의 사유 안내(§4.4 — 조각이 사라진 이유가 화면에 남는다). */}

@@ -33,6 +33,7 @@ import type {
   StoreSeriesRef,
   StoreSourceConfig,
   SeriesReduceFunc,
+  PieLegendPosition,
 } from './panels/charts/chartChannelTypes';
 import { SeriesRangeField } from './SeriesRangeField';
 import {
@@ -49,6 +50,7 @@ import {
   buildDefaultStoreSource,
   defaultSysmetricsSource,
   defaultTsdbSource,
+  DEFAULT_PIE_LEGEND_FONT_SIZE,
   pickSeriesColor,
   REDUCE_PANEL_TYPES,
 } from './panels/charts/chartChannelTypes';
@@ -62,6 +64,9 @@ import {
   DEFAULT_DECIMAL_PLACES,
   MAX_DECIMAL_PLACES,
 } from './panels/charts/decimalPlaces';
+import { DEFAULT_PIE_LABEL_MIN_PERCENT } from './panels/charts/pieLabel';
+import { FONT_FAMILY_OPTIONS, type ChartFontFamily } from './panels/charts/textStyle';
+import { PANEL_SIZE_MAX, PANEL_SIZE_MIN } from './panels/charts/panelGeometry';
 import {
   readValueScale,
   VALUE_SCALE_MAX,
@@ -3089,6 +3094,95 @@ export function BarChartSection({
 
 // --- 5. pie-chart 패널 설정 ---
 
+/**
+ * 글자 스타일 한 줄 — 글꼴 · 크기 · 색.
+ *
+ * 셋을 한 줄에 묶는 이유는 축 폰트 행(`AxisFontRow`)과 같다. 따로 놓으면 같은 대상의
+ * 설정이 세 칸 떨어져 어느 것이 무엇에 걸리는지 화면에서 읽히지 않는다.
+ *
+ * 세 값 모두 **비우면 상속**이다. 색만 비우는 수단이 따로 필요한 이유는 색 입력에
+ * "없음" 상태가 없기 때문이다 — 지정한 뒤에만 나타나는 초기화 버튼이 그 출구다.
+ */
+function TextStyleFields({
+  label,
+  family,
+  size,
+  color,
+  sizePlaceholder,
+  testIdPrefix,
+  onChange,
+}: {
+  label: string;
+  family: ChartFontFamily | undefined;
+  size: number | undefined;
+  color: string | undefined;
+  sizePlaceholder: string;
+  testIdPrefix: string;
+  onChange: (patch: {
+    family?: ChartFontFamily | undefined;
+    size?: number | undefined;
+    color?: string | undefined;
+  }) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  return (
+    <LabeledField label={label}>
+      <div className="flex items-center gap-1.5">
+        <select
+          value={family ?? ''}
+          data-testid={`${testIdPrefix}-family`}
+          aria-label={`${label} ${t('dashboard.chart.fontFamily')}`}
+          onChange={(e) =>
+            onChange({ family: (e.target.value || undefined) as ChartFontFamily | undefined })
+          }
+          className={`${inputClass()} flex-1`}
+        >
+          <option value="">{t('dashboard.chart.inherit')}</option>
+          {FONT_FAMILY_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {t(o.labelKey)}
+            </option>
+          ))}
+        </select>
+        <input
+          type="number"
+          min={6}
+          max={40}
+          value={size ?? ''}
+          placeholder={sizePlaceholder}
+          data-testid={`${testIdPrefix}-size`}
+          aria-label={`${label} ${t('dashboard.chart.fontSize')}`}
+          onChange={(e) => {
+            const v = e.target.value;
+            onChange({ size: v === '' ? undefined : parseInt(v, 10) || undefined });
+          }}
+          className="w-16 shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-center text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+        />
+        <input
+          type="color"
+          value={color ?? '#9ca3af'}
+          data-testid={`${testIdPrefix}-color`}
+          aria-label={`${label} ${t('dashboard.chart.fontColor')}`}
+          onChange={(e) => onChange({ color: e.target.value })}
+          className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+        />
+        {color !== undefined && (
+          <button
+            type="button"
+            data-testid={`${testIdPrefix}-color-reset`}
+            aria-label={`${label} ${t('dashboard.chart.fontColorReset')}`}
+            title={t('dashboard.chart.fontColorReset')}
+            onClick={() => onChange({ color: undefined })}
+            className="h-7 w-7 shrink-0 rounded border border-(--color-border-default) text-xs text-(--color-text-muted) hover:bg-(--color-bg-elevated)"
+          >
+            x
+          </button>
+        )}
+      </div>
+    </LabeledField>
+  );
+}
+
 export function PieChartSection({
   panel,
   onConfigChange,
@@ -3098,24 +3192,40 @@ export function PieChartSection({
 }): React.ReactElement {
   const { t } = useTranslation();
   const config = panel.config ?? {};
-  const displayField = (config.display_field as string | undefined) ?? 'value';
-  const labelField = (config.label_field as string | undefined) ?? 'labels.name';
-  const aggFunc = (config.agg_func as AggFunc | undefined) ?? 'sum';
   const showLegend = (config.show_legend as boolean | undefined) ?? true;
+  const legendPosition = (config.legend_position as PieLegendPosition | undefined) ?? 'bottom';
   const showPercentage = (config.show_percentage as boolean | undefined) ?? true;
-  const maxPoints = (config.max_points as number | undefined) ?? 20;
+  const showValue = (config.show_value as boolean | undefined) ?? false;
+  const labelPosition = config.label_position === 'outside' ? 'outside' : 'inside';
+  // 슬라이더는 "미지정" 을 표현할 수 없으므로 자동값을 그대로 보여 준다 — 빈 칸이
+  // 0으로 읽히거나, 자동일 때 슬라이더가 왼쪽 끝에 붙어 있는 것을 막는다.
+  const autoPieSize = labelPosition === 'outside' && (showPercentage || showValue) ? 62 : 80;
+  const pieSize = (config.pie_size as number | undefined) ?? autoPieSize;
+  const legendShowPercentage = (config.legend_show_percentage as boolean | undefined) ?? false;
+  const legendShowValue = (config.legend_show_value as boolean | undefined) ?? false;
   const unit = (config.unit as string | undefined) ?? '';
+
+  /** 체크박스 한 줄 — 이 섹션 안에서만 쓰는 모양이라 지역 헬퍼로 둔다. */
+  const checkbox = (
+    key: string,
+    labelKey: string,
+    checked: boolean,
+    testId: string,
+  ): React.ReactElement => (
+    <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 transition-colors hover:bg-(--color-bg-elevated)">
+      <input
+        type="checkbox"
+        checked={checked}
+        data-testid={testId}
+        onChange={(e) => onConfigChange({ [key]: e.target.checked })}
+        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+      />
+      <span className="text-sm text-(--color-text-primary)">{t(labelKey)}</span>
+    </label>
+  );
 
   return (
     <div className="space-y-3">
-      <LabeledField label={t('dashboard.chart.displayField')}>
-        <input
-          type="text"
-          value={displayField}
-          onChange={(e) => onConfigChange({ display_field: e.target.value })}
-          className={inputClass()}
-        />
-      </LabeledField>
       <UnitField
         value={unit}
         onChange={(v) => onConfigChange({ unit: v || undefined })}
@@ -3126,60 +3236,167 @@ export function PieChartSection({
         onConfigChange={onConfigChange}
         testId="pie-chart-decimal-places"
       />
-      <LabeledField
-        label={t('dashboard.chart.labelField')}
-        hint={t('dashboard.chart.labelFieldHintPie')}
-      >
-        <input
-          type="text"
-          value={labelField}
-          onChange={(e) => onConfigChange({ label_field: e.target.value })}
-          className={inputClass()}
-        />
-      </LabeledField>
-      <LabeledField label={t('dashboard.chart.aggFunc')}>
-        <select
-          value={aggFunc}
-          onChange={(e) => onConfigChange({ agg_func: e.target.value as AggFunc })}
-          className={inputClass()}
-        >
-          <option value="count">count</option>
-          <option value="sum">sum</option>
-          <option value="avg">avg</option>
-        </select>
-      </LabeledField>
-      <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 transition-colors hover:bg-(--color-bg-elevated)">
-        <input
-          type="checkbox"
-          checked={showLegend}
-          onChange={(e) => onConfigChange({ show_legend: e.target.checked })}
-          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-        />
-        <span className="text-sm text-(--color-text-primary)">{t('dashboard.chart.showLegend')}</span>
-      </label>
-      <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 transition-colors hover:bg-(--color-bg-elevated)">
-        <input
-          type="checkbox"
-          checked={showPercentage}
-          onChange={(e) => onConfigChange({ show_percentage: e.target.checked })}
-          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-        />
-        <span className="text-sm text-(--color-text-primary)">
-          {t('dashboard.chart.showPercentage')}
-        </span>
-      </label>
-      <LabeledField label={t('dashboard.chart.maxPoints')}>
-        <input
-          type="number"
-          min={1}
-          value={maxPoints}
-          onChange={(e) => {
-            const n = parseInt(e.target.value, 10);
-            if (!Number.isNaN(n)) onConfigChange({ max_points: n });
-          }}
-          className={inputClass()}
-        />
-      </LabeledField>
+
+      {/* ═══ 파이 ═══ */}
+      <SettingsSection title={t('dashboard.chart.pieSection')}>
+        <LabeledField label={t('dashboard.chart.pieSize')} hint={t('dashboard.chart.pieSizeHint')}>
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={PANEL_SIZE_MIN}
+              max={PANEL_SIZE_MAX}
+              step={1}
+              value={pieSize}
+              data-testid="pie-chart-size"
+              onChange={(e) => onConfigChange({ pie_size: Number(e.target.value) })}
+              className="flex-1"
+            />
+            <span className="w-12 shrink-0 text-right text-xs tabular-nums text-(--color-text-muted)">
+              {pieSize}%
+            </span>
+            {/* 자동으로 되돌리는 유일한 출구다 — 슬라이더에는 "미지정" 자리가 없다. */}
+            {config.pie_size !== undefined && (
+              <button
+                type="button"
+                data-testid="pie-chart-size-reset"
+                onClick={() => onConfigChange({ pie_size: undefined })}
+                className="shrink-0 rounded border border-(--color-border-default) px-2 py-1 text-xs text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
+              >
+                {t('dashboard.chart.auto')}
+              </button>
+            )}
+          </div>
+        </LabeledField>
+        <p className="text-[10px] leading-snug text-(--color-text-muted)">
+          {t('dashboard.chart.pieDragHint')}
+        </p>
+        {(config.pie_offset_x || config.pie_offset_y) ? (
+          <button
+            type="button"
+            data-testid="pie-chart-reset-offset"
+            onClick={() => onConfigChange({ pie_offset_x: undefined, pie_offset_y: undefined })}
+            className="rounded border border-(--color-border-default) px-2 py-1 text-xs text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
+          >
+            {t('dashboard.chart.pieResetOffset')}
+          </button>
+        ) : null}
+      </SettingsSection>
+
+      {/* ═══ 조각 라벨 ═══ */}
+      <SettingsSection title={t('dashboard.chart.sliceLabelSection')}>
+        {checkbox('show_percentage', 'dashboard.chart.showPercentage', showPercentage, 'pie-chart-show-percentage')}
+        {checkbox('show_value', 'dashboard.chart.showValue', showValue, 'pie-chart-show-value')}
+        {/* 크기는 적을 것이 있을 때만 뜻이 있다 — 둘 다 끈 상태에서 크기를 고르게
+            두면 설정이 적용되지 않는 이유를 화면에서 알 수 없다. */}
+        {(showPercentage || showValue) && (
+          <>
+            <LabeledField
+              label={t('dashboard.chart.labelPosition')}
+              hint={t('dashboard.chart.labelPositionHint')}
+            >
+              <select
+                value={labelPosition}
+                data-testid="pie-chart-label-position"
+                onChange={(e) => onConfigChange({ label_position: e.target.value })}
+                className={inputClass()}
+              >
+                <option value="inside">{t('dashboard.chart.labelInside')}</option>
+                <option value="outside">{t('dashboard.chart.labelOutside')}</option>
+              </select>
+            </LabeledField>
+            <TextStyleFields
+              label={t('dashboard.chart.labelTextStyle')}
+              family={config.label_font_family as ChartFontFamily | undefined}
+              size={config.label_font_size as number | undefined}
+              color={config.label_font_color as string | undefined}
+              sizePlaceholder={t('dashboard.chart.inherit')}
+              testIdPrefix="pie-chart-label-font"
+              onChange={(patch) =>
+                onConfigChange({
+                  ...('family' in patch ? { label_font_family: patch.family } : null),
+                  ...('size' in patch ? { label_font_size: patch.size } : null),
+                  ...('color' in patch ? { label_font_color: patch.color } : null),
+                })
+              }
+            />
+            <LabeledField
+              label={t('dashboard.chart.labelMinPercent')}
+              hint={t('dashboard.chart.labelMinPercentHint')}
+            >
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={(config.label_min_percent as number | undefined) ?? ''}
+                placeholder={String(DEFAULT_PIE_LABEL_MIN_PERCENT)}
+                data-testid="pie-chart-label-min-percent"
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === '') return onConfigChange({ label_min_percent: undefined });
+                  const n = parseInt(v, 10);
+                  if (!Number.isNaN(n) && n >= 0) onConfigChange({ label_min_percent: n });
+                }}
+                className={inputClass()}
+              />
+            </LabeledField>
+          </>
+        )}
+      </SettingsSection>
+
+      {/* ═══ 범례 ═══ */}
+      <SettingsSection title={t('dashboard.chart.legendSection')}>
+        {checkbox('show_legend', 'dashboard.chart.showLegend', showLegend, 'pie-chart-show-legend')}
+        {/* 아래 항목은 모두 범례를 켰을 때만 뜻이 있다. */}
+        {showLegend && (
+          <>
+            <LabeledField label={t('dashboard.chart.legendPosition')} hint={t('dashboard.chart.legendDragHint')}>
+              <select
+                value={legendPosition}
+                onChange={(e) =>
+                  onConfigChange({ legend_position: e.target.value as PieLegendPosition })
+                }
+                data-testid="pie-chart-legend-position"
+                className={inputClass()}
+              >
+                <option value="bottom">{t('dashboard.chart.legendBottom')}</option>
+                <option value="left">{t('dashboard.chart.legendLeft')}</option>
+                <option value="right">{t('dashboard.chart.legendRight')}</option>
+              </select>
+            </LabeledField>
+            {checkbox('legend_show_percentage', 'dashboard.chart.legendShowPercentage', legendShowPercentage, 'pie-chart-legend-show-percentage')}
+            {checkbox('legend_show_value', 'dashboard.chart.legendShowValue', legendShowValue, 'pie-chart-legend-show-value')}
+            <TextStyleFields
+              label={t('dashboard.chart.legendTextStyle')}
+              family={config.legend_font_family as ChartFontFamily | undefined}
+              size={config.legend_font_size as number | undefined}
+              color={config.legend_font_color as string | undefined}
+              sizePlaceholder={String(DEFAULT_PIE_LEGEND_FONT_SIZE)}
+              testIdPrefix="pie-chart-legend-font"
+              onChange={(patch) =>
+                onConfigChange({
+                  ...('family' in patch ? { legend_font_family: patch.family } : null),
+                  ...('size' in patch ? { legend_font_size: patch.size } : null),
+                  ...('color' in patch ? { legend_font_color: patch.color } : null),
+                })
+              }
+            />
+            {/* 끌어 옮긴 자리를 되돌리는 유일한 출구다 — 오프셋이 남으면 위치를 바꿔도
+                범례가 엉뚱한 자리에 붙어 있고, 드래그는 미리보기에서만 되기 때문이다. */}
+            {(config.legend_offset_x || config.legend_offset_y) ? (
+              <button
+                type="button"
+                data-testid="pie-chart-legend-reset-offset"
+                onClick={() =>
+                  onConfigChange({ legend_offset_x: undefined, legend_offset_y: undefined })
+                }
+                className="rounded border border-(--color-border-default) px-2 py-1 text-xs text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
+              >
+                {t('dashboard.chart.legendResetOffset')}
+              </button>
+            ) : null}
+          </>
+        )}
+      </SettingsSection>
     </div>
   );
 }

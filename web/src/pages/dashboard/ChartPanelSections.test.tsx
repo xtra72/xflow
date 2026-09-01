@@ -808,9 +808,281 @@ describe('PieChartSection', () => {
         onConfigChange={onConfigChange}
       />,
     );
-    const legendCheckbox = screen.getByLabelText(/dashboard.chart.showLegend/) as HTMLInputElement;
-    fireEvent.click(legendCheckbox);
+    fireEvent.click(screen.getByTestId('pie-chart-show-legend'));
     expect(onConfigChange).toHaveBeenCalledWith({ show_legend: false });
+  });
+
+  describe('파이 크기·위치', () => {
+    it('크기를 바꾸면 pie_size 로 저장한다', () => {
+      const onConfigChange = vi.fn();
+      render(
+        <PieChartSection panel={makePanel('pie-chart', {})} onConfigChange={onConfigChange} />,
+      );
+      fireEvent.change(screen.getByTestId('pie-chart-size'), { target: { value: '45' } });
+      expect(onConfigChange).toHaveBeenCalledWith({ pie_size: 45 });
+    });
+
+    it('미지정이면 자동값을 보여 주고 초기화 버튼은 숨긴다', () => {
+      const { unmount } = render(
+        <PieChartSection panel={makePanel('pie-chart', {})} onConfigChange={vi.fn()} />,
+      );
+      // 안쪽 라벨 기본 → 80. 슬라이더가 왼쪽 끝에 붙어 있지 않아야 한다.
+      expect((screen.getByTestId('pie-chart-size') as HTMLInputElement).value).toBe('80');
+      expect(screen.queryByTestId('pie-chart-size-reset')).toBeNull();
+      unmount();
+
+      // 바깥 라벨이면 자동값이 62 로 바뀐다 — 패널이 실제로 그리는 값과 같다.
+      render(
+        <PieChartSection
+          panel={makePanel('pie-chart', { label_position: 'outside' })}
+          onConfigChange={vi.fn()}
+        />,
+      );
+      expect((screen.getByTestId('pie-chart-size') as HTMLInputElement).value).toBe('62');
+    });
+
+    it('자동으로 되돌리면 pie_size 를 지운다 — 슬라이더에는 미지정 자리가 없다', () => {
+      const onConfigChange = vi.fn();
+      render(
+        <PieChartSection
+          panel={makePanel('pie-chart', { pie_size: 45 })}
+          onConfigChange={onConfigChange}
+        />,
+      );
+      fireEvent.click(screen.getByTestId('pie-chart-size-reset'));
+      expect(onConfigChange).toHaveBeenCalledWith({ pie_size: undefined });
+    });
+
+    it('끌어 옮긴 자리가 있을 때만 초기화 버튼이 나온다', () => {
+      const onConfigChange = vi.fn();
+      const { unmount } = render(
+        <PieChartSection panel={makePanel('pie-chart', {})} onConfigChange={vi.fn()} />,
+      );
+      expect(screen.queryByTestId('pie-chart-reset-offset')).toBeNull();
+      unmount();
+
+      render(
+        <PieChartSection
+          panel={makePanel('pie-chart', { pie_offset_x: 12 })}
+          onConfigChange={onConfigChange}
+        />,
+      );
+      fireEvent.click(screen.getByTestId('pie-chart-reset-offset'));
+      expect(onConfigChange).toHaveBeenCalledWith({
+        pie_offset_x: undefined,
+        pie_offset_y: undefined,
+      });
+    });
+  });
+
+  describe('조각 라벨', () => {
+    it('값 표시는 기본 꺼짐이며 켜면 show_value 로 저장한다', () => {
+      const onConfigChange = vi.fn();
+      render(
+        <PieChartSection panel={makePanel('pie-chart', {})} onConfigChange={onConfigChange} />,
+      );
+      const box = screen.getByTestId('pie-chart-show-value') as HTMLInputElement;
+      expect(box.checked).toBe(false);
+      fireEvent.click(box);
+      expect(onConfigChange).toHaveBeenCalledWith({ show_value: true });
+    });
+
+    it('글자 크기를 비우면 상속으로 되돌린다', () => {
+      const onConfigChange = vi.fn();
+      render(
+        <PieChartSection
+          panel={makePanel('pie-chart', { label_font_size: 20 })}
+          onConfigChange={onConfigChange}
+        />,
+      );
+      fireEvent.change(screen.getByTestId('pie-chart-label-font-size'), {
+        target: { value: '' },
+      });
+      expect(onConfigChange).toHaveBeenCalledWith({ label_font_size: undefined });
+    });
+
+    it('라벨 위치를 고른다 — 기본은 조각 안쪽', () => {
+      const onConfigChange = vi.fn();
+      render(
+        <PieChartSection panel={makePanel('pie-chart', {})} onConfigChange={onConfigChange} />,
+      );
+      const select = screen.getByTestId('pie-chart-label-position') as HTMLSelectElement;
+      expect(select.value).toBe('inside');
+      fireEvent.change(select, { target: { value: 'outside' } });
+      expect(onConfigChange).toHaveBeenCalledWith({ label_position: 'outside' });
+    });
+
+    it('글꼴·색을 저장하고, 색은 초기화로 상속으로 되돌린다', () => {
+      const onConfigChange = vi.fn();
+      const { unmount } = render(
+        <PieChartSection panel={makePanel('pie-chart', {})} onConfigChange={onConfigChange} />,
+      );
+      fireEvent.change(screen.getByTestId('pie-chart-label-font-family'), {
+        target: { value: 'mono' },
+      });
+      expect(onConfigChange).toHaveBeenCalledWith({ label_font_family: 'mono' });
+      fireEvent.change(screen.getByTestId('pie-chart-label-font-color'), {
+        target: { value: '#ff0000' },
+      });
+      expect(onConfigChange).toHaveBeenCalledWith({ label_font_color: '#ff0000' });
+      // 색을 지정하지 않았으면 초기화 버튼이 없다 — 되돌릴 것이 없다.
+      expect(screen.queryByTestId('pie-chart-label-font-color-reset')).toBeNull();
+      unmount();
+
+      const onConfigChange2 = vi.fn();
+      render(
+        <PieChartSection
+          panel={makePanel('pie-chart', { label_font_color: '#ff0000' })}
+          onConfigChange={onConfigChange2}
+        />,
+      );
+      fireEvent.click(screen.getByTestId('pie-chart-label-font-color-reset'));
+      expect(onConfigChange2).toHaveBeenCalledWith({ label_font_color: undefined });
+    });
+
+    it('비율·값을 모두 끄면 글자 크기·최소 비중 칸을 내린다', () => {
+      render(
+        <PieChartSection
+          panel={makePanel('pie-chart', { show_percentage: false, show_value: false })}
+          onConfigChange={vi.fn()}
+        />,
+      );
+      expect(screen.queryByTestId('pie-chart-label-font-size')).toBeNull();
+      expect(screen.queryByTestId('pie-chart-label-min-percent')).toBeNull();
+    });
+
+    it('라벨 표시 최소 비중을 저장한다 — 0 은 "모두 표시" 로 저장된다', () => {
+      const onConfigChange = vi.fn();
+      const { unmount } = render(
+        <PieChartSection panel={makePanel('pie-chart', {})} onConfigChange={onConfigChange} />,
+      );
+      const input = screen.getByTestId('pie-chart-label-min-percent') as HTMLInputElement;
+      // 미지정이면 기본값을 placeholder 로 알린다 — 빈 칸이 "0" 으로 읽히지 않도록.
+      expect(input.placeholder).toBe('5');
+      fireEvent.change(input, { target: { value: '0' } });
+      expect(onConfigChange).toHaveBeenCalledWith({ label_min_percent: 0 });
+      unmount();
+    });
+
+    it('비우면 기본값으로 되돌린다', () => {
+      const onConfigChange = vi.fn();
+      render(
+        <PieChartSection
+          panel={makePanel('pie-chart', { label_min_percent: 10 })}
+          onConfigChange={onConfigChange}
+        />,
+      );
+      fireEvent.change(screen.getByTestId('pie-chart-label-min-percent'), {
+        target: { value: '' },
+      });
+      expect(onConfigChange).toHaveBeenCalledWith({ label_min_percent: undefined });
+    });
+  });
+
+  describe('범례', () => {
+    it('위치를 고르면 legend_position 으로 저장한다', () => {
+      const onConfigChange = vi.fn();
+      render(
+        <PieChartSection
+          panel={makePanel('pie-chart', { show_legend: true })}
+          onConfigChange={onConfigChange}
+        />,
+      );
+      fireEvent.change(screen.getByTestId('pie-chart-legend-position'), {
+        target: { value: 'right' },
+      });
+      expect(onConfigChange).toHaveBeenCalledWith({ legend_position: 'right' });
+    });
+
+    it('미지정이면 위치 기본 선택은 하단', () => {
+      render(<PieChartSection panel={makePanel('pie-chart', {})} onConfigChange={vi.fn()} />);
+      expect((screen.getByTestId('pie-chart-legend-position') as HTMLSelectElement).value).toBe(
+        'bottom',
+      );
+    });
+
+    it('비율·값 표시와 글자 크기를 저장한다', () => {
+      const onConfigChange = vi.fn();
+      render(
+        <PieChartSection
+          panel={makePanel('pie-chart', { show_legend: true })}
+          onConfigChange={onConfigChange}
+        />,
+      );
+      fireEvent.click(screen.getByTestId('pie-chart-legend-show-percentage'));
+      expect(onConfigChange).toHaveBeenCalledWith({ legend_show_percentage: true });
+      fireEvent.click(screen.getByTestId('pie-chart-legend-show-value'));
+      expect(onConfigChange).toHaveBeenCalledWith({ legend_show_value: true });
+      fireEvent.change(screen.getByTestId('pie-chart-legend-font-size'), {
+        target: { value: '16' },
+      });
+      expect(onConfigChange).toHaveBeenCalledWith({ legend_font_size: 16 });
+      fireEvent.change(screen.getByTestId('pie-chart-legend-font-family'), {
+        target: { value: 'serif' },
+      });
+      expect(onConfigChange).toHaveBeenCalledWith({ legend_font_family: 'serif' });
+      fireEvent.change(screen.getByTestId('pie-chart-legend-font-color'), {
+        target: { value: '#00ff00' },
+      });
+      expect(onConfigChange).toHaveBeenCalledWith({ legend_font_color: '#00ff00' });
+    });
+
+    it('범례를 끄면 하위 설정을 모두 내린다 — 적용되지 않는 설정을 남기지 않는다', () => {
+      render(
+        <PieChartSection
+          panel={makePanel('pie-chart', { show_legend: false })}
+          onConfigChange={vi.fn()}
+        />,
+      );
+      expect(screen.queryByTestId('pie-chart-legend-position')).toBeNull();
+      expect(screen.queryByTestId('pie-chart-legend-show-percentage')).toBeNull();
+      expect(screen.queryByTestId('pie-chart-legend-font-size')).toBeNull();
+      expect(screen.queryByTestId('pie-chart-legend-font-family')).toBeNull();
+    });
+
+    it('끌어 옮긴 자리가 있을 때만 초기화 버튼이 나오고, 누르면 오프셋을 지운다', () => {
+      const onConfigChange = vi.fn();
+      const { unmount } = render(
+        <PieChartSection
+          panel={makePanel('pie-chart', { show_legend: true })}
+          onConfigChange={vi.fn()}
+        />,
+      );
+      // 끌어 옮기지 않았으면 되돌릴 것이 없다.
+      expect(screen.queryByTestId('pie-chart-legend-reset-offset')).toBeNull();
+      unmount();
+
+      render(
+        <PieChartSection
+          panel={makePanel('pie-chart', { show_legend: true, legend_offset_x: 12 })}
+          onConfigChange={onConfigChange}
+        />,
+      );
+      fireEvent.click(screen.getByTestId('pie-chart-legend-reset-offset'));
+      expect(onConfigChange).toHaveBeenCalledWith({
+        legend_offset_x: undefined,
+        legend_offset_y: undefined,
+      });
+    });
+  });
+
+  it('표시 필드·라벨 필드·집계 함수·최대 포인트는 설정에 노출하지 않는다', () => {
+    // 넷 다 구간 대표값(series_reduce) 경로에서 무시되고 채널 모드에서만 쓰인다.
+    // 설정 화면에서 걷어냈으므로 렌더 결과에 남아 있으면 안 된다.
+    render(
+      <PieChartSection
+        panel={makePanel('pie-chart', {
+          display_field: 'value',
+          label_field: 'labels.name',
+          agg_func: 'count',
+          max_points: 5,
+        })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    for (const key of ['displayField', 'labelField', 'aggFunc', 'maxPoints']) {
+      expect(screen.queryByText(`dashboard.chart.${key}`)).toBeNull();
+    }
   });
 });
 
