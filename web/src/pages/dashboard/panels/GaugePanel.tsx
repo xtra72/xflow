@@ -39,6 +39,12 @@ import { resolveStoreAgentName } from './charts/storeAgentResolve';
 import { usePanelTitleVisible } from '../panelChromeContext';
 // 게이지 모양 8종은 sysmetrics 패널과 공유한다 (panels/gauge/gaugeShapes).
 import { parseConfig, renderGaugeByType, withGaugeValue } from './gauge/gaugeShapes';
+import {
+  panelBoxTransform,
+  PANEL_SIZE_MAX,
+  readPanelOffset,
+  readPanelSize,
+} from './charts/panelGeometry';
 
 // ---- 타입 정의 ----
 
@@ -147,12 +153,49 @@ function useStoreLatestValue(
  * 대표값이 없으면(`undefined`) 슬롯은 유지하고 값 자리에 `--` 를 표시한다(§2.4) —
  * 각 렌더러가 `hasValue={false}` 에서 이미 그렇게 그린다.
  */
+/**
+ * 게이지 그림 상자 — **크기와 자리**를 얹는다.
+ *
+ * 게이지 모양은 6종이고 저마다 다른 `viewBox` 로 그려지므로, 크기·자리를 모양마다
+ * 손보면 6곳이 갈린다. 대신 그려진 결과를 상자째 CSS transform 으로 옮기고 줄인다 —
+ * 한 곳에서 6종 모두에 같은 규칙이 걸린다.
+ *
+ * 파이와 같은 어휘(백분율 크기 · 백분율 오프셋)를 쓴다(`panelGeometry`) — 두 패널의
+ * 같은 설정이 다른 범위를 갖지 않게 한다.
+ */
+function GaugeBox({
+  config,
+  children,
+}: {
+  config: Record<string, unknown>;
+  children: React.ReactNode;
+}): ReactElement {
+  const transform = panelBoxTransform(
+    readPanelSize(config.gauge_size) ?? PANEL_SIZE_MAX,
+    readPanelOffset(config.gauge_offset_x),
+    readPanelOffset(config.gauge_offset_y),
+  );
+  return (
+    <div
+      className="h-full w-full"
+      data-testid="gauge-box"
+      data-gauge-body=""
+      style={{ transform }}
+    >
+      {children}
+    </div>
+  );
+}
+
 function GaugeTile({
   item,
   base,
+  config,
 }: {
   item: ReducedSeries;
   base: ReturnType<typeof parseConfig>;
+  /** 크기·자리를 얹기 위한 원본 config(타일마다 같은 규칙이 걸린다). */
+  config: Record<string, unknown>;
 }): ReactElement {
   const hasValue = item.value !== undefined && Number.isFinite(item.value);
   const parsed = hasValue ? withGaugeValue(base, item.value!) : base;
@@ -172,7 +215,7 @@ function GaugeTile({
         data-testid="gauge-tile-chart"
         className="min-h-0 w-full min-w-0 flex-1"
       >
-        {renderGaugeByType(parsed, hasValue)}
+        <GaugeBox config={config}>{renderGaugeByType(parsed, hasValue)}</GaugeBox>
       </div>
       <span
         data-testid="gauge-tile-caption"
@@ -333,7 +376,7 @@ export default function GaugePanel({
             limit={config.multi_output_limit as number | undefined}
             rows={config.tile_rows as number | undefined}
             itemKey={(item, i) => `${i}:${item.name}`}
-            renderItem={(item) => <GaugeTile item={item} base={parsedBase} />}
+            renderItem={(item) => <GaugeTile item={item} base={parsedBase} config={config} />}
             // 게이지는 내용이 아니라 행이 높이를 정해야 한다 — 그래야 낮은 패널에서
             // 잘리지 않고 축소된다(stat 타일은 종전대로 내용 높이를 쓴다).
             fillRows
@@ -343,7 +386,9 @@ export default function GaugePanel({
         <div className="flex min-h-0 flex-1 items-center justify-center">
           {/* Store 경로인데 시리즈가 0개면 신규 경로의 빈 상태(`--`)를 보여준다(§2.4).
               레거시 값으로 몰래 되돌아가지 않는다. */}
-          {renderGaugeByType(parsed, isStoreSourcePath ? false : hasValue)}
+          <GaugeBox config={config}>
+            {renderGaugeByType(parsed, isStoreSourcePath ? false : hasValue)}
+          </GaugeBox>
         </div>
       )}
     </div>

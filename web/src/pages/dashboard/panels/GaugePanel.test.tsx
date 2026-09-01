@@ -527,4 +527,50 @@ describe('GaugePanel 레거시 바인딩 특성화 (SPEC-CHART-002 M2)', () => {
     await waitFor(() => expect(screen.getByText('30.00')).toBeInTheDocument());
     expect(screen.queryByTestId('chart-status-icon')).toBeNull();
   });
+
+  describe('게이지 크기·위치', () => {
+    const box = () => screen.getByTestId('gauge-box');
+
+    it('기본은 가득 채우고 transform 을 남기지 않는다 — 불필요한 레이어를 만들지 않는다', () => {
+      renderPanel({ gaugeType: 'simple', value: 50, min: 0, max: 100 });
+      expect(box().getAttribute('style') ?? '').not.toContain('transform');
+    });
+
+    it('크기를 줄이면 scale 로 실린다', () => {
+      renderPanel({ gaugeType: 'simple', value: 50, min: 0, max: 100, gauge_size: 60 });
+      expect(box().getAttribute('style') ?? '').toContain('scale(0.6)');
+    });
+
+    it('오프셋은 백분율로 실린다 — 패널 크기가 바뀌어도 상대 위치가 유지된다', () => {
+      renderPanel({
+        gaugeType: 'simple',
+        value: 50,
+        min: 0,
+        max: 100,
+        gauge_offset_x: 10,
+        gauge_offset_y: -5,
+      });
+      expect(box().getAttribute('style') ?? '').toContain('translate(10%, -5%)');
+    });
+
+    it('범위를 벗어난 크기·오프셋은 죈다 — 손으로 고친 config 가 게이지를 날리지 않게', () => {
+      renderPanel({
+        gaugeType: 'simple',
+        value: 50,
+        min: 0,
+        max: 100,
+        gauge_size: 500,
+        gauge_offset_x: 999,
+      });
+      const style = box().getAttribute('style') ?? '';
+      // 범위 밖 크기는 무시하고 가득(=scale 1), 오프셋은 상한으로 죈다.
+      expect(style).toContain('scale(1)');
+      expect(style).toContain('translate(40%, 0%)');
+    });
+
+    it('드래그 레이어가 잡을 수 있도록 표식을 남긴다', () => {
+      renderPanel({ gaugeType: 'simple', value: 50, min: 0, max: 100 });
+      expect(box().hasAttribute('data-gauge-body')).toBe(true);
+    });
+  });
 });

@@ -28,7 +28,13 @@ import {
   SysResourceSelector,
   type SysResourceKind,
 } from '@/components/property/SysResourceSelector';
-import { GaugeValueDragLayer } from './GaugeValueDragLayer';
+import { GaugeDragLayer } from './GaugeDragLayer';
+import {
+  PANEL_SIZE_MAX,
+  PANEL_SIZE_MIN,
+  readPanelSize,
+} from './panels/charts/panelGeometry';
+import { PieDragLayer } from './PieDragLayer';
 import {
   DEFAULT_TRACK_FILL,
   defaultGaugeThresholds,
@@ -1087,12 +1093,17 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               >
                 {/* 값 글자를 끌어 자리를 잡는다. 두 미리보기 경로(실 패널 · 미니)가 같은
                     레이어를 쓰므로 어느 쪽이 떠 있어도 조작이 같다. */}
-                <GaugeValueDragLayer
-                  offsetX={readValueOffset(panel.config?.value_offset_x)}
-                  offsetY={readValueOffset(panel.config?.value_offset_y)}
-                  onChange={({ x, y }) =>
-                    patchConfig({ value_offset_x: x, value_offset_y: y })
-                  }
+                <GaugeDragLayer
+                  value={{
+                    offsetX: readValueOffset(panel.config?.value_offset_x),
+                    offsetY: readValueOffset(panel.config?.value_offset_y),
+                    onChange: ({ x, y }) => patchConfig({ value_offset_x: x, value_offset_y: y }),
+                  }}
+                  body={{
+                    offsetX: readValueOffset(panel.config?.gauge_offset_x),
+                    offsetY: readValueOffset(panel.config?.gauge_offset_y),
+                    onChange: ({ x, y }) => patchConfig({ gauge_offset_x: x, gauge_offset_y: y }),
+                  }}
                 >
                   {isStoreGaugePreview ? (
                     // Store 소스 + 대표값 지정: 합성 샘플값이 아니라 **실제 패널**을 draft
@@ -1107,7 +1118,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   ) : (
                     <GaugeMiniPreview panel={previewRenderPanel} />
                   )}
-                </GaugeValueDragLayer>
+                </GaugeDragLayer>
               </div>
             )}
             {/*
@@ -1175,11 +1186,29 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('4 / 3')}
                 onWheel={handlePreviewWheel}
               >
-                <PieChartPanel
-                  panelId={previewRenderPanel.id}
-                  title={previewRenderPanel.title}
-                  config={previewRenderPanel.config ?? {}}
-                />
+                {/* 범례를 끌어 자리를 잡는다. 게이지 값 드래그와 같은 규칙이다 —
+                    미리보기에서만 끌리고, 대시보드 패널은 오프셋만 반영한다. */}
+                <PieDragLayer
+                  legend={{
+                    offsetX: readValueOffset(panel.config?.legend_offset_x),
+                    offsetY: readValueOffset(panel.config?.legend_offset_y),
+                    onChange: ({ x, y }) => patchConfig({ legend_offset_x: x, legend_offset_y: y }),
+                  }}
+                  chart={{
+                    offsetX: readValueOffset(panel.config?.pie_offset_x),
+                    offsetY: readValueOffset(panel.config?.pie_offset_y),
+                    onChange: ({ x, y }) => patchConfig({ pie_offset_x: x, pie_offset_y: y }),
+                  }}
+                >
+                  <PieChartPanel
+                    panelId={previewRenderPanel.id}
+                    title={previewRenderPanel.title}
+                    // 범례 배치는 시각 설정이라 재조회를 트리거하지 않는다 — 디바운스된
+                    // previewPanel 이 아니라 draft(panel)로 렌더해야 드래그가 지연 없이
+                    // 따라온다(표 열 폭 조절과 같은 이유).
+                    config={panel.config ?? {}}
+                  />
+                </PieDragLayer>
               </div>
             )}
             {panel.type === 'graph-chart' && (
@@ -4317,7 +4346,14 @@ const GAUGE_ACCENT_LABEL_KEYS: Record<string, string> = {
  * 자리가 그렇다. 끌어서 옮기는 조작은 손이 움직이는 동안 그림이 따라와야 어디에 놓일지
  * 보이므로, 여기에 없으면 드래그가 200ms 계단으로 끊긴다.
  */
-const PREVIEW_LIVE_KEYS = ['value_scale', 'value_offset_x', 'value_offset_y'] as const;
+const PREVIEW_LIVE_KEYS = [
+  'value_scale',
+  'value_offset_x',
+  'value_offset_y',
+  'gauge_size',
+  'gauge_offset_x',
+  'gauge_offset_y',
+] as const;
 
 /** 니들(바늘)이 있는 유형 — 니들 색 설정을 노출하는 자리다. */
 const NEEDLE_GAUGE_TYPES: readonly GaugeType[] = ['needle', 'needle-rainbow', 'half-rainbow'];
@@ -4578,6 +4614,8 @@ function GaugeSection({
   const baseColor = readBaseColor(config.base_color);
   const needleColor = typeof config.needle_color === 'string' ? config.needle_color : '';
   const valueScale = readValueScale(config.value_scale);
+  // 슬라이더는 "미지정" 을 표현할 수 없으므로 기본값(가득)을 그대로 보여 준다.
+  const gaugeSize = readPanelSize(config.gauge_size) ?? PANEL_SIZE_MAX;
   const min = (config.min as number) ?? 0;
   const max = (config.max as number) ?? 100;
   const unit = (config.unit as string) ?? '%';
@@ -4650,6 +4688,53 @@ function GaugeSection({
             </button>
           ))}
         </div>
+      </div>
+
+      {/* A-3.5. 게이지 크기·위치 — 그림 전체를 줄이고 옮긴다. 값(A-4)과 다른 축이다:
+          값은 게이지 **안에서의** 자리이고, 이것은 패널 안에서의 게이지 자리다.
+          파이와 같은 어휘(패널 대비 백분율)를 쓴다. */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.gaugeSection.gaugeSize')}
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            type="range"
+            min={PANEL_SIZE_MIN}
+            max={PANEL_SIZE_MAX}
+            step={1}
+            value={gaugeSize}
+            onChange={(e) => onConfigChange({ gauge_size: Number(e.target.value) })}
+            data-testid="gauge-body-size"
+            className="flex-1"
+          />
+          <span className="w-10 shrink-0 text-right text-xs tabular-nums text-(--color-text-muted)">
+            {gaugeSize}%
+          </span>
+          {/* 크기·자리를 함께 되돌린다 — 둘은 같은 조작(끌기·슬라이더)으로 어긋나므로
+              따로 되돌리면 한쪽이 남아 왜 제자리가 아닌지 알 수 없다. */}
+          {(config.gauge_size !== undefined ||
+            config.gauge_offset_x ||
+            config.gauge_offset_y) ? (
+            <button
+              type="button"
+              onClick={() =>
+                onConfigChange({
+                  gauge_size: undefined,
+                  gauge_offset_x: undefined,
+                  gauge_offset_y: undefined,
+                })
+              }
+              data-testid="gauge-body-reset"
+              className="shrink-0 rounded-md bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)/80"
+            >
+              {t('dashboard.settings.gaugeSection.valueReset')}
+            </button>
+          ) : null}
+        </div>
+        <p className="mt-1 text-[11px] leading-snug text-(--color-text-muted)">
+          {t('dashboard.settings.gaugeSection.gaugeDragHint')}
+        </p>
       </div>
 
       {/* A-4. 현재값 크기·위치 — 유형마다 기본 크기·자리가 달라 **배율과 변위**로 둔다.
