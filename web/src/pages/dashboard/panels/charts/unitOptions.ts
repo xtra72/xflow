@@ -311,6 +311,11 @@ export function formatTickValue(
  * 그래서 축이 실제로 접은 배율의 접미사를 돌려준다 — 배율은 눈금마다 다시 정하지 않고
  * **축 전체가 하나**를 쓰므로(가장 큰 눈금이 정한다) 라벨 한 줄로 말할 수 있다.
  *
+ * 기준값을 모르면(데이터가 아직 없는 축) **접기 이전의 밑단위**로 떨어진다 — 라벨을 아예
+ * 지우지 않는 이유는, 값이 들어오기 전까지 축이 무엇을 세는지 말하지 않게 되기 때문이다.
+ * 실시간 모드는 시작 직후가 늘 이 상태라(첫 표본은 증가량을 구할 기준점이 없다) 라벨이
+ * 사라지면 "단위 설정이 안 먹는다" 로 보인다. 빈 축은 어차피 0 이므로 0 의 배율이 맞다.
+ *
  * @param reference 배율을 정할 기준값. 축의 최대 눈금을 넘긴다.
  */
 export function axisUnitLabel(
@@ -318,8 +323,8 @@ export function axisUnitLabel(
   reference: number | undefined,
 ): string | undefined {
   if (!isAutoScaledUnit(unit)) return unit === '' ? undefined : unit;
-  if (reference === undefined || !Number.isFinite(reference)) return undefined;
-  return scaleValueParts(reference, unit).suffix;
+  const at = reference !== undefined && Number.isFinite(reference) ? reference : 0;
+  return scaleValueParts(at, unit).suffix;
 }
 
 /** {@link scaleValueUnit} 의 두 조각을 이어 붙인 문자열. 툴팁·축 눈금·표 셀에서 쓴다. */

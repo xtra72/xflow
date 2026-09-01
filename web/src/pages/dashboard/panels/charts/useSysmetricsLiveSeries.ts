@@ -80,9 +80,14 @@ export function useSysmetricsLiveSeries(
   );
   const [series, setSeries] = useState<Map<string, ChartEntry[]>>(new Map());
   const shapeRef = useRef('');
+  // 마지막으로 쌓은 표본 시각. 같은 표본을 두 번 쌓지 않기 위한 빗장이다.
+  const lastAppendedRef = useRef<number | null>(null);
   useEffect(() => {
     if (shapeRef.current === shapeKey) return;
     shapeRef.current = shapeKey;
+    // 구성이 바뀌면 빗장도 함께 푼다 — 안 그러면 현재 표본을 다시 쌓지 못해 다음 폴링까지
+    // 빈 차트로 남는다.
+    lastAppendedRef.current = null;
     setSeries(new Map());
   }, [shapeKey]);
 
@@ -91,9 +96,16 @@ export function useSysmetricsLiveSeries(
   const collectedAt = snapshot?.collectedAt ?? null;
   useEffect(() => {
     if (!enabled || !snapshot || collectedAt === null) return;
+    // **표본 하나는 한 번만 쌓는다.** 스냅샷 객체의 참조가 렌더마다 새로 만들어져도
+    // (호출부 사정으로 얼마든지 그럴 수 있다) 표본 시각이 같으면 이미 쌓은 것이다.
+    // 이 빗장이 없으면 "effect → setState → 리렌더 → 새 참조 → effect" 가 끝없이 돌아
+    // 렌더 깊이 초과로 화면이 죽는다(useSysMetricsRateSeries 가 같은 함정을 겪었다).
+    if (lastAppendedRef.current === collectedAt) return;
+    lastAppendedRef.current = collectedAt;
     setSeries((current) => {
       const next = new Map(current);
       const cutoff = collectedAt - windowMs;
+      let appended = false;
       for (const line of lines) {
         const value = readSeriesValue(snapshot, previous, line, RATE_UNIT);
         // null 은 "그릴 수 없다"이지 0 이 아니다(기준점 없음·되감김·경과 0). 점을 만들지 않는다.
@@ -104,8 +116,11 @@ export function useSysmetricsLiveSeries(
           line.name,
           kept.length > MAX_POINTS ? kept.slice(kept.length - MAX_POINTS) : kept,
         );
+        appended = true;
       }
-      return next;
+      // 쌓을 것이 없으면 **같은 참조를 돌려준다** — 새 Map 을 만들면 값이 그대로인데도
+      // 리렌더가 한 번 더 돈다(첫 표본처럼 전부 null 인 구간에서 매번 일어난다).
+      return appended ? next : current;
     });
     // `lines` 는 shapeKey 로 이미 구성 변화를 다루므로 의존성에서 뺀다 — 넣으면 매 렌더
     // 새 배열이라 effect 가 표본과 무관하게 계속 돈다.

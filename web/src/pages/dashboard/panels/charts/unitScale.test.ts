@@ -244,11 +244,16 @@ describe('axisUnitLabel — 축 라벨의 단위 표기', () => {
     expect(axisUnitLabel('°C', 12)).toBe('°C');
   });
 
-  it('단위가 없거나 기준값을 모르면 라벨을 만들지 않는다', () => {
+  it('단위가 없으면 라벨도 없다', () => {
     expect(axisUnitLabel(undefined, 10)).toBeUndefined();
     expect(axisUnitLabel('', 10)).toBeUndefined();
-    // 자동 축(도메인 'auto')에서 데이터가 없으면 배율을 정할 근거가 없다.
-    expect(axisUnitLabel(AUTO_BYTES_UNIT, undefined)).toBeUndefined();
-    expect(axisUnitLabel(AUTO_BYTES_UNIT, Number.NaN)).toBeUndefined();
+  });
+
+  it('기준값을 몰라도 밑단위로 라벨을 만든다(데이터 이전에도 축이 무엇을 세는지 말한다)', () => {
+    // 실시간 모드는 시작 직후가 늘 이 상태다 — 첫 표본은 증가량을 구할 기준점이 없어
+    // 그릴 점이 없다. 여기서 라벨을 지우면 "단위 설정이 안 먹는다" 로 보인다.
+    expect(axisUnitLabel(AUTO_BYTES_UNIT, undefined)).toBe('B');
+    expect(axisUnitLabel(AUTO_BYTES_UNIT, Number.NaN)).toBe('B');
+    expect(axisUnitLabel(AUTO_BYTES_RATE_UNIT, undefined)).toBe('B/s');
   });
 });
