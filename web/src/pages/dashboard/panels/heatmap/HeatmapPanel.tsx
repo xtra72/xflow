@@ -230,7 +230,20 @@ export default function HeatmapPanel({
   // 없어도 방금 선택한 센서 마커를 유지해 드래그 배치가 가능하다. tag 매칭(미체크) 시리즈는
   // 절대 마커로 그리지 않으며, 잔존 sensor_positions(선택에서 빠진 옛 키)로 인한 유령 마커도 막는다.
   // 기준은 동일성 키다 — alias 기준이면 이름을 바꾼 순간 마커가 사라진다.
-  const boundIds = useMemo(() => new Set(refs.map((ref) => heatmapSensorId(ref))), [refs]);
+  //
+  // 화이트리스트는 refs 파생 키와 **실제 조회 결과 키 공간**(resolved.ids)의 합집합이다.
+  // refs 만 쓰면 두 공간이 어긋나는 경로에서 방금 배치한 좌표가 그 자리에서 사라졌다:
+  //   (a) TSDB/sysmetrics 소스 — refs 는 `store_source` 에서 오므로 비어 있다.
+  //   (b) store 라도 컬럼 수와 refs 수가 어긋나면(resolveSensorSeries aligned=false)
+  //       조회 이름 공간이 그대로 id 가 된다.
+  // 두 경우 모두 팔레트 칩(=resolved.ids)을 끌어 놓으면 **그 키로** 좌표가 저장되는데 마커는
+  // refs 로 걸러져 렌더되지 않았다 → 좌표가 생겨 칩도 사라지고 마커도 없다. 즉 "포인트가
+  // 사라져 한 번 이동한 뒤로는 다시 잡을 수 없다". 합집합인 이유는 refs 쪽도 남겨야 조회
+  // 전(로딩/무값)에도 마커가 유지되던 동작이 깨지지 않기 때문이다.
+  const boundIds = useMemo(
+    () => new Set([...refs.map((ref) => heatmapSensorId(ref)), ...resolved.ids]),
+    [refs, resolved.ids],
+  );
   // 동일성 키 → 표시 라벨. 사용자가 붙인 이름이 있으면 그 이름, 없으면 시리즈를 구분하는
   // 서술 표기(`key · metric{k=v}`)다 — key 만 쓰면 한 key 를 공유하는 형제 센서들의 마커가
   // 같은 글자로 찍혀 서로 구분되지 않는다. 마커/칩 텍스트 전용이며 매칭에는 쓰지 않는다.
