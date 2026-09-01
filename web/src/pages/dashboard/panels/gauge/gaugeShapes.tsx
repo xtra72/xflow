@@ -515,8 +515,15 @@ function GaugeValueText({
   const twoLine = hasValue && unit !== '';
   const vSize = valueSize * scale;
   const uSize = unitSize * scale;
-  // 두 행이면 블록 전체가 아래로 반 행 내려가므로 시작점을 그만큼 올린다.
-  const startY = (twoLine ? y - uSize * 0.55 : y) + offsetY;
+  // 값과 단위의 행간.
+  //
+  // 종전에는 `uSize * 1.15` 로 **단위 크기만** 기준이었다. 그런데 아래로 뻗는 것은 값의
+  // 디센더(≈ 값 크기의 20%)이고 위로 뻗는 것은 단위의 캡 높이(≈ 단위 크기의 70%)라,
+  // 값이 단위보다 두 배 큰 기본 배치(28 / 14)에서 둘 사이가 1px 도 남지 않았다.
+  // 두 크기를 함께 세어 값이 커져도 간격이 따라 벌어지게 한다.
+  const lineStep = vSize * 0.35 + uSize * 0.95;
+  // 두 행이면 블록 전체가 아래로 한 행 내려가므로 시작점을 그 절반만큼 올린다.
+  const startY = (twoLine ? y - lineStep / 2 : y) + offsetY;
   const cx = x + offsetX;
   return (
     <text
@@ -537,7 +544,7 @@ function GaugeValueText({
       {twoLine && (
         <tspan
           x={cx}
-          dy={uSize * 1.15}
+          dy={lineStep}
           fontSize={uSize}
           className={unitClassName}
           opacity={unitOpacity}
