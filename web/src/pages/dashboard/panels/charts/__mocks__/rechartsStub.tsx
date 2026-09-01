@@ -237,6 +237,8 @@ export function YAxis({
       // 눈금 포맷터를 표본 값에 적용해 노출한다 — 포맷 배선(소수 자릿수·단위)을
       // 실제 눈금 문자열로 확인할 수 있게 하기 위함. 포맷터가 없으면 속성도 없다.
       data-tick-sample={tickFormatter ? String(tickFormatter(12.3456)) : undefined}
+      // 큰 표본 — 자동 환산 단위의 배율이 축과 값에서 같은지 비교하는 데 쓴다.
+      data-tick-sample-large={tickFormatter ? String(tickFormatter(137_355.2)) : undefined}
     />
   );
 }
@@ -278,6 +280,9 @@ export function Tooltip({
       data-testid="rc-tooltip"
       data-single={content ? 'true' : undefined}
       data-fmt-number={sample(12.3456, 'value')}
+      // 자동 환산 단위(바이트 접기)는 표본이 접기 밑(1024)을 넘어야 배율이 드러난다.
+      // 작은 표본만 노출하면 "축은 KB, 값은 B" 같은 배율 어긋남을 잡을 수 없다.
+      data-fmt-number-large={sample(137_355.2, 'value')}
       data-fmt-bool={sample(1, '__bool__')}
     />
   );

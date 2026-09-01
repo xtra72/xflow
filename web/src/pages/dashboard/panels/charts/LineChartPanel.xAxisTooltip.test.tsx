@@ -397,3 +397,38 @@ describe('경계 채우기 (회귀)', () => {
     ]);
   });
 });
+
+describe('자동 환산 단위 — 축·툴팁·범례가 한 값을 말한다', () => {
+  // 보고된 결함: 축은 바이트를 1024 로 접어 `137`(KB) 로 그리는데 값 표기는 원값
+  // `137355.20`(B) 을 그대로 찍어, 같은 점이 축과 범례에서 1000배 다르게 읽혔다.
+  const BYTES = 137_355.2;
+
+  function renderBytes(extra: Record<string, unknown> = {}) {
+    mockResult.current.entries = [{ timestamp: NOW, value: BYTES }];
+    return renderPanel({ y_unit: 'auto:bytes', decimal_places: 2, ...extra });
+  }
+
+  it('툴팁 값도 축과 같은 배율로 접는다(접미사는 축 라벨이 한 번만 말한다)', () => {
+    renderBytes();
+    // 137355.2 / 1024 = 134.14…
+    expect(screen.getByTestId('rc-tooltip').getAttribute('data-fmt-number-large')).toBe('134.14');
+  });
+
+  it('축 눈금도 같은 배율이다', () => {
+    renderBytes();
+    expect(screen.getByTestId('rc-yaxis').getAttribute('data-tick-sample-large')).toBe('134.14');
+  });
+
+  it('축 라벨은 저장값이 아니라 실제로 접은 배율을 말한다', () => {
+    // `auto:bytes` 는 접미사가 아니라 규칙이다. 그대로 붙이면 눈금은 KB 인데 라벨은
+    // 규칙 이름을 말해, 축이 무엇을 세는지 알 수 없다.
+    renderBytes();
+    expect(screen.getByTestId('rc-yaxis').getAttribute('data-label')).toBe('(KB)');
+  });
+
+  it('일반 단위는 종전대로 저장값을 그대로 라벨에 쓴다(회귀 0)', () => {
+    mockResult.current.entries = [{ timestamp: NOW, value: 12.3456 }];
+    renderPanel({ y_unit: 'kW', y_label: '전력' });
+    expect(screen.getByTestId('rc-yaxis').getAttribute('data-label')).toBe('전력 (kW)');
+  });
+});

@@ -78,7 +78,7 @@ import {
   hasExplicitDecimalPlaces,
   readDecimalPlaces,
 } from './decimalPlaces';
-import { formatTickValue } from './unitOptions';
+import { axisUnitLabel, formatTickValue, isAutoScaledUnit } from './unitOptions';
 import { resolveGroupPageDisplay, resolvePanelSeriesDisplay } from './panelSeriesStatus';
 import {
   chartXRangePoints,
@@ -750,7 +750,10 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
       return label ?? formatDecimal(value as number, dec);
     }
     if (booleanKeys.has(name)) return value === 1 ? 'true' : 'false';
-    if (isNum) return formatDecimal(value as number, dec);
+    // 축과 **같은 배율**로 접어 표기한다. 접미사는 붙이지 않는다 — 단위는 축 라벨이 한 번만
+    // 말한다는 규칙(`formatTickValue` 머리말)을 툴팁도 따른다. 종전에는 원값을 그대로
+    // 찍어 축은 `137`(KB) 인데 값은 `137355.20`(B) 로 같은 점이 두 자리로 읽혔다.
+    if (isNum) return formatTickValue(value as number, cfg.y_unit, dec);
     // 숫자가 아니면 그대로 — 문자열·null 은 Recharts 가 알아서 표기한다.
     return value as React.ReactNode;
   };
@@ -825,8 +828,27 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
       .map(fmt);
   }, [enumMode, enumMap, boolAxis, yNumberFormatter, yDomain]);
 
+  // 축 라벨의 단위는 **축이 실제로 접은 배율**이다(`axisUnitLabel`). 자동 환산 단위의
+  // 저장값(`auto:bytes`)을 그대로 붙이면 눈금은 KB 인데 라벨은 규칙 이름을 말한다.
+  // 배율은 가장 큰 눈금이 정하므로 도메인 상한을 기준으로 삼는다.
+  // 배율 기준값. 도메인 상한이 수면 그대로 쓰고, 'auto' 면 실제 데이터 최대값을 찾는다 —
+  // 자동 축에서는 Recharts 가 상한을 정하므로 여기서는 알 수 없다. 스캔은 자동 환산
+  // 단위일 때만 한다(다른 단위에서는 라벨이 저장값 그대로라 기준값이 필요 없다).
+  const yScaleReference = useMemo<number | undefined>(() => {
+    if (!isAutoScaledUnit(cfg.y_unit)) return undefined;
+    if (typeof yDomain[1] === 'number') return yDomain[1];
+    let max = Number.NEGATIVE_INFINITY;
+    for (const row of chartData) {
+      for (const k of seriesKeys) {
+        const v = row[k as keyof typeof row];
+        if (typeof v === 'number' && Number.isFinite(v) && v > max) max = v;
+      }
+    }
+    return Number.isFinite(max) ? max : undefined;
+  }, [cfg.y_unit, yDomain, chartData, seriesKeys]);
+  const yUnitLabel = axisUnitLabel(cfg.y_unit, yScaleReference);
   const yAxisTitle =
-    [cfg.y_label, cfg.y_unit ? `(${cfg.y_unit})` : ''].filter(Boolean).join(' ') || undefined;
+    [cfg.y_label, yUnitLabel ? `(${yUnitLabel})` : ''].filter(Boolean).join(' ') || undefined;
 
   const yAxisWidth = resolveYAxisWidth({
     tickTexts: yTickSamples,
@@ -1190,7 +1212,8 @@ export default function LineChartPanel({ panelId: _panelId, title, config }: Lin
           formatValue={(key: string, v: number) => {
             if (enumMode) return formatEnumValue(v, enumMap);
             if (booleanKeys.has(key)) return v === 1 ? 'true' : v === 0 ? 'false' : String(v);
-            return formatDecimal(v, readDecimalPlaces(config));
+            // 툴팁·축과 같은 배율 — 셋이 한 값을 말해야 한다.
+            return formatTickValue(v, cfg.y_unit, readDecimalPlaces(config));
           }}
         />
       </div>

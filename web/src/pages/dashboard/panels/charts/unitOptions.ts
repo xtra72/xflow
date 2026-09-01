@@ -301,6 +301,27 @@ export function formatTickValue(
   return formatDecimal(parts.value, dec);
 }
 
+/**
+ * **축 라벨**에 적을 단위 표기.
+ *
+ * 자동 환산 단위는 저장값(`auto:bytes`)이 곧 표기가 아니라 규칙이다. 그대로 축 라벨에
+ * 붙이면 눈금은 KB 로 접혀 있는데 라벨은 `auto:bytes` 라고 말해, 축이 무엇을 세는지
+ * 알 수 없다(`0 · 34 · 68 · 103 · 137 (auto:bytes)` 로 보이던 자리).
+ *
+ * 그래서 축이 실제로 접은 배율의 접미사를 돌려준다 — 배율은 눈금마다 다시 정하지 않고
+ * **축 전체가 하나**를 쓰므로(가장 큰 눈금이 정한다) 라벨 한 줄로 말할 수 있다.
+ *
+ * @param reference 배율을 정할 기준값. 축의 최대 눈금을 넘긴다.
+ */
+export function axisUnitLabel(
+  unit: string | undefined,
+  reference: number | undefined,
+): string | undefined {
+  if (!isAutoScaledUnit(unit)) return unit === '' ? undefined : unit;
+  if (reference === undefined || !Number.isFinite(reference)) return undefined;
+  return scaleValueParts(reference, unit).suffix;
+}
+
 /** {@link scaleValueUnit} 의 두 조각을 이어 붙인 문자열. 툴팁·축 눈금·표 셀에서 쓴다. */
 export function formatValueWithUnit(
   value: number,

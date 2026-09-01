@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  axisUnitLabel,
   AUTO_BYTES_RATE_UNIT,
   AUTO_BYTES_UNIT,
   formatTickValue,
@@ -225,5 +226,29 @@ describe('눈금 값 자릿수 — 크기가 정한다', () => {
 
   it('수가 아니면 원문을 남긴다', () => {
     expect(formatTickValue(Number.NaN, '°C')).toBe('NaN');
+  });
+});
+
+describe('axisUnitLabel — 축 라벨의 단위 표기', () => {
+  it('자동 환산 단위는 저장값이 아니라 실제로 접은 배율을 말한다', () => {
+    // `auto:bytes` 는 접미사가 아니라 규칙이다. 그대로 라벨에 붙이면 눈금은 KB 로
+    // 접혀 있는데 라벨은 규칙 이름을 말해 축이 무엇을 세는지 알 수 없다.
+    expect(axisUnitLabel(AUTO_BYTES_UNIT, 137_355.2)).toBe('KB');
+    expect(axisUnitLabel(AUTO_BYTES_UNIT, 500)).toBe('B');
+    expect(axisUnitLabel(AUTO_BYTES_UNIT, 5 * 1024 * 1024)).toBe('MB');
+    expect(axisUnitLabel(AUTO_BYTES_RATE_UNIT, 137_355.2)).toBe('KB/s');
+  });
+
+  it('일반 단위는 저장값이 곧 표기다(회귀 0)', () => {
+    expect(axisUnitLabel('kW', 137_355.2)).toBe('kW');
+    expect(axisUnitLabel('°C', 12)).toBe('°C');
+  });
+
+  it('단위가 없거나 기준값을 모르면 라벨을 만들지 않는다', () => {
+    expect(axisUnitLabel(undefined, 10)).toBeUndefined();
+    expect(axisUnitLabel('', 10)).toBeUndefined();
+    // 자동 축(도메인 'auto')에서 데이터가 없으면 배율을 정할 근거가 없다.
+    expect(axisUnitLabel(AUTO_BYTES_UNIT, undefined)).toBeUndefined();
+    expect(axisUnitLabel(AUTO_BYTES_UNIT, Number.NaN)).toBeUndefined();
   });
 });
