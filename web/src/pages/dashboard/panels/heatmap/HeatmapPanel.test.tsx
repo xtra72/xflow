@@ -1229,4 +1229,44 @@ describe('HeatmapPanel 소스 활성 판정 특성화 (SPEC-TSDB-002 M2, CT-06~C
     dropOnOverlay(screen.getByTestId(handleId), 30, 30);
     expect(screen.getByTestId(handleId)).toBeInTheDocument();
   });
+  it('판독값이 아직 없어도 바인딩된 센서는 미배치 팔레트에 뜬다(자리 정하기는 값보다 먼저다)', () => {
+    // 조회는 붙었지만 컬럼/값이 하나도 없는 상태(설정 미리보기에서 실제 데이터를 끈 경우 포함).
+    // 종전에는 팔레트가 통째로 비어 배치 자체가 불가능했다.
+    setStore({ seriesNames: [], seriesEntries: new Map(), status: 'connected' });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig({}, {}, ['s1', 's2'])}
+        onConfigChange={vi.fn()}
+        forcePlacement
+      />,
+    );
+    expect(screen.getByTestId(`sensor-unplaced-${tid(sid('s1'))}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`sensor-unplaced-${tid(sid('s2'))}`)).toBeInTheDocument();
+  });
+
+  it('마커 오버레이가 도면 이동 오버레이보다 위에 온다(마커를 잡으면 도면이 아니라 마커가 움직이도록)', () => {
+    setStore({
+      seriesNames: [sid('s1')],
+      seriesEntries: new Map([[sid('s1'), reading(22)]]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig({ [sid('s1')]: { x: 0.5, y: 0.5 } }, {
+          floor_plan: { image: 'data:image/png;base64,AAAA' },
+        })}
+        onConfigChange={vi.fn()}
+        forcePlacement
+      />,
+    );
+    const zOf = (el: HTMLElement): number => {
+      const m = /z-\[?(\d+)\]?/.exec(el.className);
+      return m ? Number(m[1]) : NaN;
+    };
+    const sensorZ = zOf(screen.getByTestId('sensor-placement-overlay'));
+    const transformZ = zOf(screen.getByTestId('floorplan-transform-overlay'));
+    expect(sensorZ).toBeGreaterThan(transformZ);
+  });
 });

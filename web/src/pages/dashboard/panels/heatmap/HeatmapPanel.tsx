@@ -195,7 +195,7 @@ export default function HeatmapPanel({
   );
 
   // 센서 최신값(시리즈별) 추출 + 좌표 결합(T6). 좌표 미지정 센서는 보간 입력에서 제외(AC-E2).
-  const { points, unplacedNames, autoBounds } = useMemo(
+  const { points, autoBounds } = useMemo(
     () => joinSensorPoints(resolved.ids, resolved.entriesById, sensorPositions),
     [resolved, sensorPositions],
   );
@@ -261,6 +261,16 @@ export default function HeatmapPanel({
         .filter(([id]) => boundIds.has(id))
         .map(([id, pos]) => ({ key: id, pos })),
     [sensorPositions, boundIds],
+  );
+  // 미배치: 바인딩된 센서 중 좌표가 없는 것. **판독값을 요구하지 않는다.**
+  // `joinSensorPoints` 의 unplacedNames 는 최신 유한값이 있는 시리즈만 담으므로, 값이 아직
+  // 오지 않았거나 설정 미리보기에서 실제 데이터를 끄면 팔레트가 통째로 비어 **배치 자체가
+  // 불가능**했다(보고된 "설정 모드에서 센서 포인트가 보이지 않음"). 마커(placed)는 이미
+  // 판독값과 무관하게 유지되므로, 미배치 쪽만 값을 요구하던 것은 두 목록이 서로 다른 규칙을
+  // 쓰던 비대칭이다 — 자리를 정하는 일은 값이 흐르기 전에도 할 수 있어야 한다.
+  const unplacedIds = useMemo(
+    () => [...boundIds].filter((id) => sensorPositions[id] === undefined),
+    [boundIds, sensorPositions],
   );
 
   // 좌표 쓰기는 항상 **환산된 맵 전체**를 내보내고 공간을 'stage' 로 승격한다. 레거시 맵에
@@ -346,14 +356,16 @@ export default function HeatmapPanel({
           <span className="text-sm text-(--color-text-muted)">
             {t('dashboard.heatmap.emptyState')}
           </span>
-          {unplacedNames.length > 0 && (
+          {unplacedIds.length > 0 && (
             <span className="text-xs text-(--color-text-muted)">
-              {t('dashboard.heatmap.unplaced').replace('{count}', String(unplacedNames.length))}
+              {t('dashboard.heatmap.unplaced').replace('{count}', String(unplacedIds.length))}
             </span>
           )}
         </div>
       ) : (
-        // 레이어 스택: 도면 배경(z-0) → 히트맵 canvas(z-10, opacity 합성) → 마커 오버레이(z-20, 편집 시).
+        // 레이어 스택: 도면 배경(z-0) → 히트맵 canvas(z-10, opacity 합성) → 등고선(z-15) →
+        // 도면 이동(z-22, 편집 + 도면 있을 때) → 마커 오버레이(z-24, 편집 시) → 범례(z-25).
+        // 마커가 도면 이동보다 **위**인 것이 요점이다 — 아래에 깔리면 마커를 잡아도 도면이 끌려간다.
         // 세 레이어가 동일 컨테이너 rect 위에 겹쳐 정규화 좌표 공간을 공유한다. 편집은 오버레이 레이어에
         // 국한되어 store 폴링/히트맵 렌더를 파괴하지 않는다(REQ-04, R3, AC-03).
         // 본문(컨테이너)은 패널을 가득 채우고, 그 안의 스테이지가 기준 도면 종횡비로 레터박스된다.
@@ -403,7 +415,7 @@ export default function HeatmapPanel({
           {placementActive && (
             <SensorPlacementOverlay
               placed={placed}
-              unplaced={unplacedNames}
+              unplaced={unplacedIds}
               labels={sensorLabels}
               onPositionChange={handlePositionChange}
               onRemove={handleRemove}
@@ -417,12 +429,12 @@ export default function HeatmapPanel({
               이 결함의 진단을 어렵게 만든 원인이다. 배경 유무와 무관하게 카운트를 노출하되,
               그림을 가리지 않도록 작은 모서리 배지 + pointer-events-none 으로 둔다. 배치 편집
               중에는 미배치 팔레트가 같은 정보를 더 잘 보여주므로 생략한다. */}
-          {!placementActive && unplacedNames.length > 0 && (
+          {!placementActive && unplacedIds.length > 0 && (
             <span
               data-testid="heatmap-unplaced-hint"
               className="pointer-events-none absolute bottom-2 left-2 z-30 max-w-[70%] rounded-md bg-(--color-bg-elevated) px-2 py-1 text-[10px] leading-tight text-(--color-text-muted) shadow"
             >
-              {t('dashboard.heatmap.unplaced').replace('{count}', String(unplacedNames.length))}
+              {t('dashboard.heatmap.unplaced').replace('{count}', String(unplacedIds.length))}
             </span>
           )}
         </div>
