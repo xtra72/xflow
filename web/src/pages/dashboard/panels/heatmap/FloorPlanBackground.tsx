@@ -13,6 +13,8 @@
 //
 // @spec SPEC-HEATMAP-PANEL-002
 
+import { useEffect, useRef } from 'react';
+
 import type { FloorPlanLayer } from './heatmapConfig';
 
 interface FloorPlanBackgroundProps {
@@ -50,6 +52,20 @@ export default function FloorPlanBackground({
   stretch,
   onBaseAspect,
 }: FloorPlanBackgroundProps) {
+  // 캐시된 이미지는 React 가 onLoad 를 붙이기 전에 이미 로드가 끝나 **load 이벤트가 오지
+  // 않는다**. 같은 도면을 쓰는 패널이 여럿이거나 대시보드를 다시 열면 늘 이 경로다. 그때
+  // 종횡비를 못 받으면 스테이지가 패널 전체로 퇴화한 채 남으므로, 이미 완료된 이미지는
+  // 마운트/`src` 변경 시점에 직접 읽는다(이벤트와 중복 호출돼도 같은 값이라 무해하다).
+  const baseImgRef = useRef<HTMLImageElement | null>(null);
+  const baseSrc = sources[0] ?? '';
+  useEffect(() => {
+    const img = baseImgRef.current;
+    if (!img || !onBaseAspect) return;
+    if (img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
+      onBaseAspect(img.naturalWidth / img.naturalHeight);
+    }
+  }, [baseSrc, onBaseAspect]);
+
   // 레이어가 없거나 아직 해석된 src 가 하나도 없으면 배경을 렌더하지 않는다.
   if (layers.length === 0 || sources.every((s) => !s)) return null;
   return (
@@ -62,6 +78,7 @@ export default function FloorPlanBackground({
           alt=""
           aria-hidden="true"
           data-testid={i === 0 ? 'floor-plan-background' : `floor-plan-layer-${i}`}
+          ref={i === 0 ? baseImgRef : undefined}
           // 기준 레이어만 스테이지 종횡비를 정한다(나머지는 그 위에 얹히는 겹판이다).
           onLoad={
             i === 0 && onBaseAspect

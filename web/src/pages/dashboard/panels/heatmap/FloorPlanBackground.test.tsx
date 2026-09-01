@@ -161,4 +161,26 @@ describe('FloorPlanBackground — 기준 레이어 종횡비 보고', () => {
     fireEvent.load(getByTestId('floor-plan-background'));
     expect(onBaseAspect).not.toHaveBeenCalled();
   });
+  it('이미 캐시돼 load 이벤트가 오지 않는 이미지도 종횡비를 알린다', () => {
+    // React 가 onLoad 를 붙이기 전에 로드가 끝난 이미지는 load 이벤트를 다시 내지 않는다.
+    // 같은 도면을 쓰는 패널이 여럿이거나 대시보드를 다시 여는 흔한 경로가 전부 이 경우다.
+    const proto = HTMLImageElement.prototype as unknown as Record<string, unknown>;
+    Object.defineProperty(proto, 'complete', { value: true, configurable: true });
+    Object.defineProperty(proto, 'naturalWidth', { value: 1200, configurable: true });
+    Object.defineProperty(proto, 'naturalHeight', { value: 400, configurable: true });
+    try {
+      const onBaseAspect = vi.fn();
+      render(
+        <FloorPlanBackground
+          layers={[layer()]}
+          sources={['data:image/png;base64,AAAA']}
+          onBaseAspect={onBaseAspect}
+        />,
+      );
+      expect(onBaseAspect).toHaveBeenCalledWith(3);
+    } finally {
+      // 프로토타입 오염을 되돌린다(다른 테스트는 크기 0 을 기대한다).
+      for (const k of ['complete', 'naturalWidth', 'naturalHeight']) delete proto[k];
+    }
+  });
 });
