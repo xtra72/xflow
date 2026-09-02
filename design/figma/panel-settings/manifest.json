@@ -1,0 +1,11 @@
+{
+  "name": "xflow — 그래프 패널 설정 화면",
+  "id": "xflow-panel-settings-mock",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": [
+    "figma"
+  ],
+  "documentAccess": "dynamic-page",
+  "ui": "ui.html"
+}
