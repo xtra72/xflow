@@ -1,10 +1,10 @@
 ---
 id: SPEC-TSDB-002
 title: 대시보드 패널 TSDB 데이터소스 — 패널측 계약 확립 + InfluxDB 첫 백엔드
-version: 0.5.0
+version: 0.6.0
 status: draft
 created: 2026-08-22
-updated: 2026-08-22
+updated: 2026-09-02
 author: xtra
 priority: high
 domain: dashboard
@@ -30,6 +30,7 @@ lifecycle_level: spec-first
 | 0.3.0 | 2026-08-22 | xtra | 신규 질문 NQ1~NQ5 **전부 확정**(모두 잠정안 그대로). NQ4 — 미등록 `/api/v1/tsdb/*` 라우트는 **본 SPEC 범위 밖의 별도 이슈**로 분리한다. TSDB 패널 소스가 memTSDB 를 쓰지 않게 되어 이 SPEC 의 구현을 막지 않으며, `internal/cli/tsdb.go` 하위명령 · 에이전트 상세 Series 탭 · `services/api/tsdb.ts` · `hooks/useTsdb.ts` 의 404/도달불가 상태와 SPEC-TSDB-001 REQ-TSDB-040 미충족 사실은 기록만 남긴다. NQ-rename — `SeriesDataSourceKind` 의 `'tsdb'` → `'memtsdb'` 리네임을 **확정**한다(같은 문자열이 두 화면에서 반대 뜻을 갖는 것을 막는다; 대상 5개 지점, 해당 경로가 라우트 미등록이라 리네임 위험이 낮다). NQ1·NQ2·NQ3·NQ5 도 잠정안 확정. 결정에 따른 요구사항 변경 없음 — 확정만 기록한다. |
 | 0.4.0 | 2026-08-22 | xtra | **M1~M5 구현 회차의 사실 정정 3건.** 구현이 각 정본을 따른 결과 SPEC 본문의 서술 3지점이 사실과 어긋남을 확인했다. 요구사항 변경 없음 — 서술만 정정한다. §HISTORY-0.4.0 참조. |
 | 0.5.0 | 2026-08-22 | xtra | **M6 + M7 구현 회차 기록.** M6 커밋 4건으로 첫 사용자 가치에 도달했고, M7 마무리에서 **구현 이탈 1건(eslint 게이트 범위 확대)** · **측정 범위 확대 1건(커버리지 include)** · **사실 정정 1건(3소스 교차 검증이 실제로는 2소스였음)** 이 발생했다. 요구사항 변경 없음 — 회차 사실과 그 처분만 기록한다. §HISTORY-0.5.0 참조. |
+| 0.6.0 | 2026-09-02 | xtra | **구현 노트 추가**(§8). 본문 §1~§7 은 spec-first 규약대로 보존하고, 계획에서 벗어난 지점만 기록한다 — 채널 소스 완전 제거로 AC-09·AC-12 의 전제가 사라진 사실, `sources[]` 다중 소스(수평 확장, NQ1 과 다른 축), X축 구간의 패널 소유화, 범위 밖 차트 표시 개편 7종. |
 
 ### HISTORY-0.5.0 — M6 + M7 구현 회차
 
@@ -1100,3 +1101,60 @@ TypeScript 쪽은 `Record<ChartDataSourceKind, ...>` 로 두면 컴파일러가 
 | **NQ3** | Store 어댑터의 `Promise.all`(부분 실패 격리 없음, `store.ts:611`)을 TSDB 와 같이 `allSettled` 로 맞출 것인가? | **본 SPEC 에서는 맞추지 않는다**(§1.3 — Store 무변경) | 별도 SPEC. 두 소스가 실패 처리에서 다르게 동작하는 상태가 남는다 |
 | **NQ4** | `/api/v1/tsdb/*` 6종 라우트가 미등록이라 CLI `tsdb` 하위명령과 에이전트 상세 Series 탭이 404 인 문제를 언제 처리할 것인가? | **본 SPEC 범위 밖**(§1.3). 사실만 기록한다 | (a) `main.go` 에 `tsdbHandler` 배선 (b) 도달 불가 코드로 판정하고 CLI 하위명령 · Series 탭 · `services/api/tsdb.ts` · `hooks/useTsdb.ts` 를 함께 제거 |
 | **NQ5** | `resolveStoreAgentName` 을 `resolveAgentName` 으로 개명해 Store/TSDB 가 공유할 것인가? | **개명한다**(§2.15 O1, 선택 항목) | 개명하지 않고 TSDB 가 같은 함수를 그대로 호출(이름만 Store 를 가리키는 상태가 남는다) |
+
+---
+
+## 8. 구현 노트 (2026-09-02 sync)
+
+`lifecycle_level: spec-first` 이므로 위 §1~§7 본문은 **작성 당시 상태 그대로 보존**한다. 이 절은 실제 구현이 계획에서 벗어난 지점만 기록한다 — 본문을 고쳐 쓰면 "무엇을 계획했고 무엇이 실제였는가" 를 나중에 대조할 수 없다.
+
+### 8.1 채널 소스 제거 — AC-09 · AC-12 의 전제 소멸
+
+본문 §2.4 는 `ChartDataSourceKind = 'channel' | 'store' | 'tsdb'` 3종 유니온을 계약으로 두고, `'channel'` 을 인식 불가 값의 폴백 자리로 삼았다. 인수 조건 **AC-09**(저장된 config 3형태의 렌더 결과가 바이트 동일) · **AC-12**(미리보기 범례의 채널 폴백이 보존된다)가 이를 잠갔다.
+
+구현은 채널을 **패널 데이터 소스에서 완전히 걷어냈다**. 유니온은 `'store' | 'tsdb' | 'sysmetrics'` 가 되었고, 폴백 자리는 `'store'` 로 옮겨졌다.
+
+- 옮긴 근거는 두 가지다. (1) 신규 패널이 이미 store 로 태어난다(`uiStore.createDefaultPanel`). (2) 채널 모드로 저장된 패널은 설정을 열 때 store 로 이관되므로(`SERIES_SOURCE_PANEL_TYPES`), 폴백과 이관 대상이 같아야 두 경로가 갈리지 않는다.
+- **활성 판정도 함께 바뀌었다.** 채널 폴백은 언제나 활성이었지만(채널 훅이 빈 상태를 스스로 처리했다) store 는 시리즈를 골라야 활성이다. 활성을 참으로 두면 고른 것이 없는 패널이 "조회 중" 으로 보인다.
+- 폐지된 `'channel'` 값은 **경고 없이** store 로 접는다. 사용자가 고른 적 없는 손상된 값과 달리, 폐지된 값은 구제 대상이지 오류가 아니다.
+- 삭제된 모듈: `useChartChannel` · `useChartChannels` · `services/api/charts` · `services/ws/remoteChartChannel` (+ 각 테스트, 총 9개 파일). 플로우·서버측 채널 인프라는 **건드리지 않았다** — 제거 범위는 패널 옵션에 한정된다.
+- AC-09 · AC-12 를 대체하는 특성화는 `PanelSettingsDialog.channelRemoval.test.tsx` 가 갖는다(채널 모드 저장 패널의 store 자동 이관 + 4종 패널의 채널 섹션 부재).
+
+### 8.2 다중 데이터 소스 — 수평 확장 축 추가
+
+본문은 단일 `data_source` 축만 다룬다. 구현은 `config.sources[]` 를 더해 **종류당 최대 4개**(`MAX_SOURCES_PER_KIND`) 인스턴스를 동시에 둘 수 있게 했다.
+
+- §NQ1 이 확정한 "읽기 경로를 하나로 **합치지 않는다**" 와는 다른 축이다. NQ1 은 `store_source`/`tsdb_source` 를 한 블록으로 **수직 통합**할지의 질문이었고, 이번 변경은 같은 종류를 **여러 개 나열**하는 수평 확장이다. 두 소스 블록은 그대로 분리되어 있다.
+- 세 세대의 config 를 함께 읽는다: `sources[]` → `data_sources[]` → `data_source`. 구 패널은 단일 축으로 되돌아가므로 렌더가 종전과 같다.
+- 소스별 결과는 `mergeSeriesResults` 가 합친다. 계열 이름이 겹칠 때만 접미사를 붙이고, 입력이 하나면 **그 결과를 참조 그대로** 돌려준다(불필요한 리렌더 방지).
+- 상태 병합 규칙: `idle` 이 가장 낮고 `error` 가 가장 높다.
+- 활성 판정은 목록 전체를 본다(`isPanelSeriesActive`). 단일 축 해석기(`resolvePanelSourceBinding`)로 판정하면 목록 쪽 인스턴스에만 시리즈가 있는 패널이 비활성으로 보인다 — 실제로 "시리즈를 골라도 미리보기가 반영되지 않는" 결함으로 나타났다.
+- 종류 버튼은 **더하기 전용**이다. 토글로 두면 같은 버튼을 다시 눌렀을 때 그 소스의 설정이 통째로 사라진다. 지우는 길은 인스턴스 머리의 휴지통 하나뿐이다.
+
+### 8.3 X축 구간의 소유권 이전
+
+가져올 데이터의 구간은 **데이터 소스가 아니라 패널 옵션**이 소유한다(`panelXRange.ts`). 소스마다 구간을 따로 두면 한 그래프 안에서 축이 갈라진다.
+
+`max_points` 는 구간 재정의 판정에서 **빠진다** — bar/pie/stat 에서 그 값은 "막대 개수" 를 뜻하므로, 12막대 패널이 12포인트만 조회하는 결함이 있었다.
+
+### 8.4 범위 밖 추가 — 차트 패널 표시 개편
+
+아래는 어느 SPEC 에도 없는, 사용자 요청으로 이번 사이클에 함께 들어간 항목이다. 요구사항 형태로는 남아 있지 않으므로 목록만 기록한다.
+
+| 항목 | 모듈 |
+|---|---|
+| 타이틀·범례 디자인 팝오버(폰트·크기·색) | `panelChromeContext.ts`, `ChartPanelSections.tsx` |
+| 범례·그래프 영역 자유 좌표 드래그 | `ChartDragLayer.tsx`, `legendOverlay.ts` |
+| 그래프 영역 크기 조절 + 기본값 리셋 | `chartLayout.ts` |
+| 툴팁 레이블 좌측·값 우측 정렬 | `ChartTooltipContent.tsx` |
+| Y축 값 짤림(자동 도메인) | `axisSize.ts` — `yTickSampleValues` |
+| 드래그 중 미리보기 디바운스 우회 | `previewLiveKeys.ts` |
+| Figma 설정 화면 추출 도구 | `design/figma/panel-settings/` |
+
+`previewLiveKeys.ts` 를 별도 모듈로 뺀 이유는 반복된 실수 때문이다 — 끌어 옮기는 값을 새로 만들 때마다 200ms 디바운스 제외 목록에 넣는 것을 잊어 드래그가 끊겼다. 목록을 한 곳이 소유하고 대상별 시험을 붙여 누락이 드러나게 했다.
+
+### 8.5 미해결로 남긴 것
+
+- `sources[]` 의 소스별 색 팔레트(계열 색이 소스 간에 겹칠 수 있다).
+- 소스별 조회 주기 — 구간과 마찬가지로 패널이 소유할지 미정.
+- `references/modbus-device/` 는 이번 변경과 무관한 별도 반입물이다.
