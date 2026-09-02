@@ -101,6 +101,57 @@ describe('store 라인 차트 미리보기 — 실제 데이터 패널 사용', 
     expect(wrapper.textContent).toContain('dashboard.settings.preview.label');
   });
 
+  // 다중 소스로 넘어간 뒤 시리즈 선택은 `sources[i].store_source.series` 에 쓰인다.
+  // 게이트가 최상위 `store_source` 만 보던 동안은 고른 뒤에도 합성 미니 프리뷰가 남아
+  // "시리즈를 골랐는데 미리보기에 적용이 안 된다" 로 보였다.
+  it('선택이 소스 목록에만 있어도 실제 패널을 렌더한다', () => {
+    storeMock.panel = {
+      id: 'p1',
+      type: 'graph-chart',
+      title: '라인',
+      config: {
+        data_source: 'store',
+        store_source: { agent_id: 'store-uuid-1', agent_name: 'store-1', series: [] },
+        sources: [
+          {
+            kind: 'store',
+            store_source: {
+              agent_id: 'store-uuid-1',
+              agent_name: 'store-1',
+              series: [{ key: 'LAI', field: 'value' }],
+            },
+          },
+        ],
+      },
+    } as unknown as PanelConfig;
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+
+    const wrapper = screen.getByTestId('line-chart-preview-wrapper');
+    expect(wrapper.textContent).not.toContain('dashboard.settings.preview.label');
+  });
+
+  it('둘째 인스턴스만 시리즈를 가져도 실제 패널을 렌더한다', () => {
+    storeMock.panel = {
+      id: 'p1',
+      type: 'graph-chart',
+      title: '라인',
+      config: {
+        data_source: 'store',
+        sources: [
+          { kind: 'store', store_source: { agent_name: 'store-1', series: [] } },
+          {
+            kind: 'store',
+            store_source: { agent_name: 'store-2', series: [{ key: 'LAI', field: 'value' }] },
+          },
+        ],
+      },
+    } as unknown as PanelConfig;
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+
+    const wrapper = screen.getByTestId('line-chart-preview-wrapper');
+    expect(wrapper.textContent).not.toContain('dashboard.settings.preview.label');
+  });
+
   it('태그 자동 바인딩(시리즈 배열 비어있음)도 실제 패널을 쓴다', () => {
     storeMock.panel = {
       id: 'p1',
@@ -193,9 +244,11 @@ describe('미리보기 게이트 2곳의 독립 판정 특성화 (SPEC-TSDB-002 
     expect(statGateActive()).toBe(true);
   });
 
-  it('CT-15: 채널 모드에서는 stat 게이트가 거짓이다(부가 조건은 소스 종류 축 하나)', () => {
+  // 종전 CT-15 는 "채널이면 거짓" 을 잠갔다. 채널이 패널 소스에서 빠지면서 그 축이
+  // 사라졌고, 폐지된 값도 store 로 접히므로 갖춰진 store_source 는 그대로 게이트를 연다.
+  it("CT-15: 폐지된 'channel' 값도 store 로 접혀 stat 게이트가 참이다", () => {
     renderPanel('stat', { data_source: 'channel', store_source: activeStore() });
-    expect(statGateActive()).toBe(false);
+    expect(statGateActive()).toBe(true);
   });
 
   it('CT-15: 같은 config 조각이 line-chart 에서는 `:714` 참을 낸다(부가 조건이 다르다)', () => {
@@ -263,16 +316,6 @@ describe('PanelSettingsDialog — 바/파이 라이브 미리보기', () => {
         },
       });
       expect(screen.getByTestId(testid)).toBeInTheDocument();
-    });
-
-    it(`${type}: 채널 모드에서는 렌더하지 않는다(종전 동작)`, () => {
-      renderPanel(type, { data_source: 'channel', channel_name: 'c1' });
-      expect(screen.queryByTestId(testid)).toBeNull();
-    });
-
-    it(`${type}: data_source 미지정(구 패널)도 렌더하지 않는다`, () => {
-      renderPanel(type, { channel_name: 'c1' });
-      expect(screen.queryByTestId(testid)).toBeNull();
     });
   }
 });

@@ -278,7 +278,10 @@ export function Tooltip({
   return (
     <div
       data-testid="rc-tooltip"
-      data-single={content ? 'true' : undefined}
+      // 어떤 content 를 받았는지 이름으로 노출한다. 두 모드 모두 자체 content 를 쓰므로
+      // "content 가 있는가" 로는 단일 값 여부를 가릴 수 없다 — 무엇을 받았는지가 판정이다.
+      data-content={content?.name || undefined}
+      data-single={content?.name === 'SingleSeriesTooltipContent' ? 'true' : undefined}
       data-fmt-number={sample(12.3456, 'value')}
       // 자동 환산 단위(바이트 접기)는 표본이 접기 밑(1024)을 넘어야 배율이 드러난다.
       // 작은 표본만 노출하면 "축은 KB, 값은 B" 같은 배율 어긋남을 잡을 수 없다.

@@ -30,6 +30,7 @@ vi.mock('./useChartChannel', () => ({
 
 vi.mock('../../panelChromeContext', () => ({
   usePanelTitleVisible: () => true,
+  usePanelTitleStyle: () => undefined,
 }));
 
 vi.mock('@/hooks/useAgent', () => ({

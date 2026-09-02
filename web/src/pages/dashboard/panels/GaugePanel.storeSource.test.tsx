@@ -420,13 +420,12 @@ describe('GaugePanel 신규 경로 진입 조건 (SPEC-CHART-002 §2.9 [S1])', (
     expect(query.fn).not.toHaveBeenCalled();
   });
 
-  it("data_source 가 'store' 가 아니면 series_reduce 가 있어도 레거시 경로다", async () => {
-    // §2.10 [S2] — 채널 모드에서는 series_reduce 를 읽지 않는다.
+  // 채널이 패널 소스에서 빠지면서 이 행이 뒤집혔다 — 폐지된 `'channel'` 값도 store 로
+  // 접히므로, 갖춰진 store_source 와 대표값이 있으면 신규 경로가 레거시를 밀어낸다.
+  it("폐지된 'channel' 값도 store 경로로 대표값을 읽는다", async () => {
     await renderPanel(panelConfig({ series_reduce: 'max', data_source: 'channel' }));
 
-    expect(screen.queryByTestId('series-tile')).toBeNull();
-    expect(screen.getByText('77.00')).toBeInTheDocument();
-    expect(query.fn).not.toHaveBeenCalled();
+    expect(query.fn).toHaveBeenCalled();
   });
 
   it('store_source 가 비활성(시리즈 0개)이면 레거시 경로로 폴백한다', async () => {

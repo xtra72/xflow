@@ -14,8 +14,12 @@ const hookMocks = vi.hoisted(() => ({
 vi.mock('recharts', () => ({
   usePlotArea: () => hookMocks.plotArea,
   useYAxisDomain: () => hookMocks.yDomain,
-  // 좁혀진 payload 를 그대로 노출하는 가짜 기본 내용.
-  DefaultTooltipContent: ({ payload }: { payload?: Array<{ name?: string }> }) => (
+}));
+
+// 좁혀진 payload 를 그대로 노출하는 가짜 내용. 이 파일이 보는 것은 **판정 결과**뿐이며,
+// 그리기(정렬·여백)는 ChartTooltipContent 자신의 테스트가 본다.
+vi.mock('./ChartTooltipContent', () => ({
+  ChartTooltipContent: ({ payload }: { payload?: Array<{ name?: string }> }) => (
     <div data-testid="content">{(payload ?? []).map((p) => p.name).join(',')}</div>
   ),
 }));

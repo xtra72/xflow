@@ -7,8 +7,10 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  clampInlineLegendOffset,
   clampLegendOffsets,
   clampStoredLegendOffset,
+  inlineLegendOffsetStyle,
   LEGEND_OFFSET_SAFETY_LIMIT,
   legendOffsetBounds,
   legendOverlayStyle,
@@ -128,5 +130,77 @@ describe('clampStoredLegendOffset', () => {
   it('수가 아니면 0 — 구 config 에는 이 키가 없다', () => {
     expect(clampStoredLegendOffset(undefined)).toBe(0);
     expect(clampStoredLegendOffset('12')).toBe(0);
+  });
+});
+
+describe('inlineLegendOffsetStyle — 흐름에 남는 범례', () => {
+  it('변위가 없으면 스타일을 붙이지 않는다 — 저장된 대시보드의 그림이 변하지 않는다', () => {
+    expect(inlineLegendOffsetStyle(0, 0)).toBeUndefined();
+  });
+
+  it('상대 배치로 민다 — 자리를 새로 잡지 않고 그 자리에서 밀기만 한다', () => {
+    expect(inlineLegendOffsetStyle(10, -5)).toEqual({
+      position: 'relative',
+      left: '10%',
+      top: '-5%',
+    });
+  });
+});
+
+describe('clampInlineLegendOffset', () => {
+  // 상자 1000×500, 범례는 그 안 (100,400) 자리에 200×50 으로 그려져 있다.
+  const container = { left: 0, top: 0, width: 1000, height: 500 };
+  const legend = { left: 100, top: 400, width: 200, height: 50 };
+  const base = { x: 0, y: 0 };
+
+  it('남은 여백 안에서는 그대로 통과한다', () => {
+    expect(clampInlineLegendOffset(base, { x: 5, y: -10 }, container, legend)).toEqual({
+      x: 5,
+      y: -10,
+    });
+  });
+
+  it('왼쪽 끝을 넘지 않는다 — 범례 왼면이 상자 왼면에 닿는 곳이 한계다', () => {
+    // 여백 -100px / 1000px = -10%.
+    expect(clampInlineLegendOffset(base, { x: -50, y: 0 }, container, legend).x).toBe(-10);
+  });
+
+  it('오른쪽 끝을 넘지 않는다', () => {
+    // 오른쪽 여백 1000 - 300 = 700px → 70%.
+    expect(clampInlineLegendOffset(base, { x: 200, y: 0 }, container, legend).x).toBe(70);
+  });
+
+  it('아래쪽도 같은 규칙이다', () => {
+    // 아래 여백 500 - 450 = 50px / 500px = 10%.
+    expect(clampInlineLegendOffset(base, { x: 0, y: 99 }, container, legend).y).toBe(10);
+  });
+
+  it('이미 밀려 있으면 그 자리에서 남은 만큼만 더 간다', () => {
+    // base 20% 에서 오른쪽 여백이 70% 남았으므로 총 90% 까지.
+    const moved = { x: 20, y: 0 };
+    expect(clampInlineLegendOffset(moved, { x: 500, y: 0 }, container, legend).x).toBe(90);
+  });
+
+  it('범례가 상자보다 크면 움직이지 않는다 — 죌 수 없는 값을 통과시키면 사라진다', () => {
+    const huge = { left: -50, top: -20, width: 1200, height: 600 };
+    expect(clampInlineLegendOffset({ x: 3, y: 4 }, { x: 99, y: 99 }, container, huge)).toEqual({
+      x: 3,
+      y: 4,
+    });
+  });
+
+  it('상자를 잴 수 없으면 제자리다', () => {
+    const zero = { left: 0, top: 0, width: 0, height: 0 };
+    expect(clampInlineLegendOffset({ x: 7, y: 8 }, { x: 1, y: 2 }, zero, legend)).toEqual({
+      x: 7,
+      y: 8,
+    });
+  });
+
+  it('NaN 은 제자리로 떨어뜨린다', () => {
+    expect(clampInlineLegendOffset({ x: 2, y: 3 }, { x: NaN, y: NaN }, container, legend)).toEqual({
+      x: 2,
+      y: 3,
+    });
   });
 });

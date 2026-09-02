@@ -1071,8 +1071,16 @@ describe('HeatmapPanel — 타이틀 바', () => {
 // @spec SPEC-TSDB-002 §2.3 (U3) — plan.md §3.2 CT-06 ~ CT-08 / AC-10
 // ---------------------------------------------------------------------------
 describe('HeatmapPanel 소스 활성 판정 특성화 (SPEC-TSDB-002 M2, CT-06~CT-08)', () => {
+  /**
+   * store 경로의 호출.
+   *
+   * 다중 소스가 들어오면서 `useStoreChartData` 는 한 렌더에 **두 번** 불린다
+   * (store 한 번, 시스템 지표 이력 한 번 — 훅 규칙상 쓰지 않는 쪽도 인자를 비워 부른다).
+   * 그래서 "마지막 호출" 로는 어느 쪽인지 알 수 없다. 소스가 실린 호출이 store 쪽이다.
+   */
   function lastStoreCall(): { source: unknown; enabled: unknown } {
-    return storeHookCalls.args.at(-1)!;
+    const withSource = storeHookCalls.args.filter((c) => c.source !== undefined);
+    return (withSource.at(-1) ?? storeHookCalls.args.at(-1))!;
   }
 
   beforeEach(() => {

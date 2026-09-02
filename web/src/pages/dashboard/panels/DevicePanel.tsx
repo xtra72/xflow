@@ -18,7 +18,7 @@ import {
 import { useDevicesRealtime } from '@/hooks/useDevice';
 import { useDevicesTarget } from '@/hooks/useResourceTargets';
 import { useTranslation } from '@/lib/i18n';
-import { usePanelTitleVisible } from '../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { DeviceCell } from '@/pages/devices/DeviceCell';
@@ -75,6 +75,7 @@ export default function DevicePanel({
   onTitleChange: _onTitleChange,
 }: DevicePanelProps) {
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const { t } = useTranslation();
   // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L04): 원격이면 노드 미러 목록을
   // 소스로 쓴다(useDevicesTarget). 로컬은 기존 useDevicesRealtime 그대로(회귀 없음).
@@ -207,7 +208,7 @@ export default function DevicePanel({
             <HardDrive className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
             <h3
               className="truncate text-lg font-semibold text-(--color-text-primary)"
-              style={acColor('header') ? { color: acColor('header')! } : undefined}
+              style={{ ...(acColor('header') ? { color: acColor('header')! } : undefined), ...titleStyle }}
             >
               {panelTitle}
             </h3>

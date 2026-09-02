@@ -204,15 +204,16 @@ describe('채널 모드 → store 자동 이관', () => {
     });
   }
 
-  it('게이지는 이관 대상이 아니다 — 레거시 dataSources 편집기가 남아 있어 갇히지 않는다', async () => {
-    // SPEC-CHART-002 §2.8 [E2] "저장된 config 를 자동으로 조용히 다시 쓰지 않는다"(AC-20).
+  // 게이지를 제외해 두던 근거(레거시 `dataSources[]` 편집기가 남아 있어 갇히지 않는다)는
+  // 채널이 패널 소스에서 완전히 빠지면서 사라졌다 — 이제 게이지도 같은 구제 대상이다.
+  it('게이지도 이관된다 — 레거시 채널 바인딩만으로는 더 이상 고칠 수 없다', async () => {
     await renderDialog('gauge', {
       gaugeType: 'simple',
       dataSources: [{ sourceType: 'chart-emitter', channelName: 'ch1' }],
     });
     const applied = await apply();
-    expect(applied.data_source).toBeUndefined();
-    expect(applied.store_source).toBeUndefined();
+    expect(applied.data_source).toBe('store');
+    expect(applied.store_source).toBeDefined();
   });
 
   it('저장하지 않으면 스토어에 아무것도 쓰지 않는다(draft 전용)', async () => {

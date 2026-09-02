@@ -183,17 +183,6 @@ describe('stat 라이브 미리보기 (M6.3)', () => {
     expect(screen.getByTestId('stat-preview-wrapper')).toBeInTheDocument();
   });
 
-  it('채널 모드에서는 대표값이 남아 있어도 미리보기를 렌더하지 않는다', async () => {
-    // series_reduce 는 채널 모드에서 읽히지 않는다(§2.10 [S2]) — 미리보기도 같아야 한다.
-    await renderDialog('stat', {
-      channel_name: 'c1',
-      data_source: 'channel',
-      store_source: f1Store(),
-      series_reduce: 'max',
-    });
-    expect(screen.queryByTestId('stat-preview-wrapper')).toBeNull();
-  });
-
   it('시리즈 미선택이면 실패널의 빈 상태를 렌더한다(빈 화면이 아니다)', async () => {
     // 신규 통계 패널은 store 기본 소스 + 시리즈 0개로 태어난다. 이때 미리보기를 끄면
     // 사용자는 소스를 고르기도 전에 빈 화면을 본다. 소스가 비활성이면 조회는 idle 이므로

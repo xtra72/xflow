@@ -15,8 +15,18 @@ const mockResult = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('./useChartChannel', () => ({
-  useChartChannel: () => mockResult.current,
+// 채널이 패널 소스에서 빠지면서 데이터 이음매가 하나로 줄었다(`usePanelSeriesData`).
+// 이 파일의 테스트들은 채널 형상(`mockResult.current`)을 심으므로, 그 형상을 시리즈 소스
+// 결과로 옮겨 준다 — 테스트 본문을 그대로 두기 위한 어댑터다.
+vi.mock('./usePanelSeriesData', () => ({
+  usePanelSeriesData: () => ({
+    ...mockResult.current,
+    seriesEntries: new Map(),
+    seriesStyles: new Map(),
+    seriesNames: [],
+    booleanSeries: new Set(),
+  }),
+  isPanelSeriesSource: () => true,
 }));
 
 // useStoreChartData 가 내부에서 useAgents(React Query)를 호출하므로, QueryClient

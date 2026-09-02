@@ -22,7 +22,6 @@ import { post } from '@/services/api/client';
 import { useAgents } from '@/hooks/useAgent';
 
 import {
-  getByPath,
   type SeriesReduceFunc,
 } from './charts/chartChannelTypes';
 import { ConnectionStatusIcon } from './charts/ConnectionStatusIcon';
@@ -33,10 +32,9 @@ import {
 } from './charts/gaugeLegacyBinding';
 import { reduceAllSeries, type ReducedSeries } from './charts/seriesReduce';
 import { SeriesTileGrid } from './charts/SeriesTileGrid';
-import { useChartChannel } from './charts/useChartChannel';
 import { usePanelSeriesData } from './charts/usePanelSeriesData';
 import { resolveStoreAgentName } from './charts/storeAgentResolve';
-import { usePanelTitleVisible } from '../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 // 게이지 모양 8종은 sysmetrics 패널과 공유한다 (panels/gauge/gaugeShapes).
 import { parseConfig, renderGaugeByType, withGaugeValue } from './gauge/gaugeShapes';
 import {
@@ -91,12 +89,6 @@ interface GaugeDataSource {
   storeAgent?: string;
   storeKey?: string;
   storeNamespace?: string;
-}
-
-function pickChartEmitterSource(config: Record<string, unknown>): GaugeDataSource | undefined {
-  const list = config.dataSources as GaugeDataSource[] | undefined;
-  if (!Array.isArray(list)) return undefined;
-  return list.find((d) => d?.sourceType === 'chart-emitter' && !!d.channelName);
 }
 
 function pickStoreSource(config: Record<string, unknown>): GaugeDataSource | undefined {
@@ -308,6 +300,7 @@ export default function GaugePanel({
   forceEdit = false,
 }: GaugePanelProps) {
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
 
   // ---- SPEC-CHART-002 M5: 값 소스 판정 ----
   //
@@ -330,9 +323,6 @@ export default function GaugePanel({
   //
   // 레거시 계산 코드는 **삭제하지 않는다** — 판정이 `'legacy'` 인 순간 그대로 되살아나며
   // 그것이 이관의 되돌리기 경로다(§4.5). 특성화 CH-11~CH-18 이 이 가지를 계속 지킨다.
-  const chartSource = isStoreSourcePath ? undefined : pickChartEmitterSource(config);
-  const { entries, status } = useChartChannel(chartSource?.channelName, { maxPoints: 1 });
-
   const storeSource = isStoreSourcePath ? undefined : pickStoreSource(config);
   const storeValue = useStoreLatestValue(storeSource);
 
@@ -346,29 +336,17 @@ export default function GaugePanel({
   // 종전 `useStoreChartData(undefined, false)` 와 같은 idle 로 둔다.
   const storeChart = usePanelSeriesData(isStoreSourcePath ? config : IDLE_SERIES_CONFIG);
 
-  // chart-emitter 최신 값
-  const chartLiveValue = (() => {
-    if (!chartSource || entries.length === 0) return undefined;
-    const last = entries[entries.length - 1]!;
-    const field = chartSource.displayField && chartSource.displayField.length > 0
-      ? chartSource.displayField
-      : 'value';
-    const n = toNumber(getByPath(last, field));
-    return Number.isFinite(n) ? n : undefined;
-  })();
-
-  // 레거시 경로 안의 우선순위: chart-emitter > store > static.
+  // 레거시 경로의 값은 이제 store 하나다.
   //
-  // 주의 — 이것은 **값** 우선순위이지 **바인딩** 우선순위가 아니다(특성화 CH-15). 채널이
-  // 바인딩되어 있어도 그 채널이 값을 못 내면(entries 0 / 비수치) 조용히 레거시 store 값이
-  // 이긴다. spec.md §1.2.4 의 "우선순위 chart-emitter > store > static" 문구는 바인딩
-  // 우선순위처럼 읽히지만 실제 동작은 값 우선순위다. M5 는 이 규칙을 바꾸지 않는다.
+  // 종전에는 `chart-emitter > store > static` 이라는 **값** 우선순위가 있었다. chart-emitter
+  // 는 채널로 들어오는 값이었고, 채널이 패널 소스에서 빠지면서 그 항이 사라졌다 — 같은
+  // 데이터는 Store 소스로 받는다. 우선순위 자체가 없어진 것이지 store 항이 바뀐 것은 아니다.
   //
-  // store-source 경로가 이긴 경우 위의 두 레거시 훅이 idle 이므로 두 값 모두 undefined 가
-  // 되고, `hasBinding` 은 false 가 된다. 렌더 분기가 그 경우 `hasValue` 를 강제로 false 로
-  // 넘기므로(아래 renderGaugeByType 호출) 표시 결과는 M4 와 동일하다.
-  const liveValue = chartLiveValue ?? storeValue;
-  const hasBinding = !!chartSource || !!storeSource;
+  // store-source 경로가 이긴 경우 레거시 훅이 idle 이므로 값은 undefined 가 되고
+  // `hasBinding` 은 false 가 된다. 렌더 분기가 그 경우 `hasValue` 를 강제로 false 로
+  // 넘기므로 표시 결과는 종전과 같다.
+  const liveValue = storeValue;
+  const hasBinding = !!storeSource;
 
   const parsedBase = parseConfig(config);
   const hasValue = !hasBinding || liveValue !== undefined;
@@ -449,16 +427,12 @@ export default function GaugePanel({
         <div className="absolute right-3 top-3 z-10">
           <ConnectionStatusIcon status={storeChart.status} />
         </div>
-      ) : chartSource ? (
-        <div className="absolute right-3 top-3 z-10">
-          <ConnectionStatusIcon status={status} />
-        </div>
       ) : null}
       {/* 헤더 */}
       {showTitle && (
         <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
           <GaugeIcon className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-          <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
+          <span className="truncate text-sm font-semibold text-(--color-text-primary)" style={titleStyle}>{title}</span>
         </div>
       )}
       {/*

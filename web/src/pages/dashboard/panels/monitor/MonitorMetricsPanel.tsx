@@ -19,7 +19,7 @@ import { useTranslation } from '@/lib/i18n';
 import { MetricChannelChart, type MetricChannel } from '@/pages/monitoring/MetricsChart';
 import { useMonitorStream } from '@/pages/monitoring/monitorStream';
 
-import { usePanelTitleVisible } from '../../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../../panelChromeContext';
 import {
   readAccent,
   readMaxCols,
@@ -51,6 +51,7 @@ interface MonitorMetricsPanelProps {
 export default function MonitorMetricsPanel({ title, config }: MonitorMetricsPanelProps) {
   const { t } = useTranslation();
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const items = useMemo(() => readPanelItems('metrics', config), [config]);
   const maxCols = readMaxCols(config, DEFAULT_MAX_COLS, items.length);
   const refreshMs = readRefreshMs(config, DEFAULT_REFRESH_MS);
@@ -77,7 +78,7 @@ export default function MonitorMetricsPanel({ title, config }: MonitorMetricsPan
           />
           <span
             className="truncate text-sm font-medium text-(--color-text-primary)"
-            style={accentColor('header') ? { color: accentColor('header') } : undefined}
+            style={{ ...(accentColor('header') ? { color: accentColor('header') } : undefined), ...titleStyle }}
           >
             {title}
           </span>

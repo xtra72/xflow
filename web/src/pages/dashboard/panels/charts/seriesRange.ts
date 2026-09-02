@@ -234,3 +234,48 @@ export function chartXRangePoints(range: SeriesRange): number {
   }
   return DEFAULT_CHART_POINTS;
 }
+
+/** 실시간 누적이 무엇을 남길지 — 시간 창과 점 개수 상한. */
+export interface LiveRetention {
+  /** 이보다 오래된 점을 버린다(ms). 시간으로 자르지 않으면 `Infinity`. */
+  windowMs: number;
+  /** 계열당 남길 점의 최대 개수. */
+  maxPoints: number;
+}
+
+/**
+ * 조회 범위를 **실시간 누적의 보관 기준**으로 해석한다.
+ *
+ * 실시간에는 버킷도 집계도 없다 — 스냅샷을 폴링해 오는 대로 쌓을 뿐이다. 그래서 범위는
+ * "무엇을 질의할지" 가 아니라 "쌓아 둔 것 중 무엇을 남길지" 가 된다. 뜻이 이렇게 갈리므로
+ * 조회 창 해석(`resolveSeriesWindow`)을 그대로 쓸 수 없다.
+ *
+ *   - `relative` — 그 기간보다 오래된 점을 버린다. 가장 곧은 대응이다.
+ *   - `count`    — 시간으로 자르지 않고 최근 N개만 남긴다.
+ *   - `absolute` — 시작·끝이 정해진 구간은 "지금부터 쌓는" 모델과 맞지 않는다. 구간의
+ *     **길이**만 취해 상대 창처럼 다룬다 — 과거의 절대 구간을 실시간으로 채울 수는 없고,
+ *     그렇다고 아무것도 남기지 않으면 빈 차트가 된다.
+ *
+ * `hardMaxPoints` 는 메모리 상한이다. 창이 아주 길거나 갯수가 크게 잡혀도 이 값을 넘지
+ * 않는다 — 창은 사용자가 정하지만 브라우저가 버틸 수 있는 양은 그렇지 않다.
+ */
+export function resolveLiveRetention(range: SeriesRange, hardMaxPoints: number): LiveRetention {
+  const positive = (v: number | undefined): number | undefined =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined;
+
+  switch (range.mode) {
+    case 'count': {
+      const n = positive(range.count);
+      return { windowMs: Infinity, maxPoints: Math.min(n ?? hardMaxPoints, hardMaxPoints) };
+    }
+    case 'absolute': {
+      const span =
+        positive(range.start_ms) !== undefined && positive(range.end_ms) !== undefined
+          ? range.end_ms! - range.start_ms!
+          : undefined;
+      return { windowMs: positive(span) ?? Infinity, maxPoints: hardMaxPoints };
+    }
+    default:
+      return { windowMs: positive(range.window_ms) ?? Infinity, maxPoints: hardMaxPoints };
+  }
+}

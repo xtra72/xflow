@@ -6,10 +6,9 @@
 // 분기하여 해당 Section 을 렌더링한다.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, ChevronUp, GripVertical, Info, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronUp, Info, Plus, Trash2 } from 'lucide-react';
 
 import type { PanelConfig } from '@/stores/uiStore';
-import { listChartChannels, type ChartChannelSummary } from '@/services/api/charts';
 import { useAgents } from '@/hooks/useAgent';
 import { useStoreKeysWithTags, useStoreTagPairs } from '@/services/api/store';
 import { useTranslation } from '@/lib/i18n';
@@ -27,20 +26,19 @@ import type {
   AxisFontStyle,
   TooltipConfig,
   YThreshold,
-  ChannelRefConfig,
   StrokeStyle,
   ChartDataSourceKind,
   StoreSeriesRef,
   StoreSourceConfig,
+  TsdbSourceConfig,
+  SysmetricsSourceConfig,
   SeriesReduceFunc,
   PieLegendPosition,
+  LegendConfig,
 } from './panels/charts/chartChannelTypes';
 import { SeriesRangeField } from './SeriesRangeField';
-import {
-  readChartXRange,
-  readSeriesRange,
-  type ChartXRangeSource,
-} from './panels/charts/seriesRange';
+import { readSeriesRange } from './panels/charts/seriesRange';
+import { panelXRangePatch, readPanelXRange } from './panels/charts/panelXRange';
 import {
   INTERVAL_PRESETS_MS,
   formatIntervalMs,
@@ -65,8 +63,9 @@ import {
   MAX_DECIMAL_PLACES,
 } from './panels/charts/decimalPlaces';
 import { DEFAULT_PIE_LABEL_MIN_PERCENT } from './panels/charts/pieLabel';
+import { DEFAULT_CHART_LEGEND_FONT_SIZE } from './panels/charts/chartChannelTypes';
 import { FONT_FAMILY_OPTIONS, type ChartFontFamily } from './panels/charts/textStyle';
-import { PANEL_SIZE_MAX, PANEL_SIZE_MIN } from './panels/charts/panelGeometry';
+import { PANEL_SIZE_MAX, PANEL_SIZE_MIN, readPanelSize } from './panels/charts/panelGeometry';
 import {
   readValueScale,
   VALUE_SCALE_MAX,
@@ -84,10 +83,14 @@ import {
 } from './panels/charts/panelTagKeys';
 import {
   CAPABILITY_REASON_KEYS,
+  MAX_SOURCES_PER_KIND,
   panelSourceCapabilities,
-  resolvePanelSourceBinding,
+  readPanelSources,
+  resolvePanelSourceBindings,
+  sourceEntryPatch,
+  sourceEntryLabel,
+  type PanelSourceEntry,
 } from './panels/charts/panelDataSource';
-import { isPanelSeriesSource } from './panels/charts/usePanelSeriesData';
 import { FillStrategyField, TsdbSourceSection } from './TsdbSourceSection';
 import { FillPreviousLimitField } from './FillPreviousLimitField';
 import { SysmetricsSourceSection } from './SysmetricsSourceSection';
@@ -97,7 +100,6 @@ import {
   hasStrokeStyle,
   isStackable,
   readGraphStyle,
-  requiresBuckets,
   type GraphStyle,
 } from './panels/charts/graphStyle';
 import { AliasTokenHelp } from './AliasTokenHelp';
@@ -120,20 +122,10 @@ import {
  * sysmetrics 버튼에 붙는 식).
  */
 const DATA_SOURCE_LABEL_KEYS: Record<ChartDataSourceKind, string> = {
-  channel: 'dashboard.chart.dataSourceChannel',
   store: 'dashboard.chart.dataSourceStore',
   tsdb: 'dashboard.chart.dataSourceTsdb',
   sysmetrics: 'dashboard.chart.dataSourceSysmetrics',
 };
-
-/** REQ-M5-04: channel_name 정규식 */
-const CHANNEL_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
-
-/** Custom (수동 입력) 드롭다운 옵션 sentinel */
-const CUSTOM_CHANNEL_SENTINEL = '__custom__';
-
-/** 인라인 에러 메시지 i18n 키 (렌더 시 t() 로 변환) */
-const CHANNEL_NAME_ERROR_KEY = 'dashboard.chart.channelNameError';
 
 type OnConfig = (config: Record<string, unknown>) => void;
 
@@ -420,173 +412,6 @@ export function TileRowsField({
 
 // --- 1. 공통: channel_name 편집 (등록된 채널 드롭다운 + Custom 수동 입력) ---
 
-/**
- * 모든 차트 패널 공통 channel_name 선택.
- * REQ-M5-02: 활성 chart-emitter 채널을 드롭다운으로 제시, 수동 입력도 허용.
- * REQ-M5-04: 정규식 검증 + 인라인 에러.
- *
- * 기존 panel.config.channel_name 이 활성 목록에 없더라도 (플로우 undeploy 등)
- * 해당 값은 드롭다운에 "(현재 선택, 비활성)" 로 표시되어 선택 상태를 유지한다.
- *
- * 주입 가능한 `fetchChannels` 파라미터는 테스트 용도이며, 프로덕션에서는
- * 기본값으로 `listChartChannels` (GET /api/v1/charts/channels) 를 호출한다.
- */
-export function ChartChannelSection({
-  panel,
-  onConfigChange,
-  fetchChannels = listChartChannels,
-}: {
-  panel: PanelConfig;
-  onConfigChange: OnConfig;
-  fetchChannels?: () => Promise<ChartChannelSummary[]>;
-}): React.ReactElement {
-  const { t } = useTranslation();
-  const currentName = (panel.config?.channel_name as string | undefined) ?? '';
-
-  // 드롭다운 선택 상태. 초기값은 현재 저장된 채널 이름 (없으면 '')
-  const [selectedOption, setSelectedOption] = useState<string>(currentName);
-  const [customDraft, setCustomDraft] = useState<string>('');
-  const [channels, setChannels] = useState<ChartChannelSummary[]>([]);
-  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('loading');
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  // 활성 채널 목록 조회 (마운트 시 1회 + 패널 변경 시)
-  useEffect(() => {
-    let cancelled = false;
-    setLoadState('loading');
-    setLoadError(null);
-    fetchChannels()
-      .then((result) => {
-        if (cancelled) return;
-        setChannels(result);
-        setLoadState('idle');
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setLoadError(err instanceof Error ? err.message : String(err));
-        setLoadState('error');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [fetchChannels, panel.id]);
-
-  // 외부 currentName 이 바뀌면 드롭다운 상태도 동기화
-  useEffect(() => {
-    setSelectedOption(currentName);
-    setCustomDraft('');
-  }, [currentName, panel.id]);
-
-  // 실제 commit 대상 채널 이름
-  const effectiveName =
-    selectedOption === CUSTOM_CHANNEL_SENTINEL ? customDraft : selectedOption;
-  const trimmed = effectiveName.trim();
-  const isEmpty = trimmed.length === 0;
-  const isValid = !isEmpty && CHANNEL_NAME_REGEX.test(trimmed);
-  const showError = !isEmpty && !isValid;
-
-  // 현재 저장된 이름이 활성 목록에 있는지
-  const activeNames = new Set(channels.map((c) => c.name));
-  const currentIsInactive = currentName !== '' && !activeNames.has(currentName);
-
-  // 드롭다운 변경 → 즉시 commit (활성 채널 선택 시) 또는 Custom 모드 전환
-  const handleSelect = (value: string): void => {
-    setSelectedOption(value);
-    if (value === CUSTOM_CHANNEL_SENTINEL) {
-      // Custom 모드: 현재 커스텀 값 초기화하고 사용자 입력 대기
-      setCustomDraft(currentIsInactive ? currentName : '');
-      return;
-    }
-    if (value === '') {
-      if (currentName !== '') {
-        onConfigChange({ channel_name: '' });
-      }
-      return;
-    }
-    // 활성 채널 선택 시 즉시 저장
-    if (value !== currentName) {
-      onConfigChange({ channel_name: value });
-    }
-  };
-
-  // Custom 입력 commit (blur / Enter)
-  const commitCustom = (): void => {
-    if (isValid && trimmed !== currentName) {
-      onConfigChange({ channel_name: trimmed });
-    } else if (isEmpty && currentName !== '') {
-      onConfigChange({ channel_name: '' });
-    }
-  };
-
-  return (
-    <LabeledField
-      label={t('dashboard.chart.channelNameLabel')}
-      hint={t('dashboard.chart.channelNameHint')}
-    >
-      <select
-        data-testid="chart-channel-name-select"
-        value={selectedOption}
-        onChange={(e) => handleSelect(e.target.value)}
-        disabled={loadState === 'loading'}
-        className={`${inputClass()} disabled:opacity-60`}
-      >
-        <option value="">
-          {loadState === 'loading'
-            ? t('dashboard.chart.loadingChannels')
-            : channels.length === 0
-              ? t('dashboard.chart.noChannelsCustom')
-              : t('dashboard.chart.selectChannel')}
-        </option>
-        {currentIsInactive && (
-          <option value={currentName}>
-            {t('dashboard.chart.channelInactive').replace('{name}', currentName)}
-          </option>
-        )}
-        {channels.map((ch) => (
-          <option key={ch.name} value={ch.name}>
-            {t('dashboard.chart.channelOption')
-              .replace('{name}', ch.name)
-              .replace('{flow}', ch.flow_id || '?')
-              .replace('{count}', String(ch.subscriber_count))}
-          </option>
-        ))}
-        <option value={CUSTOM_CHANNEL_SENTINEL}>{t('dashboard.chart.customOption')}</option>
-      </select>
-
-      {loadState === 'error' && (
-        <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-          {t('dashboard.chart.loadErrorCustom')}
-          {loadError ? ` (${loadError})` : ''}
-        </p>
-      )}
-
-      {selectedOption === CUSTOM_CHANNEL_SENTINEL && (
-        <input
-          type="text"
-          data-testid="chart-channel-name-input"
-          value={customDraft}
-          onChange={(e) => setCustomDraft(e.target.value)}
-          onBlur={commitCustom}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-          }}
-          placeholder={t('dashboard.chart.customPlaceholder')}
-          autoFocus
-          className={`${inputClass()} mt-2`}
-        />
-      )}
-
-      {showError && (
-        <p
-          data-testid="chart-channel-name-error"
-          className="mt-1 text-xs text-red-500"
-        >
-          {t(CHANNEL_NAME_ERROR_KEY)}
-        </p>
-      )}
-    </LabeledField>
-  );
-}
 
 // --- 1.5 데이터 소스 토글 + Store 소스 선택 (SPEC-WEB-005) ---
 
@@ -652,13 +477,29 @@ function defaultStoreSource(): StoreSourceConfig {
 export function StoreSourceSection({
   panel,
   onConfigChange,
-  fetchChannels = listChartChannels,
   onModeChange,
+  sourceIndex,
+  renderStoreTable,
 }: {
   panel: PanelConfig;
   onConfigChange: OnConfig;
-  /** 채널 모드 시리즈 편집기에 주입할 활성 채널 조회기(테스트용). */
-  fetchChannels?: () => Promise<ChartChannelSummary[]>;
+  /**
+   * 이 편집기가 맡을 **소스 인스턴스**의 자리.
+   *
+   * 지정하면 그 인스턴스의 블록만 읽고 쓰며, 종류 토글과 다른 소스의 편집기는 그리지
+   * 않는다 — 그것들은 대표 렌더(미지정)가 소유한다. 같은 종류를 둘 이상 쓸 때 둘째부터가
+   * 이 형태로 렌더된다.
+   */
+  sourceIndex?: number;
+  /**
+   * Store 인스턴스의 **시리즈 선택 표**를 그리는 함수.
+   *
+   * 표 자체는 상위(`PanelSettingsDataSource`)가 소유한다 — 조회 훅과 컬럼 레지스트리를
+   * 함께 들고 있어 이 파일로 옮기면 의존이 뒤엉킨다. 그래서 그리는 일만 위임받아 **각
+   * 인스턴스의 편집기 안**에 놓는다. 종전에는 패널 단위로 한 번만 그려서, 둘째 Store 는
+   * 시리즈를 고를 수단이 없었다.
+   */
+  renderStoreTable?: (sourceIndex: number) => React.ReactNode;
   /**
    * 데이터소스 바인딩 모드(채널/Store/TSDB) 변경 콜백. 모드의 단일 소스 오브 트루스는
    * `config.data_source` 이며(@spec SPEC-TSDB-002 §2.11), 이 콜백은 그 파생값을 상위
@@ -669,10 +510,62 @@ export function StoreSourceSection({
 }): React.ReactElement {
   const { t } = useTranslation();
   const config = panel.config ?? {};
+
+  // 소스 인스턴스 목록. 저장된 패널(구 형상)은 한 개짜리로 읽히므로 아래 계산이 종전과
+  // 같은 결과를 낸다.
+  const sourceEntries = readPanelSources(config);
+  /**
+   * 이 편집기가 맡은 자리 — 미지정이면 첫 store 인스턴스.
+   *
+   * store 인스턴스가 없으면 **-1** 이다. 0 으로 접으면 아래 인스턴스 목록이 0번을
+   * "이미 그렸다" 며 건너뛰어, store 아닌 소스 하나만 쓰는 패널의 편집기가 통째로 사라진다.
+   */
+  const myIndex = sourceIndex ?? sourceEntries.findIndex((e) => e.kind === 'store');
+  /** 대표 렌더인가 — 종류 버튼과 다른 소스 편집기를 그릴 자리. */
+  const isPrimary = sourceIndex === undefined;
+
+  /**
+   * 접힌 인스턴스 자리 번호. **저장하지 않는다** — 접었다는 사실이 config 에 남으면 다음에
+   * 열 때도 접혀 있고, 그것을 펴는 방법이 다른 사람의 화면에서는 설명되지 않는다.
+   */
+  const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(() => new Set());
+  const isCollapsed = (index: number): boolean => collapsed.has(index);
+  const toggleCollapsed = (index: number): void =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
   const storeSource =
-    (config.store_source as StoreSourceConfig | undefined) ?? defaultStoreSource();
-  // 라인 차트 패널은 per-line 스타일 통합 편집(채널/스토어 시리즈 양쪽)을 노출한다.
-  const isLineChart = panel.type === 'graph-chart';
+    (sourceEntries[myIndex]?.store_source as StoreSourceConfig | undefined) ??
+    defaultStoreSource();
+
+  /**
+   * 인스턴스 목록을 통째로 쓴다.
+   *
+   * 하나뿐이고 아직 구 형상이면 **구 형상 그대로** 둔다 — 다중을 실제로 쓰기 전까지
+   * 저장된 대시보드의 config 가 변하지 않는다. 둘 이상이 되면 그때 `sources` 로 옮긴다.
+   */
+  const writeEntries = (next: PanelSourceEntry[], extra: Record<string, unknown> = {}): void => {
+    if (next.length === 0) return;
+    // 한 번에 쓴다 — 두 번 나눠 쓰면 두 번째 패치가 첫 번째를 보지 못한 상태로 계산된다.
+    if (next.length === 1 && !Array.isArray(config.sources)) {
+      onConfigChange({ ...extra, data_source: next[0]!.kind, data_sources: undefined });
+      return;
+    }
+    onConfigChange({
+      ...extra,
+      sources: next,
+      data_source: next[0]!.kind,
+      data_sources: undefined,
+    });
+  };
+
+  /** 한 인스턴스의 블록을 갈아 끼운다. 규칙은 공용 헬퍼가 소유한다(표와 같은 규칙). */
+  const writeSourceBlock = (index: number, patch: Record<string, unknown>): void => {
+    onConfigChange(sourceEntryPatch(config, index, patch));
+  };
 
   // SPEC-TSDB-002 §2.11 [E1]: 모드의 단일 소스 오브 트루스가 로컬 `useState` 에서
   // `config.data_source` 로 이동했다. 세 모드 모두 config 에 영속되므로 TSDB 는 더
@@ -682,33 +575,101 @@ export function StoreSourceSection({
   // 불가 문자열은 `'channel'` 로 접힌다(§2.17-2). 이전엔 그런 config 에서 토글이 "아무것도
   // 선택되지 않음" 으로 보이고 채널 시리즈 편집기도 사라졌는데, 정작 패널은 channel 로
   // 폴백해 렌더하고 있었다. 이제 설정 UI 와 렌더 경로가 **같은 판정**을 쓴다.
-  const mode = resolvePanelSourceBinding(config).kind;
-  const isStoreMode = mode === 'store';
+  // 한 패널이 소스를 **여럿** 쓸 수 있다. 목록이 없는(저장된) 패널은 한 개짜리로 읽히므로
+  // 아래 계산은 종전과 같은 결과를 낸다.
+  const activeKinds = resolvePanelSourceBindings(config).map((b) => b.kind);
+  // `mode` 는 "대표 소스" — 상위(PanelSettingsDataSource)가 하나만 받는 콜백과 Store 전용
+  // 섹션 게이팅에 쓴다. 첫 소스를 대표로 둔다(목록 순서가 곧 표시 순서다).
+  const mode = activeKinds[0] ?? 'store';
+  const isSourceOn = (kind: ChartDataSourceKind): boolean => activeKinds.includes(kind);
+  const isStoreMode = isSourceOn('store');
+  /** 이 편집기의 본문을 그릴지 — store 인스턴스이고 접혀 있지 않을 때. */
+  const storeBodyVisible = isStoreMode && !isCollapsed(myIndex);
+
+  /**
+   * 인스턴스별 test id.
+   *
+   * 대표 인스턴스는 **접미사가 없다** — 저장된 테스트와 화면 자동화가 그 이름을 쓰고 있고,
+   * 소스가 하나뿐인 패널에서 굳이 번호를 붙일 이유가 없다. 둘째부터만 번호를 단다.
+   */
+  const tid = (base: string): string => (isPrimary ? base : `${base}-${myIndex}`);
   useEffect(() => {
     onModeChange?.(mode);
   }, [mode, onModeChange]);
 
-  const setDataSource = (kind: ChartDataSourceKind): void => {
-    if (kind === 'store' && !config.store_source) {
-      // 처음 store 로 전환 시 기본 설정을 함께 채운다.
-      onConfigChange({ data_source: 'store', store_source: defaultStoreSource() });
-    } else if (kind === 'tsdb' && !config.tsdb_source) {
-      // 처음 TSDB 로 전환 시 기본 블록을 함께 채운다(§2.11 [E1]). 이미 `tsdb_source` 가
-      // 있으면 종류만 기록해 기존 선택을 덮어쓰지 않는다 — store 쪽과 같은 규칙이다.
-      onConfigChange({ data_source: 'tsdb', tsdb_source: defaultTsdbSource() });
-    } else if (kind === 'sysmetrics' && !config.sysmetrics_source) {
-      // store/tsdb 와 같은 규칙 — 처음 전환할 때만 기본 블록을 함께 채운다.
-      onConfigChange({
-        data_source: 'sysmetrics',
-        sysmetrics_source: defaultSysmetricsSource(),
-      });
-    } else {
-      onConfigChange({ data_source: kind });
+  /** 종류를 처음 켤 때 함께 채우는 기본 블록. 이미 있으면 사용자의 선택을 덮지 않는다. */
+  const defaultBlockFor = (kind: ChartDataSourceKind): Record<string, unknown> => {
+    if (kind === 'store' && !config.store_source) return { store_source: defaultStoreSource() };
+    if (kind === 'tsdb' && !config.tsdb_source) return { tsdb_source: defaultTsdbSource() };
+    if (kind === 'sysmetrics' && !config.sysmetrics_source) {
+      return { sysmetrics_source: defaultSysmetricsSource() };
     }
+    return {};
   };
 
+  /**
+   * 소스를 켜고 끈다.
+   *
+   * 저장 형상이 개수에 따라 갈린다 — **하나면 `data_source`, 둘 이상이면 `data_sources`.**
+   * 다중을 실제로 쓰기 전까지 config 가 종전 모양 그대로 남아, 저장된 대시보드와의 차이가
+   * 생기지 않는다. 하나로 되돌아오면 목록을 지워 다시 종전 모양이 된다.
+   *
+   * 마지막 하나는 끌 수 없다. 소스가 0개인 패널은 아무것도 그리지 않으면서 되돌릴 단서도
+   * 화면에 남기지 않는다.
+   */
+  /**
+   * 그 종류의 소스를 **하나 더한다.**
+   *
+   * 종전에는 토글이었다 — 켜진 종류를 다시 누르면 그 종류의 인스턴스가 통째로 사라졌고,
+   * 사용자에게는 "설정이 지워진" 것으로 보였다. 지우는 일은 인스턴스마다 붙은 휴지통이
+   * 맡고, 이 버튼은 더하기만 한다. 되돌릴 수 없는 조작을 같은 버튼에 겹쳐 두지 않는다.
+   */
+  const addDataSource = (kind: ChartDataSourceKind): void => {
+    const sameKind = sourceEntries.filter((e) => e.kind === kind).length;
+    if (sameKind >= MAX_SOURCES_PER_KIND) return;
+    // 그 종류의 첫 인스턴스는 최상위 블록을 물려받는다 — 저장된 설정이 사라지지 않는다.
+    const entry = sameKind === 0 ? newSourceEntry(kind) : blankSourceEntry(kind);
+    writeEntries([...sourceEntries, entry], sameKind === 0 ? defaultBlockFor(kind) : {});
+  };
+
+  /** 새 인스턴스 하나. 최상위에 같은 종류 블록이 있으면 물려받는다(첫 인스턴스의 경로). */
+  const newSourceEntry = (kind: ChartDataSourceKind): PanelSourceEntry => {
+    if (kind === 'store') {
+      return { kind, store_source: (config.store_source as StoreSourceConfig) ?? defaultStoreSource() };
+    }
+    if (kind === 'tsdb') {
+      return { kind, tsdb_source: (config.tsdb_source as TsdbSourceConfig) ?? defaultTsdbSource() };
+    }
+    return {
+      kind,
+      sysmetrics_source:
+        (config.sysmetrics_source as SysmetricsSourceConfig) ?? defaultSysmetricsSource(),
+    };
+  };
+
+  /** 빈 인스턴스 하나 — 둘째부터는 첫째 설정을 복제하지 않는다. */
+  const blankSourceEntry = (kind: ChartDataSourceKind): PanelSourceEntry =>
+    kind === 'store'
+      ? { kind, store_source: defaultStoreSource() }
+      : kind === 'tsdb'
+        ? { kind, tsdb_source: defaultTsdbSource() }
+        : { kind, sysmetrics_source: defaultSysmetricsSource() };
+
+  /** 인스턴스 하나를 뺀다. 마지막 하나는 뺄 수 없다. */
+  const removeSourceInstance = (index: number): void => {
+    if (sourceEntries.length <= 1) return;
+    writeEntries(sourceEntries.filter((_, i) => i !== index));
+  };
+
+  /** 인스턴스 i 를 자기 config 로 보는 파생 패널 — 섹션 내부는 손대지 않아도 된다. */
+  const scopedPanel = (index: number): PanelConfig => ({
+    ...panel,
+    config: { ...config, ...sourceEntries[index] },
+  });
+  const scopedChange = (index: number): OnConfig => (patch) => writeSourceBlock(index, patch);
+
   const patchStore = (patch: Partial<StoreSourceConfig>): void => {
-    onConfigChange({ store_source: { ...storeSource, ...patch } });
+    writeSourceBlock(myIndex, { store_source: { ...storeSource, ...patch } });
   };
 
   // 에이전트 선택 파생값 — 에이전트 셀렉트를 데이터소스 토글과 같은 행(Row 1)에 두기 위해
@@ -730,7 +691,10 @@ export function StoreSourceSection({
 
   return (
     <div className="space-y-3">
-      {/* Row 1: 데이터 소스 토글 + 에이전트 선택(스토어 모드) — 한 행 배치(레이블 위). */}
+      {/* Row 1: 소스 추가 버튼 — **대표 렌더만** 그린다.
+          인스턴스 렌더가 자기 버튼 줄을 또 그리면 화면에 같은 버튼이 인스턴스 수만큼 생기고,
+          어느 것을 눌러야 하는지 알 수 없다. */}
+      {isPrimary && (
       <div className="flex flex-wrap items-start gap-3">
       {/* 데이터 소스 토글 */}
       <div>
@@ -738,49 +702,64 @@ export function StoreSourceSection({
           {t('dashboard.chart.dataSourceLabel')}
         </label>
         <div className="flex items-center gap-1.5">
+        {/* 버튼은 **더하기**다 — 상태 토글이 아니다. 어느 종류가 쓰이는지는 아래 목록이
+            말하므로 버튼이 그것까지 표시할 필요가 없고, 같은 버튼에 지우기를 겹치면
+            "다시 눌렀더니 설정이 사라졌다" 가 된다. */}
         <div
           className="inline-flex rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-0.5"
-          role="tablist"
+          role="group"
           aria-label={t('dashboard.chart.dataSourceLabel')}
         >
-          {(['channel', 'store', 'tsdb', 'sysmetrics'] as const).map((kind) => {
-            const selected = mode === kind;
+          {(['store', 'tsdb', 'sysmetrics'] as const).map((kind) => {
+            const full =
+              sourceEntries.filter((e) => e.kind === kind).length >= MAX_SOURCES_PER_KIND;
             return (
               <button
                 key={kind}
                 type="button"
-                role="tab"
-                aria-selected={selected}
+                disabled={full}
                 data-testid={`chart-data-source-${kind}`}
-                onClick={() => setDataSource(kind)}
-                className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
-                  selected
-                    ? 'bg-blue-600 text-white'
-                    : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)'
-                }`}
+                onClick={() => addDataSource(kind)}
+                title={t('dashboard.chart.sourceAdd')}
+                className="rounded px-3 py-1 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-40"
               >
-                {t(DATA_SOURCE_LABEL_KEYS[kind])}
+                + {t(DATA_SOURCE_LABEL_KEYS[kind])}
               </button>
             );
           })}
         </div>
         {/* Store 모드일 때만 조회 설정 정보 "i" 아이콘을 데이터소스 토글 옆에 표시한다. */}
-        {isStoreMode && (
+        {storeBodyVisible && (
           <StoreInfoPopover storeSource={storeSource} />
         )}
         </div>
       </div>
       </div>
+      )}
+
+      {/* 대표 store 인스턴스의 머리. 추가된 인스턴스와 **같은 모양**이어야 한다 —
+          첫째만 머리가 없으면 접기·지우기가 어디 있는지 자리마다 다시 찾아야 한다. */}
+      {isPrimary && isStoreMode && myIndex >= 0 && (
+        <SourceInstanceHeader
+          label={sourceEntryLabel(sourceEntries, myIndex)}
+          index={myIndex}
+          collapsed={isCollapsed(myIndex)}
+          onToggle={() => toggleCollapsed(myIndex)}
+          onRemove={
+            sourceEntries.length > 1 ? () => removeSourceInstance(myIndex) : undefined
+          }
+        />
+      )}
 
       {/* Row 2: 에이전트 선택 — TSDB 쪽과 같은 레이아웃으로 **한 줄 아래**에 둔다.
           토글과 같은 행에 두면 소스를 바꿀 때 셀렉트가 나타났다 사라지며 행 높이가
           출렁인다. 두 소스가 같은 자리에 같은 모양으로 있는 편이 읽기 쉽다. */}
-      {isStoreMode && (
+      {storeBodyVisible && (
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-[10rem] flex-1">
             <LabeledField label={t('dashboard.chart.storeAgent')}>
               <select
-                data-testid="chart-store-agent-select"
+                data-testid={tid('chart-store-agent-select')}
                 value={selectValue}
                 onChange={(e) => {
                   const id = e.target.value;
@@ -817,7 +796,7 @@ export function StoreSourceSection({
       )}
 
       {/* Store 모드: 가져올 데이터 범위 — 기간(상대·절대) 또는 갯수. TSDB 와 같은 편집기다. */}
-      {isStoreMode && (
+      {storeBodyVisible && (
         <SeriesRangeField
           range={readSeriesRange(storeSource.range, storeSource.time_window_ms)}
           onChange={(range) => patchStore({ range })}
@@ -827,7 +806,7 @@ export function StoreSourceSection({
 
       {/* Store 모드: 인터벌(버킷) 간격. TSDB 와 같은 눈금·같은 조작이다 — 소스를 바꿔도
           같은 값을 같은 방식으로 고른다. */}
-      {isStoreMode && (
+      {storeBodyVisible && (
         <StoreIntervalField
           intervalMs={storeSource.interval_ms}
           timeWindowMs={storeSource.time_window_ms}
@@ -838,10 +817,10 @@ export function StoreSourceSection({
       {/* Store 모드: 인터벌 집계 — 버킷 하나를 대표하는 값을 무엇으로 삼을지.
           종전에는 이 값이 config 에만 있고 조작 통로가 없어 `average` 로 고정이었다.
           TSDB 모드의 같은 컨트롤과 같은 어휘·같은 자리를 쓴다. */}
-      {isStoreMode && (
+      {storeBodyVisible && (
         <LabeledField label={t('dashboard.chart.tsdbAggregation')}>
           <select
-            data-testid="chart-store-aggregation"
+            data-testid={tid('chart-store-aggregation')}
             value={storeSource.aggregation}
             onChange={(e) =>
               patchStore({ aggregation: e.target.value as StoreSourceConfig['aggregation'] })
@@ -863,18 +842,18 @@ export function StoreSourceSection({
         쓰므로 소스를 갈아타도 같은 설정이 같은 그림을 낸다. `avg` 만 비활성이며,
         선택지를 지우지 않고 남기는 이유는 §2.13 [S1] 이다.
       */}
-      {isStoreMode && (
+      {storeBodyVisible && (
         <FillStrategyField
           value={storeSource.fill ?? ''}
           onChange={(fill) => patchStore({ fill: fill === '' ? undefined : fill })}
           supported={panelSourceCapabilities('store').fillStrategies}
           avgSupported={panelSourceCapabilities('store').fillAvg}
           reasonKey={CAPABILITY_REASON_KEYS.fillAvg}
-          testId="chart-store-fill"
+          testId={tid('chart-store-fill')}
         />
       )}
       {/* 사용 기간 제한은 `직전값 사용` 에서만 뜻이 있다. */}
-      {isStoreMode && storeSource.fill === 'previous' && (
+      {storeBodyVisible && storeSource.fill === 'previous' && (
         <FillPreviousLimitField
           value={{
             maxMs: storeSource.fill_previous_max_ms,
@@ -888,7 +867,7 @@ export function StoreSourceSection({
               fill_previous_overflow_value: next.overflowValue,
             })
           }
-          testIdPrefix="chart-store-fill-prev"
+          testIdPrefix={tid('chart-store-fill-prev')}
         />
       )}
       {/*
@@ -896,46 +875,124 @@ export function StoreSourceSection({
         선택기를 노출한다. line-chart/table/heatmap 은 같은 섹션을 쓰지만 선택기가 없다
         (§2.3 / UB1-10). 채널 모드에서도 노출하지 않는다(§2.10 [S2]).
       */}
-      {isStoreMode && REDUCE_PANEL_TYPES.has(panel.type) && (
+      {storeBodyVisible && REDUCE_PANEL_TYPES.has(panel.type) && (
         <SeriesReduceField
           panelType={panel.type}
           storeSource={storeSource}
           value={config.series_reduce as SeriesReduceFunc | undefined}
           onChange={(series_reduce) => onConfigChange({ series_reduce })}
+          testIdPrefix={tid('chart-series-reduce')}
         />
       )}
 
 
       {/* Store 모드: 이름을 지정하지 않은 시리즈의 표시 이름 형식(패널 단위 기본값). */}
-      {isStoreMode && (
+      {storeBodyVisible && (
         <SeriesNameFormatField
           value={storeSource.series_name_format}
           onChange={(series_name_format) => patchStore({ series_name_format })}
           sample={storeSource.series?.[0]}
+          testIdPrefix={tid('chart-store-series-name-format')}
         />
       )}
 
-      {/* TSDB 모드: 에이전트 · bucket · measurement→field→tag 드릴다운 선택 UI(§2.11 ~ §2.15). */}
-      {mode === 'tsdb' && (
-        <TsdbSourceSection panel={panel} onConfigChange={onConfigChange} />
-      )}
+      {/* 이 인스턴스의 시리즈 선택 표. 인스턴스마다 자기 표를 갖는다. */}
+      {storeBodyVisible && renderStoreTable?.(myIndex)}
 
-      {/* sysmetrics 모드: 에이전트 · 값 · 대상 선택 UI(이력 없는 라이브 누적 소스). */}
-      {mode === 'sysmetrics' && (
-        <SysmetricsSourceSection panel={panel} onConfigChange={onConfigChange} />
-      )}
+      {/* 인스턴스마다 그 소스의 편집기를 낸다.
+          대표 렌더(sourceIndex 미지정)만 이 목록을 그린다 — 인스턴스 렌더가 다시 그리면
+          같은 편집기가 무한히 겹친다. 첫 store 인스턴스는 위 본문이 이미 그렸으므로 뺀다. */}
+      {isPrimary &&
+        sourceEntries.map((entry, index) => {
+          if (index === myIndex) return null;
+          const removable = sourceEntries.length > 1;
+          const body =
+            entry.kind === 'store' ? (
+              <StoreSourceSection
+                panel={panel}
+                onConfigChange={onConfigChange}
+                sourceIndex={index}
+                renderStoreTable={renderStoreTable}
+              />
+            ) : entry.kind === 'tsdb' ? (
+              <TsdbSourceSection panel={scopedPanel(index)} onConfigChange={scopedChange(index)} />
+            ) : (
+              <SysmetricsSourceSection
+                panel={scopedPanel(index)}
+                onConfigChange={scopedChange(index)}
+              />
+            );
+          return (
+            <div
+              key={`source-${index}`}
+              data-testid={`panel-source-instance-${index}`}
+              className="space-y-2 border-t border-(--color-border-default) pt-3"
+            >
+              <SourceInstanceHeader
+                label={sourceEntryLabel(sourceEntries, index)}
+                index={index}
+                collapsed={isCollapsed(index)}
+                onToggle={() => toggleCollapsed(index)}
+                onRemove={removable ? () => removeSourceInstance(index) : undefined}
+              />
+              {!isCollapsed(index) && body}
+            </div>
+          );
+        })}
 
-      {/*
-        채널 모드 + 라인 차트: 채널 시리즈 편집기(채널 추가/선택/순서 + per-line 스타일).
-        다른 차트 타입은 채널 모드에서 단일 channel_name 을 ChartChannelSection(우측 컬럼)
-        으로 편집하므로 여기서는 렌더하지 않는다.
-      */}
-      {mode === 'channel' && isLineChart && (
-        <ChannelSeriesEditor
-          panel={panel}
-          onConfigChange={onConfigChange}
-          fetchChannels={fetchChannels}
-        />
+    </div>
+  );
+}
+
+/**
+ * 소스 인스턴스 하나의 머리 — 이름 · 접기 · 지우기.
+ *
+ * 모든 인스턴스가 같은 머리를 쓴다. 첫째만 다르게 두면 접기·지우기가 어디 있는지 자리마다
+ * 다시 찾아야 한다. 지우기는 인스턴스가 둘 이상일 때만 뜬다 — 소스가 0개인 패널은 아무것도
+ * 그리지 않으면서 되돌릴 단서도 화면에 남기지 않는다.
+ */
+function SourceInstanceHeader({
+  label,
+  index,
+  collapsed,
+  onToggle,
+  onRemove,
+}: {
+  label: string;
+  index: number;
+  collapsed: boolean;
+  onToggle: () => void;
+  /** 지울 수 없으면 미지정 — 버튼 자체를 그리지 않는다. */
+  onRemove?: () => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        data-testid={`panel-source-toggle-${index}`}
+        className="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs font-semibold text-(--color-text-primary) hover:text-blue-500"
+      >
+        {collapsed ? (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-(--color-text-muted)" />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-(--color-text-muted)" />
+        )}
+        <span className="truncate">{label}</span>
+      </button>
+      {onRemove && (
+        <button
+          type="button"
+          data-testid={`panel-source-remove-${index}`}
+          onClick={onRemove}
+          aria-label={t('dashboard.chart.sourceRemove')}
+          title={t('dashboard.chart.sourceRemove')}
+          className="shrink-0 rounded p-1 text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
       )}
     </div>
   );
@@ -1001,11 +1058,14 @@ function SeriesReduceField({
   storeSource,
   value,
   onChange,
+  testIdPrefix = 'chart-series-reduce',
 }: {
   panelType: string;
   storeSource: StoreSourceConfig;
   value: SeriesReduceFunc | undefined;
   onChange: (next: SeriesReduceFunc | undefined) => void;
+  /** 인스턴스별 test id 접두사 — 소스가 둘 이상이면 같은 이름이 겹친다. */
+  testIdPrefix?: string;
 }): React.ReactElement {
   const { t } = useTranslation();
   const showPieWarning =
@@ -1045,7 +1105,7 @@ function SeriesReduceField({
         hint={value === undefined ? t('dashboard.chart.seriesReduceNoneHint') : undefined}
       >
         <select
-          data-testid="chart-series-reduce"
+          data-testid={testIdPrefix}
           value={value ?? ''}
           onChange={(e) => {
             const next = e.target.value;
@@ -1063,7 +1123,7 @@ function SeriesReduceField({
       </LabeledField>
       {comboText !== undefined && (
         <p
-          data-testid="chart-series-reduce-combo"
+          data-testid={`${testIdPrefix}-combo`}
           className="text-[11px] leading-snug text-(--color-text-muted)"
         >
           {comboText}
@@ -1071,7 +1131,7 @@ function SeriesReduceField({
       )}
       {booleanText !== undefined && (
         <p
-          data-testid="chart-series-reduce-boolean-hint"
+          data-testid={`${testIdPrefix}-boolean-hint`}
           className="text-[11px] leading-snug text-(--color-text-muted)"
         >
           {booleanText}
@@ -1079,7 +1139,7 @@ function SeriesReduceField({
       )}
       {showPieWarning && (
         <p
-          data-testid="chart-series-reduce-pie-warning"
+          data-testid={`${testIdPrefix}-pie-warning`}
           className="rounded-md bg-amber-50 px-2 py-1.5 text-[11px] leading-snug text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
         >
           {t('dashboard.chart.pieNegativeReduceWarning')}
@@ -1844,320 +1904,7 @@ export function StatChartSection({
 
 // --- 다채널 행 컴포넌트 (LineChartSection 내부에서 사용) ---
 
-function ChannelRow({
-  idx,
-  channel,
-  activeChannels,
-  activeNameSet,
-  channelsLoadState,
-  canDelete,
-  onPatch,
-  onRemove,
-  onDragStart,
-  onDragOver,
-  onDrop,
-}: {
-  idx: number;
-  channel: ChannelRefConfig;
-  activeChannels: ChartChannelSummary[];
-  activeNameSet: Set<string>;
-  channelsLoadState: 'idle' | 'loading' | 'error';
-  canDelete: boolean;
-  onPatch: (patch: Partial<ChannelRefConfig>) => void;
-  onRemove: () => void;
-  onDragStart: (e: React.DragEvent) => void;
-  onDragOver: (e: React.DragEvent) => void;
-  onDrop: (e: React.DragEvent) => void;
-}): React.ReactElement {
-  const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(false);
 
-  const currentName = channel.name ?? '';
-  const isInactive = currentName !== '' && !activeNameSet.has(currentName);
-
-  const [selectedOption, setSelectedOption] = useState<string>(currentName);
-  const [customDraft, setCustomDraft] = useState<string>('');
-  useEffect(() => {
-    setSelectedOption(currentName);
-    setCustomDraft('');
-  }, [currentName]);
-  const handleSelect = (value: string): void => {
-    setSelectedOption(value);
-    if (value === CUSTOM_CHANNEL_SENTINEL) {
-      setCustomDraft(isInactive ? currentName : '');
-      return;
-    }
-    if (value !== currentName) {
-      const patch: Partial<ChannelRefConfig> = { name: value };
-      if (!channel.alias && value) patch.alias = value;
-      onPatch(patch);
-    }
-  };
-  const commitCustom = (): void => {
-    const trimmed = customDraft.trim();
-    if (trimmed && CHANNEL_NAME_REGEX.test(trimmed) && trimmed !== currentName) {
-      const patch: Partial<ChannelRefConfig> = { name: trimmed };
-      if (!channel.alias && trimmed) patch.alias = trimmed;
-      onPatch(patch);
-    }
-  };
-
-  const effectiveColor = channel.color ?? pickSeriesColor(idx);
-
-  return (
-    <div
-      data-testid={`line-chart-channel-row-${idx}`}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-      className="rounded-md border border-(--color-border-default) bg-(--color-bg-elevated)"
-    >
-      {/* 접힌 상태: 이름 + 색상 dot + 삭제 */}
-      <div className="flex items-center gap-1.5 px-2 py-1.5">
-        <span
-          draggable
-          onDragStart={onDragStart}
-          data-testid={`line-chart-channel-drag-${idx}`}
-          title={t('dashboard.chart.dragOrderTitle')}
-          className="flex h-5 w-4 cursor-grab items-center justify-center text-(--color-text-muted) active:cursor-grabbing"
-        >
-          <GripVertical className="h-3 w-3" />
-        </span>
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="flex items-center gap-1 text-(--color-text-muted)"
-          aria-label={expanded ? t('dashboard.chart.collapseAria') : t('dashboard.chart.expandAria')}
-        >
-          {expanded
-            ? <ChevronDown className="h-3 w-3" />
-            : <ChevronRight className="h-3 w-3" />}
-        </button>
-        <span
-          className="h-3 w-3 shrink-0 cursor-pointer rounded-full ring-1 ring-(--color-border-default)"
-          style={{ backgroundColor: effectiveColor }}
-          title={t('dashboard.chart.colorChangeTitle')}
-          onClick={() => {
-            const input = document.getElementById(`ch-color-${idx}`);
-            input?.click();
-          }}
-        />
-        <input
-          id={`ch-color-${idx}`}
-          type="color"
-          value={effectiveColor}
-          onChange={(e) => onPatch({ color: e.target.value })}
-          className="invisible absolute h-0 w-0"
-          tabIndex={-1}
-        />
-        <input
-          type="text"
-          value={channel.alias ?? ''}
-          onChange={(e) => onPatch({ alias: e.target.value || undefined })}
-          placeholder={currentName || t('dashboard.chart.unspecified')}
-          className="min-w-0 flex-1 truncate border-0 bg-transparent px-0 text-xs font-medium text-(--color-text-primary) outline-none placeholder:text-(--color-text-muted) focus:ring-0"
-          aria-label={t('dashboard.chart.displayNameAria')}
-        />
-        {canDelete && (
-          <button
-            type="button"
-            onClick={onRemove}
-            aria-label={t('dashboard.chart.deleteChannelAria')}
-            className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-red-50 hover:text-red-600"
-          >
-            <Trash2 className="h-3 w-3" />
-          </button>
-        )}
-      </div>
-
-      {/* 펼친 상태 */}
-      {expanded && (
-        <div className="space-y-2 border-t border-(--color-border-default) px-2 pt-2 pb-2">
-          {/* 줄 1: 채널 선택 */}
-          <div className="flex items-center gap-1.5">
-            <select
-              data-testid={`line-chart-channel-row-select-${idx}`}
-              value={selectedOption}
-              onChange={(e) => handleSelect(e.target.value)}
-              disabled={channelsLoadState === 'loading'}
-              className="flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs disabled:opacity-60"
-              aria-label={t('dashboard.chart.selectChannelAria')}
-            >
-              <option value="">
-                {channelsLoadState === 'loading'
-                  ? t('dashboard.chart.loading')
-                  : activeChannels.length === 0
-                    ? t('dashboard.chart.noActiveChannels')
-                    : t('dashboard.chart.selectChannelAria')}
-              </option>
-              {isInactive && selectedOption !== CUSTOM_CHANNEL_SENTINEL && (
-                <option value={currentName}>{t('dashboard.chart.channelInactiveShort').replace('{name}', currentName)}</option>
-              )}
-              {activeChannels.map((ch) => (
-                <option key={ch.name} value={ch.name}>{ch.name}</option>
-              ))}
-              <option value={CUSTOM_CHANNEL_SENTINEL}>{t('dashboard.chart.customShort')}</option>
-            </select>
-          </div>
-          {selectedOption === CUSTOM_CHANNEL_SENTINEL && (
-            <input
-              type="text"
-              data-testid={`line-chart-channel-row-custom-${idx}`}
-              value={customDraft}
-              onChange={(e) => setCustomDraft(e.target.value)}
-              onBlur={commitCustom}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-              }}
-              placeholder={t('dashboard.chart.customDeployPlaceholder')}
-              autoFocus
-              className="w-full rounded border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs"
-            />
-          )}
-
-          {/* 줄 2: 통합 라인 스타일(stroke/width/smooth/display_field) */}
-          <LineStyleControls
-            value={channel}
-            onPatch={(patch) => onPatch(patch)}
-            testIdPrefix={`line-chart-channel-row-${idx}`}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * 채널 모드 시리즈 편집기 (SPEC-WEB-005).
- *
- * 라인 차트 패널의 채널(channels[]) 추가/선택/순서변경 + per-line 스타일을 데이터
- * 소스 영역에서 편집한다. 기존 LineChartSection 의 채널 편집 블록을 이곳으로 이전했다.
- * channel_name 만 있는 기존 패널은 channels[] 로 자동 마이그레이션된다(하위 호환).
- *
- * @spec SPEC-WEB-005
- */
-export function ChannelSeriesEditor({
-  panel,
-  onConfigChange,
-  fetchChannels = listChartChannels,
-}: {
-  panel: PanelConfig;
-  onConfigChange: OnConfig;
-  fetchChannels?: () => Promise<ChartChannelSummary[]>;
-}): React.ReactElement {
-  const { t } = useTranslation();
-  const config = panel.config ?? {};
-  const legacyChannelName = (config.channel_name as string | undefined) ?? '';
-
-  // channel_name 만 있고 channels 가 없는 기존 패널 → 자동 마이그레이션.
-  const channels: ChannelRefConfig[] = useMemo(() => {
-    const raw = config.channels as ChannelRefConfig[] | undefined;
-    if (raw && raw.length > 0) return raw;
-    if (legacyChannelName) return [{ name: legacyChannelName }];
-    return [{ name: '' }];
-  }, [config.channels, legacyChannelName]);
-
-  function updateChannels(next: ChannelRefConfig[]): void {
-    // channels 로 통합: channel_name 은 제거.
-    onConfigChange({ channels: next.length === 0 ? [{ name: '' }] : next, channel_name: undefined });
-  }
-  function addChannel(): void {
-    // 시리즈 인덱스별 팔레트 색을 자동 배정(사용자 변경 가능).
-    updateChannels([...channels, { name: '', color: pickSeriesColor(channels.length) }]);
-  }
-  function removeChannel(idx: number): void {
-    if (channels.length <= 1) return;
-    updateChannels(channels.filter((_, i) => i !== idx));
-  }
-  function patchChannel(idx: number, patch: Partial<ChannelRefConfig>): void {
-    updateChannels(channels.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
-  }
-  function moveChannel(from: number, to: number): void {
-    if (from === to || from < 0 || to < 0) return;
-    if (from >= channels.length || to >= channels.length) return;
-    const next = channels.slice();
-    const [item] = next.splice(from, 1);
-    next.splice(to, 0, item!);
-    updateChannels(next);
-  }
-
-  // 활성 채널 fetch (행 드롭다운에서 사용).
-  const [activeChannels, setActiveChannels] = useState<ChartChannelSummary[]>([]);
-  const [channelsLoadState, setChannelsLoadState] = useState<
-    'idle' | 'loading' | 'error'
-  >('loading');
-  useEffect(() => {
-    let cancelled = false;
-    setChannelsLoadState('loading');
-    fetchChannels()
-      .then((result) => {
-        if (cancelled) return;
-        setActiveChannels(result);
-        setChannelsLoadState('idle');
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setChannelsLoadState('error');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [fetchChannels, panel.id]);
-  const activeNameSet = new Set(activeChannels.map((c) => c.name));
-
-  return (
-    <div
-      className="space-y-2 rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) p-2.5"
-      data-testid="line-chart-channels-editor"
-    >
-      <div className="flex items-center justify-between">
-        <label className="text-xs font-medium text-(--color-text-muted)">
-          {t('dashboard.chart.channels')}
-        </label>
-        <button
-          type="button"
-          onClick={addChannel}
-          data-testid="line-chart-add-channel"
-          className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-blue-600 hover:bg-blue-50"
-        >
-          <Plus className="h-3 w-3" /> {t('dashboard.chart.add')}
-        </button>
-      </div>
-      <p className="text-[10px] leading-snug text-(--color-text-muted)">
-        {t('dashboard.chart.channelsHint')}
-      </p>
-      <div className="space-y-2">
-        {channels.map((c, idx) => (
-          <ChannelRow
-            key={idx}
-            idx={idx}
-            channel={c}
-            activeChannels={activeChannels}
-            activeNameSet={activeNameSet}
-            channelsLoadState={channelsLoadState}
-            canDelete={channels.length > 1}
-            onPatch={(patch) => patchChannel(idx, patch)}
-            onRemove={() => removeChannel(idx)}
-            onDragStart={(e) => {
-              e.dataTransfer.setData('text/x-channel-idx', String(idx));
-              e.dataTransfer.effectAllowed = 'move';
-            }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              e.dataTransfer.dropEffect = 'move';
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              const raw = e.dataTransfer.getData('text/x-channel-idx');
-              const from = parseInt(raw, 10);
-              if (Number.isNaN(from)) return;
-              moveChannel(from, idx);
-            }}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // --- 3. line-chart 패널 설정 — 전역 스타일만 (채널/시리즈 편집은 데이터 소스 영역) ---
 
@@ -2204,22 +1951,22 @@ function SettingsSection({
  * `onPadPct` 가 오면 자동 여백 칸을 함께 낸다(Y축 전용). 여백은 최소·최대가 비어
  * 있을 때 축을 데이터 범위보다 얼마나 넓게 잡을지를 정한다 — 값이 없으면 쓰지 않는다.
  */
-function AxisDesignPopover({
+/**
+ * 디자인 배지 — 자주 고치지 않는 **모양 설정을 접어 두는** 껍데기.
+ *
+ * 축 글꼴 네 줄이 본문에 펼쳐져 있으면 정작 자주 고치는 레이블·범위보다 자리를 많이
+ * 차지한다는 것이 이 방식의 출발점이었다(`AxisDesignPopover`). 범례·타이틀의 글자 설정도
+ * 같은 성질이라 같은 껍데기를 쓴다 — 세 곳이 제각각 다른 모양의 접기를 만들면 사용자가
+ * "디자인은 여기 접혀 있다" 를 자리마다 다시 배워야 한다.
+ *
+ * 여는 방식(배지 버튼 · 바깥 클릭으로 닫기 · 자리)만 여기서 정하고, 내용은 호출부가 준다.
+ */
+export function DesignPopover({
   testId,
-  labelFont,
-  tickFont,
-  onLabelFont,
-  onTickFont,
-  padPct,
-  onPadPct,
+  children,
 }: {
   testId: string;
-  labelFont: AxisFontStyle | undefined;
-  tickFont: AxisFontStyle | undefined;
-  onLabelFont: (patch: Partial<AxisFontStyle>) => void;
-  onTickFont: (patch: Partial<AxisFontStyle>) => void;
-  padPct?: number;
-  onPadPct?: (next: number | undefined) => void;
+  children: React.ReactNode;
 }): React.ReactElement {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -2253,6 +2000,33 @@ function AxisDesignPopover({
           data-testid={`${testId}-popover`}
           className="absolute left-0 top-full z-30 mt-1 w-72 space-y-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2.5 text-left shadow-lg"
         >
+          {children}
+        </div>
+      )}
+    </span>
+  );
+}
+
+function AxisDesignPopover({
+  testId,
+  labelFont,
+  tickFont,
+  onLabelFont,
+  onTickFont,
+  padPct,
+  onPadPct,
+}: {
+  testId: string;
+  labelFont: AxisFontStyle | undefined;
+  tickFont: AxisFontStyle | undefined;
+  onLabelFont: (patch: Partial<AxisFontStyle>) => void;
+  onTickFont: (patch: Partial<AxisFontStyle>) => void;
+  padPct?: number;
+  onPadPct?: (next: number | undefined) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  return (
+    <DesignPopover testId={testId}>
           <div className="flex items-center gap-2 text-[11px] text-(--color-text-muted)">
             <span className="w-20 shrink-0">{t('dashboard.chart.axisFont')}</span>
             <span className="w-14 text-center">{t('dashboard.chart.fontSize')}</span>
@@ -2290,9 +2064,7 @@ function AxisDesignPopover({
               <span>%</span>
             </label>
           )}
-        </div>
-      )}
-    </span>
+    </DesignPopover>
   );
 }
 
@@ -2400,21 +2172,19 @@ export function LineChartSection({
   function patchEnumLabel(idx: number, patch: Partial<YEnumLabel>): void {
     updateEnumLabels(enumLabels.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
   }
-  // X축 범위 — 데이터 소스와 같은 어휘(SeriesRange). 구 time_window_mode 계열은
-  // readChartXRange 안에서 폴백으로 해석되므로 여기서는 새 어휘만 다룬다.
-  const xRange = readChartXRange(config as ChartXRangeSource);
-  const refreshMs = (config.time_window_refresh_ms as number | undefined) ?? 1000;
+  // X축 범위 — 데이터 소스와 같은 어휘(SeriesRange). 소스가 소유하면 그 소스의 조회
+  // 구간을, 채널 모드면 패널의 `x_range` 를 읽는다(구 time_window_mode 계열은 그 안에서
+  // 폴백으로 해석된다).
+  const xRange = readPanelXRange(config);
   const tooltipCfg = (config.tooltip as TooltipConfig | undefined) ?? {};
   const panelSmooth = (config.smooth as boolean | undefined) ?? false;
   const panelGraphStyle = readGraphStyle(config.graph_style);
+  // 그림 상자의 크기 — 파이·게이지와 같은 상수를 쓴다(패널 대비 백분율).
+  const plotSize = readPanelSize(config.plot_size) ?? PANEL_SIZE_MAX;
   const panelStacked = config.stacked === true;
   // 스타일의 옵션 줄을 낼지 — 셋 다 뜻이 없으면(캔들) 빈 줄만 남아 간격이 어긋난다.
   const styleOptionsVisible =
     isStackable(panelGraphStyle) || hasStrokeStyle(panelGraphStyle) || hasGapDash(panelGraphStyle);
-  // 소스가 채널이 아니면 X축 범위는 데이터 소스 설정이 정한다 — 조회 범위가 곧
-  // 표시 범위다. 같은 값을 두 곳에서 편집하게 두면 서로 어긋난다.
-  const xRangeOwnedBySource = isPanelSeriesSource(resolvePanelSourceBinding(config));
-
   /**
    * Y축 도메인 방식은 저장 필드로 남아 있지만(렌더러가 읽는다), 화면에는 노출하지
    * 않는다 — 목업의 규약은 "최소·최대가 비면 자동"이다. 사용자가 최소/최대나 자동
@@ -2448,6 +2218,7 @@ export function LineChartSection({
     });
   }
 
+  const legendCfg = (config.legend as LegendConfig | undefined) ?? {};
   function patchLegend(patch: Record<string, unknown>): void {
     onConfigChange({
       legend: { ...((config.legend as Record<string, unknown>) ?? {}), ...patch },
@@ -2508,40 +2279,19 @@ export function LineChartSection({
           />
         </LabeledField>
 
-        {/* 범위 — 채널 모드에서만 편집한다. 시리즈 소스는 조회 범위가 곧 표시 범위라
-            데이터 소스 설정이 소유한다(같은 값을 두 곳에서 고치면 어긋난다). */}
-        {xRangeOwnedBySource ? (
-          <p
-            data-testid="line-chart-x-range-owned-note"
-            className="text-[11px] text-(--color-text-muted)"
-          >
-            {t('dashboard.chart.xRangeFromSource')}
-          </p>
-        ) : (
-          <>
-            <SeriesRangeField
-              range={xRange}
-              onChange={(next) => onConfigChange({ x_range: next })}
-              testIdPrefix="line-chart-x"
-            />
-            {xRange.mode === 'relative' && (
-              <LabeledField label={t('dashboard.chart.refreshMs')}>
-                <input
-                  type="number"
-                  min={200}
-                  max={60000}
-                  step={100}
-                  value={refreshMs}
-                  onChange={(e) => {
-                    const n = parseInt(e.target.value, 10);
-                    if (!Number.isNaN(n)) onConfigChange({ time_window_refresh_ms: n });
-                  }}
-                  className={inputClass()}
-                />
-              </LabeledField>
-            )}
-          </>
-        )}
+        {/* 범위는 **패널이 소유한다** — 소스와 무관하다.
+            소스가 여럿이 되면서 "어느 소스의 구간인가" 가 답이 없는 물음이 됐다. Store A 와
+            B 가 서로 다른 구간을 보면 한 X축에 그릴 수 없다. 그래서 여기서 고른 구간 하나로
+            모든 소스가 조회한다(`withPanelRange`). 폴링 주기 칸은 채널 모드의 것이었고,
+            시리즈 소스는 각자 조회 주기를 가지므로 두지 않는다. */}
+        <SeriesRangeField
+          range={xRange}
+          onChange={(next) => onConfigChange(panelXRangePatch(config, next))}
+          testIdPrefix="line-chart-x"
+        />
+        <p className="text-[11px] leading-snug text-(--color-text-muted)">
+          {t('dashboard.chart.xRangeAppliesToAllSources')}
+        </p>
       </SettingsSection>
 
       {/* ═══ Y 축 ═══ */}
@@ -2701,23 +2451,14 @@ export function LineChartSection({
                 <option
                   key={g}
                   value={g}
-                  // 캔들은 버킷마다 시·고·저·종이 필요해 집계 소스에서만 그릴 수 있다.
-                  // 숨기지 않고 비활성으로 두어 "왜 없지" 대신 "왜 못 쓰지" 를 답한다.
-                  disabled={requiresBuckets(g) && !xRangeOwnedBySource}
+                  // 캔들은 버킷마다 시·고·저·종이 필요하다. 채널이 빠진 뒤로 남은 소스는
+                  // 모두 버킷 소스이므로 막을 이유가 없어졌다.
                 >
                   {t(`dashboard.chart.graphStyle_${g}`)}
                 </option>
               ))}
             </select>
           </LabeledField>
-          {requiresBuckets(panelGraphStyle) && !xRangeOwnedBySource && (
-            <p
-              data-testid="line-chart-candle-unsupported"
-              className="w-full text-[11px] text-amber-500"
-            >
-              {t('dashboard.chart.candleNeedsBuckets')}
-            </p>
-          )}
         </div>
 
         {/* 스타일의 옵션들 — 셋 다 "그 스타일에서만 뜻이 있는" 같은 성격이라 한 줄에 모은다.
@@ -2809,8 +2550,86 @@ export function LineChartSection({
         )}
       </SettingsSection>
 
+      {/* ═══ 그래프 영역 ═══
+          그림을 줄이고 옮긴다. 스타일(무엇을 어떻게 그리는가)과 다른 축이라 절을 나눈다.
+          파이·게이지와 **같은 어휘**(패널 대비 백분율)이며 같은 상수를 쓴다. */}
+      <SettingsSection title={t('dashboard.chart.plotAreaSection')}>
+        <div className="flex items-center gap-2">
+          <input
+            type="range"
+            min={PANEL_SIZE_MIN}
+            max={PANEL_SIZE_MAX}
+            step={1}
+            value={plotSize}
+            onChange={(e) => onConfigChange({ plot_size: Number(e.target.value) })}
+            data-testid="line-chart-plot-size"
+            aria-label={t('dashboard.chart.plotSize')}
+            className="flex-1"
+          />
+          <span className="w-10 shrink-0 text-right text-xs tabular-nums text-(--color-text-muted)">
+            {plotSize}%
+          </span>
+          {/* 크기·자리를 함께 되돌린다 — 둘은 같은 조작(끌기·슬라이더)으로 어긋나므로
+              따로 되돌리면 한쪽이 남아 왜 제자리가 아닌지 알 수 없다(게이지와 같은 규칙). */}
+          {config.plot_size !== undefined || config.plot_offset_x || config.plot_offset_y ? (
+            <button
+              type="button"
+              data-testid="line-chart-plot-reset"
+              onClick={() =>
+                onConfigChange({
+                  plot_size: undefined,
+                  plot_offset_x: undefined,
+                  plot_offset_y: undefined,
+                })
+              }
+              className="shrink-0 rounded-md bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-secondary) hover:bg-(--color-bg-elevated)/80"
+            >
+              {t('dashboard.chart.plotReset')}
+            </button>
+          ) : null}
+        </div>
+        <p className="text-[11px] leading-snug text-(--color-text-muted)">
+          {t('dashboard.chart.plotDragHint')}
+        </p>
+      </SettingsSection>
+
       {/* ═══ 범례 ═══ */}
-      <SettingsSection title={t('dashboard.chart.legendSection')}>
+      <SettingsSection
+        title={t('dashboard.chart.legendSection')}
+        design={
+          /* 글자 모양은 축과 같은 자리(디자인 배지)에 접는다 — 본문에는 자주 고치는
+             구성·위치만 남는다. 글꼴 편집기는 파이 범례와 **같은 컴포넌트**다. */
+          <DesignPopover testId="line-chart-legend-design">
+            <TextStyleFields
+              label={t('dashboard.chart.legendTextStyle')}
+              family={legendCfg.font_family}
+              size={legendCfg.font_size}
+              color={legendCfg.font_color}
+              sizePlaceholder={String(DEFAULT_CHART_LEGEND_FONT_SIZE)}
+              testIdPrefix="line-chart-legend-font"
+              onChange={(patch) =>
+                patchLegend({
+                  ...('family' in patch ? { font_family: patch.family } : null),
+                  ...('size' in patch ? { font_size: patch.size } : null),
+                  ...('color' in patch ? { font_color: patch.color } : null),
+                })
+              }
+            />
+            {/* 끌어 옮긴 자리를 되돌리는 유일한 출구다 — 변위가 남으면 위치를 바꿔도
+                범례가 엉뚱한 자리에 있고, 드래그는 편집 모드에서만 되기 때문이다. */}
+            {legendCfg.offset_x || legendCfg.offset_y ? (
+              <button
+                type="button"
+                data-testid="line-chart-legend-reset-offset"
+                onClick={() => patchLegend({ offset_x: undefined, offset_y: undefined })}
+                className="w-full rounded border border-(--color-border-default) px-2 py-1 text-xs text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
+              >
+                {t('dashboard.chart.legendResetOffset')}
+              </button>
+            ) : null}
+          </DesignPopover>
+        }
+      >
         <div className="space-y-1">
           <span className="block text-xs font-medium text-(--color-text-muted)">
             {t('dashboard.chart.legendComposition')}
@@ -3103,11 +2922,12 @@ export function BarChartSection({
  * 세 값 모두 **비우면 상속**이다. 색만 비우는 수단이 따로 필요한 이유는 색 입력에
  * "없음" 상태가 없기 때문이다 — 지정한 뒤에만 나타나는 초기화 버튼이 그 출구다.
  */
-function TextStyleFields({
+export function TextStyleFields({
   label,
   family,
   size,
   color,
+  weight,
   sizePlaceholder,
   testIdPrefix,
   onChange,
@@ -3116,12 +2936,18 @@ function TextStyleFields({
   family: ChartFontFamily | undefined;
   size: number | undefined;
   color: string | undefined;
+  /**
+   * 굵기. **`undefined` 를 넘기면 굵기 칸 자체를 그리지 않는다** — 범례·라벨처럼 굵기를
+   * 고르지 않는 대상에 빈 칸이 생기면 무엇을 고르는 자리인지 읽히지 않는다.
+   */
+  weight?: 'normal' | 'bold' | 'inherit';
   sizePlaceholder: string;
   testIdPrefix: string;
   onChange: (patch: {
     family?: ChartFontFamily | undefined;
     size?: number | undefined;
     color?: string | undefined;
+    weight?: 'normal' | 'bold' | undefined;
   }) => void;
 }): React.ReactElement {
   const { t } = useTranslation();
@@ -3166,6 +2992,21 @@ function TextStyleFields({
           onChange={(e) => onChange({ color: e.target.value })}
           className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
         />
+        {weight !== undefined && (
+          <select
+            value={weight === 'inherit' ? '' : weight}
+            data-testid={`${testIdPrefix}-weight`}
+            aria-label={`${label} ${t('dashboard.chart.fontWeight')}`}
+            onChange={(e) =>
+              onChange({ weight: (e.target.value || undefined) as 'normal' | 'bold' | undefined })
+            }
+            className={`${inputClass()} w-20 shrink-0`}
+          >
+            <option value="">{t('dashboard.chart.inherit')}</option>
+            <option value="normal">{t('dashboard.chart.fontWeightNormal')}</option>
+            <option value="bold">{t('dashboard.chart.fontWeightBold')}</option>
+          </select>
+        )}
         {color !== undefined && (
           <button
             type="button"

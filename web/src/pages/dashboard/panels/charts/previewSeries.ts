@@ -7,6 +7,7 @@
 // Recharts 렌더 없이 검증할 수 있도록 산출 로직만 분리한다.
 
 import { normalizeStoreSeriesAlias, storeSeriesLabel } from './chartChannelTypes';
+import { DEFAULT_GRAPH_STYLE, resolveSeriesStyle, type GraphStyle } from './graphStyle';
 import { groupComboSignature } from '@/services/api/tsdbSeriesEnum';
 import type {
   ChannelRefConfig,
@@ -26,6 +27,14 @@ export interface PreviewSeries {
   smooth: boolean;
   strokeWidth: number;
   strokeDasharray: string;
+  /**
+   * 이 줄을 그리는 모양(라인·영역·바·캔들).
+   *
+   * 종전에는 이 필드가 없어 미리보기가 **무엇을 고르든 선으로만** 그렸다 — 그래프
+   * 스타일을 바꿔도 샘플이 그대로였던 자리가 여기다. 실제 렌더와 같은 우선순위
+   * (시리즈 지정 → 패널 기본값)로 여기서 확정한다.
+   */
+  graphStyle: GraphStyle;
 }
 
 /** 미리보기 시리즈 산출 입력. */
@@ -39,6 +48,8 @@ export interface PreviewSeriesInput {
   channels: readonly ChannelRefConfig[];
   channelName: string;
   globalSmooth: boolean;
+  /** 패널 기본 그래프 스타일. 시리즈가 지정하지 않은 줄이 이것을 따른다. */
+  panelGraphStyle?: GraphStyle;
   /** stroke_style → SVG dasharray 매핑(호출부의 상수를 그대로 받는다). */
   strokeDasharray: Record<StrokeStyle, string>;
   /** 인덱스별 폴백 색 팔레트. */
@@ -70,6 +81,7 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
     channels,
     channelName,
     globalSmooth,
+    panelGraphStyle = DEFAULT_GRAPH_STYLE,
     strokeDasharray,
     palette,
     sampleName,
@@ -106,6 +118,7 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
         smooth: line.ref.smooth ?? globalSmooth,
         strokeWidth: line.ref.stroke_width ?? 2,
         strokeDasharray: line.ref.stroke_style ? strokeDasharray[line.ref.stroke_style] : '',
+        graphStyle: resolveSeriesStyle(line.ref.graph_style, panelGraphStyle),
       }));
     }
   }
@@ -118,6 +131,7 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
         smooth: ref.smooth ?? globalSmooth,
         strokeWidth: ref.stroke_width ?? 2,
         strokeDasharray: ref.stroke_style ? strokeDasharray[ref.stroke_style] : '',
+        graphStyle: resolveSeriesStyle(ref.graph_style, panelGraphStyle),
       }));
     }
   }
@@ -141,6 +155,8 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
           smooth: ref.smooth ?? globalSmooth,
           strokeWidth: ref.stroke_width ?? 2,
           strokeDasharray: ref.stroke_style ? strokeDasharray[ref.stroke_style] : '',
+          // TSDB 시리즈에는 per-series 모양이 없다(`TsdbSeriesRef`) — 패널 기본값을 따른다.
+          graphStyle: panelGraphStyle,
         });
         continue;
       }
@@ -171,6 +187,7 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
           smooth: ref.smooth ?? globalSmooth,
           strokeWidth: ref.stroke_width ?? 2,
           strokeDasharray: ref.stroke_style ? strokeDasharray[ref.stroke_style] : '',
+          graphStyle: panelGraphStyle,
         });
       }
     }
@@ -185,6 +202,8 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
       smooth: c.smooth ?? globalSmooth,
       strokeWidth: c.stroke_width ?? 2,
       strokeDasharray: c.stroke_style ? strokeDasharray[c.stroke_style] : '',
+      // 채널은 실제 렌더도 per-series 모양을 읽지 않는다(LineChartPanel) — 패널 기본값을 따른다.
+      graphStyle: panelGraphStyle,
     }));
   }
 
@@ -195,6 +214,7 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
       smooth: globalSmooth,
       strokeWidth: 2,
       strokeDasharray: '',
+      graphStyle: panelGraphStyle,
     },
   ];
 }

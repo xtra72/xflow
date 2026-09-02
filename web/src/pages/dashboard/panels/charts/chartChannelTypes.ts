@@ -59,7 +59,7 @@ export type ChartConnectionStatus =
  *
  * @spec SPEC-WEB-005 · SPEC-TSDB-002 §2.1 (U1)
  */
-export type ChartDataSourceKind = 'channel' | 'store' | 'tsdb' | 'sysmetrics';
+export type ChartDataSourceKind = 'store' | 'tsdb' | 'sysmetrics';
 
 /**
  * Store 소스에서 조회할 단일 시리즈 참조.
@@ -962,7 +962,30 @@ export interface LegendConfig {
   show_line?: boolean;
   /** 마지막 값 표시. 기본 false */
   show_last_value?: boolean;
+  /**
+   * 글자 크기(px). 미지정은 기본 11 — 저장된 패널의 범례 크기가 그대로여야 한다.
+   *
+   * 마지막 값 칸은 이 크기에 비례해 조금 작게 그린다(`em`). 두 값을 따로 저장하면
+   * 크기를 키웠을 때 이름만 커지고 값은 그대로인 어긋난 범례가 된다.
+   */
+  font_size?: number;
+  /** 글꼴 토큰. 미지정은 상속(파이 범례와 같은 어휘). */
+  font_family?: ChartFontFamily;
+  /** 글자색. 미지정은 테마 글자색(`--color-text-primary`). */
+  font_color?: string;
+  /**
+   * 끌어 옮긴 변위(담는 상자 대비 %). 기본 자리에서 얼마나 밀렸는지.
+   *
+   * 파이 범례(`legend_offset_x`)와 **같은 저장 규약**이되 배치 방식이 다르다 — 파이는
+   * 겹쳐 뜨고 이쪽은 흐름에 남아 상대 변위만 얹는다(`inlineLegendOffsetStyle`).
+   * 0 이면 스타일 자체를 붙이지 않아 저장된 대시보드의 그림이 변하지 않는다.
+   */
+  offset_x?: number;
+  offset_y?: number;
 }
+
+/** 범례 기본 글자 크기(px). 종전 하드코딩(`text-[11px]`)과 같은 값이다. */
+export const DEFAULT_CHART_LEGEND_FONT_SIZE = 11;
 
 export interface LineChartPanelConfig extends ChartPanelConfigBase {
   /** 채널 목록 — 기본 입력 */

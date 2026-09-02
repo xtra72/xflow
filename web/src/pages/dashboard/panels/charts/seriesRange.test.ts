@@ -12,6 +12,7 @@ import {
   readChartXRange,
   readSeriesRange,
   resolveChartXWindow,
+  resolveLiveRetention,
   resolveSeriesWindow,
   seriesRangeKey,
   type SeriesRange,
@@ -234,5 +235,42 @@ describe('chartXRangePoints — 버퍼 크기', () => {
     expect(chartXRangePoints({ mode: 'absolute', start_ms: 1, end_ms: 2 })).toBe(
       DEFAULT_CHART_POINTS,
     );
+  });
+});
+
+describe('resolveLiveRetention — 실시간 누적의 보관 기준', () => {
+  const HARD = 1_800;
+
+  // 보고된 결함: 시스템 지표 실시간 조회는 소스 설정에서 구간 칸을 내리므로, 표시 구간을
+  // 정할 자리가 어디에도 없었다. 이제 X축 섹션이 같은 `range` 필드를 고치고 이 함수가
+  // 그것을 보관 기준으로 옮긴다.
+  it('상대 구간은 그 기간보다 오래된 점을 버린다', () => {
+    expect(resolveLiveRetention({ mode: 'relative', window_ms: 30_000 }, HARD)).toEqual({
+      windowMs: 30_000,
+      maxPoints: HARD,
+    });
+  });
+
+  it('갯수 방식은 시간으로 자르지 않고 최근 N개만 남긴다', () => {
+    expect(resolveLiveRetention({ mode: 'count', count: 50 }, HARD)).toEqual({
+      windowMs: Infinity,
+      maxPoints: 50,
+    });
+  });
+
+  it('갯수가 하드 상한을 넘어도 상한을 지킨다 — 창은 사용자가, 메모리는 아니다', () => {
+    expect(resolveLiveRetention({ mode: 'count', count: 99_999 }, HARD).maxPoints).toBe(HARD);
+  });
+
+  it('절대 구간은 길이만 취해 상대 창처럼 다룬다 — 과거 구간을 실시간으로 채울 수는 없다', () => {
+    expect(
+      resolveLiveRetention({ mode: 'absolute', start_ms: 1_000, end_ms: 61_000 }, HARD).windowMs,
+    ).toBe(60_000);
+  });
+
+  it('값이 비면 시간으로 자르지 않는다 — 임의 기본값으로 메우지 않는다', () => {
+    expect(resolveLiveRetention({ mode: 'relative' }, HARD).windowMs).toBe(Infinity);
+    expect(resolveLiveRetention({ mode: 'absolute' }, HARD).windowMs).toBe(Infinity);
+    expect(resolveLiveRetention({ mode: 'count' }, HARD).maxPoints).toBe(HARD);
   });
 });

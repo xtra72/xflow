@@ -62,6 +62,7 @@ describe('buildPreviewSeries — store 모드: 선택된 시리즈 반영', () =
       smooth: true,
       strokeWidth: 4,
       strokeDasharray: '6 4',
+      graphStyle: 'line',
     });
   });
 
@@ -75,8 +76,49 @@ describe('buildPreviewSeries — store 모드: 선택된 시리즈 반영', () =
       input({ dataSource: 'store', storeSource: storeSource({ series: [] }) }),
     );
     expect(out).toEqual([
-      { key: '(sample)', color: '#c1', smooth: false, strokeWidth: 2, strokeDasharray: '' },
+      { key: '(sample)', color: '#c1', smooth: false, strokeWidth: 2, strokeDasharray: '', graphStyle: 'line' },
     ]);
+  });
+});
+
+describe('buildPreviewSeries — 그래프 스타일', () => {
+  // 보고된 결함: 그래프 스타일을 바꿔도 설정 미리보기의 샘플이 항상 선으로 그려졌다.
+  // PreviewSeries 에 모양 필드가 아예 없어 렌더가 <Line> 으로 고정돼 있었기 때문이다.
+  it('패널 기본 모양이 시리즈에 실린다', () => {
+    const out = buildPreviewSeries(
+      input({ dataSource: 'store', storeSource: storeSource(), panelGraphStyle: 'area' }),
+    );
+    expect(out.map((s) => s.graphStyle)).toEqual(['area', 'area']);
+  });
+
+  it('시리즈 지정이 패널 기본값을 이긴다', () => {
+    const src = storeSource({
+      series: [
+        { key: 'k1', field: 'value', graph_style: 'bar' },
+        { key: 'k2', field: 'value' },
+      ],
+    } as Partial<StoreSourceConfig>);
+    const out = buildPreviewSeries(
+      input({ dataSource: 'store', storeSource: src, panelGraphStyle: 'area' }),
+    );
+    expect(out.map((s) => s.graphStyle)).toEqual(['bar', 'area']);
+  });
+
+  it('패널 기본값 미지정이면 라인이다 — 저장된 미리보기가 변하지 않는다', () => {
+    const out = buildPreviewSeries(input({ dataSource: 'store', storeSource: storeSource() }));
+    expect(out.map((s) => s.graphStyle)).toEqual(['line', 'line']);
+  });
+
+  it('채널 모드는 패널 기본값을 따른다 — 실제 렌더가 per-channel 모양을 읽지 않는다', () => {
+    const out = buildPreviewSeries(
+      input({ channels: [{ name: 'ch-a' }], panelGraphStyle: 'bar' }),
+    );
+    expect(out.map((s) => s.graphStyle)).toEqual(['bar']);
+  });
+
+  it('sample 폴백도 패널 기본값을 따른다', () => {
+    const out = buildPreviewSeries(input({ panelGraphStyle: 'candle' }));
+    expect(out.map((s) => s.graphStyle)).toEqual(['candle']);
   });
 });
 
@@ -139,9 +181,12 @@ describe('buildPreviewSeries — 채널 모드(기존 동작 보존)', () => {
     expect(buildPreviewSeries(input())[0]!.key).toBe('(sample)');
   });
 
-  it('store 모드가 아니면 store_source 를 무시한다', () => {
+  // 채널이 패널 소스에서 빠지면서 이 규칙이 뒤집혔다 — 폐지된 `'channel'` 값은 store 로
+  // 접히므로, 그 config 의 store_source 는 이제 **읽힌다**. 구 패널을 열었을 때 고른 적 있는
+  // 시리즈가 미리보기에 그대로 뜨는 것이 이 변화의 목적이다.
+  it("폐지된 'channel' 값도 store 로 접혀 store_source 를 읽는다", () => {
     const out = buildPreviewSeries(input({ dataSource: 'channel', storeSource: storeSource() }));
-    expect(out[0]!.key).toBe('(sample)');
+    expect(out.map((x) => x.key)).toEqual(['LAI · value{room=1}', '소음']);
   });
 });
 
@@ -202,7 +247,7 @@ describe('buildPreviewSeries 활성 판정 + 채널 폴백 결합 특성화 (SPE
       input({ dataSource: 'store', storeSource: storeSource({ series: [] }), channels: [] }),
     );
     expect(out).toEqual([
-      { key: '(sample)', color: '#c1', smooth: false, strokeWidth: 2, strokeDasharray: '' },
+      { key: '(sample)', color: '#c1', smooth: false, strokeWidth: 2, strokeDasharray: '', graphStyle: 'line' },
     ]);
   });
 });

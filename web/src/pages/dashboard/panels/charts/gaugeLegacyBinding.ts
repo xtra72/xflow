@@ -186,8 +186,6 @@ function seriesSourceActive(
   flags: GaugeValueSourceFlags,
 ): boolean {
   switch (kind) {
-    case 'channel':
-      return false;
     case 'store':
       return flags.storeSourceActive;
     case 'tsdb':

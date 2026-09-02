@@ -35,10 +35,8 @@ import {
 // 값 표기 자릿수는 차트 계열 공용 규칙을 따른다.
 import { readDecimalPlaces } from './decimalPlaces';
 import { pivotByTimestamp, pivotColumns } from './tablePivot';
-import { useChartChannel } from './useChartChannel';
-import { resolvePanelSourceBinding } from './panelDataSource';
-import { isPanelSeriesSource, usePanelSeriesData } from './usePanelSeriesData';
-import { usePanelTitleVisible } from '../../panelChromeContext';
+import { usePanelSeriesData } from './usePanelSeriesData';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../../panelChromeContext';
 import { useTranslation } from '@/lib/i18n';
 
 interface TablePanelProps {
@@ -113,6 +111,7 @@ export default function TablePanel({
   onColumnsChange,
 }: TablePanelProps) {
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const { t } = useTranslation();
   const cfg = parseConfig(config);
   // 값 표기 자릿수 — 셀·필터 목록·필터 판정이 **같은 값**을 써야 표시와 필터가 어긋나지 않는다.
@@ -121,20 +120,10 @@ export default function TablePanel({
   // SPEC-WEB-005: data_source 에 따라 Store 소스 또는 채널 소스를 사용한다(공존).
   // SPEC-TSDB-002 §2.3 [U3]: 소스 판정은 `panelDataSource` 계약이 소유한다. 패널은
   // `data_source` 를 직접 비교하지 않는다 — 소스 종류가 늘어도 이 지점이 종류만큼
-  // 곱해지지 않게 하기 위함이다(UB1-1).
-  // `isStore` 는 "채널이 아닌 시리즈 소스가 활성인가" 를 뜻한다. M3 시점에는 store 만
-  // 그 조건을 만족하며, tsdb 는 M6 에서 같은 이름을 통해 합류한다.
-  const isStore = isPanelSeriesSource(resolvePanelSourceBinding(config));
-
-  const channelRes = useChartChannel(
-    isStore ? undefined : cfg.channel_name || undefined,
-    { maxPoints: cfg.max_points ?? DEFAULT_MAX_POINTS },
-  );
   const storeRes = usePanelSeriesData(config);
 
-  const { entries, status, closedReason, errorReason } = isStore
-    ? storeRes
-    : channelRes;
+  // 채널이 패널 소스에서 빠진 뒤로 데이터는 시리즈 소스 하나로 들어온다.
+  const { entries, status, closedReason, errorReason } = storeRes;
 
   const [sortState, setSortState] = useState<SortState>(() =>
     cfg.default_sort ? { field: cfg.default_sort.field, order: cfg.default_sort.order } : null,
@@ -258,7 +247,7 @@ export default function TablePanel({
       {showTitle && (
         <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
           <TableIcon className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-          <span className="truncate text-sm font-semibold text-(--color-text-primary)">
+          <span className="truncate text-sm font-semibold text-(--color-text-primary)" style={titleStyle}>
             {title || cfg.channel_name || '채널 미지정'}
           </span>
         </div>

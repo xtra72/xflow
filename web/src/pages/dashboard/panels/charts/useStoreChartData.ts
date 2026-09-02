@@ -1,6 +1,6 @@
 // Store 에이전트 시리즈 매트릭스를 주기적으로 폴링해 차트용 ChartEntry 로 변환하는 훅.
 //
-// chart-emitter 채널 경로(useChartChannel/useChartChannels)와 공존하는 대체 데이터
+// 시리즈 소스(store · TSDB · 시스템 지표)가 공유하는 조회 훅. 채널 경로가 패널에서 빠진 뒤로 유일한 데이터
 // 소스다. 패널은 config.data_source === 'store' 일 때 이 훅을 사용하고, 그 외에는
 // 기존 채널 훅을 사용한다. 반환 형상은 채널 훅과 최대한 일치시켜 패널 렌더 코드의
 // 변경을 최소화한다(entries / status / closedReason / errorReason).

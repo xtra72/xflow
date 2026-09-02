@@ -5,6 +5,9 @@
 //
 // 게이지 값 글자만 다른 좌표계(SVG viewBox)를 쓴다(`panels/gauge/valueDrag.ts`) — 그것은
 // SVG 안의 좌표라 애초에 상자 백분율로 표현되지 않는다.
+//
+// 파일 끝의 `clampInlineLegendOffset` / `inlineLegendOffsetStyle` 은 **겹쳐 뜨지 않는**
+// 라인 차트 범례 몫이다. 백분율 오프셋이라는 저장 규약은 같고, 죄기 기준만 다르다.
 
 import type { CSSProperties } from 'react';
 
@@ -145,4 +148,46 @@ export const LEGEND_OFFSET_SAFETY_LIMIT = 50;
 export function clampStoredLegendOffset(v: unknown): number {
   const n = typeof v === 'number' && Number.isFinite(v) ? v : 0;
   return Math.min(Math.max(n, -LEGEND_OFFSET_SAFETY_LIMIT), LEGEND_OFFSET_SAFETY_LIMIT);
+}
+
+/**
+ * 흐름 안에 남은 채로 **밀어서 옮기는** 범례의 오프셋 죄기.
+ *
+ * 라인 차트 범례는 파이와 달리 겹쳐 뜨지 않는다 — 차트와 자리를 나눠 가지는 형제이며,
+ * 구분선과 마지막 값 칸이 있는 표에 가깝다. 그것을 절대 배치로 띄우면 저장된 모든
+ * 대시보드에서 차트가 커지고 범례가 그림 위를 덮는다. 그래서 자리는 흐름이 정하고,
+ * 끌어 옮긴 값은 그 자리에서의 **상대 변위**(`position: relative` 의 left/top)로만 얹는다.
+ *
+ * 그래서 죄기 기준도 다르다. 붙인 변이 없으므로 앵커별 규칙(`legendOffsetBounds`)이
+ * 성립하지 않는다. 대신 **지금 그려진 자리**에서 담는 상자 밖으로 나가지 않는 범위를
+ * 구한다: 이미 적용된 오프셋(`base`)에, 아직 남은 여백만큼만 더 갈 수 있다.
+ *
+ * 상자를 잴 수 없으면 움직이지 않는다 — 죌 수 없는 값을 통과시키면 범례가 사라진다.
+ */
+export function clampInlineLegendOffset(
+  base: { x: number; y: number },
+  next: { x: number; y: number },
+  container: { left: number; top: number; width: number; height: number },
+  legend: { left: number; top: number; width: number; height: number },
+): { x: number; y: number } {
+  if (!(container.width > 0) || !(container.height > 0)) return { x: base.x, y: base.y };
+  const pct = (px: number, span: number): number => (px / span) * 100;
+  // 지금 자리에서 남은 여백. 왼쪽으로는 상자 왼끝까지, 오른쪽으로는 상자 오른끝까지.
+  const minX = base.x + pct(container.left - legend.left, container.width);
+  const maxX = base.x + pct(container.left + container.width - (legend.left + legend.width), container.width);
+  const minY = base.y + pct(container.top - legend.top, container.height);
+  const maxY = base.y + pct(container.top + container.height - (legend.top + legend.height), container.height);
+  const fit = (v: number, fallback: number, lo: number, hi: number): number => {
+    if (!Number.isFinite(v)) return fallback;
+    // 범례가 상자보다 크면 lo > hi 가 된다 — 움직일 여지가 없으므로 제자리에 둔다.
+    if (lo > hi) return fallback;
+    return Math.min(Math.max(v, lo), hi);
+  };
+  return { x: fit(next.x, base.x, minX, maxX), y: fit(next.y, base.y, minY, maxY) };
+}
+
+/** 흐름 배치 범례의 상대 변위 스타일. 0,0 이면 스타일을 붙이지 않는다(저장된 그림 유지). */
+export function inlineLegendOffsetStyle(x: number, y: number): CSSProperties | undefined {
+  if (x === 0 && y === 0) return undefined;
+  return { position: 'relative', left: `${x}%`, top: `${y}%` };
 }

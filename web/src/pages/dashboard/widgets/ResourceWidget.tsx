@@ -10,7 +10,7 @@ import { useTranslation } from '@/lib/i18n';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { useUIStore } from '@/stores/uiStore';
-import { usePanelTitleVisible } from '../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 import {
   type MetricKey,
   type PanelConfig,
@@ -95,6 +95,7 @@ function MetricCard({
 /** 프로세스 리소스 개요를 표시하는 대시보드 위젯 */
 export default function ResourceWidget({ metrics: localMetrics, panelConfig }: ResourceWidgetProps) {
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L05): 원격이면 노드의 메트릭
   // 스냅샷을 monitor/metrics query-action 으로 취득한다. 로컬은 prop 의 metrics 를
   // 그대로 사용해 회귀 없이 동일 렌더한다.
@@ -157,7 +158,7 @@ export default function ResourceWidget({ metrics: localMetrics, panelConfig }: R
         <div className="mb-4 flex shrink-0 items-center justify-between">
           <h3
             className="text-lg font-semibold text-(--color-text-primary)"
-            style={acColor('header') ? { color: acColor('header')! } : undefined}
+            style={{ ...(acColor('header') ? { color: acColor('header')! } : undefined), ...titleStyle }}
           >
             {title}
           </h3>

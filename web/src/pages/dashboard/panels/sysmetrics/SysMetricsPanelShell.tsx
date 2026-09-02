@@ -9,7 +9,7 @@ import type { LucideIcon } from 'lucide-react';
 
 import { useTranslation } from '@/lib/i18n';
 
-import { usePanelTitleVisible } from '../../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../../panelChromeContext';
 import type { SysMetricsItemOptions, TileAlign, TileTextSize, TileTextWeight } from './sysMetricsItemOptions';
 import type { SysMetricsPanelState } from './useSysMetricsSnapshot';
 
@@ -82,6 +82,7 @@ export function SysMetricsPanelShell({
 }: SysMetricsPanelShellProps) {
   const { t } = useTranslation();
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
 
   const blocked = state !== 'ready' && state !== 'stopped';
 
@@ -98,7 +99,7 @@ export function SysMetricsPanelShell({
           />
           <span
             className="truncate text-sm font-medium text-(--color-text-primary)"
-            style={headerColor ? { color: headerColor } : undefined}
+            style={{ ...(headerColor ? { color: headerColor } : undefined), ...titleStyle }}
           >
             {title}
           </span>

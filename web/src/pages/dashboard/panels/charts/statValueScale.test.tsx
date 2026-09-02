@@ -20,10 +20,23 @@ const mockResult = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('./useChartChannel', () => ({ useChartChannel: () => mockResult.current }));
+// 채널이 빠진 뒤 데이터 이음매는 하나다 — 채널 형상을 시리즈 소스 결과로 옮겨 준다.
+vi.mock('./usePanelSeriesData', () => ({
+  usePanelSeriesData: () => ({
+    ...mockResult.current,
+    seriesEntries: new Map(),
+    seriesStyles: new Map(),
+    seriesNames: [],
+    booleanSeries: new Set(),
+  }),
+  isPanelSeriesSource: () => true,
+}));
 vi.mock('@/hooks/useAgent', () => ({ useAgents: () => ({ data: { data: [] } }) }));
 vi.mock('@/lib/i18n', () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
-vi.mock('../../panelChromeContext', () => ({ usePanelTitleVisible: () => true }));
+vi.mock('../../panelChromeContext', () => ({
+  usePanelTitleVisible: () => true,
+  usePanelTitleStyle: () => undefined,
+}));
 
 import StatPanel from './StatPanel';
 import { readValueScale, VALUE_SCALE_MAX, VALUE_SCALE_MIN } from './valueScale';

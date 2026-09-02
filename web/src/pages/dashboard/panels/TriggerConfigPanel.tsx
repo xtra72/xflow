@@ -20,7 +20,7 @@ import { getFlow, updateFlow } from '@/services/api/flowService';
 import { useUIStore } from '@/stores/uiStore';
 import { APIError } from '@/types/api';
 import { cn } from '@/lib/utils/cn';
-import { usePanelTitleVisible } from '../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 import {
   buildFullTriggerConfig,
   detectConflict,
@@ -62,6 +62,7 @@ export default function TriggerConfigPanel({
   onTitleChange: _onTitleChange,
 }: TriggerConfigPanelProps) {
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const flowId = typeof config.flowId === 'string' ? config.flowId : '';
   const nodeId = typeof config.nodeId === 'string' ? config.nodeId : '';
   const catalog = readCatalog(config);
@@ -294,7 +295,7 @@ export default function TriggerConfigPanel({
       <div className="flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2">
           <AlarmClock className="h-5 w-5 text-blue-500" />
-          <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
+          <span className="truncate text-base font-bold text-(--color-text-primary)" style={titleStyle}>{title}</span>
         </div>
         {isRunning ? (
           <span

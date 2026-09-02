@@ -501,3 +501,145 @@ describe('usePanelSeriesData — sysmetrics 분기 배선', () => {
     expect(sysFn).toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// 다중 소스 — 한 패널이 여러 종류를 동시에 쓴다.
+//
+// 순수 병합 규칙은 `mergeSeriesResults.test.ts` 가 잠근다. 여기서는 **배선**을 본다:
+// 목록이 있으면 훅이 여러 조회를 실제로 내고, 그 결과가 한 시리즈 목록으로 합쳐지는가.
+// ---------------------------------------------------------------------------
+
+describe('usePanelSeriesData — 다중 소스', () => {
+  /** 두 번째 store 소스처럼 보이도록 다른 컬럼을 돌려주는 조회기. */
+  function twoSourceConfig(): Record<string, unknown> {
+    return {
+      data_sources: ['store', 'sysmetrics'],
+      store_source: storeBlock(),
+      sysmetrics_source: {
+        agent_id: 'sys-1',
+        agent_name: 'host',
+        series: [{ key: 'cpu.usage_percent' }],
+        time_window_ms: 60_000,
+        interval_ms: 10_000,
+        aggregation: 'average' as const,
+      },
+    };
+  }
+
+  it('목록에 적은 소스마다 조회를 낸다', async () => {
+    const sysQuery = vi.fn(async () => emptyMatrix);
+    renderHook(() =>
+      usePanelSeriesData(twoSourceConfig(), {
+        storeOptions: { queryMatrixFn: queryFn, resolveKeysFn: keysFn },
+        sysmetricsOptions: { queryMatrixFn: sysQuery },
+      }),
+    );
+    await flushMicrotasks();
+
+    // 두 소스가 각자 자기 조회를 낸다 — 종전에는 훅 호출 하나를 나눠 써서 둘 중
+    // 하나만 돌 수 있었다.
+    expect(queryFn).toHaveBeenCalled();
+    expect(sysQuery).toHaveBeenCalled();
+  });
+
+  it('한 소스만 활성이면 그 결과를 그대로 돌려준다 — 저장된 단일 소스 패널이 변하지 않는다', async () => {
+    const { result } = render({
+      data_sources: ['store', 'tsdb'],
+      store_source: storeBlock(),
+    });
+    await flushMicrotasks();
+
+    // tsdb 는 블록이 없어 비활성이므로 합치기가 돌지 않는다(이름에 꼬리표가 붙지 않는다).
+    expect(result.current.seriesNames).toEqual(['Temp']);
+  });
+
+  it('활성 소스가 하나도 없으면 idle 이다', async () => {
+    const { result } = render({ data_sources: ['store', 'tsdb'] });
+    await flushMicrotasks();
+    expect(result.current.status).toBe('idle');
+    expect(result.current.seriesNames).toEqual([]);
+  });
+
+  it('목록이 없으면 단일 축을 읽는다 — 저장된 패널의 경로', async () => {
+    const { result } = render({ data_source: 'store', store_source: storeBlock() });
+    await flushMicrotasks();
+    expect(result.current.seriesNames).toEqual(['Temp']);
+  });
+});
+
+describe('usePanelSeriesData — 같은 종류 여러 인스턴스', () => {
+  it('Store 두 개가 각자 조회를 내고 두 계열이 함께 나온다', async () => {
+    const queryA = vi.fn(async () => ({
+      columns: ['a'],
+      rows: [{ bucketStartMs: 1000, values: [1] }],
+    }));
+    const { result } = renderHook(() =>
+      usePanelSeriesData(
+        {
+          sources: [
+            { kind: 'store', store_source: storeBlock({ agent_name: 'store-1' }) },
+            {
+              kind: 'store',
+              store_source: storeBlock({
+                agent_name: 'store-1',
+                series: [{ key: 'room:hum', alias: 'Hum' }],
+              }),
+            },
+          ],
+        },
+        { storeOptions: { queryMatrixFn: queryA, resolveKeysFn: keysFn } },
+      ),
+    );
+    await flushMicrotasks();
+
+    // 인스턴스마다 조회가 나간다 — 종류 목록 시절에는 한 번뿐이었다.
+    expect(queryA.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(result.current.seriesNames.length).toBeGreaterThan(0);
+  });
+
+  it('상한을 넘는 인스턴스는 잘라 낸다 — 훅 슬롯이 고정이다', async () => {
+    const many = Array.from({ length: 9 }, () => ({
+      kind: 'store' as const,
+      store_source: storeBlock(),
+    }));
+    const { result } = renderHook(() =>
+      usePanelSeriesData(
+        { sources: many },
+        { storeOptions: { queryMatrixFn: queryFn, resolveKeysFn: keysFn } },
+      ),
+    );
+    await flushMicrotasks();
+    // 잘렸어도 예외 없이 결과가 나온다.
+    expect(result.current.status).not.toBe('error');
+  });
+
+  it('인스턴스 수가 바뀌어도 훅 순서가 깨지지 않는다', async () => {
+    const { rerender } = renderHook(
+      ({ config }: { config: Record<string, unknown> }) =>
+        usePanelSeriesData(config, {
+          storeOptions: { queryMatrixFn: queryFn, resolveKeysFn: keysFn },
+        }),
+      {
+        initialProps: {
+          config: { sources: [{ kind: 'store', store_source: storeBlock() }] } as Record<
+            string,
+            unknown
+          >,
+        },
+      },
+    );
+    await flushMicrotasks();
+    expect(() =>
+      rerender({
+        config: {
+          sources: [
+            { kind: 'store', store_source: storeBlock() },
+            { kind: 'store', store_source: storeBlock() },
+            { kind: 'tsdb' },
+          ],
+        },
+      }),
+    ).not.toThrow();
+    await flushMicrotasks();
+  });
+});

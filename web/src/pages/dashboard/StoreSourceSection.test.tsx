@@ -275,16 +275,6 @@ describe('Store 조회 설정 정보 "i" 말풍선 (SPEC-PANEL-SETTINGS-001)', (
     expect(sel.value).toBe('60000');
   });
 
-  it('채널 모드에서는 인터벌 셀렉트를 렌더하지 않는다', () => {
-    render(
-      <StoreSourceSection
-        panel={makePanel({ data_source: 'channel' })}
-        onConfigChange={vi.fn()}
-      />,
-    );
-    expect(screen.queryByTestId('chart-store-interval')).toBeNull();
-  });
-
   it('프리셋을 고르면 store_source.interval_ms 만 갱신한다', () => {
     const onConfigChange = vi.fn();
     const cfg = infoConfig();
@@ -343,16 +333,6 @@ describe('Store 조회 설정 정보 "i" 말풍선 (SPEC-PANEL-SETTINGS-001)', (
     expect(screen.getByTestId('chart-store-info-button')).toBeInTheDocument();
     // Store 토글과 같은 영역에 있다(데이터소스 토글 존재 확인).
     expect(screen.getByTestId('chart-data-source-store')).toBeInTheDocument();
-  });
-
-  it('채널 모드에서는 "i" 정보 아이콘을 렌더하지 않는다', () => {
-    render(
-      <StoreSourceSection
-        panel={makePanel({ data_source: 'channel' })}
-        onConfigChange={vi.fn()}
-      />,
-    );
-    expect(screen.queryByTestId('chart-store-info-button')).toBeNull();
   });
 
   it('기본(닫힘)에서는 말풍선이 없고, "i" 클릭 시 열린다', () => {
@@ -465,16 +445,6 @@ describe('설정 UI 게이팅 특성화 (SPEC-TSDB-002 M2, CT-19~CT-21)', () => 
     expect(gates()).toEqual([true, true, true, true]);
   });
 
-  it("CT-20: data_source:'channel' 이면 4개 게이트가 모두 미렌더다", () => {
-    render(
-      <StoreSourceSection
-        panel={makePanel({ data_source: 'channel', channel_name: 'c1' })}
-        onConfigChange={vi.fn()}
-      />,
-    );
-    expect(gates()).toEqual([false, false, false, false]);
-  });
-
   it('CT-21 [반전]: TSDB 선택이 config 에 기록되고 tsdb config 에서는 4개 게이트가 미렌더다', () => {
     // [SPEC-TSDB-002 §2.11 반전] SPEC-PANEL-SETTINGS-001 REQ-05 는 TSDB 토글을
     // config 무기록(no-op)으로 규정했고 이 테스트가 그것을 잠갔다. SPEC-TSDB-002 가
@@ -490,9 +460,12 @@ describe('설정 UI 게이팅 특성화 (SPEC-TSDB-002 M2, CT-19~CT-21)', () => 
     fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
 
     // 반전 (a): 로컬 상태 no-op 이 아니라 config 기록이다.
-    expect(onConfigChange).toHaveBeenCalledWith(
-      expect.objectContaining({ data_source: 'tsdb' }),
-    );
+    // 다중 소스가 들어오면서 버튼은 토글이 됐다 — store 는 그대로 남고 tsdb 가 더해진다.
+    const written = onConfigChange.mock.calls[0]![0] as Record<string, unknown>;
+    expect((written.sources as Array<{ kind: string }>).map((e) => e.kind)).toEqual([
+      'store',
+      'tsdb',
+    ]);
     unmount();
 
     // 반전 (b): 모드가 config 파생이므로 게이트는 tsdb config 에서 닫힌다.
@@ -506,10 +479,10 @@ describe('설정 UI 게이팅 특성화 (SPEC-TSDB-002 M2, CT-19~CT-21)', () => 
     // 반전 (c): placeholder 는 렌더 트리에서 은퇴했다(testid 소멸).
   });
 
-  it('CT-21 [반전]: 모드가 config 파생이므로 store 로 되돌리면 게이트가 되살아난다', () => {
+  it('CT-21 [반전]: 종류 버튼은 더하기이므로 tsdb 를 붙여도 store 게이트가 살아 있고, 지워야 닫힌다', () => {
     // 위와 같은 사유의 반전이다(§2.11). 이전에는 `setTsdbMode(false)` 로 로컬 상태만
-    // 풀렸고 config 는 내내 store 였다. 이제는 왕복 자체가 config 를 거치므로, 제어
-    // 컴포넌트로 감싸 부모가 패치를 반영해야 모드가 되돌아온다.
+    // 풀렸고 config 는 내내 store 였다. 이제는 게이트가 config 의 소스 목록에서 나오고,
+    // 종류 버튼은 **더하기**다 — 닫는 길은 그 인스턴스를 지우는 것뿐이다.
     function Harness(): React.ReactElement {
       const [config, setConfig] = useState<Record<string, unknown>>(storeConfig());
       return (
@@ -522,11 +495,14 @@ describe('설정 UI 게이팅 특성화 (SPEC-TSDB-002 M2, CT-19~CT-21)', () => 
     render(<Harness />);
     expect(gates()).toEqual([true, true, true, true]);
 
+    // tsdb 를 켜도 store 가 함께 켜져 있으므로 store 게이트는 살아 있다 — 이것이
+    // 다중 소스의 뜻이다(두 소스의 편집기가 함께 뜬다).
     fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
-    expect(gates()).toEqual([false, false, false, false]);
-
-    fireEvent.click(screen.getByTestId('chart-data-source-store'));
     expect(gates()).toEqual([true, true, true, true]);
+
+    // store 인스턴스를 **지워야** tsdb 만 남고 store 게이트가 닫힌다.
+    fireEvent.click(screen.getByTestId('panel-source-remove-0'));
+    expect(gates()).toEqual([false, false, false, false]);
   });
 });
 
@@ -547,15 +523,18 @@ describe('소스 전환 비파괴 (SPEC-TSDB-002 §2.12 [E2], AC-36)', () => {
     fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
 
     const patch = onConfigChange.mock.calls[0]?.[0] as Record<string, unknown>;
-    // 패치가 store_source 를 건드리지 않는다 — 종류만 바꾸고 다른 소스의 블록은 그대로 둔다.
+    // 패치가 store_source 를 건드리지 않는다 — 목록만 바꾸고 다른 소스의 블록은 그대로 둔다.
     expect(patch).not.toHaveProperty('store_source');
-    expect(patch.data_source).toBe('tsdb');
+    expect((patch.sources as Array<{ kind: string }>).map((e) => e.kind)).toEqual([
+      'store',
+      'tsdb',
+    ]);
     // 병합된 결과에도 원본 store 블록이 그대로 남는다.
     const merged = { ...initial, ...patch };
     expect(merged.store_source).toEqual(initial.store_source);
   });
 
-  it('tsdb → store 왕복 후 두 블록이 모두 보존된다', () => {
+  it('tsdb 를 붙였다 store 를 지웠다 다시 붙여도 두 블록이 모두 보존된다', () => {
     // 제어 컴포넌트로 감싸 실제 왕복(부모가 패치를 반영)을 재현한다.
     const seen: Array<Record<string, unknown>> = [];
     function Harness(): React.ReactElement {
@@ -571,11 +550,16 @@ describe('소스 전환 비파괴 (SPEC-TSDB-002 §2.12 [E2], AC-36)', () => {
     render(<Harness />);
     const original = seen[0]!.store_source;
 
+    // 왕복 — tsdb 를 붙이고, store 인스턴스를 지우고, store 를 다시 붙인다.
     fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
+    fireEvent.click(screen.getByTestId('panel-source-remove-0'));
     fireEvent.click(screen.getByTestId('chart-data-source-store'));
 
     const final = seen[seen.length - 1]!;
-    expect(final.data_source).toBe('store');
+    expect((final.sources as Array<{ kind: string }>).map((e) => e.kind)).toEqual([
+      'tsdb',
+      'store',
+    ]);
     // 왕복 후에도 두 블록이 공존한다 — tsdb 로 갔다 왔다고 store 선택이 사라지지 않고,
     // store 로 돌아왔다고 방금 만든 tsdb 블록이 지워지지도 않는다.
     expect(final.store_source).toEqual(original);
@@ -699,5 +683,116 @@ describe('가져올 데이터 범위 — 기간(상대·절대) / 갯수', () =>
     fireEvent.change(input, { target: { value: '999999' } });
     const patch = onConfigChange.mock.calls[0]![0] as { store_source: StoreSourceConfig };
     expect(patch.store_source.range).toMatchObject({ count: 10_000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 같은 종류 여러 인스턴스 — 종류 토글로는 표현되지 않는 축.
+//
+// 종류 목록 시절에는 Store 두 개(에이전트 A·B)를 한 차트에 겹쳐 볼 수 없었다. 저장 단위가
+// 인스턴스로 옮겨진 뒤 설정 화면이 실제로 그것을 만들 수 있는지 본다.
+// ---------------------------------------------------------------------------
+
+describe('소스 인스턴스 추가·제거', () => {
+  /** 부모가 패치를 반영하는 제어 하네스 — 실제 왕복을 재현한다. */
+  function Harness({ initial }: { initial: Record<string, unknown> }): React.ReactElement {
+    const [config, setConfig] = useState<Record<string, unknown>>(initial);
+    seen.length = 0;
+    seen.push(config);
+    return (
+      <StoreSourceSection
+        panel={makePanel(config)}
+        onConfigChange={(patch) => setConfig((prev) => ({ ...prev, ...patch }))}
+      />
+    );
+  }
+  const seen: Array<Record<string, unknown>> = [];
+  const latest = (): Record<string, unknown> => seen[seen.length - 1]!;
+  const kinds = (c: Record<string, unknown>): string[] =>
+    ((c.sources as Array<{ kind: string }> | undefined) ?? []).map((e) => e.kind);
+
+  it('Store 를 하나 더 붙일 수 있다 — 같은 종류 둘째', () => {
+    render(<Harness initial={storeConfig()} />);
+    fireEvent.click(screen.getByTestId('chart-data-source-store'));
+    expect(kinds(latest())).toEqual(['store', 'store']);
+  });
+
+  it('둘째 인스턴스는 빈 기본 블록으로 시작한다 — 첫째 설정을 복제하지 않는다', () => {
+    render(<Harness initial={storeConfig()} />);
+    fireEvent.click(screen.getByTestId('chart-data-source-store'));
+    const list = latest().sources as Array<{ store_source?: { agent_name?: string } }>;
+    expect(list[0]!.store_source?.agent_name).toBe(
+      (storeConfig().store_source as { agent_name: string }).agent_name,
+    );
+    expect(list[1]!.store_source?.agent_name).toBe('');
+  });
+
+  it('추가한 인스턴스의 편집기가 함께 뜬다', () => {
+    render(<Harness initial={storeConfig()} />);
+    fireEvent.click(screen.getByTestId('chart-data-source-store'));
+    expect(screen.getByTestId('panel-source-instance-1')).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // 접기 — 소스가 늘어나면 한 화면에 다 들어가지 않는다. 지우지 않고 치울 길이 있어야
+  // "일단 접어두고 다른 소스를 본다" 가 된다. 접힘은 화면 상태이지 설정이 아니므로
+  // config 에 남기지 않는다(패널을 다시 열면 모두 펼쳐진다).
+  // -------------------------------------------------------------------------
+  it('머리를 누르면 그 인스턴스의 본문이 접힌다', () => {
+    render(<Harness initial={storeConfig()} />);
+    fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
+    expect(screen.getByTestId('chart-tsdb-backend')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('panel-source-toggle-1'));
+    expect(screen.queryByTestId('chart-tsdb-backend')).toBeNull();
+    // 머리는 남는다 — 접은 것이지 지운 것이 아니다.
+    expect(screen.getByTestId('panel-source-instance-1')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('panel-source-toggle-1'));
+    expect(screen.getByTestId('chart-tsdb-backend')).toBeInTheDocument();
+  });
+
+  it('접기는 설정을 건드리지 않는다 — config 패치가 나가지 않는다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={onConfigChange} />,
+    );
+    onConfigChange.mockClear();
+    fireEvent.click(screen.getByTestId('panel-source-toggle-0'));
+    expect(onConfigChange).not.toHaveBeenCalled();
+  });
+
+  it('대표 인스턴스도 접힌다 — 첫째만 예외로 두지 않는다', () => {
+    render(<Harness initial={storeConfig()} />);
+    expect(screen.getByTestId('chart-store-agent-select')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('panel-source-toggle-0'));
+    expect(screen.queryByTestId('chart-store-agent-select')).toBeNull();
+    // 소스를 더 붙이는 길은 접어도 그대로 있다.
+    expect(screen.getByTestId('chart-data-source-store')).toBeInTheDocument();
+  });
+
+  it('인스턴스를 제거할 수 있다', () => {
+    render(<Harness initial={storeConfig()} />);
+    fireEvent.click(screen.getByTestId('chart-data-source-store'));
+    expect(kinds(latest())).toHaveLength(2);
+    fireEvent.click(screen.getByTestId('panel-source-remove-1'));
+    expect(kinds(latest()).length <= 1).toBe(true);
+  });
+
+  it('하나뿐일 때는 제거 버튼을 내지 않는다 — 소스 0개 패널을 만들 수 없다', () => {
+    render(<Harness initial={storeConfig()} />);
+    expect(screen.queryByTestId('panel-source-remove-0')).toBeNull();
+  });
+
+  it('상한에 닿으면 추가 버튼이 비활성이 된다', () => {
+    render(<Harness initial={storeConfig()} />);
+    for (let i = 0; i < 8; i++) {
+      const btn = screen.getByTestId('chart-data-source-store');
+      if ((btn as HTMLButtonElement).disabled) break;
+      fireEvent.click(btn);
+    }
+    // 버튼은 남되 비활성이 된다 — 사라지면 왜 더 못 넣는지 화면이 말하지 못한다.
+    expect(screen.getByTestId('chart-data-source-store')).toBeDisabled();
+    expect(kinds(latest())).toHaveLength(4);
   });
 });

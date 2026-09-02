@@ -55,7 +55,13 @@ vi.mock('./useStoreChartData', async (importOriginal) => {
     ...actual,
     useStoreChartData: (source: unknown, enabled: unknown) => {
       storeHookCalls.args.push({ source, enabled });
-      return storeHookResult.current;
+      const store = storeHookResult.current;
+      // 채널이 패널 소스에서 빠지면서 데이터 이음매가 하나로 줄었다. 이 파일의 오래된
+      // 테스트들은 채널 형상(`mockResult.current`)을 심으므로, store 쪽에 심은 것이 없으면
+      // 그 형상을 시리즈 소스 결과로 옮겨 준다 — 테스트 본문을 그대로 두기 위한 어댑터다.
+      const storeHasData =
+        (store.entries?.length ?? 0) > 0 || (store.seriesEntries?.size ?? 0) > 0;
+      return storeHasData ? store : { ...store, ...mockResult.current };
     },
   };
 });
@@ -211,82 +217,6 @@ describe('TablePanel', () => {
 //
 // @spec SPEC-TSDB-002 §2.3 (U3) · §2.4 (U4) — plan.md §3.1 CT-01 ~ CT-05 / AC-09
 // ---------------------------------------------------------------------------
-describe('TablePanel 소스 활성 판정 특성화 (SPEC-TSDB-002 M2, CT-01~CT-05)', () => {
-  function lastStoreCall(): { source: unknown; enabled: unknown } {
-    return storeHookCalls.args.at(-1)!;
-  }
-  /** 첫 행의 Value 셀 — 채널/store 어느 쪽 entries 를 소비했는지 드러낸다. */
-  function firstValue(container: HTMLElement): string {
-    return container.querySelectorAll('tbody tr td')[1]?.textContent ?? '';
-  }
-
-  const TS = new Date(2026, 3, 16, 14, 30, 0, 0).getTime();
-
-  beforeEach(() => {
-    storeHookCalls.args = [];
-    mockResult.current = {
-      entries: [{ timestamp: TS, value: 11 }],
-      status: 'connected',
-      closedReason: undefined,
-      errorReason: undefined,
-    };
-    storeHookResult.current = {
-      ...storeHookResult.current,
-      entries: [{ timestamp: TS, value: 99 }],
-      status: 'connected',
-    };
-  });
-
-  it('CT-01: config 가 비어 있으면 채널 경로다(store 훅은 idle)', () => {
-    const { container } = render(<TablePanel panelId="p1" config={{ channel_name: 'c1' }} />);
-    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
-    expect(firstValue(container)).toBe('11');
-  });
-
-  it("CT-02: data_source:'channel' 이면 채널 경로다", () => {
-    const { container } = render(
-      <TablePanel panelId="p1" config={{ channel_name: 'c1', data_source: 'channel' }} />,
-    );
-    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
-    expect(firstValue(container)).toBe('11');
-  });
-
-  it("CT-03: data_source:'store' 인데 store_source 가 없으면 채널 경로로 폴백한다", () => {
-    const { container } = render(
-      <TablePanel panelId="p1" config={{ channel_name: 'c1', data_source: 'store' }} />,
-    );
-    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
-    expect(firstValue(container)).toBe('11');
-  });
-
-  it("CT-04: data_source:'store' + 시리즈 0개면 채널 경로로 폴백한다", () => {
-    const { container } = render(
-      <TablePanel
-        panelId="p1"
-        config={{
-          channel_name: 'c1',
-          data_source: 'store',
-          store_source: { agent_name: 'store-1', series: [] },
-        }}
-      />,
-    );
-    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
-    expect(firstValue(container)).toBe('11');
-  });
-
-  it("CT-05: data_source:'store' + 시리즈 N개면 store 경로다", () => {
-    const store_source = { agent_name: 'store-1', series: [{ key: 'k1' }] };
-    const { container } = render(
-      <TablePanel
-        panelId="p1"
-        config={{ channel_name: 'c1', data_source: 'store', store_source }}
-      />,
-    );
-    expect(lastStoreCall()).toEqual({ source: store_source, enabled: true });
-    expect(firstValue(container)).toBe('99');
-  });
-});
-
 describe('TablePanel — 열 폭 비율 / 정렬 허용 / 열 필터', () => {
   beforeEach(() => {
     mockResult.current = {

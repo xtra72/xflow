@@ -31,6 +31,7 @@ vi.mock('./useChartChannel', () => ({
 
 vi.mock('../../panelChromeContext', () => ({
   usePanelTitleVisible: () => true,
+  usePanelTitleStyle: () => undefined,
 }));
 
 // 공용 데이터 경로가 에이전트 목록을 조회한다 — 조회 컨텍스트 없이 렌더하려고 스텁한다.

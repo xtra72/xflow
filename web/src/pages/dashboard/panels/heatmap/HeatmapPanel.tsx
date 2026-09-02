@@ -46,7 +46,7 @@ import {
 } from './stage';
 import { useFloorPlanAspect } from './useFloorPlanAspect';
 import { useFloorPlanSources } from './useFloorPlanSources';
-import { usePanelTitleVisible } from '../../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../../panelChromeContext';
 
 /** 값을 [lo, hi] 로 clamp 한다(격자 해상도 성능 가드). */
 function clamp(value: number, lo: number, hi: number): number {
@@ -80,6 +80,7 @@ export default function HeatmapPanel({
 }: HeatmapPanelProps) {
   const { t } = useTranslation();
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const cfg = parseHeatmapConfig(config);
   const explicitDecimals = hasExplicitDecimalPlaces(config)
     ? readDecimalPlaces(config)
@@ -405,7 +406,7 @@ export default function HeatmapPanel({
       {headerVisible && (
         <div className="mb-1 flex shrink-0 items-center gap-2" data-testid="heatmap-title">
           <Thermometer className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-          <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
+          <span className="truncate text-sm font-semibold text-(--color-text-primary)" style={titleStyle}>{title}</span>
         </div>
       )}
       {/* 배치 편집 진입/종료 토글(REQ-03/T7). onConfigChange 가 있고(콜백 없는 MVP 불변) 대시보드

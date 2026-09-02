@@ -2,11 +2,13 @@
 // 편집 모드에서 패널별 설정(타이틀, 색상, 컬럼/필드 가시성, 타입별 설정)을 관리한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Fan, Gauge, Maximize2, Minimize2, Minus, Pipette, Plus, Power, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Fan, Gauge, Maximize2, Minimize2, Minus, Pipette, Plus, Power, RotateCcw, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
 import {
+  Area,
+  Bar,
   CartesianGrid,
+  ComposedChart,
   Line,
-  LineChart,
   ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
@@ -29,8 +31,10 @@ import {
   type SysResourceKind,
 } from '@/components/property/SysResourceSelector';
 import {
+  panelBoxTransform,
   PANEL_SIZE_MAX,
   PANEL_SIZE_MIN,
+  readPanelOffset,
   readPanelSize,
 } from './panels/charts/panelGeometry';
 import { FONT_FAMILY_OPTIONS } from './panels/charts/textStyle';
@@ -111,9 +115,17 @@ import {
   type YEnumLabel,
   type LegendConfig as ChartLegendConfig,
   type TsdbSourceConfig,
+  type SysmetricsSourceConfig,
 } from './panels/charts/chartChannelTypes';
 import { ChartLegend } from './panels/charts/ChartLegend';
+import { ChartDragLayer } from './ChartDragLayer';
+import { clampStoredLegendOffset } from './panels/charts/legendOverlay';
+import { CandleShape } from './panels/charts/CandleShape';
+import { candleRows } from './panels/charts/candle';
+import { readGraphStyle } from './panels/charts/graphStyle';
 import { buildPreviewSeries } from './panels/charts/previewSeries';
+import { chartLayoutResetPatch, isChartLayoutDirty } from './panels/charts/chartLayout';
+import { mergeLivePreviewConfig } from './previewLiveKeys';
 // SPEC-HEATMAP-PANEL-001: 히트맵 설정 섹션(store 태그 + 센서 좌표 + 상하한 + 색상표 + IDW).
 import {
   parseHeatmapConfig,
@@ -134,9 +146,8 @@ import LineChartPanel from './panels/charts/LineChartPanel';
 import PieChartPanel from './panels/charts/PieChartPanel';
 import StatPanel from './panels/charts/StatPanel';
 import TablePanel from './panels/charts/TablePanel';
-import { resolvePanelSourceBinding } from './panels/charts/panelDataSource';
+import { isPanelSeriesActive } from './panels/charts/panelDataSource';
 // "채널이 아닌 활성 소스인가" 판정 — 소스 종류가 늘어도 식이 그대로다.
-import { isPanelSeriesSource } from './panels/charts/usePanelSeriesData';
 import {
   clonePresetStops,
   HEATMAP_COLOR_PRESETS,
@@ -154,6 +165,7 @@ import { useFloorPlanSources } from './panels/heatmap/useFloorPlanSources';
 import { useFloorPlanAspect } from './panels/heatmap/useFloorPlanAspect';
 import { gridCellSize, gridHeightForAspect, panelPixelAspect } from './gridGeometry';
 import { PanelChromeProvider } from './PanelChromeProvider';
+import type { PanelTitleFont } from './panelChromeContext';
 import ColorSwatchButton from './colorSwatchPalette';
 import { COLOR_PALETTE } from './colorPalette';
 import {
@@ -165,6 +177,8 @@ import {
   TileRowsField,
   DecimalPlacesField,
   UnitField,
+  TextStyleFields,
+  DesignPopover,
 } from './ChartPanelSections';
 import { PanelSettingsDataSource } from './PanelSettingsDataSource';
 import { useDraftPanelConfig } from './useDraftPanelConfig';
@@ -227,6 +241,11 @@ const SERIES_SOURCE_PANEL_TYPES: ReadonlySet<string> = new Set([
   // 테이블도 채널 편집 섹션이 사라졌으므로 같은 구제 대상이다 — 이관하지 않으면
   // 기존 채널 모드 테이블이 채널 이름을 고칠 수단 없이 채널 모드에 갇힌다.
   'table',
+  // 채널이 패널 소스에서 완전히 빠지면서 나머지 둘도 같은 처지가 됐다. 게이지를 종전에
+  // 제외한 이유(레거시 `dataSources[]` 로 채널을 물고 있어 이 섹션의 대상이 아니었다)는
+  // 더 이상 구제를 미룰 근거가 되지 못한다 — 그 레거시 경로 자체가 사라졌다.
+  'graph-chart',
+  'gauge',
 ]);
 
 /** SPEC-MODBUS-012: MODBUS Gateway 패널 6종 집합(설정 섹션/프리뷰 분기용). */
@@ -348,6 +367,18 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     [storePanel, draftConfig, draftTitle],
   );
 
+  // 타이틀 글자 모양 — 모든 패널 공통 크롬 옵션(`panelChromeContext`).
+  const titleFont = (panel?.config?.title_font as PanelTitleFont | undefined) ?? {};
+
+  // 라인 차트 배치(그림 상자 크기·자리 + 범례 자리) — 미리보기에서 끌어 고치는 값들이다.
+  // 판정과 되돌리기는 순수 모듈이 소유한다(`chartLayout.ts`).
+  const chartConfig = panel?.config;
+  const layoutDirty = isChartLayoutDirty(chartConfig);
+  const resetChartLayout = useCallback(
+    () => patchConfig(chartLayoutResetPatch(chartConfig)),
+    [chartConfig, patchConfig],
+  );
+
   // 통계/게이지/바/파이의 채널 모드 → store 자동 이관.
   //
   // 이 4종은 채널 편집 섹션을 노출하지 않으므로(`CHANNEL_SECTION_PANEL_TYPES`) 채널 모드에
@@ -366,8 +397,11 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // 계속 그린다**. 시리즈를 고르는 순간 store 로 넘어간다.
   useEffect(() => {
     if (!storePanel || !SERIES_SOURCE_PANEL_TYPES.has(storePanel.type)) return;
-    // 인식 불가 문자열도 계약이 channel 로 접으므로 함께 이관된다(§2.17-2).
-    if (resolvePanelSourceBinding(draftConfig).kind !== 'channel') return;
+    // 채널이 소스에서 빠진 뒤로 판정은 **저장값 원문**을 본다. 계약이 이미 store 로 접어
+    // 주므로 `kind` 로는 이관 대상을 가릴 수 없다 — config 에 남은 옛 값이 그대로 있는지가
+    // 기준이다. 부재도 대상이다(그 시절의 기본이 채널이었다).
+    const raw = draftConfig.data_source;
+    if (raw !== undefined && raw !== null && raw !== 'channel') return;
     patchConfig({
       data_source: 'store',
       store_source:
@@ -380,18 +414,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // 잦은 편집 재렌더/재조회를 억제한다(T9/AC-13/R3). 옵션 편집은 즉시(panel), 미리보기는
   // 디바운스(previewPanel)로 분리한다.
   const debouncedConfig = useDebouncedValue(draftConfig, 200);
-  // 디바운스에서 **빼는** 필드 — 데이터 조회에 전혀 관여하지 않고 그리기만 바꾸는 값들이다.
-  //
-  // 디바운스를 둔 이유는 "잦은 편집이 재조회를 부르는 것" 을 막기 위해서다. 조회와
-  // 무관한 값까지 200ms 늦추면, 값 글자를 끌 때 미리보기가 200ms 계단으로 따라와
-  // 드래그가 뚝뚝 끊긴다. 조회 축이 아닌 값은 즉시 반영한다.
+  // 디바운스에서 **빼는** 필드 — 목록과 병합 규칙은 `previewLiveKeys.ts` 가 소유한다
+  // (끌어 옮기는 값을 새로 만들 때 목록에 넣는 것을 잊는 일이 반복됐다).
   const livePreviewConfig = useMemo(() => {
-    const live: Record<string, unknown> = { ...debouncedConfig };
-    for (const key of PREVIEW_LIVE_KEYS) {
-      if (key in draftConfig) live[key] = draftConfig[key];
-      else delete live[key];
-    }
-    return live;
+    return mergeLivePreviewConfig(debouncedConfig, draftConfig);
   }, [debouncedConfig, draftConfig]);
   const previewPanel = useMemo(
     () =>
@@ -610,7 +636,33 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             */}
             <CollapsibleSection title={t('dashboard.settings.panelOptions')}>
               <div className="space-y-3">
-                <TitleSection panel={panel} onTitleChange={(v) => handleTitleChange(v)} />
+                <TitleSection
+                  panel={panel}
+                  onTitleChange={(v) => handleTitleChange(v)}
+                  design={
+                    /* 타이틀을 감춘 패널에는 걸 곳이 없으므로 표시할 때만 낸다.
+                       미지정은 각 패널이 쓰던 모양 그대로다. */
+                    panel.config?.showTitle !== false ? (
+                      <DesignPopover testId="panel-title-design">
+                        <TextStyleFields
+                          label={t('dashboard.settings.titleTextStyle')}
+                          family={titleFont.family}
+                          size={titleFont.size}
+                          color={titleFont.color}
+                          weight={titleFont.weight ?? 'inherit'}
+                          sizePlaceholder={t('dashboard.chart.inherit')}
+                          testIdPrefix="panel-title-font"
+                          onChange={(patch) => {
+                            const next = { ...titleFont, ...patch };
+                            // 전부 비면 필드를 지운다 — 빈 객체가 남으면 "설정했다" 로 읽힌다.
+                            const empty = Object.values(next).every((v) => v === undefined);
+                            handleConfigChange({ title_font: empty ? undefined : next });
+                          }}
+                        />
+                      </DesignPopover>
+                    ) : null
+                  }
+                />
                 {/* 타이틀 바 표시(모든 패널 공통). 기본 표시 — 명시적으로 끌 때만 config 에 남긴다. */}
                 <label className="flex items-center gap-2 text-xs text-(--color-text-secondary)">
                   <input
@@ -857,14 +909,16 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // 두 게이트는 같은 `previewRenderPanel.config` 에서 파생하므로 바인딩도 하나면 된다.
   // **부가 조건은 각 게이트에 그대로 남는다** — 패널 타입, 라인의 `tag_filters` 대안,
   // stat 의 `series_reduce` 요구는 소스 종류와 무관한 게이트 고유 조건이다.
-  const previewSourceBinding = resolvePanelSourceBinding(previewChartConfig);
+  // 활성 판정은 소스 **목록 전체**를 본다. 단일 축 해석기는 최상위 `store_source` 만 보므로,
+  // 시리즈 선택이 `sources[i].store_source` 에 쓰이는 지금은 고른 뒤에도 게이트가 거짓으로
+  // 남아 미리보기가 합성 샘플에 머물렀다.
   // 소스 종류를 **열거하지 않는다**. 'store' 만 보던 때는 TSDB 패널이, 'store'|'tsdb' 만
   // 보던 때는 sysmetrics 패널이 영원히 합성 미리보기에 머물렀다 — 종류가 늘 때마다 이
   // 자리를 고쳐야 하는 것이 결함의 원인이었다. 계약의 술어(`isPanelSeriesSource` =
   // 채널이 아니고 활성)를 그대로 쓰면 다음 종류에서 같은 일이 반복되지 않는다.
   //
   // previewRealData 가 거짓이면 실제 렌더를 쓰지 않고 합성 미리보기로 내려간다.
-  const isPreviewStoreActive = previewRealData && isPanelSeriesSource(previewSourceBinding);
+  const isPreviewStoreActive = previewRealData && isPanelSeriesActive(previewChartConfig);
   // Store 라인 차트에서 실제 데이터 미리보기를 쓸지 판정한다. 시리즈가 하나도 선택되지
   // 않았거나 채널 모드면 실제 패널은 빈 상태만 보여주므로, 스타일을 확인할 수 있는
   // 합성 미니 프리뷰를 유지한다.
@@ -886,10 +940,12 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // 보인다" 가 된다. 게이지는 예외로 남는다(합성 미니 프리뷰가 있고, 대표값이 값 소스
   // 진리표의 축 자체다 — `resolveGaugeValueSource`).
   //
-  // 채널 모드는 종전대로 미리보기가 없다. 실제 조회를 끈 경우(previewRealData 해제)도 같다 —
-  // 그 토글의 의미가 "실제 질의를 내지 않는다" 이므로 대신 보여줄 합성 화면이 없다.
-  const isSeriesSourcePreview =
-    previewSourceBinding.kind !== 'channel' && previewRealData;
+  // 실제 조회를 끈 경우(previewRealData 해제)는 미리보기가 없다 — 그 토글의 의미가
+  // "실제 질의를 내지 않는다" 이므로 대신 보여줄 화면이 없다.
+  //
+  // 소스 항은 사라졌다. 종전 조건은 "채널이 아닐 것" 이었는데 채널이 빠지면서 언제나
+  // 참이다 — 시리즈 미선택 패널도 종전처럼 **실패널의 빈 상태**를 그린다(빈 화면이 아니다).
+  const isSeriesSourcePreview = previewRealData;
   const isStoreStatPreview = previewRenderPanel.type === 'stat' && isSeriesSourcePreview;
   // gauge: 값 소스 판정의 단일 정본(`resolveGaugeValueSource`)을 그대로 쓴다. 레거시 경로가
   // 이기는 동안에는 합성 샘플값 미니 프리뷰가 그대로 남는다(레거시는 실제 값이 없을 수 있다).
@@ -1210,9 +1266,12 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                     panelId={previewRenderPanel.id}
                     title={previewRenderPanel.title}
                     config={previewRenderPanel.config ?? {}}
+                    // 미리보기에서 범례를 끌어 배치한다(파이·히트맵과 같은 규칙).
+                    onConfigChange={patchConfig}
+                    forceEdit
                   />
                 ) : (
-                  <LineChartMiniPreview panel={previewRenderPanel} />
+                  <LineChartMiniPreview panel={previewRenderPanel} onConfigChange={patchConfig} />
                 )}
               </div>
             )}
@@ -1291,7 +1350,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             미리보기 영역에 두면 "보기 방식" 처럼 읽히지만, 실제로는 소스에
             질의를 낼지 말지를 정하는 조회 옵션이다. 소스가 활성일 때만
             의미가 있으므로 그때만 노출한다. */}
-        {isPanelSeriesSource(previewSourceBinding) && (
+        {isPanelSeriesActive(previewChartConfig) && (
             <label
               data-testid="preview-real-data-toggle"
               className="mt-2 flex items-center gap-1 text-xs text-(--color-text-muted)"
@@ -1381,6 +1440,9 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
           zoomReset={zoomReset}
           previewZoomMin={PREVIEW_ZOOM_MIN}
           previewZoomMax={PREVIEW_ZOOM_MAX}
+          onResetLayout={
+            panel?.type === 'graph-chart' && layoutDirty ? resetChartLayout : undefined
+          }
           t={t}
         />
 
@@ -1446,9 +1508,12 @@ function CollapsibleSection({
 function TitleSection({
   panel,
   onTitleChange,
+  design,
 }: {
   panel: PanelConfig;
   onTitleChange: (title: string) => void;
+  /** 글자 모양 배지. 축·범례와 같은 자리에 접는다 — 자주 고치는 것은 제목 글자뿐이다. */
+  design?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState(panel.title);
@@ -1468,9 +1533,12 @@ function TitleSection({
 
   return (
     <div>
-      <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-        {t('dashboard.settings.titleLabel')}
-      </label>
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <label className="block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.titleLabel')}
+        </label>
+        {design}
+      </div>
       <input
         type="text"
         value={draft}
@@ -4330,24 +4398,6 @@ const GAUGE_ACCENT_LABEL_KEYS: Record<string, string> = {
 };
 
 /** 게이지 단위 옵션 — labelKey/unitLabelKey 는 i18n 키. 키가 없으면 value 를 그대로 표시. */
-/**
- * 미리보기에서 **디바운스 없이** 즉시 반영할 config 키.
- *
- * 조건은 하나다 — 데이터 조회에 관여하지 않고 그리기만 바꾸는 값인가. 현재값의 크기와
- * 자리가 그렇다. 끌어서 옮기는 조작은 손이 움직이는 동안 그림이 따라와야 어디에 놓일지
- * 보이므로, 여기에 없으면 드래그가 200ms 계단으로 끊긴다.
- */
-const PREVIEW_LIVE_KEYS = [
-  'value_scale',
-  'value_offset_x',
-  'value_offset_y',
-  'gauge_size',
-  'gauge_offset_x',
-  'gauge_offset_y',
-  'threshold_legend_offset_x',
-  'threshold_legend_offset_y',
-] as const;
-
 /** 니들(바늘)이 있는 유형 — 니들 색 설정을 노출하는 자리다. */
 const NEEDLE_GAUGE_TYPES: readonly GaugeType[] = ['needle', 'needle-rainbow', 'half-rainbow'];
 
@@ -5347,7 +5397,14 @@ const PREVIEW_FALLBACK_PALETTE = [
   '#06b6d4',
 ];
 
-function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
+function LineChartMiniPreview({
+  panel,
+  onConfigChange,
+}: {
+  panel: PanelConfig;
+  /** 범례를 끌어 옮긴 값을 쓸 곳. 실제 패널 미리보기와 같은 조작을 여기서도 준다. */
+  onConfigChange?: (config: Record<string, unknown>) => void;
+}) {
   const { t } = useTranslation();
   const config = panel.config ?? {};
   const rawChannels = config.channels as ChannelRefConfig[] | undefined;
@@ -5391,16 +5448,30 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
         dataSource: config.data_source as string | undefined,
         storeSource,
         tsdbSource: config.tsdb_source as TsdbSourceConfig | undefined,
+        // sysmetrics 소스를 넘기지 않으면 소스 판정이 channel 로 떨어져 미리보기가
+        // sample 한 줄로 퇴화한다 — 시스템 지표 패널에서 스타일 변화가 보이지 않던 자리다.
+        sysmetricsSource: config.sysmetrics_source as SysmetricsSourceConfig | undefined,
         channels,
         channelName,
         globalSmooth,
+        panelGraphStyle: readGraphStyle(config.graph_style),
         strokeDasharray: STROKE_DASHARRAY,
         palette: PREVIEW_FALLBACK_PALETTE,
         sampleName: t('dashboard.settings.preview.sample'),
         channelFallbackName: (i) =>
           t('dashboard.settings.preview.channelFallback').replace('{index}', String(i)),
       }),
-    [config.data_source, config.tsdb_source, storeSource, channels, channelName, globalSmooth, t],
+    [
+      config.data_source,
+      config.tsdb_source,
+      config.sysmetrics_source,
+      config.graph_style,
+      storeSource,
+      channels,
+      channelName,
+      globalSmooth,
+      t,
+    ],
   );
 
   const data = useMemo(() => {
@@ -5422,7 +5493,30 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
       const row: Record<string, number> = { t: i };
       series.forEach((s, idx) => {
         const phase = (idx * Math.PI) / 3;
-        row[s.key] = 50 + 30 * Math.sin((i / points) * Math.PI * 2 + phase);
+        const wave = (n: number): number => 50 + 30 * Math.sin((n / points) * Math.PI * 2 + phase);
+        if (s.graphStyle === 'candle') {
+          // 캔들은 값 하나로 그릴 수 없다 — 시·고·저·종 네 값이 있어야 몸통과 꼬리가 선다.
+          // 합성 파형의 이웃 두 점을 시가·종가로 삼고 꼬리를 붙인다. 행 키는 실제 렌더와
+          // 같은 규칙(`candleRows`)을 따라야 모양 함수가 값을 찾는다.
+          const open = wave(i);
+          const close = wave(i + 1);
+          const body = Math.abs(close - open) || 1;
+          candleRows(s.key, [
+            {
+              timestamp: i,
+              open,
+              close,
+              high: Math.max(open, close) + body * 0.6,
+              low: Math.min(open, close) - body * 0.6,
+            },
+          ]).forEach((r) => {
+            for (const [k, v] of Object.entries(r)) {
+              if (k !== 'timestamp') (row as Record<string, unknown>)[k] = v;
+            }
+          });
+          return;
+        }
+        row[s.key] = wave(i);
       });
       rows.push(row);
     }
@@ -5457,16 +5551,43 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
               : channelName || t('dashboard.settings.preview.channelUnset')}
         </span>
       </div>
+      <ChartDragLayer
+        legend={{
+          offsetX: clampStoredLegendOffset(legendCfg.offset_x),
+          offsetY: clampStoredLegendOffset(legendCfg.offset_y),
+          onChange: ({ x, y }) =>
+            onConfigChange?.({ legend: { ...legendCfg, offset_x: x, offset_y: y } }),
+        }}
+        plot={{
+          offsetX: readPanelOffset(config.plot_offset_x),
+          offsetY: readPanelOffset(config.plot_offset_y),
+          onChange: ({ x, y }) => onConfigChange?.({ plot_offset_x: x, plot_offset_y: y }),
+        }}
+      >
       <div
         className={cn(
           'flex min-h-0 flex-1',
           isLegendVert ? 'flex-row' : 'flex-col',
           legendPos === 'left' ? 'flex-row-reverse' : '',
         )}
+        // 범례를 끌 수 있는 범위 — 실제 패널과 같은 표식이다.
+        data-chart-legend-bounds=""
       >
-        <div className="min-h-0 min-w-0 flex-1">
+        <div
+          className="min-h-0 min-w-0 flex-1"
+          // 실제 패널과 같은 표식·같은 변환 — 미리보기에서 끈 자리가 대시보드와 달라지면
+          // 미리보기가 제 일을 못 한다.
+          data-chart-plot-area=""
+          style={{
+            transform: panelBoxTransform(
+              readPanelSize(config.plot_size) ?? PANEL_SIZE_MAX,
+              readPanelOffset(config.plot_offset_x),
+              readPanelOffset(config.plot_offset_y),
+            ),
+          }}
+        >
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 8, right: 16, left: yAxisLabel ? 16 : 0, bottom: xLabel ? 20 : 0 }}>
+          <ComposedChart data={data} margin={{ top: 8, right: 16, left: yAxisLabel ? 16 : 0, bottom: xLabel ? 20 : 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis
               dataKey="t"
@@ -5519,19 +5640,49 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
                   strokeOpacity={0}
                 />
               ))}
-            {series.map((s) => (
-              <Line
-                key={s.key}
-                type={s.smooth ? 'monotone' : 'linear'}
-                dataKey={s.key}
-                stroke={s.color}
-                strokeWidth={s.strokeWidth}
-                strokeDasharray={s.strokeDasharray || undefined}
-                dot={false}
-                isAnimationActive={false}
-              />
-            ))}
-          </LineChart>
+            {/* 모양은 실제 패널과 같은 분기다 — 미리보기가 라인으로만 그리면
+                "스타일을 바꿔도 샘플이 그대로" 가 된다. */}
+            {series.map((s) => {
+              const common = {
+                key: s.key,
+                dataKey: s.key,
+                isAnimationActive: false,
+              } as const;
+              if (s.graphStyle === 'candle') {
+                return (
+                  <Bar
+                    {...common}
+                    shape={(p: object) => <CandleShape {...p} seriesKey={s.key} color={s.color} />}
+                  />
+                );
+              }
+              if (s.graphStyle === 'bar') return <Bar {...common} fill={s.color} />;
+              if (s.graphStyle === 'area') {
+                return (
+                  <Area
+                    {...common}
+                    type={s.smooth ? 'monotone' : 'linear'}
+                    stroke={s.color}
+                    strokeWidth={s.strokeWidth}
+                    strokeDasharray={s.strokeDasharray || undefined}
+                    fill={s.color}
+                    fillOpacity={0.25}
+                    dot={false}
+                  />
+                );
+              }
+              return (
+                <Line
+                  {...common}
+                  type={s.smooth ? 'monotone' : 'linear'}
+                  stroke={s.color}
+                  strokeWidth={s.strokeWidth}
+                  strokeDasharray={s.strokeDasharray || undefined}
+                  dot={false}
+                />
+              );
+            })}
+          </ComposedChart>
         </ResponsiveContainer>
         </div>
         {/* 범례 — 실제 패널과 같은 컴포넌트/배치. recharts 내장 Legend 를 쓰면 구분선·여백과
@@ -5539,12 +5690,12 @@ function LineChartMiniPreview({ panel }: { panel: PanelConfig }) {
         <ChartLegend
           seriesKeys={series.map((s) => s.key)}
           seriesColors={series.map((s) => s.color)}
-          isMultiMode={isMultiMode}
           legendCfg={legendCfg}
           chartData={data}
           formatValue={(_key, v) => (enumMode ? formatEnumValue(v, enumMap) : v.toFixed(1))}
         />
       </div>
+      </ChartDragLayer>
     </div>
   );
 }
@@ -6514,6 +6665,7 @@ function PanelSettingsShell({
   zoomReset,
   previewZoomMin: PREVIEW_ZOOM_MIN,
   previewZoomMax: PREVIEW_ZOOM_MAX,
+  onResetLayout,
   t,
 }: {
   options: React.ReactNode;
@@ -6536,6 +6688,8 @@ function PanelSettingsShell({
   zoomReset: () => void;
   previewZoomMin: number;
   previewZoomMax: number;
+  /** 배치(그림 상자·범례 자리)를 되돌린다. 되돌릴 것이 없으면 `undefined` — 버튼을 내지 않는다. */
+  onResetLayout?: () => void;
   t: TranslationFn;
 }) {
   // 상하 경계는 미리보기 + 데이터소스가 함께 존재할 때만(접힘 아님 + 차트/heatmap) 노출.
@@ -6692,6 +6846,24 @@ function PanelSettingsShell({
                     <Minimize2 className="h-3 w-3" />
                   )}
                 </button>
+                {/* 배치 초기화 — 미리보기에서 끌어 옮긴 결과를 한 번에 되돌린다.
+                    그림 상자와 범례는 **같은 화면에서 같은 조작(끌기)** 으로 어긋나므로
+                    한 버튼이 둘을 함께 되돌린다. 따로 두면 한쪽이 남아 왜 제자리가
+                    아닌지 알 수 없다. 되돌릴 것이 없으면 버튼을 내지 않는다. */}
+                {onResetLayout && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={onResetLayout}
+                      data-testid="panel-settings-preview-reset-layout"
+                      aria-label={t('dashboard.settings.previewResetLayout')}
+                      title={t('dashboard.settings.previewResetLayout')}
+                      className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                    </button>
+                  </>
+                )}
                 <div className="mx-1 h-3 w-px bg-(--color-border-default)" />
                 <button
                   type="button"

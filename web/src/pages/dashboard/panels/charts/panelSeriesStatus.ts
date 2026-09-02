@@ -73,9 +73,6 @@ export function resolvePanelSeriesDisplay(
   const failureCount = result.partialFailureCount ?? 0;
   const backendMismatch = result.backendMismatch === true;
 
-  if (binding.kind === 'channel') {
-    return { state: 'channel', failureCount: 0, backendMismatch: false };
-  }
   if (!binding.active) {
     return { state: 'empty-selection', failureCount: 0, backendMismatch: false };
   }

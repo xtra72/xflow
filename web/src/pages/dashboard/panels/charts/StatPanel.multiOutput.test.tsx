@@ -375,15 +375,10 @@ describe('채널 모드에서의 series_reduce (AC-25 / §2.10 [S2])', () => {
     };
   });
 
-  it('채널 모드에서는 series_reduce 가 있어도 레거시 채널 경로를 사용한다', async () => {
-    channelMock.current = {
-      ...channelMock.current,
-      entries: [
-        { timestamp: 1, value: 11 },
-        { timestamp: 2, value: 42 },
-      ],
-    };
-
+  // 채널이 패널 소스에서 빠지면서 이 규칙이 뒤집혔다. 폐지된 `'channel'` 값은 store 로
+  // 접히므로, 그 config 에 갖춰진 store_source 와 대표값이 **그대로 살아난다** — 구 패널을
+  // 열면 고른 적 있는 시리즈가 다시 보이는 것이 이 변화의 목적이다.
+  it("폐지된 'channel' 값도 store 경로로 대표값을 낸다", async () => {
     await renderPanel({
       channel_name: 'c1',
       decimal_places: 0,
@@ -392,11 +387,7 @@ describe('채널 모드에서의 series_reduce (AC-25 / §2.10 [S2])', () => {
       series_reduce: 'max',
     });
 
-    // 대표값 경로였다면 타일 3개 + max(26) 이 나왔을 것이다. 채널 경로는 마지막 값 1개다.
-    expect(screen.queryByTestId('series-tile')).toBeNull();
-    expect(screen.getByTestId('stat-value').textContent).toContain('42');
-    // Store 조회 자체가 일어나지 않는다.
-    expect(query.calls).toHaveLength(0);
+    expect(tiles().map((t) => t.value)).toEqual(['26', '23', '—']);
   });
 
   it('채널 모드 전환이 series_reduce 를 config 에서 제거하지 않는다', async () => {
@@ -414,7 +405,7 @@ describe('채널 모드에서의 series_reduce (AC-25 / §2.10 [S2])', () => {
     expect(config.store_source).toBeDefined();
   });
 
-  it('다시 Store 모드로 전환하면 series_reduce 가 즉시 유효해진다', async () => {
+  it('data_source 를 store 로 고쳐도 같은 값을 낸다 — 이관은 값을 바꾸지 않는다', async () => {
     const view = await renderPanel({
       channel_name: 'c1',
       decimal_places: 0,
@@ -422,11 +413,11 @@ describe('채널 모드에서의 series_reduce (AC-25 / §2.10 [S2])', () => {
       store_source: f1Config(),
       series_reduce: 'max',
     });
-    expect(screen.queryByTestId('series-tile')).toBeNull();
+    const before = tiles().map((t) => t.value);
     view.unmount();
 
     await renderPanel(panelConfig({ series_reduce: 'max' }));
-    expect(tiles().map((t) => t.value)).toEqual(['26', '23', '—']);
+    expect(tiles().map((t) => t.value)).toEqual(before);
   });
 });
 

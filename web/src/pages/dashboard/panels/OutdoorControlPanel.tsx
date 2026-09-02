@@ -10,7 +10,7 @@ import { useTranslation, type TranslationFn } from '@/lib/i18n';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
-import { usePanelTitleVisible } from '../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 
 // ---- 타입 정의 ----
 
@@ -70,6 +70,7 @@ export default function OutdoorControlPanel({
   onTitleChange: _onTitleChange,
 }: OutdoorControlPanelProps) {
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
   // 현재 값 (압축기 주파수 / 토출 온도) 표시 색상 — 패널 설정에서 지정 가능.
@@ -101,7 +102,7 @@ export default function OutdoorControlPanel({
         {showTitle && (
           <div className="mb-2 flex shrink-0 items-center gap-2">
             <Cpu className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-            <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
+            <span className="truncate text-sm font-semibold text-(--color-text-primary)" style={titleStyle}>{title}</span>
           </div>
         )}
         <div className="flex flex-1 items-center justify-center">
@@ -142,7 +143,7 @@ export default function OutdoorControlPanel({
         {showTitle && (
           <div className="flex items-center gap-2.5">
             <Gauge className="h-5 w-5 text-blue-500" />
-            <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
+            <span className="truncate text-base font-bold text-(--color-text-primary)" style={titleStyle}>{title}</span>
           </div>
         )}
         <div className="flex items-center gap-2">
@@ -266,6 +267,7 @@ function LgIcp01OutdoorLayout({
   t: TranslationFn;
 }) {
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const outdoorTemp = typeof rawProps['outdoor_temperature'] === 'number' ? rawProps['outdoor_temperature'] : null;
 
   return (
@@ -275,7 +277,7 @@ function LgIcp01OutdoorLayout({
         {showTitle && (
           <div className="flex items-center gap-2.5">
             <Gauge className="h-5 w-5 text-blue-500" />
-            <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
+            <span className="truncate text-base font-bold text-(--color-text-primary)" style={titleStyle}>{title}</span>
           </div>
         )}
         <div className="flex items-center gap-2">

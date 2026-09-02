@@ -33,14 +33,13 @@ import { aggregateByLabel } from './chartChannelUtils';
 import { reduceAllSeries } from './seriesReduce';
 import { MultiOutputTruncationNotice } from './SeriesTileGrid';
 import { applyMultiOutputLimit } from './multiOutputLimit';
-import { useChartChannel } from './useChartChannel';
 import { type StoreSeriesStyle } from './useStoreChartData';
-import { resolvePanelSourceBinding } from './panelDataSource';
+import { isPanelSeriesActive } from './panelDataSource';
 // 값 표기 자릿수는 차트 계열 공용 규칙을 따른다.
 import { readDecimalPlaces } from './decimalPlaces';
 import { formatValueWithUnit } from './unitOptions';
-import { isPanelSeriesSource, usePanelSeriesData } from './usePanelSeriesData';
-import { usePanelTitleVisible } from '../../panelChromeContext';
+import { usePanelSeriesData } from './usePanelSeriesData';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../../panelChromeContext';
 import { usePanelEditMode } from '../PanelEditToggle';
 import { PieDragLayer } from '../../PieDragLayer';
 import { useTranslation } from '@/lib/i18n';
@@ -154,6 +153,7 @@ export default function PieChartPanel({
 }: PieChartPanelProps) {
   const { t } = useTranslation();
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   // 대시보드 패널에서도 파이·범례를 끌어 배치한다(히트맵과 같은 규칙).
   const edit = usePanelEditMode({
     canEdit: typeof onConfigChange === 'function',
@@ -172,17 +172,14 @@ export default function PieChartPanel({
   // 곱해지지 않게 하기 위함이다(UB1-1).
   // `isStore` 는 "채널이 아닌 시리즈 소스가 활성인가" 를 뜻한다. M3 시점에는 store 만
   // 그 조건을 만족하며, tsdb 는 M6 에서 같은 이름을 통해 합류한다.
-  const isStore = isPanelSeriesSource(resolvePanelSourceBinding(config));
+  // 활성 판정은 소스 **목록 전체**를 본다 — 단일 축 해석기로 판정하면 목록 쪽 인스턴스에만
+  // 시리즈가 있는 패널이 비활성으로 보인다.
+  const isStore = isPanelSeriesActive(config);
 
-  const channelRes = useChartChannel(
-    isStore ? undefined : cfg.channel_name || undefined,
-    { maxPoints: Math.max(cfg.max_points ?? DEFAULT_MAX_POINTS, 100) },
-  );
   const storeRes = usePanelSeriesData(config);
 
-  const { entries, status, closedReason, errorReason } = isStore
-    ? storeRes
-    : channelRes;
+  // 채널이 패널 소스에서 빠진 뒤로 데이터는 시리즈 소스 하나로 들어온다.
+  const { entries, status, closedReason, errorReason } = storeRes;
 
   // 시리즈 축은 Store 경로에만 존재한다.
   const seriesEntries = storeRes.seriesEntries ?? EMPTY_SERIES_ENTRIES;
@@ -406,7 +403,7 @@ export default function PieChartPanel({
       {showTitle && (
         <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
           <PieChartIcon className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-          <span className="truncate text-sm font-semibold text-(--color-text-primary)">
+          <span className="truncate text-sm font-semibold text-(--color-text-primary)" style={titleStyle}>
             {title || cfg.channel_name || '채널 미지정'}
           </span>
         </div>

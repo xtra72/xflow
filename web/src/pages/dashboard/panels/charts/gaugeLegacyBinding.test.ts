@@ -153,14 +153,23 @@ describe('판정 진리표', () => {
     ).toBe('legacy');
   });
 
-  it('data_source 미지정 + store_source·series_reduce 가 있어도 레거시다', () => {
-    // 채널 모드에서 series_reduce 는 읽지 않는다(§2.10 [S2]).
+  // 채널이 패널 소스에서 빠지면서 이 행이 뒤집혔다. 종전에는 `data_source` 미지정이
+  // 채널로 접혀 신규 경로가 아무리 갖춰져 있어도 레거시가 이겼지만, 이제 미지정은
+  // store 로 접히므로 **신규 경로가 값을 낼 수 있으면 레거시를 밀어낸다** — 원래 규칙이
+  // "신규 경로가 실제로 값을 낼 수 있을 때만" 이었고, 그 조건이 이제 성립한다.
+  it('data_source 미지정 + store_source·series_reduce 가 갖춰지면 store 다', () => {
     expect(
       resolveFromConfig({
         store_source: activeKeysStore(),
         series_reduce: 'max',
         dataSources: legacyPresent(),
       }),
+    ).toBe('store-source');
+  });
+
+  it('대표값이 없으면 미지정도 여전히 레거시다 — 게이지 고유 논리곱은 그대로다', () => {
+    expect(
+      resolveFromConfig({ store_source: activeKeysStore(), dataSources: legacyPresent() }),
     ).toBe('legacy');
   });
 
@@ -524,14 +533,16 @@ describe('buildGaugeStoreMigrationPatch — 레거시 → store_source 변환 (�
     expect(resolveFromConfig(after)).toBe('store-source');
   });
 
-  it("이관 후 data_source 를 'channel' 로 되돌리면 다시 legacy 로 판정된다(롤백)", () => {
+  it('이관 후 대표값을 지우면 다시 legacy 로 판정된다(롤백)', () => {
+    // 종전 롤백 수단은 `data_source: 'channel'` 이었다. 채널이 없어졌으므로 되돌리는
+    // 축은 게이지 고유의 논리곱(`series_reduce`) 하나만 남는다.
     const before: Record<string, unknown> = { dataSources: legacyPresent(), value: 42 };
     const binding = findMigratableGaugeStoreBinding(before)!;
     const migrated: Record<string, unknown> = {
       ...before,
       ...buildGaugeStoreMigrationPatch(binding),
     };
-    const reverted: Record<string, unknown> = { ...migrated, data_source: 'channel' };
+    const reverted: Record<string, unknown> = { ...migrated, series_reduce: undefined };
     expect(resolveFromConfig(reverted)).toBe('legacy');
     // 되돌린 config 에도 레거시 바인딩이 그대로 남아 있어야 복구가 성립한다.
     expect(reverted.dataSources).toEqual(legacyPresent());
@@ -663,20 +674,24 @@ describe('이관 기본 조회 창은 공용 상수 단일 정본이다 (§2.8 [
 // @spec SPEC-TSDB-002 §2.3 (U3) · §2.4 (U4) — plan.md §3.3 CT-09 ~ CT-12 / AC-11
 // ---------------------------------------------------------------------------
 describe('게이지 판정 진리표 특성화 (SPEC-TSDB-002 M2, CT-09~CT-12)', () => {
-  it('CT-09: data_source 부재/channel → legacy (소스·대표값과 무관)', () => {
+  // CT-09 은 채널 제거로 뒤집힌 유일한 행이다. 종전에는 `data_source` 부재·`'channel'` 이
+  // 채널로 접혀 무조건 legacy 였지만, 이제 store 로 접히므로 신규 경로가 값을 낼 수 있으면
+  // 그쪽이 이긴다. 나머지 세 행(CT-10~12)은 그대로다 — 게이지 고유의 논리곱은 안 바뀌었다.
+  it('CT-09: data_source 부재/폐지값 → 신규 경로가 갖춰졌으면 store', () => {
+    // 소스도 대표값도 없으면 여전히 legacy.
     expect(resolveFromConfig({})).toBe('legacy');
     expect(resolveFromConfig({ dataSources: legacyPresent() })).toBe('legacy');
-    // 활성 store_source 와 series_reduce 가 모두 있어도 data_source 가 없으면 legacy.
+    // 활성 store_source + series_reduce 가 갖춰지면 이제 store 가 이긴다.
     expect(
       resolveFromConfig({ store_source: activeKeysStore(), series_reduce: 'last' }),
-    ).toBe('legacy');
+    ).toBe('store-source');
     expect(
       resolveFromConfig({
         data_source: 'channel',
         store_source: activeKeysStore(),
         series_reduce: 'last',
       }),
-    ).toBe('legacy');
+    ).toBe('store-source');
   });
 
   it('CT-10: store + 소스 비활성 → legacy (series_reduce 유무와 무관)', () => {

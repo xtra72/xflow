@@ -19,7 +19,7 @@ import StatItem, { type StatSources } from '@/pages/monitoring/StatItem';
 import { useMonitorStream } from '@/pages/monitoring/monitorStream';
 import type { StatItemKey } from '@/pages/monitoring/monitoringLayout';
 
-import { usePanelTitleVisible } from '../../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../../panelChromeContext';
 import { readAccent, readMaxCols, readPanelItems, readRefreshMs } from './monitorPanelConfig';
 import { useAutoColumns } from './useAutoColumns';
 import { useThrottledValue } from './useThrottledValue';
@@ -42,6 +42,7 @@ interface MonitorStatsPanelProps {
 export default function MonitorStatsPanel({ title, config }: MonitorStatsPanelProps) {
   const { t } = useTranslation();
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const items = useMemo(() => readPanelItems('stats', config), [config]);
   const maxCols = readMaxCols(config, DEFAULT_MAX_COLS, items.length);
   const refreshMs = readRefreshMs(config, DEFAULT_REFRESH_MS);
@@ -87,7 +88,7 @@ export default function MonitorStatsPanel({ title, config }: MonitorStatsPanelPr
           />
           <span
             className="truncate text-sm font-medium text-(--color-text-primary)"
-            style={accentColor('header') ? { color: accentColor('header') } : undefined}
+            style={{ ...(accentColor('header') ? { color: accentColor('header') } : undefined), ...titleStyle }}
           >
             {title}
           </span>

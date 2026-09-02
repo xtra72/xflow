@@ -354,7 +354,16 @@ function renderPanelBody(
     case 'stat':
       return <StatPanel panelId={panel.id} title={panel.title} config={panel.config} />;
     case 'graph-chart':
-      return <LineChartPanel panelId={panel.id} title={panel.title} config={panel.config} />;
+      return (
+        <LineChartPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          // 대시보드에서도 범례를 끌어 배치한다(파이와 같은 규칙 — 편집모드 + 패널 안
+          // 토글로 두 겹 게이팅).
+          onConfigChange={onCfg}
+        />
+      );
     case 'bar-chart':
       return <BarChartPanel panelId={panel.id} title={panel.title} config={panel.config} />;
     case 'pie-chart':

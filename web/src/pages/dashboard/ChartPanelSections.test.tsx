@@ -2,7 +2,7 @@
 // 각 섹션이 SPEC-CHART-001 §4.2.2 의 config 필드를 올바르게 렌더/편집하는지 검증.
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 
 // i18n 스텁 — 키를 그대로 반환하되, 보간 슬롯을 가진 키는 템플릿을 반환한다.
 vi.mock('@/lib/i18n', () => {
@@ -30,148 +30,19 @@ vi.mock('@/hooks/useAgent', () => ({
 }));
 
 import {
-  ChartChannelSection,
   StoreSourceSection,
   StatChartSection,
   LineChartSection,
-  ChannelSeriesEditor,
   BarChartSection,
   PieChartSection,
   TableChartSection,
 } from './ChartPanelSections';
-import { pickSeriesColor } from './panels/charts/chartChannelTypes';
 import type { PanelConfig } from '@/stores/uiStore';
-import type { ChartChannelSummary } from '@/services/api/charts';
 
 function makePanel(type: PanelConfig['type'], config: Record<string, unknown>): PanelConfig {
   return { id: 'p1', type, title: '테스트', config };
 }
 
-const emptyChannels: () => Promise<ChartChannelSummary[]> = () => Promise.resolve([]);
-const twoChannels: () => Promise<ChartChannelSummary[]> = () =>
-  Promise.resolve([
-    {
-      name: 'room1_temp',
-      flow_id: 'flow-a',
-      node_id: 'n1',
-      buffer_size: 100,
-      retention_sec: 3600,
-      subscriber_count: 2,
-      last_message_ms: 0,
-    },
-    {
-      name: 'pump_rpm',
-      flow_id: 'flow-b',
-      node_id: 'n2',
-      buffer_size: 50,
-      retention_sec: 60,
-      subscriber_count: 0,
-      last_message_ms: 0,
-    },
-  ]);
-
-describe('ChartChannelSection (REQ-M5-02/04: 드롭다운 + Custom)', () => {
-  it('활성 채널 드롭다운에서 선택 시 즉시 저장', async () => {
-    const onConfigChange = vi.fn();
-    render(
-      <ChartChannelSection
-        panel={makePanel('stat', { channel_name: '' })}
-        onConfigChange={onConfigChange}
-        fetchChannels={twoChannels}
-      />,
-    );
-    const select = await screen.findByTestId('chart-channel-name-select');
-    await waitFor(() =>
-      expect(screen.getByRole('option', { name: /room1_temp/ })).toBeInTheDocument(),
-    );
-    fireEvent.change(select, { target: { value: 'room1_temp' } });
-    expect(onConfigChange).toHaveBeenCalledWith({ channel_name: 'room1_temp' });
-  });
-
-  it('Custom 선택 → 유효한 이름 입력 blur 시 저장', async () => {
-    const onConfigChange = vi.fn();
-    render(
-      <ChartChannelSection
-        panel={makePanel('graph-chart', { channel_name: '' })}
-        onConfigChange={onConfigChange}
-        fetchChannels={emptyChannels}
-      />,
-    );
-    const select = await screen.findByTestId('chart-channel-name-select');
-    fireEvent.change(select, { target: { value: '__custom__' } });
-
-    const input = (await screen.findByTestId('chart-channel-name-input')) as HTMLInputElement;
-    fireEvent.change(input, { target: { value: 'valid_name-1' } });
-    fireEvent.blur(input);
-    expect(onConfigChange).toHaveBeenCalledWith({ channel_name: 'valid_name-1' });
-  });
-
-  it('Custom 모드에서 잘못된 이름 → 에러 표시 + commit 안 함', async () => {
-    const onConfigChange = vi.fn();
-    render(
-      <ChartChannelSection
-        panel={makePanel('graph-chart', { channel_name: '' })}
-        onConfigChange={onConfigChange}
-        fetchChannels={emptyChannels}
-      />,
-    );
-    const select = await screen.findByTestId('chart-channel-name-select');
-    fireEvent.change(select, { target: { value: '__custom__' } });
-
-    const input = await screen.findByTestId('chart-channel-name-input');
-    fireEvent.change(input, { target: { value: 'abc/def' } });
-    expect(screen.getByTestId('chart-channel-name-error')).toHaveTextContent(
-      '유효한 채널 이름이 아닙니다',
-    );
-    fireEvent.blur(input);
-    expect(onConfigChange).not.toHaveBeenCalled();
-  });
-
-  it('드롭다운에서 빈 값 선택 시 channel_name 초기화', async () => {
-    const onConfigChange = vi.fn();
-    render(
-      <ChartChannelSection
-        panel={makePanel('stat', { channel_name: 'old_name' })}
-        onConfigChange={onConfigChange}
-        fetchChannels={emptyChannels}
-      />,
-    );
-    const select = await screen.findByTestId('chart-channel-name-select');
-    fireEvent.change(select, { target: { value: '' } });
-    expect(onConfigChange).toHaveBeenCalledWith({ channel_name: '' });
-  });
-
-  it('비활성 채널 이름은 "(현재 선택, 비활성)" 옵션으로 유지', async () => {
-    const onConfigChange = vi.fn();
-    render(
-      <ChartChannelSection
-        panel={makePanel('stat', { channel_name: 'gone_channel' })}
-        onConfigChange={onConfigChange}
-        fetchChannels={twoChannels}
-      />,
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByRole('option', { name: /gone_channel — \(현재 선택, 비활성\)/ }),
-      ).toBeInTheDocument(),
-    );
-  });
-
-  it('목록 조회 실패 시 Custom 입력 유도 메시지 표시', async () => {
-    const onConfigChange = vi.fn();
-    const fail = () => Promise.reject(new Error('network down'));
-    render(
-      <ChartChannelSection
-        panel={makePanel('stat', { channel_name: '' })}
-        onConfigChange={onConfigChange}
-        fetchChannels={fail}
-      />,
-    );
-    await waitFor(() =>
-      expect(screen.getByText(/dashboard.chart.loadErrorCustom/)).toBeInTheDocument(),
-    );
-  });
-});
 
 describe('StatChartSection', () => {
   it('display_field / unit / decimal_places 편집', () => {
@@ -255,261 +126,6 @@ describe('StatChartSection', () => {
 });
 
 describe('LineChartSection', () => {
-  it('구 max_points 는 X축 범위 포인트로 읽히고, 편집은 x_range 로 저장된다', () => {
-    const onConfigChange = vi.fn();
-    render(
-      <LineChartSection
-        panel={makePanel('graph-chart', { max_points: 100 })}
-        onConfigChange={onConfigChange}
-      />,
-    );
-    // 구 필드가 새 어휘(count)로 읽힌다.
-    const input = screen.getByTestId('line-chart-x-range-count') as HTMLInputElement;
-    expect(input.value).toBe('100');
-    fireEvent.change(input, { target: { value: '250' } });
-    expect(onConfigChange).toHaveBeenCalledWith({
-      x_range: { mode: 'count', count: 250 },
-    });
-  });
-
-  // --- 다채널 행에 채널 드롭다운 ---
-  describe('multi-channel rows: channel dropdown', () => {
-    it('채널 추가 시 행에 채널 드롭다운 노출', async () => {
-      render(
-        <ChannelSeriesEditor
-          panel={makePanel('graph-chart', { channels: [{ name: '' }] })}
-          onConfigChange={vi.fn()}
-          fetchChannels={twoChannels}
-        />,
-      );
-      fireEvent.click(screen.getByLabelText('dashboard.chart.expandAria'));
-      const select = await screen.findByTestId('line-chart-channel-row-select-0');
-      expect(select).toBeInTheDocument();
-      await waitFor(() =>
-        expect(screen.getByRole('option', { name: /room1_temp/ })).toBeInTheDocument(),
-      );
-    });
-
-    it('드롭다운 선택 시 해당 채널 row 의 name 만 갱신', async () => {
-      const onConfigChange = vi.fn();
-      render(
-        <ChannelSeriesEditor
-          panel={makePanel('graph-chart', {
-            channels: [
-              { name: '', alias: 'A' },
-              { name: 'pump_rpm', alias: 'B' },
-            ],
-          })}
-          onConfigChange={onConfigChange}
-          fetchChannels={twoChannels}
-        />,
-      );
-      fireEvent.click(screen.getAllByLabelText('dashboard.chart.expandAria')[0]!);
-      const select = (await screen.findByTestId(
-        'line-chart-channel-row-select-0',
-      )) as HTMLSelectElement;
-      await waitFor(() =>
-        expect(
-          Array.from(select.options).some((o) => o.value === 'room1_temp'),
-        ).toBe(true),
-      );
-      fireEvent.change(select, { target: { value: 'room1_temp' } });
-      expect(onConfigChange).toHaveBeenCalledWith({
-        channels: [
-          { name: 'room1_temp', alias: 'A' },
-          { name: 'pump_rpm', alias: 'B' },
-        ],
-        channel_name: undefined,
-      });
-    });
-
-    it('Custom 옵션 선택 시 수동 입력 input 표시', async () => {
-      render(
-        <ChannelSeriesEditor
-          panel={makePanel('graph-chart', { channels: [{ name: '' }] })}
-          onConfigChange={vi.fn()}
-          fetchChannels={twoChannels}
-        />,
-      );
-      fireEvent.click(screen.getByLabelText('dashboard.chart.expandAria'));
-      const select = await screen.findByTestId('line-chart-channel-row-select-0');
-      fireEvent.change(select, { target: { value: '__custom__' } });
-      expect(
-        await screen.findByTestId('line-chart-channel-row-custom-0'),
-      ).toBeInTheDocument();
-    });
-
-    it('Custom 입력 blur 시 channels 배열 갱신', async () => {
-      const onConfigChange = vi.fn();
-      render(
-        <ChannelSeriesEditor
-          panel={makePanel('graph-chart', { channels: [{ name: '', alias: 'X' }] })}
-          onConfigChange={onConfigChange}
-          fetchChannels={emptyChannels}
-        />,
-      );
-      fireEvent.click(screen.getByLabelText('dashboard.chart.expandAria'));
-      const select = await screen.findByTestId('line-chart-channel-row-select-0');
-      fireEvent.change(select, { target: { value: '__custom__' } });
-      const input = await screen.findByTestId('line-chart-channel-row-custom-0');
-      fireEvent.change(input, { target: { value: 'pending_ch' } });
-      fireEvent.blur(input);
-      expect(onConfigChange).toHaveBeenCalledWith({
-        channels: [{ name: 'pending_ch', alias: 'X' }],
-        channel_name: undefined,
-      });
-    });
-
-    it('각 행에 drag handle 노출', async () => {
-      render(
-        <ChannelSeriesEditor
-          panel={makePanel('graph-chart', {
-            channels: [{ name: 'a' }, { name: 'b' }],
-          })}
-          onConfigChange={vi.fn()}
-          fetchChannels={emptyChannels}
-        />,
-      );
-      expect(await screen.findByTestId('line-chart-channel-drag-0')).toBeInTheDocument();
-      expect(screen.getByTestId('line-chart-channel-drag-1')).toBeInTheDocument();
-    });
-
-    it('drop 으로 첫 행을 끝으로 이동 시 channels 순서 변경', async () => {
-      const onConfigChange = vi.fn();
-      render(
-        <ChannelSeriesEditor
-          panel={makePanel('graph-chart', {
-            channels: [
-              { name: 'a', alias: 'A' },
-              { name: 'b', alias: 'B' },
-              { name: 'c', alias: 'C' },
-            ],
-          })}
-          onConfigChange={onConfigChange}
-          fetchChannels={emptyChannels}
-        />,
-      );
-      const handle0 = await screen.findByTestId('line-chart-channel-drag-0');
-      const row2 = screen.getByTestId('line-chart-channel-row-2');
-
-      // jsdom 의 dataTransfer 를 setData/getData 로 대체
-      const dt: Record<string, string> = {};
-      const dataTransfer = {
-        setData: (k: string, v: string) => {
-          dt[k] = v;
-        },
-        getData: (k: string) => dt[k] ?? '',
-        effectAllowed: '',
-        dropEffect: '',
-      };
-
-      fireEvent.dragStart(handle0, { dataTransfer });
-      fireEvent.dragOver(row2, { dataTransfer });
-      fireEvent.drop(row2, { dataTransfer });
-
-      expect(onConfigChange).toHaveBeenCalledWith({
-        channels: [
-          { name: 'b', alias: 'B' },
-          { name: 'c', alias: 'C' },
-          { name: 'a', alias: 'A' },
-        ],
-      });
-    });
-
-    it('같은 위치로 drop 은 무시', async () => {
-      const onConfigChange = vi.fn();
-      render(
-        <ChannelSeriesEditor
-          panel={makePanel('graph-chart', {
-            channels: [{ name: 'a' }, { name: 'b' }],
-          })}
-          onConfigChange={onConfigChange}
-          fetchChannels={emptyChannels}
-        />,
-      );
-      const handle0 = await screen.findByTestId('line-chart-channel-drag-0');
-      const row0 = screen.getByTestId('line-chart-channel-row-0');
-      const dt: Record<string, string> = {};
-      const dataTransfer = {
-        setData: (k: string, v: string) => {
-          dt[k] = v;
-        },
-        getData: (k: string) => dt[k] ?? '',
-        effectAllowed: '',
-        dropEffect: '',
-      };
-      fireEvent.dragStart(handle0, { dataTransfer });
-      fireEvent.dragOver(row0, { dataTransfer });
-      fireEvent.drop(row0, { dataTransfer });
-      expect(onConfigChange).not.toHaveBeenCalled();
-    });
-
-    it('현재 row name 이 활성 목록에 없으면 (비활성) 옵션으로 표시', async () => {
-      render(
-        <ChannelSeriesEditor
-          panel={makePanel('graph-chart', {
-            channels: [{ name: 'undeployed_ch' }],
-          })}
-          onConfigChange={vi.fn()}
-          fetchChannels={twoChannels}
-        />,
-      );
-      fireEvent.click(screen.getByLabelText('dashboard.chart.expandAria'));
-      await screen.findByRole('option', { name: /room1_temp/ });
-      const inactiveOption = screen.getByRole('option', {
-        name: /undeployed_ch.*비활성/,
-      });
-      expect(inactiveOption).toBeInTheDocument();
-    });
-
-    it('채널 추가 버튼이 channels[] 에 새 채널을 추가한다(ChannelRow 제거 후에도 동작)', async () => {
-      const onConfigChange = vi.fn();
-      render(
-        <ChannelSeriesEditor
-          panel={makePanel('graph-chart', { channels: [{ name: 'a', alias: 'A' }] })}
-          onConfigChange={onConfigChange}
-          fetchChannels={emptyChannels}
-        />,
-      );
-      fireEvent.click(await screen.findByTestId('line-chart-add-channel'));
-      // 새 채널은 시리즈 인덱스별 팔레트 색이 자동 배정된다(인덱스 1).
-      expect(onConfigChange).toHaveBeenCalledWith({
-        channels: [{ name: 'a', alias: 'A' }, { name: '', color: pickSeriesColor(1) }],
-        channel_name: undefined,
-      });
-    });
-
-    it('채널이 2개 이상이면 삭제 버튼으로 제거된다', async () => {
-      const onConfigChange = vi.fn();
-      render(
-        <ChannelSeriesEditor
-          panel={makePanel('graph-chart', {
-            channels: [{ name: 'a', alias: 'A' }, { name: 'b', alias: 'B' }],
-          })}
-          onConfigChange={onConfigChange}
-          fetchChannels={emptyChannels}
-        />,
-      );
-      const delBtns = await screen.findAllByLabelText('dashboard.chart.deleteChannelAria');
-      fireEvent.click(delBtns[0]!);
-      expect(onConfigChange).toHaveBeenCalledWith({
-        channels: [{ name: 'b', alias: 'B' }],
-        channel_name: undefined,
-      });
-    });
-
-    it('channel_name 만 있는 기존 패널은 channels[] 로 마이그레이션된다(하위 호환)', async () => {
-      render(
-        <ChannelSeriesEditor
-          panel={makePanel('graph-chart', { channel_name: 'legacy_ch' })}
-          onConfigChange={vi.fn()}
-          fetchChannels={emptyChannels}
-        />,
-      );
-      // 마이그레이션된 채널 행이 렌더되고 alias placeholder 로 legacy_ch 가 표시된다.
-      expect(await screen.findByTestId('line-chart-channel-row-0')).toBeInTheDocument();
-    });
-  });
 
   it('LineChartSection 은 채널 편집기를 더 이상 렌더하지 않는다(전역 스타일만)', () => {
     render(
@@ -524,25 +140,6 @@ describe('LineChartSection', () => {
     expect(screen.getByTestId('line-chart-x-range-count')).toBeInTheDocument();
   });
 
-  it('채널 행 펼치면 라인 스타일 옵션(곡선 체크박스) 노출', () => {
-    const onConfigChange = vi.fn();
-    render(
-      <ChannelSeriesEditor
-        panel={makePanel('graph-chart', {
-          channels: [{ name: 'a', smooth: false }],
-        })}
-        onConfigChange={onConfigChange}
-      />,
-    );
-    fireEvent.click(screen.getByLabelText('dashboard.chart.expandAria'));
-    const row = screen.getByTestId('line-chart-channel-row-0');
-    const checkbox = row.querySelector('input[type="checkbox"]') as HTMLInputElement;
-    fireEvent.click(checkbox);
-    expect(onConfigChange).toHaveBeenCalledWith({
-      channels: [{ name: 'a', smooth: true }],
-      channel_name: undefined,
-    });
-  });
 
   // --- 시간 윈도우 모드 ---
   it('구 config 없이 기본은 포인트 범위 — 기간 입력은 숨김', () => {
@@ -550,35 +147,6 @@ describe('LineChartSection', () => {
     expect(screen.getByTestId('line-chart-x-range-count')).toBeInTheDocument();
     expect(screen.queryByTestId('line-chart-x-range-window')).toBeNull();
     expect(screen.queryByTestId('line-chart-x-range-start')).toBeNull();
-  });
-
-  it('구 time_window_mode=recent 는 최근(relative) 범위로 읽히고 새로고침 주기가 함께 뜬다', () => {
-    render(
-      <LineChartSection
-        panel={makePanel('graph-chart', { time_window_mode: 'recent', recent_window_sec: 300 })}
-        onConfigChange={vi.fn()}
-      />,
-    );
-    expect(screen.getByTestId('line-chart-x-range-window')).toBeInTheDocument();
-    expect(screen.getByText(/dashboard.chart.refreshMs/)).toBeInTheDocument();
-    expect(screen.queryByTestId('line-chart-x-range-count')).toBeNull();
-  });
-
-  it('time_window_refresh_ms 편집', () => {
-    const onConfigChange = vi.fn();
-    render(
-      <LineChartSection
-        panel={makePanel('graph-chart', {
-          time_window_mode: 'recent',
-          time_window_refresh_ms: 1000,
-        })}
-        onConfigChange={onConfigChange}
-      />,
-    );
-    const label = screen.getByText(/dashboard.chart.refreshMs/);
-    const input = label.parentElement?.querySelector('input[type="number"]') as HTMLInputElement;
-    fireEvent.change(input, { target: { value: '500' } });
-    expect(onConfigChange).toHaveBeenCalledWith({ time_window_refresh_ms: 500 });
   });
 
   it('구 time_window_mode=fixed 는 구간(absolute) 범위로 읽힌다', () => {
@@ -1386,16 +954,6 @@ describe('대표값 선택기 (SPEC-CHART-002 U3)', () => {
     }
   });
 
-  it('채널 모드에서는 노출되지 않는다', () => {
-    render(
-      <StoreSourceSection
-        panel={makePanel('stat', { data_source: 'channel', channel_name: 'c1' })}
-        onConfigChange={vi.fn()}
-      />,
-    );
-    expect(screen.queryByTestId(REDUCE_TESTID)).toBeNull();
-  });
-
   it('선택지는 max/avg/min/last/sum/count/delta 7개이며 first 는 없다', () => {
     render(
       <StoreSourceSection panel={makePanel('stat', storeModeConfig())} onConfigChange={vi.fn()} />,
@@ -1820,27 +1378,6 @@ describe('LineChartSection — 그래프 스타일', () => {
 });
 
 describe('LineChartSection — 캔들 게이팅', () => {
-  it('채널 모드에서는 캔들 선택지가 비활성이다', () => {
-    render(<LineChartSection panel={makePanel('graph-chart', {})} onConfigChange={vi.fn()} />);
-    const select = screen.getByTestId('line-chart-graph-style') as HTMLSelectElement;
-    const candle = [...select.options].find((o) => o.value === 'candle')!;
-    expect(candle.disabled).toBe(true);
-    // 나머지는 고를 수 있다.
-    for (const v of ['line', 'area', 'bar']) {
-      expect([...select.options].find((o) => o.value === v)!.disabled).toBe(false);
-    }
-  });
-
-  it('채널 모드에서 캔들이 이미 저장돼 있으면 이유를 알린다', () => {
-    render(
-      <LineChartSection
-        panel={makePanel('graph-chart', { graph_style: 'candle' })}
-        onConfigChange={vi.fn()}
-      />,
-    );
-    expect(screen.getByTestId('line-chart-candle-unsupported')).toBeInTheDocument();
-  });
-
   it('시리즈 소스(TSDB)에서는 캔들을 고를 수 있다', () => {
     render(
       <LineChartSection

@@ -10,6 +10,7 @@ import {
   MIN_Y_AXIS_WIDTH,
   resolveXAxisHeight,
   resolveYAxisWidth,
+  yTickSampleValues,
 } from './axisSize';
 
 describe('estimateTextWidth', () => {
@@ -105,5 +106,32 @@ describe('resolveXAxisHeight', () => {
 
   it('최소 높이를 지킨다', () => {
     expect(resolveXAxisHeight({ tickFontSize: 1, labelFontSize: 1 })).toBeGreaterThanOrEqual(30);
+  });
+});
+
+describe('yTickSampleValues', () => {
+  // 보고된 결함: 기본값인 자동 축에서 큰 값(100005270112)의 앞자리가 잘렸다.
+  // 표본이 빈 배열이 되어 폭이 최소값으로 주저앉은 것이 원인이다.
+  it('자동 축에서 데이터 양끝을 표본으로 쓴다 — 표본이 비지 않는다', () => {
+    expect(yTickSampleValues(['auto', 'auto'], [0, 100005270112])).toEqual([0, 100005270112]);
+  });
+
+  it('자동 축 + 데이터 없음이면 표본도 없다 — 없는 값을 지어내지 않는다', () => {
+    expect(yTickSampleValues(['auto', 'auto'], undefined)).toEqual([]);
+  });
+
+  it('고정 도메인은 그 값이 이긴다', () => {
+    expect(yTickSampleValues([0, 100], [5, 42])).toEqual([0, 100]);
+  });
+
+  it('한쪽만 자동이면 그 쪽만 데이터로 메운다', () => {
+    expect(yTickSampleValues([0, 'auto'], [5, 4200])).toEqual([0, 4200]);
+    expect(yTickSampleValues(['auto', 100], [5, 42])).toEqual([5, 100]);
+  });
+
+  it('자동 축의 큰 값은 최소 폭보다 넓은 축을 만든다', () => {
+    const samples = yTickSampleValues(['auto', 'auto'], [0, 100005270112]).map(String);
+    const width = resolveYAxisWidth({ tickTexts: samples, tickFontSize: 10, labelFontSize: 10 });
+    expect(width).toBeGreaterThan(MIN_Y_AXIS_WIDTH);
   });
 });

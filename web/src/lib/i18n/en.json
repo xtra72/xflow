@@ -1043,7 +1043,9 @@
       "sysmetrics": "Host metrics",
       "gaugeType": "Gauge shape",
       "min": "Min",
-      "max": "Max"
+      "max": "Max",
+      "titleTextStyle": "Title text",
+      "previewResetLayout": "Reset layout"
     },
     "heatmap": {
       "stagePlaceholder": "Heatmap rendering coming soon (MVP)",
@@ -1431,7 +1433,17 @@
       "decimalPlacesHint": "Applies to value readouts. Leave empty for the default (2). Axis ticks, legend scales and contour labels follow this only when set explicitly.",
       "sysmetricsSeries": "Series",
       "sysmetricsSeriesHint": "One row is one series. The measurement column is the field name; the group rides as a `category` tag and the target as `interface` / `device` / `mountpoint` — the same vocabulary as a Store series.",
-      "sysmetricsSeriesAlias": "Series name"
+      "sysmetricsSeriesAlias": "Series name",
+      "fontWeight": "Weight",
+      "fontWeightNormal": "Normal",
+      "fontWeightBold": "Bold",
+      "plotAreaSection": "Plot area",
+      "plotSize": "Plot size",
+      "plotReset": "Reset",
+      "plotDragHint": "Drag the plot in the preview or in panel layout-edit mode.",
+      "sourceAdd": "Add source",
+      "sourceRemove": "Remove this source",
+      "xRangeAppliesToAllSources": "All data sources are queried with this range."
     },
     "widget": {
       "throughputLabel": "Throughput (msg/s)"

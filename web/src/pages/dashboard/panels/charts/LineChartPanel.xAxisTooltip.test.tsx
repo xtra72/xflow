@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 
 import type { ChartEntry } from './chartChannelTypes';
+import { MIN_Y_AXIS_WIDTH } from './axisSize';
 
 const mockResult = vi.hoisted(() => ({
   current: {
@@ -23,29 +24,18 @@ const mockResult = vi.hoisted(() => ({
     errorReason: undefined as string | undefined,
   },
 }));
-const hookOpts = vi.hoisted(() => ({ maxPoints: [] as unknown[] }));
 
-vi.mock('./useChartChannel', () => ({
-  useChartChannel: (_name?: string, opts?: { maxPoints?: number }) => {
-    hookOpts.maxPoints.push(opts?.maxPoints);
-    return mockResult.current;
-  },
+// 채널이 패널 소스에서 빠진 뒤로 데이터는 **시리즈 소스 훅 하나**로 들어온다.
+// 그래서 이음매도 하나다 — 종전에는 채널 훅 둘 + store 훅을 각각 흉내 내야 했다.
+vi.mock('./usePanelSeriesData', () => ({
+  usePanelSeriesData: () => mockResult.current,
+  // 실물을 끌어오지 않는다 — 그 모듈이 조회 계층을 함께 들여와 QueryClient 를 요구한다.
+  isPanelSeriesSource: (binding: { active: boolean }) => binding.active,
 }));
-vi.mock('./useChartChannels', () => ({
-  useChartChannels: () => ({
-    states: new Map(),
-    seriesNames: [],
-    booleanSeries: new Set<string>(),
-  }),
-}));
-vi.mock('./useStoreChartData', () => ({
-  useStoreChartData: () => ({
-    seriesEntries: new Map(),
-    seriesStyles: new Map(),
-    seriesNames: [],
-    booleanSeries: new Set<string>(),
-    status: 'idle',
-  }),
+// 캔들은 조회 계층(react-query)을 쓰므로 QueryClient 없이는 렌더되지 않는다. 이 파일은
+// 축·툴팁을 보므로 캔들은 비활성으로 흉내 낸다 — 종전에는 store 훅 모킹이 이 몫을 겸했다.
+vi.mock('./useCandleSeriesData', () => ({
+  useCandleSeriesData: () => new Map(),
 }));
 vi.mock('@/lib/i18n', () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
 vi.mock('recharts', async () => await import('./__mocks__/rechartsStub'));
@@ -58,8 +48,14 @@ function wrapper({ children }: { children: ReactNode }) {
 
 const NOW = 1_700_000_000_000;
 
+/** 활성 store 소스 — 소스가 활성이어야 패널이 시리즈를 그린다. */
+const STORE_CFG = {
+  data_source: 'store',
+  store_source: { agent_name: 'a', series: [{ key: 'k', field: 'value' }] },
+} as const;
+
 function renderPanel(config: Record<string, unknown>) {
-  return render(<LineChartPanel panelId="p1" title="t" config={{ channel_name: 'c', ...config }} />, {
+  return render(<LineChartPanel panelId="p1" title="t" config={{ ...STORE_CFG, ...config }} />, {
     wrapper,
   });
 }
@@ -69,13 +65,27 @@ function xDomain(): [number, number] | string[] {
   return JSON.parse(raw ?? 'null');
 }
 
+/**
+ * 한 시리즈짜리 결과를 심는다.
+ *
+ * 패널은 `entries` 평탄 배열이 아니라 `seriesEntries`(이름 → 점 목록)를 읽는다 — 채널
+ * 시절의 단일 타임라인과 달리 시리즈 소스는 여러 줄을 동시에 낸다. 테스트가 `entries` 만
+ * 심으면 차트는 비어 있고, 그러면 축·툴팁 검증이 전부 헛돈다.
+ */
+function setEntries(entries: ChartEntry[], name = 'value'): void {
+  mockResult.current.entries = entries;
+  mockResult.current.seriesEntries = new Map([[name, entries]]);
+  mockResult.current.seriesNames = entries.length > 0 ? [name] : [];
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
-  hookOpts.maxPoints.length = 0;
-  mockResult.current.entries = [];
+  setEntries([]);
 });
 
+// 버퍼 크기(maxPoints) 검증은 없앴다 — 채널 링버퍼가 사라지면서 "몇 점을 들고 있을지" 라는
+// 축 자체가 없어졌다. 시리즈 소스는 구간을 질의하고 그 결과를 그대로 그린다.
 describe('X축 범위 — 새 어휘와 구 어휘가 같은 축을 그린다', () => {
   it('최근(relative) 범위는 [now-w, now] 축을 만든다', () => {
     renderPanel({ x_range: { mode: 'relative', window_ms: 60_000 } });
@@ -101,28 +111,17 @@ describe('X축 범위 — 새 어휘와 구 어휘가 같은 축을 그린다', 
     renderPanel({ x_range: { mode: 'count', count: 50 } });
     expect(xDomain()).toEqual(['dataMin', 'dataMax']);
   });
-
-  it('버퍼 크기는 범위가 정한다 — 갯수는 그 값', () => {
-    renderPanel({ x_range: { mode: 'count', count: 321 } });
-    expect(hookOpts.maxPoints.at(-1)).toBe(321);
-  });
-
-  it('버퍼 크기는 범위가 정한다 — 최근 기간은 1Hz 가정 2배', () => {
-    renderPanel({ x_range: { mode: 'relative', window_ms: 600_000 } });
-    expect(hookOpts.maxPoints.at(-1)).toBe(1200);
-  });
-
-  it('구 max_points 도 그대로 버퍼 크기가 된다', () => {
-    renderPanel({ max_points: 321 });
-    expect(hookOpts.maxPoints.at(-1)).toBe(321);
-  });
 });
 
 describe('툴팁', () => {
   it('기본은 켬 + 전체 시리즈 — 저장된 패널의 동작', () => {
     renderPanel({});
-    // 커스텀 content 를 주지 않는다 = 축 위의 모든 시리즈를 그대로 보여 준다.
+    // 좁히지 않는 공용 content = 축 위의 모든 시리즈를 그대로 보여 준다.
+    // (그리기는 두 모드 모두 자체 content 가 맡는다 — 레이블 왼쪽·값 오른쪽 정렬 때문에.)
     expect(screen.getByTestId('rc-tooltip').getAttribute('data-single')).toBeNull();
+    expect(screen.getByTestId('rc-tooltip').getAttribute('data-content')).toBe(
+      'ChartTooltipContent',
+    );
   });
 
   it('사용을 끄면 툴팁을 아예 렌더하지 않는다', () => {
@@ -319,6 +318,25 @@ describe('Y축 폭 — 제목이 잘리지 않게', () => {
     expect(width()).toBeGreaterThan(plain);
   });
 
+  // 보고된 결함: 자동 축(기본값)에서 큰 값의 앞자리가 잘렸다(`100005270112` 이 `0000000`).
+  // 눈금 표본을 도메인 양끝에서만 뽑아, 자동 축에서는 표본이 비고 폭이 최소값으로
+  // 주저앉았다. 자동 축이 기본값이므로 잘림이 곧 기본 동작이었다.
+  it('자동 축에서도 값이 크면 폭이 는다 — 눈금이 잘리지 않는다', () => {
+    setEntries([{ timestamp: NOW, value: 12 }]);
+    renderPanel({});
+    const small = width();
+    cleanup();
+
+    setEntries([{ timestamp: NOW, value: 100_005_270_112 }]);
+    renderPanel({});
+    expect(width()).toBeGreaterThan(small);
+  });
+
+  it('자동 축 + 데이터 없음이면 종전 폭 그대로다 — 빈 패널의 그림이 변하지 않는다', () => {
+    renderPanel({});
+    expect(width()).toBe(MIN_Y_AXIS_WIDTH);
+  });
+
   it('제목과 단위를 함께 표기한다', () => {
     renderPanel({ y_label: '온도', y_unit: 'C' });
     expect(screen.getByTestId('rc-yaxis').getAttribute('data-label')).toBe('온도 (C)');
@@ -404,7 +422,7 @@ describe('자동 환산 단위 — 축·툴팁·범례가 한 값을 말한다',
   const BYTES = 137_355.2;
 
   function renderBytes(extra: Record<string, unknown> = {}) {
-    mockResult.current.entries = [{ timestamp: NOW, value: BYTES }];
+    setEntries([{ timestamp: NOW, value: BYTES }]);
     return renderPanel({ y_unit: 'auto:bytes', decimal_places: 2, ...extra });
   }
 
@@ -427,8 +445,44 @@ describe('자동 환산 단위 — 축·툴팁·범례가 한 값을 말한다',
   });
 
   it('일반 단위는 종전대로 저장값을 그대로 라벨에 쓴다(회귀 0)', () => {
-    mockResult.current.entries = [{ timestamp: NOW, value: 12.3456 }];
+    setEntries([{ timestamp: NOW, value: 12.3456 }]);
     renderPanel({ y_unit: 'kW', y_label: '전력' });
     expect(screen.getByTestId('rc-yaxis').getAttribute('data-label')).toBe('전력 (kW)');
+  });
+});
+
+describe('그림 상자 크기·자리', () => {
+  function plotStyle(): string {
+    return screen.getByTestId('line-chart-plot').getAttribute('style') ?? '';
+  }
+
+  it('기본값이면 transform 을 붙이지 않는다 — 저장된 대시보드의 그림이 변하지 않는다', () => {
+    renderPanel({});
+    expect(plotStyle()).not.toContain('transform');
+  });
+
+  it('크기를 줄이면 축소한다', () => {
+    renderPanel({ plot_size: 80 });
+    expect(plotStyle()).toContain('scale(0.8)');
+  });
+
+  it('옮긴 뒤 줄인다 — 오프셋이 크기에 휘둘리지 않게', () => {
+    renderPanel({ plot_size: 50, plot_offset_x: 10, plot_offset_y: -5 });
+    expect(plotStyle()).toContain('translate(10%, -5%) scale(0.5)');
+  });
+
+  it('범위 밖 크기는 미지정으로 본다 — 0 이하는 그림이 사라져 화면에서 되돌릴 수 없다', () => {
+    renderPanel({ plot_size: 0 });
+    expect(plotStyle()).not.toContain('transform');
+  });
+
+  it('저장된 오프셋은 ±상한으로 죈다', () => {
+    renderPanel({ plot_offset_x: 999, plot_offset_y: -999 });
+    expect(plotStyle()).toContain('translate(40%, -40%)');
+  });
+
+  it('끌 수 있는 대상 표식을 낸다', () => {
+    renderPanel({});
+    expect(screen.getByTestId('line-chart-plot').hasAttribute('data-chart-plot-area')).toBe(true);
   });
 });

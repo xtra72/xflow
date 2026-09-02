@@ -26,7 +26,7 @@ import {
   type NetworkChannel,
 } from '@/pages/monitoring/networkSeries';
 
-import { usePanelTitleVisible } from '../../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../../panelChromeContext';
 import {
   readInterfaces,
   readMaxCols,
@@ -56,6 +56,7 @@ interface MonitorNetworkPanelProps {
 export default function MonitorNetworkPanel({ title, config }: MonitorNetworkPanelProps) {
   const { t } = useTranslation();
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
 
   // config 파생 배열은 매 렌더 새로 만들어진다. 훅 의존성으로 흘러가면
   // "effect → setState → 리렌더 → 새 배열 → effect" 루프가 되므로 여기서 고정한다.
@@ -85,7 +86,7 @@ export default function MonitorNetworkPanel({ title, config }: MonitorNetworkPan
       {showTitle && (
         <div className="mb-3 flex shrink-0 items-center gap-2">
           <Network className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-          <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
+          <span className="truncate text-sm font-medium text-(--color-text-primary)" style={titleStyle}>{title}</span>
         </div>
       )}
 

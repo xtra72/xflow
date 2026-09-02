@@ -21,6 +21,7 @@ import { useSysMetricsSnapshot } from '@/pages/dashboard/panels/sysmetrics/useSy
 
 import { DEFAULT_STORE_SOURCE_WINDOW, type SysmetricsSourceConfig } from './chartChannelTypes';
 import type { ChartEntry } from './chartChannelTypes';
+import { readSeriesRange, resolveLiveRetention } from './seriesRange';
 import { readSeriesValue, resolveSysmetricsSeries } from './sysmetricsSource';
 import type { StoreSeriesStyle, UseStoreChartDataResult } from './useStoreChartData';
 
@@ -33,7 +34,10 @@ import type { StoreSeriesStyle, UseStoreChartDataResult } from './useStoreChartD
  */
 const RATE_UNIT = 'sec' as const;
 
-/** 계열당 보관 상한. 표시 창으로 이미 자르지만, 창이 아주 길 때의 메모리 상한이다. */
+/**
+ * 계열당 보관 **하드 상한**. 표시 창으로 이미 자르지만, 창이 아주 길거나 갯수 방식으로
+ * 크게 잡았을 때의 메모리 상한이다 — 창은 사용자가 정하지만 브라우저가 버티는 양은 아니다.
+ */
 const MAX_POINTS = 1_800;
 
 /** 조회하지 않는 경로가 돌려주는 idle 결과(형상 유지). */
@@ -58,7 +62,21 @@ export function useSysmetricsLiveSeries(
 ): UseStoreChartDataResult {
   const agentId = source?.agent_id ?? '';
   const refreshMs = source?.refresh_interval_ms ?? DEFAULT_STORE_SOURCE_WINDOW.refresh_interval_ms;
-  const windowMs = source?.time_window_ms ?? DEFAULT_STORE_SOURCE_WINDOW.time_window_ms;
+  // 보관 기준은 **조회 범위**가 정한다. 종전에는 `time_window_ms` 만 봤는데, 실시간에서는
+  // 소스 설정이 구간 칸을 내리므로(버킷이 없어 조회 창의 뜻이 다르다) 그 값을 고칠 자리가
+  // 어디에도 없었다 — 이제 X축 섹션이 같은 필드(`range`)를 고친다.
+  const retention = useMemo(
+    () =>
+      resolveLiveRetention(
+        readSeriesRange(
+          source?.range,
+          source?.time_window_ms ?? DEFAULT_STORE_SOURCE_WINDOW.time_window_ms,
+        ),
+        MAX_POINTS,
+      ),
+    [source?.range, source?.time_window_ms],
+  );
+  const { windowMs, maxPoints } = retention;
 
   // 조회 담당이 아니면 빈 에이전트로 넘겨 폴링 자체를 끈다(훅은 조건 없이 호출).
   const { snapshot, previous, state } = useSysMetricsSnapshot(
@@ -114,7 +132,7 @@ export function useSysmetricsLiveSeries(
         kept.push({ timestamp: collectedAt, value });
         next.set(
           line.name,
-          kept.length > MAX_POINTS ? kept.slice(kept.length - MAX_POINTS) : kept,
+          kept.length > maxPoints ? kept.slice(kept.length - maxPoints) : kept,
         );
         appended = true;
       }
@@ -125,7 +143,7 @@ export function useSysmetricsLiveSeries(
     // `lines` 는 shapeKey 로 이미 구성 변화를 다루므로 의존성에서 뺀다 — 넣으면 매 렌더
     // 새 배열이라 effect 가 표본과 무관하게 계속 돈다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, snapshot, previous, collectedAt, windowMs]);
+  }, [enabled, snapshot, previous, collectedAt, windowMs, maxPoints]);
 
   return useMemo<UseStoreChartDataResult>(() => {
     if (!enabled) return IDLE;

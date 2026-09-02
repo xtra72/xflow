@@ -1043,7 +1043,9 @@
       "sysmetrics": "호스트 지표",
       "gaugeType": "게이지 모양",
       "min": "최소",
-      "max": "최대"
+      "max": "최대",
+      "titleTextStyle": "타이틀 글자",
+      "previewResetLayout": "배치 초기화"
     },
     "heatmap": {
       "stagePlaceholder": "히트맵 렌더 준비 중 (MVP)",
@@ -1431,7 +1433,17 @@
       "decimalPlacesHint": "값 표기에 적용됩니다. 비우면 기본값(2)입니다. 축 눈금·범례 눈금·등고선 라벨은 직접 지정했을 때만 따릅니다.",
       "sysmetricsSeries": "시리즈",
       "sysmetricsSeriesHint": "한 행이 한 시리즈입니다. measurement 컬럼은 필드 이름이고, 그룹은 `category` 태그로, 대상은 `interface` / `device` / `mountpoint` 태그로 실립니다 — Store 시리즈와 같은 어휘입니다.",
-      "sysmetricsSeriesAlias": "시리즈 이름"
+      "sysmetricsSeriesAlias": "시리즈 이름",
+      "fontWeight": "굵기",
+      "fontWeightNormal": "보통",
+      "fontWeightBold": "굵게",
+      "plotAreaSection": "그래프 영역",
+      "plotSize": "그래프 크기",
+      "plotReset": "초기화",
+      "plotDragHint": "미리보기나 패널 배치 편집 모드에서 그래프를 끌어 옮길 수 있습니다.",
+      "sourceAdd": "소스 추가",
+      "sourceRemove": "이 소스 제거",
+      "xRangeAppliesToAllSources": "이 구간으로 모든 데이터 소스를 조회합니다."
     },
     "widget": {
       "throughputLabel": "처리량 (msg/s)"

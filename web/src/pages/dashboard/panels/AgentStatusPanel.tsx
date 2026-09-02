@@ -21,7 +21,7 @@ import { useTargetContext } from '@/lib/remote/TargetContext';
 import type { AgentSummaryStat } from '@/types/agent';
 
 import AgentStatusDiagram from './AgentStatusDiagram';
-import { usePanelTitleVisible } from '../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 
 interface AgentStatusPanelProps {
   panelId: string;
@@ -76,6 +76,7 @@ export default function AgentStatusPanel({
 }: AgentStatusPanelProps) {
   const { t } = useTranslation();
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const agentId = (config.agentId as string | undefined) ?? '';
 
   // 타깃(로컬|원격)에 따라 데이터 소스가 전환된다. useTargetContext 미설정 시 로컬.
@@ -102,7 +103,7 @@ export default function AgentStatusPanel({
         {showTitle && (
           <div className="mb-3 flex shrink-0 items-center gap-2">
             <Bot className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-            <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
+            <span className="truncate text-sm font-medium text-(--color-text-primary)" style={titleStyle}>{title}</span>
           </div>
         )}
         <div className="flex flex-1 items-center justify-center">
@@ -146,7 +147,7 @@ export default function AgentStatusPanel({
       <div className="mb-3 flex shrink-0 items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <Bot className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-          <span className="truncate text-sm font-medium text-(--color-text-primary)" title={displayName}>
+          <span className="truncate text-sm font-medium text-(--color-text-primary)" style={titleStyle} title={displayName}>
             {displayName}
           </span>
           <span className="shrink-0 text-xs text-(--color-text-muted)">{displayType}</span>

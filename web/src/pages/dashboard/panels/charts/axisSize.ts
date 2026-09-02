@@ -99,3 +99,26 @@ export function resolveXAxisHeight(input: {
   const labelLine = label ? labelFontSize * 1.6 : 0;
   return Math.max(MIN_X_AXIS_HEIGHT, Math.ceil(tickLine + labelLine));
 }
+
+/**
+ * Y축 폭 산출에 쓸 **눈금 표본 값**을 고른다.
+ *
+ * 도메인 양끝이 곧 표본이다. 다만 자동 축(`'auto'`)에서는 눈금 값을 Recharts 가 정하므로
+ * 여기서는 알 수 없다 — 그때는 실제로 그려진 값의 양끝(`dataExtent`)을 대신 쓴다.
+ *
+ * 종전에는 자동 축에서 표본이 **빈 배열**이 되어 폭이 최소값으로 주저앉았고, 큰 값
+ * (100005270112)은 앞자리가 잘렸다. 자동 축이 기본값이므로 잘림이 곧 기본 동작이었다.
+ *
+ * Recharts 는 데이터 최대값보다 위로 눈금을 올려 잡을 수 있으나 늘어나는 자릿수는 한 글자
+ * 남짓이고, 축 여백(`AXIS_GUTTER`)이 그만큼을 흡수한다.
+ */
+export function yTickSampleValues(
+  domain: readonly [number | 'auto', number | 'auto'],
+  dataExtent: readonly [number, number] | undefined,
+): number[] {
+  const pick = (bound: number | 'auto', fallback: number | undefined): number | undefined =>
+    typeof bound === 'number' ? bound : fallback;
+  return [pick(domain[0], dataExtent?.[0]), pick(domain[1], dataExtent?.[1])].filter(
+    (v): v is number => typeof v === 'number' && Number.isFinite(v),
+  );
+}

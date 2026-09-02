@@ -34,13 +34,12 @@ const STAT_VALUE_PX = { value: 36, unit: 20 } as const;
 const STAT_TILE_PX = { value: 24, unit: 14 } as const;
 import { reduceAllSeries, type ReducedSeries } from './seriesReduce';
 import { SeriesTileGrid } from './SeriesTileGrid';
-import { useChartChannel } from './useChartChannel';
 import { type StoreSeriesStyle } from './useStoreChartData';
-import { resolvePanelSourceBinding } from './panelDataSource';
+import { isPanelSeriesActive } from './panelDataSource';
 // 값 표기 자릿수는 차트 계열 공용 규칙을 따른다(범위를 벗어난 config 도 여기서 걸린다).
 import { readDecimalPlaces } from './decimalPlaces';
-import { isPanelSeriesSource, usePanelSeriesData } from './usePanelSeriesData';
-import { usePanelTitleVisible } from '../../panelChromeContext';
+import { usePanelSeriesData } from './usePanelSeriesData';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../../panelChromeContext';
 
 interface StatPanelProps {
   panelId: string;
@@ -87,6 +86,7 @@ interface ReduceDerived {
 
 export default function StatPanel({ panelId: _panelId, title, config }: StatPanelProps) {
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const cfg = parseConfig(config);
   // SPEC-WEB-005: data_source === 'store' 면 Store 소스에서, 그 외에는 기존 채널에서
   // 데이터를 가져온다. 두 훅 모두 항상 호출하고(React 규칙) 비활성 쪽은 idle 로 유지한다.
@@ -95,19 +95,14 @@ export default function StatPanel({ panelId: _panelId, title, config }: StatPane
   // 곱해지지 않게 하기 위함이다(UB1-1).
   // `isStore` 는 "채널이 아닌 시리즈 소스가 활성인가" 를 뜻한다. M3 시점에는 store 만
   // 그 조건을 만족하며, tsdb 는 M6 에서 같은 이름을 통해 합류한다.
-  const isStore = isPanelSeriesSource(resolvePanelSourceBinding(config));
+  // 활성 판정은 소스 **목록 전체**를 본다 — 단일 축 해석기로 판정하면 목록 쪽 인스턴스에만
+  // 시리즈가 있는 패널이 비활성으로 보인다.
+  const isStore = isPanelSeriesActive(config);
 
-  const channelRes = useChartChannel(
-    isStore ? undefined : cfg.channel_name || undefined,
-    { maxPoints: Math.max(cfg.max_points ?? 2, 2) },
-  );
   const storeRes = usePanelSeriesData(config);
 
-  const { entries, status, closedReason, errorReason } = isStore
-    ? storeRes
-    : channelRes;
+  const { entries, status, closedReason, errorReason } = storeRes;
 
-  // 시리즈 축은 Store 경로에만 존재한다. 채널 경로에서는 빈 기본값을 쓴다.
   const seriesEntries = storeRes.seriesEntries ?? EMPTY_SERIES_ENTRIES;
   const seriesNames = storeRes.seriesNames ?? EMPTY_SERIES_NAMES;
   const seriesStyles = storeRes.seriesStyles ?? EMPTY_SERIES_STYLES;
@@ -212,7 +207,7 @@ export default function StatPanel({ panelId: _panelId, title, config }: StatPane
       {showTitle && (
         <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
           <Hash className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-          <span className="truncate text-sm font-semibold text-(--color-text-primary)">
+          <span className="truncate text-sm font-semibold text-(--color-text-primary)" style={titleStyle}>
             {title || cfg.channel_name || '채널 미지정'}
           </span>
         </div>

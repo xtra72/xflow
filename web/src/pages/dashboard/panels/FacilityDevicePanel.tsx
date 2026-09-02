@@ -16,7 +16,7 @@ import {
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import { ControlResultView } from './facilityShared';
-import { usePanelTitleVisible } from '../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 
 interface FacilityDevicePanelProps {
   panelId: string;
@@ -215,11 +215,12 @@ function PanelShell({
 }) {
   const { t } = useTranslation();
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 rounded-lg bg-(--color-bg-surface) p-4 shadow">
       {showTitle && (
       <div className="flex shrink-0 items-center justify-between">
-        <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
+        <span className="truncate text-sm font-medium text-(--color-text-primary)" style={titleStyle}>{title}</span>
         {online !== undefined && (
           <span
             className={cn(
