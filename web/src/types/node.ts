@@ -33,20 +33,32 @@ export type ConfigSection = 'transport' | 'protocol' | 'operation' | 'logging';
  */
 export interface ConfigField {
   name: string;
-  type: 'string' | 'multiline' | 'number' | 'boolean' | 'select' | 'object' | 'object_fields' | 'string_list' | 'agent_select' | 'flow_picker' | 'register_map' | 'transform_pipeline' | 'key_value_map' | 'typed_key_value_map' | 'trigger_schedules' | 'compare_fields' | 'routes_editor' | 'metrics_editor';
+  type: 'string' | 'multiline' | 'number' | 'boolean' | 'select' | 'object' | 'object_fields' | 'string_list' | 'sysresource_select' | 'agent_select' | 'flow_picker' | 'register_map' | 'modbus_devices' | 'modbus_server_devices' | 'modbus_write_ops' | 'modbus_read_ops' | 'modbus_control_ops' | 'modbus_remap' | 'transform_pipeline' | 'key_value_map' | 'typed_key_value_map' | 'trigger_schedules' | 'compare_fields' | 'routes_editor';
   label: string;
   required?: boolean;
   default?: unknown;
   options?: string[];
   description?: string;
+  /** 입력 위젯 바로 아래에 상시 노출되는 인라인 힌트(선택).
+   *  description(? 아이콘 클릭 시 표시)과 달리 항상 보이며, object 타입 등에서
+   *  변수/이스케이프 문법 안내에 사용한다. 현재 object 타입에서만 렌더링된다. */
+  hint?: string;
   /** object_fields 타입 전용: 중첩 객체의 하위 필드 스키마.
    *  값은 이 필드의 `name` 키 아래 중첩 객체로 저장된다
    *  (config[name] = { <sub.name>: value, ... }). dotted 키를 만들지 않는다.
    *  하위 필드는 최상위 필드와 동일한 위젯(FormField)으로 렌더링된다. */
   fields?: ConfigField[];
   /** 다른 필드 값에 따라 조건부 표시.
-   *  value: 값 일치 / notEmpty: 비어있지 않을 때 표시 */
-  visibleWhen?: { field: string; value?: unknown | unknown[]; notEmpty?: boolean };
+   *  value: 값 일치(배열이면 포함) / notEmpty: 비어있지 않을 때 표시 */
+  visibleWhen?: VisibleWhenCond;
+  /** 복수 조건 OR 표시(하나라도 만족 시 표시). visibleWhen 과 함께 쓰면 둘 다 만족(AND).
+   *  단일 필드 visibleWhen 으로 표현할 수 없는 "A 이거나 B" 노출에 사용한다. */
+  visibleWhenAny?: VisibleWhenCond[];
+  /** 다른 필드 값에 따라 조건부 필수.
+   *  설정 시 required 대신 이 조건이 필수 여부를 결정한다(조건 불만족이면 선택 필드).
+   *  같은 필드가 어떤 모드에서는 필수, 다른 모드에서는 기본값이 있는 선택 필드인 경우에 쓴다
+   *  (예: storage-write 의 measurement — fields 필수 / auto 선택). */
+  requiredWhen?: VisibleWhenCond;
   /** true 이면 고급 설정 섹션으로 분리되어 기본 접힘 상태로 표시된다. */
   advanced?: boolean;
   /** HVACR 4-quadrant 레이아웃에서 어느 분면에 속하는지를 지정한다.
@@ -60,6 +72,8 @@ export interface ConfigField {
   /** 일반 문자열(string) 입력의 placeholder 오버라이드.
    *  미지정 시 기존 동작(default 값을 placeholder 로 표시)을 그대로 유지한다. */
   placeholder?: string;
+  /** sysresource_select 전용: 어떤 축의 목록을 고를지(마운트/장치/인터페이스). */
+  resourceKind?: 'mountpoints' | 'devices' | 'interfaces';
   /** key_value_map 의 "키" 컬럼 헤더 오버라이드. 미지정 시 "키". */
   keyLabel?: string;
   /** key_value_map 의 "값" 컬럼 헤더 오버라이드. 미지정 시 "값". */
@@ -69,9 +83,55 @@ export interface ConfigField {
   /** key_value_map 값 입력의 placeholder 오버라이드. 미지정 시 "값". */
   valuePlaceholder?: string;
   /** true 이면 key_value_map 의 값 입력 위에 `$.` JSONPath 빠른 삽입 칩을 표시한다.
-   *  influxdb-write 등 값에 JSONPath 를 받는 노드에서 opt-in 으로 사용한다.
+   *  storage-write 등 값에 JSONPath 를 받는 노드에서 opt-in 으로 사용한다.
    *  미지정/false 면 칩을 표시하지 않아 다른 노드의 동작은 변하지 않는다. */
   pathHelper?: boolean;
+}
+
+/** visibleWhen 단일 조건. value 일치(배열이면 포함) 또는 notEmpty 검사. */
+export interface VisibleWhenCond {
+  field: string;
+  value?: unknown | unknown[];
+  notEmpty?: boolean;
+}
+
+/** 단일 visibleWhen 조건 하나를 평가한다. */
+function matchVisibleCond(c: VisibleWhenCond, data: Record<string, unknown>): boolean {
+  const actual = data[c.field];
+  if (c.notEmpty) return actual != null && actual !== '';
+  const expected = c.value;
+  if (Array.isArray(expected)) return expected.includes(actual);
+  return actual === expected;
+}
+
+/**
+ * 필드의 표시 여부를 평가한다. 조건 미설정 시 항상 표시.
+ * - visibleWhen(단일): 만족해야 표시.
+ * - visibleWhenAny(복수): 하나라도 만족해야 표시(OR).
+ * - 둘 다 설정 시 AND(둘 다 만족해야 표시).
+ */
+export function isFieldVisible(
+  field: { visibleWhen?: VisibleWhenCond; visibleWhenAny?: VisibleWhenCond[] },
+  data: Record<string, unknown>,
+): boolean {
+  if (field.visibleWhen && !matchVisibleCond(field.visibleWhen, data)) return false;
+  if (field.visibleWhenAny && !field.visibleWhenAny.some((c) => matchVisibleCond(c, data))) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 필드의 필수 여부를 평가한다.
+ * - requiredWhen 설정 시: 그 조건이 만족될 때만 필수(required 플래그는 무시).
+ * - 미설정 시: required 플래그를 그대로 따른다.
+ */
+export function isFieldRequired(
+  field: { required?: boolean; requiredWhen?: VisibleWhenCond },
+  data: Record<string, unknown>,
+): boolean {
+  if (field.requiredWhen) return matchVisibleCond(field.requiredWhen, data);
+  return field.required === true;
 }
 
 /**

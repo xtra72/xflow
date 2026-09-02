@@ -72,7 +72,7 @@ type portCounter struct {
 	warnedUnconnected atomic.Bool
 
 	// suppressUnconnected 가 true 이면 이 포트의 미연결 출력 경고를 완전히
-	// 억제한다. influxdb-write, store-write 같은 터미널/라이터 노드는 미연결
+	// 억제한다. storage-write, storage-write 같은 터미널/라이터 노드는 미연결
 	// pass-through "out" 이 의도된 동작이므로 경고가 노이즈가 된다. 노드 config
 	// "suppress_unconnected_warning" 으로 옵트인하며 배포 시 설정된다.
 	// 불변(immutable) 값으로 배포 시점에 한 번만 설정되므로 atomic 이 아니다.

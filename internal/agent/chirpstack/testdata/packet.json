@@ -1,0 +1,108 @@
+{
+    "id": "9637faf6-157d-4330-b0d9-13a1594d97f8",
+    "metadata": {
+        "agent": {
+            "id": "21209942-a2ca-4aff-afcb-0a3447485dd4"
+        },
+        "node_id": "85d2f6d8-60de-4034-811e-10d20fe2972e"
+    },
+    "payload": {
+        "adr": true,
+        "confirmed": true,
+        "data": "AwAA",
+        "deduplicationId": "ddab8c35-747f-41e9-a6de-5aa31f7ad1fc",
+        "devAddr": "016f0699",
+        "deviceInfo": {
+            "applicationId": "96b4d719-f23f-40aa-9f94-a0f2d0354342",
+            "applicationName": "광주 캠퍼스",
+            "devEui": "24e124141d180806",
+            "deviceClassEnabled": "CLASS_A",
+            "deviceName": "WS301-180806",
+            "deviceProfileId": "9a7fedf3-5b53-4428-bb17-5e16484a8747",
+            "deviceProfileName": "WS301",
+            "tags": {
+                "location": "실습실",
+                "point": "앞문",
+                "spot": "앞문"
+            },
+            "tenantId": "84830715-69bb-4e77-be95-1062c8d47fbf",
+            "tenantName": "ChirpStack"
+        },
+        "dr": 2,
+        "fCnt": 24768,
+        "fPort": 85,
+        "object": {
+            "magnet_status": "close"
+        },
+        "regionConfigId": "kr920",
+        "rxInfo": [
+            {
+                "channel": 6,
+                "context": "aApi7A==",
+                "crcStatus": "CRC_OK",
+                "gatewayId": "24e124fffef5dccc",
+                "gwTime": "2026-08-11T23:32:01.129848+00:00",
+                "location": {},
+                "nsTime": "2026-08-11T23:27:50.366712162+00:00",
+                "rfChain": 1,
+                "rssi": -113,
+                "snr": -9.5,
+                "timeSinceGpsEpoch": "1470526339.129s",
+                "uplinkId": 47972
+            },
+            {
+                "channel": 7,
+                "context": "5o/ciQ==",
+                "crcStatus": "CRC_OK",
+                "gatewayId": "24e124fffef79304",
+                "gwTime": "2026-08-11T23:27:50.345681+00:00",
+                "location": {},
+                "nsTime": "2026-08-11T23:27:50.368822845+00:00",
+                "rfChain": 1,
+                "rssi": -57,
+                "snr": 13.5,
+                "timeSinceGpsEpoch": "1470526088.345s",
+                "uplinkId": 2599
+            }
+        ],
+        "time": "2026-08-11T23:32:01.129+00:00",
+        "txInfo": {
+            "frequency": 923300000,
+            "modulation": {
+                "lora": {
+                    "bandwidth": 125000,
+                    "codeRate": "CR_4_5",
+                    "spreadingFactor": 10
+                }
+            }
+        }
+    },
+    "timestamp": 1786490870585,
+    "type": "event"
+}
+{
+    "id": "9637faf6-157d-4330-b0d9-13a1594d97f8",
+    "metadata": {
+        "device": {
+            "id": "24e124141d180806"
+        },
+        "tags": {
+            "location": "실습실",
+            "spot": "실습실"
+        }
+    },
+    "payload": {
+        "items": [
+            {
+                "metadata": {
+                    "measurement": "magnet_status"
+                },
+                "payload": {
+                    "value": "close"
+                }
+            }
+        ]
+    },
+    "timestamp": 1786490870585,
+    "type": "event"
+}

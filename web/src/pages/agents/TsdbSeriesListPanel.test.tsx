@@ -40,7 +40,7 @@ function makeFakeDataSource(
   useKeysImpl: (params: { page: number; size: number }) => SeriesKeysQueryResult,
 ): SeriesDataSource {
   return {
-    kind: 'tsdb',
+    kind: 'memtsdb',
     useKeys: useKeysImpl,
     queryMatrix: vi.fn(),
   };

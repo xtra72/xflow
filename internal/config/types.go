@@ -63,6 +63,12 @@ type StorageConfig struct {
 	SQLitePath    string
 	PostgresDSN   string
 	PoolSize      int
+
+	// ScheduleLogType - 스케줄(예약) 실행 로그 저장소 백엔드 선택(시작 설정, 재시작 시 적용).
+	// "sqlite"(기본, 영속) | "memory"(비영속) | "file"/"jsonl"(append-only JSONL 파일).
+	// 미설정 시 "sqlite" 로 기본값이 적용되어 기존 동작이 유지된다.
+	// config key: storage.schedule_log.type (설정 UI 는 이 키를 읽고/쓴다).
+	ScheduleLogType string
 }
 
 // DeviceHistoryConfig - 디바이스 수신 데이터 이력(주기 스냅샷) 설정

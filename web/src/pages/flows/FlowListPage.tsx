@@ -2,7 +2,7 @@
 // 등록된 플로우의 CRUD 및 lifecycle 관리 기능을 제공한다.
 // 검색, 상태 필터, 페이지네이션을 지원한다.
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -26,12 +26,14 @@ import { RemoteTargetBanner } from '@/components/remote/RemoteTargetBanner';
 import { useFlowsTarget } from '@/hooks/useResourceTargets';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTargetParam } from '@/hooks/useTargetParam';
+import PermissionButton from '@/components/common/PermissionButton';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
-import { TargetProvider } from '@/lib/remote/TargetContext';
+import { TargetProvider } from '@/lib/remote/TargetProvider';
 import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
 import { downloadJSON } from '@/lib/utils/download';
 import { exportAllFlows, updateFlow } from '@/services/api/flowService';
 import type { FlowInfo } from '@/types/flow';
+import { useNameDeepLink } from '@/hooks/useNameDeepLink';
 import CreateFlowModal from '@/pages/dashboard/CreateFlowModal';
 
 import FlowActionMenu from './FlowActionMenu';
@@ -159,7 +161,16 @@ export default function FlowListPage({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  const allFlows: FlowInfo[] = flowsData?.data ?? [];
+  const allFlows: FlowInfo[] = useMemo(() => flowsData?.data ?? [], [flowsData?.data]);
+
+  // 시스템 로그에서 `/flows?name=...` 로 넘어온 경우 그 이름으로 목록을 좁히고
+  // 일치하는 플로우를 펼친다.
+  const applyNameLink = useCallback((name: string, matchedId: string | null) => {
+    setSearch(name);
+    setPage(1);
+    setExpandedId(matchedId);
+  }, []);
+  useNameDeepLink(allFlows, (f) => f.name, (f) => f.id, applyNameLink);
 
   // 클라이언트 측 필터링
   const filteredFlows = useMemo(() => {
@@ -328,27 +339,30 @@ export default function FlowListPage({
         <div className="flex items-center gap-2">
           {showLocalWrites && (
             <>
-              <button
+              <PermissionButton
                 type="button"
+                permission="flow.create"
                 onClick={() => setImportDialogOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
               >
                 <Upload className="h-4 w-4" />
                 {t('common.import')}
-              </button>
-              <button
+              </PermissionButton>
+              <PermissionButton
                 type="button"
+                permission="flow.read"
                 onClick={handleExportAll}
                 className="inline-flex items-center gap-1.5 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
               >
                 <Download className="h-4 w-4" />
                 {t('common.exportAll')}
-              </button>
+              </PermissionButton>
             </>
           )}
           {/* 생성: 로컬은 모달, 원격은 시각 편집기 신규 라우트(노드 채번 — REQ-I08). */}
-          <button
+          <PermissionButton
             type="button"
+            permission="flow.create"
             disabled={remote && !gating.nodeReady}
             title={remote && !gating.nodeReady ? t('remote.edit.createGateHint') : undefined}
             onClick={() => {
@@ -362,7 +376,7 @@ export default function FlowListPage({
           >
             <Plus className="h-4 w-4" />
             {t('flows.newFlow')}
-          </button>
+          </PermissionButton>
         </div>
       </div>
 
@@ -384,8 +398,9 @@ export default function FlowListPage({
               : t('flows.noSearchResults')}
           </p>
           {allFlows.length === 0 && (showLocalWrites || gating.nodeReady) && (
-            <button
+            <PermissionButton
               type="button"
+              permission="flow.create"
               onClick={() => {
                 if (remote && isRemoteTarget(target)) {
                   navigate(`/admin/remote/nodes/${target.instanceId}/flows/new`);
@@ -397,7 +412,7 @@ export default function FlowListPage({
             >
               <Plus className="h-4 w-4" />
               {t('flows.newFlow')}
-            </button>
+            </PermissionButton>
           )}
         </div>
       ) : (

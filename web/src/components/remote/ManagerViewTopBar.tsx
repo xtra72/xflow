@@ -18,25 +18,7 @@ import { NodePicker } from '@/components/remote/NodePicker';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 import type { ManagedNode, NodeGroup } from '@/types/remote';
-
-/** 관리자 뷰 서브탭 식별자(NodeDashboard 와 동일 집합). */
-export type ManagerViewTab = 'overview' | 'flows' | 'agents' | 'devices' | 'dashboard';
-
-/** 유효한 서브탭 식별자 집합(URL 파라미터 검증용). */
-export const MANAGER_VIEW_TABS: readonly ManagerViewTab[] = [
-  'overview',
-  'flows',
-  'agents',
-  'devices',
-  'dashboard',
-];
-
-/** URL `?tab=` 원시 값을 ManagerViewTab 으로 파싱한다(미지정/무효 → overview). */
-export function parseManagerViewTab(raw: string | null): ManagerViewTab {
-  return MANAGER_VIEW_TABS.includes(raw as ManagerViewTab)
-    ? (raw as ManagerViewTab)
-    : 'overview';
-}
+import type { ManagerViewTab } from './managerViewTab';
 
 const TABS: { id: ManagerViewTab; labelKey: string; Icon: typeof Workflow }[] = [
   { id: 'overview', labelKey: 'remote.dashboard.tab.overview', Icon: LayoutDashboard },

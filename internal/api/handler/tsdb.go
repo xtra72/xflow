@@ -57,12 +57,14 @@ func NewTSDBHandler(db tsdb.TSDB, logger *slog.Logger, opts ...TSDBHandlerOption
 //	GET    /tsdb/stats              -> Stats
 //	DELETE /tsdb/series/{key}       -> DeleteSeries
 func (h *TSDBHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.POST("/tsdb/write", h.Write)
-	g.POST("/tsdb/query", h.Query)
-	g.GET("/tsdb/series", h.ListSeries)
-	g.GET("/tsdb/series/{key}/latest", h.Latest)
-	g.GET("/tsdb/stats", h.Stats)
-	g.DELETE("/tsdb/series/{key}", h.DeleteSeries)
+	// @SPEC:SPEC-AUTH-005 (M5) — 카탈로그에 tsdb 리소스가 없어 시계열 데이터 저장소로
+	// 가장 가까운 store.* 로 매핑한다 (read/update 2종이므로 삭제도 update).
+	g.POSTPerm("/tsdb/write", "store.update", h.Write)
+	g.POSTPerm("/tsdb/query", "store.read", h.Query)
+	g.GETPerm("/tsdb/series", "store.read", h.ListSeries)
+	g.GETPerm("/tsdb/series/{key}/latest", "store.read", h.Latest)
+	g.GETPerm("/tsdb/stats", "store.read", h.Stats)
+	g.DELETEPerm("/tsdb/series/{key}", "store.update", h.DeleteSeries)
 }
 
 // Write 는 TSDB에 데이터 포인트를 기록한다.
@@ -172,6 +174,14 @@ func (h *TSDBHandler) Query(ctx api.Context) error {
 		return api.ErrBadRequest.WithMessage("invalid fill strategy: " + req.Fill + " (allowed: null, zero, previous, avg)")
 	}
 
+	// 버킷 수 상한 검사 — 반드시 Execute 전에 한다.
+	// Execute 안의 상한(ErrMaxPointsExceeded)은 다운샘플링 *결과*를 보므로,
+	// 그 시점엔 이미 구간 전체의 원본 포인트를 읽어 복사한 뒤다. 과대 요청은
+	// 스캔이 시작되기 전에 끊어야 비용이 발생하지 않는다.
+	if err := validateTSDBBucketCount(q); err != nil {
+		return api.ErrBadRequest.WithMessage(err.Error())
+	}
+
 	results, err := h.db.Execute(q)
 	if err != nil {
 		return api.MapDomainError(err)
@@ -212,6 +222,40 @@ const (
 	tsdbSeriesDefaultPageSize = 25  // size 미지정 또는 0 일 때 사용하는 기본 페이지 크기
 	tsdbSeriesMaxPageSize     = 100 // size 파라미터 상한 — 초과 시 이 값으로 클램프
 )
+
+// validateTSDBBucketCount 는 조회 구간과 버킷 간격으로 만들어질 버킷 수가
+// 상한을 넘는지 검사한다.
+//
+// Store(InfluxDB) 경로의 validateSeriesBucketCount 와 같은 판정을 내장 TSDB
+// 경로에도 적용해 두 경로를 대칭으로 만든다. 상한 상수(maxAggregationBuckets)도
+// 공유한다 — 값을 복제하면 한쪽만 조정되어 조용히 어긋난다.
+//
+// 구간이 열려 있거나(start·end 미지정) 버킷 간격이 없으면(원본 반환) 버킷 수를
+// 셀 수 없으므로 통과시킨다. 이 두 경우의 방어는 스캔 상한 소관이다.
+func validateTSDBBucketCount(q tsdb.Query) error {
+	if q.BucketInterval <= 0 || q.Start.IsZero() || q.End.IsZero() {
+		return nil
+	}
+	span := q.End.Sub(q.Start)
+	if span <= 0 {
+		return nil
+	}
+
+	numBuckets := int64(span / q.BucketInterval)
+	if span%q.BucketInterval != 0 {
+		numBuckets++
+	}
+	if numBuckets > maxAggregationBuckets {
+		return fmt.Errorf(
+			"too many buckets: bucket_count=%d exceeds max=%d "+
+				"(start=%s, end=%s, bucket=%s); "+
+				"increase bucket or shrink the time window",
+			numBuckets, maxAggregationBuckets,
+			q.Start.Format(time.RFC3339Nano), q.End.Format(time.RFC3339Nano),
+			q.BucketInterval)
+	}
+	return nil
+}
 
 // ListSeries 는 시리즈 키 목록을 반환한다.
 //

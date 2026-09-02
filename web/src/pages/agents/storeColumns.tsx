@@ -1,8 +1,7 @@
-// 저장소 탭 store 키 테이블의 컬럼 레지스트리 + localStorage 헬퍼 + Excel 유사 필터/
-// 컬럼 설정 UI.
+// 저장소 탭 store 키 테이블의 Excel 유사 필터 / 컬럼 설정 / 헤더 UI.
 //
-// 단일 출처(single source of truth): 컬럼의 논리적 순서/메타데이터를 STORE_COLUMNS 에
-// 정의하고, 헤더(thead)와 본문(StoreEntryRow)이 모두 이 목록을 매핑하여 렌더한다.
+// 컬럼 레지스트리와 localStorage 헬퍼는 storeColumnsModel.ts 가 소유한다.
+//
 // 숨김 컬럼은 헤더/본문에서 함께 사라지며, 히스토리 확장 행의 colSpan 은 렌더된 컬럼
 // 개수와 항상 일치한다.
 //
@@ -14,7 +13,6 @@ import {
   ArrowUp,
   ArrowUpDown,
   Check,
-  ChevronDown,
   Columns3,
   ListFilter,
   X,
@@ -28,162 +26,13 @@ import {
   nextSortState,
   type ColumnFilter,
   type FilterColumnId,
-  type SortColumn,
   type SortState,
 } from './storeEntrySort';
-
-/** 렌더 가능한 모든 컬럼 식별자(논리 순서 정의는 STORE_COLUMNS). */
-export type StoreColumnId =
-  | 'key'
-  | 'metric'
-  | 'value'
-  | 'namespace'
-  | 'tags'
-  | 'binding'
-  | 'ttl'
-  | 'history'
-  | 'updated'
-  | 'actions';
-
-/** 컬럼 정의. */
-export interface StoreColumn {
-  /** 안정적 컬럼 식별자. */
-  id: StoreColumnId;
-  /** i18n 키 (agents.detail.store.* 하위). */
-  labelKey: string;
-  /** 정렬 가능하면 대응하는 SortColumn, 아니면 미지정. */
-  sortColumn?: SortColumn;
-  /** Excel 유사 필터 가능하면 대응하는 FilterColumnId, 아니면 미지정. */
-  filterColumn?: FilterColumnId;
-  /** 셀 정렬(액션은 우측). 기본 left. */
-  align?: 'left' | 'right';
-  /** 사용자가 숨길 수 있는지 여부(actions=false). */
-  hideable: boolean;
-  /**
-   * 조건부 컬럼 종류:
-   *   - 'tags': 어떤 엔트리든 태그가 있을 때만 관련(showTagsColumn).
-   *   - 'history': maxHistorySize > 0 일 때만 관련.
-   * 미지정이면 항상 관련.
-   */
-  conditional?: 'tags' | 'history';
-  /** 헤더 th 와 본문 td 에 공통 적용할 폭 Tailwind 클래스(예: 'w-16', 'min-w-[260px]'). */
-  widthClass?: string;
-}
-
-/**
- * 논리적 기본 컬럼 순서(단일 출처).
- * 키 → 메트릭 → 값 → 네임스페이스 → 태그 → 바인딩 → TTL → 히스토리 → 갱신 → 액션.
- */
-export const STORE_COLUMNS: readonly StoreColumn[] = [
-  { id: 'key', labelKey: 'colKey', sortColumn: 'key', filterColumn: 'key', hideable: true, widthClass: 'min-w-[260px]' },
-  { id: 'metric', labelKey: 'colMetric', sortColumn: 'metric', filterColumn: 'metric', hideable: true },
-  { id: 'value', labelKey: 'colValue', sortColumn: 'value', filterColumn: 'value', hideable: true },
-  { id: 'namespace', labelKey: 'colNamespace', sortColumn: 'namespace', filterColumn: 'namespace', hideable: true },
-  { id: 'tags', labelKey: 'colTags', filterColumn: 'tags', hideable: true, conditional: 'tags' },
-  { id: 'binding', labelKey: 'colBinding', sortColumn: 'binding', filterColumn: 'binding', hideable: true, widthClass: 'w-32' },
-  { id: 'ttl', labelKey: 'colTtl', filterColumn: 'ttl', hideable: true, widthClass: 'w-16' },
-  { id: 'history', labelKey: 'colHistory', hideable: true, conditional: 'history', widthClass: 'w-32' },
-  { id: 'updated', labelKey: 'colUpdated', sortColumn: 'updated', hideable: true },
-  { id: 'actions', labelKey: 'colActions', align: 'right', hideable: false },
-];
-
-/** 현재 데이터 조건(태그 존재/히스토리 크기)에 따른 컬럼 관련성 판정. */
-export interface ColumnRelevance {
-  showTagsColumn: boolean;
-  hasHistory: boolean;
-}
-
-/** 조건부 컬럼(tags/history)을 관련성에 따라 걸러 렌더 가능한 컬럼만 남긴다. */
-export function relevantColumns(rel: ColumnRelevance): StoreColumn[] {
-  return STORE_COLUMNS.filter((c) => {
-    if (c.conditional === 'tags') return rel.showTagsColumn;
-    if (c.conditional === 'history') return rel.hasHistory;
-    return true;
-  });
-}
-
-/**
- * 관련 컬럼 중 실제로 렌더할(보이는) 컬럼을 계산한다.
- * actions 는 항상 표시하며, 그 외는 visibleColumns 집합에 포함될 때만 표시한다.
- */
-export function renderedColumns(
-  rel: ColumnRelevance,
-  visible: ReadonlySet<StoreColumnId>,
-): StoreColumn[] {
-  return relevantColumns(rel).filter(
-    (c) => c.id === 'actions' || visible.has(c.id),
-  );
-}
-
-// ---- localStorage 헬퍼 ----
-
-/** per-agent 컬럼 가시성 저장 키 접두. 최종 키: `xflow.store.columns.<agentId>`. */
-export const STORE_COLUMNS_STORAGE_PREFIX = 'xflow.store.columns.';
-
-/** per-agent localStorage 키를 구성한다. */
-export function storeColumnsStorageKey(agentId: string): string {
-  return `${STORE_COLUMNS_STORAGE_PREFIX}${agentId}`;
-}
-
-/** 숨길 수 있는(hideable) 모든 컬럼 id 집합 = 기본 전체 표시. */
-export function defaultVisibleColumns(): Set<StoreColumnId> {
-  return new Set(STORE_COLUMNS.filter((c) => c.hideable).map((c) => c.id));
-}
-
-/** 유효한 컬럼 id 인지 검사(저장된 무효 값 방어). */
-function isValidColumnId(v: unknown): v is StoreColumnId {
-  return (
-    typeof v === 'string' && STORE_COLUMNS.some((c) => c.id === v)
-  );
-}
-
-/**
- * per-agent 가시 컬럼 집합을 localStorage 에서 로드한다.
- * 저장값이 없거나 파싱 실패면 기본(전체 표시)을 반환한다.
- * 저장된 무효/미지정 id 는 무시하며, actions 는 항상 렌더되므로 집합에서 제외한다.
- */
-export function loadVisibleColumns(agentId: string): Set<StoreColumnId> {
-  if (typeof window === 'undefined' || !window.localStorage) {
-    return defaultVisibleColumns();
-  }
-  let raw: string | null = null;
-  try {
-    raw = window.localStorage.getItem(storeColumnsStorageKey(agentId));
-  } catch {
-    return defaultVisibleColumns();
-  }
-  if (raw === null) return defaultVisibleColumns();
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return defaultVisibleColumns();
-    const out = new Set<StoreColumnId>();
-    for (const v of parsed) {
-      if (isValidColumnId(v) && v !== 'actions') out.add(v);
-    }
-    return out;
-  } catch {
-    return defaultVisibleColumns();
-  }
-}
-
-/** per-agent 가시 컬럼 집합을 localStorage 에 저장한다(직렬화 가능한 배열로). */
-export function saveVisibleColumns(
-  agentId: string,
-  visible: ReadonlySet<StoreColumnId>,
-): void {
-  if (typeof window === 'undefined' || !window.localStorage) return;
-  try {
-    const arr = STORE_COLUMNS.filter(
-      (c) => c.hideable && visible.has(c.id),
-    ).map((c) => c.id);
-    window.localStorage.setItem(
-      storeColumnsStorageKey(agentId),
-      JSON.stringify(arr),
-    );
-  } catch {
-    // 저장 실패(용량 초과/프라이빗 모드 등)는 무시한다 — 세션 내 상태로만 동작.
-  }
-}
+import {
+  emptyColumnFilter,
+  type StoreColumn,
+  type StoreColumnId,
+} from './storeColumnsModel';
 
 // ---- 클릭 아웃사이드 훅 ----
 
@@ -276,11 +125,6 @@ export function ColumnSettingsMenu({
 
 // ---- Excel 유사 컬럼 필터 버튼 ----
 
-/** 빈 필터 상태(신규 컬럼 필터 초기값). */
-export function emptyColumnFilter(): ColumnFilter {
-  return { text: '', values: new Set<string>() };
-}
-
 /**
  * 컬럼 헤더의 Excel 유사 필터 버튼 + 드롭다운.
  *
@@ -313,7 +157,25 @@ export function ColumnFilterButton({
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
   useClickOutside(containerRef, open, () => setOpen(false));
+
+  // 팝오버가 테이블의 overflow(가로 스크롤) 영역에 잘리지 않도록 position:fixed 로 버튼 아래에
+  // 앵커링하고 뷰포트 안으로 클램프한다(오른쪽 끝 컬럼에서도 전체가 보이도록). SPEC-PANEL-SETTINGS-001
+  const popoverWidth = grouped ? 320 : 224; // w-80 / w-56 상당 px.
+  const [coords, setCoords] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
+  const toggleOpen = (): void => {
+    setOpen((o) => {
+      const next = !o;
+      if (next && btnRef.current) {
+        const r = btnRef.current.getBoundingClientRect();
+        const vw = typeof window !== 'undefined' ? window.innerWidth : popoverWidth + 16;
+        const left = Math.max(8, Math.min(r.left, vw - popoverWidth - 8));
+        setCoords({ left, top: r.bottom + 4 });
+      }
+      return next;
+    });
+  };
 
   const current = filter ?? emptyColumnFilter();
   const active = isColumnFilterActive(filter);
@@ -369,8 +231,9 @@ export function ColumnFilterButton({
   return (
     <span className="relative inline-flex" ref={containerRef}>
       <button
+        ref={btnRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggleOpen}
         aria-haspopup="true"
         aria-expanded={open}
         data-testid={`store-filter-${label}`}
@@ -393,11 +256,8 @@ export function ColumnFilterButton({
       </button>
       {open && (
         <div
-          className={cn(
-            'absolute left-0 top-full z-30 mt-1 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2 text-left shadow-lg',
-            // 태그처럼 "키=값" 이 긴 그룹 모드는 전체 값이 보이도록 폭을 넓힌다.
-            grouped ? 'w-80' : 'w-56',
-          )}
+          style={{ position: 'fixed', left: coords.left, top: coords.top, width: popoverWidth }}
+          className="z-50 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2 text-left shadow-lg"
         >
           <div className="relative mb-2">
             <input
@@ -555,8 +415,7 @@ export function ColumnHeader({
   filter,
   uniqueValues,
   onFilterChange,
-  keyExpanded,
-  onToggleKeyExpanded,
+  headerSlot,
   t,
 }: {
   column: StoreColumn;
@@ -566,9 +425,12 @@ export function ColumnHeader({
   uniqueValues: readonly string[];
   onFilterChange: (columnId: FilterColumnId, next: ColumnFilter) => void;
   /** 키 컬럼 전체 확장 상태(키 컬럼 헤더에서만 사용). */
-  keyExpanded?: boolean;
   /** 키 컬럼 전체 확장 토글(키 컬럼 헤더에서만 사용). */
-  onToggleKeyExpanded?: () => void;
+  /**
+   * 컬럼 헤더에 주입하는 커스텀 필터 어포던스(패널 설정 전용). 예: 태그 컬럼의 전용
+   * AND 태그 피커 팝오버. 미주입 시 헤더는 기존과 동일하게 렌더된다(회귀 0).
+   */
+  headerSlot?: React.ReactNode;
   t: TranslationFn;
 }) {
   const label = t(`agents.detail.store.${column.labelKey}`);
@@ -584,7 +446,6 @@ export function ColumnHeader({
       : undefined;
 
   // 키 컬럼 헤더에서 전체 키 확장/축약을 한 번에 토글(개별 행 토글 대체).
-  const showKeyToggle = column.id === 'key' && onToggleKeyExpanded !== undefined;
 
   return (
     <th
@@ -635,32 +496,8 @@ export function ColumnHeader({
             t={t}
           />
         )}
-        {showKeyToggle && (
-          <button
-            type="button"
-            onClick={onToggleKeyExpanded}
-            className={cn(
-              'inline-flex items-center rounded px-0.5 text-(--color-text-muted) transition-colors hover:text-(--color-text-primary)',
-              keyExpanded && 'text-(--color-text-primary)',
-            )}
-            aria-pressed={keyExpanded}
-            aria-label={t(
-              keyExpanded
-                ? 'agents.detail.store.keyCollapseColumnAriaLabel'
-                : 'agents.detail.store.keyExpandColumnAriaLabel',
-            )}
-            title={t(
-              keyExpanded
-                ? 'agents.detail.store.keyCollapseColumnAriaLabel'
-                : 'agents.detail.store.keyExpandColumnAriaLabel',
-            )}
-          >
-            <ChevronDown
-              className={cn('h-3 w-3 transition-transform', keyExpanded && 'rotate-180')}
-              aria-hidden="true"
-            />
-          </button>
-        )}
+        {/* 패널 설정 전용: 컬럼 헤더 커스텀 슬롯(태그 컬럼의 전용 AND 태그 피커). */}
+        {headerSlot}
       </span>
     </th>
   );

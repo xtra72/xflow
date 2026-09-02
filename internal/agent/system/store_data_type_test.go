@@ -13,7 +13,7 @@ import (
 
 // @spec SPEC-STORE-003 v0.3.0
 // store_data_type_test.go — DataType, RegistrationType, RegistrationSource enum과
-// inferDataType / matchesDataType / validateDataTypeEnum / validateMetricType /
+// inferDataType / matchesDataType / validateDataTypeEnum / validateField /
 // validateRegistrationType / isJSONMarshalable helper 들에 대한 단위 테스트.
 // 100% 분기 커버리지를 목표로 한다.
 
@@ -262,65 +262,65 @@ func TestValidateDataTypeEnum_Invalid_CaseSensitive(t *testing.T) {
 }
 
 // =============================================================================
-// G. validateMetricType helper (M8)
+// G. validateField helper (M8)
 // =============================================================================
 
-// TestValidateMetricType_ValidAlphaNum 은 정규식을 만족하는 metric_type 들이 그대로 통과하는지 확인한다.
-func TestValidateMetricType_ValidAlphaNum(t *testing.T) {
+// TestValidateField_ValidAlphaNum 은 정규식을 만족하는 field 들이 그대로 통과하는지 확인한다.
+func TestValidateField_ValidAlphaNum(t *testing.T) {
 	cases := []string{"temperature", "humidity", "pressure_v2", "abc-123"}
 	for _, v := range cases {
 		t.Run(v, func(t *testing.T) {
-			out, err := validateMetricType(v)
+			out, err := validateField(v)
 			require.NoError(t, err)
 			assert.Equal(t, v, out)
 		})
 	}
 }
 
-// TestValidateMetricType_DefaultUnknown_EmptyToUnknown 는 빈 문자열이 "unknown" 으로 normalize 되는지 확인한다.
-func TestValidateMetricType_DefaultUnknown_EmptyToUnknown(t *testing.T) {
-	out, err := validateMetricType("")
+// TestValidateField_DefaultUnknown_EmptyToUnknown 는 빈 문자열이 "unknown" 으로 normalize 되는지 확인한다.
+func TestValidateField_DefaultUnknown_EmptyToUnknown(t *testing.T) {
+	out, err := validateField("")
 	require.NoError(t, err)
 	assert.Equal(t, "unknown", out)
 }
 
-// TestValidateMetricType_InvalidDot 는 점(.) 이 포함된 문자열이 거부되는지 확인한다.
-func TestValidateMetricType_InvalidDot(t *testing.T) {
-	out, err := validateMetricType("room.temp")
+// TestValidateField_InvalidDot 는 점(.) 이 포함된 문자열이 거부되는지 확인한다.
+func TestValidateField_InvalidDot(t *testing.T) {
+	out, err := validateField("room.temp")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidMetricType))
+	assert.True(t, errors.Is(err, ErrInvalidField))
 	assert.Equal(t, "", out)
 }
 
-// TestValidateMetricType_InvalidSpace 는 공백이 포함된 문자열이 거부되는지 확인한다.
-func TestValidateMetricType_InvalidSpace(t *testing.T) {
-	out, err := validateMetricType("room temp")
+// TestValidateField_InvalidSpace 는 공백이 포함된 문자열이 거부되는지 확인한다.
+func TestValidateField_InvalidSpace(t *testing.T) {
+	out, err := validateField("room temp")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidMetricType))
+	assert.True(t, errors.Is(err, ErrInvalidField))
 	assert.Equal(t, "", out)
 }
 
-// TestValidateMetricType_InvalidColon 은 콜론(:) 이 포함된 문자열이 거부되는지 확인한다.
-func TestValidateMetricType_InvalidColon(t *testing.T) {
-	out, err := validateMetricType("room:temp")
+// TestValidateField_InvalidColon 은 콜론(:) 이 포함된 문자열이 거부되는지 확인한다.
+func TestValidateField_InvalidColon(t *testing.T) {
+	out, err := validateField("room:temp")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidMetricType))
+	assert.True(t, errors.Is(err, ErrInvalidField))
 	assert.Equal(t, "", out)
 }
 
-// TestValidateMetricType_InvalidUnicode 는 유니코드(한글) 가 거부되는지 확인한다.
-func TestValidateMetricType_InvalidUnicode(t *testing.T) {
-	out, err := validateMetricType("온도")
+// TestValidateField_InvalidUnicode 는 유니코드(한글) 가 거부되는지 확인한다.
+func TestValidateField_InvalidUnicode(t *testing.T) {
+	out, err := validateField("온도")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidMetricType))
+	assert.True(t, errors.Is(err, ErrInvalidField))
 	assert.Equal(t, "", out)
 }
 
-// TestValidateMetricType_InvalidLeadingDash 는 정규식 ^[a-zA-Z0-9_-]+$ 가
+// TestValidateField_InvalidLeadingDash 는 정규식 ^[a-zA-Z0-9_-]+$ 가
 // 선행 dash 를 허용하므로 "-leading" 도 통과한다는 점을 명문화한다.
 // 이는 design choice 이며 의도된 동작이다.
-func TestValidateMetricType_InvalidLeadingDash(t *testing.T) {
-	out, err := validateMetricType("-leading")
+func TestValidateField_InvalidLeadingDash(t *testing.T) {
+	out, err := validateField("-leading")
 	require.NoError(t, err, "정규식이 leading dash 를 허용함 (design choice)")
 	assert.Equal(t, "-leading", out)
 }
@@ -437,7 +437,7 @@ func TestCheckKeyAllowed_AutoRegister_Concurrent_SameType(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, DataTypeString, meta.DataType)
 	assert.Equal(t, SourceAuto, meta.Source)
-	assert.Equal(t, "unknown", meta.MetricType)
+	assert.Equal(t, "unknown", meta.Field)
 }
 
 // @spec SPEC-STORE-003 v0.4.0 (동적=string 정책 도입에 따른 갱신)
@@ -528,10 +528,10 @@ func TestCheckKeyAllowed_ManualMode_Reject(t *testing.T) {
 		WithRegistrationType(RegistrationManual),
 		WithStaticKeys(map[string]StaticKeyMeta{
 			"allowed_key": {
-				DataType:   DataTypeInt,
-				MetricType: "gauge",
-				Tags:       map[string]string{},
-				Source:     SourceManual,
+				DataType: DataTypeInt,
+				Field:    "gauge",
+				Tags:     map[string]string{},
+				Source:   SourceManual,
 			},
 		}),
 	)

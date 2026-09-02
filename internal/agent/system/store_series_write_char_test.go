@@ -33,7 +33,7 @@ func TestChar_SeriesWrite_DynamicStringPolicy(t *testing.T) {
 	// 메타 없는 쓰기 = 기본 시리즈 (key, "unknown", {}).
 	require.NoError(t, adapter.SetWithMeta(ctx, "dyn", 42, StoreWriteMeta{}))
 
-	seriesKey := EncodeSeriesKey(SeriesID{Key: "dyn"})
+	seriesKey := EncodeSeriesKey(SeriesID{Measurement: "dyn"})
 	meta, ok := sa.StaticKeyMetaFor(seriesKey)
 	require.True(t, ok, "기본 시리즈가 시리즈 인코딩 키로 등록되어야 한다")
 	assert.Equal(t, DataTypeString, meta.DataType, "동적 키는 string 으로 자동 등록")
@@ -54,8 +54,8 @@ func TestChar_SeriesWrite_ExplicitDataTypeCoercion(t *testing.T) {
 	adapter, _ := newMetaAdapterWithAgent(t, "default")
 
 	require.NoError(t, adapter.SetWithMeta(ctx, "temp", 22, StoreWriteMeta{
-		DataType:   "float",
-		MetricType: "temperature",
+		DataType: "float",
+		Field:    "temperature",
 	}))
 
 	val, found, err := adapter.GetSeries(ctx, "temp", "temperature", nil)
@@ -70,11 +70,11 @@ func TestChar_SeriesWrite_ManualRejectionNoTrace(t *testing.T) {
 	ctx := context.Background()
 
 	// manual 모드 + 정적 시리즈 (room, temperature, {}) 하나만 등록.
-	allowed := EncodeSeriesKey(SeriesID{Key: "room", MetricType: "temperature"})
+	allowed := EncodeSeriesKey(SeriesID{Measurement: "room", Field: "temperature"})
 	sa := NewStoreAgent(
 		WithRegistrationType(RegistrationManual),
 		WithStaticKeys(map[string]StaticKeyMeta{
-			allowed: {DataType: DataTypeInt, MetricType: "temperature", Tags: map[string]string{}, Source: SourceManual},
+			allowed: {DataType: DataTypeInt, Field: "temperature", Tags: map[string]string{}, Source: SourceManual},
 		}),
 		WithMaxHistorySize(10),
 	)
@@ -86,11 +86,11 @@ func TestChar_SeriesWrite_ManualRejectionNoTrace(t *testing.T) {
 	adapter := NewLazyNodeStoreAdapterWithAgent(storeResolver, agentResolver, "default")
 
 	// 미등록 시리즈 (room, humidity, {}) 쓰기 → 거부.
-	err := adapter.SetWithMeta(ctx, "room", 55, StoreWriteMeta{MetricType: "humidity"})
+	err := adapter.SetWithMeta(ctx, "room", 55, StoreWriteMeta{Field: "humidity"})
 	require.ErrorIs(t, err, ErrKeyNotAllowed, "manual 미등록 시리즈 쓰기는 거부되어야 한다")
 
 	// 거부된 시리즈에 흔적이 없어야 한다.
-	rejected := EncodeSeriesKey(SeriesID{Key: "room", MetricType: "humidity"})
+	rejected := EncodeSeriesKey(SeriesID{Measurement: "room", Field: "humidity"})
 	store := sa.ForNamespace("default")
 	_, getErr := store.Get(ctx, rejected)
 	require.ErrorIs(t, getErr, ErrKeyNotFound, "거부된 시리즈는 엔트리가 없어야 한다")

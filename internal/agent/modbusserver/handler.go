@@ -30,14 +30,20 @@ type ConnectionHandler interface {
 type ModbusHandler struct {
 	deviceManager *DeviceManager
 	msgCh         chan<- map[string]any
+	notifyOnWrite bool       // 외부 통신(와이어 쓰기) register_change 알림 발행 여부 (opt-in, 기본 false)
+	obs           *serverObs // 관측성 배선(클라이언트 레지스트리 + 프레임 로그 토글); nil 가능
 	logger        *slog.Logger
 }
 
 // NewModbusHandler creates a new ModbusHandler with a DeviceManager for multi-device routing.
-func NewModbusHandler(deviceManager *DeviceManager, msgCh chan<- map[string]any, logger *slog.Logger) *ModbusHandler {
+// notifyOnWrite 가 true 일 때만 원격 마스터의 와이어 쓰기에 대해 register_change 알림을 발행한다.
+// obs 는 클라이언트 레지스트리 기록과 프레임 로그를 담당하며 nil 이어도 안전하다.
+func NewModbusHandler(deviceManager *DeviceManager, msgCh chan<- map[string]any, notifyOnWrite bool, obs *serverObs, logger *slog.Logger) *ModbusHandler {
 	return &ModbusHandler{
 		deviceManager: deviceManager,
 		msgCh:         msgCh,
+		notifyOnWrite: notifyOnWrite,
+		obs:           obs,
 		logger:        logger,
 	}
 }
@@ -47,6 +53,9 @@ func NewModbusHandler(deviceManager *DeviceManager, msgCh chan<- map[string]any,
 // RequestHandler based on UnitID, and writing responses until the context
 // is cancelled or the connection errors.
 func (mh *ModbusHandler) HandleConnection(ctx context.Context, conn net.Conn) {
+	// 연결당 상수인 원격 주소를 한 번만 구한다(레지스트리 기록/프레임 로그에 재사용).
+	remoteAddr := conn.RemoteAddr().String()
+
 	for {
 		// Check context cancellation
 		select {
@@ -86,6 +95,17 @@ func (mh *ModbusHandler) HandleConnection(ctx context.Context, conn net.Conn) {
 			return
 		}
 
+		// RX 프레임 로그 (log_frames): 전체 인바운드 ADU = MBAP 헤더(7) + PDU.
+		if mh.obs.framesOn() {
+			inADU := make([]byte, 0, len(header)+len(pdu))
+			inADU = append(inADU, header...)
+			inADU = append(inADU, pdu...)
+			logFrame(mh.logger, true, mh.obs.rawOn(), "RX", remoteAddr, unitID, pdu[0], inADU)
+		}
+
+		// 클라이언트 레지스트리에 접근 unit_id 기록 (TCP 전용; obs/registry nil 이면 no-op).
+		mh.obs.record(remoteAddr, unitID)
+
 		// Step 4: Validate ProtocolID
 		if protocolID != modbus.MBAPProtocolID {
 			mh.logWarn("invalid protocol ID", "protocolID", protocolID)
@@ -99,7 +119,7 @@ func (mh *ModbusHandler) HandleConnection(ctx context.Context, conn net.Conn) {
 
 			if unitID == 0 {
 				// Broadcast: UnitID=0
-				respPDU = mh.handleBroadcast(pdu, fc, conn.RemoteAddr().String())
+				respPDU = mh.handleBroadcast(pdu, fc, remoteAddr)
 			} else {
 				// Normal: lookup device by UnitID
 				dev := mh.deviceManager.GetDevice(unitID)
@@ -108,7 +128,7 @@ func (mh *ModbusHandler) HandleConnection(ctx context.Context, conn net.Conn) {
 						"unitID", unitID)
 					continue
 				}
-				respPDU = mh.handleDeviceRequest(dev, pdu, fc, conn.RemoteAddr().String())
+				respPDU = mh.handleDeviceRequest(dev, pdu, fc, remoteAddr)
 			}
 		}
 
@@ -125,6 +145,11 @@ func (mh *ModbusHandler) HandleConnection(ctx context.Context, conn net.Conn) {
 		respFrame[6] = unitID
 		copy(respFrame[7:], respPDU)
 
+		// TX 프레임 로그 (log_frames): 전체 아웃바운드 ADU = MBAP 응답 프레임.
+		if mh.obs.framesOn() {
+			logFrame(mh.logger, true, mh.obs.rawOn(), "TX", remoteAddr, unitID, respPDU[0], respFrame)
+		}
+
 		// Step 7: Write response
 		_, err = conn.Write(respFrame)
 		if err != nil {
@@ -138,16 +163,67 @@ func (mh *ModbusHandler) HandleConnection(ctx context.Context, conn net.Conn) {
 
 // handleDeviceRequest dispatches a request to a specific device.
 func (mh *ModbusHandler) handleDeviceRequest(dev *Device, pdu []byte, fc byte, remoteAddr string) []byte {
+	var respPDU []byte
 	if isWriteFC(fc) {
 		dev.Stats.RecordWrite()
-		respPDU, cs := dev.ReqHandler.HandleWriteRequest(pdu, remoteAddr)
+		var cs *ChangeSet
+		respPDU, cs = dev.ReqHandler.HandleWriteRequest(pdu, remoteAddr)
 		if cs != nil {
 			mh.sendChangeNotification(cs, remoteAddr, dev.UnitID)
 		}
-		return respPDU
+	} else {
+		dev.Stats.RecordRead()
+		respPDU = dev.ReqHandler.HandleRequest(pdu)
 	}
-	dev.Stats.RecordRead()
-	return dev.ReqHandler.HandleRequest(pdu)
+
+	// 디바이스 상태 로그 (에이전트 로그 레벨이 유일한 제어): 요청별 활동은 DEBUG,
+	// 예외 응답(디바이스 에러)은 WARN 으로 남긴다. 별도 config 토글은 없다.
+	mh.logDeviceActivity(dev, fc, pdu, respPDU)
+	return respPDU
+}
+
+// logDeviceActivity 는 디바이스 요청 결과를 graduated slog 레벨로 로그한다.
+//   - WARN: 응답이 MODBUS 예외 PDU 이면 디바이스 에러로 간주하고 ErrorCount 를 올린다.
+//   - DEBUG: 정상 요청별 활동(unit_id + fc + area/address). 포매팅 비용을 피하려고
+//     로거 레벨이 DEBUG 일 때만 계산한다.
+func (mh *ModbusHandler) logDeviceActivity(dev *Device, fc byte, pdu, respPDU []byte) {
+	if mh.logger == nil {
+		return
+	}
+
+	// 예외 응답 감지: 예외 PDU 는 [fc|0x80, exCode] 형식(최상위 비트 set).
+	if len(respPDU) >= 2 && respPDU[0]&0x80 != 0 {
+		dev.Stats.RecordError()
+		mh.logger.Warn("modbus-gateway: device error",
+			"unit_id", dev.UnitID, "fc", fmt.Sprintf("0x%02X", fc), "exception", respPDU[1])
+		return
+	}
+
+	if mh.logger.Enabled(context.Background(), slog.LevelDebug) {
+		var addr uint16
+		if len(pdu) >= 3 {
+			addr = binary.BigEndian.Uint16(pdu[1:3])
+		}
+		mh.logger.Debug("modbus-gateway: device request",
+			"unit_id", dev.UnitID, "fc", fmt.Sprintf("0x%02X", fc),
+			"area", areaForFC(fc), "address", addr)
+	}
+}
+
+// areaForFC 는 function code 로부터 레지스터 영역 이름을 반환한다(로그용).
+func areaForFC(fc byte) string {
+	switch fc {
+	case modbus.FC01ReadCoils, modbus.FC05WriteSingleCoil, modbus.FC15WriteMultipleCoils:
+		return "coils"
+	case modbus.FC02ReadDiscreteInputs:
+		return "discrete_inputs"
+	case modbus.FC03ReadHoldingRegisters, modbus.FC06WriteSingleRegister, modbus.FC16WriteMultipleRegisters:
+		return "holding_registers"
+	case modbus.FC04ReadInputRegisters:
+		return "input_registers"
+	default:
+		return "unknown"
+	}
 }
 
 // handleBroadcast handles broadcast requests (UnitID=0).
@@ -190,7 +266,14 @@ func isWriteFC(fc byte) bool {
 }
 
 // sendChangeNotification sends a register change notification to msgCh (non-blocking).
+// notify_on_write 가 false(기본)이면 와이어 쓰기 알림을 발행하지 않는다(opt-in).
+// 이 게이트는 와이어 경로(외부 마스터 쓰기)에만 적용되며, 플로우 입력 경로의
+// sendChangeEvent(set_*/bulk_write)에는 영향을 주지 않는다.
 func (mh *ModbusHandler) sendChangeNotification(cs *ChangeSet, remoteAddr string, unitID byte) {
+	if !mh.notifyOnWrite {
+		return
+	}
+
 	notification := map[string]any{
 		"type":       "register_change",
 		"area":       cs.Area,

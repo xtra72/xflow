@@ -14,6 +14,7 @@ import { useTargetContext } from '@/lib/remote/TargetContext';
 import { remoteLogsStreamUrl } from '@/services/api/remoteService';
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import type { LogLevel } from '@/pages/monitoring/LogViewer';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 
 const LOG_COLOR_PRESETS = ['#3b82f6','#8b5cf6','#06b6d4','#10b981','#f59e0b','#ef4444','#ec4899','#6b7280'];
 
@@ -79,6 +80,8 @@ export default function LogPanel({
   onConfigChange,
   onTitleChange,
 }: LogPanelProps) {
+  const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const { t } = useTranslation();
   const maxLines = (config.maxLines as number) || 100;
   const panelColor = config.panelColor as string | undefined;
@@ -280,15 +283,18 @@ export default function LogPanel({
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-6 shadow">
       {/* 헤더: 타이틀 + 필터 + 설정 */}
       <div className="mb-3 flex shrink-0 items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <FileText className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-          <h3
-            className="truncate text-lg font-semibold text-(--color-text-primary)"
-            style={acColor('header') ? { color: acColor('header')! } : undefined}
-          >
-            {title}
-          </h3>
-        </div>
+        {/* 필터/토글은 이 행에 함께 있으므로 타이틀 묶음만 숨긴다(컨트롤 유실 방지). */}
+        {showTitle && (
+          <div className="flex min-w-0 items-center gap-2">
+            <FileText className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+            <h3
+              className="truncate text-lg font-semibold text-(--color-text-primary)"
+              style={{ ...(acColor('header') ? { color: acColor('header')! } : undefined), ...titleStyle }}
+            >
+              {title}
+            </h3>
+          </div>
+        )}
         <div className="flex shrink-0 items-center gap-2">
           {/* 레벨 필터 */}
           <select

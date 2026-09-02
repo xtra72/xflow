@@ -23,7 +23,7 @@ const ENTRIES: StoreEntry[] = [
     key: 'outdoor:humidity',
     value: 55,
     namespace: 'default',
-    metric_type: 'humidity',
+    field: 'humidity',
     tags: { room: '2' },
     updated_at: '2026-06-10T10:00:00.000Z',
   },
@@ -31,16 +31,16 @@ const ENTRIES: StoreEntry[] = [
     key: 'indoor:temp',
     value: 21.5,
     namespace: 'zone-a',
-    metric_type: 'temperature',
+    field: 'temperature',
     tags: { room: '1' },
     updated_at: '2026-06-12T10:00:00.000Z',
   },
   {
-    // 같은 key 의 다른 metric 시리즈 (보조 정렬 결정성 검증용).
+    // 같은 key 의 다른 field 시리즈 (보조 정렬 결정성 검증용).
     key: 'indoor:temp',
     value: 99,
     namespace: 'zone-b',
-    metric_type: 'apparent_temperature',
+    field: 'apparent_temperature',
     tags: {},
     updated_at: '2026-06-11T10:00:00.000Z',
   },
@@ -48,7 +48,7 @@ const ENTRIES: StoreEntry[] = [
     key: 'dynamic:count',
     value: 7,
     namespace: '',
-    metric_type: 'unknown',
+    field: 'unknown',
     tags: {},
     updated_at: '2026-06-09T10:00:00.000Z',
   },
@@ -77,12 +77,12 @@ describe('filterEntries', () => {
     expect(out.every((e) => (e.key as string).startsWith('indoor'))).toBe(true);
   });
 
-  it('metric_type 으로 필터한다 (key 에 없는 텍스트)', () => {
+  it('field 으로 필터한다 (key 에 없는 텍스트)', () => {
     const out = filterEntries(ENTRIES, 'humidity');
     expect(out.map((e) => e.key)).toEqual(['outdoor:humidity']);
   });
 
-  it('metric 누락 엔트리는 "unknown" 으로 검색된다', () => {
+  it('field 누락 엔트리는 "unknown" 으로 검색된다', () => {
     const out = filterEntries(ENTRIES, 'unknown');
     expect(out.map((e) => e.key)).toEqual(['dynamic:count']);
   });
@@ -114,8 +114,8 @@ describe('sortEntries', () => {
       'indoor:temp',
       'outdoor:humidity',
     ]);
-    // 같은 key 는 metric 보조 정렬로 결정적: apparent_temperature < temperature.
-    expect(out.map((e) => e.metric_type)).toEqual([
+    // 같은 key 는 field 보조 정렬로 결정적: apparent_temperature < temperature.
+    expect(out.map((e) => e.field)).toEqual([
       'unknown',
       'apparent_temperature',
       'temperature',
@@ -133,13 +133,13 @@ describe('sortEntries', () => {
     ]);
   });
 
-  it('metric 오름차순 정렬', () => {
+  it('field 오름차순 정렬', () => {
     const out = sortEntries(
       ENTRIES,
-      { column: 'metric', direction: 'asc' },
+      { column: 'field', direction: 'asc' },
       ctx(),
     );
-    expect(out.map((e) => e.metric_type)).toEqual([
+    expect(out.map((e) => e.field)).toEqual([
       'apparent_temperature',
       'humidity',
       'temperature',
@@ -153,7 +153,7 @@ describe('sortEntries', () => {
       { column: 'binding', direction: 'asc' },
       ctx(),
     );
-    // 정적 키(indoor:temp) 2건이 앞, 나머지 동적이 뒤. 동률은 key→metric 보조 정렬.
+    // 정적 키(indoor:temp) 2건이 앞, 나머지 동적이 뒤. 동률은 key→field 보조 정렬.
     const isStaticSeq = out.map((e) => STATIC_KEYS.has(e.key as string));
     expect(isStaticSeq).toEqual([true, true, false, false]);
   });
@@ -204,7 +204,7 @@ describe('sortEntries', () => {
 
 describe('nextSortState', () => {
   it('다른 컬럼 클릭 시 해당 컬럼 오름차순으로 전환', () => {
-    const cur: SortState = { column: 'metric', direction: 'desc' };
+    const cur: SortState = { column: 'field', direction: 'desc' };
     expect(nextSortState(cur, 'key')).toEqual({
       column: 'key',
       direction: 'asc',
@@ -238,7 +238,7 @@ const FILTER_ENTRIES: StoreEntry[] = [
     key: 'indoor:temp',
     value: 21.5,
     namespace: 'zone-a',
-    metric_type: 'temperature',
+    field: 'temperature',
     tags: { room: '1', floor: '2' },
     ttl: '10m',
   },
@@ -246,14 +246,14 @@ const FILTER_ENTRIES: StoreEntry[] = [
     key: 'outdoor:humidity',
     value: 55,
     namespace: 'default',
-    metric_type: 'humidity',
+    field: 'humidity',
     tags: { room: '2' },
   },
   {
     key: 'dynamic:count',
     value: 7,
     namespace: '',
-    metric_type: 'unknown',
+    field: 'unknown',
     tags: {},
   },
 ];
@@ -270,16 +270,16 @@ function at(i: number): StoreEntry {
 }
 
 describe('columnCellValues', () => {
-  it('key/metric/value/namespace 단일 값을 반환한다', () => {
+  it('key/field/value/namespace 단일 값을 반환한다', () => {
     const e = at(0);
     expect(columnCellValues(e, 'key', FILTER_CTX)).toEqual(['indoor:temp']);
-    expect(columnCellValues(e, 'metric', FILTER_CTX)).toEqual(['temperature']);
+    expect(columnCellValues(e, 'field', FILTER_CTX)).toEqual(['temperature']);
     expect(columnCellValues(e, 'value', FILTER_CTX)).toEqual(['21.5']);
     expect(columnCellValues(e, 'namespace', FILTER_CTX)).toEqual(['zone-a']);
   });
 
-  it('metric 누락은 unknown 으로 정규화된다', () => {
-    expect(columnCellValues(at(2), 'metric', FILTER_CTX)).toEqual([
+  it('field 누락은 unknown 으로 정규화된다', () => {
+    expect(columnCellValues(at(2), 'field', FILTER_CTX)).toEqual([
       'unknown',
     ]);
   });
@@ -312,8 +312,8 @@ describe('columnCellValues', () => {
 });
 
 describe('uniqueColumnValues', () => {
-  it('metric 고유 값을 정렬해 반환한다', () => {
-    expect(uniqueColumnValues(FILTER_ENTRIES, 'metric', FILTER_CTX)).toEqual([
+  it('field 고유 값을 정렬해 반환한다', () => {
+    expect(uniqueColumnValues(FILTER_ENTRIES, 'field', FILTER_CTX)).toEqual([
       'humidity',
       'temperature',
       'unknown',
@@ -337,19 +337,19 @@ describe('uniqueColumnValues', () => {
 describe('entryPassesColumnFilter', () => {
   it('텍스트 부분일치(대소문자 무시)', () => {
     const f = filter({ text: 'TEMP' });
-    expect(entryPassesColumnFilter(at(0), 'metric', f, FILTER_CTX)).toBe(true);
-    expect(entryPassesColumnFilter(at(1), 'metric', f, FILTER_CTX)).toBe(false);
+    expect(entryPassesColumnFilter(at(0), 'field', f, FILTER_CTX)).toBe(true);
+    expect(entryPassesColumnFilter(at(1), 'field', f, FILTER_CTX)).toBe(false);
   });
 
   it('값 체크박스: 선택 없으면 전체 통과', () => {
     const f = filter({});
-    expect(entryPassesColumnFilter(at(0), 'metric', f, FILTER_CTX)).toBe(true);
+    expect(entryPassesColumnFilter(at(0), 'field', f, FILTER_CTX)).toBe(true);
   });
 
   it('값 체크박스: 선택된 값 집합에 포함될 때만 통과', () => {
     const f = filter({ values: new Set(['humidity']) });
-    expect(entryPassesColumnFilter(at(0), 'metric', f, FILTER_CTX)).toBe(false);
-    expect(entryPassesColumnFilter(at(1), 'metric', f, FILTER_CTX)).toBe(true);
+    expect(entryPassesColumnFilter(at(0), 'field', f, FILTER_CTX)).toBe(false);
+    expect(entryPassesColumnFilter(at(1), 'field', f, FILTER_CTX)).toBe(true);
   });
 
   it('텍스트 AND 값: 둘 다 만족해야 통과', () => {
@@ -391,7 +391,7 @@ describe('applyColumnFilters', () => {
       FILTER_ENTRIES,
       {
         binding: filter({ values: new Set(['정적']) }),
-        metric: filter({ text: 'temp' }),
+        field: filter({ text: 'temp' }),
       },
       FILTER_CTX,
     );
@@ -401,7 +401,7 @@ describe('applyColumnFilters', () => {
   it('빈(비활성) 필터는 무시된다', () => {
     const out = applyColumnFilters(
       FILTER_ENTRIES,
-      { metric: filter({}), namespace: filter({ text: 'zone' }) },
+      { field: filter({}), namespace: filter({ text: 'zone' }) },
       FILTER_CTX,
     );
     expect(out.map((e) => e.key)).toEqual(['indoor:temp']);

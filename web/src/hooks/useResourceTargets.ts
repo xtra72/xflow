@@ -96,7 +96,7 @@ function mirrorToDevice(r: MirroredResource): DeviceInfo {
 
 /** 미러 쿼리 결과를 목록 타깃 결과로 어댑트한다. */
 function adaptMirror<T>(
-  mirror: ReturnType<typeof useNodeMirror>,
+  mirror: { data?: MirroredResource[]; isLoading: boolean; error: unknown; refetch: () => unknown },
   map: (r: MirroredResource) => T,
 ): ListTargetResult<T> {
   const rows = mirror.data ?? [];
@@ -174,13 +174,27 @@ function useRemoteListSources<T>(
   // 미러 폴백: 라이브가 비활성(노드 미-ready)이거나 실패했을 때만 발행한다.
   const mirror = useNodeMirror(id, kind, remote && (!nodeReady || liveErrored));
 
+  // 쿼리 객체 자체는 렌더마다 새 참조라 필드 단위로 분해해 메모 의존성을 안정화한다
+  // (refetch 는 react-query 옵저버에 바인딩된 안정 참조).
+  const { data: liveData, isLoading: liveLoading, error: liveError, refetch: liveRefetch } = live;
+  const { data: mirrorData, isLoading: mirrorLoading, error: mirrorError, refetch: mirrorRefetch } = mirror;
   const liveResult = useMemo(
-    () => adaptLive(live as { data?: T[]; isLoading: boolean; error: unknown; refetch: () => unknown }),
-    [live.data, live.isLoading, live.error],
+    () =>
+      adaptLive<T>({
+        data: liveData as T[] | undefined,
+        isLoading: liveLoading,
+        error: liveError,
+        refetch: liveRefetch,
+      }),
+    [liveData, liveLoading, liveError, liveRefetch],
   );
   const mirrorResult = useMemo(
-    () => adaptMirror(mirror, mapMirror),
-    [mirror.data, mirror.isLoading, mirror.error],
+    () =>
+      adaptMirror(
+        { data: mirrorData, isLoading: mirrorLoading, error: mirrorError, refetch: mirrorRefetch },
+        mapMirror,
+      ),
+    [mirrorData, mirrorLoading, mirrorError, mirrorRefetch, mapMirror],
   );
   // 폴백 조건: 라이브 에러 OR 노드 미-ready(라이브 비활성).
   const result = combineRemote(liveResult, mirrorResult, liveErrored || !nodeReady);

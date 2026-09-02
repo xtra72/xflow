@@ -8,8 +8,8 @@ import type { ConfigField, ConfigSchema } from '@/types/node';
 export const AGENT_TYPES = [
   { value: 'mqtt-client', label: 'MQTT' },
   { value: 'thingplus-gateway', label: 'Thingplus Gateway' },
-  { value: 'modbus-tcp', label: 'Modbus TCP' },
-  { value: 'modbus-tcp-server', label: 'Modbus TCP Server' },
+  { value: 'modbus-client', label: 'Modbus Client' },
+  { value: 'modbus-gateway', label: 'Modbus Gateway' },
   { value: 'http', label: 'HTTP Receiver' },
   { value: 'http-sender', label: 'HTTP Sender' },
   { value: 'influxdb', label: 'InfluxDB' },
@@ -19,7 +19,10 @@ export const AGENT_TYPES = [
   { value: 'lg_hvacr02', label: 'LG HVACR-02 Capture' },
   { value: 'lg_hvacr01', label: 'LG HVACR-01 Capture' },
   { value: 'century_hvacr01', label: 'Century HVACR-01 (passive)' },
+  { value: 'chirpstack-client', label: 'ChirpStack LoRaWAN (passive)' },
+  { value: 'xsfm', label: 'Subway Facilities Manager' },
   { value: 'store', label: 'Store' },
+  { value: 'sysmetrics', label: 'System Monitor' },
   { value: 'serial', label: 'Serial' },
   { value: 'tcp-server', label: 'TCP Server' },
   { value: 'tcp-client', label: 'TCP Client' },
@@ -42,6 +45,87 @@ const MQTT_FIELDS: ConfigField[] = [
   { name: 'clean_session', type: 'boolean', label: '클린 세션', default: true },
   { name: 'buffer_size', type: 'number', label: '버퍼 크기', default: 256 },
   { name: 'max_pub_topics', type: 'number', label: '발행 토픽 최대 추적 수', default: 100, description: '초과 시 가장 오래된 토픽 삭제' },
+];
+
+// ──────────────────────────────────────────────────────────────────────────
+// ChirpStack LoRaWAN (SPEC-CHIRPSTACK-001, passive MQTT receiver)
+// ChirpStack MQTT integration 이벤트를 패시브로 수신하는 에이전트.
+// MQTT_FIELDS 의 트랜스포트 서브셋을 미러링하며(발행 노브 제외), 백엔드
+// ChirpStackConfig 의 Transport.Options 키와 1:1 매핑된다
+// (internal/agent/chirpstack/config.go). comm-state 노브
+// (emit_comm_state / comm_report_interval / offline_threshold)는 M5 범위.
+// 필드에 section 이 없으므로 DynamicForm(flat) 으로 렌더링된다(mqtt-client 와 동일).
+// ──────────────────────────────────────────────────────────────────────────
+const CHIRPSTACK_FIELDS: ConfigField[] = [
+  { name: 'broker', type: 'string', label: '브로커 주소', required: true, default: 'tcp://localhost:1883', description: 'MQTT 브로커 주소 (예: tcp://localhost:1883)' },
+  { name: 'client_id', type: 'string', label: '클라이언트 ID', description: '빈 값이면 자동 생성' },
+  { name: 'username', type: 'string', label: '사용자명', sensitive: true },
+  { name: 'password', type: 'string', label: '비밀번호', sensitive: true },
+  { name: 'topics', type: 'string', label: '구독 토픽', default: 'application/#', description: '쉼표로 구분, ChirpStack application 이벤트 (예: application/#)' },
+  { name: 'qos', type: 'select', label: 'QoS', options: ['0', '1', '2'], default: '1', description: '메시지 전달 보증 레벨' },
+  { name: 'keep_alive_sec', type: 'number', label: 'Keep Alive (초)', default: 60 },
+  { name: 'auto_reconnect', type: 'boolean', label: '자동 재연결', default: true },
+  { name: 'clean_session', type: 'boolean', label: '클린 세션', default: true },
+  { name: 'buffer_size', type: 'number', label: '수신 버퍼 크기', default: 1024 },
+  { name: 'connect_timeout_sec', type: 'number', label: '연결 타임아웃(초)', default: 10 },
+  // 측정치 방출 모드 (opt-in). 기본값은 현행 동작(측정치별 fan-out)과 동일하다.
+  {
+    name: 'measurement_emit_mode',
+    type: 'select',
+    label: '측정치 방출 모드',
+    options: ['per_measurement', 'combined'],
+    default: 'per_measurement',
+    description:
+      'per_measurement: 업링크 1건의 측정치마다 메시지 1개를 만듭니다 (예: 온도/습도 → 메시지 2개, payload.value 에 값 1개, metadata.measurement 에 측정치 이름). combined: 업링크 1건을 메시지 1개로 합칩니다 (예: 온도/습도 → 메시지 1개, payload 에 {"temperature": 29.8, "humidity": 55.2} 형태로 모든 측정치, metadata.measurement 없음). 시간/디바이스/태그는 두 모드가 동일합니다.',
+  },
+  // 타임스탬프 소스 (opt-in). 기본값은 현행 동작(업링크 time 필드)과 동일하다.
+  {
+    name: 'timestamp_source',
+    type: 'select',
+    label: '타임스탬프 소스',
+    options: ['uplink', 'server'],
+    default: 'uplink',
+    description:
+      'uplink: 업링크에 실려 온 time 값(디바이스/게이트웨이가 찍은 시각)을 메시지 시간으로 씁니다. server: 서버가 업링크를 받은 시각을 메시지 시간으로 씁니다. 디바이스나 게이트웨이의 시계가 틀어져 있거나 서로 어긋나 데이터 순서가 뒤죽박죽이면 server 를 선택하세요. 업링크 1건에서 나온 모든 측정치는 동일한 수신 시각을 공유합니다.',
+  },
+  // 무선 품질(radio) 그룹 (opt-in). 기본 false 에서는 payload 에 radio 키 자체가 없다.
+  {
+    name: 'emit_radio',
+    type: 'boolean',
+    label: '무선 품질(radio) 포함',
+    default: false,
+    description:
+      'event 메시지 payload 에 radio 그룹(payload.radio.gateways[] = {gateway_id, rssi, snr, channel}, payload.radio.count)을 함께 싣습니다. 업링크를 수신한 게이트웨이를 최적 1대로 접지 않고 전량 배열로 담으므로 메시지 크기가 게이트웨이 수에 비례해 커집니다. 게다가 측정치 방출 모드가 per_measurement 이면 같은 배열이 측정치마다 반복됩니다 (측정치 5개 × 게이트웨이 3대 = 한 업링크에서 무선 정보가 15번 직렬화). 그래서 기본은 꺼짐이며, 무선 품질이 실제로 필요한 배포에서만 켜세요. 끄면 payload 에 radio 키가 아예 생기지 않습니다.',
+  },
+  // 주기 집계 리포트 노브 (opt-in). comm-state 의 device_state.report 와는 다른 메시지다.
+  {
+    name: 'emit_report',
+    type: 'boolean',
+    label: '집계 리포트 발행',
+    default: false,
+    description:
+      '주기 집계 리포트를 별도 메시지 타입(measurement.report)으로 방출합니다. 리포트 1건에는 집계 구간의 측정치별 min/max/avg/count, 게이트웨이별 rssi·snr 의 min/max/avg/count, 그리고 구간 업링크 수신 건수(uplinks)와 관측된 게이트웨이 수(gateways)가 담깁니다. event 메시지를 대체하지 않습니다 — event 와 리포트는 서로 독립적으로 계속 흐릅니다. comm-state 의 device_state.report(마지막 값 재방출)와는 이름만 비슷할 뿐 완전히 다른 메시지입니다.',
+  },
+  {
+    name: 'report_interval',
+    type: 'string',
+    label: '집계 리포트 주기',
+    description:
+      'measurement.report 의 집계 윈도 길이 (Go duration, 예: 60s, 5m). 0 또는 빈 값이면 집계 리포트 비활성. 변경하면 에이전트를 재시작해야 반영됩니다 — tick 루프가 Init 시점에 기동되기 때문이며, comm-state 주기 report 간격과 동일한 제약입니다. comm-state 의 device_state.report 주기가 아니라 집계(measurement.report) 주기입니다.',
+  },
+  {
+    name: 'report_emit_mode',
+    type: 'select',
+    label: '집계 리포트 방출 모드',
+    options: ['per_measurement', 'combined'],
+    default: 'per_measurement',
+    description:
+      'per_measurement: 측정치마다 리포트 메시지 1개를 만듭니다 (payload 에 count/min/max/avg, metadata.measurement 에 측정치 이름). combined: 디바이스마다 리포트 메시지 1개로 합칩니다 (payload.measurements 에 {"temperature": {count, min, max, avg}, ...} 형태로 모든 측정치, metadata.measurement 없음). 측정치 방출 모드(measurement_emit_mode)와는 독립된 축이므로 event 는 per_measurement, 리포트는 combined 처럼 서로 다르게 고를 수 있습니다.',
+  },
+  // comm-state 노브 (M5, REQ-FROZEN-03 / REQ-M5-01/03/04).
+  { name: 'emit_comm_state', type: 'boolean', label: 'comm-state 발행', default: false, description: 'device_state 이벤트 발행 게이트' },
+  { name: 'comm_report_interval', type: 'string', label: 'comm-state 주기 report 간격', description: '예: 60s, 0 이면 주기 report off (change 는 유지). comm-state 마지막 값을 그대로 재방출하는 device_state.report 의 주기이며, 집계 리포트 주기(report_interval)와는 무관합니다.' },
+  { name: 'offline_threshold', type: 'string', label: 'offline 임계', default: '300s', description: '마지막 업링크 후 이 시간 경과 시 offline 판정' },
 ];
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -70,23 +154,76 @@ const THINGPLUS_FIELDS: ConfigField[] = [
   { name: 'log_messages', type: 'boolean', label: '송/수신 프레임 로그', default: false, description: '활성화 시 송신(TX)·수신(RX) 프레임을 hex 로 INFO 로그 (진단용). 운영 환경에서는 로그 폭주·민감 데이터 노출 우려로 비활성 권장.', section: 'logging' },
 ];
 
+// ──────────────────────────────────────────────────────────────────────────
+// Modbus Client (SPEC-MODBUS-006)
+// type id 는 modbus-client 이며, transport 로 tcp | rtu 를 선택한다.
+//  - transport=tcp (기본, 생략 시): 기존 MBAP/TCP 동작 (하위 호환)
+//  - transport=rtu: 시리얼 파라미터(serial_port/baud_rate/data_bits/stop_bits/parity)를
+//    조건부(visibleWhen)로 노출. 시리얼 파라미터는 init 전용(런타임 set_config 로 변경 불가).
+// 데이터 타입/바이트순서(raw + ABCD/BADC/CDAB/DCBA + big_endian/little_endian 별칭)와
+// 그룹별 poll_interval 은 디바이스/레지스터 그룹 탭에서 그룹 단위로 지정한다.
+// ──────────────────────────────────────────────────────────────────────────
 const MODBUS_TCP_FIELDS: ConfigField[] = [
+  { name: 'transport', type: 'select', label: '트랜스포트', options: ['tcp', 'rtu'], default: 'tcp', description: 'tcp: MODBUS/TCP(MBAP) / rtu: MODBUS RTU(시리얼, CRC-16). 생략 시 tcp (하위 호환). 런타임 전환 불가(init 전용)' },
+  // RTU 시리얼 파라미터 (transport=rtu 일 때만 노출, init 전용). 백엔드 parseSerialConfig 키와 1:1 매핑.
+  { name: 'serial_port', type: 'string', label: '시리얼 포트', description: 'RTU 시리얼 포트 경로 (예: /dev/ttyUSB0). transport=rtu 필수', visibleWhen: { field: 'transport', value: 'rtu' } },
+  { name: 'baud_rate', type: 'select', label: '보 레이트', options: ['1200', '2400', '4800', '9600', '19200', '38400', '57600', '115200'], default: '9600', description: 'RTU 시리얼 통신 속도', visibleWhen: { field: 'transport', value: 'rtu' } },
+  { name: 'data_bits', type: 'select', label: '데이터 비트', options: ['5', '6', '7', '8'], default: '8', visibleWhen: { field: 'transport', value: 'rtu' } },
+  { name: 'stop_bits', type: 'select', label: '스톱 비트', options: ['1', '2'], default: '1', visibleWhen: { field: 'transport', value: 'rtu' } },
+  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', visibleWhen: { field: 'transport', value: 'rtu' } },
+  // 공통 (tcp/rtu)
   { name: 'mode', type: 'select', label: '모드', options: ['interval', 'event'], default: 'interval', description: 'interval: 주기적 폴링, event: 변경 감지' },
   { name: 'read_mode', type: 'select', label: '읽기 모드', options: ['direct', 'cached'], default: 'cached' },
-  { name: 'poll_interval', type: 'string', label: '폴링 간격', default: '5s', description: 'Go duration 형식 (예: 5s, 1m)' },
+  { name: 'poll_interval', type: 'string', label: '기본 폴링 간격', default: '5s', description: 'Go duration 형식 (예: 5s, 1m). 그룹에 poll_interval 이 지정되면 해당 그룹은 그 주기로 독립 폴링하고, 미지정 그룹만 이 기본 주기로 폴백' },
   { name: 'reconnect_interval', type: 'string', label: '재연결 간격', default: '10s' },
   { name: 'request_timeout', type: 'string', label: '요청 타임아웃', default: '3s' },
   { name: 'max_retries', type: 'number', label: '최대 재시도', default: 3 },
   { name: 'enable_write_events', type: 'boolean', label: '쓰기 이벤트', default: true },
-  { name: 'devices', type: 'object', label: '디바이스 설정', required: true, description: '디바이스 배열 (JSON)' },
+  // 세션 공유 (SPEC-MODBUS-008 F3). 켜면 동일 엔드포인트(TCP (host,port) / RTU serial_port)를
+  // 대상으로 하는 디바이스들이 하나의 트랜스포트/연결을 공유한다. 기본 false(현 토폴로지 유지 —
+  // TCP 디바이스별 독립 연결, RTU 단일 버스). 디바이스별 오버라이드는 디바이스 탭에서 지정한다.
+  { name: 'share_session', type: 'boolean', label: '세션 공유', default: false, description: '켜면 동일 엔드포인트(TCP host:port / RTU 시리얼 포트) 디바이스들이 하나의 연결을 공유합니다. 끄면 TCP 는 디바이스별 독립 연결, RTU 는 단일 버스를 유지합니다(기본). 접근은 turnaround 직렬화됩니다.' },
+  // 프레임 로그 (SPEC-MODBUS-008 F4). 게이트웨이와 동일 키·의미. 변경 즉시 적용(재시작 불필요).
+  { name: 'log_frames', type: 'boolean', label: '프레임 로그', default: false, description: '켜면 송/수신 MODBUS 프레임 요약(방향·주소·unit·기능코드·길이)을 로그에 남깁니다. 변경 즉시 적용(재시작 불필요). 로그 패널에서 확인.' },
+  { name: 'log_raw_frames', type: 'boolean', label: 'Raw 프레임(hex)', default: false, description: '켜면 프레임 로그에 전체 ADU를 hex 로 포함합니다. 프레임 로그가 켜져 있을 때만 의미가 있습니다. 변경 즉시 적용.' },
+  { name: 'devices', type: 'modbus_devices', label: '디바이스 설정', required: false, description: '디바이스 배열. 각 디바이스는 register_group 목록을 가지며, 그룹별로 data_type(uint16/int16/uint32/int32/float32/raw)·poll_interval(그룹별 독립 주기)을 지정한다. byte_order(big_endian/little_endian 별칭 + ABCD/BADC/CDAB/DCBA 4순열)는 그룹의 고급 type_map 에서 주소별로만 지정한다. per-device transport 오버라이드(+RTU 시리얼) 및 per-device share_session 오버라이드는 디바이스 편집 팝업에서 지정한다(SPEC-MODBUS-008 F2/F3). TCP 는 host+port 를, RTU 는 unit_id 만 사용한다(host/port 숨김)' },
 ];
 
-const MODBUS_TCP_SERVER_FIELDS: ConfigField[] = [
-  { name: 'listen_address', type: 'string', label: '수신 주소', default: '0.0.0.0' },
-  { name: 'listen_port', type: 'number', label: '수신 포트', default: 502, required: true, description: '범위: 1-65535' },
+/** Modbus register_group 의 data_type 옵션 (SPEC-MODBUS-006 REQ-03). raw 는 변환 없이 원본 워드 전달. */
+export const MODBUS_DATA_TYPE_OPTIONS = ['uint16', 'int16', 'uint32', 'int32', 'float32', 'raw'] as const;
+
+/** Modbus register_group 의 byte_order 옵션 (SPEC-MODBUS-006 REQ-03).
+ *  big_endian(=ABCD)/little_endian(=CDAB) 별칭 + 완전한 4순열(ABCD/BADC/CDAB/DCBA). */
+export const MODBUS_BYTE_ORDER_OPTIONS = ['big_endian', 'little_endian', 'ABCD', 'BADC', 'CDAB', 'DCBA'] as const;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Modbus Gateway (SPEC-MODBUS-006)
+// type id 는 modbus-gateway 이며, transport 로 tcp | rtu 를 선택한다.
+//  - transport=tcp (기본, 생략 시): listen_address/listen_port 로 TCP 수신.
+//  - transport=rtu: 시리얼 파라미터(serial_port/baud_rate/data_bits/stop_bits/parity)를
+//    조건부(visibleWhen)로 노출한다(modbus-client 와 동일 키). init 전용.
+// 디바이스(unit_id + register_map)는 디바이스 탭에서 관리한다.
+// ──────────────────────────────────────────────────────────────────────────
+const MODBUS_SERVER_FIELDS: ConfigField[] = [
+  { name: 'transport', type: 'select', label: '트랜스포트', options: ['tcp', 'rtu'], default: 'tcp', description: 'tcp: MODBUS/TCP(MBAP) 수신 / rtu: MODBUS RTU(시리얼, CRC-16). 생략 시 tcp (하위 호환). 런타임 전환 불가(init 전용)' },
+  // TCP 수신 파라미터 (transport=tcp 일 때만 노출)
+  { name: 'listen_address', type: 'string', label: '수신 주소', default: '0.0.0.0', visibleWhen: { field: 'transport', value: 'tcp' } },
+  { name: 'listen_port', type: 'number', label: '수신 포트', default: 502, required: true, description: '범위: 1-65535', visibleWhen: { field: 'transport', value: 'tcp' } },
+  // RTU 시리얼 파라미터 (transport=rtu 일 때만 노출, init 전용). modbus-client 와 동일 키.
+  { name: 'serial_port', type: 'string', label: '시리얼 포트', description: 'RTU 시리얼 포트 경로 (예: /dev/ttyUSB0). transport=rtu 필수', visibleWhen: { field: 'transport', value: 'rtu' } },
+  { name: 'baud_rate', type: 'select', label: '보 레이트', options: ['1200', '2400', '4800', '9600', '19200', '38400', '57600', '115200'], default: '9600', description: 'RTU 시리얼 통신 속도', visibleWhen: { field: 'transport', value: 'rtu' } },
+  { name: 'data_bits', type: 'select', label: '데이터 비트', options: ['5', '6', '7', '8'], default: '8', visibleWhen: { field: 'transport', value: 'rtu' } },
+  { name: 'stop_bits', type: 'select', label: '스톱 비트', options: ['1', '2'], default: '1', visibleWhen: { field: 'transport', value: 'rtu' } },
+  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', visibleWhen: { field: 'transport', value: 'rtu' } },
+  // 공통 (tcp/rtu)
   { name: 'max_connections', type: 'number', label: '최대 연결 수', default: 10 },
   { name: 'idle_timeout', type: 'string', label: '유휴 타임아웃', default: '60s' },
-  // 디바이스(unit_id + register_map)는 디바이스 탭에서 관리
+  { name: 'notify_on_write', type: 'boolean', label: '통신 쓰기 알림', default: false, description: '켜면 외부 MODBUS 마스터의 통신(와이어) 쓰기로 레지스터가 변경될 때만 register_change 알림을 발행합니다. 플로우 입력(set 명령) 쓰기는 대상이 아닙니다. 변경은 다음 재시작 시 적용됩니다.' },
+  { name: 'log_frames', type: 'boolean', label: '프레임 로그', default: false, description: '켜면 송/수신 MODBUS 프레임 요약(방향·주소·unit·기능코드·길이)을 로그에 남깁니다. 변경 즉시 적용(재시작 불필요). 로그 패널에서 확인.' },
+  { name: 'log_raw_frames', type: 'boolean', label: 'Raw 프레임(hex)', default: false, description: '켜면 프레임 로그에 전체 ADU를 hex 로 포함합니다. 프레임 로그가 켜져 있을 때만 의미가 있습니다. 변경 즉시 적용.' },
+  // 디바이스(unit_id + register_map)는 생성 폼이 아니라 디바이스 탭(config.devices + PUT)에서
+  // 관리한다. 서버는 devices 없이 생성 가능하며, 생성/추가 디바이스가 동일하게
+  // 취급된다(SPEC-MODBUS-008). modbus_server_devices 필드 타입/에디터는 디바이스 탭에서 재사용된다.
 ];
 
 const HTTP_RECEIVER_FIELDS: ConfigField[] = [
@@ -153,7 +290,7 @@ const CONSOLE_LOGGER_FIELDS: ConfigField[] = [
 const SAMSUNG_HVACR01_FIELDS: ConfigField[] = [
   { name: 'log_messages', type: 'boolean', label: '송/수신 프레임 로그', default: false, description: '디바이스와 주고받는 송/수신(TX/RX) 프레임을 hex 로 INFO 로그 (진단용, 운영 환경 비활성 권장 — 로그 폭주 우려)', advanced: true, section: 'logging' },
   // ── Transport ──
-  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server'], required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp-client: TCP 클라이언트 / tcp-server: TCP 서버', section: 'transport' },
+  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['serial', 'tcp-client', 'tcp-server', 'mirror-mqtt', 'mirror-message'], required: true, description: '통신 전송 방식 — serial: RS-485 직결 / tcp-client: TCP 클라이언트 / tcp-server: TCP 서버 / mirror-mqtt: 서버 역할, 게이트웨이가 MQTT 로 보낸 디코드 메시지를 받아 동기화 / mirror-message: MQTT 없이 플로우 노드의 mirror-in/mirror-out 포트로 디코드 메시지를 중계 (SPEC-HVACR-SYNC-001 M10)', section: 'transport' },
   { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
   { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 9600, description: '통신 속도 (이 프로토콜 기본값: 9600bps)', visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
   { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, visibleWhen: { field: 'transport_type', value: 'serial' }, section: 'transport' },
@@ -166,6 +303,22 @@ const SAMSUNG_HVACR01_FIELDS: ConfigField[] = [
   { name: 'read_timeout', type: 'string', label: 'TCP 읽기 타임아웃', default: '3s', description: 'TCP 소켓 읽기 대기 시간', visibleWhen: { field: 'transport_type', value: ['tcp-client', 'tcp-server'] }, section: 'transport' },
   { name: 'reconnect_interval', type: 'string', label: '재연결 초기 간격', default: '5s', description: '재연결 backoff 시작값 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
   { name: 'max_reconnect_backoff', type: 'string', label: '재연결 backoff 상한', default: '5m', description: '재연결 최대 백오프 (tcp-client 전용)', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
+  // ── Mirror 동기화 (SPEC-HVACR-SYNC-001) ──
+  // 게이트웨이(serial/tcp + 업링크 활성) 또는 서버(transport_type:mirror-mqtt) 역할에서 MQTT 동기화 설정.
+  // MQTT 필드는 두 역할 모두 필요하므로 visibleWhen 을 OR(mirror 이거나 업링크 활성)로 노출한다.
+  { name: 'mirror_uplink_enabled', type: 'boolean', label: '미러 업링크 (게이트웨이)', default: false, description: '게이트웨이 역할: 디코드한 메시지를 MQTT 로 서버에 발행해 동기화한다. serial/tcp 연결에서만 해당(서버는 연결 방식=mirror-mqtt 선택).', visibleWhen: { field: 'transport_type', value: ['serial', 'tcp-client', 'tcp-server'] }, section: 'transport' },
+  { name: 'mirror_broker', type: 'string', label: 'MQTT 브로커', description: '미러 동기화 MQTT 브로커 주소 (예: tcp://broker:1883). 미러/업링크 활성 시 필수.', visibleWhenAny: [{ field: 'transport_type', value: 'mirror-mqtt' }, { field: 'mirror_uplink_enabled', value: true }], section: 'transport' },
+  { name: 'mirror_gateway_id', type: 'string', label: '게이트웨이 ID', description: '게이트웨이 식별자 — 토픽에 인코딩되어 서버가 게이트웨이를 구분한다(payload 에는 넣지 않음). 미러/업링크 활성 시 필수.', visibleWhenAny: [{ field: 'transport_type', value: 'mirror-mqtt' }, { field: 'mirror_uplink_enabled', value: true }], section: 'transport' },
+  { name: 'mirror_topic_prefix', type: 'string', label: '토픽 prefix', default: 'xflow/hvacr', description: 'MQTT 토픽 prefix (기본 xflow/hvacr). 게이트웨이·서버가 동일해야 한다.', visibleWhenAny: [{ field: 'transport_type', value: 'mirror-mqtt' }, { field: 'mirror_uplink_enabled', value: true }], section: 'transport' },
+  { name: 'mirror_qos', type: 'number', label: 'MQTT QoS', default: 1, description: '미러 발행 QoS (0/1/2, 기본 1).', visibleWhenAny: [{ field: 'transport_type', value: 'mirror-mqtt' }, { field: 'mirror_uplink_enabled', value: true }], section: 'transport' },
+  { name: 'mirror_control_enabled', type: 'boolean', label: '제어 역경로 활성', default: true, description: '서버에서 내린 제어를 MQTT 로 게이트웨이에 전달해 실행한다(양방향). 기본 활성.', visibleWhenAny: [{ field: 'transport_type', value: 'mirror-mqtt' }, { field: 'mirror_uplink_enabled', value: true }], section: 'transport' },
+  { name: 'mirror_ack_enabled', type: 'boolean', label: '제어 ACK 활성', default: false, description: '제어 실행 결과를 up/ack 로 서버에 회신한다(선택).', visibleWhenAny: [{ field: 'transport_type', value: 'mirror-mqtt' }, { field: 'mirror_uplink_enabled', value: true }], section: 'transport' },
+  { name: 'mirror_snapshot_enabled', type: 'boolean', label: 'retain 스냅샷', default: false, description: '게이트웨이가 상태를 retain 스냅샷으로 발행해 서버 재시작 시 즉시 복원한다(재동기화).', visibleWhenAny: [{ field: 'transport_type', value: 'mirror-mqtt' }, { field: 'mirror_uplink_enabled', value: true }], section: 'transport' },
+  // ── 미러 브로커 보안 (인증 + TLS, M9) ──
+  { name: 'mirror_username', type: 'string', label: 'MQTT 사용자명', sensitive: true, description: '미러 브로커 인증 사용자명. 보안 브로커(무익명 + per-topic ACL) 사용 시 지정.', visibleWhenAny: [{ field: 'transport_type', value: 'mirror-mqtt' }, { field: 'mirror_uplink_enabled', value: true }], section: 'transport' },
+  { name: 'mirror_password', type: 'string', label: 'MQTT 비밀번호', sensitive: true, description: '미러 브로커 인증 비밀번호.', visibleWhenAny: [{ field: 'transport_type', value: 'mirror-mqtt' }, { field: 'mirror_uplink_enabled', value: true }], section: 'transport' },
+  { name: 'mirror_tls', type: 'boolean', label: 'TLS 사용', default: false, description: 'ssl:// 브로커 연결 암호화. 브로커 주소를 ssl://host:8883 형식으로 지정한다.', visibleWhenAny: [{ field: 'transport_type', value: 'mirror-mqtt' }, { field: 'mirror_uplink_enabled', value: true }], section: 'transport' },
+  { name: 'mirror_ca_cert', type: 'multiline', label: 'CA 인증서', description: '사설/자체서명 CA PEM 또는 경로. TLS 사용 시 서버 검증용(빈 값이면 시스템 루트 CA).', visibleWhenAny: [{ field: 'transport_type', value: 'mirror-mqtt' }, { field: 'mirror_uplink_enabled', value: true }], section: 'transport' },
   // ── Protocol-specific (Samsung NASA) ──
   { name: 'status_query_enabled', type: 'boolean', label: '상태 확인 요청 활성', default: true, description: '주기적 상태 확인 요청 (BuildStatusQuery) 송신 여부. false 면 passive sniff only (수동 감청 전용 모드, 컨트롤러 부담 감소)', section: 'protocol' },
   { name: 'poll_interval', type: 'string', label: '상태 확인 요청 간격', default: '30s', description: 'status_query_enabled=true 일 때만 의미 있음. 디바이스마다 status query 송신', section: 'protocol' },
@@ -367,6 +520,47 @@ const CENTURY_HVACR01_FIELDS: ConfigField[] = [
   { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: '실내온도(current_temp)만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (0 이하=비활성)', advanced: true, section: 'operation' },
 ];
 
+// ──────────────────────────────────────────────────────────────────────────
+// Subway Facilities Manager (SPEC-XSFM-001)
+// 지하철 역사 설비 관리 에이전트. thingplus MQTT 트랜스포트 셸 + samsung 로스터/
+// 관측 상태 모델. transport_mode 로 direct(에이전트가 브로커 소유) / port(외부 노드 I/O)
+// 두 모드를 선택한다. field key 는 백엔드 XSFMConfig Transport.Options JSON 키와
+// 1:1 매핑되어야 폼이 바인딩된다:
+//   transport_mode, broker, tls, ca_cert, client_id, username, password, qos,
+//   state_topic_template, command_topic_template, payload_mapping, offline_timeout,
+//   control_response_timeout, lwt_enabled, registry_path, station_registry_path.
+// ──────────────────────────────────────────────────────────────────────────
+const XSFM_FIELDS: ConfigField[] = [
+  // ── Transport ──
+  { name: 'transport_mode', type: 'select', label: '트랜스포트 모드', options: ['direct', 'port'], default: 'direct', required: true, description: 'direct: 에이전트가 MQTT 브로커를 직접 소유 / port: 외부 노드가 I/O 를 담당 (제어 출력 포트 사용)', section: 'transport' },
+  { name: 'broker', type: 'string', label: '브로커 주소', default: 'tcp://localhost:1883', description: 'MQTT 브로커 주소 (direct 모드 필수, 예: tcp://localhost:1883). TLS 사용 시 ssl:// 스킴', visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'transport' },
+  { name: 'tls', type: 'boolean', label: 'TLS 사용', default: false, visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'transport' },
+  { name: 'ca_cert', type: 'multiline', label: 'CA 인증서', description: 'TLS CA 인증서 PEM 또는 경로', visibleWhen: { field: 'tls', value: true }, section: 'transport' },
+  { name: 'client_id', type: 'string', label: '클라이언트 ID', description: '빈 값이면 자동 생성 (xflow-xsfm-<uuid>). 인스턴스마다 고유해야 함', visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'transport' },
+  { name: 'username', type: 'string', label: '사용자명', sensitive: true, visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'transport' },
+  { name: 'password', type: 'string', label: '비밀번호', sensitive: true, visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'transport' },
+  { name: 'qos', type: 'select', label: 'QoS', options: ['0', '1', '2'], default: '1', description: '메시지 전달 보증 레벨', visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'transport' },
+  { name: 'lwt_enabled', type: 'boolean', label: 'LWT(유언) 사용', default: true, description: 'Last Will and Testament — 비정상 종료 시 오프라인 통지', visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'transport' },
+  // ── Topic / Payload mapping ──
+  { name: 'state_topic_template', type: 'string', label: '상태 토픽 템플릿', required: true, description: '최소 1개의 {placeholder} 세그먼트 포함 (direct 모드 필수). 단일 필드: xsfm/{device_id}/state. 다중 필드: state/ui-line/{station_code}/{place_code}/bse9000/{device_index}/{attribute} — 모든 {...} 는 하나의 와일드카드(+) 구독으로 통합되고, {attribute} 가 있으면 마지막 세그먼트가 상태 축(power/fan_speed/online)을 지칭하며 페이로드는 그 축의 스칼라 값이다', visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'protocol' },
+  { name: 'command_topic_template', type: 'string', label: '명령 토픽 템플릿', required: true, description: '최소 1개의 {placeholder} 세그먼트 포함 (direct 모드 필수). 단일 필드: xsfm/{device_id}/cmd. 다중 필드: cmd/ui-line/{station_code}/{place_code}/bse9000/{device_index}/{attribute} — {attribute} 가 있으면 축별 토픽으로 발행(set_power→…/power, set_fan_speed→…/fan_speed)하며 payload_mapping 의 필드명이 {attribute} 토큰이 된다', visibleWhen: { field: 'transport_mode', value: 'direct' }, section: 'protocol' },
+  { name: 'payload_mapping', type: 'object', label: '페이로드 매핑', required: true, description: '설정 주도 페이로드 시임 (양 모드 공통 필수). power_field / fan_speed_field / online_field 등 (JSON)', section: 'protocol' },
+  // ── Operation / Control ──
+  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '60s', description: '이 시간 동안 상태 미수신 시 디바이스 오프라인 판정 (Go duration, 예: 60s, 1m)', section: 'operation' },
+  { name: 'control_response_timeout', type: 'string', label: '제어 응답 타임아웃', default: '5s', description: '제어 명령 후 상태 반영 대기 시간 (Go duration)', section: 'operation' },
+  // ── State emission (SPEC-XSFM-AGENT-IO-001, M5 / REQ-05) ──
+  // 백엔드 Transport.Options 키(forward_received_to_node/state_emit_mode/state_emit_interval)와
+  // 1:1 매핑. 기본값(forward off, mode=event)은 현행 동작과 바이트 동일(무회귀).
+  { name: 'forward_received_to_node', type: 'boolean', label: '수신 메시지 노드 전달', default: false, description: '파싱된 상태를 xsfm 노드로 전달 (device_state_received). 변경 여부와 무관하게 매 수신마다 방출하는 패스스루 탭. state_emit_mode 와 독립적으로 동작 (기본 꺼짐)', section: 'operation' },
+  { name: 'state_emit_mode', type: 'select', label: '상태 방출 모드', options: ['event', 'interval', 'both'], default: 'event', description: 'event: 이벤트(변경 시)만 방출 (현행) / interval: 주기 스냅샷만 방출 (변경 이벤트 억제) / both: 이벤트+주기 스냅샷 병행', section: 'operation' },
+  { name: 'state_emit_interval', type: 'string', label: '상태 방출 주기', default: '60s', description: '주기 스냅샷(device_state_snapshot) 방출 간격 (Go duration, 예: 60s, 1m). state_emit_mode 가 interval 또는 both 일 때만 적용', visibleWhen: { field: 'state_emit_mode', value: ['interval', 'both'] }, section: 'operation' },
+  { name: 'registry_path', type: 'string', label: '디바이스 레지스트리 경로', description: '런타임 등록 디바이스(bridge/auto) 로스터 파일 경로 (빈 값=영속화 비활성)', section: 'operation' },
+  { name: 'station_registry_path', type: 'string', label: '역사 레지스트리 경로', description: '역사(station)→호선(line) 레지스트리 파일 경로 (빈 값=영속화 비활성)', section: 'operation' },
+  // ── Output / logging (advanced) ──
+  { name: 'log_messages', type: 'boolean', label: '송/수신 프레임 로그', default: false, description: '수신 상태(RX)·송신 명령(TX) MQTT 메시지(토픽+페이로드)를 INFO 로그. 진단용, 운영 비활성 권장', advanced: true, section: 'logging' },
+  { name: 'log_mqtt', type: 'boolean', label: 'MQTT 로그', default: false, description: 'MQTT 연결/재연결/구독/발행 생명주기를 INFO 로그. 진단용, 운영 비활성 권장', advanced: true, section: 'logging' },
+];
+
 const SERIAL_FIELDS: ConfigField[] = [
   // 시리얼 포트 설정
   { name: 'port', type: 'string', label: '시리얼 포트', required: true, description: '예: /dev/ttyUSB0, COM3' },
@@ -453,7 +647,7 @@ const UDP_CLIENT_FIELDS: ConfigField[] = [
  *
  * SPEC-STORE-003 이후 필드는 UI 상 두 섹션으로 나뉘어 렌더링된다:
  *   - 운영 섹션: history_ttl, max_history_size, max_key_length, scan_interval, default_ttl
- *   - 데이터 섹션: registration_type, keys (정적 키 + data_type + metric_type + 태그)
+ *   - 데이터 섹션: registration_type, keys (정적 키 + data_type + field + 태그)
  *
  * 섹션 분리는 `AgentDetailPanel.tsx` 의 `StoreConfigEditor` 컴포넌트가 담당하며,
  * 여기서는 필드 메타데이터만 정의한다. `keys` 필드는 별도의 커스텀 UI 로
@@ -461,11 +655,38 @@ const UDP_CLIENT_FIELDS: ConfigField[] = [
  *
  * v0.7.0 진화 (M12, M13):
  *   - `allow_dynamic_keys: bool` → `registration_type: enum` ('auto' | 'manual')
- *   - keys[] 항목에 `data_type` 와 `metric_type` 추가 (StoreKeysEditor 에서 처리)
+ *   - keys[] 항목에 `data_type` 와 `field` 추가 (StoreKeysEditor 에서 처리)
  *
  * @spec SPEC-WEB-005 v0.7.0 (M12)
  * @spec SPEC-STORE-003 v0.3.0
  */
+// 시스템 모니터링 에이전트 — 호스트 리소스를 주기적으로 표본 수집해 방출한다.
+// 값은 플로우를 거쳐 storage-write 로 Store/TSDB 에 들어가고, 대시보드는 기존
+// Store/TSDB 데이터 소스로 조회한다(전용 데이터 소스 종류를 만들지 않는 이유).
+const SYSMETRICS_FIELDS: ConfigField[] = [
+  { name: 'interval', type: 'string', label: '표본 주기', default: '5s', description: '수집 주기 (1s ~ 1h, 예: 5s, 1m)' },
+  // 대시보드 차트가 질의하는 이력 길이. 에이전트 메모리에만 있고 재시작하면 사라진다
+  // — 영속 이력은 storage-write 경로의 몫이다.
+  { name: 'history', type: 'string', label: '이력 보관 기간', default: '1h', description: '차트가 거슬러 볼 수 있는 기간 (1m ~ 24h, 예: 1h). 표본 수 상한에 걸리면 실제로는 더 짧습니다' },
+  { name: 'collect_cpu', type: 'boolean', label: 'CPU 사용률', default: true, description: '호스트 전체 CPU 사용률(%)' },
+  { name: 'collect_memory', type: 'boolean', label: '메모리 사용률', default: true, description: '호스트 전체 메모리 사용량·사용률' },
+  // 대상 선택기는 그 지표를 켰을 때만, 그 토글 **바로 아래**에 낸다.
+  //
+  // 손으로 적는 대신 호스트의 실제 목록에서 고른다(GET /monitor/sysresources).
+  // 비워 두면 "전체" — 백엔드 parseSysMetricsConfig 와 같은 규약이다.
+  //
+  // `value: [true, undefined]` 인 이유: 키가 아예 없는 config 도 있다(설정 파일이나
+  // API 로 만든 에이전트). 백엔드는 없는 키를 기본값 true 로 읽으므로
+  // (defaultSysMetricsConfig), 여기서 `value: true` 만 보면 수집은 도는데 대상
+  // 선택기만 숨는 상태가 된다.
+  { name: 'collect_storage', type: 'boolean', label: '스토리지 사용량', default: true, description: '마운트별 전체·사용·여유 용량' },
+  { name: 'mountpoints', type: 'sysresource_select', resourceKind: 'mountpoints', label: '마운트 선택', description: '관측할 마운트를 고릅니다. 아무것도 고르지 않으면 물리 파티션 전체', visibleWhen: { field: 'collect_storage', value: [true, undefined] } },
+  { name: 'collect_disk_io', type: 'boolean', label: '디스크 I/O', default: true, description: '장치별 읽기·쓰기 누적 카운터' },
+  { name: 'devices', type: 'sysresource_select', resourceKind: 'devices', label: '디스크 장치 선택', description: '관측할 디스크 장치를 고릅니다. 아무것도 고르지 않으면 전체', visibleWhen: { field: 'collect_disk_io', value: [true, undefined] } },
+  { name: 'collect_network', type: 'boolean', label: '네트워크', default: true, description: '인터페이스별 송·수신 누적 카운터' },
+  { name: 'interfaces', type: 'sysresource_select', resourceKind: 'interfaces', label: '네트워크 인터페이스 선택', description: '관측할 인터페이스를 고릅니다. 아무것도 고르지 않으면 전체', visibleWhen: { field: 'collect_network', value: [true, undefined] } },
+];
+
 const STORE_FIELDS: ConfigField[] = [
   // --- 운영 섹션 ---
   { name: 'max_key_length', type: 'number', label: '최대 키 길이 (바이트)', default: 512, description: '키 문자열 최대 바이트 수' },
@@ -531,8 +752,8 @@ export const HVACR_QUADRANT_AGENT_TYPES = new Set([
 const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'mqtt-client': MQTT_FIELDS,
   'thingplus-gateway': THINGPLUS_FIELDS,
-  'modbus-tcp': MODBUS_TCP_FIELDS,
-  'modbus-tcp-server': MODBUS_TCP_SERVER_FIELDS,
+  'modbus-client': MODBUS_TCP_FIELDS,
+  'modbus-gateway': MODBUS_SERVER_FIELDS,
   'http': HTTP_RECEIVER_FIELDS,
   'http-sender': HTTP_SENDER_FIELDS,
   'influxdb': INFLUXDB_FIELDS,
@@ -542,12 +763,15 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'lg_hvacr02': LG_HVACR02_FIELDS,
   'lg_hvacr01': LG_HVACR01_FIELDS,
   'century_hvacr01': CENTURY_HVACR01_FIELDS,
+  'chirpstack-client': CHIRPSTACK_FIELDS,
+  'xsfm': XSFM_FIELDS,
   'serial': SERIAL_FIELDS,
   'tcp-server': TCP_SERVER_FIELDS,
   'tcp-client': TCP_CLIENT_FIELDS,
   'udp-server': UDP_SERVER_FIELDS,
   'udp-client': UDP_CLIENT_FIELDS,
   'store': STORE_FIELDS,
+  'sysmetrics': SYSMETRICS_FIELDS,
 };
 
 /**

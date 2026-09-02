@@ -55,6 +55,19 @@ vi.mock('@/hooks/useAuth', () => ({
   useAuth: useAuthMock,
 }));
 
+// usePermission mock — SPEC-AUTH-006 M3: 채널 변경 게이팅이 role==='admin'
+// 에서 'system.update' 권한 키 판정으로 바뀌었다. 기본은 전원 허용이며,
+// 권한 부족 상황은 각 테스트가 denied 에 키를 넣어 만든다.
+const permissionMock = vi.hoisted(() => ({ denied: new Set<string>() }));
+vi.mock('@/hooks/usePermission', () => ({
+  usePermission: () => ({
+    hasPermission: (key: string) => !permissionMock.denied.has(key),
+    hasAnyPermission: (keys: readonly string[]) =>
+      keys.some((key) => !permissionMock.denied.has(key)),
+    isPermissionUnavailable: false,
+  }),
+}));
+
 // uiStore 알림 캡처용 mock — addNotification 호출 검증.
 const addNotificationMock = vi.hoisted(() => vi.fn());
 
@@ -191,6 +204,7 @@ beforeEach(() => {
   useChangeChannelMock.mockReset();
   useAuthMock.mockReset();
   addNotificationMock.mockReset();
+  permissionMock.denied = new Set<string>();
 
   // Phase D — UpdateDialog 의 훅 default state (idle).
   useUpdateApplyMock.mockReturnValue({
@@ -616,7 +630,9 @@ describe('SystemStatusPage — ChannelChangeDialog 결합 (SPEC-UPDATE-002 M8)',
     expect(screen.getByTestId('channel-change-dialog')).toBeInTheDocument();
   });
 
-  it('비-admin 사용자: 채널 배지가 클릭 불가 (button 미사용) + dialog 미렌더', () => {
+  it('system.update 권한 없음: 채널 배지가 클릭 불가 (button 미사용) + dialog 미렌더', () => {
+    // SPEC-AUTH-006 M3: 판정 기준이 역할 이름에서 권한 키로 바뀌었다.
+    permissionMock.denied = new Set(['system.update']);
     useAuthMock.mockReturnValue({
       user: { name: 'viewer', role: 'viewer' },
       isAuthenticated: true,

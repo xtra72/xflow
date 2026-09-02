@@ -30,6 +30,7 @@ import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 import {
   readControlButtonColorConfig,
   readFanLevelColorConfig,
@@ -55,10 +56,12 @@ function readAcProps(props: Record<string, unknown>, capabilities?: string[]) {
   const isPassive = !hasControl;
   const power = typeof props['power'] === 'boolean' ? props['power'] : undefined;
   const currentTemp = props['current_temperature'] as number | undefined;
+  // 현재 습도(%) — 삼성 NASA V1.1 등 지원 기기만 emit 한다(미지원 시 undefined → 표시 생략).
+  const currentHumidity = props['current_humidity'] as number | undefined;
   const targetTemp = (props['target_temperature'] as number) ?? 24;
   const mode: AcMode = normalizeAcMode(props['mode']);
   const fanSpeed: FanSpeed = normalizeFanSpeed(props['fan_speed']);
-  return { power, mode, currentTemp, targetTemp, fanSpeed, isPassive };
+  return { power, mode, currentTemp, currentHumidity, targetTemp, fanSpeed, isPassive };
 }
 
 // ---- 타입 정의 ----
@@ -119,6 +122,8 @@ export default function AcControlPanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: AcControlPanelProps) {
+  const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
   // 레거시: 단일 currentValueColor 만 지정하던 시절의 호환 경로.
@@ -153,7 +158,7 @@ export default function AcControlPanel({
   // 디바이스 상태에서 읽기 (백엔드에서 속성명 통일됨)
   const rawProps = device?.state?.properties ?? {};
   const capabilities = device?.capabilities as string[] | undefined;
-  const { power: serverPower, mode, currentTemp, targetTemp, fanSpeed, isPassive } =
+  const { power: serverPower, mode, currentTemp, currentHumidity, targetTemp, fanSpeed, isPassive } =
     readAcProps(rawProps, capabilities);
 
   // 낙관적 전원 토글: 즉시 UI 반영 → 서버 확인 후 동기화 / 타임아웃 시 복원
@@ -182,10 +187,12 @@ export default function AcControlPanel({
   if (isLoading) {
     return (
       <div className="flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-3 ring-1 ring-(--color-border-default)">
-        <div className="mb-2 flex shrink-0 items-center gap-2">
-          <Snowflake className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-          <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
-        </div>
+        {showTitle && (
+          <div className="mb-2 flex shrink-0 items-center gap-2">
+            <Snowflake className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+            <span className="truncate text-sm font-semibold text-(--color-text-primary)" style={titleStyle}>{title}</span>
+          </div>
+        )}
         <div className="flex flex-1 items-center justify-center">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-(--color-border-default) border-t-blue-600" />
         </div>
@@ -214,10 +221,13 @@ export default function AcControlPanel({
     <div className="flex min-h-0 flex-1 flex-col gap-4 rounded-2xl bg-(--color-bg-surface) p-5 ring-1 ring-(--color-border-default)">
       {/* ---- 헤더: 아이콘+타이틀 | 상태뱃지+전원버튼 ---- */}
       <div className="flex shrink-0 items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <Snowflake className="h-5 w-5 text-blue-500" />
-          <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
-        </div>
+        {/* 우측에 전원 버튼이 함께 있으므로 타이틀 묶음만 숨긴다(제어 유실 방지). */}
+        {showTitle && (
+          <div className="flex items-center gap-2.5">
+            <Snowflake className="h-5 w-5 text-blue-500" />
+            <span className="truncate text-base font-bold text-(--color-text-primary)" style={titleStyle}>{title}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           {isPassive && (
             <span title={t('dashboard.panel.monitorOnly')}><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label={t('dashboard.panel.monitorOnly')} /></span>
@@ -285,6 +295,13 @@ export default function AcControlPanel({
           </span>
         </div>
         <span className="text-xs font-medium text-(--color-text-muted)">{t('dashboard.acControl.currentTemp')}</span>
+        {/* ---- 현재 습도(%) — 지원 기기만(current_humidity emit 시). 미지원 시 생략 ---- */}
+        {currentHumidity !== undefined && (
+          <div className="mt-1 flex items-center gap-1" title={t('dashboard.acControl.currentHumidity')}>
+            <Droplets className="h-3.5 w-3.5 text-(--color-text-muted)" />
+            <span className="text-sm font-medium text-(--color-text-secondary)">{currentHumidity}%</span>
+          </div>
+        )}
       </div>
       )}
 

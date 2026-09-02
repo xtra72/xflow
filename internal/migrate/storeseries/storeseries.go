@@ -294,7 +294,7 @@ func isCanonicalSeriesKey(key string) bool {
 
 // defaultSeriesKey 는 bare key 를 (key, "unknown", {}) 기본 시리즈 인코딩 키로 변환한다.
 func defaultSeriesKey(bareKey string) string {
-	return system.EncodeSeriesKey(system.SeriesID{Key: bareKey})
+	return system.EncodeSeriesKey(system.SeriesID{Measurement: bareKey})
 }
 
 // manifest 는 백업/검증용 sha256 합산 + per-key sha256 표현이다.

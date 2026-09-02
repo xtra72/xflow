@@ -3,8 +3,8 @@
 // 검증 대상:
 //   - isOpen=false 일 때 렌더링되지 않음 / true 일 때 렌더링됨
 //   - 키 이름이 읽기 전용으로 표시됨
-//   - initialMetricType / initialTags 사전 채움
-//   - metric_type 정규식 위반 시 에러 + 저장 버튼 비활성
+//   - initialField / initialTags 사전 채움
+//   - field 정규식 위반 시 에러 + 저장 버튼 비활성
 //   - 태그 전체 교체: 기존 태그 삭제 + 신규 추가 후 onConfirm 페이로드 반영
 //   - Esc / 취소 버튼으로 닫힘
 //   - isSubmitting=true 일 때 저장 버튼 비활성 + 스피너
@@ -46,7 +46,7 @@ describe('EditKeyMetaDialog', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('isOpen=true 면 키 이름과 metric_type 입력이 표시된다', () => {
+  it('isOpen=true 면 키 이름과 field 입력이 표시된다', () => {
     render(
       <EditKeyMetaDialog
         isOpen={true}
@@ -58,29 +58,29 @@ describe('EditKeyMetaDialog', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText('타입 / 태그 편집')).toBeInTheDocument();
     expect(screen.getByText('indoor:1:temp')).toBeInTheDocument();
-    expect(screen.getByLabelText(/메트릭 타입/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/필드/)).toBeInTheDocument();
     expect(screen.getByText('태그가 없습니다')).toBeInTheDocument();
   });
 
-  it('initialMetricType / initialTags 를 사전 채움한다', () => {
+  it('initialField / initialTags 를 사전 채움한다', () => {
     render(
       <EditKeyMetaDialog
         isOpen={true}
         onClose={vi.fn()}
         keyName="k"
-        initialMetricType="gauge"
+        initialField="gauge"
         initialTags={{ room: '1', floor: '3' }}
         onConfirm={vi.fn()}
       />,
     );
-    expect(screen.getByLabelText(/메트릭 타입/)).toHaveValue('gauge');
+    expect(screen.getByLabelText(/필드/)).toHaveValue('gauge');
     const keyInputs = screen.getAllByLabelText('태그 키');
     expect(keyInputs).toHaveLength(2);
     const values = keyInputs.map((el) => (el as HTMLInputElement).value).sort();
     expect(values).toEqual(['floor', 'room']);
   });
 
-  it('metric_type 정규식 위반 시 저장 버튼이 비활성된다', () => {
+  it('field 정규식 위반 시 저장 버튼이 비활성된다', () => {
     render(
       <EditKeyMetaDialog
         isOpen={true}
@@ -89,7 +89,7 @@ describe('EditKeyMetaDialog', () => {
         onConfirm={vi.fn()}
       />,
     );
-    const metricInput = screen.getByLabelText(/메트릭 타입/);
+    const metricInput = screen.getByLabelText(/필드/);
     fireEvent.change(metricInput, { target: { value: 'bad type!' } });
     expect(screen.getByTestId('edit-key-meta-confirm')).toBeDisabled();
     expect(
@@ -97,20 +97,20 @@ describe('EditKeyMetaDialog', () => {
     ).toBeInTheDocument();
   });
 
-  it('저장 시 metric_type 과 태그 전체를 onConfirm 으로 전달한다', () => {
+  it('저장 시 field 과 태그 전체를 onConfirm 으로 전달한다', () => {
     const onConfirm = vi.fn();
     render(
       <EditKeyMetaDialog
         isOpen={true}
         onClose={vi.fn()}
         keyName="k"
-        initialMetricType="gauge"
+        initialField="gauge"
         initialTags={{ room: '1' }}
         onConfirm={onConfirm}
       />,
     );
-    // metric_type 변경
-    fireEvent.change(screen.getByLabelText(/메트릭 타입/), {
+    // field 변경
+    fireEvent.change(screen.getByLabelText(/필드/), {
       target: { value: 'temperature' },
     });
     // 신규 태그 행 추가 후 입력
@@ -129,24 +129,24 @@ describe('EditKeyMetaDialog', () => {
 
     expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(onConfirm).toHaveBeenCalledWith({
-      metric_type: 'temperature',
+      field: 'temperature',
       tags: { room: '1', floor: '3' },
     });
   });
 
-  it('metric_type 을 비우면 payload 에서 생략된다 (전체 교체 tags 만 전송)', () => {
+  it('field 을 비우면 payload 에서 생략된다 (전체 교체 tags 만 전송)', () => {
     const onConfirm = vi.fn();
     render(
       <EditKeyMetaDialog
         isOpen={true}
         onClose={vi.fn()}
         keyName="k"
-        initialMetricType="gauge"
+        initialField="gauge"
         initialTags={{ room: '1' }}
         onConfirm={onConfirm}
       />,
     );
-    fireEvent.change(screen.getByLabelText(/메트릭 타입/), {
+    fireEvent.change(screen.getByLabelText(/필드/), {
       target: { value: '' },
     });
     fireEvent.click(screen.getByTestId('edit-key-meta-confirm'));

@@ -9,7 +9,9 @@ import { useTranslation } from '@/lib/i18n';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
-import { getPropertyLabel, sortProperties, formatPropertyValue } from '@/lib/utils/deviceLabels';
+import { getPropertyLabel, sortProperties, formatPropertyValue, expandMeasurementEntries, excludeDedicatedSectionKeys } from '@/lib/utils/deviceLabels';
+import { formatEpochMs, formatRelativeEpochMs } from '@/lib/utils/format';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 
 interface PropertiesGridPanelProps {
   panelId: string;
@@ -26,6 +28,8 @@ export default function PropertiesGridPanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: PropertiesGridPanelProps) {
+  const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
   const gridCols = (config.gridCols as number | undefined) ?? 3;
@@ -62,10 +66,12 @@ export default function PropertiesGridPanel({
   if (isLoading) {
     return (
       <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
-        <div className="mb-2 flex shrink-0 items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-gray-300" />
-          <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
-        </div>
+        {showTitle && (
+          <div className="mb-2 flex shrink-0 items-center gap-2">
+            <div className="h-2 w-2 rounded-full bg-gray-300" />
+            <span className="truncate text-sm font-medium text-(--color-text-primary)" style={titleStyle}>{title}</span>
+          </div>
+        )}
         <div className="flex flex-1 items-center justify-center">
           <div
             className="h-5 w-5 animate-spin rounded-full border-2 border-(--color-border-strong) border-t-blue-600"
@@ -89,8 +95,9 @@ export default function PropertiesGridPanel({
   if (!properties || Object.keys(properties).length === 0) {
     return (
       <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
+        {showTitle && (
         <div className="mb-3 flex shrink-0 items-center justify-between">
-          <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
+          <span className="truncate text-sm font-medium text-(--color-text-primary)" style={titleStyle}>{title}</span>
           <span className={cn(
             'inline-flex items-center gap-1 rounded-full px-2 py-1',
             device.online
@@ -102,6 +109,7 @@ export default function PropertiesGridPanel({
               : <span title={t('dashboard.acPanel.standby')}><Moon className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.standby')} /></span>}
           </span>
         </div>
+        )}
         <div className="flex flex-1 items-center justify-center">
           <p className="text-xs text-(--color-text-muted)">{t('dashboard.panel.noProperties')}</p>
         </div>
@@ -112,12 +120,21 @@ export default function PropertiesGridPanel({
   // 전원 OFF 시 운전 계열 속성은 정규화된 기본값이라 실제 값이 아니므로 '-' 로 표시.
   const powerOff = properties['power'] === false;
 
-  // 표시할 속성 필터링 (visibleProperties가 비어있으면 전체 표시)
-  let entries = sortProperties(Object.entries(properties));
+  // 표시할 속성 필터링 (visibleProperties가 비어있으면 전체 표시).
+  // 필터는 원본 속성 키 기준이므로 'measurements' 를 선택하면 측정치 전체가 표시된다.
+  //
+  // gateways 는 여기서 제외한다. 이 패널은 사용자가 컬럼 수와 표시 항목을 고르는
+  // "key/value 카드 N열" 그리드라, (디바이스, 게이트웨이) 쌍 여러 건짜리 표를 끼워 넣으면
+  // 사용자가 지정한 레이아웃이 깨진다. 제외하지 않으면 객체 폴백으로 JSON 덩어리가
+  // 표시되므로 제외 자체는 필수다. 링크별 상세는 디바이스 상세 패널의 게이트웨이
+  // 섹션과 에이전트 게이트웨이 탭에서 본다.
+  let filtered = excludeDedicatedSectionKeys(sortProperties(Object.entries(properties)));
   if (visibleProperties.length > 0) {
     const allowed = new Set(visibleProperties);
-    entries = entries.filter(([key]) => allowed.has(key));
+    filtered = filtered.filter(([key]) => allowed.has(key));
   }
+  // measurements 는 측정치별 개별 카드로 펼친다(측정치마다 갱신 시각이 다르다).
+  const entries = expandMeasurementEntries(filtered);
 
   const colClass =
     gridCols === 1 ? 'grid-cols-1'
@@ -130,11 +147,12 @@ export default function PropertiesGridPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
       {/* 헤더 */}
+      {showTitle && (
       <div className="mb-3 flex shrink-0 items-center justify-between">
         <div className="flex items-center gap-2">
           <span
             className="truncate text-sm font-medium text-(--color-text-primary)"
-            style={acColor('labels') ? { color: acColor('labels')! } : undefined}
+            style={{ ...(acColor('labels') ? { color: acColor('labels')! } : undefined), ...titleStyle }}
           >
             {title}
           </span>
@@ -153,13 +171,14 @@ export default function PropertiesGridPanel({
             : <span title={t('dashboard.acPanel.standby')}><Moon className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.standby')} /></span>}
         </span>
       </div>
+      )}
 
       {/* 속성 그리드 */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className={cn('grid gap-3', colClass)}>
-          {entries.map(([key, value]) => (
+          {entries.map(({ id, key, value, timeMs }) => (
             <div
-              key={key}
+              key={id}
               className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2"
               style={acColor('borders') ? { borderColor: `${acColor('borders')}30` } : undefined}
             >
@@ -169,6 +188,13 @@ export default function PropertiesGridPanel({
               <p className="mt-0.5 text-sm font-medium text-(--color-text-primary)">
                 {formatPropertyValue(key, value, { powerOff })}
               </p>
+              {/* 측정치별 갱신 시각. 값과 경쟁하지 않도록 작고 흐리게, 상대 시간으로 표시하고
+                  정확한 시각은 title(hover)로 제공한다. */}
+              {timeMs !== undefined && (
+                <p className="mt-0.5 text-[10px] text-(--color-text-muted)" title={formatEpochMs(timeMs)}>
+                  {formatRelativeEpochMs(timeMs)}
+                </p>
+              )}
             </div>
           ))}
         </div>

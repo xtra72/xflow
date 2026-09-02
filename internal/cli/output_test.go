@@ -323,8 +323,8 @@ func TestDetailFormatter_NestedMapConfig(t *testing.T) {
 	)
 
 	data := map[string]any{
-		"name": "modbus-server",
-		"type": "modbus-tcp-server",
+		"name": "modbus-gateway",
+		"type": "modbus-gateway",
 		"config": map[string]any{
 			"listen_port": 5020,
 			"register_map": map[string]any{
@@ -347,7 +347,7 @@ func TestDetailFormatter_NestedMapConfig(t *testing.T) {
 	output := buf.String()
 	// 스칼라 필드 검증
 	assert.Contains(t, output, "Name:")
-	assert.Contains(t, output, "modbus-server")
+	assert.Contains(t, output, "modbus-gateway")
 
 	// 중첩 맵이 %v (map[key:value]) 형식이 아닌 재귀 렌더링 되어야 함
 	assert.NotContains(t, output, "map[coils:", "중첩 맵이 Go 기본 형식으로 출력되면 안 됨")

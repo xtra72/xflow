@@ -56,7 +56,7 @@ func storeKeyRowFunc(item any) []string {
 		fmt.Sprintf("%v", m["key"]),
 		fmt.Sprintf("%v", m["registration"]),
 		fmt.Sprintf("%v", m["data_type"]),
-		fmt.Sprintf("%v", m["metric_type"]),
+		fmt.Sprintf("%v", m["field"]),
 		formatTagsMap(m["tags"]),
 	}
 }
@@ -100,7 +100,7 @@ func newStoreKeysCmd(client **Client) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			agentName := args[0]
 
-			// 서버 응답 형식: {count, keys: [{key, registration, data_type, metric_type, tags}, ...]}
+			// 서버 응답 형식: {count, keys: [{key, registration, data_type, field, tags}, ...]}
 			var resp struct {
 				Count int              `json:"count"`
 				Keys  []map[string]any `json:"keys"`
@@ -217,7 +217,7 @@ func joinTagValues(v any) string {
 //
 // 요청 바디는 두 가지 방식으로 구성할 수 있다:
 //   - 플래그 매핑: --key/--mode/--namespace/--count/--duration-sec/--start-ms/
-//     --end-ms/--metric-type/--tag 를 storeQueryRequest 필드로 매핑.
+//     --end-ms/--field-type/--tag 를 storeQueryRequest 필드로 매핑.
 //   - --json: 원시 JSON 바디 문자열을 그대로 전송(고급 사용자용). 지정 시 플래그는 무시된다.
 //
 // mode 별 필수 필드(서버 검증):
@@ -235,7 +235,7 @@ func newStoreQueryCmd(client **Client) *cobra.Command {
 		durationSec int
 		startMs     int64
 		endMs       int64
-		metricType  string
+		field       string
 		tagPairs    []string
 		rawJSON     string
 	)
@@ -247,7 +247,7 @@ func newStoreQueryCmd(client **Client) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			agentName := args[0]
 
-			body, err := buildStoreQueryBody(rawJSON, key, mode, namespace, count, durationSec, startMs, endMs, metricType, tagPairs)
+			body, err := buildStoreQueryBody(rawJSON, key, mode, namespace, count, durationSec, startMs, endMs, field, tagPairs)
 			if err != nil {
 				return err
 			}
@@ -270,7 +270,7 @@ func newStoreQueryCmd(client **Client) *cobra.Command {
 	cmd.Flags().IntVar(&durationSec, "duration-sec", 0, "duration 모드의 기간(초)")
 	cmd.Flags().Int64Var(&startMs, "start-ms", 0, "time_range/since_n 모드의 시작 시각(epoch ms)")
 	cmd.Flags().Int64Var(&endMs, "end-ms", 0, "time_range 모드의 종료 시각(epoch ms)")
-	cmd.Flags().StringVar(&metricType, "metric-type", "", "시리즈 필터: metric_type")
+	cmd.Flags().StringVar(&field, "field-type", "", "시리즈 필터: field")
 	cmd.Flags().StringArrayVar(&tagPairs, "tag", nil, "시리즈 필터: 태그 k=v (반복 가능)")
 	cmd.Flags().StringVar(&rawJSON, "json", "", "원시 JSON 요청 바디 (지정 시 다른 플래그 무시)")
 
@@ -288,7 +288,7 @@ func buildStoreQueryBody(
 	rawJSON, key, mode, namespace string,
 	count, durationSec int,
 	startMs, endMs int64,
-	metricType string,
+	field string,
 	tagPairs []string,
 ) (map[string]any, error) {
 	// --json: 원시 바디 우선.
@@ -323,8 +323,8 @@ func buildStoreQueryBody(
 	if endMs > 0 {
 		body["end_ms"] = endMs
 	}
-	if metricType != "" {
-		body["metric_type"] = metricType
+	if field != "" {
+		body["field"] = field
 	}
 
 	tags, err := parseTagKV(tagPairs)
@@ -343,17 +343,17 @@ func buildStoreQueryBody(
 // newStoreMetaCmd 는 store meta <agent_name> <key> 서브커맨드를 생성한다.
 // PUT /api/v1/store/{agent_name}/keys/{key}/meta 로 키 메타데이터를 설정한다.
 //
-// 요청 바디: {"metric_type": "...", "tags": {"k": "v", ...}}
+// 요청 바디: {"field": "...", "tags": {"k": "v", ...}}
 // tags 는 전체 교체(replace) 시맨틱이다(부분 갱신이 아님).
 func newStoreMetaCmd(client **Client) *cobra.Command {
 	var (
-		metricType string
-		tagPairs   []string
+		field    string
+		tagPairs []string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "meta <agent_name> <key>",
-		Short: "저장소 키 메타데이터(metric_type/tags) 설정",
+		Short: "저장소 키 메타데이터(field/tags) 설정",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			agentName := args[0]
@@ -364,14 +364,14 @@ func newStoreMetaCmd(client **Client) *cobra.Command {
 				return err
 			}
 
-			// 서버 바디 형식: {"metric_type": "...", "tags": {...}}
+			// 서버 바디 형식: {"field": "...", "tags": {...}}
 			// tags 는 항상 non-nil 맵으로 전송하여 replace 시맨틱을 명확히 한다.
 			if tags == nil {
 				tags = map[string]string{}
 			}
 			body := map[string]any{
-				"metric_type": metricType,
-				"tags":        tags,
+				"field": field,
+				"tags":  tags,
 			}
 
 			// 키는 콜론 등 특수문자를 포함할 수 있어 path 세그먼트로 escape 한다.
@@ -388,7 +388,7 @@ func newStoreMetaCmd(client **Client) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&metricType, "metric-type", "", "설정할 metric_type (생략 시 unknown)")
+	cmd.Flags().StringVar(&field, "field-type", "", "설정할 field (생략 시 unknown)")
 	cmd.Flags().StringArrayVar(&tagPairs, "tag", nil, "설정할 태그 k=v (반복 가능, 전체 교체)")
 
 	return cmd

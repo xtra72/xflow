@@ -9,7 +9,7 @@
 | 측면 | Store (SPEC-STORE-004) | TSDB (SPEC-TSDB-001) |
 | --- | --- | --- |
 | 1차 목적 | 현재값/최근값 중심 KV + 제한적 시계열(history) | 본격 시계열(대량 포인트, retention/eviction) |
-| 식별 | `(key, metric_type, sorted(tags))` (namespace 스코프) | `(measurement, tags)` 시리즈 |
+| 식별 | `(measurement, field, sorted(tags))` (namespace 스코프) | `(measurement, tags)` 시리즈 |
 | 보관 | history 개수/TTL 제한 (`maxHistorySize`, `historyTTL`) | `MaxPointsPerSeries`(기본 100000), `MaxAge`(기본 24h), 메모리 상한, eviction loop |
 | 접근 | 키 단위 Get/Set + QueryHistory | 시리즈 단위 Write + QueryRange/Latest, subscriber |
 | 권장 사용 | 디바이스 상태/설정/최근 측정의 빠른 KV 조회 | 고빈도·장기 보존이 필요한 메트릭 |
@@ -35,11 +35,11 @@
 두 에이전트는 **독립 유지**하되, 시리즈 식별의 **하위 문법만 공유**한다 (O1):
 
 - TSDB: `tsdb.BuildSeriesKey(measurement, tags)` → `"measurement,k1=v1,k2=v2"` (태그 key 사전순 정렬).
-- Store: `system.EncodeSeriesKey(SeriesID{Key, MetricType, Tags})` → `"metric_type|tagsEncoded|key"`.
+- Store: `system.EncodeSeriesKey(SeriesID{Measurement, Field, Tags})` → `"field|tagsEncoded|measurement"`.
   - 이때 `tagsEncoded` 부분(`k1=v1,k2=v2`, 정렬)은 TSDB 태그 인코딩과 **동일한 하위 문법**이다.
-  - 바깥 프레임(`metric|tags|key`)은 Store 고유다. Store 는 TSDB 에 없는 **임의 Key 차원**을
-    포함하므로 (디바이스 UUID 등 구분자 포함 가능), measurement 위치에 임의 key 를 넣으면
-    구분자 충돌(N5)이 발생한다. 따라서 제약된 문자집합 필드(metric, tags)를 앞쪽에 배치하여
+  - 바깥 프레임(`field|tags|measurement`)은 Store 고유다. Store 의 measurement 는 TSDB 와 달리
+    **임의 문자열**이라 (디바이스 UUID 등 구분자 포함 가능) 맨 앞에 두면 구분자 충돌(N5)이
+    발생한다. 따라서 제약된 문자집합 필드(field, tags)를 앞쪽에 배치하여
     `|` 구분자 위치를 결정적으로 만들고, 임의 key 는 두 번째 `|` 이후로 안전하게 흡수한다.
 
 ## 결정 사항: 통합 여부

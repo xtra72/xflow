@@ -32,7 +32,8 @@ import {
   type SeriesMatrixQuery,
   type SeriesSelectorFilter,
 } from './seriesDataSource';
-import { seriesDisplayName, seriesSignature } from './seriesLabels';
+import { seriesSignature } from './seriesLabels';
+import { buildSeriesMatrix } from './seriesMatrixPivot';
 
 // ---- Backend DTOs ----
 
@@ -64,13 +65,13 @@ export type RegistrationSource = 'manual' | 'auto';
  * Store 키 메타데이터 객체 (SPEC-STORE-003 v0.3.0 M11).
  *
  * v0.3.0 BREAKING CHANGE: 키 목록 응답이 string 배열에서 객체 배열로 진화했다.
- * 각 객체는 키 이름, 등록 출처, 데이터 타입, 메트릭 타입, 태그 메타데이터를 포함한다.
+ * 각 객체는 키 이름, 등록 출처, 데이터 타입, 필드, 태그 메타데이터를 포함한다.
  *
  * 예) {
  *   key: "indoor:1:room_temp",
  *   registration: "manual",
  *   data_type: "float",
- *   metric_type: "gauge",
+ *   field: "gauge",
  *   tags: { room: "1", type: "temperature" }
  * }
  *
@@ -81,7 +82,7 @@ export interface StoreKeyObject {
   key: string;
   registration: RegistrationSource;
   data_type: DataType;
-  metric_type: string;
+  field: string;
   tags: Record<string, string>;
 }
 
@@ -147,15 +148,33 @@ interface StoreQueryRequest {
   /** 서버 집계 버킷 크기 (ms). > 0 + aggregation 동시 지정 시 서버 집계 경로 활성화. */
   interval_ms?: number;
   /** 서버 집계 함수. UI `average` 는 백엔드 `avg` 로 변환해 전달한다. */
-  aggregation?: 'min' | 'max' | 'avg';
+  aggregation?: StoreBackendAggregation;
+  /** 빈 버킷 채우기. 어휘는 TSDB 소스와 같다(`'' | null | zero | previous`). */
+  fill?: string;
+  /** `previous` 로 직전값을 이어 쓸 수 있는 최대 기간(ms). 0/미지정이면 무제한. */
+  fill_previous_max_ms?: number;
+  /** 사용 기간을 넘긴 버킷의 처리(`'' | value`). */
+  fill_previous_overflow?: string;
+  /** 위가 `value` 일 때 채울 값. */
+  fill_previous_overflow_value?: number;
 }
+
+/**
+ * 백엔드가 받는 집계 어휘.
+ *
+ * `average` 만 `avg` 로 어긋나고 나머지는 UI 표기와 같다. 종전에는 min/max/avg
+ * 셋뿐이라 first/last 는 클라이언트가 원시 엔트리를 버킷으로 나눠 계산했는데,
+ * 그 경로에는 서버의 빈 버킷 채우기가 걸리지 않아 같은 fill 설정이 집계 함수에
+ * 따라 되기도 하고 안 되기도 했다. 다섯 종을 모두 서버로 보낸다.
+ */
+type StoreBackendAggregation = 'min' | 'max' | 'avg' | 'first' | 'last';
 
 /**
  * 개별 엔트리 (값 타입은 런타임에 검증).
  *
  * @spec SPEC-STORE-004
- * `labels` 는 M3 백엔드부터 추가된 시리즈 식별자다. 예약 키 `__metric__` 는
- * metric_type, 그 외 키는 tag key=value 이다. 같은 store key 라도 metric/tags 가
+ * `labels` 는 M3 백엔드부터 추가된 시리즈 식별자다. 예약 키 `__field__` 는
+ * field, 그 외 키는 tag key=value 이다. 같은 store key 라도 metric/tags 가
  * 다른 다중 시리즈가 한 응답에 평탄화되어 섞여 올 수 있으므로, 클라이언트는 이
  * 라벨을 기준으로 시리즈를 분리해 각각 독립 컬럼/라인으로 렌더한다.
  * 라벨이 없는(undefined) 엔트리는 라벨 없는 단일 시리즈로 취급한다(기존 호환).
@@ -203,6 +222,24 @@ export function sliceKeysPage(
 }
 
 /**
+ * 태그 AND 필터를 `&tag=key:value` 반복 쿼리 파라미터로 인코딩한다.
+ *
+ * 백엔드 `GET /keys` 는 `?tag=k:v` 를 여러 번 받아 AND 로 결합한다(콜론 구분,
+ * 첫 콜론 기준 분리). 각 `key:value` 쌍을 URL 인코딩해 콜론/특수문자를 보존한다.
+ * 필터가 비어있으면 빈 문자열을 반환해 기존 URL 을 그대로 둔다(하위 호환).
+ *
+ * @spec SPEC-WEB-005
+ */
+export function buildStoreTagQuery(
+  tagFilters: Record<string, string> | undefined,
+): string {
+  if (!tagFilters) return '';
+  return Object.entries(tagFilters)
+    .map(([k, v]) => `&tag=${encodeURIComponent(`${k}:${v}`)}`)
+    .join('');
+}
+
+/**
  * `GET /api/v1/store/{agent_name}/keys` 를 호출해 키 이름 배열만 반환한다.
  *
  * v0.7.0 (M11) BREAKING CHANGE 호환 레이어:
@@ -211,12 +248,21 @@ export function sliceKeysPage(
  *   - 메타데이터(태그/등록출처/데이터타입) 가 필요한 호출자는
  *     `fetchStoreKeyObjects` 또는 `fetchStoreKeysWithTags` 를 사용한다.
  *
+ * `tagFilters` 를 주면 `?tag=k:v` AND 필터로 좁혀 조회한다(차트 tag 자동 모드).
+ * 미지정이면 전체 키를 반환한다(기존 동작). `signal` 로 요청 중단을 전파한다.
+ *
  * @spec SPEC-WEB-005 v0.7.0 (M11)
  */
-export async function fetchStoreKeys(agentName: string): Promise<string[]> {
-  const data = await get<StoreKeysRawResponse>(
-    `/store/${encodeURIComponent(agentName)}/keys?namespace=default&pattern=*`,
-  );
+export async function fetchStoreKeys(
+  agentName: string,
+  tagFilters?: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const url = `/store/${encodeURIComponent(agentName)}/keys?namespace=default&pattern=*${buildStoreTagQuery(tagFilters)}`;
+  // signal 이 없을 때 두 번째 인자로 undefined 를 넘기지 않는다(호출 서명 하위 호환).
+  const data = signal
+    ? await get<StoreKeysRawResponse>(url, { signal })
+    : await get<StoreKeysRawResponse>(url);
   // @spec SPEC-STORE-004
   // 백엔드 GET /keys 는 같은 key 를 metric/tags 별 다중 시리즈 행으로 반환한다.
   // 시리즈 선택 풀은 key 단위이므로(선택 시 해당 key 의 모든 시리즈를 한 번에 조회)
@@ -239,14 +285,22 @@ export async function fetchStoreKeys(agentName: string): Promise<string[]> {
  * StoreKeysEditor 등) 를 위한 신규 API. 기존 호출자는 `fetchStoreKeys` 또는
  * `fetchStoreKeysWithTags` 를 그대로 사용한다.
  *
+ * `tagFilters` 를 주면 `?tag=k:v` AND 필터로 좁혀 조회한다(차트 tag 자동 모드에서
+ * 매칭 키의 메타데이터가 필요할 때). 미지정이면 전체 키 객체를 반환한다(기존 동작).
+ * `signal` 로 요청 중단을 전파한다.
+ *
  * @spec SPEC-WEB-005 v0.7.0 (M11)
  */
 export async function fetchStoreKeyObjects(
   agentName: string,
+  tagFilters?: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<StoreKeyObject[]> {
-  const data = await get<StoreKeysRawResponse>(
-    `/store/${encodeURIComponent(agentName)}/keys?namespace=default&pattern=*`,
-  );
+  const url = `/store/${encodeURIComponent(agentName)}/keys?namespace=default&pattern=*${buildStoreTagQuery(tagFilters)}`;
+  // signal 이 없을 때 두 번째 인자로 undefined 를 넘기지 않는다(호출 서명 하위 호환).
+  const data = signal
+    ? await get<StoreKeysRawResponse>(url, { signal })
+    : await get<StoreKeysRawResponse>(url);
   return data.keys ?? [];
 }
 
@@ -336,12 +390,16 @@ export function bucketAndAggregate(
 }
 
 /**
- * UI `aggregation` (average/min/max) 을 백엔드 문자열(`avg`/`min`/`max`) 로 변환한다.
- * `average` 만 `avg` 로 치환되며, 나머지는 동일하다.
+ * UI `aggregation` 을 백엔드 어휘로 변환한다. `average` 만 `avg` 로 치환된다.
+ *
+ * `sum`/`count` 는 store 백엔드가 받지 않으므로 `null` 을 돌려 클라이언트 버킷
+ * 경로(`bucketAndAggregate`)로 내린다. 그 경로에는 서버 채우기가 걸리지 않지만,
+ * 두 집계는 store 소스의 설정 UI 에 노출되지 않으므로 도달하지 않는다 — 계약이
+ * 넓어 타입상 가능할 뿐이다.
  */
 function toBackendAggregation(
   aggregation: SeriesMatrixQuery['aggregation'],
-): 'min' | 'max' | 'avg' | null {
+): StoreBackendAggregation | null {
   switch (aggregation) {
     case 'average':
       return 'avg';
@@ -349,9 +407,11 @@ function toBackendAggregation(
       return 'min';
     case 'max':
       return 'max';
+    case 'first':
+      return 'first';
+    case 'last':
+      return 'last';
     default:
-      // first/last 는 store 백엔드 서버 집계가 미지원 → null 반환하여
-      // 클라이언트 측 bucketAndAggregate(aggregateValues) 경로를 사용한다.
       return null;
   }
 }
@@ -377,7 +437,7 @@ function isAggregationUnsupportedError(err: unknown): boolean {
  * 단일 store key 조회 결과를 시리즈 단위로 분리한 표현.
  *
  * - `signature`: labels 기준 결정적 서명. 라벨 없는 단일 시리즈는 "".
- * - `labels`: 원본 labels 맵(metric `__metric__` + tags). 라벨 없으면 undefined.
+ * - `labels`: 원본 labels 맵(metric `__field__` + tags). 라벨 없으면 undefined.
  * - `buckets`: 버킷 시작 시각 → 집계값 맵.
  */
 interface KeySeries {
@@ -396,7 +456,7 @@ interface KeySeries {
  *
  * 라벨이 없는 엔트리는 서명 "" 으로 묶여 "라벨 없는 단일 시리즈" 가 된다(기존 호환).
  */
-function groupEntriesBySeries(
+export function groupEntriesBySeries(
   entries: StoreQueryEntry[],
 ): Map<string, { labels: Record<string, string> | undefined; entries: StoreQueryEntry[] }> {
   const groups = new Map<
@@ -452,7 +512,7 @@ function collectAggregatedBuckets(entries: StoreQueryEntry[]): Map<number, numbe
  */
 function selectorSignature(filter: SeriesSelectorFilter): string {
   const labels: Record<string, string> = { ...(filter.tags ?? {}) };
-  if (filter.metricType) labels['__metric__'] = filter.metricType;
+  if (filter.fieldName) labels['__field__'] = filter.fieldName;
   return seriesSignature(labels);
 }
 
@@ -482,6 +542,18 @@ async function fetchKeySeries(
       namespace: 'default',
       interval_ms: params.intervalMs,
       aggregation: backendAgg,
+      // 채우기는 값이 있을 때만 싣는다 — 빈 문자열을 보내도 뜻은 같지만,
+      // 요청 본문이 종전과 바이트로 같아야 구버전 서버 폴백 판정이 흔들리지 않는다.
+      ...(params.fill ? { fill: params.fill } : {}),
+      ...(params.fill === 'previous' && params.fillPreviousMaxMs
+        ? { fill_previous_max_ms: params.fillPreviousMaxMs }
+        : {}),
+      ...(params.fill === 'previous' && params.fillPreviousOverflow
+        ? {
+            fill_previous_overflow: params.fillPreviousOverflow,
+            fill_previous_overflow_value: params.fillPreviousOverflowValue ?? 0,
+          }
+        : {}),
     };
 
     try {
@@ -541,6 +613,7 @@ async function fetchKeySeries(
  * - 기본적으로 서버 측 집계를 사용한다(`interval_ms` + `aggregation` 전송).
  * - 서버가 4xx 로 응답하면 자동으로 클라이언트 집계 경로로 폴백한다.
  * - 개별 요청(폴백 포함)이 최종적으로 실패하면 전체 프로미스가 rejected 된다.
+ *   Store 는 `Promise.all` 이므로 한 키의 실패가 전체 실패다.
  * - `signal` 로 axios 요청 중단을 전파할 수 있다 (개별 요청 모두에 주입).
  * - 결과 매트릭스의 행은 `bucketStartMs` 오름차순으로 정렬된다.
  *
@@ -550,78 +623,27 @@ async function fetchKeySeries(
  *   - 한 key 에서 시리즈가 1개뿐이면 → store key 그대로 (기존 동작 보존).
  *   - 2개 이상이면 → `key · metric{tag=...}` 형태로 라벨을 덧붙여 구분.
  * 컬럼 순서는 요청 key 순서 → 각 key 안에서 시리즈 등장 순서를 보존한다.
+ *
+ * @spec SPEC-TSDB-002 §4.3
+ * 입력 검증 · 컬럼 구성 · 0행 자리 보존 · 버킷 합집합 피벗은 소스를 모르므로
+ * `buildSeriesMatrix` 가 소유한다. 이 함수에 남는 것은 "Store 에서 키별 시리즈를
+ * 어떻게 가져오는가" 하나뿐이다(UB1-25 — 피벗 사본을 만들지 않는다).
  */
 export async function queryStoreMatrix(
   agentName: string,
   params: SeriesMatrixQuery,
   signal?: AbortSignal,
 ): Promise<SeriesMatrix> {
-  if (params.keys.length === 0) {
-    return { columns: [], rows: [] };
-  }
-  if (params.endMs <= params.startMs) {
-    throw new Error('종료 시각은 시작 시각 이후여야 합니다');
-  }
-  if (!Number.isFinite(params.intervalMs) || params.intervalMs <= 0) {
-    throw new Error('인터벌은 양수여야 합니다');
-  }
-
   // 키별로 시리즈 배열을 병렬 조회 (서버 집계 우선, 4xx 시 폴백).
   // 같은 인덱스의 결과가 같은 요청 (key, seriesFilters[idx]) 에 대응한다.
   // 시리즈별 선택 시 같은 key 가 metric/tags 가 다른 채로 여러 인덱스에 중복될 수 있다.
-  const perKeySeries: KeySeries[][] = await Promise.all(
-    params.keys.map((key, idx) =>
-      fetchKeySeries(agentName, key, params, signal, params.seriesFilters?.[idx]),
+  return buildSeriesMatrix(params, (p) =>
+    Promise.all(
+      p.keys.map((key, idx) =>
+        fetchKeySeries(agentName, key, p, signal, p.seriesFilters?.[idx]),
+      ),
     ),
   );
-
-  // 같은 key 가 몇 번 요청되었는지 — 시리즈별 선택으로 한 key 가 여러 인덱스에
-  // 나뉘어 오면 컬럼명이 충돌하므로 라벨 표기를 강제한다.
-  const keyRequestCount = new Map<string, number>();
-  for (const key of params.keys) {
-    keyRequestCount.set(key, (keyRequestCount.get(key) ?? 0) + 1);
-  }
-
-  // 요청 순서를 보존하며 모든 시리즈를 컬럼으로 평탄화한다.
-  // 한 key 의 시리즈가 2개 이상이거나, 같은 key 가 여러 인덱스로 중복 요청되면
-  // 라벨 표기를 덧붙여 컬럼명을 구분한다.
-  const columns: string[] = [];
-  const columnBuckets: Array<Map<number, number>> = [];
-  params.keys.forEach((key, idx) => {
-    const seriesList = perKeySeries[idx] ?? [];
-    // 데이터가 전혀 없는 key 도 단일 컬럼(전부 null)으로 노출해 기존 동작을 보존한다.
-    if (seriesList.length === 0) {
-      columns.push(key);
-      columnBuckets.push(new Map<number, number>());
-      return;
-    }
-    const withLabel = seriesList.length > 1 || (keyRequestCount.get(key) ?? 0) > 1;
-    for (const series of seriesList) {
-      columns.push(seriesDisplayName(key, series.labels, withLabel));
-      columnBuckets.push(series.buckets);
-    }
-  });
-
-  // 전체 버킷 시작 시각의 합집합을 수집하고 정렬한다.
-  const allBuckets = new Set<number>();
-  for (const m of columnBuckets) {
-    for (const ts of m.keys()) allBuckets.add(ts);
-  }
-  const sortedBuckets = Array.from(allBuckets).sort((a, b) => a - b);
-
-  // 각 버킷에 대해 컬럼 순서대로 값을 배치한다 (없으면 null).
-  const rows: SeriesMatrix['rows'] = sortedBuckets.map((bucketStartMs) => ({
-    bucketStartMs,
-    values: columnBuckets.map((m) => {
-      const v = m.get(bucketStartMs);
-      return v === undefined ? null : v;
-    }),
-  }));
-
-  return {
-    columns,
-    rows,
-  };
 }
 
 // ---- React Query hook ----
@@ -838,18 +860,18 @@ export async function renameStoreKey(
   return post<StoreRenameResult>(url, { new_key: newKey });
 }
 
-// ---- Key meta (metric_type / tags) ----
+// ---- Key meta (field / tags) ----
 
 /**
- * 임의 엔트리(정적 + 동적)의 metric_type / tags 를 설정한다.
+ * 임의 엔트리(정적 + 동적)의 field / tags 를 설정한다.
  *
  * `PUT /api/v1/store/{agent_name}/keys/{key}/meta` 를 호출한다.
  *
  * 동작 특성:
  *   - tags 는 **전체 교체** (merge 아님). 부분 수정 시 기존+변경 전체를 전송해야 한다.
- *   - metric_type 미지정/빈 문자열 → 백엔드가 `"unknown"` 으로 normalize.
+ *   - field 미지정/빈 문자열 → 백엔드가 `"unknown"` 으로 normalize.
  *   - 키는 URL 인코딩된다 (`:` → `%3A`). `encodeURIComponent` 가 콜론을 인코딩한다.
- *   - 검증 실패(metric_type 정규식 / tag key 정규식) 시 400 → `APIError` 로 전파된다.
+ *   - 검증 실패(field 정규식 / tag key 정규식) 시 400 → `APIError` 로 전파된다.
  *
  * @spec SPEC-STORE-003 v0.4.0
  */
@@ -870,7 +892,7 @@ export interface SetStoreKeyMetaVars {
 }
 
 /**
- * 엔트리 메타데이터(metric_type/tags) 설정 mutation 훅.
+ * 엔트리 메타데이터(field/tags) 설정 mutation 훅.
  *
  * 성공 시 해당 에이전트의 store 키 목록/태그 캐시를 invalidate 하여 즉시 UI 에
  * 반영한다. State 엔트리(`['agents', agentId]`)는 호출자가 추가로 invalidate 해야

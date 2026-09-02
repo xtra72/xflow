@@ -109,7 +109,7 @@ func messageToMap(msg message.Message) map[string]any {
 		}
 	}
 
-	// v0.16.2: timestamp 는 epoch ms (int64) — store-write/influxdb-write 의
+	// v0.16.2: timestamp 는 epoch ms (int64) — storage-write/storage-write 의
 	// resolveTemplateExpr ($.timestamp) 과 일관성 유지.
 	return map[string]any{
 		"id":        msg.ID(),

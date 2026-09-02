@@ -11,17 +11,20 @@ import (
 	"time"
 )
 
-// ModbusTransport 는 MODBUS/TCP 트랜스포트 레이어 인터페이스이다.
+// ModbusTransport 는 MODBUS 트랜스포트 레이어 인터페이스이다.
+// ADU-중립 설계: 상위 계층은 순수 PDU(function code + payload)만 다루며,
+// 각 트랜스포트 구현이 ADU 프레이밍(TCP=MBAP, RTU=CRC)을 담당한다.
 // 테스트 가능성을 위해 인터페이스로 분리한다.
 type ModbusTransport interface {
-	// Connect 는 MODBUS/TCP 디바이스에 TCP 연결을 수립한다.
+	// Connect 는 MODBUS 디바이스에 연결을 수립한다.
 	Connect(ctx context.Context) error
 
-	// SendAndReceive 는 MBAP 프레임을 전송하고 응답을 수신한다.
-	// MBAP 헤더(7바이트)를 먼저 읽어 Length 필드로 나머지 PDU 크기를 결정한다.
-	SendAndReceive(ctx context.Context, frame []byte) ([]byte, error)
+	// SendAndReceive 는 unitID 와 순수 PDU 를 받아 트랜스포트별 ADU 프레이밍을
+	// 부착해 전송하고, 응답에서 ADU 를 제거한 순수 응답 PDU 를 반환한다.
+	// TCP 구현은 MBAP(트랜잭션 ID 관리 + Length + de-framing)를 소유한다.
+	SendAndReceive(ctx context.Context, unitID byte, pdu []byte) (respPDU []byte, err error)
 
-	// Close 는 TCP 연결을 종료한다.
+	// Close 는 연결을 종료한다.
 	Close() error
 
 	// IsConnected 는 현재 연결 상태를 반환한다.
@@ -29,14 +32,27 @@ type ModbusTransport interface {
 }
 
 // ModbusTCPTransport 는 net.Conn 기반 MODBUS/TCP 트랜스포트 구현체이다.
+// MBAP 프레이밍(트랜잭션 ID 관리 포함)을 소유한다.
 type ModbusTCPTransport struct {
 	host           string
 	port           int
 	conn           net.Conn
 	mu             sync.Mutex
 	connected      bool
+	transactionID  uint16 // MBAP 트랜잭션 ID 카운터 (MBAP 관심사이므로 트랜스포트가 소유)
 	requestTimeout time.Duration
 	logger         *slog.Logger
+	obs            *clientObs // 프레임 로그 관측성 배선 (nil 이면 no-op, opt-in, F4)
+}
+
+// setObs 는 프레임 로그 관측성 배선을 주입한다(opt-in). nil 이면 프레임 로그는 no-op 이다.
+func (t *ModbusTCPTransport) setObs(o *clientObs) {
+	t.obs = o
+}
+
+// endpointAddr 는 프레임 로그용 대상 엔드포인트 주소 문자열을 반환한다.
+func (t *ModbusTCPTransport) endpointAddr() string {
+	return fmt.Sprintf("%s:%d", t.host, t.port)
 }
 
 // NewModbusTCPTransport 는 새로운 ModbusTCPTransport 를 생성한다.
@@ -73,16 +89,32 @@ func (t *ModbusTCPTransport) Connect(ctx context.Context) error {
 	return nil
 }
 
-// SendAndReceive 는 MBAP 프레임을 전송하고 응답을 수신한다.
+// SendAndReceive 는 unitID 와 순수 PDU 를 받아 MBAP ADU 를 부착해 전송하고,
+// 응답에서 MBAP 를 제거한 순수 응답 PDU 를 반환한다.
+// 트랜잭션 ID 관리·MBAP 프레이밍·de-framing 은 트랜스포트가 소유한다(ADU 관심사).
 // MODBUS/TCP 는 순차 통신이므로 mu 로 직렬화한다.
 // 응답 읽기 전략: MBAP 헤더(7바이트)를 먼저 읽어 Length 필드(바이트 4-5)를 추출하고,
 // 나머지 (Length - 1)바이트(UnitID 는 이미 헤더에 포함)를 읽는다.
-func (t *ModbusTCPTransport) SendAndReceive(ctx context.Context, frame []byte) ([]byte, error) {
+func (t *ModbusTCPTransport) SendAndReceive(ctx context.Context, unitID byte, pdu []byte) ([]byte, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if !t.connected || t.conn == nil {
 		return nil, ErrConnectionFailed
+	}
+
+	// MBAP ADU 프레이밍: 트랜잭션 ID 를 발급하고 MBAP 헤더를 부착한다.
+	txID := t.transactionID
+	t.transactionID++
+	frame := buildMBAPFrame(txID, unitID, pdu)
+
+	// TX 프레임 로그 (log_frames): ADU 프레이밍 직후, 전체 아웃바운드 ADU = MBAP 프레임(A-9).
+	if t.obs.framesOn() {
+		var reqFC byte
+		if len(pdu) > 0 {
+			reqFC = pdu[0]
+		}
+		logFrame(t.logger, true, t.obs.rawOn(), "TX", t.endpointAddr(), unitID, reqFC, frame)
 	}
 
 	// 컨텍스트 또는 requestTimeout 으로 데드라인 설정
@@ -119,20 +151,28 @@ func (t *ModbusTCPTransport) SendAndReceive(ctx context.Context, frame []byte) (
 		return nil, ErrFrameTooShort
 	}
 
-	pdu := make([]byte, pduSize)
+	// 응답 PDU(ADU-stripped) 반환: MBAP 헤더는 상위로 노출하지 않는다.
+	respPDU := make([]byte, pduSize)
 	if pduSize > 0 {
-		if _, err := io.ReadFull(t.conn, pdu); err != nil {
+		if _, err := io.ReadFull(t.conn, respPDU); err != nil {
 			t.handleConnError()
 			return nil, fmt.Errorf("modbus: read PDU failed: %w", err)
 		}
 	}
 
-	// 전체 응답 프레임 = MBAP 헤더 + PDU
-	response := make([]byte, MBAPHeaderSize+pduSize)
-	copy(response, header)
-	copy(response[MBAPHeaderSize:], pdu)
+	// RX 프레임 로그 (log_frames): 응답 수신 직후, 전체 인바운드 ADU = MBAP 헤더(7) + 응답 PDU(A-9).
+	if t.obs.framesOn() {
+		rxADU := make([]byte, 0, len(header)+len(respPDU))
+		rxADU = append(rxADU, header...)
+		rxADU = append(rxADU, respPDU...)
+		var respFC byte
+		if len(respPDU) > 0 {
+			respFC = respPDU[0]
+		}
+		logFrame(t.logger, true, t.obs.rawOn(), "RX", t.endpointAddr(), unitID, respFC, rxADU)
+	}
 
-	return response, nil
+	return respPDU, nil
 }
 
 // Close 는 TCP 연결을 종료한다.

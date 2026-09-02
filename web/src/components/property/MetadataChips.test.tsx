@@ -1,6 +1,6 @@
 // MetadataChips 단위 테스트.
 //
-// SPEC-STORE-003 v0.3.0 메타데이터 (data_type, metric_type, registration) 의
+// SPEC-STORE-003 v0.3.0 메타데이터 (data_type, field, registration) 의
 // 칩 표시 동작을 검증한다.
 //
 // @spec SPEC-WEB-005 v0.7.0 (M16)
@@ -69,20 +69,20 @@ describe('MetadataChips', () => {
     expect(screen.getByTestId('metadata-data-type').className).toMatch(/bg-gray-100/);
   });
 
-  it('metricType 이 지정되면 메트릭 칩이 노출된다', () => {
-    render(<MetadataChips metricType="temperature" />);
+  it('fieldName 이 지정되면 필드 칩이 노출된다', () => {
+    render(<MetadataChips fieldName="temperature" />);
     const chip = screen.getByTestId('metadata-metric-type');
     expect(chip).toHaveTextContent('temperature');
     // unknown 변종은 노출되지 않는다.
     expect(screen.queryByTestId('metadata-metric-type-unknown')).toBeNull();
   });
 
-  it('metricType=unknown 은 별도 muted 칩으로 표시된다', () => {
-    render(<MetadataChips metricType="unknown" />);
+  it('fieldName=unknown 은 별도 muted 칩으로 표시된다', () => {
+    render(<MetadataChips fieldName="unknown" />);
     const muted = screen.getByTestId('metadata-metric-type-unknown');
     expect(muted).toHaveTextContent('unknown');
     expect(muted.className).toMatch(/opacity-70/);
-    // 일반 metric_type 칩은 노출되지 않는다.
+    // 일반 field 칩은 노출되지 않는다.
     expect(screen.queryByTestId('metadata-metric-type')).toBeNull();
   });
 
@@ -111,7 +111,7 @@ describe('MetadataChips', () => {
     render(
       <MetadataChips
         dataType="float"
-        metricType="temperature"
+        fieldName="temperature"
         registration="manual"
         showAutoBadge
       />,
@@ -136,7 +136,7 @@ describe('MetadataChips', () => {
     render(
       <MetadataChips
         dataType="bytes"
-        metricType="counter"
+        fieldName="counter"
         registration="auto"
         showAutoBadge
       />,
@@ -145,7 +145,7 @@ describe('MetadataChips', () => {
       '데이터 타입: bytes',
     );
     expect(screen.getByTestId('metadata-metric-type').getAttribute('title')).toBe(
-      '메트릭 타입: counter',
+      '필드: counter',
     );
     expect(
       screen.getByTestId('metadata-registration-auto').getAttribute('title'),

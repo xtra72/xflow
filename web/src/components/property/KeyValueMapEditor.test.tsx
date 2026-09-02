@@ -1,6 +1,6 @@
 // KeyValueMapEditor 의 opt-in 강화(pathHelper 칩, 커스텀 라벨/placeholder) 테스트.
 //
-// influxdb-write 노드의 tag/field 값에 $. JSONPath 참조를 쉽게 입력할 수 있도록
+// storage-write 노드의 tag/field 값에 $. JSONPath 참조를 쉽게 입력할 수 있도록
 // 추가된 기능을 검증한다. 모든 신규 동작은 opt-in 이며, prop 미지정 시
 // 기존 "키"/"값" 기본 동작이 그대로 유지되어야 한다(다른 노드 무회귀).
 

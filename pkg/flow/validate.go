@@ -139,14 +139,21 @@ func validateDuplicateNodeNames(nodes []NodeDef) []ValidationError {
 var agentRefRequiredTypes = map[string]struct{}{
 	"bridge":          {},
 	"store-read":      {},
-	"store-write":     {},
+	"storage-write":   {},
 	"influxdb-read":   {},
-	"influxdb-write":  {},
 	"influxdb-query":  {},
 	"tsdb-write":      {},
 	"tsdb-query":      {},
 	"mqtt-subscriber": {},
 	"mqtt-publisher":  {},
+	// ChirpStack LoRaWAN 노드 (agent_ref 필수 — mqtt-subscriber 패턴)
+	"chirpstack-in":      {},
+	"chirpstack-control": {},
+	"chirpstack-status":  {},
+	// MODBUS command-set 노드 (agent_ref 필수)
+	"modbus-write":   {},
+	"modbus-read":    {},
+	"modbus-control": {},
 	// Thingplus 게이트웨이 노드 (agent_ref 필수)
 	"thingplus-uplink":   {},
 	"thingplus-downlink": {},
@@ -175,9 +182,6 @@ var agentRefRequiredTypes = map[string]struct{}{
 	"lgap":                    {},
 	"lgap-status":             {},
 	"lgap-control":            {},
-	"modbus":                  {},
-	"modbus-poller":           {},
-	"modbus-writer":           {},
 	"serial-in":               {},
 	"serial-out":              {},
 	"tcp-in":                  {},

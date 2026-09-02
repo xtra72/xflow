@@ -20,15 +20,15 @@
 //   - 결과 매트릭스에 CSV 내보내기 버튼을 위한 agentName / 범위 전달.
 //
 // SPEC-WEB-005 v0.7.0 (M16, Task 11/13) 메타데이터 표시 + 신규 필터 UI:
-//   - Store 모드 시리즈 행에 data_type / metric_type / registration 칩을 표시.
-//   - 시리즈 풀 위에 data_type / metric_type / registration 필터 UI 추가
+//   - Store 모드 시리즈 행에 data_type / field / registration 칩을 표시.
+//   - 시리즈 풀 위에 data_type / field / registration 필터 UI 추가
 //     (Store 모드에 한정; TSDB 모드는 메타데이터 소스가 없어 필터를 노출하지 않음).
 //   - 신규 필터는 기존 태그 필터 + 검색과 AND 결합되며, 모두 클라이언트 측에서 적용된다
 //     (서버 라운드트립 없음 — Phase A 의 `keyObjects` 응답을 그대로 사용).
 //
 // SPEC-WEB-005 v0.7.0 (Option A) TSDB 메타데이터 필터 확장:
-//   - TSDB 모드에서도 data_type / metric_type 필터를 노출한다.
-//     metric_type 은 키 이름에서 자동 추출 (InfluxDB measurement / 첫 segment),
+//   - TSDB 모드에서도 data_type / field 필터를 노출한다.
+//     field 은 키 이름에서 자동 추출 (InfluxDB measurement / 첫 segment),
 //     data_type 은 시계열 numeric 가정으로 'float' 고정.
 //   - registration 은 TSDB 에 개념이 없으므로 Store 모드에서만 노출 (필터 자체가 숨김).
 //   - 합성 메타데이터는 `useExtractedTagFilterState` 가 빌드하며,
@@ -110,6 +110,8 @@ const AGGREGATION_OPTIONS: { value: TsdbAggregation; labelKey: string }[] = [
   { value: 'average', labelKey: 'tsdb.aggAverage' },
   { value: 'first', labelKey: 'tsdb.aggFirst' },
   { value: 'last', labelKey: 'tsdb.aggLast' },
+  { value: 'sum', labelKey: 'tsdb.aggSum' },
+  { value: 'count', labelKey: 'tsdb.aggCount' },
 ];
 
 /** 빈 버킷 채우기(gap-fill) 전략 옵션. 인터벌 구간에 값이 없을 때 적용. */
@@ -237,7 +239,7 @@ interface StoreTagFilterState {
    *
    * Store 모드에서만 채워지며 (Phase A 의 `keyObjects` 응답에서 derived),
    * TSDB/그 외 모드에서는 빈 객체를 반환한다. v0.7.0 (M16) 메타데이터 칩
-   * 표시와 data_type/metric_type/registration 필터 적용에 사용된다.
+   * 표시와 data_type/field/registration 필터 적용에 사용된다.
    *
    * 같은 key 에 다중 시리즈가 있으면 마지막 시리즈가 대표값으로 들어간다.
    * 시리즈별 구분 표시는 `seriesByKey` 를 사용한다.
@@ -398,7 +400,7 @@ function useExtractedTagFilterState(
   }, []);
   const clearAll = useCallback(() => setSelected(new Set()), []);
   // SPEC-WEB-005 v0.7.0 (Option A): TSDB 모드 합성 메타데이터.
-  //   - metric_type: 키 이름에서 자동 추출 (InfluxDB measurement / 첫 segment / 키 전체).
+  //   - field: 키 이름에서 자동 추출 (InfluxDB measurement / 첫 segment / 키 전체).
   //                  추출 실패한 빈 문자열은 'unknown' 으로 대체해 필터 매칭 가능하게 한다.
   //   - data_type: TSDB 시계열은 numeric 이므로 'float' 고정.
   //                필터에서 'float' 외 값을 선택하면 0개 매치 (의도적 동작).
@@ -414,7 +416,7 @@ function useExtractedTagFilterState(
         key: k,
         registration: 'manual',
         data_type: 'float',
-        metric_type: metric || 'unknown',
+        field: metric || 'unknown',
         tags: tagsByKey[k] ?? {},
       };
     }
@@ -522,7 +524,7 @@ function SeriesDataViewerModalImpl({
         ids.push(k);
       } else {
         for (const o of arr) {
-          const id = makeSeriesId(o.key, o.metric_type, o.tags);
+          const id = makeSeriesId(o.key, o.field, o.tags);
           byId.set(id, { key: o.key, obj: o });
           ids.push(id);
         }
@@ -546,7 +548,7 @@ function SeriesDataViewerModalImpl({
       rows.push({
         id,
         key,
-        metric: meta?.metric_type ?? '',
+        field: meta?.field ?? '',
         dataType: meta?.data_type ?? '',
         registration: meta?.registration ?? '',
         tags: meta?.tags ?? {},
@@ -823,7 +825,7 @@ function SeriesDataViewerModalImpl({
       orderedKeys.push(entry.key);
       seriesFilters.push(
         isMulti && entry.obj
-          ? { metricType: entry.obj.metric_type, tags: entry.obj.tags }
+          ? { fieldName: entry.obj.field, tags: entry.obj.tags }
           : undefined,
       );
     }

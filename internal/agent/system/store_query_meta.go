@@ -6,7 +6,7 @@
 // 본 파일은 Phase B/C 의 누락 보정용이다 — 내부 *StoreAgent 에는 이미
 // `StaticKeysSnapshot() map[string]StaticKeyMeta` 가 있지만 (`store.go` 참조),
 // API 핸들러가 거치는 *UserStoreAgent (agent.Agent 구현) 에는 동일 패스스루가
-// 없어 Phase D 의 BREAKING 응답 모델 (data_type, metric_type, registration 노출)
+// 없어 Phase D 의 BREAKING 응답 모델 (data_type, field, registration 노출)
 // 을 구현할 수 없었다.
 //
 // Phase D 가 핸들러 측에서 `StaticKeysSnapshot()` 으로 마이그레이션을 완료하면

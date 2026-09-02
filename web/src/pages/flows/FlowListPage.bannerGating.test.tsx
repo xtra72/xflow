@@ -48,7 +48,7 @@ vi.mock('@/components/remote/RemoteTargetBanner', () => ({
 }));
 
 // TargetProvider 는 컨텍스트만 제공하므로 통과 스텁.
-vi.mock('@/lib/remote/TargetContext', () => ({
+vi.mock('@/lib/remote/TargetProvider', () => ({
   TargetProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 

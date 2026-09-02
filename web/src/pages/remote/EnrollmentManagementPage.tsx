@@ -270,21 +270,19 @@ interface PageHeaderProps {
   onPreRegister?: () => void;
 }
 
+// 페이지 제목은 앱 헤더(Header 의 PAGE_TITLE_KEYS)가 그린다. 제목이 빠지면서
+// 좌측은 설명 한 줄만 남으므로, 제목+설명을 묶던 래퍼 div 를 걷어내고 정렬을
+// items-start → items-center 로 바꾼다(우측 사전 등록 버튼과 수직 중앙 정렬).
 function PageHeader({ onPreRegister }: PageHeaderProps): React.JSX.Element {
   const { t } = useTranslation();
   return (
     <header
       data-testid="enrollment-management-header"
-      className="flex items-start justify-between gap-4"
+      className="flex items-center justify-between gap-4"
     >
-      <div>
-        <h1 className="text-2xl font-semibold text-(--color-text-primary)">
-          {t('remote.enrollmentManagement.title')}
-        </h1>
-        <p className="mt-1 text-sm text-(--color-text-muted)">
-          {t('remote.enrollmentManagement.subtitle')}
-        </p>
-      </div>
+      <p className="text-sm text-(--color-text-muted)">
+        {t('remote.enrollmentManagement.subtitle')}
+      </p>
       {onPreRegister && (
         <button
           type="button"

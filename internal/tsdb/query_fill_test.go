@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xtra/xflow/internal/fillpolicy"
 )
 
 // first/last 집계 검증.
@@ -109,4 +110,65 @@ func TestExecute_Downsample_FillPrevious(t *testing.T) {
 	pts := results[0].Points
 	require.Len(t, pts, 4) // 빈 버킷 포함 4개
 	assert.Equal(t, 10.0, pts[1].Fields["value"])
+}
+
+// 직전값 채우기의 사용 기간 제한(fillpolicy.Previous).
+//
+// 제한이 없으면 종전대로 끝까지 이어 쓴다. 제한을 걸면 그 기간까지만 잇고,
+// 넘긴 버킷은 비우거나(기본) 지정 값으로 채운다.
+func TestDownsampleFilled_직전값_사용기간(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	const interval = time.Minute
+	// 0분에만 값이 있고 1~5분은 비어 있다.
+	pts := []scalarPoint{{ts: base, v: 10}}
+	start, end := base, base.Add(6*interval)
+
+	// 결과에서 fieldName 값을 뽑는다(nil = 비움).
+	values := func(rows []DataPoint) []any {
+		out := make([]any, len(rows))
+		for i, r := range rows {
+			out[i] = r.Fields["v"]
+		}
+		return out
+	}
+
+	t.Run("제한 없으면 끝까지 이어 쓴다(종전 동작)", func(t *testing.T) {
+		got := downsampleFilledScalars(
+			pts, "v", AggLast, interval, start, end, FillPrevious, fillpolicy.Previous{})
+		require.Len(t, got, 6)
+		assert.Equal(t, []any{10.0, 10.0, 10.0, 10.0, 10.0, 10.0}, values(got))
+	})
+
+	t.Run("기간을 넘긴 버킷은 기본적으로 비운다", func(t *testing.T) {
+		// 3분 제한 → 1·2·3분은 잇고 4·5분은 비운다.
+		got := downsampleFilledScalars(
+			pts, "v", AggLast, interval, start, end, FillPrevious,
+			fillpolicy.Previous{MaxMs: 3 * 60_000})
+		require.Len(t, got, 6)
+		assert.Equal(t, []any{10.0, 10.0, 10.0, 10.0, nil, nil}, values(got))
+	})
+
+	t.Run("기간을 넘긴 버킷을 지정 값으로 채울 수 있다", func(t *testing.T) {
+		got := downsampleFilledScalars(
+			pts, "v", AggLast, interval, start, end, FillPrevious,
+			fillpolicy.Previous{MaxMs: 3 * 60_000, Overflow: fillpolicy.OverflowValue, Value: -1})
+		assert.Equal(t, []any{10.0, 10.0, 10.0, 10.0, -1.0, -1.0}, values(got))
+	})
+
+	t.Run("실측이 다시 나오면 기간이 처음부터 다시 세어진다", func(t *testing.T) {
+		// 0분과 3분에 값이 있다. 3분 뒤로 2칸(4·5분)만 이어야 한다.
+		two := []scalarPoint{{ts: base, v: 10}, {ts: base.Add(3 * interval), v: 20}}
+		got := downsampleFilledScalars(
+			two, "v", AggLast, interval, start, end, FillPrevious,
+			fillpolicy.Previous{MaxMs: 2 * 60_000})
+		// 0=10, 1·2=10 이어짐(2칸 한도), 3=20(실측), 4·5=20 이어짐(다시 2칸).
+		assert.Equal(t, []any{10.0, 10.0, 10.0, 20.0, 20.0, 20.0}, values(got))
+	})
+
+	t.Run("제한은 previous 에만 걸린다 — zero 는 그대로", func(t *testing.T) {
+		got := downsampleFilledScalars(
+			pts, "v", AggLast, interval, start, end, FillZero,
+			fillpolicy.Previous{MaxMs: 60_000})
+		assert.Equal(t, []any{10.0, 0.0, 0.0, 0.0, 0.0, 0.0}, values(got))
+	})
 }

@@ -83,10 +83,13 @@ type createReleaseRequest struct {
 
 // RegisterRoutes 는 JSON admin 라우트를 RouteGroup 에 등록한다(Auth 미들웨어 + requireAdmin).
 func (h *ReleaseAdminHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.GET("/remote/releases", h.ListReleases)
-	g.POST("/remote/releases", h.CreateRelease)
-	g.DELETE("/remote/releases/{version}", h.DeleteRelease)
-	g.DELETE("/remote/releases/{version}/assets/{os}/{arch}", h.DeleteAsset)
+	// @SPEC:SPEC-AUTH-005 (M5) — 원격 하위 API 는 remote.* 단일 키로만 다룬다
+	// (spec.md §1.3 비범위: 원격 노드 하위 API 의 세분 권한). 조회는 remote.read,
+	// 그 외 모든 변경·명령은 remote.update 이다.
+	g.GETPerm("/remote/releases", "remote.read", h.ListReleases)
+	g.POSTPerm("/remote/releases", "remote.update", h.CreateRelease)
+	g.DELETEPerm("/remote/releases/{version}", "remote.update", h.DeleteRelease)
+	g.DELETEPerm("/remote/releases/{version}/assets/{os}/{arch}", "remote.update", h.DeleteAsset)
 }
 
 // uploadPattern 은 raw multipart 업로드 라우트 패턴이다(RegisterRawHandler 등록용).

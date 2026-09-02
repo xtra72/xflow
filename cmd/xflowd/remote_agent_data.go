@@ -88,7 +88,7 @@ func buildStoreKeysResponse(snapshot map[string]system.StaticKeyMeta) *handler.S
 			Key:          key,
 			Registration: string(meta.Source),
 			DataType:     string(meta.DataType),
-			MetricType:   meta.MetricType,
+			Field:        meta.Field,
 			Tags:         tags,
 		})
 	}

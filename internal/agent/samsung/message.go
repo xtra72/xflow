@@ -47,7 +47,8 @@ const (
 	MsgSwingVertical    uint16 = 0x4011
 	MsgFilterCleanReset uint16 = 0x4025
 	MsgFilterCleanAlarm uint16 = 0x4027
-	MsgAirPurifier      uint16 = 0x4043
+	MsgCurrentHumidity  uint16 = 0x4038 // 현재 습도(%) — NASA V1.1 지표 세트 #10, 1바이트 uint8 (예: 0x3E=62)
+	MsgXSFM             uint16 = 0x4043
 	MsgBuzzer           uint16 = 0x4050
 	MsgWindless         uint16 = 0x4060
 	MsgSwingHorizontal  uint16 = 0x407E

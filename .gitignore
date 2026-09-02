@@ -228,3 +228,17 @@ dist-ssr/
 .netlify/
 .firebase/data/
 .firebase/
+
+# ===========================================
+# 로컬 실행 산출물 / 런타임 상태
+# ===========================================
+# 디버그 덤프 (노드 출력 · 패킷 캡처)
+/data.json
+/output.json
+/packet.json
+# 웹 개발 서버가 만드는 SQLite 파일
+/web/data/
+# Claude Code 로컬 설정 락 (.claude/settings.local.json 은 이미 무시됨)
+.claude/settings.local.json.lock
+# MoAI 런타임 상태 (검증 로그 · 세션 레지스트리)
+/.moai/state/

@@ -29,9 +29,9 @@ func testModbusAgentConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "test-modbus-server",
 		Name: "Test MODBUS Server",
-		Type: "modbus-tcp-server",
+		Type: "modbus-gateway",
 		Transport: agent.TransportConfig{
-			Type: "modbus-tcp-server",
+			Type: "modbus-gateway",
 			Options: map[string]any{
 				"listen_address":   "127.0.0.1",
 				"listen_port":      0,
@@ -87,12 +87,12 @@ func addressResolverConfig() map[string]any {
 	return map[string]any{
 		"mode": "merge",
 		"address_table": map[string]any{
-			"창고:서버 옆":     0,
-			"실습실:전방 우측":   8,
-			"실습실:후방 오른쪽":  16,
-			"실습실:전방 좌측":   24,
-			"실습실:앞문":      32,
-			"회의실:":        40,
+			"창고:서버 옆":    0,
+			"실습실:전방 우측":  8,
+			"실습실:후방 오른쪽": 16,
+			"실습실:전방 좌측":  24,
+			"실습실:앞문":     32,
+			"회의실:":       40,
 		},
 		"expression": `{
           _base: $address_table[
@@ -631,4 +631,3 @@ func TestMqttToModbus_EndToEnd_Float32Precision(t *testing.T) {
 		})
 	}
 }
-

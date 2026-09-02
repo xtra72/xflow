@@ -9,6 +9,22 @@ import type { AuthTokens, User } from '@/types/auth';
 /** localStorage 토큰 저장 키 */
 const TOKENS_STORAGE_KEY = 'xflow_auth_tokens';
 
+/**
+ * 권한 집합의 적재 상태 (SPEC-AUTH-006 U1 / UB1).
+ *
+ * "필드 없음(구버전 서버)" 과 "조회 실패" 는 acceptance.md 엣지 케이스 표에서
+ * 서로 다른 기대 동작을 가지므로 한 값으로 뭉뚱그리지 않는다.
+ *
+ * - `unknown`: 아직 조회 전 (초기값)
+ * - `absent` : 응답에 permissions 필드가 없음 — 구버전 서버, 하위 호환 폴백 대상
+ * - `loaded` : 권한 집합 확보 — 집합 조회로 판정
+ * - `error`  : 조회 실패 — 폴백하지 않고 권한 없음으로 처리 (서버가 어차피 차단)
+ */
+export type PermissionStatus = 'unknown' | 'absent' | 'loaded' | 'error';
+
+/** 빈 권한 집합 (불변 공유 인스턴스). */
+const EMPTY_PERMISSIONS: ReadonlySet<string> = new Set<string>();
+
 interface AuthState {
   user: User | null;
   tokens: AuthTokens | null;
@@ -16,6 +32,10 @@ interface AuthState {
   isLoading: boolean;
   /** 서버 인증 활성화 여부. null = 아직 확인 전 */
   authEnabled: boolean | null;
+  /** 보유 권한 키 집합. 렌더당 네트워크 요청 없이 메모리 조회만 한다. */
+  permissions: ReadonlySet<string>;
+  /** 권한 집합 적재 상태. 폴백 분기의 입력이다. */
+  permissionStatus: PermissionStatus;
 }
 
 interface AuthActions {
@@ -24,8 +44,29 @@ interface AuthActions {
   setTokens: (tokens: AuthTokens) => void;
   setLoading: (loading: boolean) => void;
   setAuthEnabled: (enabled: boolean) => void;
+  /** `/auth/me` 결과로 사용자와 권한 집합을 함께 갱신한다. */
+  setUser: (user: User) => void;
+  /** 권한 조회 실패를 기록한다. 폴백하지 않고 권한 없음으로 처리된다. */
+  setPermissionsError: () => void;
   /** 앱 시작 시 인증 상태 확인 및 토큰 복원 */
   initialize: () => Promise<void>;
+}
+
+/**
+ * User.permissions → 스토어 권한 상태로 변환한다.
+ *
+ * 권한 집합의 출처를 이 함수 한 곳으로 모아, login / setUser / initialize 가
+ * 서로 다른 규칙으로 집합을 만드는 drift 를 막는다.
+ */
+function derivePermissions(user: User | null): Pick<AuthState, 'permissions' | 'permissionStatus'> {
+  if (!user) {
+    return { permissions: EMPTY_PERMISSIONS, permissionStatus: 'unknown' };
+  }
+  if (!user.permissions) {
+    // 구버전 서버 — 필드 자체가 없다. 조회 실패와 구분한다.
+    return { permissions: EMPTY_PERMISSIONS, permissionStatus: 'absent' };
+  }
+  return { permissions: new Set(user.permissions), permissionStatus: 'loaded' };
 }
 
 /**
@@ -142,6 +183,8 @@ export const useAuthStore = create<AuthState & AuthActions>()((set, get) => ({
   isAuthenticated: false,
   isLoading: false,
   authEnabled: null,
+  permissions: EMPTY_PERMISSIONS,
+  permissionStatus: 'unknown',
 
   // 액션
   login: (user, tokens) => {
@@ -157,6 +200,9 @@ export const useAuthStore = create<AuthState & AuthActions>()((set, get) => ({
       tokens,
       isAuthenticated: true,
       isLoading: false,
+      // 로그인 응답에는 permissions 가 없으므로 보통 'absent' 로 시작하며,
+      // useAuth.login 이 이어서 /auth/me 로 권한을 적재한다 (SPEC-AUTH-006 U1).
+      ...derivePermissions(user),
     });
   },
 
@@ -167,6 +213,8 @@ export const useAuthStore = create<AuthState & AuthActions>()((set, get) => ({
       tokens: null,
       isAuthenticated: false,
       isLoading: false,
+      permissions: EMPTY_PERMISSIONS,
+      permissionStatus: 'unknown',
     });
   },
 
@@ -180,6 +228,12 @@ export const useAuthStore = create<AuthState & AuthActions>()((set, get) => ({
 
   setAuthEnabled: (enabled) =>
     set({ authEnabled: enabled }),
+
+  setUser: (user) =>
+    set({ user, ...derivePermissions(user) }),
+
+  setPermissionsError: () =>
+    set({ permissions: EMPTY_PERMISSIONS, permissionStatus: 'error' }),
 
   initialize: async () => {
     const state = get();
@@ -206,22 +260,28 @@ export const useAuthStore = create<AuthState & AuthActions>()((set, get) => ({
         return;
       }
 
-      // 3. 토큰 유효성 검증 (서버 호출)
+      // 3. 토큰 유효성 검증 (서버 호출). 응답의 permissions 로 권한 집합도 함께
+      //    복원한다 — 세션 복원 후에도 로그인 직후와 동일한 판정이 유지된다.
       set({ tokens: stored });
       const user = await authService.getCurrentUser();
       set({
         user,
         isAuthenticated: true,
         isLoading: false,
+        ...derivePermissions(user),
       });
     } catch {
-      // 토큰이 만료되었거나 유효하지 않음 — 정리
+      // 토큰이 만료되었거나 유효하지 않음 — 정리.
+      // 권한 상태는 'error' 로 둔다. 조회에 실패한 상태에서 전원 허용으로
+      // 폴백하면 게이팅이 무의미해지고, 서버는 어차피 차단한다.
       clearTokens();
       set({
         user: null,
         tokens: null,
         isAuthenticated: false,
         isLoading: false,
+        permissions: EMPTY_PERMISSIONS,
+        permissionStatus: 'error',
       });
     }
   },

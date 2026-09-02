@@ -20,7 +20,7 @@ import (
 // fakeInfluxDBAgent 는 influxFluxQueryer 를 구현하는 테스트용 페이크이다.
 type fakeInfluxDBAgent struct {
 	*fakeAgentCommon
-	fluxFn    func(ctx context.Context, q string) ([]system.InfluxQueryResult, error)
+	fluxFn     func(ctx context.Context, q string) ([]system.InfluxQueryResult, error)
 	influxQLFn func(ctx context.Context, q string) ([]system.InfluxQueryResult, error)
 }
 

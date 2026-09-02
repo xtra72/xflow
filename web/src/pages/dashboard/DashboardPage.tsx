@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import GridLayout from 'react-grid-layout';
+import { useNavigate } from 'react-router';
 import {
   Pencil,
   RefreshCw,
@@ -21,22 +22,22 @@ import {
   Paintbrush,
   Palette as PaletteIcon,
   Save,
-  Info,
   Check,
   Grid3X3,
   ChevronUp,
   Clock,
+  Trash2,
 } from 'lucide-react';
 
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 
 import { useFlows, useWebSocket } from '@/hooks';
+import { usePermission } from '@/hooks/usePermission';
 import { useTranslation } from '@/lib/i18n';
-import { useDashboardSync } from '@/hooks/useDashboardSync';
+import { useDashboardSyncStatus } from '@/contexts/DashboardSyncContext';
 import { isRemoteTarget, LOCAL_TARGET, type ResourceTarget } from '@/lib/remote/target';
 import { getMetrics } from '@/services/api/monitorService';
-import { useAuthStore } from '@/stores/authStore';
 import {
   useUIStore,
   type DashboardLayoutItem,
@@ -46,13 +47,17 @@ import {
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import type { FlowInfo } from '@/types/flow';
 
+import { dashboardAccessByUid } from './dashboardAccess';
+import DashboardSettingsSelector from './DashboardSettingsSelector';
+import DragHandle from './DragHandle';
+import { GRID_MARGIN_PX } from './gridGeometry';
+import { useCreateDashboard } from './useCreateDashboard';
+import { useDashboardMutations } from './useDashboardMutations';
 import { renderDashboardPanel } from './renderDashboardPanel';
 import RemoteDashboardView from './RemoteDashboardView';
-import AddPanelDialog from './AddPanelDialog';
-import PanelSettingsDialog from './PanelSettingsDialog';
 
-/** 그리드 설정 */
-const GRID_MARGIN: [number, number] = [16, 16];
+/** 그리드 설정. 마진은 gridGeometry 와 공유한다 — 패널 설정 화면이 같은 식으로 종횡비를 역산한다. */
+const GRID_MARGIN: [number, number] = [GRID_MARGIN_PX, GRID_MARGIN_PX];
 
 /**
  * 대시보드 페이지 — 로컬/원격 디스패처 (SPEC-REMOTE-001 M10, 그룹 L, REQ-L09/L10).
@@ -96,16 +101,35 @@ function LocalDashboardView() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
-  // SPEC-DASHBOARD-001 v0.2.0: 서버 snapshot 동기화 훅.
-  const { pendingSync } = useDashboardSync();
+  // SPEC-DASHBOARD-001 v0.2.0: 서버 snapshot 동기화 상태(읽기 전용).
+  // 실제 동기화 훅(useDashboardSync)은 AppLayout 이 호출한다 — 패널 추가/설정
+  // 라우트로 이동해도 구독이 끊기지 않아야 하기 때문(AppLayout 주석 참조).
+  const { pendingSync } = useDashboardSyncStatus();
 
-  // SPEC-DASHBOARD-001 v0.2.0: 활성 스코프 (탭) + 사용자 역할.
-  const activeDashboardScope = useUIStore((s) => s.activeDashboardScope);
-  const setActiveDashboardScope = useUIStore((s) => s.setActiveDashboardScope);
-  const userRole = useAuthStore((s) => s.user?.role);
-  const isAdmin = userRole === 'admin';
-  /** 공유 탭이면서 admin 이 아닌 경우 편집 컨트롤 사전 비활성화 (AC-4 UX). */
-  const sharedReadOnly = activeDashboardScope === 'shared' && !isAdmin;
+  // SPEC-DASHBOARD-004 M6: 대시보드 단위 인가 판정 (spec.md §2.11 S2).
+  //
+  // 목록 응답이 항목마다 실어 보내는 can_edit / can_grant / can_delete 를 그대로
+  // 읽는다 — 판정 규칙(§2.2)은 서버가 소유하고 프론트는 재구현하지 않는다.
+  // 컨트롤은 **숨기지 않고 비활성 + 사유 툴팁**으로 둔다(SPEC-AUTH-006 §4.2):
+  // 사라진 버튼은 "기능이 없다"로 읽히지만, 비활성 버튼은 관리자에게 권한을
+  // 요청할 여지를 남긴다.
+  const dashboards = useUIStore((s) => s.dashboards);
+  const accessOf = useCallback(
+    (uid: string) => dashboardAccessByUid(dashboards, uid),
+    [dashboards],
+  );
+
+  // 생성은 대시보드 단위가 아니라 **전역 권한** 판정이다(spec.md §2.7 E1).
+  // 아직 존재하지 않는 대시보드에는 can_* 를 붙일 대상이 없기 때문이다.
+  // 역할 이름 비교(isAdmin)는 쓰지 않는다(spec.md §2.14 #2).
+  const { hasPermission } = usePermission();
+  const canCreate = hasPermission('dashboard.create');
+  const { create: createDashboardOnServer, isCreating } = useCreateDashboard();
+
+  // 이름 변경·기본 지정·삭제는 서버에 반영해야 영속된다 — `name` 과 `is_default`
+  // 는 컬럼이 되었고 본문 PUT 은 `{ payload }` 만 보내므로, 로컬 스토어만 바꾸면
+  // 사용자가 새로고침에서 변경을 잃는다.
+  const { rename, setDefault, remove: removeDashboard } = useDashboardMutations();
 
   // UI store
   const refreshInterval = useUIStore((s) => s.dashboardRefreshInterval);
@@ -114,12 +138,11 @@ function LocalDashboardView() {
   const dashboardPages = useUIStore((s) => s.dashboardPages);
   const activeDashboardId = useUIStore((s) => s.activeDashboardId);
   const setActiveDashboard = useUIStore((s) => s.setActiveDashboard);
-  const addDashboardPage = useUIStore((s) => s.addDashboardPage);
-  const setDefaultDashboardPage = useUIStore((s) => s.setDefaultDashboardPage);
-  const renameDashboardPage = useUIStore((s) => s.renameDashboardPage);
   const activePage = useUIStore((s) =>
     s.dashboardPages.find((p) => p.id === s.activeDashboardId),
   );
+  // 활성 대시보드의 판정 — 레이아웃 편집·패널 추가/삭제의 게이트다.
+  const activeAccess = accessOf(activeDashboardId);
   const layout = activePage?.layout ?? [];
   const panels = activePage?.panels ?? [];
   const setLayout = useUIStore((s) => s.setDashboardLayout);
@@ -134,6 +157,7 @@ function LocalDashboardView() {
   const setGridCols = useUIStore((s) => s.setDashboardGridCols);
   const showGridLines = useUIStore((s) => s.dashboardShowGridLines);
   const setShowGridLines = useUIStore((s) => s.setDashboardShowGridLines);
+  const setGridWidth = useUIStore((s) => s.setDashboardGridWidth);
   const refreshMs = refreshInterval * 1000;
 
   // 대시보드 드롭다운 열기/닫기
@@ -152,10 +176,8 @@ function LocalDashboardView() {
   // 갱신 주기 드롭다운 (일반 모드 헤더)
   const [refreshDropdownOpen, setRefreshDropdownOpen] = useState(false);
   const refreshDropdownRef = useRef<HTMLDivElement>(null);
-  // 패널 추가 다이얼로그
-  const [addPanelOpen, setAddPanelOpen] = useState(false);
-  // 패널 설정 다이얼로그 (열린 패널 ID)
-  const [settingsPanelId, setSettingsPanelId] = useState<string | null>(null);
+  // 패널 생성/설정: 모달 대신 딥링크 라우트로 이동한다(편집 상태는 uiStore 로 보존).
+  const navigate = useNavigate();
 
   // 컨테이너 너비 측정 (그리드 영역) — 콜백 ref로 조건부 렌더링 대응
   const containerRef = useRef<HTMLDivElement>(null);
@@ -190,6 +212,12 @@ function LocalDashboardView() {
       }
     };
   }, []);
+
+  // 실측 폭을 store 에 게시한다 — 패널 설정 화면(다른 라우트)은 그리드를 렌더하지 않으므로
+  // 스스로 잴 수 없고, 이 값 없이는 "이 패널이 실제로 몇 대 몇인지"를 알 수 없다.
+  useEffect(() => {
+    setGridWidth(containerWidth);
+  }, [containerWidth, setGridWidth]);
 
   // 칼럼 폭에 맞춘 동적 행 높이 (정사각형 셀)
   const gridRowHeight = containerWidth > 0
@@ -300,13 +328,26 @@ function LocalDashboardView() {
     setEditingName(currentName);
   };
 
-  /** 인라인 이름 편집 완료 */
+  /** 인라인 이름 편집 완료 — 서버 PATCH{name} 으로 영속한다.
+   *
+   * 편집 시작 후 목록 재조회로 권한을 잃는 경우가 있으므로 확정 시점에 다시
+   * 판정한다. 서버가 거부하면 훅이 낙관적 반영을 되돌리고 사유를 알린다. */
   const finishRename = () => {
-    if (editingPageId && editingName.trim()) {
-      renameDashboardPage(editingPageId, editingName.trim());
+    if (editingPageId && editingName.trim() && accessOf(editingPageId).canEdit) {
+      void rename(editingPageId, editingName.trim());
     }
     setEditingPageId(null);
     setEditingName('');
+  };
+
+  /** 대시보드 삭제 — 되돌릴 수 없으므로 확인을 받고 서버에 요청한다. */
+  const handleDeleteDashboard = (uid: string, name: string) => {
+    if (!accessOf(uid).canDelete) return;
+    const confirmed = window.confirm(
+      t('header.dashboard.deleteConfirm').replace('{name}', name),
+    );
+    if (!confirmed) return;
+    void removeDashboard(uid);
   };
 
   /** 패널 타입에 따라 적절한 위젯 컴포넌트를 렌더링(공유 렌더러 재사용 — REQ-L09). */
@@ -322,74 +363,17 @@ function LocalDashboardView() {
   const activePageName = activePage?.name ?? t('dashboard.fallbackName');
 
   return (
-    <div className="-m-6 flex flex-1 flex-col" ref={containerRef}>
-      {/* SPEC-DASHBOARD-001 v0.2.0: 공유/내 대시보드 탭 토글 (헤더 위) */}
-      <div
-        role="tablist"
-        aria-label={t('dashboard.scope.aria')}
-        className="flex h-9 shrink-0 items-center gap-1 border-b border-(--color-border-default) bg-(--color-bg-surface) px-6"
-      >
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeDashboardScope === 'shared'}
-          aria-label={t('dashboard.scope.sharedAria')}
-          onClick={() => setActiveDashboardScope('shared')}
-          className={`inline-flex h-7 items-center rounded-md px-3 text-[12px] font-medium transition-colors ${
-            activeDashboardScope === 'shared'
-              ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
-              : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
-          }`}
-        >
-          {t('dashboard.scope.shared')}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeDashboardScope === 'mine'}
-          aria-label={t('dashboard.scope.mineAria')}
-          onClick={() => setActiveDashboardScope('mine')}
-          className={`inline-flex h-7 items-center rounded-md px-3 text-[12px] font-medium transition-colors ${
-            activeDashboardScope === 'mine'
-              ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
-              : 'text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
-          }`}
-        >
-          {t('dashboard.scope.mine')}
-        </button>
-        {/* 동기화 인디케이터 + 읽기 전용 뱃지 */}
-        <div className="ml-auto flex items-center gap-3">
-          {sharedReadOnly && (
-            <span
-              className="text-[11px] text-(--color-text-muted)"
-              title={t('dashboard.scope.adminOnly')}
-            >
-              {t('dashboard.scope.readOnly')}
-            </span>
-          )}
-          {pendingSync && (
-            <span
-              className="text-[11px] text-(--color-text-muted)"
-              aria-live="polite"
-            >
-              {t('dashboard.scope.syncing')}
-            </span>
-          )}
-        </div>
-      </div>
-
+    <div className="-m-6 flex flex-1 flex-col" ref={containerRef} data-testid="dashboard-root">
+      {/* 공유/내 대시보드 스코프 바는 제거했다(SPEC-AUTH-006 후속) —
+          대시보드 관리는 별도 메뉴로 분리 예정이다. 같은 행에 있던 저장 상태
+          표시는 아래 헤더 바 우측으로 옮겨 정보가 사라지지 않게 했다. */}
       {/* ── 헤더 바 (Pencil: 56px, 흰색, border-bottom) ── */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-(--color-border-default) bg-(--color-bg-surface) px-6">
         {editMode ? (
-          /* ── 편집 모드 헤더 좌측: 타이틀 + 앰버 뱃지 ── */
-          <div className="flex items-center gap-3">
-            <span className="text-base font-semibold text-(--color-text-primary)">
-              {activePageName}
-            </span>
-            <span className="inline-flex items-center rounded-md bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-500 dark:bg-amber-900/30 dark:text-amber-400">
-              {t('dashboard.editMode')}
-            </span>
-          </div>
+          /* ── 편집 모드 헤더 좌측: 대시보드 셀렉터 + 관리 컨트롤 + 앰버 뱃지 ──
+             별도 '대시보드 관리' 화면을 없애고 관리 기능을 이 안으로 옮겼다.
+             목록은 볼 수 있는 대시보드 **전부**(비활성 포함)를 싣는다. */
+          <DashboardSettingsSelector activeName={activePageName} />
         ) : (
           /* ── 일반 모드 헤더 좌측: 대시보드 셀렉터 ── */
           <div className="relative" ref={dropdownRef}>
@@ -406,7 +390,11 @@ function LocalDashboardView() {
             {dashboardDropdownOpen && (
               <div className="absolute left-0 top-full z-50 mt-1 w-[220px] overflow-hidden rounded-[10px] border border-(--color-border-default) bg-(--color-bg-surface) shadow-lg">
                 <div className="flex flex-col gap-0.5 p-1.5">
-                  {dashboardPages.map((page) => (
+                  {dashboardPages.map((page) => {
+                    // 행마다 그 대시보드의 판정을 쓴다 — 활성 대시보드 하나로
+                    // 목록 전체를 잠그면 편집 가능한 대시보드까지 함께 잠긴다.
+                    const rowAccess = accessOf(page.id);
+                    return (
                     <div
                       key={page.id}
                       className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-(--color-bg-elevated) ${
@@ -435,48 +423,80 @@ function LocalDashboardView() {
                           {page.name}
                         </button>
                       )}
+                      {/* 기본 지정은 서버가 PATCH{is_default} 를 grant 인가로
+                          검사한다(spec.md §2.3) — can_grant 로 게이팅한다. */}
                       <button
                         type="button"
-                        onClick={() => setDefaultDashboardPage(page.id)}
-                        disabled={sharedReadOnly}
-                        aria-disabled={sharedReadOnly}
+                        onClick={() => void setDefault(page.id)}
+                        disabled={!rowAccess.canGrant}
+                        aria-disabled={!rowAccess.canGrant}
+                        data-testid={`dashboard-set-default-${page.id}`}
                         className={`shrink-0 p-0.5 transition-colors ${
-                          sharedReadOnly
+                          !rowAccess.canGrant
                             ? 'cursor-not-allowed opacity-40'
                             : page.isDefault
                             ? 'text-yellow-500'
                             : 'text-(--color-text-muted) hover:text-yellow-400'
                         }`}
-                        title={sharedReadOnly ? t('dashboard.scope.adminOnly') : page.isDefault ? t('dashboard.header.defaultTitle') : t('dashboard.header.setDefault')}
+                        title={!rowAccess.canGrant ? t('dashboard.gate.grantDenied') : page.isDefault ? t('dashboard.header.defaultTitle') : t('dashboard.header.setDefault')}
                       >
                         <Star className={`h-3.5 w-3.5 ${page.isDefault ? 'fill-current' : ''}`} />
                       </button>
+                      {/* 이름 변경은 서버가 PATCH{name} 를 edit 인가로
+                          검사한다(spec.md §2.3) — can_edit 으로 게이팅한다. */}
                       <button
                         type="button"
                         onClick={() => startRename(page.id, page.name)}
-                        disabled={sharedReadOnly}
-                        aria-disabled={sharedReadOnly}
+                        disabled={!rowAccess.canEdit}
+                        aria-disabled={!rowAccess.canEdit}
+                        data-testid={`dashboard-rename-${page.id}`}
                         className={`shrink-0 p-0.5 transition-colors ${
-                          sharedReadOnly
+                          !rowAccess.canEdit
                             ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
                             : 'text-(--color-text-muted) hover:text-(--color-text-primary)'
                         }`}
-                        title={sharedReadOnly ? t('dashboard.scope.adminOnly') : t('dashboard.header.rename')}
+                        title={!rowAccess.canEdit ? t('dashboard.gate.editDenied') : t('dashboard.header.rename')}
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
+                      {/* 삭제는 서버가 DELETE 를 delete 인가로 검사한다
+                          (spec.md §2.3) — can_delete 로 게이팅한다. 활성
+                          대시보드를 지우면 M5 의 폴백 사슬이 착지점을 정한다. */}
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteDashboard(page.id, page.name)}
+                        disabled={!rowAccess.canDelete}
+                        aria-disabled={!rowAccess.canDelete}
+                        data-testid={`dashboard-delete-${page.id}`}
+                        className={`shrink-0 p-0.5 transition-colors ${
+                          !rowAccess.canDelete
+                            ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
+                            : 'text-(--color-text-muted) hover:text-red-500'
+                        }`}
+                        title={!rowAccess.canDelete ? t('dashboard.gate.deleteDenied') : t('header.dashboard.delete')}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div className="border-t border-(--color-border-default)">
+                  {/* 생성은 전역 dashboard.create 판정이다(spec.md §2.7 E1).
+                      로컬 스토어가 아니라 서버 POST 로 만들고 서버가 발급한
+                      uid 를 그대로 쓴다 — uid 를 지어내면 서버 행과 어긋난다. */}
                   <button
                     type="button"
-                    onClick={() => { addDashboardPage(t('dashboard.header.newDashboardName')); setDashboardDropdownOpen(false); }}
-                    disabled={sharedReadOnly}
-                    aria-disabled={sharedReadOnly}
-                    title={sharedReadOnly ? t('dashboard.scope.adminOnly') : undefined}
+                    onClick={() => {
+                      void createDashboardOnServer(t('dashboard.header.newDashboardName'));
+                      setDashboardDropdownOpen(false);
+                    }}
+                    disabled={!canCreate || isCreating}
+                    aria-disabled={!canCreate || isCreating}
+                    data-testid="dashboard-add"
+                    title={canCreate ? undefined : t('dashboard.gate.createDenied')}
                     className={`flex w-full items-center justify-center gap-2 px-4 py-2.5 text-sm transition-colors ${
-                      sharedReadOnly
+                      !canCreate || isCreating
                         ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
                         : 'text-blue-600 hover:bg-(--color-bg-elevated) dark:text-blue-400'
                     }`}
@@ -492,6 +512,17 @@ function LocalDashboardView() {
 
         {/* 헤더 우측 */}
         <div className="flex items-center gap-2">
+          {/* 저장 진행 표시 — 스코프 바가 사라지면서 이리로 옮겼다. 레이아웃
+              변경이 저장 중인지 사용자가 알 수 있어야 한다. */}
+          {pendingSync && (
+            <span
+              className="text-[11px] text-(--color-text-muted)"
+              aria-live="polite"
+              data-testid="dashboard-syncing"
+            >
+              {t('dashboard.scope.syncing')}
+            </span>
+          )}
           {editMode ? (
             /* ── 편집 모드 우측: 테마 + 패널추가 + 취소 + 저장 ── */
             <>
@@ -623,14 +654,22 @@ function LocalDashboardView() {
                 )}
               </div>
 
-              {/* 패널 추가 (Pencil: aSF19) */}
+              {/* 패널 추가 (Pencil: aSF19) — 편집 모드 진입 후 권한을 잃는
+                  경우(목록 재조회로 can_edit 이 false 로 바뀜)가 있으므로
+                  여기서도 판정한다(spec.md §2.11 은 패널 추가를 명시한다). */}
               <button
                 type="button"
-                onClick={() => setAddPanelOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-3.5 py-2 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default)"
+                onClick={() => navigate('/panels/new')}
+                disabled={!activeAccess.canEdit}
+                aria-disabled={!activeAccess.canEdit}
+                data-testid="dashboard-add-panel"
+                title={activeAccess.canEdit ? undefined : t('dashboard.gate.editDenied')}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-3.5 py-2 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default) disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Plus className="h-3.5 w-3.5" />
-                {t('dashboard.addPanel')}
+                {/* dashboard.addPanel 은 하위 키를 가진 네임스페이스 객체이므로
+                    그대로 넘기면 번역이 잡히지 않고 키 문자열이 그대로 노출된다. */}
+                {t('dashboard.addPanel.title')}
               </button>
 
               {/* 취소 (Pencil: m5m4p) */}
@@ -729,22 +768,22 @@ function LocalDashboardView() {
                   <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
                 </button>
 
-                {/* 편집 모드 진입 — sharedReadOnly 면 비활성화 (AC-4) */}
-                <button
-                  type="button"
-                  onClick={() => setEditMode(true)}
-                  disabled={sharedReadOnly}
-                  aria-disabled={sharedReadOnly}
-                  title={sharedReadOnly ? t('dashboard.scope.adminOnly') : t('dashboard.editLayout')}
-                  className={`transition-colors ${
-                    sharedReadOnly
-                      ? 'cursor-not-allowed text-(--color-text-muted) opacity-40'
-                      : 'text-(--color-text-muted) hover:text-(--color-text-primary)'
-                  }`}
-                  aria-label={t('dashboard.editLayout')}
-                >
-                  <Pencil className="h-4 w-4" />
-                </button>
+                {/* 레이아웃 편집 진입 — 읽기 전용 대시보드에서는 아예 숨긴다(사용자 요청).
+                    프로젝트 기본 규칙은 "숨기지 말고 비활성"(spec.md §2.11 S2)이지만,
+                    이 버튼만 예외로 둔다. 서버의 can_edit 판정은 그대로이며 숨김은
+                    표시 결정일 뿐이다 — 편집 시도는 여전히 서버가 막는다. */}
+                {activeAccess.canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => setEditMode(true)}
+                    data-testid="dashboard-edit-mode"
+                    title={t('dashboard.editLayout')}
+                    className="text-(--color-text-muted) transition-colors hover:text-(--color-text-primary)"
+                    aria-label={t('dashboard.editLayout')}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -760,15 +799,8 @@ function LocalDashboardView() {
           </div>
         )}
 
-        {/* 편집 모드 인포 배너 (Pencil: iN5W7) */}
-        {editMode && (
-          <div className="mx-6 mt-4 flex h-9 items-center gap-2 rounded-lg bg-blue-50 px-4 dark:bg-blue-900/20">
-            <Info className="h-3.5 w-3.5 shrink-0 text-blue-500" />
-            <span className="text-[11px] text-blue-500">
-              {t('dashboard.editInfo').replace(/\{cols\}/g, String(gridCols))}
-            </span>
-          </div>
-        )}
+        {/* 편집 불가 상시 안내 배너는 두지 않는다(사용자 요청).
+            사유는 비활성 컨트롤의 툴팁(dashboard.gate.*Denied)이 계속 전달한다. */}
 
         {/* 로딩 스켈레톤 */}
         {isLoading && !flowsData && !metrics ? (
@@ -811,11 +843,13 @@ function LocalDashboardView() {
                 containerPadding: [0, 0],
               }}
               dragConfig={{
-                enabled: editMode,
+                // 레이아웃 편집도 can_edit 게이트를 탄다(spec.md §2.11) —
+                // 편집 중 권한을 잃으면 드래그가 즉시 멈춰야 한다.
+                enabled: editMode && activeAccess.canEdit,
                 handle: '.dashboard-drag-handle',
               }}
               resizeConfig={{
-                enabled: editMode,
+                enabled: editMode && activeAccess.canEdit,
                 handles: ['se'],
               }}
               onLayoutChange={(newLayout) => handleLayoutChange(newLayout as DashboardLayoutItem[])}
@@ -830,10 +864,10 @@ function LocalDashboardView() {
                   >
                     {editMode && <DragHandle />}
                     {editMode && (
-                      <div className="absolute right-1 top-1 z-10 flex gap-1">
+                      <div className="absolute right-1 top-1 z-20 flex gap-1">
                         <button
                           type="button"
-                          onClick={() => setSettingsPanelId(panel.id)}
+                          onClick={() => navigate(`/panels/${panel.id}/settings`)}
                           className="rounded-full bg-(--color-bg-elevated) p-0.5 text-(--color-text-muted) shadow transition-colors hover:bg-(--color-bg-surface) hover:text-(--color-text-primary)"
                           aria-label={t('dashboard.settings.title')}
                           title={t('dashboard.settings.title')}
@@ -843,9 +877,11 @@ function LocalDashboardView() {
                         <button
                           type="button"
                           onClick={() => removePanel(panel.id)}
-                          className="rounded-full bg-red-500 p-0.5 text-white shadow transition-colors hover:bg-red-600"
+                          disabled={!activeAccess.canEdit}
+                          aria-disabled={!activeAccess.canEdit}
+                          className="rounded-full bg-red-500 p-0.5 text-white shadow transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-40"
                           aria-label={t('dashboard.settings.deletePanelAria')}
-                          title={t('dashboard.settings.deletePanelAria')}
+                          title={activeAccess.canEdit ? t('dashboard.settings.deletePanelAria') : t('dashboard.gate.editDenied')}
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
@@ -860,31 +896,7 @@ function LocalDashboardView() {
         )}
       </div>
 
-      {/* 패널 추가 다이얼로그 */}
-      <AddPanelDialog
-        open={addPanelOpen}
-        onClose={() => setAddPanelOpen(false)}
-      />
-
-      {/* 패널 설정 다이얼로그 */}
-      <PanelSettingsDialog
-        panelId={settingsPanelId}
-        onClose={() => setSettingsPanelId(null)}
-      />
-
     </div>
   );
 }
 
-/** 편집 모드 드래그 핸들 */
-function DragHandle() {
-  return (
-    <div className="dashboard-drag-handle flex h-6 cursor-grab items-center justify-center rounded-t-lg bg-(--color-bg-elevated)/80 active:cursor-grabbing">
-      <div className="flex gap-1">
-        <span className="h-1 w-1 rounded-full bg-(--color-text-muted)" />
-        <span className="h-1 w-1 rounded-full bg-(--color-text-muted)" />
-        <span className="h-1 w-1 rounded-full bg-(--color-text-muted)" />
-      </div>
-    </div>
-  );
-}

@@ -5,10 +5,10 @@
 // 결합하여 실제 사용자 플로우를 시뮬레이션한다.
 //
 // 커버 범위:
-//   1) 라우팅 + 관리자 가드
-//        - admin role → /admin/system 접근 허용 + SystemStatusPage 렌더
-//        - viewer role → ForbiddenPage 노출
-//        - authEnabled=false → role 검사 우회 (단일 사용자 dev 모드)
+//   1) 라우팅 + 권한 가드 (SPEC-AUTH-006 M3 이후 권한 키 기반)
+//        - system.read 보유 → /admin/system 접근 허용 + SystemStatusPage 렌더
+//        - system.read 미보유 → 대시보드 리다이렉트 + 안내 (AC-06)
+//        - authEnabled=false → 권한 검사 우회 (단일 사용자 dev 모드)
 //   2) 시나리오 4: 업데이트 적용 해피패스
 //        info → confirm → apply → progress → completed (result success)
 //   3) 시나리오 5: 서명 위조 실패
@@ -45,6 +45,7 @@ import {
 } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { useAuthStore } from '@/stores/authStore';
 import { APIError } from '@/types/api';
 import type { User, UserRole } from '@/types/auth';
 
@@ -84,26 +85,60 @@ vi.mock('@/hooks/useAuth', () => ({
   }),
 }));
 
+/**
+ * 역할별 기본 권한 집합.
+ *
+ * SPEC-AUTH-006: 게이팅이 역할 이름이 아니라 권한 키로 바뀌었으므로, 테스트도
+ * 역할에 대응하는 권한을 함께 주입해야 한다. 서버 빌트인 역할 정의
+ * (internal/rbac/catalog.go)와 같은 취지로, 이 스위트가 필요로 하는
+ * system.* 키만 추린 축약본이다.
+ */
+const ROLE_PERMISSIONS: Record<string, string[]> = {
+  admin: ['system.read', 'system.update'],
+  // viewer/editor 는 조회 권한만 가진다 — 시스템 상태 열람은 되지만 채널 변경은 안 된다.
+  editor: ['system.read'],
+  viewer: ['system.read'],
+  // 권한이 전혀 없는 커스텀 역할 — 라우트 진입 자체가 막힌다.
+  norole: [],
+};
+
 function setAuth({
   authEnabled,
   role,
+  permissions,
 }: {
   authEnabled: boolean;
   role?: UserRole;
+  /** 미지정 시 ROLE_PERMISSIONS 의 역할별 기본값을 사용한다. */
+  permissions?: string[];
 }): void {
   authState.authEnabled = authEnabled;
   authState.isLoading = false;
+
+  // usePermission 은 (모킹된 useAuth 가 아니라) 실제 authStore 를 읽으므로
+  // 권한 상태는 스토어에 직접 주입한다.
+  const applyStore = (perms: string[] | null) => {
+    useAuthStore.setState({
+      authEnabled,
+      permissions: new Set(perms ?? []),
+      permissionStatus: perms === null ? 'unknown' : 'loaded',
+    });
+  };
+
   if (!authEnabled) {
     authState.user = null;
     authState.isAuthenticated = false;
+    applyStore(null);
     return;
   }
   if (role) {
     authState.user = { name: 'tester', role };
     authState.isAuthenticated = true;
+    applyStore(permissions ?? ROLE_PERMISSIONS[role] ?? []);
   } else {
     authState.user = null;
     authState.isAuthenticated = false;
+    applyStore(null);
   }
 }
 
@@ -324,7 +359,7 @@ function buildTestRouter(initialPath: string) {
               },
               {
                 path: '/admin',
-                element: <AuthGuard requireRole="admin" />,
+                element: <AuthGuard requirePermission="system.read" />,
                 children: [
                   {
                     path: 'system',
@@ -400,7 +435,7 @@ afterEach(() => {
 // ─────────────────────────────────────────────────────────────────────
 
 describe('SystemStatusPage 라우팅 + 권한 가드', () => {
-  it('admin role → /admin/system 접근 허용 + SystemStatusPage 렌더', async () => {
+  it('system.read 보유(admin) → /admin/system 접근 허용 + SystemStatusPage 렌더', async () => {
     setAuth({ authEnabled: true, role: 'admin' });
 
     renderRoute('/admin/system');
@@ -409,28 +444,40 @@ describe('SystemStatusPage 라우팅 + 권한 가드', () => {
     await waitFor(() => {
       expect(screen.getByTestId('system-status-header')).toBeInTheDocument();
     });
-    expect(screen.queryByTestId('forbidden-page')).not.toBeInTheDocument();
   });
 
-  it('viewer role → /admin/system 거부 + ForbiddenPage 표시', async () => {
-    setAuth({ authEnabled: true, role: 'viewer' });
+  // SPEC-AUTH-006 §2.3: 게이팅 기준이 역할 이름에서 권한 키로 바뀌었다.
+  //   viewer/editor 는 system.read 를 보유하므로 시스템 상태 "열람"은 허용된다
+  //   (채널 변경 등 쓰기 컨트롤은 system.update 로 별도 게이팅된다).
+  it.each(['viewer', 'editor'] as const)(
+    'system.read 보유(%s) → /admin/system 열람 허용',
+    async (role) => {
+      setAuth({ authEnabled: true, role });
+
+      renderRoute('/admin/system');
+
+      await waitFor(() => {
+        expect(screen.getByTestId('system-status-header')).toBeInTheDocument();
+      });
+    },
+  );
+
+  // AC-06: 권한 없는 사용자는 빈 화면이 아니라 대시보드로 리다이렉트된다.
+  it('system.read 미보유 → 대시보드로 리다이렉트 + 안내 표시', async () => {
+    setAuth({ authEnabled: true, role: 'norole' });
 
     renderRoute('/admin/system');
 
     await waitFor(() => {
-      expect(screen.getByTestId('forbidden-page')).toBeInTheDocument();
+      expect(screen.getByTestId('home-page')).toBeInTheDocument();
     });
     expect(screen.queryByTestId('system-status-header')).not.toBeInTheDocument();
-  });
-
-  it('editor role → /admin/system 거부 + ForbiddenPage 표시', async () => {
-    setAuth({ authEnabled: true, role: 'editor' });
-
-    renderRoute('/admin/system');
-
-    await waitFor(() => {
-      expect(screen.getByTestId('forbidden-page')).toBeInTheDocument();
-    });
+    // 빈 화면 금지 — 사유가 사용자 언어로 안내된다.
+    expect(addNotificationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: '이 화면에 접근할 권한이 없습니다. 관리자에게 권한을 요청하세요.',
+      }),
+    );
   });
 
   it('미인증 사용자 → SystemStatusPage 미렌더 (Navigate 로 /login 리다이렉트)', async () => {
@@ -447,10 +494,9 @@ describe('SystemStatusPage 라우팅 + 권한 가드', () => {
         screen.queryByTestId('system-status-header'),
       ).not.toBeInTheDocument();
     });
-    expect(screen.queryByTestId('forbidden-page')).not.toBeInTheDocument();
   });
 
-  it('authEnabled=false (dev 모드) → role 무관하게 SystemStatusPage 접근 허용', async () => {
+  it('authEnabled=false (dev 모드) → 권한 무관하게 SystemStatusPage 접근 허용', async () => {
     setAuth({ authEnabled: false });
 
     renderRoute('/admin/system');
@@ -458,7 +504,6 @@ describe('SystemStatusPage 라우팅 + 권한 가드', () => {
     await waitFor(() => {
       expect(screen.getByTestId('system-status-header')).toBeInTheDocument();
     });
-    expect(screen.queryByTestId('forbidden-page')).not.toBeInTheDocument();
   });
 });
 

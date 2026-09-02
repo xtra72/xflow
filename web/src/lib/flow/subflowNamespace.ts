@@ -17,6 +17,22 @@ import type {
 import type { FlowNodeInfo, SubflowNodeStat } from '@/types/flow';
 
 /**
+ * 긴 노드 ID 를 앞뒤를 남기고 가운데를 줄여 표시한다.
+ *
+ * 서브플로우 확장 노드 id 는 `subflow_<flowNodeID>_<originalID>` 형태라 앞(서브플로우
+ * 여부)과 뒤(원본 노드 id)가 모두 식별에 필요하다. 앞만 남기는 일반 truncate 를 쓰면
+ * 같은 flow-node 아래 형제 노드들이 접두사만 보여 화면에서 구분되지 않는다.
+ *
+ * 전체 값은 호출 측에서 툴팁/복사로 제공한다 — 이 함수는 표시용 축약만 담당한다.
+ */
+export function shortenNodeId(id: string, max = 34): string {
+  if (id.length <= max) return id;
+  const head = Math.ceil((max - 1) / 2);
+  const tail = Math.floor((max - 1) / 2);
+  return `${id.slice(0, head)}...${id.slice(id.length - tail)}`;
+}
+
+/**
  * FlowNodeInfo.extra["stat_source"] 를 StatSource 로 정규화한다(SPEC-SUBFLOW-002 S03).
  *
  * 백엔드가 넣는 값은 'direct' | 'embedded' | 'direct+embedded' 셋 중 하나다. 그 외

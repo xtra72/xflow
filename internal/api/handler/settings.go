@@ -64,8 +64,9 @@ func NewSettingsHandler(repo SettingsRepository, logger *slog.Logger) *SettingsH
 //	GET /settings/{key}
 //	PUT /settings/{key}
 func (h *SettingsHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.GET("/settings/{key}", h.Get)
-	g.PUT("/settings/{key}", h.Put)
+	// @SPEC:SPEC-AUTH-005 (M5) — 전역 서버/UI 설정이므로 system.* 로 매핑한다.
+	g.GETPerm("/settings/{key}", "system.read", h.Get)
+	g.PUTPerm("/settings/{key}", "system.update", h.Put)
 }
 
 // Get 은 key 에 해당하는 설정 value 를 반환한다.

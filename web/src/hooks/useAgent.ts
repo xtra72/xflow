@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type { ListOptions } from '@/types/api';
 import type { AgentCreateRequest, AgentExecRequest, AgentUpdateRequest } from '@/types/agent';
+import type { AgentQueryRequest } from '@/services/api/agentService';
 import * as agentService from '@/services/api/agentService';
 
 // ---- Queries ----
@@ -147,6 +148,25 @@ export function useExecAgent() {
   return useMutation({
     mutationFn: ({ id, req }: { id: string; req: AgentExecRequest }) =>
       agentService.execAgent(id, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
+}
+
+/**
+ * 읽기 전용 커맨드용 뮤테이션 훅. `POST /agents/{id}/query` 로 보내므로
+ * `agent.read` 권한만 있으면 동작한다(exec 는 `agent.execute` 를 요구).
+ *
+ * 명령 자체는 상태를 바꾸지 않지만 onSuccess 의 ['devices'] 무효화는
+ * useExecAgent 와 동일하게 유지한다 — 호출부(AgentDetailPanel 의 목록 새로고침)가
+ * 쓰기 직후 이 조회로 캐시 갱신을 유발해 왔고, 여기서 빼면 갱신이 조용히 사라진다.
+ */
+export function useQueryAgent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, req }: { id: string; req: AgentQueryRequest }) =>
+      agentService.queryAgent(id, req),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] });
     },

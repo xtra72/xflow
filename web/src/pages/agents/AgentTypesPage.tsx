@@ -19,8 +19,8 @@ const GRID_COLS = 3;
 const AGENT_CATEGORY: Record<string, string> = {
   'mqtt-client': 'protocol',
   'thingplus-gateway': 'protocol',
-  'modbus-tcp': 'protocol',
-  'modbus-tcp-server': 'protocol',
+  'modbus-client': 'protocol',
+  'modbus-gateway': 'protocol',
   http: 'protocol',
   'http-sender': 'protocol',
   serial: 'protocol',
@@ -33,6 +33,7 @@ const AGENT_CATEGORY: Record<string, string> = {
   lg_hvacr02: 'device',
   lg_hvacr01: 'device',
   'century_hvacr01': 'device',
+  xsfm: 'device',
   influxdb: 'storage',
   store: 'storage',
   logger: 'utility',

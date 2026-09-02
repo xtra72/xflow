@@ -27,8 +27,10 @@ const (
 )
 
 // overrideAllowedPrefixes 는 오버라이드로 영속화 가능한 config 키 접두사 allowlist 이다.
-// 보안: 임의 config 키를 오버라이드 파일로 덮어쓰지 못하게 remote_management.* 만 허용한다.
-var overrideAllowedPrefixes = []string{"remote_management."}
+// 보안: 임의 config 키를 오버라이드 파일로 덮어쓰지 못하게 명시된 접두사만 허용한다.
+//   - remote_management.*        : 원격 관리 클라이언트 설정 UI (SPEC-REMOTE-001)
+//   - storage.schedule_log.type  : 스케줄 로그 저장소 백엔드 선택 (재시작 시 적용, 비-mutable)
+var overrideAllowedPrefixes = []string{"remote_management.", "storage.schedule_log.type"}
 
 // IsOverridable 은 key 가 오버라이드 저장 대상인지(allowlist) 반환한다.
 func IsOverridable(key string) bool {

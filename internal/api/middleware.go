@@ -361,12 +361,107 @@ func Auth(enabled bool, jwtSvc *auth.JWTService) MiddlewareFunc {
 	}
 }
 
-// RequireRole 은 사용자가 필요한 역할을 가지고 있는지 확인한다.
-// P1에서는 단순 패스스루이다.
-func RequireRole(_ ...string) MiddlewareFunc {
+// @SPEC:SPEC-AUTH-005 (M4) — 인가 강제.
+//
+// 기존 RequireRole 은 인자를 버리는 패스스루라 인가를 전혀 강제하지 못했다
+// (spec.md §1.2.1). 호출자가 없었으므로 실제 검사로 대체하는 대신 제거하고,
+// 라우트별 권한 키를 요구하는 RequirePermission 으로 일원화한다.
+
+// Authorizer 는 요청 주체가 특정 권한 키를 보유했는지 판정한다.
+//
+// username 은 JWT 의 주체이고 role 은 토큰 클레임의 역할이다. 구현은 username 으로
+// 현재 역할을 다시 조회하여 강등이 기존 토큰에도 즉시 반영되게 할 수 있다
+// (acceptance.md AC-05). 조회 대상이 없으면 role 을 그대로 사용한다.
+//
+// internal/auth.PermissionCache 가 본 인터페이스를 만족한다. api 패키지가 인가 구현을
+// 직접 알지 않도록 인터페이스로 주입받는다.
+type Authorizer interface {
+	HasPermission(ctx context.Context, username, role, permission string) (bool, error)
+}
+
+// authzConfig 는 요청 컨텍스트로 전달되는 인가 설정이다.
+//
+// 핸들러의 RegisterRoutes 는 Server 참조가 없으므로 RequirePermission 이 생성 시점에
+// 활성화 플래그를 알 수 없다. 서버 조립부가 글로벌 미들웨어(Authorization)로 본 설정을
+// 컨텍스트에 주입하고, RequirePermission 은 요청 시점에 이를 읽는다.
+type authzConfig struct {
+	enabled    bool
+	authorizer Authorizer
+	logger     *slog.Logger
+}
+
+// ctxKeyAuthz 는 authzConfig 컨텍스트 키이다.
+const ctxKeyAuthz contextKey = "authz"
+
+// Authorization 은 인가 설정을 요청 컨텍스트에 주입하는 글로벌 미들웨어이다.
+//
+// Auth 와 동일한 enabled 플래그를 공유한다 (spec.md §2.5 S1). Auth 직후에 등록하여
+// 컨텍스트의 역할 정보가 이미 채워진 상태에서 RequirePermission 이 동작하게 한다.
+func Authorization(enabled bool, authorizer Authorizer, logger *slog.Logger) MiddlewareFunc {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	cfg := &authzConfig{enabled: enabled, authorizer: authorizer, logger: logger}
+
 	return func(next HandlerFunc) HandlerFunc {
 		return func(ctx Context) error {
-			return next(ctx)
+			hctx, ok := ctx.(*httpContext)
+			if !ok {
+				return next(ctx)
+			}
+			newCtx := context.WithValue(hctx.r.Context(), ctxKeyAuthz, cfg)
+			hctx.setRequest(hctx.r.WithContext(newCtx))
+			return next(hctx)
+		}
+	}
+}
+
+// RequirePermission 은 라우트가 요구하는 권한 키를 요청자의 역할이 보유했는지 검사한다.
+//
+// 동작 (spec.md §2.3 E1, §2.5 S1):
+//   - 인가 설정이 컨텍스트에 없거나 비활성(basic_auth.enabled=false)이면 패스스루한다.
+//     인증 없이 쓰던 기존 배포가 전부 403 이 되는 회귀를 막기 위함이다.
+//   - 권한이 없으면 403 으로 거부하고, 구조화 로그에 username/permission/method/path 를
+//     남긴다. 응답 본문에는 어떤 권한이 부족한지 노출하지 않는다.
+//   - 토큰의 역할이 삭제된 역할을 가리키면 403 이다 (500 아님).
+func RequirePermission(permission string) MiddlewareFunc {
+	return func(next HandlerFunc) HandlerFunc {
+		return func(ctx Context) error {
+			hctx, ok := ctx.(*httpContext)
+			if !ok {
+				return next(ctx)
+			}
+
+			cfg, _ := hctx.r.Context().Value(ctxKeyAuthz).(*authzConfig)
+			if cfg == nil || !cfg.enabled || cfg.authorizer == nil {
+				// S1: 인증 비활성 상태에서는 권한 검사를 수행하지 않는다.
+				return next(hctx)
+			}
+
+			allowed, err := cfg.authorizer.HasPermission(
+				hctx.Context(), hctx.UserID(), hctx.UserRole(), permission)
+			if err != nil {
+				cfg.logger.Error("인가 검사 실패",
+					slog.String("username", hctx.UserID()),
+					slog.String("permission", permission),
+					slog.String("method", hctx.Method()),
+					slog.String("path", hctx.Path()),
+					slog.String("error", err.Error()),
+				)
+				return ErrInternalServer
+			}
+			if !allowed {
+				cfg.logger.Warn("권한 거부",
+					slog.String("username", hctx.UserID()),
+					slog.String("permission", permission),
+					slog.String("method", hctx.Method()),
+					slog.String("path", hctx.Path()),
+				)
+				// 부족한 권한 키를 응답에 노출하지 않는다 (spec.md §5).
+				return ErrForbidden
+			}
+
+			return next(hctx)
 		}
 	}
 }

@@ -129,7 +129,7 @@ func (w *wsLogWriter) isLevelEnabled(levelStr string) bool {
 var agentTypes = map[string]bool{
 	"logger":          true,
 	"modbus":          true,
-	"modbus-server":   true,
+	"modbus-gateway":   true,
 	"mqtt-subscriber": true,
 	"influxdb":        true,
 	"samsung":         true,

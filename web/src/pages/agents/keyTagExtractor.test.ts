@@ -198,7 +198,7 @@ describe('extractMetricTypeFromKey (SPEC-WEB-005 v0.7.0 Option A)', () => {
   });
 
   it('InfluxDB 스타일: `=` 가 없어도 콤마 앞부분 추출 (느슨한 인식)', () => {
-    // metric_type 추정용으로는 첫 토큰만 있으면 충분하므로 `=` 검사를 생략한다.
+    // field 추정용으로는 첫 토큰만 있으면 충분하므로 `=` 검사를 생략한다.
     expect(extractMetricTypeFromKey('metric_a,extra', ':')).toBe('metric_a');
   });
 

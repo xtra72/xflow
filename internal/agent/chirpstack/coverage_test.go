@@ -1,0 +1,221 @@
+package chirpstack
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/xtra/xflow/internal/agent"
+	"github.com/xtra/xflow/pkg/lifecycle"
+)
+
+// TestChirpStackAgent_Accessors 는 상태 무관 접근자(Process/Configure/Health/
+// Info/Stats)의 기본 동작을 검증한다.
+//
+// Process 계약 역전(SPEC-CHIRPSTACK-003 REQ-M3-01): 이 테스트는 종전 `Process =
+// (nil, nil) — 수신 전용` 을 고정하고 있었다. SPEC-CHIRPSTACK-003 이 그 의도적
+// no-op 을 조회 전용 커맨드 디스패처로 역전하므로, 기대값을 "무음 nil" 에서
+// "미지 커맨드는 ErrInvalidCommand" 로 갱신한다. 이는 회귀가 아니라 SPEC 이 요구한
+// 계약 변경이다(agent.go Process 주석의 역전 기록 참조). 디스패처 전체 계약은
+// gateways_test.go 의 TestProcess_* 가 검증한다.
+func TestChirpStackAgent_Accessors(t *testing.T) {
+	a := newRunningTestAgent(t, "acc-cs")
+
+	// 유효하지 않은 JSON → 파싱 에러(무음 nil 아님).
+	if out, err := a.Process([]byte("ignored")); out != nil || err == nil {
+		t.Errorf("Process(비-JSON) = (%v,%v), want (nil, 에러)", out, err)
+	}
+	// 유효 JSON + 미지 커맨드 → ErrInvalidCommand.
+	if out, err := a.Process([]byte(`{"command":"nope"}`)); out != nil || !errors.Is(err, ErrInvalidCommand) {
+		t.Errorf("Process(미지 커맨드) = (%v,%v), want (nil, ErrInvalidCommand)", out, err)
+	}
+	if err := a.Configure(newTestConfig("acc-cs-id", "acc-cs")); err != nil {
+		t.Errorf("Configure: %v", err)
+	}
+	if a.Health().Status == "" {
+		t.Error("Health().Status empty")
+	}
+	info := a.Info()
+	if info.Type != "chirpstack-client" || info.Name != "acc-cs" {
+		t.Errorf("Info = %+v", info)
+	}
+	_ = a.Stats() // 스냅샷 접근이 panic 없이 동작하는지.
+}
+
+// TestChirpStackAgent_EnabledDegradedLifecycle 는 브로커 미가용(연결 거부) 상황에서
+// auto_reconnect 하에 degraded Running 으로 진입하고 Pause/Resume/Start/Stop 이
+// 동작하는지 검증한다. connect(degraded 경로) + 라이프사이클 전이를 커버한다.
+//
+// tcp://127.0.0.1:1 은 즉시 연결 거부되며, connect_timeout_sec=1 로 대기 상한을 둔다.
+func TestChirpStackAgent_EnabledDegradedLifecycle(t *testing.T) {
+	resetNameRegistryForTest()
+	enabled := true
+	cfg := agent.AgentConfig{
+		ID:      "deg-id",
+		Name:    "deg-cs",
+		Type:    "chirpstack-client",
+		Enabled: &enabled,
+		Transport: agent.TransportConfig{
+			Options: map[string]any{
+				"broker":              "tcp://127.0.0.1:1",
+				"auto_reconnect":      true,
+				"connect_timeout_sec": 1,
+			},
+		},
+	}
+	raw, err := NewChirpStackAgent(cfg)
+	if err != nil {
+		t.Fatalf("NewChirpStackAgent(degraded): %v", err)
+	}
+	a := raw.(*ChirpStackAgent)
+	t.Cleanup(func() { _ = a.Stop(context.Background()) })
+
+	if a.CurrentState() != lifecycle.StateRunning {
+		t.Fatalf("state = %s, want Running", a.CurrentState())
+	}
+	// Health() 는 Running 브랜치를 커버한다(연결/미연결 세부 상태는 paho 타이밍
+	// 의존이라 값 자체는 단언하지 않는다).
+	if a.Health().Status == "" {
+		t.Error("Health().Status empty")
+	}
+
+	// Start (이미 Running) → no-op.
+	if err := a.Start(context.Background()); err != nil {
+		t.Errorf("Start(running no-op): %v", err)
+	}
+	// Pause / Resume 전이.
+	if err := a.Pause(context.Background()); err != nil {
+		t.Errorf("Pause: %v", err)
+	}
+	if a.CurrentState() != lifecycle.StatePaused {
+		t.Errorf("state after Pause = %s", a.CurrentState())
+	}
+	if err := a.Resume(context.Background()); err != nil {
+		t.Errorf("Resume: %v", err)
+	}
+	if err := a.Stop(context.Background()); err != nil {
+		t.Errorf("Stop: %v", err)
+	}
+	if a.CurrentState() != lifecycle.StateStopped {
+		t.Errorf("state after Stop = %s", a.CurrentState())
+	}
+}
+
+// TestChirpStackAgent_HandleUplinkBadJSON 은 디코드 실패 시 레코드가 방출되지
+// 않고 에러 통계가 증가하는지 검증한다.
+func TestChirpStackAgent_HandleUplinkBadJSON(t *testing.T) {
+	a := newRunningTestAgent(t, "bad-cs")
+	a.handleUplink([]byte("not-json"), "application/x")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100_000_000) // 100ms
+	defer cancel()
+	if _, err := a.ReceiveMessage(ctx); err == nil {
+		t.Error("no record should be emitted for bad uplink")
+	}
+}
+
+// TestChirpStackAgent_EnqueueDrop 은 버퍼가 가득 차면 메시지를 드롭하는지 검증한다.
+func TestChirpStackAgent_EnqueueDrop(t *testing.T) {
+	resetNameRegistryForTest()
+	disabled := false
+	cfg := agent.AgentConfig{
+		ID: "drop-id", Name: "drop-cs", Type: "chirpstack-client", Enabled: &disabled,
+		Transport: agent.TransportConfig{Options: map[string]any{"buffer_size": 1}},
+	}
+	raw, err := NewChirpStackAgent(cfg)
+	if err != nil {
+		t.Fatalf("NewChirpStackAgent: %v", err)
+	}
+	a := raw.(*ChirpStackAgent)
+
+	a.enqueue([]byte("a"), "t") // 버퍼(cap 1) 채움.
+	a.enqueue([]byte("b"), "t") // 드롭.
+	if a.Stats().ExternalMessagesErrored == 0 {
+		t.Error("expected a dropped-message error stat")
+	}
+}
+
+// TestChirpStackAgent_StartFromCreatedAndStopped 는 Start 의 Created/Stopped 재-Init
+// 경로를 커버한다 (비활성화 에이전트는 Created 로 남고 재시작해도 연결하지 않는다).
+func TestChirpStackAgent_StartFromCreatedAndStopped(t *testing.T) {
+	a := newRunningTestAgent(t, "start-cs") // 비활성화 → StateCreated.
+
+	if err := a.Start(context.Background()); err != nil { // Created → Init(disabled) → Created.
+		t.Errorf("Start from Created: %v", err)
+	}
+	if err := a.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if err := a.Start(context.Background()); err != nil { // Stopped → Created → Init(disabled).
+		t.Errorf("Start from Stopped: %v", err)
+	}
+}
+
+// TestToIntAndToStringSlice 는 설정 파싱 헬퍼의 타입 분기를 커버한다.
+//
+// 이전 toInt/toStringSlice 는 실패를 각각 0 과 "일부만 담긴 목록" 으로 뭉갰다.
+// 이제 coerceInt/coerceStringSlice 가 (값, ok) 를 돌려 실패를 명시하므로 ok 를 함께
+// 고정한다. 특히 []any{"a", 1, "b"} 는 이전에 1 을 조용히 버리고 ["a","b"] 를
+// 돌려주었으나, 그 부분 성공(조용한 누락)이 이번 결함의 근원 형태라 이제 거부한다.
+func TestToIntAndToStringSlice(t *testing.T) {
+	intCases := []struct {
+		in     any
+		want   int
+		wantOK bool
+	}{
+		{5, 5, true},
+		{int64(5), 5, true},
+		{byte(5), 5, true},
+		{5.9, 5, true},
+		{"5", 5, true}, // 숫자 문자열 허용(web UI 의 select 위젯이 보내는 형태).
+		{"x", 0, false},
+	}
+	for _, c := range intCases {
+		if got, ok := coerceInt(c.in); got != c.want || ok != c.wantOK {
+			t.Errorf("coerceInt(%#v) = (%d,%v), want (%d,%v)", c.in, got, ok, c.want, c.wantOK)
+		}
+	}
+
+	if got, ok := coerceStringSlice([]string{"a"}); !ok || len(got) != 1 || got[0] != "a" {
+		t.Errorf("coerceStringSlice([]string) = (%v,%v)", got, ok)
+	}
+	if got, ok := coerceStringSlice([]any{"a", 1, "b"}); ok {
+		t.Errorf("coerceStringSlice([]any{문자열 아닌 원소 포함}) = (%v,%v), want ok=false", got, ok)
+	}
+	if got, ok := coerceStringSlice(42); ok || got != nil {
+		t.Errorf("coerceStringSlice(non-slice) = (%v,%v), want (nil,false)", got, ok)
+	}
+}
+
+// TestChirpDeviceAdapter_Accessors 는 device.Device 어댑터의 접근자 전부를 검증한다.
+func TestChirpDeviceAdapter_Accessors(t *testing.T) {
+	withMemDeviceIDRepo(t)
+	a := newRunningTestAgent(t, "adap-cs")
+	a.handleUplink(loadRawUplink(t), "application/x")
+
+	d := a.DeviceProvider().Devices()[0]
+	if d.Type() != "sensor" {
+		t.Errorf("Type = %q, want sensor", d.Type())
+	}
+	if d.Protocol() != "chirpstack" {
+		t.Errorf("Protocol = %q", d.Protocol())
+	}
+	if d.AgentName() != "adap-cs" {
+		t.Errorf("AgentName = %q", d.AgentName())
+	}
+	if !d.Online() {
+		t.Error("Online = false, want true after uplink")
+	}
+	if d.LastSeen().IsZero() {
+		t.Error("LastSeen is zero")
+	}
+	if st := d.State(); !st.Online {
+		t.Error("State().Online = false")
+	}
+	if d.Source() != "auto" {
+		t.Errorf("Source = %q, want auto", d.Source())
+	}
+	if caps := d.Capabilities(); len(caps) != 1 || caps[0] != "passive-monitor" {
+		t.Errorf("Capabilities = %v", caps)
+	}
+}

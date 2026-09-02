@@ -70,10 +70,36 @@ export async function refreshToken(token: string): Promise<AuthTokens> {
 }
 
 /**
+ * 서버 측 `GET /auth/me` 응답의 원본 형태.
+ *
+ * SPEC-AUTH-005 M6: 기존 필드(username, role)의 위치·형식을 그대로 유지하고
+ * permissions 배열만 뒤에 덧붙인다. permissions 를 제공하지 않는 구버전 서버
+ * 에서는 필드 자체가 없다 (하위 호환 폴백 대상).
+ */
+interface ServerMeResponse {
+  username: string;
+  role: string;
+  permissions?: string[];
+}
+
+/**
  * 현재 인증된 사용자 프로필을 조회한다.
+ *
+ * SPEC-AUTH-006 M1.3: 이전 구현은 `get<User>('/auth/me')` 로 서버 응답을 그대로
+ * 단언했다. 서버는 `username` 을 보내는데 클라이언트 도메인 타입은 `name` 이고
+ * client.ts 의 get 은 키를 변환하지 않으므로, 세션 복원 경로에서 `user.name` 이
+ * undefined 가 되어 헤더 사용자명·설정 계정 패널·`useDashboardSync` 의 `mine`
+ * 스코프 owner 가 함께 깨졌다. login() 과 동일하게 username → name 으로 매핑한다.
  */
 export async function getCurrentUser(): Promise<User> {
-  return get<User>('/auth/me');
+  const data = await get<ServerMeResponse>('/auth/me');
+
+  return {
+    name: data.username,
+    role: data.role as UserRole,
+    // 구버전 서버에서는 undefined 로 남는다 — 폴백 판단의 입력이다.
+    permissions: data.permissions,
+  };
 }
 
 /**

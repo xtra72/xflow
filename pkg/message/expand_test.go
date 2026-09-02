@@ -109,17 +109,18 @@ func TestExpandGroupsByID_Nil(t *testing.T) {
 	}
 }
 
-// TestExpandRoundTripWithSlim 는 full → slim → expand 왕복이 핵심 식별 필드를
-// 복원함을 검증한다(슬림이 손실한 type/name 을 레지스트리에서 되살림).
+// TestExpandRoundTripWithSlim 는 id-only 그룹을 ExpandGroupsByID 로 레지스트리 조회하여
+// type/name 을 복원함을 검증한다. (egress 슬림화 제거 후 SlimGroupsToID 는 축소하지
+// 않으므로, id-only 입력을 직접 구성해 expand 경로만 독립적으로 검증한다.)
 func TestExpandRoundTripWithSlim(t *testing.T) {
 	full := map[string]any{
 		"agent":  map[string]string{"id": "a-1", "type": "serial", "name": "reader"},
 		"device": map[string]string{"id": "d-1", "type": "HVACR.IDU", "name": "room1"},
 	}
-	slim := SlimGroupsToID(full)
-	expected := map[string]string{"id": "a-1"}
-	if g, _ := slim["agent"].(map[string]string); !reflect.DeepEqual(g, expected) {
-		t.Fatalf("슬림 후 agent = %#v, want %#v", g, expected)
+	// id-only 그룹(과거 슬림 산출물과 동일 형태)을 직접 구성한다.
+	slim := map[string]any{
+		"agent":  map[string]string{"id": "a-1"},
+		"device": map[string]string{"id": "d-1"},
 	}
 
 	expanded := ExpandGroupsByID(slim, GroupExpander{

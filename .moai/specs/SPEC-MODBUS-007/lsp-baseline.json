@@ -1,0 +1,15 @@
+{
+  "spec_id": "SPEC-MODBUS-007",
+  "captured_at": "2026-08-02",
+  "tools": {
+    "go_vet": { "scope": "./internal/node/... ./internal/agent/modbusserver/...", "exit": 0 },
+    "go_build": { "scope": "./...", "exit": 0 }
+  },
+  "metrics": {
+    "error_count": 0,
+    "warning_count": 0,
+    "type_error_count": 0,
+    "lint_error_count": 0
+  },
+  "notes": "golangci-lint not run (not required for baseline); go vet clean. Pre-existing xsfm schedule_log_test.go build failure (SPEC-SCHEDULE-VIEW-001, commit 8881d9c7) is a test-only build issue unrelated to this SPEC scope and does not affect `go build ./...`."
+}

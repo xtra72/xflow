@@ -3,11 +3,8 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -129,201 +126,58 @@ func TestDashboardMineGet(t *testing.T) {
 	assert.Contains(t, out, "alice")
 }
 
-// --- dashboard shared set ---
+// --- 쓰기 커맨드 회귀 방지 ---
 
-func TestDashboardSharedSet_InlineJSON(t *testing.T) {
-	var gotPath, gotMethod string
-	var gotBody map[string]any
+// TestDashboardCmd_NoWriteSubcommands 는 shared / mine 그룹에 쓰기 하위 커맨드가
+// 등록되지 않았음을 고정한다.
+//
+// @SPEC:SPEC-DASHBOARD-004 (M4, spec.md §2.3)
+// 서버가 PUT/DELETE /api/v1/dashboards/{shared,mine} 를 등록하지 않으므로(호출 시
+// 404) 그 경로를 때리는 CLI 커맨드를 다시 추가하면 런타임에서만 깨진다. mock 서버를
+// 쓰는 테스트는 그 사실을 잡아내지 못하므로, "커맨드가 없다" 를 직접 고정한다.
+func TestDashboardCmd_NoWriteSubcommands(t *testing.T) {
+	var client *Client
+	dashboardCmd := newDashboardCmd(&client)
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotMethod = r.Method
-		body, _ := io.ReadAll(r.Body)
-		require.NoError(t, json.Unmarshal(body, &gotBody))
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(dashboardEnvelope(sampleSnapshot("global", nil)))
-	})
-
-	buf, cmd, cleanup := setupDashboardTest(t, handler)
-	defer cleanup()
-
-	cmd.SetArgs([]string{
-		"dashboard", "shared", "set",
-		"--payload", `{"widgets":["cpu"]}`,
-	})
-	require.NoError(t, cmd.Execute())
-
-	assert.Equal(t, http.MethodPut, gotMethod)
-	assert.Equal(t, "/api/v1/dashboards/shared", gotPath)
-
-	payload, ok := gotBody["payload"].(map[string]any)
-	require.True(t, ok, "본문에 payload 객체가 있어야 합니다")
-	widgets, ok := payload["widgets"].([]any)
-	require.True(t, ok)
-	assert.Equal(t, []any{"cpu"}, widgets)
-
-	assert.Contains(t, buf.String(), "저장되었습니다")
-}
-
-func TestDashboardSharedSet_FromFile(t *testing.T) {
-	var gotBody map[string]any
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		require.NoError(t, json.Unmarshal(body, &gotBody))
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(dashboardEnvelope(sampleSnapshot("global", nil)))
-	})
-
-	_, cmd, cleanup := setupDashboardTest(t, handler)
-	defer cleanup()
-
-	// 임시 JSON 파일 작성 후 @file 로 전달.
-	dir := t.TempDir()
-	file := filepath.Join(dir, "dash.json")
-	require.NoError(t, os.WriteFile(file, []byte(`{"layout":"grid"}`), 0o600))
-
-	cmd.SetArgs([]string{
-		"dashboard", "shared", "set",
-		"--payload", "@" + file,
-	})
-	require.NoError(t, cmd.Execute())
-
-	payload, ok := gotBody["payload"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "grid", payload["layout"])
-}
-
-func TestDashboardSharedSet_InvalidJSON(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("payload JSON 이 잘못되면 서버를 호출하면 안 됩니다")
-	})
-
-	_, cmd, cleanup := setupDashboardTest(t, handler)
-	defer cleanup()
-
-	cmd.SetArgs([]string{"dashboard", "shared", "set", "--payload", `{invalid`})
-	require.Error(t, cmd.Execute())
-}
-
-func TestDashboardSharedSet_MissingPayload(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("payload 미지정 시 서버를 호출하면 안 됩니다")
-	})
-
-	_, cmd, cleanup := setupDashboardTest(t, handler)
-	defer cleanup()
-
-	cmd.SetArgs([]string{"dashboard", "shared", "set"})
-	require.Error(t, cmd.Execute(), "--payload 는 필수 플래그입니다")
-}
-
-func TestDashboardSharedSet_FileNotFound(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("파일이 없으면 서버를 호출하면 안 됩니다")
-	})
-
-	_, cmd, cleanup := setupDashboardTest(t, handler)
-	defer cleanup()
-
-	cmd.SetArgs([]string{"dashboard", "shared", "set", "--payload", "@/nonexistent/path.json"})
-	require.Error(t, cmd.Execute())
-}
-
-// --- dashboard mine set ---
-
-func TestDashboardMineSet(t *testing.T) {
-	var gotPath, gotMethod string
-	var gotBody map[string]any
-	owner := "alice"
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotMethod = r.Method
-		body, _ := io.ReadAll(r.Body)
-		require.NoError(t, json.Unmarshal(body, &gotBody))
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(dashboardEnvelope(sampleSnapshot("user", &owner)))
-	})
-
-	buf, cmd, cleanup := setupDashboardTest(t, handler)
-	defer cleanup()
-
-	cmd.SetArgs([]string{"dashboard", "mine", "set", "--payload", `{"theme":"dark"}`})
-	require.NoError(t, cmd.Execute())
-
-	assert.Equal(t, http.MethodPut, gotMethod)
-	assert.Equal(t, "/api/v1/dashboards/mine", gotPath)
-
-	payload, ok := gotBody["payload"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "dark", payload["theme"])
-
-	assert.Contains(t, buf.String(), "저장되었습니다")
-}
-
-func TestDashboardMineSet_JSONFormat(t *testing.T) {
-	owner := "alice"
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(dashboardEnvelope(sampleSnapshot("user", &owner)))
-	})
-
-	buf, cmd, cleanup := setupDashboardTest(t, handler)
-	defer cleanup()
-
-	cmd.SetArgs([]string{"--format", "json", "dashboard", "mine", "set", "--payload", `{"theme":"dark"}`})
-	require.NoError(t, cmd.Execute())
-
-	var parsed map[string]any
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &parsed))
-	assert.Equal(t, "user", parsed["scope"])
-}
-
-// --- buildDashboardPutBody 단위 테스트 ---
-
-func TestBuildDashboardPutBody(t *testing.T) {
-	tests := []struct {
-		name    string
-		payload string
-		wantErr bool
-	}{
-		{"valid inline object", `{"a":1}`, false},
-		{"valid inline array", `[1,2,3]`, false},
-		{"empty object", `{}`, false},
-		{"empty payload", ``, true},
-		{"whitespace only", `   `, true},
-		{"invalid json", `{bad`, true},
-		{"empty file ref", `@`, true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			body, err := buildDashboardPutBody(tt.payload)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
+	for _, group := range []string{"shared", "mine"} {
+		t.Run(group, func(t *testing.T) {
+			var groupCmd *cobra.Command
+			for _, c := range dashboardCmd.Commands() {
+				if c.Name() == group {
+					groupCmd = c
+					break
+				}
 			}
-			require.NoError(t, err)
-			_, ok := body["payload"]
-			assert.True(t, ok, "본문에 payload 키가 있어야 합니다")
+			require.NotNil(t, groupCmd, "%s 그룹은 남아 있어야 한다", group)
+
+			names := make([]string, 0, len(groupCmd.Commands()))
+			for _, c := range groupCmd.Commands() {
+				names = append(names, c.Name())
+			}
+			assert.Equal(t, []string{"get"}, names,
+				"%s 그룹은 읽기 전용이어야 한다 (set 재추가 금지 — 서버 라우트가 없다)", group)
 		})
 	}
 }
 
-func TestBuildDashboardPutBody_FromFile(t *testing.T) {
-	dir := t.TempDir()
-	file := filepath.Join(dir, "p.json")
-	require.NoError(t, os.WriteFile(file, []byte(`{"k":"v"}`), 0o600))
+// TestDashboardCmd_OnlyTargetsReadRoutes 는 등록된 하위 커맨드가 실제로 GET 만
+// 발생시키는지 확인한다.
+func TestDashboardCmd_OnlyTargetsReadRoutes(t *testing.T) {
+	var methods []string
 
-	body, err := buildDashboardPutBody("@" + file)
-	require.NoError(t, err)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(dashboardEnvelope(sampleSnapshot("global", nil)))
+	})
 
-	raw, ok := body["payload"].(json.RawMessage)
-	require.True(t, ok)
+	for _, group := range []string{"shared", "mine"} {
+		_, cmd, cleanup := setupDashboardTest(t, handler)
+		cmd.SetArgs([]string{"dashboard", group, "get"})
+		require.NoError(t, cmd.Execute())
+		cleanup()
+	}
 
-	var parsed map[string]any
-	require.NoError(t, json.Unmarshal(raw, &parsed))
-	assert.Equal(t, "v", parsed["k"])
+	assert.Equal(t, []string{http.MethodGet, http.MethodGet}, methods,
+		"대시보드 CLI 는 읽기 요청만 발생시켜야 한다")
 }

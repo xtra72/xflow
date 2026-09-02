@@ -1814,6 +1814,12 @@ func TestStateChanged(t *testing.T) {
 			current: NasaDeviceState{FanSpeed: "high"},
 			want:    true,
 		},
+		{
+			name:    "current humidity changed",
+			prev:    NasaDeviceState{CurrentHumidity: 50},
+			current: NasaDeviceState{CurrentHumidity: 62},
+			want:    true,
+		},
 	}
 
 	for _, tt := range tests {

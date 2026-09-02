@@ -111,7 +111,10 @@ func TestInfluxManagement_RegisterRoutes(t *testing.T) {
 	g := router.Group("/api/v1")
 	before := router.RouteCount()
 	h.RegisterRoutes(g)
-	assert.Equal(t, 6, router.RouteCount()-before)
+	// @spec SPEC-TSDB-002 §2.10 (U10) — 관리 6 종 + 디스커버리 3 종(D2~D4).
+	// D1(measurements)은 기존 관리 라우트를 겸하므로 신규 등록이 없다.
+	// @spec SPEC-TSDB-003 §2.2 (U2) — 열거 D5 1 종이 더해져 10 이다.
+	assert.Equal(t, 10, router.RouteCount()-before)
 }
 
 // ===== ListBuckets =====
@@ -320,6 +323,17 @@ func TestInfluxManagement_ListMeasurements_bucket생략_기본버킷(t *testing.
 	assert.Len(t, arr, 0)
 }
 
+// TestInfluxManagement_ListMeasurements_미지원_501 은 mapInfluxManagementError 의
+// 501 매핑이 measurement 목록 경로에서도 성립함을 잠근다.
+//
+// [SPEC-TSDB-002 §2.10 D1 반전] **프로덕션에서 이 경로는 더 이상 도달하지
+// 않는다.** v3 클라이언트가 SHOW MEASUREMENTS 로 실제 조회하도록 바뀌었으므로
+// (influxdb_v3.go), ErrManagementNotSupported 를 돌려주는 클라이언트가 없다.
+// 그래도 삭제하지 않는 이유는 둘이다 — (1) 핸들러는 클라이언트를 모르는 계층이며
+// 이 테스트가 검증하는 것은 "센티넬 -> 501" 매핑 자체다, (2) 지우면 "왜 v3 의
+// measurements 가 501 이 아니게 되었는가" 의 기록이 diff 밖으로 사라진다.
+// 실제 반전 단언은 system 계층의 TestInfluxV3Client_ListMeasurements_501해제 가
+// 갖는다. 나머지 5 종 관리 조작의 501 기대는 무변경이다.
 func TestInfluxManagement_ListMeasurements_미지원_501(t *testing.T) {
 	f := newInfluxManagerFake("metrics")
 	f.listMeasurementsFn = func(_ context.Context, _ string) ([]string, error) {

@@ -69,13 +69,13 @@ func TestTSDBAgent_CustomConfig(t *testing.T) {
 		Type: "tsdb",
 		Transport: agent.TransportConfig{
 			Options: map[string]any{
-				"max_series":           500,
+				"max_series":            500,
 				"max_points_per_series": 50000,
-				"max_memory_mb":        128,
-				"max_age":             "12h",
-				"eviction_interval":   "1m",
-				"max_query_points":    5000,
-				"query_timeout":       "5s",
+				"max_memory_mb":         128,
+				"max_age":               "12h",
+				"eviction_interval":     "1m",
+				"max_query_points":      5000,
+				"query_timeout":         "5s",
 			},
 		},
 	}
@@ -148,7 +148,7 @@ func TestTSDBAgent_State(t *testing.T) {
 
 	// 데이터 기록 후 상태 확인
 	db := tsdbAgent.TSDB()
-	err = db.Write("metric", nil, map[string]any{"val": float64(1)})
+	err = db.Write("field", nil, map[string]any{"val": float64(1)})
 	require.NoError(t, err)
 
 	state = tsdbAgent.State()

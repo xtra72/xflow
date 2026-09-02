@@ -3,7 +3,7 @@
 // 자동 검색(runtime auto-registration)으로 생성된 동적 키 목록에서 하나를 선택하거나,
 // 목록에 없는 키 이름을 직접 입력(수동)하여 정적 키 등록 대상을 고른다.
 //
-// 이 다이얼로그는 키를 "고르기만" 하며, 실제 정적 등록(data_type/metric_type/tags 확정 및
+// 이 다이얼로그는 키를 "고르기만" 하며, 실제 정적 등록(data_type/field/tags 확정 및
 // PUT /agents/{id}/config)은 부모가 선택된 키로 기존 PromoteToStaticDialog 를 열어 처리한다.
 // 즉 선택(1단계) → 설정/확정(2단계)의 2단계 플로우 중 1단계를 담당한다.
 //
@@ -83,7 +83,7 @@ export default function SelectStaticKeyDialog({
     if (lower === '') return candidates;
     return candidates.filter((c) => {
       if (c.key.toLowerCase().includes(lower)) return true;
-      if (c.metric_type.toLowerCase().includes(lower)) return true;
+      if (c.field.toLowerCase().includes(lower)) return true;
       return Object.entries(c.tags).some(
         ([k, v]) =>
           k.toLowerCase().includes(lower) || v.toLowerCase().includes(lower),
@@ -195,9 +195,9 @@ export default function SelectStaticKeyDialog({
                       <span className="block break-all font-mono text-xs text-(--color-text-primary)">
                         {c.key}
                       </span>
-                      {c.metric_type && c.metric_type !== 'unknown' && (
+                      {c.field && c.field !== 'unknown' && (
                         <span className="text-[10px] text-(--color-text-muted)">
-                          {c.metric_type}
+                          {c.field}
                         </span>
                       )}
                     </span>

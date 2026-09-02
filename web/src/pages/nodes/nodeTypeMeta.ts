@@ -127,6 +127,87 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
+  split: {
+    description:
+      '배열 페이로드를 요소별 N개 메시지로 분리하는 노드입니다. path 로 지정한 배열을 꺼내 각 요소마다 한 개의 메시지로 팬아웃합니다. 요소가 metadata/payload 키를 가진 객체이면 완전한 메시지로 재구성(messages)하고, 그 외에는 payload 로 취급(payloads)합니다. mode=auto 는 요소별로 자동 감지합니다. 입력 배열 순서는 출력에서 보존됩니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '배열을 담은 메시지 입력. path 로 배열 위치를 지정합니다.' },
+      { name: 'out', direction: 'output', description: '배열 요소마다 1개씩 생성된 메시지(N개) 출력. correlation id 는 <부모ID>#<인덱스>.' },
+    ],
+    configFields: [
+      {
+        name: 'path',
+        type: 'string',
+        required: true,
+        description: '분리할 배열의 위치. 평면 top-level 페이로드 키(예: items) 또는 $. 접두 JSONPath(예: $.items[*]).',
+      },
+      {
+        name: 'mode',
+        type: 'string',
+        required: false,
+        description: 'auto: 요소별 자동 감지 / payloads: 요소=payload(부모 메타 공유) / messages: 요소=완전한 메시지(부모 메타에 요소 메타 병합).',
+        default: 'auto',
+      },
+      {
+        name: 'share_metadata',
+        type: 'boolean',
+        required: false,
+        description: '분리된 각 메시지에 부모 메타데이터를 공유합니다.',
+        default: 'true',
+      },
+      {
+        name: 'on_missing',
+        type: 'string',
+        required: false,
+        description: 'path 누락/비배열 시: passthrough(입력 그대로 통과) 또는 error(노드 에러).',
+        default: 'passthrough',
+      },
+      {
+        name: 'on_empty',
+        type: 'string',
+        required: false,
+        description: '빈 배열 시: emit_none(0개 방출) 또는 passthrough(입력 그대로 통과).',
+        default: 'emit_none',
+      },
+      {
+        name: 'scalar_key',
+        type: 'string',
+        required: false,
+        description: 'payloads 모드에서 비객체(스칼라) 요소를 감쌀 payload 키.',
+        default: 'value',
+      },
+    ],
+    configExample: {
+      path: '$.items[*]',
+      mode: 'auto',
+      share_metadata: true,
+      on_missing: 'passthrough',
+      on_empty: 'emit_none',
+      scalar_key: 'value',
+    },
+    inputExamples: {
+      'payloads 모드 · 스칼라 배열': {
+        _comment: 'path=$.readings 배열의 각 요소가 scalar_key(value)로 래핑되어 3개 메시지로 분리',
+        payload: { readings: [21.5, 22.0, 22.4] },
+      },
+      'messages 모드 · 객체 배열': {
+        _comment: 'path=$.events 각 요소가 완전한 메시지({metadata, payload})로 재구성',
+        payload: {
+          events: [
+            { metadata: { device_id: 'd1' }, payload: { temp: 25 } },
+            { metadata: { device_id: 'd2' }, payload: { temp: 26 } },
+          ],
+        },
+      },
+    },
+    outputExamples: {
+      'out (payloads 모드 첫 번째 요소)': {
+        _comment: '스칼라 요소가 scalar_key 로 래핑되고 부모 메타 공유',
+        payload: { value: 21.5 },
+      },
+    },
+  },
+
   enrich: {
     description:
       'slim 된 메시지의 agent/device 그룹을 레지스트리 룩업으로 in-flow 재수화하는 노드입니다. agent 와 device 는 독립 블록으로, 둘 다(또는 하나만) 동시에 보강할 수 있습니다. 각 블록은 id_source 로 얻은 id 를 레지스트리에서 조회하여 type/name 을 얻고, to_metadata 로 해당 메타데이터 그룹을 재수화하거나 to_payload 로 {type,id,name} 객체를 payload 키에 기록합니다. 한 블록은 to_metadata=true 또는 to_payload 값이 있어야 활성화되며, 최소 한 블록이 활성이어야 합니다. id 를 얻지 못하거나 레지스트리에 없으면 그 블록만 원본 그대로 통과합니다(에러 아님, no-op). id 는 소스 값을 항상 보존합니다.',
@@ -757,133 +838,12 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  modbus: {
+  'modbus-write': {
     description:
-      'MODBUS 에이전트(Server/Client)에 연결하여 레지스터를 읽거나 쓰는 처리 노드입니다. 입력 메시지가 도착하면 설정된 연산(읽기/쓰기)을 수행하고 결과를 출력합니다. 모든 설정값(operation, register_area, address, count, data_type, byte_order, device_id)은 입력 메시지 payload로 런타임 오버라이드할 수 있습니다. 노드 config은 기본값이며, 메시지에 동일 키가 있으면 해당 값이 우선 적용됩니다.',
+      'MODBUS 에이전트(Client/Server)에 연결하여 레지스터에 값을 쓰는 노드입니다. config의 command_set(WriteOp 배열)이 기본값이며, 입력 메시지 payload에 command_set이 있으면 런타임에 오버라이드됩니다.',
     ports: [
-      { name: 'input', direction: 'input', description: '읽기/쓰기 연산을 트리거하는 메시지를 수신합니다. 쓰기 시 payload에 value 또는 values 키가 필요합니다. payload에 operation, register_area, address, count, data_type, byte_order, device_id 키가 있으면 노드 설정을 오버라이드합니다.' },
-      { name: 'output', direction: 'output', description: '읽기 결과 또는 쓰기 확인 메시지를 출력합니다. 원본 payload가 보존됩니다.' },
-      { name: 'error', direction: 'error', description: '에이전트 통신 실패, timeout, 잘못된 설정 등 에러 발생 시 에러 메시지를 출력합니다.' },
-    ],
-    configFields: [
-      {
-        name: 'agent_ref',
-        type: 'string',
-        required: true,
-        description: '대상 MODBUS 에이전트의 이름 또는 ID입니다. Server Agent와 Client Agent를 모두 지원합니다.',
-      },
-      {
-        name: 'operation',
-        type: 'string',
-        required: true,
-        description: '수행할 연산입니다. "read"는 레지스터를 읽고, "write"는 레지스터에 값을 씁니다. 입력 메시지 payload의 operation으로 오버라이드 가능합니다.',
-      },
-      {
-        name: 'register_area',
-        type: 'string',
-        required: true,
-        description: 'MODBUS 레지스터 영역입니다. coils, discrete_inputs, holding_registers, input_registers를 지원합니다. 입력 메시지 payload의 register_area로 오버라이드 가능합니다.',
-      },
-      {
-        name: 'address',
-        type: 'number',
-        required: true,
-        description: '시작 레지스터 주소입니다 (0-65535). 입력 메시지 payload의 address로 오버라이드 가능합니다.',
-      },
-      {
-        name: 'count',
-        type: 'number',
-        required: false,
-        description: '읽기/쓰기할 레지스터 수입니다. 입력 메시지 payload의 count로 오버라이드 가능합니다.',
-        default: '1',
-      },
-      {
-        name: 'data_type',
-        type: 'string',
-        required: false,
-        description: '레지스터 데이터 타입입니다. Holding/Input Registers에만 적용됩니다. 지원: uint16, int16, float32, uint32, int32. 입력 메시지 payload의 data_type으로 오버라이드 가능합니다.',
-        default: 'uint16',
-      },
-      {
-        name: 'byte_order',
-        type: 'string',
-        required: false,
-        description: '다중 레지스터 타입(float32, uint32, int32)의 바이트 순서입니다. 입력 메시지 payload의 byte_order로 오버라이드 가능합니다.',
-        default: 'big_endian',
-      },
-      {
-        name: 'device_id',
-        type: 'number',
-        required: false,
-        description: 'MODBUS Client 에이전트 전용 대상 디바이스 ID입니다. 입력 메시지 payload의 device_id로 오버라이드 가능합니다.',
-        default: '1',
-      },
-    ],
-    configExample: {
-      agent_ref: 'modbus-server-1',
-      operation: 'read',
-      register_area: 'holding_registers',
-      address: 100,
-      count: 10,
-      data_type: 'float32',
-      byte_order: 'big_endian',
-      device_id: 1,
-    },
-  },
-
-  'modbus-poller': {
-    description:
-      'MODBUS 에이전트(Server/Client)에 연결하여 register_map에 정의된 레지스터를 주기적으로 폴링하는 SourceNode입니다. poll_interval 주기로 자동 읽기를 수행하며, 각 레지스터 항목별로 영역, 주소, 데이터 타입, 디바이스 ID를 개별 지정할 수 있습니다. in 포트로 메시지를 보내면 device_id, poll_interval, register_map을 런타임에 동적으로 변경할 수 있습니다.',
-    ports: [
-      { name: 'in', direction: 'input', description: '설정 변경 메시지를 수신합니다. payload에 device_id, poll_interval, register_map을 포함하면 폴링 설정이 동적으로 변경됩니다.' },
-      { name: 'out', direction: 'output', description: '폴링 읽기 결과를 출력합니다. register_map의 이름별 키로 값이 포함됩니다.' },
-      { name: 'error', direction: 'error', description: '에이전트 통신 실패, 타임아웃 등 에러 발생 시 출력합니다.' },
-    ],
-    configFields: [
-      {
-        name: 'agent_ref',
-        type: 'string',
-        required: true,
-        description: '대상 MODBUS 에이전트의 이름 또는 ID입니다.',
-      },
-      {
-        name: 'device_id',
-        type: 'number',
-        required: false,
-        description: '기본 디바이스 ID입니다. register_map 항목에서 개별 지정하지 않으면 이 값이 사용됩니다.',
-        default: '1',
-      },
-      {
-        name: 'poll_interval',
-        type: 'string',
-        required: false,
-        description: '폴링 주기입니다 (예: "1s", "5s", "1m"). 최소 100ms.',
-        default: '5s',
-      },
-      {
-        name: 'register_map',
-        type: 'json',
-        required: true,
-        description: '폴링할 레지스터 정의입니다. 각 항목에 name, register_area, address, count, data_type, byte_order, device_id를 지정합니다.',
-      },
-    ],
-    configExample: {
-      agent_ref: 'modbus-server-1',
-      poll_interval: '5s',
-      register_map: [
-        { name: 'temperature', register_area: 'input_registers', address: 0, count: 2, data_type: 'float32' },
-        { name: 'humidity', register_area: 'input_registers', address: 2, count: 2, data_type: 'float32' },
-        { name: 'battery', register_area: 'input_registers', address: 6, count: 1, data_type: 'uint16' },
-      ],
-    },
-  },
-
-  'modbus-writer': {
-    description:
-      'MODBUS 에이전트(Server/Client)에 연결하여 레지스터에 값을 쓰는 전용 ProcessNode입니다. 쓰기 가능 영역(coils, holding_registers)만 허용합니다. 입력 메시지의 payload에서 value 또는 values를 추출하여 레지스터에 씁니다. address, data_type, byte_order, device_id, register_area는 입력 메시지 payload로 런타임 오버라이드할 수 있습니다.',
-    ports: [
-      { name: 'in', direction: 'input', description: '쓰기 연산을 트리거하는 메시지를 수신합니다. payload에 value 또는 values 키가 필요합니다.' },
-      { name: 'out', direction: 'output', description: '쓰기 완료 후 결과 메시지를 출력합니다. success, register_area, address, data_type 등이 포함됩니다.' },
+      { name: 'in', direction: 'input', description: '쓰기를 트리거하는 메시지를 수신합니다. payload에 command_set이 있으면 config 기본값을 오버라이드합니다.' },
+      { name: 'out', direction: 'output', description: '쓰기 결과를 출력합니다.' },
       { name: 'error', direction: 'error', description: '에이전트 통신 실패 등 에러 발생 시 출력합니다.' },
     ],
     configFields: [
@@ -891,49 +851,140 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         name: 'agent_ref',
         type: 'string',
         required: true,
-        description: '대상 MODBUS 에이전트의 이름 또는 ID입니다.',
+        description: '대상 MODBUS 에이전트(Client/Server)의 이름 또는 ID입니다.',
       },
       {
-        name: 'register_area',
-        type: 'string',
+        name: 'command_set',
+        type: 'json',
         required: false,
-        description: '쓰기 가능 레지스터 영역입니다. coils, holding_registers만 허용합니다.',
-        default: 'holding_registers',
-      },
-      {
-        name: 'address',
-        type: 'number',
-        required: false,
-        description: '시작 레지스터 주소입니다 (0-65535).',
-        default: '0',
-      },
-      {
-        name: 'data_type',
-        type: 'string',
-        required: false,
-        description: '레지스터 데이터 타입입니다. uint16, int16, float32, uint32, int32을 지원합니다.',
-        default: 'uint16',
-      },
-      {
-        name: 'byte_order',
-        type: 'string',
-        required: false,
-        description: '다중 레지스터 타입의 바이트 순서입니다.',
-        default: 'big_endian',
-      },
-      {
-        name: 'device_id',
-        type: 'number',
-        required: false,
-        description: 'MODBUS Client 에이전트 전용 대상 디바이스 ID입니다.',
-        default: '1',
+        description: '쓰기 명령(WriteOp) 배열입니다. 각 항목: area, address, value(단일) 또는 values(배열), data_type, byte_order, unit_id(0=공유). config 기본값이며 입력 payload의 command_set으로 오버라이드됩니다.',
       },
     ],
     configExample: {
-      agent_ref: 'modbus-server-1',
-      register_area: 'holding_registers',
-      address: 100,
-      data_type: 'float32',
+      agent_ref: 'modbus-gateway-1',
+      command_set: [
+        { area: 'holding_registers', address: 100, value: 42, data_type: 'uint16', byte_order: 'big_endian' },
+        { area: 'holding_registers', address: 200, values: [1, 2, 3], data_type: 'uint16', byte_order: 'big_endian', unit_id: 0 },
+      ],
+    },
+  },
+
+  'modbus-read': {
+    description:
+      'MODBUS 에이전트(Client/Server)에 연결하여 레지스터를 읽는 노드입니다. config의 command_set(ReadOp 배열)이 기본값이며, 입력 메시지 payload에 command_set이 있으면 런타임에 오버라이드됩니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '읽기를 트리거하는 메시지를 수신합니다. payload에 command_set이 있으면 config 기본값을 오버라이드합니다.' },
+      { name: 'out', direction: 'output', description: '읽기 결과를 출력합니다.' },
+      { name: 'error', direction: 'error', description: '에이전트 통신 실패 등 에러 발생 시 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '대상 MODBUS 에이전트(Client/Server)의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'command_set',
+        type: 'json',
+        required: false,
+        description: '읽기 명령(ReadOp) 배열입니다. 각 항목: area, address, count, data_type, byte_order, unit_id(0=공유). config 기본값이며 입력 payload의 command_set으로 오버라이드됩니다.',
+      },
+    ],
+    configExample: {
+      agent_ref: 'modbus-gateway-1',
+      command_set: [
+        { area: 'holding_registers', address: 0, count: 10, data_type: 'float32', byte_order: 'big_endian' },
+        { area: 'coils', address: 0, count: 8, unit_id: 1 },
+      ],
+    },
+  },
+
+  'modbus-control': {
+    description:
+      'MODBUS 에이전트(Client/Server)를 제어하는 노드입니다(start/stop/pause/resume/reconnect/add_device/remove_device/set_config/command). config의 command_set(ControlOp 배열)이 기본값이며, 입력 메시지 payload에 command_set이 있으면 런타임에 오버라이드됩니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '제어를 트리거하는 메시지를 수신합니다. payload에 command_set이 있으면 config 기본값을 오버라이드합니다.' },
+      { name: 'out', direction: 'output', description: '제어 결과를 출력합니다.' },
+      { name: 'error', direction: 'error', description: '제어 실패 등 에러 발생 시 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '제어할 MODBUS 에이전트(Client/Server)의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'command_set',
+        type: 'json',
+        required: false,
+        description: '제어 명령(ControlOp) 배열입니다. 각 항목: action, params(자유형 객체, add_device/remove_device/set_config/command 용). config 기본값이며 입력 payload의 command_set으로 오버라이드됩니다.',
+      },
+    ],
+    configExample: {
+      agent_ref: 'modbus-gateway-1',
+      command_set: [
+        { action: 'reconnect' },
+        { action: 'add_device', params: { unit_id: 5, host: '10.0.0.9', port: 502 } },
+      ],
+    },
+  },
+
+  'modbus-remap': {
+    description:
+      'MODBUS 레지스터 리매퍼 노드입니다. 에이전트와 통신하지 않고, modbus-read 출력 payload({success, values[], agent_type})의 레지스터를 rules/templates 규칙에 따라 재매핑하여 modbus-write 호환 payload({success, values[], errors?, agent_type})로 변환합니다. rules는 From→To 개별 규칙, templates는 정의+적용 축약형입니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: 'modbus-read 출력 메시지를 수신합니다. payload에 success, values 배열, agent_type이 포함됩니다.' },
+      { name: 'out', direction: 'output', description: '재매핑된 modbus-write 호환 메시지를 출력합니다.' },
+      { name: 'error', direction: 'error', description: 'count 불일치 등 재매핑 실패 시 에러 메시지를 출력합니다.' },
+    ],
+    configFields: [
+      {
+        name: 'rules',
+        type: 'json',
+        required: false,
+        description: '개별 재매핑 규칙(From→To 팬아웃) 배열입니다. 각 항목: source_unit_id(선택), source_area, source_address, count, targets[](최소 1개; 각 target 은 target_unit_id, target_area(선택; 생략 시 source_area 유지), target_address). count는 대응 read 항목의 count와 정확히 일치해야 합니다. legacy 최상위 단일 target_* 형식도 로드 가능하며 targets 배열로 정규화됩니다.',
+      },
+      {
+        name: 'templates',
+        type: 'json',
+        required: false,
+        description: '축약형 규칙 배열입니다. 각 항목: source_unit_id(선택), area, offset(target_address=start+offset, 음수 허용), device_id(→target_unit_id), start(→source_address), count, target_area(선택; 생략 시 area 유지).',
+      },
+    ],
+    configExample: {
+      rules: [
+        {
+          source_unit_id: 1,
+          source_area: 'holding_registers',
+          source_address: 0,
+          count: 10,
+          targets: [
+            { target_unit_id: 2, target_address: 100 },
+            { target_unit_id: 3, target_area: 'input_registers', target_address: 200 },
+          ],
+        },
+      ],
+      templates: [
+        {
+          name: 'sensor-block',
+          rules: [
+            {
+              source_area: 'holding_registers',
+              source_offset: 0,
+              count: 8,
+              targets: [{ target_offset: 100, target_unit_offset: 0 }],
+            },
+            {
+              source_area: 'input_registers',
+              source_offset: 8,
+              count: 4,
+              targets: [{ target_area: 'holding_registers', target_offset: 200, target_unit_offset: 1 }],
+            },
+          ],
+        },
+      ],
     },
   },
 
@@ -1061,27 +1112,79 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
-  'influxdb-write': {
+  'storage-write': {
     description:
-      'InfluxDB에 시계열 데이터를 기록하는 노드입니다. payload에서 measurement, tags, fields를 추출하여 InfluxDB 에이전트의 쓰기 API를 호출합니다.',
+      '메시지를 스토리지에 기록하는 통합 노드입니다. 기록 규약은 메시지 구조를 그대로 따릅니다 — payload 의 키/값이 측정값(키 = 측정 종류), metadata 가 태그, 메시지 타임스탬프가 기록 시각이 됩니다. 백엔드는 agent_ref 가 가리키는 에이전트의 타입으로 결정되며(store → 키-값 저장소, influxdb → 시계열 DB), 설정을 그대로 둔 채 에이전트만 교체하면 저장 대상이 바뀝니다. 기록 후 원본 메시지를 그대로 다음 노드로 전달합니다 (pass-through).',
     ports: [
-      { name: 'in', direction: 'input', description: '기록할 데이터가 담긴 메시지 입력' },
-      { name: 'out', direction: 'output', description: '기록 성공 후 원본 메시지 pass-through' },
-      { name: 'error', direction: 'error', description: '기록 실패 시 에러 출력' },
+      { name: 'in', direction: 'input', description: 'payload 에 측정값(키/값) 1개 이상을 담은 메시지 입력. metadata 는 태그로, 타임스탬프는 기록 시각으로 쓰입니다.' },
+      { name: 'out', direction: 'output', description: '기록 완료 후 원본 메시지를 passthrough로 출력합니다.' },
+      { name: 'error', direction: 'error', description: '기록 실패 시 에러 메시지를 출력합니다.' },
     ],
     configFields: [
-      { name: 'agent_ref', type: 'string', required: true, description: 'InfluxDB 에이전트 이름 또는 ID' },
-      { name: 'measurement', type: 'string', required: false, description: '고정 measurement 이름' },
-      { name: 'measurement_key', type: 'string', required: false, description: 'payload에서 measurement를 추출할 키' },
-      { name: 'tag_mappings', type: 'string', required: false, description: '태그 매핑 (tag_name: payload_key)' },
-      { name: 'field_mappings', type: 'string', required: false, description: '필드 매핑 (field_name: payload_key). 비어있으면 전체 payload' },
-      { name: 'timestamp_key', type: 'string', required: false, description: '타임스탬프 추출 키 (Unix ms)' },
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '기록 대상 에이전트의 이름 또는 ID입니다. 에이전트 타입이 백엔드를 결정합니다 (store / influxdb).',
+      },
+      {
+        name: 'payload_mode',
+        type: 'string',
+        required: false,
+        description:
+          'payload 키 처리 방식입니다. fields = 모든 키/값을 measurement 하나 아래 여러 측정값으로 기록. split = 키마다 별도 시리즈로 분리하고 값을 그 시리즈의 값("value")으로 기록. auto = 메시지마다 둘 중 하나를 선택 — measurement 템플릿이 그 메시지에서 해석되면 fields, 해석되지 않으면 split. object = 쪼개지 않고 payload 전체를 measurement 시리즈의 단일 오브젝트 값(이름은 object_key)으로 기록.',
+        default: 'fields',
+      },
+      {
+        name: 'measurement',
+        type: 'string',
+        required: true,
+        description:
+          'fields / object 모드의 시리즈 이름입니다. {…} 안의 경로를 메시지 값으로 치환합니다 (예: "{$.metadata.device.id}"). store 의 저장 키, influxdb 의 measurement 에 대응합니다. split 모드에서는 payload 키가 시리즈 이름이므로 쓰이지 않습니다. auto 모드에서는 선택 항목이며, 비우면 "{$.metadata.measurement}" 가 적용됩니다.',
+      },
+      {
+        name: 'object_key',
+        type: 'string',
+        required: false,
+        description:
+          'object 모드에서 payload 오브젝트에 부여할 값 이름입니다. 이름 규칙은 field 와 같습니다 (영문자·숫자·_·-). 다른 모드에서는 무시됩니다.',
+        default: 'object',
+      },
+      {
+        name: 'exclude_keys',
+        type: 'array',
+        required: false,
+        description:
+          '측정값으로 쓰지 않을 payload 키 목록입니다 (예: ["device", "room"]). object 모드에서는 오브젝트에서 해당 top-level 키를 뺍니다.',
+      },
+      {
+        name: 'namespace',
+        type: 'string',
+        required: false,
+        description: 'Store 네임스페이스입니다. influxdb 백엔드에서는 무시됩니다.',
+        default: 'default',
+      },
+      {
+        name: 'ttl',
+        type: 'string',
+        required: false,
+        description: 'TTL 기간입니다 (예: "5m", "1h"). influxdb 백엔드에서는 무시됩니다.',
+      },
+      {
+        name: 'bool_to_int',
+        type: 'boolean',
+        required: false,
+        description: 'true/false 값을 1/0 정수로 변환하여 기록합니다. store 백엔드에서는 무시됩니다.',
+        default: 'false',
+      },
     ],
     configExample: {
-      agent_ref: 'my-influxdb',
-      measurement: 'temperature',
-      tag_mappings: { location: 'room' },
-      field_mappings: { value: 'temp_celsius' },
+      agent_ref: 'store-engine',
+      namespace: 'sensors',
+      payload_mode: 'fields',
+      measurement: '{$.metadata.device.id}',
+      exclude_keys: ['device_id'],
+      ttl: '1h',
     },
   },
 
@@ -1127,72 +1230,6 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
       query: 'SELECT * FROM $measurement WHERE location = $location LIMIT $limit',
       language: 'influxql',
       result_key: 'results',
-    },
-  },
-
-  'store-write': {
-    description:
-      '메시지 데이터를 키-값 저장소에 기록하는 노드입니다. key_template으로 복합 키를 생성하고, value_key로 지정된 값 또는 전체 payload를 저장한 뒤 원본 메시지를 그대로 다음 노드로 전달합니다 (pass-through).',
-    ports: [
-      { name: 'in', direction: 'input', description: '저장할 메시지 입력. 페이로드에서 키 템플릿 필드와 값을 추출합니다.' },
-      { name: 'out', direction: 'output', description: '저장 완료 후 원본 메시지를 passthrough로 출력합니다.' },
-      { name: 'error', direction: 'error', description: 'Store 기록 실패 시 에러 메시지를 출력합니다.' },
-    ],
-    configFields: [
-      {
-        name: 'agent_ref',
-        type: 'string',
-        required: true,
-        description: '연결할 Store 에이전트의 이름 또는 ID입니다.',
-      },
-      {
-        name: 'namespace',
-        type: 'string',
-        required: false,
-        description: 'Store 네임스페이스입니다 (기본값: "default").',
-        default: 'default',
-      },
-      {
-        name: 'key_template',
-        type: 'string',
-        required: true,
-        description: '키 템플릿입니다. {field} 형식 플레이스홀더를 payload 값으로 치환합니다 (예: "{location}:{point}"). 이 키에 metrics 의 각 메트릭이 metric_type 별 시리즈로 기록됩니다.',
-      },
-      {
-        name: 'key_mappings',
-        type: 'object',
-        required: false,
-        description: '한 메시지에서 서로 다른 키에 값을 기록합니다(키 템플릿 → 값 $.경로). 네임스페이스·TTL·태그는 공유 적용됩니다.',
-      },
-      {
-        name: 'tags',
-        type: 'object',
-        required: false,
-        description: '모든 메트릭/키에 공유 적용되는 태그(키=값). 값은 리터럴 또는 $. 경로.',
-      },
-      {
-        name: 'metrics',
-        type: 'array',
-        required: false,
-        description:
-          '다중 메트릭 배열. 각 항목은 { metric_type, value_key(기본 $.payload.value), data_type, min_interval, min_change, min_change_percent } 를 가집니다. 같은 key_template 키에 metric_type 별 시리즈로 저장되며, 메트릭마다 독립적인 미세변화 억제(dead-band)가 적용됩니다. min_interval 이 설정된 메트릭만 억제되고, 간격 경과 시 변화가 없어도 1건 저장(heartbeat)합니다.',
-      },
-      {
-        name: 'ttl',
-        type: 'string',
-        required: false,
-        description: 'TTL 기간입니다 (예: "5m", "1h", "24h"). 모든 메트릭/키에 공유 적용. 비워두면 만료 없음.',
-      },
-    ],
-    configExample: {
-      agent_ref: 'store-engine',
-      namespace: 'sensors',
-      key_template: '{location}:{device_id}',
-      ttl: '1h',
-      metrics: [
-        { metric_type: 'temperature', value_key: '$.payload.temperature', data_type: 'float', min_interval: '30s', min_change: 0.5 },
-        { metric_type: 'humidity', value_key: '$.payload.humidity', data_type: 'float', min_interval: '1m', min_change: 2 },
-      ],
     },
   },
 
@@ -1650,6 +1687,191 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
+  'chirpstack-in': {
+    description:
+      'ChirpStack LoRaWAN 업링크를 수신하는 소스 노드입니다. 에이전트가 measurement 당 1개로 fan-out 한 레코드를 그대로 플로우 메시지로 방출하므로, 하류에서 별도의 분해(split) 없이 store/influx 소비자에 직접 연결할 수 있습니다. 에이전트에 emit_comm_state 가 켜져 있으면 통신 상태 변화 시 device_state.* 메시지도 같은 출력 포트로 방출됩니다.',
+    ports: [
+      { name: 'out', direction: 'output', description: 'measurement 당 1건의 업링크 메시지 출력 (통신 상태 변화 시 device_state.* 메시지 포함)' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '연결할 ChirpStack 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'emit_node_id',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 emit 한 flow 노드 UUID 를 포함합니다.',
+        default: 'false',
+      },
+      {
+        name: 'emit_agent',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 agent:{type,id} 그룹을 포함합니다.',
+        default: 'true',
+      },
+      {
+        name: 'emit_device',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 device:{type,id} 그룹을 포함합니다 (unit_id=devEui 승격).',
+        default: 'true',
+      },
+    ],
+    configExample: {
+      agent_ref: 'chirpstack-lora',
+    },
+    outputExamples: {
+      out: {
+        type: 'event',
+        timestamp: 1765000000000,
+        payload: { value: 23.4 },
+        metadata: {
+          measurement: 'temperature',
+          tags: { application_name: 'site-a', device_profile_name: 'Milesight WS301' },
+          device: { id: 'a1b2c3d4e5f60718', name: 'ws301-office-01' },
+          agent: { type: 'chirpstack-client', id: 'agent-cs-1' },
+        },
+      },
+      'out (device_state)': {
+        _comment: '에이전트 emit_comm_state=true 일 때 통신 상태 변화 시 같은 포트로 방출',
+        type: 'device_state.report',
+        payload: {
+          last_seen_ms: 1765000000000,
+          state: { online: true, rssi: -87, snr: 8.5, gateway_id: 'gw-0001', last_seen_ms: 1765000000000 },
+        },
+        metadata: { device: { id: 'a1b2c3d4e5f60718' }, agent: { type: 'chirpstack-client', id: 'agent-cs-1' } },
+      },
+    },
+  },
+
+  'chirpstack-control': {
+    description:
+      'ChirpStack LoRaWAN 다운링크를 전송하는 제어 노드입니다. 입력 payload 의 command 를 대상 디바이스의 deviceProfile 코덱으로 인코딩하여 application/{applicationId}/device/{devEui}/command/down 토픽에 발행합니다. 대상 디바이스는 설정이 아니라 입력 메시지의 unit_id 로 지정되므로 노드 1개가 N개 디바이스를 담당합니다. 전제조건: applicationId 는 해당 devEui 의 최초 업링크에서 캐시되므로 최초 업링크 수신 이후에만 제어가 가능합니다. 등록된 deviceProfile 코덱만 허용되며(v1: Milesight WS301 — reboot / set_report_interval / query_device_status), 미등록 프로파일이나 알 수 없는 명령은 발행 없이 에러 포트로 전달됩니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '다운링크 명령 입력 (unit_id + command + params)' },
+      { name: 'out', direction: 'output', description: '발행 완료 후 원본 메시지를 type=response 로 패스스루 (chirpstack_command / chirpstack_downlink_topic 메타데이터 추가)' },
+      { name: 'error', direction: 'error', description: '미등록 코덱, 알 수 없는 command, applicationId 미캐시, 발행 실패 시 출력' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '다운링크를 발행할 ChirpStack 에이전트의 이름 또는 ID입니다.',
+      },
+      {
+        name: 'emit_node_id',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 emit 한 flow 노드 UUID 를 포함합니다.',
+        default: 'false',
+      },
+      {
+        name: 'emit_agent',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 agent:{type,id} 그룹을 포함합니다.',
+        default: 'true',
+      },
+    ],
+    configExample: {
+      agent_ref: 'chirpstack-lora',
+    },
+    inputExamples: {
+      in: {
+        payload: {
+          unit_id: 'a1b2c3d4e5f60718',
+          command: 'set_report_interval',
+          params: { interval: 1200 },
+        },
+      },
+    },
+    outputExamples: {
+      out: {
+        type: 'response',
+        payload: { unit_id: 'a1b2c3d4e5f60718', command: 'set_report_interval', params: { interval: 1200 } },
+        metadata: {
+          chirpstack_command: 'set_report_interval',
+          chirpstack_downlink_topic: 'application/12/device/a1b2c3d4e5f60718/command/down',
+          agent: { type: 'chirpstack-client', id: 'agent-cs-1' },
+        },
+      },
+    },
+  },
+
+  'chirpstack-status': {
+    description:
+      'ChirpStack 에이전트에 캐시된 마지막 통신 상태를 조회하는 읽기 전용 노드입니다. 입력 payload 의 unit_id(devEui)에 해당하는 캐시 항목을 읽어 입력 1건당 상태 메시지 1건을 방출하며, MQTT 발행도 온디맨드 폴링도 하지 않습니다. 전제조건: 대상 에이전트의 emit_comm_state 가 켜져 있어야 합니다. 꺼져 있으면 통신 상태 캐시가 채워지지 않아 항상 offline/unknown 이 방출됩니다(Init 시 1회 경고). 캐시에 항목이 없는 디바이스는 online=false 로 방출되며 online=true 를 조기 보고하지 않습니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '조회 트리거 입력 (unit_id 로 대상 devEui 지정)' },
+      { name: 'out', direction: 'output', description: '캐시된 통신 상태를 type=device_state.* 메시지로 출력' },
+      { name: 'error', direction: 'error', description: 'unit_id 누락, 에이전트 미초기화, 상태 메시지 빌드 실패 시 출력' },
+    ],
+    configFields: [
+      {
+        name: 'agent_ref',
+        type: 'string',
+        required: true,
+        description: '통신 상태를 조회할 ChirpStack 에이전트의 이름 또는 ID입니다 (에이전트의 emit_comm_state 활성 필요).',
+      },
+      {
+        name: 'emit_node_id',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 emit 한 flow 노드 UUID 를 포함합니다.',
+        default: 'false',
+      },
+      {
+        name: 'emit_agent',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 agent:{type,id} 그룹을 포함합니다.',
+        default: 'true',
+      },
+      {
+        name: 'emit_device',
+        type: 'boolean',
+        required: false,
+        description: '메시지 metadata 에 device:{type,id} 그룹을 포함합니다 (unit_id=devEui 승격).',
+        default: 'true',
+      },
+    ],
+    configExample: {
+      agent_ref: 'chirpstack-lora',
+    },
+    inputExamples: {
+      in: {
+        payload: { unit_id: 'a1b2c3d4e5f60718' },
+      },
+    },
+    outputExamples: {
+      out: {
+        type: 'device_state.report',
+        payload: {
+          last_seen_ms: 1765000000000,
+          state: { online: true, rssi: -87, snr: 8.5, gateway_id: 'gw-0001', last_seen_ms: 1765000000000 },
+        },
+        metadata: {
+          device: { id: 'a1b2c3d4e5f60718', name: 'ws301-office-01' },
+          agent: { type: 'chirpstack-client', id: 'agent-cs-1' },
+        },
+      },
+      'out (캐시 없음)': {
+        _comment: '캐시에 항목이 없는 devEui — offline/unknown 으로 방출 (online=true 조기 보고 없음)',
+        type: 'device_state.report',
+        payload: {
+          last_seen_ms: 0,
+          state: { online: false, rssi: 0, snr: 0, gateway_id: '', last_seen_ms: 0 },
+        },
+      },
+    },
+  },
+
   'chart-emitter': {
     description:
       '입력 메시지를 WebSocket 차트 채널로 발행하고 링버퍼에 보관합니다. 대시보드의 차트 패널(Stat/Line/Bar/Pie/Table)이 이 채널을 구독해 실시간 데이터를 표시합니다. 두 가지 입력 모드를 지원합니다: 단일 엔트리(실시간 append) 와 배치(entries_field 설정 시 배열 분해). 필터/집계/정렬은 filter, aggregate, mapping 등 기존 노드와 조합해 앞단에 배치합니다. 종단 노드이므로 출력 포트가 없습니다.',
@@ -1730,7 +1952,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         timestamp: 1713312000000,
         value: 25.5,
         labels: { room: 'room1', sensor: 'temp' },
-        meta: { source: 'modbus-poller' },
+        meta: { source: 'modbus-read' },
       },
       '단일 엔트리 · timestamp 생략 → 현재 epoch ms 주입': {
         value: 42.5,

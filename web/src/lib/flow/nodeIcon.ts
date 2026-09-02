@@ -11,7 +11,7 @@
 import {
   Activity,
   Antenna,
-  Archive,
+  ArrowLeftRight,
   ArrowUpFromLine,
   BarChart3,
   Boxes,
@@ -22,6 +22,7 @@ import {
   Columns3,
   CopyMinus,
   Database,
+  Download,
   Filter,
   GitBranch,
   Globe,
@@ -34,18 +35,22 @@ import {
   Plug,
   Puzzle,
   Radio,
+  RadioReceiver,
   Replace,
   Route,
   ScrollText,
+  SendHorizontal,
   ShieldAlert,
   Shuffle,
   Sigma,
+  SignalHigh,
   SlidersHorizontal,
   Sparkles,
   Split,
   Thermometer,
   ThermometerSun,
   TriangleAlert,
+  Upload,
   Workflow,
   Zap,
   type LucideIcon,
@@ -91,12 +96,16 @@ export const NODE_TYPE_ICONS: Record<string, LucideIcon> = {
   'mqtt-subscriber': Antenna,
   'mqtt-publisher': Radio,
   // Modbus: 산업용 시리얼/TCP 버스 → Cable/Plug/Network 계열
-  modbus: Cable,
+  'modbus-client': Network,
   'modbus-tcp': Network,
   'modbus-rtu': Cable,
-  'modbus-tcp-server': Network,
-  'modbus-poller': Cable,
-  'modbus-writer': Plug,
+  'modbus-gateway': Network,
+  // Modbus 명령셋 노드: write=Upload, read=Download, control=SlidersHorizontal
+  'modbus-write': Upload,
+  'modbus-read': Download,
+  'modbus-control': SlidersHorizontal,
+  // Modbus 레지스터 리매퍼: From→To 변환 → ArrowLeftRight
+  'modbus-remap': ArrowLeftRight,
   // HTTP → Globe
   http: Globe,
   // 시리얼/TCP → 물리 결선
@@ -104,6 +113,12 @@ export const NODE_TYPE_ICONS: Record<string, LucideIcon> = {
   'serial-out': Plug,
   'tcp-in': Network,
   'tcp-out': Network,
+  // ChirpStack(LoRaWAN): 무선 계열이지만 MQTT(Antenna/Radio)와 구분되게 배정.
+  // 업링크 수신 = RadioReceiver, 다운링크 송신 = SendHorizontal,
+  // 통신 상태(rssi/snr/online) 조회 = SignalHigh.
+  'chirpstack-in': RadioReceiver,
+  'chirpstack-control': SendHorizontal,
+  'chirpstack-status': SignalHigh,
   // 브리지 → 범용 결선
   bridge: Cable,
 
@@ -127,15 +142,14 @@ export const NODE_TYPE_ICONS: Record<string, LucideIcon> = {
   'century-hvacr01-control': SlidersHorizontal,
 
   // --- 저장 / 시계열 ---
-  // 시계열(influx/tsdb): write=Database, read/query=LineChart/Activity 로 구분
+  // 통합 쓰기 노드(storage-write)는 백엔드와 무관하게 Database 로 통일한다.
+  // 조회 계열은 read/query=LineChart/Activity/HardDrive 로 구분한다.
   influxdb: Database,
-  'influxdb-write': Database,
+  'storage-write': Database,
   'influxdb-read': LineChart,
   'influxdb-query': Activity,
   'tsdb-write': Database,
   'tsdb-query': LineChart,
-  // in-memory store: write=Archive, read=HardDrive
-  'store-write': Archive,
   'store-read': HardDrive,
 
   // --- 처리 ---
@@ -145,6 +159,7 @@ export const NODE_TYPE_ICONS: Record<string, LucideIcon> = {
   aggregate: Sigma,
   deduplicate: CopyMinus,
   filter: Filter,
+  split: Split,
   script: Code,
   framer: Layers,
   enrich: Sparkles,

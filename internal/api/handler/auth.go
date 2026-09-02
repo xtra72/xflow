@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -10,10 +11,24 @@ import (
 	"github.com/xtra/xflow/internal/auth"
 )
 
+// PermissionLister 는 역할의 권한 키 목록을 조회한다.
+//
+// @SPEC:SPEC-AUTH-005 (M6) — /auth/me 의 permissions 배열 산출에 사용된다.
+// *auth.PermissionCache 가 본 인터페이스를 만족한다. 주입되지 않으면 permissions 는
+// 빈 배열이 된다 (인증 비활성 배포 등).
+type PermissionLister interface {
+	// Permissions 는 역할의 권한 키 목록을 반환한다.
+	Permissions(ctx context.Context, role string) ([]string, error)
+	// EffectiveRole 은 인가 판정에 실제로 사용되는 현재 역할을 반환한다.
+	// 조회 대상이 없으면 fallback(토큰 클레임의 역할)을 그대로 돌려준다.
+	EffectiveRole(ctx context.Context, username, fallback string) (string, error)
+}
+
 // AuthHandler 는 인증 관련 API 핸들러이다.
 type AuthHandler struct {
 	credentials *auth.CredentialsManager
 	jwtSvc      *auth.JWTService
+	permissions PermissionLister
 	logger      *slog.Logger
 }
 
@@ -27,6 +42,16 @@ func NewAuthHandler(credentials *auth.CredentialsManager, jwtSvc *auth.JWTServic
 		jwtSvc:      jwtSvc,
 		logger:      logger,
 	}
+}
+
+// WithPermissions 는 /auth/me 의 permissions 배열 산출에 사용할 조회기를 주입한다.
+//
+// @SPEC:SPEC-AUTH-005 (M6)
+// 생성자 시그니처를 바꾸면 기존 호출자(cmd/xflowd, 테스트)가 전부 깨지므로 선택적
+// 설정자로 추가한다. 주입하지 않으면 permissions 는 빈 배열이다.
+func (h *AuthHandler) WithPermissions(p PermissionLister) *AuthHandler {
+	h.permissions = p
+	return h
 }
 
 // RegisterRoutes 는 인증 관련 라우트를 등록한다.
@@ -177,9 +202,38 @@ func (h *AuthHandler) me(ctx api.Context) error {
 		return api.ErrUnauthorized.WithMessage("인증이 필요합니다")
 	}
 
-	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(dto.UserInfoResponse{
-		Username: username,
-		Role:     role,
+	// @SPEC:SPEC-AUTH-005 (M6, acceptance.md AC-06)
+	// 기존 필드(username, role)는 임베드로 위치·형식을 그대로 유지하고 permissions 만
+	// 덧붙인다. 조회 실패는 로그만 남기고 빈 배열로 응답한다 — /auth/me 는 세션 유지에
+	// 쓰이므로 권한 조회 장애로 로그인 상태가 끊기면 안 된다.
+	//
+	// 역할은 인가 미들웨어와 동일한 유효 역할(users 테이블 기준)로 보고한다. 토큰
+	// 클레임을 그대로 쓰면 강등 직후 "권한이 있다고 표시되는데 요청은 403" 인
+	// 불일치가 생겨 UI 게이팅이 어긋난다.
+	perms := []string{}
+	if h.permissions != nil {
+		effective, err := h.permissions.EffectiveRole(ctx.Context(), username, role)
+		if err != nil {
+			h.logger.Error("유효 역할 조회 실패", "username", username, "role", role, "error", err)
+		} else {
+			role = effective
+		}
+		if role != "" {
+			got, err := h.permissions.Permissions(ctx.Context(), role)
+			if err != nil {
+				h.logger.Error("권한 목록 조회 실패", "username", username, "role", role, "error", err)
+			} else if got != nil {
+				perms = got
+			}
+		}
+	}
+
+	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(dto.MeResponse{
+		UserInfoResponse: dto.UserInfoResponse{
+			Username: username,
+			Role:     role,
+		},
+		Permissions: perms,
 	}))
 }
 

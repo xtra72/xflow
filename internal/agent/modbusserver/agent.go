@@ -36,11 +36,15 @@ type ModbusServerAgent struct {
 	config        ModbusServerConfig
 	deviceManager *DeviceManager
 	registerMap   *RegisterMap // 하위 호환: 첫 번째 디바이스의 RegisterMap (Process 메서드용)
-	listener      *Listener
+	listener      serverListener
 	handler       *ModbusHandler
 	cancelFn      context.CancelFunc
+	rootCtx       context.Context          // 백킹 폴러 수명을 묶는 에이전트 컨텍스트(Start 에서 설정, a.mu 보호)
+	backings      map[byte]*deviceBacking  // 백킹 디바이스별 런타임 상태(트랜스포트+폴러), a.mu 보호 (REQ-MODBUS-010-05)
+	newTransport  upstreamTransportFactory // 백킹 트랜스포트 생성 seam(nil=기본 newUpstreamTransport, 테스트 주입용)
+	obs           *serverObs               // 관측성 배선(클라이언트 레지스트리 + 프레임 로그 토글 미러). Configure 로 라이브 갱신
 	msgCh         chan map[string]any
-	hasReceiver   *atomic.Bool // ReceiveMessage 호출 시 true → sendChangeEvent 활성화
+	hasReceiver   *atomic.Bool  // ReceiveMessage 호출 시 true → sendChangeEvent 활성화
 	receiverOn    chan struct{} // ReceiveMessage 활성화 신호 (drainMsgCh 즉시 종료용, 1회 close)
 	receiverOnce  sync.Once     // receiverOn 채널의 1회 close 보장
 	stopCh        chan struct{}
@@ -52,7 +56,7 @@ type ModbusServerAgent struct {
 	paused        bool
 }
 
-// NewModbusServerAgent creates a new MODBUS/TCP server agent.
+// NewModbusServerAgent creates a new MODBUS server agent.
 func NewModbusServerAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 	cfg, err := parseModbusServerConfig(agentConfig.Transport.Options)
 	if err != nil {
@@ -62,24 +66,58 @@ func NewModbusServerAgent(agentConfig agent.AgentConfig) (agent.Agent, error) {
 	msgCh := make(chan map[string]any, cfg.MsgChannelSize)
 	logger := agent.ResolveLogger(agentConfig)
 
-	// DeviceManager 생성 (멀티-디바이스 지원)
-	dm, err := NewDeviceManager(cfg.Devices, logger)
-	if err != nil {
-		return nil, fmt.Errorf("modbus-server agent: %w", err)
+	// DeviceManager 생성 (멀티-디바이스 지원).
+	// 디바이스가 없는 서버(빈 게이트웨이)는 빈 DeviceManager 로 시작하며, 생성 이후
+	// device 탭(add_device)으로 디바이스를 추가한다.
+	var dm *DeviceManager
+	if len(cfg.Devices) == 0 {
+		dm = NewEmptyDeviceManager()
+	} else {
+		dm, err = NewDeviceManager(cfg.Devices, logger)
+		if err != nil {
+			return nil, fmt.Errorf("modbus-server agent: %w", err)
+		}
 	}
 
-	handler := NewModbusHandler(dm, msgCh, logger)
+	// 관측성 배선: 프레임 로그 토글 atomic 미러(Configure 로 라이브 갱신) + TCP 클라이언트
+	// 레지스터리(RTU 는 per-client 개념 없음 → registry nil).
+	obs := &serverObs{
+		logFrames:    &atomic.Bool{},
+		logRawFrames: &atomic.Bool{},
+	}
+	obs.logFrames.Store(cfg.LogFrames)
+	obs.logRawFrames.Store(cfg.LogRawFrames)
+	if cfg.Transport == TransportTCP {
+		obs.registry = NewClientRegistry()
+	}
 
-	listenAddr := fmt.Sprintf("%s:%d", cfg.ListenAddress, cfg.ListenPort)
-	listener := NewListener(listenAddr, cfg.MaxConnections, cfg.IdleTimeout, handler, logger)
+	handler := NewModbusHandler(dm, msgCh, cfg.NotifyOnWrite, obs, logger)
+
+	// 첫 번째 디바이스의 RegisterMap (Process 메서드 하위 호환용). 디바이스가 없으면
+	// nil 이며 이후 add_device 로 디바이스가 추가되면 그 맵을 사용한다.
+	var primaryRM *RegisterMap
+	if first := dm.FirstDevice(); first != nil {
+		primaryRM = first.RegisterMap
+	}
+
+	// 트랜스포트에 따라 TCP 리스너 또는 RTU 시리얼 슬레이브 리스너를 선택한다.
+	var listener serverListener
+	if cfg.Transport == TransportRTU {
+		listener = NewRTUListener(cfg.Serial, handler, obs, logger)
+	} else {
+		listenAddr := fmt.Sprintf("%s:%d", cfg.ListenAddress, cfg.ListenPort)
+		listener = NewListener(listenAddr, cfg.MaxConnections, cfg.IdleTimeout, handler, obs, logger)
+	}
 
 	a := &ModbusServerAgent{
-		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("modbus-tcp-server")),
+		BaseLifecycle: lifecycle.NewBaseLifecycle(lifecycle.WithName("modbus-gateway")),
 		config:        cfg,
 		deviceManager: dm,
-		registerMap:   dm.FirstDevice().RegisterMap, // 하위 호환: 첫 번째 디바이스
+		registerMap:   primaryRM, // 하위 호환: 첫 번째 디바이스 (없으면 nil, add_device 후 채움)
 		listener:      listener,
 		handler:       handler,
+		backings:      make(map[byte]*deviceBacking),
+		obs:           obs,
 		msgCh:         msgCh,
 		hasReceiver:   &atomic.Bool{},
 		receiverOn:    make(chan struct{}),
@@ -147,9 +185,18 @@ func (a *ModbusServerAgent) Start(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	a.mu.Lock()
 	a.cancelFn = cancel
+	a.rootCtx = childCtx
 	a.mu.Unlock()
 
+	// 설정 시점 백킹 디바이스 배선: upstream 연결 + (indirect) 폴러 시작.
+	// 리스너 기동 이전에 수행하여 서빙 시작 시점에 디바이스가 백킹 준비 상태가 되게 한다.
+	if err := a.startBackings(childCtx); err != nil {
+		cancel()
+		return fmt.Errorf("modbus-server start: %w", err)
+	}
+
 	if err := a.listener.Start(childCtx); err != nil {
+		a.stopBackings()
 		cancel()
 		return fmt.Errorf("modbus-server start: %w", err)
 	}
@@ -175,6 +222,10 @@ func (a *ModbusServerAgent) Stop(_ context.Context) error {
 	if cancelFn != nil {
 		cancelFn()
 	}
+
+	// 백킹 폴러 종료 + upstream 트랜스포트 Close (goroutine 누수 방지, AC-11).
+	// cancelFn 이 이미 폴러 컨텍스트를 취소했더라도 stop() 으로 종료를 확정 대기한다.
+	a.stopBackings()
 
 	if err := a.listener.Stop(); err != nil {
 		a.logger.Warn("modbus-server: listener stop failed", "error", err)
@@ -290,6 +341,8 @@ func (a *ModbusServerAgent) Process(data []byte) ([]byte, error) {
 		return a.processReadRaw(&req)
 	case "list_devices":
 		return a.processListDevices()
+	case "list_clients":
+		return a.processListClients()
 	case "add_device":
 		return a.processAddDevice(&req)
 	case "remove_device":
@@ -303,7 +356,10 @@ func (a *ModbusServerAgent) Process(data []byte) ([]byte, error) {
 
 // processSetCoil sets a single coil value.
 func (a *ModbusServerAgent) processSetCoil(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_coil requires 'address' param")
@@ -324,7 +380,10 @@ func (a *ModbusServerAgent) processSetCoil(req *processRequest) ([]byte, error) 
 
 // processSetCoils sets multiple coil values.
 func (a *ModbusServerAgent) processSetCoils(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_coils requires 'address' param")
@@ -359,7 +418,10 @@ func (a *ModbusServerAgent) processSetCoils(req *processRequest) ([]byte, error)
 // processSetRegister sets a single holding register value.
 // Supports optional data_type and byte_order params for typed writes.
 func (a *ModbusServerAgent) processSetRegister(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_register requires 'address' param")
@@ -399,7 +461,10 @@ func (a *ModbusServerAgent) processSetRegister(req *processRequest) ([]byte, err
 // processSetRegisters sets multiple holding register values.
 // Supports optional data_type and byte_order params for typed writes.
 func (a *ModbusServerAgent) processSetRegisters(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_registers requires 'address' param")
@@ -470,7 +535,10 @@ func (a *ModbusServerAgent) processSetRegisters(req *processRequest) ([]byte, er
 // processSetInput sets a single input register or discrete input value.
 // Supports optional data_type and byte_order params for typed writes on input_registers.
 func (a *ModbusServerAgent) processSetInput(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	area, ok := req.Params["area"].(string)
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: set_input requires 'area' param (string)")
@@ -549,7 +617,10 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 
 	switch area {
 	case "input_registers":
-		rm := a.resolveRegisterMap(req.Params)
+		rm, err := a.resolveRegisterMap(req.Params)
+		if err != nil {
+			return nil, err
+		}
 		dataType, _ := getParamString(req.Params, "data_type")
 		byteOrder, _ := getParamString(req.Params, "byte_order")
 		if byteOrder == "" {
@@ -602,7 +673,10 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 		return json.Marshal(map[string]any{"ok": true, "area": area, "address": addr, "quantity": len(values)})
 
 	case "discrete_inputs":
-		rm := a.resolveRegisterMap(req.Params)
+		rm, err := a.resolveRegisterMap(req.Params)
+		if err != nil {
+			return nil, err
+		}
 		values := make([]bool, len(arr))
 		for i, v := range arr {
 			b, ok := v.(bool)
@@ -627,7 +701,10 @@ func (a *ModbusServerAgent) processSetInputs(req *processRequest) ([]byte, error
 // params.writes 배열의 각 항목은 area, address, value, (선택) data_type, byte_order를 포함한다.
 // 브릿지 어댑터가 플로우 메시지를 ModbusServerAgent에 전달할 때 사용한다.
 func (a *ModbusServerAgent) processBulkWrite(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	rawWrites, ok := req.Params["writes"]
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: bulk_write requires 'writes' param")
@@ -741,7 +818,10 @@ func (a *ModbusServerAgent) processBulkWrite(req *processRequest) ([]byte, error
 
 // processGetCoils reads coil values by address and quantity.
 func (a *ModbusServerAgent) processGetCoils(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: get_coils requires 'address' param")
@@ -766,7 +846,10 @@ func (a *ModbusServerAgent) processGetCoils(req *processRequest) ([]byte, error)
 
 // processGetDiscreteInputs reads discrete input values by address and quantity.
 func (a *ModbusServerAgent) processGetDiscreteInputs(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: get_discrete_inputs requires 'address' param")
@@ -791,7 +874,10 @@ func (a *ModbusServerAgent) processGetDiscreteInputs(req *processRequest) ([]byt
 
 // processGetHoldingRegisters reads holding register values by address and quantity.
 func (a *ModbusServerAgent) processGetHoldingRegisters(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: get_holding_registers requires 'address' param")
@@ -831,7 +917,10 @@ func (a *ModbusServerAgent) processGetHoldingRegisters(req *processRequest) ([]b
 
 // processGetInputRegisters reads input register values by address and quantity.
 func (a *ModbusServerAgent) processGetInputRegisters(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: get_input_registers requires 'address' param")
@@ -975,7 +1064,10 @@ func (a *ModbusServerAgent) buildTypedValues(rm *RegisterMap, area string, start
 
 // processGetRegisterTyped reads a single typed register value.
 func (a *ModbusServerAgent) processGetRegisterTyped(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	addr, ok := getParamInt(req.Params, "address")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server: get_register_typed requires 'address' param")
@@ -1004,7 +1096,10 @@ func (a *ModbusServerAgent) processGetRegisterTyped(req *processRequest) ([]byte
 // processGetMap returns the register map snapshot.
 // If a TypeOverlay exists, it is included in the response.
 func (a *ModbusServerAgent) processGetMap(req *processRequest) ([]byte, error) {
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	snap := rm.GetSnapshot()
 	resp := map[string]any{"register_map": snap}
 
@@ -1022,7 +1117,10 @@ func (a *ModbusServerAgent) processReadRaw(req *processRequest) ([]byte, error) 
 		return nil, fmt.Errorf("modbus-server read_raw: params required")
 	}
 
-	rm := a.resolveRegisterMap(req.Params)
+	rm, err := a.resolveRegisterMap(req.Params)
+	if err != nil {
+		return nil, err
+	}
 	fc, ok := getParamInt(req.Params, "function_code")
 	if !ok {
 		return nil, fmt.Errorf("modbus-server read_raw: function_code required")
@@ -1037,7 +1135,6 @@ func (a *ModbusServerAgent) processReadRaw(req *processRequest) ([]byte, error) 
 	}
 
 	var values []uint16
-	var err error
 
 	const (
 		fc03 = 3 // ReadHoldingRegisters
@@ -1087,13 +1184,30 @@ func (a *ModbusServerAgent) processGetStatus() ([]byte, error) {
 func (a *ModbusServerAgent) processListDevices() ([]byte, error) {
 	devices := a.deviceManager.GetAllDevices()
 
+	// 백킹 맵을 한 번만 RLock 으로 스냅샷하여 루프 내 락 경합을 줄인다(SPEC-MODBUS-012 M3).
+	a.mu.RLock()
+	backings := make(map[byte]*deviceBacking, len(a.backings))
+	for uid, b := range a.backings {
+		backings[uid] = b
+	}
+	a.mu.RUnlock()
+
 	devList := make([]map[string]any, 0, len(devices))
 	for _, dev := range devices {
+		// backed/mode: 실제(upstream) 백킹 여부와 모드. 비백킹은 backed=false, mode="".
+		backed := false
+		mode := ""
+		if b := backings[dev.UnitID]; b != nil && b.store != nil {
+			backed = true
+			mode = b.store.modeString()
+		}
 		devList = append(devList, map[string]any{
 			"unit_id":         dev.UnitID,
 			"name":            dev.Name,
 			"register_counts": dev.RegisterMap.RegisterCounts(),
 			"status":          "active",
+			"backed":          backed,
+			"mode":            mode,
 			"stats": map[string]any{
 				"read_count":  dev.Stats.ReadCount.Load(),
 				"write_count": dev.Stats.WriteCount.Load(),
@@ -1107,6 +1221,29 @@ func (a *ModbusServerAgent) processListDevices() ([]byte, error) {
 		"device_count": len(devList),
 	}
 	return json.Marshal(resp)
+}
+
+// processListClients 는 연결된 TCP 클라이언트 목록을 반환한다("Clients" 탭용).
+// TCP 는 레지스트리 스냅샷을, RTU 는 빈 배열을 반환한다(시리얼, per-client 개념 없음).
+// socket tcp_server.go 의 processListConnections 형식에 unit_ids 필드를 추가한 형태이다.
+func (a *ModbusServerAgent) processListClients() ([]byte, error) {
+	list := a.listener.Clients()
+	clients := make([]map[string]any, 0, len(list))
+	for i := range list {
+		// unit_ids 는 []byte 이면 JSON 에서 base64 로 인코딩되므로 정수 배열로 변환한다.
+		ids := make([]int, len(list[i].UnitIDs))
+		for j, id := range list[i].UnitIDs {
+			ids[j] = int(id)
+		}
+		clients = append(clients, map[string]any{
+			"remote_addr":   list[i].RemoteAddr,
+			"connected_at":  list[i].ConnectedAt.Format(time.RFC3339),
+			"unit_ids":      ids,
+			"request_count": list[i].RequestCount,
+			"last_seen":     list[i].LastSeen.Format(time.RFC3339),
+		})
+	}
+	return json.Marshal(map[string]any{"clients": clients})
 }
 
 // processAddDevice 는 런타임에 새 디바이스를 추가한다.
@@ -1149,9 +1286,34 @@ func (a *ModbusServerAgent) processAddDevice(req *processRequest) ([]byte, error
 		}
 	}
 
-	// RegisterMap + RequestHandler 생성
+	// RegisterMap 생성. 기본은 순수 slave(RequestHandler(rm)).
 	rm := NewRegisterMap(rmCfg)
 	reqHandler := NewRequestHandler(rm, a.logger)
+
+	// backing 파라미터 (선택: upstream 백킹). 부재 시 순수 slave(하위 호환).
+	// 존재 시 트랜스포트 연결 + backedStore 배선 + (indirect) 폴러 시작을 수행한다.
+	var backing *deviceBacking
+	if rawBacking, ok := req.Params["backing"]; ok {
+		bc, err := parseBackingConfig(rawBacking, 0)
+		if err != nil {
+			return nil, err
+		}
+		// 폴러 수명 컨텍스트는 에이전트 Start 컨텍스트(rootCtx)에 묶는다. 미기동 시엔
+		// Background 로 대체하되, remove_device/Stop 이 폴러를 명시적으로 종료하므로 안전하다.
+		a.mu.RLock()
+		rootCtx := a.rootCtx
+		a.mu.RUnlock()
+		if rootCtx == nil {
+			rootCtx = context.Background()
+		}
+		// setupBacking 은 a.mu 밖에서 호출한다(Connect 가 블로킹될 수 있음).
+		h, b, err := a.setupBacking(rootCtx, rm, rmCfg, bc)
+		if err != nil {
+			return nil, err
+		}
+		reqHandler = h
+		backing = b
+	}
 
 	dev := &Device{
 		UnitID:       byte(uid),
@@ -1163,7 +1325,21 @@ func (a *ModbusServerAgent) processAddDevice(req *processRequest) ([]byte, error
 
 	// DeviceManager 에 추가 (중복 UnitID 검사 포함)
 	if err := a.deviceManager.AddDevice(dev); err != nil {
+		// 백킹 배선 롤백(폴러 종료 + 트랜스포트 Close)으로 goroutine 누수를 방지한다.
+		teardownBacking(backing)
 		return nil, err
+	}
+
+	// 백킹 상태를 a.mu 보호 하에 등록한다(Stop/remove 에서 정리 대상).
+	if backing != nil {
+		a.mu.Lock()
+		a.backings[dev.UnitID] = backing
+		a.mu.Unlock()
+	}
+
+	// 디바이스 로스터 변경: INFO 로 남긴다(기존 로그 레벨에서 항상 노출).
+	if a.logger != nil {
+		a.logger.Info("modbus-gateway: device added", "unit_id", dev.UnitID, "name", dev.Name)
 	}
 
 	resp := map[string]any{
@@ -1192,6 +1368,20 @@ func (a *ModbusServerAgent) processRemoveDevice(req *processRequest) ([]byte, er
 		return nil, err
 	}
 
+	// 백킹 디바이스였으면 폴러 종료 + upstream 트랜스포트 Close (goroutine 누수 방지, AC-11).
+	// 디바이스는 이미 매니저에서 제거되어 신규 조회가 없으므로, 진행 중 요청이 있더라도
+	// Close 후에는 0x0B 로 안전하게 처리된다.
+	a.mu.Lock()
+	backing := a.backings[byte(uid)]
+	delete(a.backings, byte(uid))
+	a.mu.Unlock()
+	teardownBacking(backing)
+
+	// 디바이스 로스터 변경: INFO 로 남긴다(기존 로그 레벨에서 항상 노출).
+	if a.logger != nil {
+		a.logger.Info("modbus-gateway: device removed", "unit_id", byte(uid))
+	}
+
 	resp := map[string]any{
 		"status":  "removed",
 		"unit_id": uid,
@@ -1218,11 +1408,24 @@ func (a *ModbusServerAgent) processGetDeviceStatus(req *processRequest) ([]byte,
 		lastAccessStr = lastAccess.Format(time.RFC3339)
 	}
 
+	// 실효(effective) 레지스터 맵/카운트: 마스터가 실제로 읽는 서빙 store 기준으로 노출한다
+	// (SPEC-MODBUS-008). 공유 세그먼트 디바이스(deviceView)는 컨테이너 값이, 백킹 디바이스
+	// (backedStore)는 폴/조회 값이 반영된다. 로컬 전용 디바이스는 기존과 바이트 동일하다.
+	// ReqHandler 부재 시(방어적)에만 자체 맵으로 폴백한다.
+	var registerMap map[string]any
+	var registerCounts map[string]int
+	if dev.ReqHandler != nil {
+		registerMap, registerCounts = dev.ReqHandler.effectiveRegisterView()
+	} else {
+		registerMap = dev.RegisterMap.GetSnapshot()
+		registerCounts = dev.RegisterMap.RegisterCounts()
+	}
+
 	resp := map[string]any{
 		"unit_id":         dev.UnitID,
 		"name":            dev.Name,
-		"register_counts": dev.RegisterMap.RegisterCounts(),
-		"register_map":    dev.RegisterMap.GetSnapshot(),
+		"register_counts": registerCounts,
+		"register_map":    registerMap,
 		"stats": map[string]any{
 			"read_count":  dev.Stats.ReadCount.Load(),
 			"write_count": dev.Stats.WriteCount.Load(),
@@ -1230,6 +1433,27 @@ func (a *ModbusServerAgent) processGetDeviceStatus(req *processRequest) ([]byte,
 			"last_access": lastAccessStr,
 		},
 	}
+
+	// backing: 실제(upstream) 백킹 관측 메트릭(SPEC-MODBUS-012 M3, REQ-06-02).
+	// 백킹 디바이스면 서브객체를, 비백킹(순수 slave)이면 null 을 반환한다(하위 호환).
+	// DeviceStats(위 stats, 마스터→게이트웨이 서빙측)와는 별개의 게이트웨이→upstream 통계다.
+	a.mu.RLock()
+	backing := a.backings[byte(uid)]
+	a.mu.RUnlock()
+	if backing != nil && backing.store != nil {
+		m := backing.store.metrics()
+		resp["backing"] = map[string]any{
+			"mode":           m.Mode,
+			"connected":      m.Connected,
+			"request_count":  m.RequestCount,
+			"error_count":    m.ErrorCount,
+			"avg_latency_ms": m.AvgLatencyMs,
+			"last_ok":        m.LastOKMillis,
+		}
+	} else {
+		resp["backing"] = nil
+	}
+
 	return json.Marshal(resp)
 }
 
@@ -1266,7 +1490,8 @@ func (a *ModbusServerAgent) sendChangeEvent(cs *ChangeSet, command string, dataT
 // Implements agent.MessageReceiver.
 // 최초 호출 시 hasReceiver=true + receiverOn close 로 drainMsgCh 를 즉시 종료시킨다.
 // (atomic 만으로는 drainMsgCh 가 select 블록 중일 때 종료를 보장 못함 → channel close 로
-//  select 의 첫 번째 case 를 깨운다.)
+//
+//	select 의 첫 번째 case 를 깨운다.)
 func (a *ModbusServerAgent) ReceiveMessage(ctx context.Context) ([]byte, error) {
 	a.activateReceiver()
 	select {
@@ -1320,6 +1545,13 @@ func (a *ModbusServerAgent) Configure(config agent.AgentConfig) error {
 	a.mu.Lock()
 	a.agentConfig = config
 	a.mu.Unlock()
+
+	// log_frames / log_raw_frames 는 재시작 없이 즉시 반영한다(needsRestart 대상 아님).
+	// 이 두 키만 재파싱하여 atomic 미러를 갱신한다(socket tcp_server.go log_messages 패턴).
+	if newCfg, perr := parseModbusServerConfig(config.Transport.Options); perr == nil {
+		a.obs.logFrames.Store(newCfg.LogFrames)
+		a.obs.logRawFrames.Store(newCfg.LogRawFrames)
+	}
 	return nil
 }
 
@@ -1339,7 +1571,16 @@ func (a *ModbusServerAgent) Name() string {
 
 // Type returns the agent type.
 func (a *ModbusServerAgent) Type() string {
-	return "modbus-tcp-server"
+	return "modbus-gateway"
+}
+
+// SharedRegisterMap 는 이 서버의 주(첫 번째) 디바이스 RegisterMap 포인터를 반환한다.
+// role=sub 서버가 이 포인터를 자신의 핸들러/디바이스에 연결하여 라이브 공유한다.
+// 디바이스가 없으면(예: 아직 상속 전인 서브) nil 을 반환한다.
+func (a *ModbusServerAgent) SharedRegisterMap() *RegisterMap {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.registerMap
 }
 
 // Info returns the agent info snapshot.
@@ -1359,7 +1600,7 @@ func (a *ModbusServerAgent) Info() agent.AgentInfo {
 	return agent.AgentInfo{
 		ID:        cfg.ID,
 		Name:      cfg.Name,
-		Type:      "modbus-tcp-server",
+		Type:      "modbus-gateway",
 		State:     state,
 		Health:    a.Health(),
 		Config:    cfg,
@@ -1563,16 +1804,26 @@ func (a *ModbusServerAgent) ListenAddr() net.Addr {
 
 // resolveRegisterMap resolves the target RegisterMap based on unit_id parameter.
 // If unit_id is not specified, uses the first device's RegisterMap (backward compatibility).
-func (a *ModbusServerAgent) resolveRegisterMap(params map[string]any) *RegisterMap {
+// When unit_id is explicitly 0, the shared container (unit_id 0) is targeted; if no
+// shared container is configured, ErrNoSharedContainer is returned.
+func (a *ModbusServerAgent) resolveRegisterMap(params map[string]any) (*RegisterMap, error) {
 	if params != nil {
 		if uid, ok := getParamInt(params, "unit_id"); ok {
+			// unit_id 가 명시적으로 0 이면 공유 컨테이너를 대상으로 한다.
+			// (getParamInt 의 ok 로 "미지정"과 "명시적 0"을 구분: 미지정이면 아래 기본 경로)
+			if uid == 0 {
+				if c := a.deviceManager.SharedContainer(); c != nil {
+					return c.RegisterMap, nil
+				}
+				return nil, ErrNoSharedContainer
+			}
 			dev := a.deviceManager.GetDevice(byte(uid))
 			if dev != nil {
-				return dev.RegisterMap
+				return dev.RegisterMap, nil
 			}
 		}
 	}
-	return a.registerMap // 첫 번째 디바이스 (하위 호환)
+	return a.registerMap, nil // 첫 번째 디바이스 (하위 호환)
 }
 
 // ---------------------------------------------------------------------------
@@ -1582,7 +1833,11 @@ func (a *ModbusServerAgent) resolveRegisterMap(params map[string]any) *RegisterM
 // resolveDataType resolves the data_type for a given area and address.
 // Priority: explicit param > TypeOverlay > "uint16" default
 func (a *ModbusServerAgent) resolveDataType(params map[string]any, area string, address uint16) (string, string) {
-	rm := a.resolveRegisterMap(params)
+	rm, err := a.resolveRegisterMap(params)
+	if err != nil {
+		// 맵을 얻지 못하면(예: 컨테이너 미존재) TypeOverlay 없이 명시 파라미터/기본값만 사용한다.
+		rm = nil
+	}
 	return resolveDataTypeFromRM(rm, params, area, address)
 }
 
@@ -1594,7 +1849,7 @@ func resolveDataTypeFromRM(rm *RegisterMap, params map[string]any, area string, 
 		byteOrder = modbus.ByteOrderBigEndian
 	}
 
-	if dataType == "" {
+	if dataType == "" && rm != nil {
 		// TypeOverlay 확인
 		overlay := rm.GetTypeOverlay()
 		key := area + ":" + fmt.Sprintf("%d", address)

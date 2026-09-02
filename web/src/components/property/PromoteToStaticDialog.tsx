@@ -7,9 +7,9 @@
 //   - data_type 셀렉트 (필수, 6종 enum: int|float|string|boolean|bytes|json).
 //     변환 시점에 사용자가 명시적으로 직렬화 형식을 선언하므로 manual 모드와
 //     동일하게 필수로 강제한다 (미선택 시 변환 버튼 비활성).
-//   - metric_type 입력 (선택, 정규식 `^[a-zA-Z0-9_-]+$`).
+//   - field 입력 (선택, 정규식 `^[a-zA-Z0-9_-]+$`).
 //     빈 값이면 백엔드가 default `"unknown"` 적용.
-//   - onConfirm 시그니처 진화: `(tags) => void` → `({data_type, metric_type, tags}) => void`.
+//   - onConfirm 시그니처 진화: `(tags) => void` → `({data_type, field, tags}) => void`.
 //   - 부모로부터 `defaultDataType` 을 전달받으면 셀렉트에 사전 채움한다 (백엔드가
 //     이미 키에 대해 추론한 타입이 있을 경우 — 이벤트 기반 워크플로우).
 //
@@ -37,14 +37,14 @@ import type { DataType } from '@/services/api/store';
  * 변환 확인 시 부모에 전달되는 페이로드.
  *
  * - data_type: 필수 (사용자가 셀렉트에서 선택한 값).
- * - metric_type: 선택. 빈 문자열은 부모/백엔드에서 default `"unknown"` 적용으로 처리된다.
+ * - field: 선택. 빈 문자열은 부모/백엔드에서 default `"unknown"` 적용으로 처리된다.
  * - tags: 사용자가 입력한 태그 맵. 비어있으면 빈 객체 `{}`.
  *
  * @spec SPEC-WEB-005 v0.7.0 (M14)
  */
 export interface PromoteToStaticPayload {
   data_type: DataType;
-  metric_type?: string;
+  field?: string;
   tags: Record<string, string>;
 }
 
@@ -57,7 +57,7 @@ interface PromoteToStaticDialogProps {
   keyName: string;
   /**
    * 변환 확인 핸들러.
-   * data_type / metric_type / tags 페이로드를 받아 부모에서
+   * data_type / field / tags 페이로드를 받아 부모에서
    * PUT /agents/{id}/config 호출을 처리한다.
    *
    * @spec SPEC-WEB-005 v0.7.0 (M14)
@@ -147,8 +147,8 @@ export function PromoteToStaticDialog({
   const [rows, setRows] = useState<TagRow[]>([]);
   // data_type 상태 (빈 문자열 = unset). 변환 시 manual 모드 검증을 적용한다.
   const [dataType, setDataType] = useState<string>('');
-  // metric_type 상태. 빈 문자열은 백엔드 default `"unknown"` 으로 매핑된다.
-  const [metricType, setMetricType] = useState<string>('');
+  // field 상태. 빈 문자열은 백엔드 default `"unknown"` 으로 매핑된다.
+  const [fieldName, setField] = useState<string>('');
 
   // 모달 열림/닫힘에 따른 상태 리셋.
   // defaultDataType 이 전달되면 셀렉트에 사전 채움한다.
@@ -156,7 +156,7 @@ export function PromoteToStaticDialog({
     if (isOpen) {
       setRows([]);
       setDataType(defaultDataType ?? '');
-      setMetricType('');
+      setField('');
     }
   }, [isOpen, defaultDataType]);
 
@@ -208,26 +208,26 @@ export function PromoteToStaticDialog({
     [dataType],
   );
 
-  // metric_type 검증 — 빈 값 허용, 정규식 위반 시 에러.
-  const metricTypeValidation = useMemo(
-    () => validateMetricType(metricType),
-    [metricType],
+  // field 검증 — 빈 값 허용, 정규식 위반 시 에러.
+  const fieldNameValidation = useMemo(
+    () => validateMetricType(fieldName),
+    [fieldName],
   );
 
   // 변환 버튼 활성 조건: 모든 검증 통과 + 제출 중이 아님.
   const canConfirm =
     allRowsValid &&
     dataTypeValidation.valid &&
-    metricTypeValidation.valid &&
+    fieldNameValidation.valid &&
     !isSubmitting;
 
   // 비활성 시 노출할 사유 (tooltip / aria-describedby 용도).
   const disabledReason = useMemo(() => {
     if (!dataTypeValidation.valid) return dataTypeValidation.error ?? t('property.meta.dataTypeSelectPrompt');
-    if (!metricTypeValidation.valid) return metricTypeValidation.error ?? t('property.meta.metricTypeFormatCheck');
+    if (!fieldNameValidation.valid) return fieldNameValidation.error ?? t('property.meta.fieldNameFormatCheck');
     if (!allRowsValid) return t('property.meta.tagInputCheck');
     return undefined;
-  }, [dataTypeValidation, metricTypeValidation, allRowsValid, t]);
+  }, [dataTypeValidation, fieldNameValidation, allRowsValid, t]);
 
   // 변환 실행 — 비어있지 않은 행만 모아 태그 맵을 구성하고 부모에 전달.
   const handleConfirm = useCallback(async () => {
@@ -239,17 +239,17 @@ export function PromoteToStaticDialog({
       if (k === '' && v === '') continue;
       tags[k] = v;
     }
-    const trimmedMetric = metricType.trim();
+    const trimmedMetric = fieldName.trim();
     const payload: PromoteToStaticPayload = {
       // canConfirm 가드로 dataType 은 비어있지 않음이 보장된다.
       data_type: dataType as DataType,
       tags,
     };
     if (trimmedMetric !== '') {
-      payload.metric_type = trimmedMetric;
+      payload.field = trimmedMetric;
     }
     await onConfirm(payload);
-  }, [canConfirm, rows, dataType, metricType, onConfirm]);
+  }, [canConfirm, rows, dataType, fieldName, onConfirm]);
 
   // Enter 키로 변환 실행 (입력 필드에서).
   const handleInputKeyDown = useCallback(
@@ -351,42 +351,42 @@ export function PromoteToStaticDialog({
             )}
           </div>
 
-          {/* metric_type 입력 (선택) */}
+          {/* field 입력 (선택) */}
           <div>
             <label
               htmlFor="promote-metric-type"
               className="mb-1 block text-xs font-medium text-(--color-text-secondary)"
             >
-              {t('property.meta.metricTypeOptional')}
+              {t('property.meta.fieldNameOptional')}
             </label>
             <p className="mb-1.5 text-[11px] text-(--color-text-muted)">
-              {t('property.promote.metricTypeHelp')}
+              {t('property.promote.fieldNameHelp')}
             </p>
             <input
               id="promote-metric-type"
               type="text"
-              value={metricType}
-              onChange={(e) => setMetricType(e.target.value)}
+              value={fieldName}
+              onChange={(e) => setField(e.target.value)}
               onKeyDown={handleInputKeyDown}
               disabled={isSubmitting}
               placeholder="unknown"
-              aria-invalid={!metricTypeValidation.valid || undefined}
+              aria-invalid={!fieldNameValidation.valid || undefined}
               aria-describedby={
-                !metricTypeValidation.valid ? 'promote-metric-type-error' : undefined
+                !fieldNameValidation.valid ? 'promote-metric-type-error' : undefined
               }
               className={cn(
                 inputCls,
                 'w-full',
-                !metricTypeValidation.valid && errorInputCls,
+                !fieldNameValidation.valid && errorInputCls,
                 isSubmitting && 'cursor-not-allowed opacity-60',
               )}
             />
-            {!metricTypeValidation.valid && (
+            {!fieldNameValidation.valid && (
               <p
                 id="promote-metric-type-error"
                 className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400"
               >
-                {metricTypeValidation.error}
+                {fieldNameValidation.error}
               </p>
             )}
           </div>

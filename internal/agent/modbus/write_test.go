@@ -776,18 +776,18 @@ func TestProcessWrite_MissingParams(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SendFrame 단위 테스트
+// SendPDU 단위 테스트
 // ---------------------------------------------------------------------------
 
-func TestModbusDevice_SendFrame(t *testing.T) {
+func TestModbusDevice_SendPDU(t *testing.T) {
 	t.Run("정상 전송", func(t *testing.T) {
 		response := buildFC05Response(0, 1, 100, true)
 		mt := &mockModbusTransport{connected: true, response: response}
 		dev := newModbusDeviceWithTransport(DeviceConfig{ID: "test-dev", UnitID: 1}, mt, nil)
 		dev.online = true
 
-		frame := buildWriteSingleCoilRequest(0, 1, 100, true)
-		resp, err := dev.SendFrame(nil, frame)
+		pdu := buildWriteSingleCoilPDU(100, true)
+		resp, err := dev.SendPDU(nil, pdu)
 		require.NoError(t, err)
 		assert.NotNil(t, resp)
 	})
@@ -797,8 +797,8 @@ func TestModbusDevice_SendFrame(t *testing.T) {
 		dev := newModbusDeviceWithTransport(DeviceConfig{ID: "test-dev", UnitID: 1}, mt, nil)
 		dev.online = true
 
-		frame := buildWriteSingleCoilRequest(0, 1, 100, true)
-		_, err := dev.SendFrame(nil, frame)
+		pdu := buildWriteSingleCoilPDU(100, true)
+		_, err := dev.SendPDU(nil, pdu)
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, ErrDeviceOffline))
 	})
@@ -811,8 +811,8 @@ func TestModbusDevice_SendFrame(t *testing.T) {
 		dev := newModbusDeviceWithTransport(DeviceConfig{ID: "test-dev", UnitID: 1}, mt, nil)
 		dev.online = true
 
-		frame := buildWriteSingleCoilRequest(0, 1, 100, true)
-		_, err := dev.SendFrame(nil, frame)
+		pdu := buildWriteSingleCoilPDU(100, true)
+		_, err := dev.SendPDU(nil, pdu)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "send failed")
 	})
@@ -865,7 +865,7 @@ func TestProcessWriteRegister_DataType_Float32_AutoFC16(t *testing.T) {
 
 	// 전송된 프레임이 FC16 인지 확인 (FC 바이트가 0x10)
 	require.NotEmpty(t, mt.sentFrames, "프레임이 전송되었어야 한다")
-	assert.Equal(t, byte(FC16WriteMultipleRegisters), mt.sentFrames[len(mt.sentFrames)-1][7],
+	assert.Equal(t, byte(FC16WriteMultipleRegisters), mt.sentFrames[len(mt.sentFrames)-1][0],
 		"float32 write_register 는 FC16 을 사용해야 한다")
 }
 
@@ -904,7 +904,7 @@ func TestProcessWriteRegister_DataType_Int16_FC06(t *testing.T) {
 
 	// 전송된 프레임이 FC06 인지 확인
 	require.NotEmpty(t, mt.sentFrames)
-	assert.Equal(t, byte(FC06WriteSingleRegister), mt.sentFrames[len(mt.sentFrames)-1][7],
+	assert.Equal(t, byte(FC06WriteSingleRegister), mt.sentFrames[len(mt.sentFrames)-1][0],
 		"int16 write_register 는 FC06 을 사용해야 한다")
 
 	// 캐시 확인: int16(-100) → uint16 변환값
@@ -944,7 +944,7 @@ func TestProcessWriteRegister_DataType_Uint32_AutoFC16(t *testing.T) {
 
 	// FC16 사용 확인
 	require.NotEmpty(t, mt.sentFrames)
-	assert.Equal(t, byte(FC16WriteMultipleRegisters), mt.sentFrames[len(mt.sentFrames)-1][7])
+	assert.Equal(t, byte(FC16WriteMultipleRegisters), mt.sentFrames[len(mt.sentFrames)-1][0])
 }
 
 func TestProcessWriteRegister_DataType_NoDataType_BackwardCompat(t *testing.T) {
@@ -976,7 +976,7 @@ func TestProcessWriteRegister_DataType_NoDataType_BackwardCompat(t *testing.T) {
 
 	// FC06 사용 확인
 	require.NotEmpty(t, mt.sentFrames)
-	assert.Equal(t, byte(FC06WriteSingleRegister), mt.sentFrames[len(mt.sentFrames)-1][7],
+	assert.Equal(t, byte(FC06WriteSingleRegister), mt.sentFrames[len(mt.sentFrames)-1][0],
 		"data_type 미지정 시 FC06 을 사용해야 한다")
 }
 

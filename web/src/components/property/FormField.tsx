@@ -18,17 +18,25 @@ import { useTargetContext } from '@/lib/remote/TargetContext';
 import { useEditorStore } from '@/stores/editorStore';
 import type { ManagedNode } from '@/types/remote';
 import type { ConfigField } from '@/types/node';
+import { isFieldRequired } from '@/types/node';
 import { cn } from '@/lib/utils/cn';
 import { RegisterMapEditor } from './RegisterMapEditor';
+import { ModbusDevicesEditor } from './ModbusDevicesEditor';
+import { ModbusServerDevicesEditor } from './ModbusServerDevicesEditor';
+import {
+  ModbusRwCommandSetEditor,
+  ModbusControlCommandSetEditor,
+} from './ModbusCommandSetEditor';
+import { RegisterRemapEditor } from './RegisterRemapEditor';
 import { TransformPipelineEditor } from './TransformPipelineEditor';
 import { KeyValueMapEditor } from './KeyValueMapEditor';
 import { TypedKeyValueMapEditor } from './TypedKeyValueMapEditor';
 import { StringListEditor } from './StringListEditor';
+import { SysResourceSelector } from './SysResourceSelector';
 import { TriggerScheduleEditor } from './TriggerScheduleEditor';
 import { FieldHelp } from './FieldHelp';
 import { CompareFieldsEditor } from './CompareFieldsEditor';
 import { RoutesEditor } from './RoutesEditor';
-import { MetricsEditor } from './MetricsEditor';
 
 interface FormFieldProps {
   field: ConfigField;
@@ -43,6 +51,8 @@ interface FormFieldProps {
   onFlowPortsRefresh?: () => void;
   /** 읽기 전용 모드 */
   readOnly?: boolean;
+  /** 전체 폼 데이터(형제 필드 접근용). modbus_devices 가 transport 형제 값을 읽는 데 사용. */
+  formData?: Record<string, unknown>;
 }
 
 /** 공통 입력 스타일 */
@@ -72,7 +82,7 @@ const errorInputClass = cn(
  * `disabled={readOnly}` 를 그대로 사용한다. */
 const readOnlyClass = 'cursor-not-allowed bg-(--color-bg-elevated)';
 
-export function FormField({ field, value, onChange, error, agentName, flowName, onFlowPortsRefresh, readOnly }: FormFieldProps) {
+export function FormField({ field, value, onChange, error, agentName, flowName, onFlowPortsRefresh, readOnly, formData }: FormFieldProps) {
   const { t } = useTranslation();
   const id = useId();
   const descriptionId = `${id}-desc`;
@@ -97,7 +107,7 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
           className="block text-xs font-medium text-(--color-text-secondary)"
         >
           {field.label}
-          {field.required && (
+          {isFieldRequired(field, formData ?? {}) && (
             <span className="ml-0.5 text-red-500" aria-hidden="true">
               *
             </span>
@@ -267,30 +277,36 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
       )}
 
       {field.type === 'object' && (
-        <textarea
-          id={id}
-          rows={4}
-          value={
-            typeof value === 'string' ? value : JSON.stringify(value ?? {}, null, 2)
-          }
-          onChange={(e) => {
-            try {
-              onChange(JSON.parse(e.target.value) as unknown);
-            } catch {
-              // JSON 파싱 실패 시 문자열 그대로 저장
-              onChange(e.target.value);
+        <>
+          <textarea
+            id={id}
+            rows={4}
+            value={
+              typeof value === 'string' ? value : JSON.stringify(value ?? {}, null, 2)
             }
-          }}
-          // textarea 도 readOnly attr 지원 — 가독성 보존을 위해 사용.
-          readOnly={readOnly}
-          className={cn(
-            inputClass,
-            'font-mono text-xs',
-            error && errorInputClass,
-            readOnly && readOnlyClass,
+            onChange={(e) => {
+              try {
+                onChange(JSON.parse(e.target.value) as unknown);
+              } catch {
+                // JSON 파싱 실패 시 문자열 그대로 저장
+                onChange(e.target.value);
+              }
+            }}
+            // textarea 도 readOnly attr 지원 — 가독성 보존을 위해 사용.
+            readOnly={readOnly}
+            className={cn(
+              inputClass,
+              'font-mono text-xs',
+              error && errorInputClass,
+              readOnly && readOnlyClass,
+            )}
+            {...ariaProps}
+          />
+          {/* 상시 노출 인라인 힌트(선택): 변수/이스케이프 문법 안내. */}
+          {field.hint && (
+            <p className="text-[10px] text-(--color-text-muted)">{field.hint}</p>
           )}
-          {...ariaProps}
-        />
+        </>
       )}
 
       {/* object_fields: 중첩 객체를 네이티브 위젯 섹션으로 편집한다(JSON textarea 아님).
@@ -313,6 +329,60 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
       {field.type === 'register_map' && (
         <RegisterMapEditor
           value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+        />
+      )}
+
+      {field.type === 'modbus_devices' && (
+        <ModbusDevicesEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+          transport={
+            typeof formData?.transport === 'string' ? formData.transport : 'tcp'
+          }
+        />
+      )}
+
+      {field.type === 'modbus_server_devices' && (
+        <ModbusServerDevicesEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+        />
+      )}
+
+      {field.type === 'modbus_write_ops' && (
+        <ModbusRwCommandSetEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+          mode="write"
+        />
+      )}
+
+      {field.type === 'modbus_read_ops' && (
+        <ModbusRwCommandSetEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+          mode="read"
+        />
+      )}
+
+      {field.type === 'modbus_control_ops' && (
+        <ModbusControlCommandSetEditor
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+        />
+      )}
+
+      {field.type === 'modbus_remap' && (
+        <RegisterRemapEditor
+          rulesValue={formData?.rules}
+          templatesValue={formData?.templates}
           onChange={onChange}
           readOnly={readOnly}
         />
@@ -357,6 +427,15 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
         />
       )}
 
+      {field.type === 'sysresource_select' && (
+        <SysResourceSelector
+          kind={field.resourceKind ?? 'mountpoints'}
+          value={value}
+          onChange={onChange}
+          readOnly={readOnly}
+        />
+      )}
+
       {field.type === 'trigger_schedules' && (
         <TriggerScheduleEditor
           value={value}
@@ -375,14 +454,6 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
 
       {field.type === 'routes_editor' && (
         <RoutesEditor
-          value={value}
-          onChange={onChange}
-          readOnly={readOnly}
-        />
-      )}
-
-      {field.type === 'metrics_editor' && (
-        <MetricsEditor
           value={value}
           onChange={onChange}
           readOnly={readOnly}

@@ -4,7 +4,7 @@
 // 매핑 우선순위:
 //   1. 마이그레이션 에러 (allow_dynamic_keys removed) — 다른 키워드보다 우선
 //   2. 4종 신규 에러 (TypeMismatch, UnsupportedValueType, InvalidDataType,
-//      InvalidMetricType)
+//      InvalidField)
 //   3. fallback (unknown)
 //
 // 본 모듈은 외부 의존성 없이 순수 문자열 패턴 매칭만 수행한다.
@@ -27,7 +27,7 @@ export type StoreErrorKind =
   | 'type_mismatch'
   | 'unsupported_value_type'
   | 'invalid_data_type'
-  | 'invalid_metric_type'
+  | 'invalid_field'
   | 'migration_required'
   | 'unknown';
 
@@ -77,8 +77,8 @@ const ERROR_KEYWORDS: ReadonlyArray<{
     patterns: ['invalid or missing data_type', 'errinvaliddatatype'],
   },
   {
-    kind: 'invalid_metric_type',
-    patterns: ['invalid metric_type', 'errinvalidmetrictype'],
+    kind: 'invalid_field',
+    patterns: ['invalid field', 'errinvalidfield'],
   },
 ];
 
@@ -211,10 +211,10 @@ function buildKnownError(
         userMessage: t('error.store.invalidDataType'),
         raw,
       };
-    case 'invalid_metric_type':
+    case 'invalid_field':
       return {
         kind,
-        userMessage: t('error.store.invalidMetricType'),
+        userMessage: t('error.store.invalidField'),
         raw,
       };
   }

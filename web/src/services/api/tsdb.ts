@@ -48,7 +48,14 @@ export interface TsdbSeriesListParams {
 // ---- Types: Query (UI-friendly) ----
 
 /** UI 에서 노출하는 집계 함수 옵션. first/last 는 버킷 내 첫/마지막 원시값. */
-export type TsdbAggregation = 'min' | 'max' | 'average' | 'first' | 'last';
+export type TsdbAggregation =
+  | 'min'
+  | 'max'
+  | 'average'
+  | 'first'
+  | 'last'
+  | 'sum'
+  | 'count';
 
 /**
  * 빈 버킷(인터벌 구간에 값이 없을 때) 채우기 전략.
@@ -463,7 +470,9 @@ export function formatDurationFromMs(ms: number): string {
  */
 export function tsdbSeriesDataSource(agentId?: string): SeriesDataSource {
   return {
-    kind: 'tsdb',
+    // memTSDB(`internal/tsdb/`) 어댑터. 외부 시계열 DB(`'tsdb'`)와 구분한다.
+    // @spec SPEC-TSDB-002 §2.1 (U1)
+    kind: 'memtsdb',
     useKeys: (params) => useTsdbSeriesQuery(agentId, params),
     queryMatrix: (params, signal) =>
       queryTsdbMatrixPivoted(params, agentId, signal),

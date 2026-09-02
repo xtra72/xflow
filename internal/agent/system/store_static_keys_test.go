@@ -1,5 +1,5 @@
 // @spec SPEC-STORE-003 v0.3.0
-// 본 파일은 v0.2.0 의 정적 키 테스트를 v0.3.0 모델 (registration_type/data_type/metric_type) 로
+// 본 파일은 v0.2.0 의 정적 키 테스트를 v0.3.0 모델 (registration_type/data_type/field) 로
 // 마이그레이션한 결과이다. v0.2.0 의 검증된 동작 (M1, M2, M4, M5) 은 그대로 보존되며,
 // allow_dynamic_keys 의 경우 부팅 실패 동작 (M5/Scenario 6) 으로 진화한다.
 package system
@@ -124,18 +124,18 @@ func TestParseStoreConfig_keys_정상케이스(t *testing.T) {
 			Options: map[string]any{
 				"keys": []any{
 					map[string]any{
-						"key":         "indoor:1:room_temp",
-						"data_type":   "float",
-						"metric_type": "temperature",
+						"key":       "indoor:1:room_temp",
+						"data_type": "float",
+						"field":     "temperature",
 						"tags": map[string]any{
 							"room": "1",
 							"type": "temperature",
 						},
 					},
 					map[string]any{
-						"key":         "outdoor:temperature",
-						"data_type":   "float",
-						"metric_type": "temperature",
+						"key":       "outdoor:temperature",
+						"data_type": "float",
+						"field":     "temperature",
 						"tags": map[string]any{
 							"location": "outside",
 							"type":     "temperature",
@@ -159,7 +159,7 @@ func TestParseStoreConfig_keys_정상케이스(t *testing.T) {
 	assert.Equal(t, "outside", sc.staticKeys["outdoor:temperature"].Tags["location"])
 	// v0.3.0 추가 검증: data_type 과 source 도 함께 노출되어야 한다.
 	assert.Equal(t, DataTypeFloat, sc.staticKeys["indoor:1:room_temp"].DataType)
-	assert.Equal(t, "temperature", sc.staticKeys["indoor:1:room_temp"].MetricType)
+	assert.Equal(t, "temperature", sc.staticKeys["indoor:1:room_temp"].Field)
 	assert.Equal(t, SourceManual, sc.staticKeys["indoor:1:room_temp"].Source)
 }
 
@@ -325,10 +325,10 @@ func TestWriteGate_strict모드_미등록키_거부(t *testing.T) {
 		WithRegistrationType(RegistrationManual),
 		WithStaticKeys(map[string]StaticKeyMeta{
 			"indoor:1:room_temp": {
-				DataType:   DataTypeFloat,
-				MetricType: "temperature",
-				Tags:       map[string]string{"room": "1", "type": "temperature"},
-				Source:     SourceManual,
+				DataType: DataTypeFloat,
+				Field:    "temperature",
+				Tags:     map[string]string{"room": "1", "type": "temperature"},
+				Source:   SourceManual,
 			},
 		}),
 	)
@@ -358,10 +358,10 @@ func TestWriteGate_strict모드_SetWithTTL_도_거부(t *testing.T) {
 		WithRegistrationType(RegistrationManual),
 		WithStaticKeys(map[string]StaticKeyMeta{
 			"k": {
-				DataType:   DataTypeString,
-				MetricType: "unknown",
-				Tags:       map[string]string{},
-				Source:     SourceManual,
+				DataType: DataTypeString,
+				Field:    "unknown",
+				Tags:     map[string]string{},
+				Source:   SourceManual,
 			},
 		}),
 	)
@@ -384,10 +384,10 @@ func TestWriteGate_permissive모드_미등록키_성공_태그없음(t *testing.
 		// 기본 RegistrationAuto
 		WithStaticKeys(map[string]StaticKeyMeta{
 			"known": {
-				DataType:   DataTypeString,
-				MetricType: "x",
-				Tags:       map[string]string{"type": "x"},
-				Source:     SourceManual,
+				DataType: DataTypeString,
+				Field:    "x",
+				Tags:     map[string]string{"type": "x"},
+				Source:   SourceManual,
 			},
 		}),
 	)
@@ -418,10 +418,10 @@ func TestAgentStore_TagsFor_정적키_태그반환(t *testing.T) {
 	sa := NewStoreAgent(
 		WithStaticKeys(map[string]StaticKeyMeta{
 			"k1": {
-				DataType:   DataTypeFloat,
-				MetricType: "temperature",
-				Tags:       map[string]string{"room": "1", "type": "temperature"},
-				Source:     SourceManual,
+				DataType: DataTypeFloat,
+				Field:    "temperature",
+				Tags:     map[string]string{"room": "1", "type": "temperature"},
+				Source:   SourceManual,
 			},
 		}),
 	)
@@ -443,10 +443,10 @@ func TestAgentStore_TagsFor_동적키_빈맵(t *testing.T) {
 	sa := NewStoreAgent(
 		WithStaticKeys(map[string]StaticKeyMeta{
 			"k1": {
-				DataType:   DataTypeString,
-				MetricType: "unknown",
-				Tags:       map[string]string{"a": "b"},
-				Source:     SourceManual,
+				DataType: DataTypeString,
+				Field:    "unknown",
+				Tags:     map[string]string{"a": "b"},
+				Source:   SourceManual,
 			},
 		}),
 	)
@@ -465,16 +465,16 @@ func TestStoreAgent_StaticKeyTags_복사본반환(t *testing.T) {
 	sa := NewStoreAgent(
 		WithStaticKeys(map[string]StaticKeyMeta{
 			"k1": {
-				DataType:   DataTypeString,
-				MetricType: "unknown",
-				Tags:       map[string]string{"room": "1"},
-				Source:     SourceManual,
+				DataType: DataTypeString,
+				Field:    "unknown",
+				Tags:     map[string]string{"room": "1"},
+				Source:   SourceManual,
 			},
 			"k2": {
-				DataType:   DataTypeString,
-				MetricType: "unknown",
-				Tags:       map[string]string{"room": "2"},
-				Source:     SourceManual,
+				DataType: DataTypeString,
+				Field:    "unknown",
+				Tags:     map[string]string{"room": "2"},
+				Source:   SourceManual,
 			},
 		}),
 	)
@@ -527,18 +527,18 @@ func newStaticKeysAgent(t *testing.T, autoMode bool) *UserStoreAgent {
 				"registration_type": regType,
 				"keys": []any{
 					map[string]any{
-						"key":         "indoor:1:room_temp",
-						"data_type":   "float",
-						"metric_type": "temperature",
+						"key":       "indoor:1:room_temp",
+						"data_type": "float",
+						"field":     "temperature",
 						"tags": map[string]any{
 							"room": "1",
 							"type": "temperature",
 						},
 					},
 					map[string]any{
-						"key":         "outdoor:temperature",
-						"data_type":   "float",
-						"metric_type": "temperature",
+						"key":       "outdoor:temperature",
+						"data_type": "float",
+						"field":     "temperature",
 						"tags": map[string]any{
 							"location": "outside",
 							"type":     "temperature",
@@ -596,9 +596,9 @@ func TestUserStoreAgent_StaticTagPairs_정적키없음_빈맵(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // @spec SPEC-STORE-003 v0.4.0 (모든 엔트리 type/tags 노출 정책에 따른 갱신)
-// State() 의 entries 는 정적 키와 동적 키 모두에 metric_type 과 tags 를 포함한다.
-// 정적 키는 yaml 에 정의된 tags/metric_type 을, 동적(자동 등록) 키는 기본값
-// metric_type="unknown" + 빈 tags 객체를 노출한다. 이로써 프론트가 모든 엔트리를
+// State() 의 entries 는 정적 키와 동적 키 모두에 field 과 tags 를 포함한다.
+// 정적 키는 yaml 에 정의된 tags/field 을, 동적(자동 등록) 키는 기본값
+// field="unknown" + 빈 tags 객체를 노출한다. 이로써 프론트가 모든 엔트리를
 // 일관되게 필터/표시할 수 있다 (v0.3.0 의 "동적 키 tags 생략" 동작에서 변경).
 func TestUserStoreAgent_State_모든엔트리_type_tags_포함(t *testing.T) {
 	a := newStaticKeysAgent(t, true)
@@ -622,29 +622,29 @@ func TestUserStoreAgent_State_모든엔트리_type_tags_포함(t *testing.T) {
 		}
 	}
 
-	// 정적 키: yaml tags + metric_type 노출.
+	// 정적 키: yaml tags + field 노출.
 	require.NotNil(t, found, "정적 키 엔트리가 존재해야 한다")
 	tags, ok := found["tags"].(map[string]string)
 	require.True(t, ok, "정적 키 엔트리는 tags 맵을 포함해야 한다")
 	assert.Equal(t, "1", tags["room"])
 	assert.Equal(t, "temperature", tags["type"])
-	_, hasMetric := found["metric_type"]
-	assert.True(t, hasMetric, "정적 키 엔트리는 metric_type 을 포함해야 한다")
+	_, hasMetric := found["field"]
+	assert.True(t, hasMetric, "정적 키 엔트리는 field 을 포함해야 한다")
 
-	// 동적 키: metric_type="unknown" + 빈 tags 객체 노출.
+	// 동적 키: field="unknown" + 빈 tags 객체 노출.
 	require.NotNil(t, foundDyn, "동적 키 엔트리가 존재해야 한다")
 	dynTags, ok := foundDyn["tags"].(map[string]string)
 	require.True(t, ok, "동적 키 엔트리도 tags 맵(빈 객체)을 포함해야 한다")
 	assert.Empty(t, dynTags, "동적 키의 tags 는 빈 맵")
-	assert.Equal(t, "unknown", foundDyn["metric_type"],
-		"동적 키의 metric_type 은 'unknown'")
+	assert.Equal(t, "unknown", foundDyn["field"],
+		"동적 키의 field 은 'unknown'")
 }
 
 // ---------------------------------------------------------------------------
 // UserStoreAgent.Configure(): 정책 필드 런타임 반영
 // ---------------------------------------------------------------------------
 // @spec SPEC-STORE-003 v0.3.0
-// Configure 는 registration_type / keys (정적 키 + DataType + MetricType + Tags) 변경을
+// Configure 는 registration_type / keys (정적 키 + DataType + Field + Tags) 변경을
 // inner StoreAgent 에 런타임으로 전파해야 한다. 운영 필드 (scan_interval 등) 는 재시작 시에만
 // 반영된다.
 
@@ -699,10 +699,10 @@ func TestUserStoreAgent_Configure_UpdatesPolicy_permissive_to_strict(t *testing.
 	// Configure 호출로 manual 모드 + 정적 키 1개 주입 (data_type=float).
 	newCfg := buildStoreConfig(RegistrationManual, []any{
 		map[string]any{
-			"key":         "static:1",
-			"data_type":   "float",
-			"metric_type": "temperature",
-			"tags":        map[string]any{"room": "1", "type": "temperature"},
+			"key":       "static:1",
+			"data_type": "float",
+			"field":     "temperature",
+			"tags":      map[string]any{"room": "1", "type": "temperature"},
 		},
 	})
 	require.NoError(t, u.Configure(newCfg))
@@ -826,7 +826,7 @@ func TestStoreErrors_정의(t *testing.T) {
 	assert.NotNil(t, ErrInvalidTagKey)
 	// v0.3.0 신규 에러 센티넬도 함께 검증.
 	assert.NotNil(t, ErrInvalidDataType)
-	assert.NotNil(t, ErrInvalidMetricType)
+	assert.NotNil(t, ErrInvalidField)
 	assert.NotNil(t, ErrTypeMismatch)
 	assert.NotNil(t, ErrUnsupportedValueType)
 
@@ -864,10 +864,10 @@ func newStaticKeysAgentWithHistory(t *testing.T) *UserStoreAgent {
 				"max_history_size":  10,
 				"keys": []any{
 					map[string]any{
-						"key":         "indoor:1:room_temp",
-						"data_type":   "int",
-						"metric_type": "temperature",
-						"tags":        map[string]any{"room": "1", "type": "temperature"},
+						"key":       "indoor:1:room_temp",
+						"data_type": "int",
+						"field":     "temperature",
+						"tags":      map[string]any{"room": "1", "type": "temperature"},
 					},
 				},
 			},

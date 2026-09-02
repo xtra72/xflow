@@ -9,7 +9,6 @@ import {
   ChevronRight,
   Columns3,
   HardDrive,
-  Lock,
   Plus,
   Trash2,
 } from 'lucide-react';
@@ -28,16 +27,17 @@ import { useDeleteDevice, useSetDeviceReport } from '@/hooks/useDevice';
 import { useDevicesTarget } from '@/hooks/useResourceTargets';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTargetParam } from '@/hooks/useTargetParam';
+import PermissionButton from '@/components/common/PermissionButton';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
-import { TargetProvider } from '@/lib/remote/TargetContext';
+import { TargetProvider } from '@/lib/remote/TargetProvider';
 import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
-import { getDeviceTypeLabel, getDeviceDisplayName } from '@/lib/utils/deviceLabels';
+import { getDeviceDisplayName } from '@/lib/utils/deviceLabels';
 import { cn } from '@/lib/utils/cn';
 import { useUIStore } from '@/stores/uiStore';
 import type { DeviceInfo, DeviceListParams } from '@/types/device';
 
 import DeviceDetailPanel from './DeviceDetailPanel';
-import DeviceStatusBadge from './DeviceStatusBadge';
+import { DeviceCell } from './DeviceCell';
 import { ReportToggleSwitch } from './ReportToggleSwitch';
 import DeviceSearchFilter from './DeviceSearchFilter';
 import AddDeviceDialog from './AddDeviceDialog';
@@ -57,59 +57,6 @@ const REMOVABLE_AGENT_TYPES = new Set(['samsung_hvacr01', 'lgap', 'lg_hvacr01', 
  * Samsung HVACR / LGAP / LG ICP-01 / LG ICP-02 가 디바이스별 report_enabled 게이트를 지원한다.
  */
 const REPORT_TOGGLE_AGENT_TYPES = new Set(['samsung_hvacr01', 'lgap', 'lg_hvacr01', 'lg_hvacr02']);
-
-// 디바이스 source 값을 사용자 친화적 라벨로 매핑.
-// 수동(manual)=config|pinned, 자동(auto)=auto|bridge.
-// `labelKey`가 있으면 i18n 키(`devices.source.*`)이고, 없으면 원본 source 문자열을
-// 그대로 표시한다(미지정 종류). 렌더 시 t()로 변환한다(컴포넌트 밖 t() 호출 금지).
-function sourceVariant(
-  source: string,
-): { labelKey?: string; rawLabel?: string; manual: boolean } | null {
-  switch (source) {
-    case 'config':
-      return { labelKey: 'devices.source.config', manual: true };
-    case 'pinned':
-      return { labelKey: 'devices.source.pinned', manual: true };
-    case 'auto':
-      return { labelKey: 'devices.source.auto', manual: false };
-    case 'bridge':
-      return { labelKey: 'devices.source.bridge', manual: false };
-    default:
-      return source ? { rawLabel: source, manual: false } : null;
-  }
-}
-
-/** 프로토콜 배지 색상 */
-const PROTOCOL_COLORS: Record<string, string> = {
-  samsung_nasa: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
-  lgap: 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400',
-  modbus: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
-};
-
-/** 상대 시간 포맷 (예: "3분 전"). t()를 인자로 받아 컴포넌트 밖 호출을 피한다. */
-function formatRelativeTime(dateStr: string, t: TranslationFn): string {
-  if (!dateStr) return '-';
-  const date = new Date(dateStr);
-  const then = date.getTime();
-  if (isNaN(then)) return '-';
-  if (date.getUTCFullYear() < 2000) return '-';
-
-  const now = Date.now();
-  const diffMs = now - then;
-  if (diffMs < 0) return t('devices.relativeTime.justNow');
-
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) return t('devices.relativeTime.secondsAgo').replace('{n}', String(seconds));
-
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return t('devices.relativeTime.minutesAgo').replace('{n}', String(minutes));
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return t('devices.relativeTime.hoursAgo').replace('{n}', String(hours));
-
-  const days = Math.floor(hours / 24);
-  return t('devices.relativeTime.daysAgo').replace('{n}', String(days));
-}
 
 /** 디바이스 목록 페이지 props. */
 interface DeviceListPageProps {
@@ -183,7 +130,7 @@ export default function DeviceListPage({
   const { columns: visibleColumns, setColumns } = useDeviceColumns();
   const [showColumnsMenu, setShowColumnsMenu] = useState(false);
 
-  const devices: DeviceInfo[] = data?.data ?? [];
+  const devices: DeviceInfo[] = useMemo(() => data?.data ?? [], [data?.data]);
 
   // 클라이언트 측 필터링
   const filteredDevices = useMemo(() => {
@@ -461,14 +408,15 @@ export default function DeviceListPage({
           onChange={setColumns}
         />
         {showLocalWrites && (
-          <button
+          <PermissionButton
             type="button"
+            permission="device.create"
             onClick={() => setShowAddDialog(true)}
             className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
           >
             <Plus className="h-4 w-4" />
             {t('devices.addDevice')}
-          </button>
+          </PermissionButton>
         )}
       </div>
 
@@ -494,14 +442,15 @@ export default function DeviceListPage({
               : t('devices.noSearchResults')}
           </p>
           {devices.length === 0 && showLocalWrites && (
-            <button
+            <PermissionButton
               type="button"
+              permission="device.create"
               onClick={() => setShowAddDialog(true)}
               className="mt-4 inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
             >
               <Plus className="h-4 w-4" />
               {t('devices.addDevice')}
-            </button>
+            </PermissionButton>
           )}
         </div>
       ) : (
@@ -753,99 +702,6 @@ interface DeviceRowProps {
 }
 
 /** 상태 전송 on/off 스위치. 디바이스 행 액션 셀에서 사용한다. */
-/** 단일 컬럼 셀 렌더 (컬럼 키별). */
-function DeviceCell({
-  column,
-  device,
-  t,
-}: {
-  column: DeviceListColumnKey;
-  device: DeviceInfo;
-  t: TranslationFn;
-}) {
-  switch (column) {
-    case 'name':
-      return (
-        <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-(--color-text-primary)">
-          {getDeviceDisplayName(device)}
-        </td>
-      );
-    case 'id': {
-      // uid 우선. 공간이 남으면 전체 표시 — 잘라내지 않고 한 줄로 노출(전체값 툴팁 유지).
-      const idValue = device.uid || device.id;
-      return (
-        <td className="px-4 py-3">
-          <span
-            title={idValue}
-            className="block whitespace-nowrap font-mono text-xs text-(--color-text-muted)"
-          >
-            {idValue || '-'}
-          </span>
-        </td>
-      );
-    }
-    case 'type':
-      return (
-        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
-          {getDeviceTypeLabel(device.type)}
-        </td>
-      );
-    case 'protocol': {
-      const protocolColor =
-        PROTOCOL_COLORS[device.protocol] ?? 'bg-(--color-bg-elevated) text-(--color-text-muted)';
-      return (
-        <td className="whitespace-nowrap px-4 py-3">
-          <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', protocolColor)}>
-            {device.protocol.toUpperCase()}
-          </span>
-        </td>
-      );
-    }
-    case 'status':
-      return (
-        <td className="whitespace-nowrap px-4 py-3">
-          <DeviceStatusBadge online={device.online} />
-        </td>
-      );
-    case 'agent':
-      return (
-        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
-          {device.agent_name}
-        </td>
-      );
-    case 'source': {
-      const variant = sourceVariant(device.source);
-      return (
-        <td className="whitespace-nowrap px-4 py-3">
-          {!variant ? (
-            <span className="text-xs text-(--color-text-muted)">-</span>
-          ) : (
-            <span
-              className={cn(
-                'inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium',
-                variant.manual
-                  ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
-                  : 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-400',
-              )}
-              title={variant.manual ? t('devices.source.manualTitle') : t('devices.source.autoTitle')}
-            >
-              {variant.manual && <Lock className="h-2.5 w-2.5" />}
-              {variant.labelKey ? t(variant.labelKey) : variant.rawLabel}
-            </span>
-          )}
-        </td>
-      );
-    }
-    case 'last_seen':
-      return (
-        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
-          {formatRelativeTime(device.last_seen, t)}
-        </td>
-      );
-    default:
-      return null;
-  }
-}
 
 function DeviceRow({
   device,

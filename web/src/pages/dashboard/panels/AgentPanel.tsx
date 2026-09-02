@@ -29,6 +29,7 @@ import {
   type PanelConfig,
 } from '@/stores/uiStore';
 import { startAgent, stopAgent, restartAgent } from '@/services/api/agentService';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 
 /** 전체 AgentColumnKey 기본 목록 */
 const ALL_AGENT_COLUMNS: AgentColumnKey[] = ['name', 'type', 'status', 'uptime', 'messages', 'actions'];
@@ -41,6 +42,8 @@ interface AgentPanelProps {
 /** 에이전트 패널 - 자체적으로 useAgents 훅으로 데이터 관리 */
 export default function AgentPanel({ panelConfig }: AgentPanelProps) {
   const { t } = useTranslation();
+  const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const queryClient = useQueryClient();
   const refreshMs = useUIStore((s) => s.dashboardRefreshInterval) * 1000;
 
@@ -60,7 +63,10 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
 
   // 패널 설정 (멀티-대시보드 패널 config에서 읽기)
   const title = panelConfig?.title ?? t('dashboard.agents');
-  const visibleColumns = (panelConfig?.config?.visibleColumns as AgentColumnKey[]) ?? [...ALL_AGENT_COLUMNS];
+  const visibleColumns = useMemo(
+    () => (panelConfig?.config?.visibleColumns as AgentColumnKey[]) ?? [...ALL_AGENT_COLUMNS],
+    [panelConfig?.config?.visibleColumns],
+  );
   const panelColor = panelConfig?.config?.panelColor as string | undefined;
   const accentElements = (panelConfig?.config?.accentElements as Record<string, string | boolean>) ?? {};
   const acColor = (group: string): string | undefined => {
@@ -235,17 +241,19 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-6 shadow">
       {/* 헤더: 타이틀 + 설정 */}
-      <div className="mb-4 flex shrink-0 items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <Bot className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-          <h3
-            className="truncate text-lg font-semibold text-(--color-text-primary)"
-            style={acColor('header') ? { color: acColor('header')! } : undefined}
-          >
-            {title}
-          </h3>
+      {showTitle && (
+        <div className="mb-4 flex shrink-0 items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <Bot className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+            <h3
+              className="truncate text-lg font-semibold text-(--color-text-primary)"
+              style={{ ...(acColor('header') ? { color: acColor('header')! } : undefined), ...titleStyle }}
+            >
+              {title}
+            </h3>
+          </div>
         </div>
-      </div>
+      )}
 
       {isLoading ? (
         <div className="flex items-center justify-center py-8">

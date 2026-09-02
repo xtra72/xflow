@@ -176,11 +176,16 @@ nodes:
   # 디바이스별 최신 상태를 Store에 캐싱한다.
   # 대시보드에서 에이전트 상세 → 저장소 탭으로 현재 상태를 확인할 수 있다.
   - name: "store-latest"
-    type: "store-write"
+    type: "storage-write"
     config:
-      key_template: "{address}"
+      # payload 의 각 상태 키가 measurement "{address}" 아래 측정값으로 기록된다.
+      # 태그는 metadata, 기록 시각은 메시지 timestamp 가 자동으로 쓰인다.
+      measurement: "{address}"
       namespace: "hvac"
       ttl: "5m"
+      # address 는 키 템플릿용 식별자이므로 측정값에서 제외한다.
+      exclude_keys:
+        - "address"
     inputs:
       - "in"
     outputs:

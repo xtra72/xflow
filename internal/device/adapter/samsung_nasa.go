@@ -32,6 +32,7 @@ type SamsungNasaDeviceInfo struct {
 	Mode            *string
 	TargetTemp      *float32
 	CurrentTemp     *float32
+	CurrentHumidity *uint8 // 현재 습도(%) — NASA V1.1 지표 세트 #10 (0x4038), raw uint8 (0~100)
 	FanSpeed        *string
 	SwingVertical   *bool
 	FilterAlarm     *bool
@@ -167,6 +168,9 @@ func (a *SamsungNasaDeviceAdapter) State() device.DeviceState {
 	}
 	if a.info.CurrentTemp != nil {
 		props["current_temperature"] = *a.info.CurrentTemp
+	}
+	if a.info.CurrentHumidity != nil {
+		props["current_humidity"] = *a.info.CurrentHumidity
 	}
 	if a.info.FanSpeed != nil {
 		props["fan_speed"] = hvac.FanSpeedFromName(*a.info.FanSpeed)

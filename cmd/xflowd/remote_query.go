@@ -87,8 +87,12 @@ type querySeriesReader interface {
 
 // dashboardReader 는 M10(그룹 L) dashboard.get_shared/get_mine query-action 에 필요한
 // 노드-로컬 대시보드 config read 인터페이스이다(REQ-L01 — GET /dashboards/{shared,mine}
-// 와 동일 소스, storage.DashboardRepository.Get 을 만족). config 는 노드 권위이며
-// (A17) 서버는 READ-ONLY 로만 취득한다(변경은 v1.5 비목표 — REQ-L12).
+// 와 동일 소스). config 는 노드 권위이며 (A17) 서버는 READ-ONLY 로만 취득한다
+// (변경은 v1.5 비목표 — REQ-L12).
+//
+// @SPEC:SPEC-DASHBOARD-004 (M4, spec.md §4.4) — 구 (scope, owner) 저장소가 제거되어
+// 이 인터페이스를 만족하는 것은 handler.DashboardSnapshotShim 이다. shim 이 신규 1급
+// 엔티티 모델에서 레거시 스냅샷 형상을 합성하므로 본 파일은 형상 변경 없이 남는다.
 type dashboardReader interface {
 	Get(ctx context.Context, scope, owner string) (*storage.DashboardSnapshot, error)
 }
@@ -143,7 +147,8 @@ func (s *remoteQuerySource) Query(ctx context.Context, domain, action string, ar
 }
 
 // queryDashboard 는 M10(그룹 L) dashboard.get_shared/get_mine 를 노드-로컬 대시보드
-// config read(storage.DashboardRepository.Get)로 매핑한다(REQ-L01, READ-ONLY).
+// config read(dashboardReader.Get — handler.DashboardSnapshotShim)로 매핑한다
+// (REQ-L01, READ-ONLY).
 //
 //   - get_shared → scope=global, owner="" (GET /dashboards/shared).
 //   - get_mine   → scope=user,   owner=args.owner (GET /dashboards/mine, 노드-로컬 사용자).

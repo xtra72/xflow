@@ -26,16 +26,16 @@ func TestChar_SeriesWrite_StorageKeyIsEncoded(t *testing.T) {
 	a := newAutoStoreAgentWithHistory(t, 10)
 	adapter := seriesAdapter(t, a, "default")
 
-	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{MetricType: "temperature"}))
-	require.NoError(t, adapter.SetWithMeta(ctx, "room", 55, StoreWriteMeta{MetricType: "humidity"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{Field: "temperature"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "room", 55, StoreWriteMeta{Field: "humidity"}))
 
 	keys, err := a.ListStoreKeys(ctx, "default", "*")
 	require.NoError(t, err)
 
-	wantTemp := EncodeSeriesKey(SeriesID{Key: "room", MetricType: "temperature"})
-	wantHum := EncodeSeriesKey(SeriesID{Key: "room", MetricType: "humidity"})
+	wantTemp := EncodeSeriesKey(SeriesID{Measurement: "room", Field: "temperature"})
+	wantHum := EncodeSeriesKey(SeriesID{Measurement: "room", Field: "humidity"})
 	assert.ElementsMatch(t, []string{wantTemp, wantHum}, keys,
-		"저장 키는 시리즈 인코딩(metric|tags|key) 형태여야 한다 (현재 동작)")
+		"저장 키는 시리즈 인코딩(field|tags|key) 형태여야 한다 (현재 동작)")
 }
 
 // CHAR: 시리즈 쓰기 후 레지스트리(staticKeys)는 인코딩 키로 키잉된다.
@@ -49,9 +49,9 @@ func TestChar_SeriesWrite_RegistryKeyedByEncoded(t *testing.T) {
 	ctx := context.Background()
 	a := newAutoStoreAgentWithHistory(t, 10)
 	adapter := seriesAdapter(t, a, "default")
-	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{MetricType: "temperature"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{Field: "temperature"}))
 
-	encoded := EncodeSeriesKey(SeriesID{Key: "room", MetricType: "temperature"})
+	encoded := EncodeSeriesKey(SeriesID{Measurement: "room", Field: "temperature"})
 	snap := a.StaticKeysSnapshot()
 	meta, exists := snap[encoded]
 	assert.True(t, exists, "레지스트리는 인코딩 키로 메타를 보관한다")
@@ -76,11 +76,11 @@ func TestChar_ClearAndDelete_OperateOnGivenKey(t *testing.T) {
 	ctx := context.Background()
 	a := newAutoStoreAgentWithHistory(t, 10)
 	adapter := seriesAdapter(t, a, "default")
-	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{MetricType: "temperature"}))
-	require.NoError(t, adapter.SetWithMeta(ctx, "room", 55, StoreWriteMeta{MetricType: "humidity"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{Field: "temperature"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "room", 55, StoreWriteMeta{Field: "humidity"}))
 
-	tempKey := EncodeSeriesKey(SeriesID{Key: "room", MetricType: "temperature"})
-	humKey := EncodeSeriesKey(SeriesID{Key: "room", MetricType: "humidity"})
+	tempKey := EncodeSeriesKey(SeriesID{Measurement: "room", Field: "temperature"})
+	humKey := EncodeSeriesKey(SeriesID{Measurement: "room", Field: "humidity"})
 
 	// 동적 시리즈는 DeleteEntry 로 엔트리+히스토리 제거. humidity 만 지운다.
 	require.NoError(t, a.DeleteEntry(ctx, "default", humKey))
@@ -99,10 +99,10 @@ func TestChar_StaticTagPairs_AggregatesAcrossSeries(t *testing.T) {
 	adapter := seriesAdapter(t, a, "default")
 
 	require.NoError(t, adapter.SetWithMeta(ctx, "temp", 21, StoreWriteMeta{
-		MetricType: "temperature", Tags: map[string]string{"room": "1"},
+		Field: "temperature", Tags: map[string]string{"room": "1"},
 	}))
 	require.NoError(t, adapter.SetWithMeta(ctx, "temp", 26, StoreWriteMeta{
-		MetricType: "temperature", Tags: map[string]string{"room": "2"},
+		Field: "temperature", Tags: map[string]string{"room": "2"},
 	}))
 
 	pairs := a.StaticTagPairs()

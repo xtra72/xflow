@@ -23,27 +23,49 @@ import type { PanelConfig, PanelType } from '@/stores/uiStore';
 import type { FlowInfo } from '@/types/flow';
 
 import AgentPanel from './panels/AgentPanel';
+import AgentStatusPanel from './panels/AgentStatusPanel';
 import DevicePanel from './panels/DevicePanel';
 import FlowPanel from './panels/FlowPanel';
 import LogPanel from './panels/LogPanel';
+import MonitorStatsPanel from './panels/monitor/MonitorStatsPanel';
+import MonitorMetricsPanel from './panels/monitor/MonitorMetricsPanel';
+import MonitorNetworkPanel from './panels/monitor/MonitorNetworkPanel';
+import SysMetricsSystemPanel from './panels/sysmetrics/SysMetricsSystemPanel';
+import SysMetricsNetworkPanel from './panels/sysmetrics/SysMetricsNetworkPanel';
+import SysMetricsStoragePanel from './panels/sysmetrics/SysMetricsStoragePanel';
+import MonitorLogsPanel from './panels/monitor/MonitorLogsPanel';
+import MonitorEventsPanel from './panels/monitor/MonitorEventsPanel';
 import SingleDevicePanel from './panels/SingleDevicePanel';
 import AcControlPanel from './panels/AcControlPanel';
 import GaugePanel from './panels/GaugePanel';
 import PropertiesGridPanel from './panels/PropertiesGridPanel';
 import HvacControlPanel from './panels/HvacControlPanel';
 import OutdoorControlPanel from './panels/OutdoorControlPanel';
+import FacilityDevicePanel from './panels/FacilityDevicePanel';
+import FacilityLinePanel from './panels/FacilityLinePanel';
+import FacilityGroupPanel from './panels/FacilityGroupPanel';
+import TriggerConfigPanel from './panels/TriggerConfigPanel';
+import FacilitySchedulePanel from './panels/facilitySchedule/FacilitySchedulePanel';
+import ModbusRealDevicesPanel from './panels/modbus/ModbusRealDevicesPanel';
+import ModbusVirtualDevicesPanel from './panels/modbus/ModbusVirtualDevicesPanel';
+import ModbusSharedRegistersPanel from './panels/modbus/ModbusSharedRegistersPanel';
+import ModbusDeviceRegistersPanel from './panels/modbus/ModbusDeviceRegistersPanel';
+import ModbusBusStatsPanel from './panels/modbus/ModbusBusStatsPanel';
+import ModbusSummaryStatsPanel from './panels/modbus/ModbusSummaryStatsPanel';
 import StatPanel from './panels/charts/StatPanel';
 import LineChartPanel from './panels/charts/LineChartPanel';
 import BarChartPanel from './panels/charts/BarChartPanel';
 import PieChartPanel from './panels/charts/PieChartPanel';
 import TablePanel from './panels/charts/TablePanel';
+import HeatmapPanel from './panels/heatmap/HeatmapPanel';
 import ResourceWidget from './widgets/ResourceWidget';
+import { PanelChromeProvider } from './PanelChromeProvider';
 
 /** 패널 타입별 아이콘 매핑(플레이스홀더 패널용). */
 const PANEL_TYPE_ICONS: Partial<Record<PanelType, React.ReactNode>> = {
   stat: <Hash className="h-6 w-6 text-(--color-text-muted)" />,
   gauge: <Gauge className="h-6 w-6 text-(--color-text-muted)" />,
-  'line-chart': <LineChart className="h-6 w-6 text-(--color-text-muted)" />,
+  'graph-chart': <LineChart className="h-6 w-6 text-(--color-text-muted)" />,
   'bar-chart': <BarChart3 className="h-6 w-6 text-(--color-text-muted)" />,
   'pie-chart': <PieChart className="h-6 w-6 text-(--color-text-muted)" />,
   text: <Type className="h-6 w-6 text-(--color-text-muted)" />,
@@ -73,6 +95,23 @@ export function renderDashboardPanel(
   refreshMs: number,
   handlers: (panelId: string) => PanelChangeHandlers,
 ): React.ReactNode {
+  // 크롬 옵션(타이틀 바 표시 여부)은 context 로 전파한다 — 패널마다 config 를 받는 방식이 달라
+  // prop 으로 꿰면 28종 호출부를 모두 고쳐야 한다(panelChromeContext 참조).
+  return (
+    <PanelChromeProvider config={panel.config}>
+      {renderPanelBody(panel, flowsList, metricsData, refreshMs, handlers)}
+    </PanelChromeProvider>
+  );
+}
+
+/** 패널 타입별 본체 렌더(크롬 래핑 이전). */
+function renderPanelBody(
+  panel: PanelConfig,
+  flowsList: FlowInfo[],
+  metricsData: Record<string, unknown> | undefined,
+  refreshMs: number,
+  handlers: (panelId: string) => PanelChangeHandlers,
+): React.ReactNode {
   const { onConfigChange: onCfg, onTitleChange: onTitle } = handlers(panel.id);
 
   switch (panel.type) {
@@ -80,6 +119,17 @@ export function renderDashboardPanel(
       return <FlowPanel flows={flowsList} panelConfig={panel} />;
     case 'agents':
       return <AgentPanel panelConfig={panel} />;
+    // SPEC-DASHBOARD-002: 단일 에이전트(타입 무관) 상태·통계 패널.
+    case 'agent-status':
+      return (
+        <AgentStatusPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
     case 'resource':
       return <ResourceWidget metrics={metricsData} panelConfig={panel} />;
     case 'devices':
@@ -106,6 +156,72 @@ export function renderDashboardPanel(
     case 'logs':
       return (
         <LogPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    // 모니터링 패널 4종. 실시간 스트림은 monitorStream 단일 구독을 공유하므로
+    // 한 대시보드에 여러 개를 올려도 버퍼가 한 벌만 생긴다.
+    case 'monitor-stats':
+      return (
+        <MonitorStatsPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    case 'monitor-metrics':
+      return (
+        <MonitorMetricsPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    case 'monitor-network':
+      return (
+        <MonitorNetworkPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    // SPEC-SYSMETRICS-PANEL-001: sysmetrics 에이전트 바인딩 호스트 지표 패널.
+    // 위 monitor-* 와 출처가 다르다 — 이쪽은 호스트 전체, 저쪽은 xflowd 런타임이다.
+    case 'sysmetrics-system':
+      return (
+        <SysMetricsSystemPanel panelId={panel.id} title={panel.title} config={panel.config} />
+      );
+    case 'sysmetrics-network':
+      return (
+        <SysMetricsNetworkPanel panelId={panel.id} title={panel.title} config={panel.config} />
+      );
+    case 'sysmetrics-storage':
+      return (
+        <SysMetricsStoragePanel panelId={panel.id} title={panel.title} config={panel.config} />
+      );
+    case 'monitor-logs':
+      return (
+        <MonitorLogsPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    case 'monitor-events':
+      return (
+        <MonitorEventsPanel
           panelId={panel.id}
           title={panel.title}
           config={panel.config}
@@ -143,6 +259,73 @@ export function renderDashboardPanel(
           onTitleChange={onTitle}
         />
       );
+    // SPEC-FACILITY-DASHBOARD-001 M5: 설비 패널 3종 (device-panel 케이스와 동일 디스패치).
+    case 'facility-device':
+      return (
+        <FacilityDevicePanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    // 레거시 facility-station 은 facility-group 의 별칭으로 디스패치한다(하위호환).
+    // FacilityGroupPanel 이 config.station → "station:<code>" 로 groupId 를 파생하므로
+    // 기존 저장된 역사 패널({type:'facility-station', config:{station}})이 그대로 렌더된다.
+    case 'facility-station':
+      return (
+        <FacilityGroupPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    case 'facility-line':
+      return (
+        <FacilityLinePanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    // SPEC-XSFM-GROUP-001 M7: 설비 그룹 패널.
+    case 'facility-group':
+      return (
+        <FacilityGroupPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    // SPEC-TRIGGER-PANEL-001 M2: trigger 노드 설정 패널.
+    case 'trigger-config':
+      return (
+        <TriggerConfigPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
+    // SPEC-TRIGGER-SCHED-001 M2: 설비 제어 예약 패널(trigger-config 와 공존, RD-5).
+    case 'facility-schedule':
+      return (
+        <FacilitySchedulePanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+          onTitleChange={onTitle}
+        />
+      );
     case 'gauge':
       return (
         <GaugePanel
@@ -163,17 +346,63 @@ export function renderDashboardPanel(
           onTitleChange={onTitle}
         />
       );
-    // SPEC-CHART-001 M4: 5종 차트 패널
+    // SPEC-CHART-001 M4: 5종 차트 패널.
+    //
+    // `title` 은 **5종 모두** 넘긴다. 각 패널 헤더는 `title || channel_name || '채널 미지정'`
+    // 순으로 폴백하므로, 넘기지 않으면 사용자가 지정한 패널 이름 대신 채널 이름이 뜬다.
+    // store/tsdb 소스 패널은 `channel_name` 이 비어 있어 "채널 미지정" 까지 내려간다.
     case 'stat':
-      return <StatPanel panelId={panel.id} config={panel.config} />;
-    case 'line-chart':
-      return <LineChartPanel panelId={panel.id} title={panel.title} config={panel.config} />;
+      return <StatPanel panelId={panel.id} title={panel.title} config={panel.config} />;
+    case 'graph-chart':
+      return (
+        <LineChartPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          // 대시보드에서도 범례를 끌어 배치한다(파이와 같은 규칙 — 편집모드 + 패널 안
+          // 토글로 두 겹 게이팅).
+          onConfigChange={onCfg}
+        />
+      );
     case 'bar-chart':
-      return <BarChartPanel panelId={panel.id} config={panel.config} />;
+      return <BarChartPanel panelId={panel.id} title={panel.title} config={panel.config} />;
     case 'pie-chart':
-      return <PieChartPanel panelId={panel.id} config={panel.config} />;
+      return (
+        <PieChartPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          // 대시보드에서도 파이·범례를 끌어 배치한다(히트맵과 같은 규칙 — 편집모드
+          // + 패널 안 토글로 두 겹 게이팅).
+          onConfigChange={onCfg}
+        />
+      );
     case 'table':
-      return <TablePanel panelId={panel.id} config={panel.config} />;
+      return <TablePanel panelId={panel.id} title={panel.title} config={panel.config} />;
+    // SPEC-HEATMAP-PANEL-001 (MVP): store 태그 바인딩 온도 히트맵 패널.
+    case 'heatmap':
+      return (
+        <HeatmapPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+        />
+      );
+    // SPEC-MODBUS-012 M1/M2/M4/M5: MODBUS Gateway 패널 6종(전부 실제 구현).
+    // M2: 실제/가상 디바이스 목록. M4: 공유/가상 레지스터 맵 그리드. M5: 버스/종합 통계.
+    case 'modbus-real-devices':
+      return <ModbusRealDevicesPanel title={panel.title} config={panel.config} />;
+    case 'modbus-virtual-devices':
+      return <ModbusVirtualDevicesPanel title={panel.title} config={panel.config} />;
+    case 'modbus-shared-registers':
+      return <ModbusSharedRegistersPanel title={panel.title} config={panel.config} />;
+    case 'modbus-device-registers':
+      return <ModbusDeviceRegistersPanel title={panel.title} config={panel.config} />;
+    case 'modbus-bus-stats':
+      return <ModbusBusStatsPanel title={panel.title} config={panel.config} />;
+    case 'modbus-summary-stats':
+      return <ModbusSummaryStatsPanel title={panel.title} config={panel.config} />;
     // 잔여 플레이스홀더 패널 타입들 (text, custom-control)
     case 'text':
     case 'custom-control':

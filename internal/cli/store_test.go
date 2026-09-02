@@ -63,14 +63,14 @@ func TestStoreKeys(t *testing.T) {
 				"key":          "indoor:1:room_temp",
 				"registration": "manual",
 				"data_type":    "float",
-				"metric_type":  "temperature",
+				"field":        "temperature",
 				"tags":         map[string]any{"room": "1"},
 			},
 			{
 				"key":          "outdoor:humidity",
 				"registration": "auto",
 				"data_type":    "float",
-				"metric_type":  "humidity",
+				"field":        "humidity",
 				"tags":         map[string]any{},
 			},
 		},
@@ -102,8 +102,8 @@ func TestStoreKeys_FilterClientSide(t *testing.T) {
 	keysData := map[string]any{
 		"count": 2,
 		"keys": []map[string]any{
-			{"key": "indoor:1:room_temp", "registration": "manual", "data_type": "float", "metric_type": "temperature", "tags": map[string]any{}},
-			{"key": "outdoor:humidity", "registration": "auto", "data_type": "float", "metric_type": "humidity", "tags": map[string]any{}},
+			{"key": "indoor:1:room_temp", "registration": "manual", "data_type": "float", "field": "temperature", "tags": map[string]any{}},
+			{"key": "outdoor:humidity", "registration": "auto", "data_type": "float", "field": "humidity", "tags": map[string]any{}},
 		},
 	}
 
@@ -127,7 +127,7 @@ func TestStoreKeys_PaginationClientSide(t *testing.T) {
 	keys := make([]map[string]any, 0, 5)
 	for _, name := range []string{"k1", "k2", "k3", "k4", "k5"} {
 		keys = append(keys, map[string]any{
-			"key": name, "registration": "auto", "data_type": "int", "metric_type": "unknown", "tags": map[string]any{},
+			"key": name, "registration": "auto", "data_type": "int", "field": "unknown", "tags": map[string]any{},
 		})
 	}
 	keysData := map[string]any{"count": 5, "keys": keys}
@@ -155,7 +155,7 @@ func TestStoreKeys_JSONFormat(t *testing.T) {
 	keysData := map[string]any{
 		"count": 1,
 		"keys": []map[string]any{
-			{"key": "k1", "registration": "auto", "data_type": "int", "metric_type": "unknown", "tags": map[string]any{}},
+			{"key": "k1", "registration": "auto", "data_type": "int", "field": "unknown", "tags": map[string]any{}},
 		},
 	}
 
@@ -247,7 +247,7 @@ func TestStoreQuery_FlagMapping(t *testing.T) {
 		"--mode", "last_n",
 		"--count", "10",
 		"--namespace", "default",
-		"--metric-type", "temperature",
+		"--field-type", "temperature",
 		"--tag", "room=1",
 		"--format", "json",
 	})
@@ -259,7 +259,7 @@ func TestStoreQuery_FlagMapping(t *testing.T) {
 	assert.Equal(t, "last_n", gotBody["mode"])
 	assert.Equal(t, float64(10), gotBody["count"])
 	assert.Equal(t, "default", gotBody["namespace"])
-	assert.Equal(t, "temperature", gotBody["metric_type"])
+	assert.Equal(t, "temperature", gotBody["field"])
 	tags, ok := gotBody["tags"].(map[string]any)
 	require.True(t, ok, "tags 는 객체여야 합니다")
 	assert.Equal(t, "1", tags["room"])
@@ -348,9 +348,9 @@ func TestStoreMeta(t *testing.T) {
 		gotBody = decodeBody(t, r)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(apiEnvelope(map[string]any{
-			"key":         "indoor:1:room_temp",
-			"metric_type": "temperature",
-			"tags":        map[string]any{"room": "1", "floor": "2"},
+			"key":   "indoor:1:room_temp",
+			"field": "temperature",
+			"tags":  map[string]any{"room": "1", "floor": "2"},
 		}))
 	})
 
@@ -359,15 +359,15 @@ func TestStoreMeta(t *testing.T) {
 
 	cmd.SetArgs([]string{
 		"store", "meta", "sensor-store", "indoor:1:room_temp",
-		"--metric-type", "temperature",
+		"--field-type", "temperature",
 		"--tag", "room=1",
 		"--tag", "floor=2",
 	})
 	require.NoError(t, cmd.Execute())
 
-	// 바디 구조 검증: {metric_type, tags{...}}.
+	// 바디 구조 검증: {field, tags{...}}.
 	require.NotNil(t, gotBody)
-	assert.Equal(t, "temperature", gotBody["metric_type"])
+	assert.Equal(t, "temperature", gotBody["field"])
 	tags, ok := gotBody["tags"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "1", tags["room"])
@@ -382,7 +382,7 @@ func TestStoreMeta_EmptyTagsSendsEmptyMap(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotBody = decodeBody(t, r)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(apiEnvelope(map[string]any{"key": "k1", "metric_type": "unknown", "tags": map[string]any{}}))
+		w.Write(apiEnvelope(map[string]any{"key": "k1", "field": "unknown", "tags": map[string]any{}}))
 	})
 
 	_, cmd, cleanup := setupStoreTest(t, handler)

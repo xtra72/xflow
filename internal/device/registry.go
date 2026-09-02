@@ -82,6 +82,30 @@ func (w *offlineDeviceWrapper) State() DeviceState {
 	return state
 }
 
+// HistoryComparisonProperties / HistoryEventTimeMs 는 내부 Device 의 선택적 구현을
+// 그대로 위임한다.
+//
+// 위임이 필요한 이유: 이 래퍼는 **인터페이스를 임베드**하므로 승격되는 메서드 집합이
+// device.Device 로 한정된다. 위임하지 않으면 에이전트가 오프라인으로 표시되는 순간
+// 프로바이더의 이력 힌트(비교 표면/이벤트 시각)가 타입 단언에서 조용히 사라져,
+// 같은 디바이스가 온라인일 때와 다른 이력 동작을 보인다.
+//
+// 내부 Device 가 해당 인터페이스를 구현하지 않으면 "의견 없음"(false)을 반환하며,
+// 레코더는 미구현 프로바이더와 동일한 폴백 경로를 탄다.
+func (w *offlineDeviceWrapper) HistoryComparisonProperties() (map[string]any, bool) {
+	if hc, ok := w.Device.(HistoryComparable); ok {
+		return hc.HistoryComparisonProperties()
+	}
+	return nil, false
+}
+
+func (w *offlineDeviceWrapper) HistoryEventTimeMs() (int64, bool) {
+	if he, ok := w.Device.(HistoryEventTimed); ok {
+		return he.HistoryEventTimeMs()
+	}
+	return 0, false
+}
+
 // inMemoryRegistry is the default in-memory implementation of DeviceRegistry.
 // It uses a pull model: List() and Get() query providers directly each time.
 type inMemoryRegistry struct {

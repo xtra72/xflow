@@ -36,9 +36,9 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
-  'modbus-tcp': {
+  'modbus-client': {
     description:
-      'Modbus TCP 클라이언트로 원격 디바이스의 레지스터를 읽고 쓰는 에이전트. interval/event 모드를 지원하며, 다중 디바이스 폴링과 쓰기 이벤트 처리가 가능합니다.',
+      'Modbus 클라이언트 에이전트. TCP(MBAP) 또는 RTU(시리얼, CRC-16) 트랜스포트를 선택해 원격 디바이스의 레지스터를 읽고 쓴다. interval/event 모드, 다중 디바이스 폴링, 그룹별 폴링 주기, 쓰기 이벤트, 런타임 재구성(set_config)을 지원합니다.',
     configFields: [
       { name: 'mode', type: 'select', required: false, description: '동작 모드 (interval: 주기적 폴링, event: 변경 감지)', default: 'interval' },
       { name: 'poll_interval', type: 'string', required: false, description: '폴링 간격 (Go duration 형식)', default: '5s' },
@@ -65,20 +65,45 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
-  'modbus-tcp-server': {
+  'modbus-gateway': {
     description:
-      'Modbus TCP 서버로 동작하여 외부 클라이언트의 요청을 수신하는 에이전트. 다중 유닛 디바이스를 호스팅하며 레지스터 맵 기반의 읽기/쓰기를 처리합니다.',
+      'Modbus 게이트웨이 에이전트. Modbus 서버로 동작하여 외부 클라이언트의 요청을 수신합니다. transport(tcp/rtu)로 TCP 수신 또는 시리얼(RTU) 수신을 선택합니다. 다중 유닛 디바이스를 호스팅하며 레지스터 맵 기반의 읽기/쓰기를 처리합니다.',
     configFields: [
-      { name: 'listen_address', type: 'string', required: false, description: '수신 대기 IP 주소', default: '0.0.0.0' },
-      { name: 'listen_port', type: 'number', required: true, description: '수신 대기 포트 (1-65535)', default: '502' },
+      { name: 'transport', type: 'string', required: false, description: 'tcp(MBAP) 또는 rtu(시리얼)', default: 'tcp' },
+      { name: 'listen_address', type: 'string', required: false, description: '수신 대기 IP 주소 (transport=tcp)', default: '0.0.0.0' },
+      { name: 'listen_port', type: 'number', required: true, description: '수신 대기 포트 (1-65535, transport=tcp)', default: '502' },
+      { name: 'serial_port', type: 'string', required: false, description: 'RTU 시리얼 포트 경로 (transport=rtu)', default: '/dev/ttyUSB0' },
       { name: 'max_connections', type: 'number', required: false, description: '최대 동시 클라이언트 연결 수', default: '10' },
       { name: 'idle_timeout', type: 'string', required: false, description: '유휴 연결 타임아웃', default: '60s' },
+      { name: 'devices', type: 'object', required: false, description: 'role=main 필수. 호스팅할 디바이스 목록(각 unit_id + register_map)' },
+      { name: 'notify_on_write', type: 'boolean', required: false, description: '외부 마스터의 통신 쓰기로 레지스터 변경 시 register_change 알림 발행(다음 재시작 시 적용)', default: 'false' },
+      { name: 'log_frames', type: 'boolean', required: false, description: '송/수신 MODBUS 프레임 요약을 로그에 기록(변경 즉시 적용)', default: 'false' },
+      { name: 'log_raw_frames', type: 'boolean', required: false, description: '프레임 로그에 전체 ADU를 hex 로 포함(log_frames 켜짐일 때만 의미, 변경 즉시 적용)', default: 'false' },
     ],
     configExample: {
+      transport: 'tcp',
       listen_address: '0.0.0.0',
       listen_port: 502,
+      role: 'main',
       max_connections: 10,
       idle_timeout: '60s',
+      devices: [
+        {
+          unit_id: 0,
+          name: 'shared',
+          register_map: {
+            holding_registers: [{ address: 0, count: 100, data_type: 'uint16' }],
+          },
+        },
+        {
+          unit_id: 1,
+          name: 'device-1',
+          register_map: {
+            coils: [{ address: 0, count: 8, data_type: 'uint16', description: 'door sensor' }],
+            holding_registers: [{ address: 0, count: 10, shared_address: 0, description: 'pump status' }],
+          },
+        },
+      ],
     },
   },
 
@@ -329,6 +354,74 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
+  'chirpstack-client': {
+    description:
+      'ChirpStack LoRaWAN Network Server 의 MQTT integration 이벤트를 패시브로 수신하는 에이전트(SPEC-CHIRPSTACK-001). ChirpStack 이 application/<id>/device/<devEui>/event/<type> 토픽으로 발행하는 업링크 이벤트를 구독하여, 업링크 payload 의 object(디코딩된 센서 값)를 측정치별로 fan-out 합니다. 디바이스는 devEui 기준으로 자동 생성되며, MQTT 트랜스포트 서브셋(broker/topics/qos/재연결)만 설정합니다. 선택적으로 comm-state(device_state 이벤트)를 발행해 업링크 staleness 기반 online/offline 을 판정합니다(emit_comm_state 게이트). transport.Write() 는 호출하지 않는 수신 전용 에이전트입니다.',
+    configFields: [
+      { name: 'broker', type: 'string', required: true, description: 'MQTT 브로커 주소 (예: tcp://localhost:1883)', default: 'tcp://localhost:1883' },
+      { name: 'client_id', type: 'string', required: false, description: '빈 값이면 자동 생성 (xflow-chirpstack-<uuid>)' },
+      { name: 'username', type: 'string', required: false, description: 'MQTT 사용자명' },
+      { name: 'password', type: 'string', required: false, description: 'MQTT 비밀번호' },
+      { name: 'topics', type: 'string', required: false, description: '구독 토픽 (쉼표 구분, ChirpStack application 이벤트)', default: 'application/#' },
+      { name: 'qos', type: 'select', required: false, description: '메시지 전달 보증 레벨 (0/1/2)', default: '1' },
+      { name: 'keep_alive_sec', type: 'number', required: false, description: 'Keep Alive 간격 (초)', default: '60' },
+      { name: 'auto_reconnect', type: 'boolean', required: false, description: '연결 끊김 시 자동 재연결', default: 'true' },
+      { name: 'clean_session', type: 'boolean', required: false, description: '클린 세션 모드', default: 'true' },
+      { name: 'buffer_size', type: 'number', required: false, description: '수신 메시지 버퍼 크기', default: '1024' },
+      { name: 'connect_timeout_sec', type: 'number', required: false, description: '연결 타임아웃 (초)', default: '10' },
+      { name: 'measurement_emit_mode', type: 'select', required: false, description: '측정치 방출 모드. per_measurement: 측정치마다 메시지 1개(payload.value + metadata.measurement). combined: 업링크 1건을 메시지 1개로 합침(payload 최상위에 측정치 이름별 값, metadata.measurement 없음)', default: 'per_measurement' },
+      { name: 'timestamp_source', type: 'select', required: false, description: '메시지 타임스탬프 소스. uplink: 업링크 payload 의 time 값(디바이스/게이트웨이 시각). server: 서버가 업링크를 받은 시각. 장비 시계가 틀어져 순서가 어긋날 때 server 를 쓴다(업링크 1건의 모든 측정치가 동일 수신 시각을 공유)', default: 'uplink' },
+      { name: 'emit_comm_state', type: 'boolean', required: false, description: 'device_state 이벤트 발행 게이트 (comm-state)', default: 'false' },
+      { name: 'comm_report_interval', type: 'string', required: false, description: 'comm-state 주기 report 간격 (예: 60s, 0 이면 주기 report off, change 는 유지)' },
+      { name: 'offline_threshold', type: 'string', required: false, description: '마지막 업링크 후 이 시간 경과 시 offline 판정', default: '300s' },
+    ],
+    configExample: {
+      broker: 'tcp://localhost:1883',
+      topics: 'application/#',
+      qos: '1',
+      auto_reconnect: true,
+      buffer_size: 1024,
+      emit_comm_state: false,
+      offline_threshold: '300s',
+    },
+  },
+
+  xsfm: {
+    description:
+      '지하철 역사 설비 관리 에이전트(SPEC-XSFM-001). thingplus MQTT 트랜스포트 셸과 samsung 로스터/관측 상태 모델을 결합합니다. transport_mode 로 direct(에이전트가 브로커를 직접 소유) / port(외부 노드가 I/O 담당) 두 모드를 선택하며, payload_mapping 으로 설정 주도 페이로드 시임(power/fan_speed/online 필드 매핑)을 정의합니다. 2축 제어(set_power / set_fan_speed 1·2·3)를 지원하고, 관측 기반 emit("확인된 값만 전송")로 상태를 방출합니다. 역사(station)→호선(line) 레지스트리로 위치 계층을 해석합니다.',
+    configFields: [
+      { name: 'transport_mode', type: 'select', required: true, description: 'I/O 경계 선택 (direct: 브로커 직접 소유 / port: 외부 노드 I/O)', default: 'direct' },
+      { name: 'broker', type: 'string', required: false, description: 'MQTT 브로커 주소 (direct 모드 필수, 예: tcp://localhost:1883)' },
+      { name: 'tls', type: 'boolean', required: false, description: 'TLS 사용 (direct 모드)', default: 'false' },
+      { name: 'ca_cert', type: 'string', required: false, description: 'TLS CA 인증서 PEM 또는 경로 (tls=true 일 때)' },
+      { name: 'client_id', type: 'string', required: false, description: '빈 값이면 자동 생성 (xflow-xsfm-<uuid>)' },
+      { name: 'username', type: 'string', required: false, description: 'MQTT 사용자명 (direct 모드)' },
+      { name: 'password', type: 'string', required: false, description: 'MQTT 비밀번호 (direct 모드)' },
+      { name: 'qos', type: 'select', required: false, description: '메시지 전달 보증 레벨 (0/1/2)', default: '1' },
+      { name: 'state_topic_template', type: 'string', required: false, description: '{device_id} placeholder 포함 상태 토픽 (direct 모드 필수)' },
+      { name: 'command_topic_template', type: 'string', required: false, description: '{device_id} placeholder 포함 명령 토픽 (direct 모드 필수)' },
+      { name: 'payload_mapping', type: 'object', required: true, description: '설정 주도 페이로드 시임 (양 모드 공통 필수, power_field/fan_speed_field/online_field 등)' },
+      { name: 'offline_timeout', type: 'string', required: false, description: '상태 미수신 시 오프라인 판정 시간', default: '60s' },
+      { name: 'control_response_timeout', type: 'string', required: false, description: '제어 명령 후 상태 반영 대기 시간', default: '5s' },
+      { name: 'lwt_enabled', type: 'boolean', required: false, description: 'LWT(유언) 사용 — 비정상 종료 시 오프라인 통지', default: 'true' },
+      { name: 'registry_path', type: 'string', required: false, description: '런타임 등록 디바이스(bridge/auto) 로스터 파일 경로 (빈 값=영속화 비활성)' },
+      { name: 'station_registry_path', type: 'string', required: false, description: '역사(station)→호선(line) 레지스트리 파일 경로 (빈 값=영속화 비활성)' },
+    ],
+    configExample: {
+      transport_mode: 'direct',
+      broker: 'tcp://localhost:1883',
+      qos: '1',
+      state_topic_template: 'xsfm/{device_id}/state',
+      command_topic_template: 'xsfm/{device_id}/cmd',
+      payload_mapping: {
+        power_field: 'power',
+        fan_speed_field: 'fan_speed',
+      },
+      offline_timeout: '60s',
+      control_response_timeout: '5s',
+    },
+  },
+
   serial: {
     description:
       '범용 시리얼 통신 에이전트. 다양한 프레이밍 모드(raw, newline, length_prefix, fixed_size, stream, frame)를 지원하며, STX/ETX/길이/체크섬 기반의 프로토콜 프레임 감지가 가능합니다. 산업용 장비, 센서, 임베디드 시스템과의 통신에 사용됩니다.',
@@ -354,6 +447,31 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       length_includes_header: true,
       length_adjustment: -1,
       checksum: 'none',
+    },
+  },
+
+  sysmetrics: {
+    description:
+      '호스트 시스템 리소스 모니터링 에이전트. CPU 사용률, 메모리 사용률, 스토리지 사용량, 디스크 I/O, 네트워크 트래픽을 주기적으로 표본 수집해 메시지로 방출합니다. 플로우에서 storage-write 노드로 Store 나 TSDB 에 기록하면 대시보드 패널이 기존 데이터 소스로 그대로 조회합니다.',
+    configFields: [
+      { name: 'interval', type: 'string', required: false, description: '수집 주기 (1s ~ 1h)', default: '5s' },
+      { name: 'collect_cpu', type: 'boolean', required: false, description: 'CPU 사용률 수집', default: 'true' },
+      { name: 'collect_memory', type: 'boolean', required: false, description: '호스트 메모리 수집', default: 'true' },
+      { name: 'collect_storage', type: 'boolean', required: false, description: '마운트별 디스크 사용량 수집', default: 'true' },
+      { name: 'collect_disk_io', type: 'boolean', required: false, description: '장치별 디스크 I/O 수집', default: 'true' },
+      { name: 'collect_network', type: 'boolean', required: false, description: '인터페이스별 네트워크 수집', default: 'true' },
+      { name: 'mountpoints', type: 'string_list', required: false, description: '관측할 마운트를 호스트 목록에서 선택. 비우면 물리 파티션 전체' },
+      { name: 'devices', type: 'string_list', required: false, description: '관측할 디스크 장치를 호스트 목록에서 선택. 비우면 전체' },
+      { name: 'interfaces', type: 'string_list', required: false, description: '관측할 네트워크 인터페이스를 호스트 목록에서 선택. 비우면 전체' },
+    ],
+    configExample: {
+      interval: '5s',
+      collect_cpu: true,
+      collect_memory: true,
+      collect_storage: true,
+      collect_disk_io: true,
+      collect_network: true,
+      mountpoints: ['/'],
     },
   },
 

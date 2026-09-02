@@ -1,11 +1,15 @@
 ---
 id: SPEC-NODE-004
 type: plan
-version: "1.0.0"
+version: "1.3.0"
 spec_ref: SPEC-NODE-004
 ---
 
 # SPEC-NODE-004 구현 계획
+
+> **v1.2.0 개정 노트 (2026-07-28)**: 아래 §1~§6은 v1.0.0/v1.1.0 원본 계획이다. v1.2.0 인플레이스 개정으로 추가된 3종 기능(weekly / monthly / per-schedule payload)의 구현 계획은 **§7 (v1.2.0 개정 마일스톤)** 및 **§8 (v1.2.0 기술적 접근)**에 별도로 기술한다. 코드는 후속 run-phase에서 구현한다.
+>
+> **v1.3.0 개정 노트 (2026-07-28)**: 페이로드 모델을 단일 통합 템플릿 엔진으로 통합(static/template 이원성 제거 + `$$` 이스케이프)하는 개정의 구현 계획은 **§10 (v1.3.0 개정 마일스톤)**, **§11 (v1.3.0 기술적 접근)**, **§12 (v1.3.0 리스크)**에 별도로 기술한다. Tier M(3파일: spec/plan/acceptance) 유지, design.md/research.md 없음. 코드는 후속 run-phase에서 구현한다.
 
 ## 1. 구현 전략 개요
 
@@ -304,3 +308,289 @@ internal/node/trigger.go (본 SPEC)
 | 3 | registry.go | RegisterDefaults()에 "trigger" 추가 | trigger.go |
 
 모든 파일에 대해 TDD 방식으로 테스트 파일을 먼저 작성한다.
+
+---
+
+## 7. v1.2.0 개정 마일스톤 (weekly / monthly / per-schedule payload)
+
+기존 구조(하위 호환)를 보존하면서 3종 기능을 추가한다. 방법론은 신규 로직에 대해 TDD(RED-GREEN-REFACTOR)를 적용한다.
+
+### Primary Goal (v1.2.0): weekly 스케줄 타입 (P0)
+
+**범위**: REQ-NODE-004-02-09
+
+**작업 항목**:
+
+1. 테스트 추가 (TDD RED)
+   - weekday 토큰 파싱 테스트 (`sun`~`sat`, 정수 `0`~`6`)
+   - `days × times` 조합 → cron 등록 수 검증 (예: 3요일 × 2시각 = 6개)
+   - 생성 cron 표현식 정확성 (`0 9 * * 1` 등) 검증
+   - 잘못된 요일 토큰/시각 → `ErrTriggerInvalidScheduleValue`
+2. 구현 (TDD GREEN)
+   - `TriggerScheduleWeekly` 상수, `TriggerSchedule.Days`/`Times` 필드 파싱
+   - weekday 토큰 → cron Dow 매핑 테이블
+   - `(day × time)` 조합마다 `SetCron("MM HH * * DOW")` 등록
+
+**산출물**: weekly 스케줄 타입 완성
+
+### Secondary Goal (v1.2.0): monthly 스케줄 타입 + last-day 게이트 (P0)
+
+**범위**: REQ-NODE-004-02-10, REQ-NODE-004-02-11
+
+**작업 항목**:
+
+1. 테스트 추가 (TDD RED)
+   - `day` 정수(1~31) / `"first"` → `MM HH N * *` cron 등록 검증
+   - `day="last"` → 매일 cron(`MM HH * * *`) 등록 검증
+   - 월말 게이트: 핸들러가 `time.Now().Day() == lastDayOfMonth` 일 때만 emit (2월 28/29, 30일 달, 31일 달 각각 검증 — 주입 가능한 clock 사용)
+   - 존재하지 않는 정수 일자(31)가 짧은 달에 미발화 (표준 cron 동작) 문서화 테스트
+   - 잘못된 `day` 값 → `ErrTriggerInvalidScheduleValue`
+2. 구현 (TDD GREEN)
+   - `TriggerScheduleMonthly` 상수, `TriggerSchedule.Day`/`Times` 파싱
+   - `day` 정수/`first`/`last` 분기
+   - last-day 게이트: entry에 last-day 플래그 저장, 핸들러 진입 시 월 마지막 날 계산 후 게이트
+
+**산출물**: monthly 스케줄 타입(date/first/last) 완성
+
+### Tertiary Goal (v1.2.0): 스케줄별 페이로드 (per-schedule payload) (P0)
+
+**범위**: REQ-NODE-004-03-04 (전 스케줄 타입 적용)
+
+**작업 항목**:
+
+1. 테스트 추가 (TDD RED)
+   - 스케줄 항목 payload 존재 → 항목 페이로드 우선 사용
+   - 스케줄 항목 payload 없음 → 노드 레벨 페이로드 폴백
+   - 노드 레벨도 없음 → 기본 페이로드 폴백
+   - 항목 `payload_template` 우선 치환 테스트
+   - 하위 호환: 기존 노드-레벨 전용 설정이 오늘과 동일 동작 (회귀 테스트)
+   - interval/cron/once/times/weekly/monthly 전 타입에서 per-schedule payload 동작 검증
+2. 구현 (TDD GREEN)
+   - `TriggerSchedule.Payload`/`PayloadTmpl` 파싱
+   - `buildMessage()` 페이로드 결정부를 3단계 폴백 순서로 재작성 (entry 페이로드 → 노드 레벨 → 기본)
+   - 깊은 복사 정책 유지
+
+**산출물**: 스케줄별 페이로드 오버라이드 완성 (하위 호환 보존)
+
+### Optional Goal (v1.2.0): Web UI weekly/monthly 위젯 + 스케줄별 페이로드 편집 (P1)
+
+**범위**: REQ-NODE-004-08-05
+
+**작업 항목**:
+
+1. `TriggerScheduleEditor.tsx`: weekly(요일 토글 + 시각 칩), monthly(일자 선택 + 시각 칩) 전용 위젯 추가
+2. `nodeSchemas.ts`: `trigger_schedules` 위젯이 신규 필드(`days`/`day`/`times`) 직렬화 지원
+3. 각 스케줄 항목에 "이 스케줄 전용 페이로드(선택)" 서브 섹션 (항목별 payload_mode 토글)
+4. 인라인 검증: 요일 최소 1개, 일자 유효성, `HH:MM` 정규식, 29~31일 미발화 안내 힌트
+
+**산출물**: 웹 UI 편집 지원 (백엔드 저장 형식과 호환)
+
+---
+
+## 8. v1.2.0 기술적 접근
+
+### 8.1 weekly → cron 변환 전략
+
+```
+days=["mon","wed","fri"], times=["09:00","18:00"]
+  → 조합 (day × time) 6개:
+     mon 09:00 → "0 9 * * 1"
+     mon 18:00 → "0 18 * * 1"
+     wed 09:00 → "0 9 * * 3"
+     wed 18:00 → "0 18 * * 3"
+     fri 09:00 → "0 9 * * 5"
+     fri 18:00 → "0 18 * * 5"
+```
+
+weekday 토큰 매핑: `sun/0→0, mon/1→1, tue/2→2, wed/3→3, thu/4→4, fri/5→5, sat/6→6`.
+`times` 타입과 동일한 `SetCron()` 경로를 사용하므로 별도 타임존 처리는 없다 (A13).
+
+### 8.2 monthly → cron 변환 전략
+
+```
+day=15, times=["08:30"]        → "30 8 15 * *"   (매월 15일)
+day="first", times=["00:00"]   → "0 0 1 * *"     (매월 1일)
+day="last", times=["23:59"]    → "59 23 * * *"   (매일 등록) + 핸들러 월말 게이트
+```
+
+- 정수/`first`: 표준 5필드 cron `MM HH N * *`. 존재하지 않는 일자(31 등)는 짧은 달에 미발화 (표준 cron, 의도됨).
+- `last`: robfig/cron이 마지막 날을 표현하지 못하므로 매일 cron으로 등록 후 게이트.
+
+### 8.3 monthly last-day 게이트 구현
+
+```go
+// entry.isLastDay == true 인 스케줄 핸들러 진입부:
+now := n.clock.Now()
+lastDay := time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()).Day()
+if now.Day() != lastDay {
+    return // 월말 아님 → emit 안 함
+}
+// 월말 → 정상 메시지 생성
+```
+
+`time.Date(year, month+1, 0, ...)`는 "다음 달 0일" = "이번 달 마지막 날"을 반환하므로
+2월(28/29), 30일 달, 31일 달을 모두 자동 처리한다. 테스트 용이성을 위해 주입 가능한 clock 인터페이스 사용을 권장한다.
+
+### 8.4 per-schedule payload 결정 로직
+
+```go
+func (n *TriggerNode) resolvePayload(entry triggerTimerEntry, tr TimerTrigger) any {
+    // (1) 스케줄 항목 페이로드 우선
+    if entry.payload != nil { return deepCopy(entry.payload) }
+    if entry.payloadTmpl != nil { return renderTemplate(entry.payloadTmpl, tr, entry) }
+    // (2) 노드 레벨 폴백
+    if n.payload != nil { return deepCopy(n.payload) }
+    if n.payloadTmpl != nil { return renderTemplate(n.payloadTmpl, tr, entry) }
+    // (3) 기본 페이로드
+    return map[string]any{"trigger_time": tr.TriggerAt.Format(time.RFC3339)}
+}
+```
+
+기존 `buildMessage()`의 노드-레벨 전용 로직을 위 3단계 폴백으로 승격한다. entry 페이로드가 없는 기존 설정은 (2)/(3) 경로로 오늘과 동일하게 동작한다 (하위 호환).
+
+---
+
+## 9. v1.2.0 리스크 및 대응
+
+### Risk 7: monthly last-day 게이트의 시간대/경계 오류
+
+- **위험**: 자정 근처 실행 시 날짜 경계, DST 전환, 잘못된 마지막 날 계산
+- **대응**: `time.Date(y, m+1, 0, ...)` 표준 관용구 사용(윤년/월별 일수 자동 처리). 주입 가능한 clock으로 2월 28/29, 30/31일 달 경계 테스트
+
+### Risk 8: weekly/monthly 다중 조합 타이머 누수
+
+- **위험**: `days × times` 조합으로 다수 타이머 등록 시 Init 실패 롤백 또는 Shutdown 누락
+- **대응**: 모든 등록 타이머를 `entries`에 추적. Init 부분 실패 시 기존 롤백 로직(REQ-NODE-004-05-01) 재사용, Shutdown 시 전체 Cancel
+
+### Risk 9: per-schedule payload 하위 호환 회귀
+
+- **위험**: 페이로드 결정부 재작성으로 기존 노드-레벨 페이로드 동작 변경
+- **대응**: 기존 설정(노드 레벨 전용) 회귀 테스트를 명시적 AC로 추가(AC-NODE-004-42). 폴백 순서 (2)/(3)이 기존 경로와 동일함을 보장
+
+---
+
+## 10. v1.3.0 개정 마일스톤 (통합 페이로드 엔진)
+
+기존 페이로드 결정부(v1.2.0의 3단계 폴백)를 보존하면서, **평가 단계**를 단일 통합 템플릿 엔진으로 교체한다. static/template 이원 분기를 제거하되 config 키 수용은 하위호환으로 유지한다. 신규 로직에 TDD(RED-GREEN-REFACTOR)를 적용한다.
+
+### Primary Goal (v1.3.0): 통합 템플릿 스캐너 (P0)
+
+**범위**: REQ-NODE-004-03-01, REQ-NODE-004-03-03, REQ-NODE-004-06-04
+
+**작업 항목**:
+
+1. 테스트 추가 (TDD RED)
+   - 통째 변수 치환(문자열 전체 `$.<var>` → 네이티브 타입): 숫자/문자열 각각 (AC-19, AC-48)
+   - 문자 단위 스캔: `$$`→리터럴 `$` (AC-46), 리터럴+변수 혼합 interpolation (AC-47)
+   - 미지 변수 `$.x` → 에러 기록 + 키 null (AC-20)
+   - 비문자열 값(숫자/불리언/배열/중첩 맵) 리터럴 패스스루 + 중첩 맵 미재귀 (AC-18)
+2. 구현 (TDD GREEN)
+   - `evalPayload(src map[string]any, ctx) (map[string]any, []error)`: 최상위 문자열 값만 스캔
+   - 문자열 평가기 `evalString(s, ctx) (any, bool, error)`: (a) 통째 일치 → 네이티브 값(any) 반환, (b) 그 외 char 스캔 → 문자열 빌드
+   - char 스캐너: `$$`/`$.<name>`/lone `$`/일반문자 상태 처리, 미지 변수 시 에러 + null 반환
+
+**산출물**: 단일 통합 템플릿 스캐너 완성 (whole-value 타입 보존 + interpolation + `$$` 이스케이프)
+
+### Secondary Goal (v1.3.0): config 하위호환 라우팅 + 결정부 통합 (P0)
+
+**범위**: REQ-NODE-004-03-03, REQ-NODE-004-03-04 (전 스케줄 타입)
+
+**작업 항목**:
+
+1. 테스트 추가 (TDD RED)
+   - 노드/스케줄 `payload`(map) → 직접 평가; 비-map 스칼라/배열 → `{"value": v}` 래핑 후 평가 (AC-13/14/16/50)
+   - 구 static 맵 동일 출력 회귀 (AC-49)
+   - per-schedule 해결 순서(항목→노드→기본)가 통합 엔진 적용 후에도 불변 (AC-41~44)
+2. 구현 (TDD GREEN)
+   - `normalizeSource(v any) map[string]any`: map이면 그대로, 아니면 `{"value": v}` 래핑
+   - `resolvePayload()`(v1.2.0 3단계 폴백)의 반환을 `normalizeSource` → `evalPayload` 파이프라인으로 연결
+   - v1.2.0 static-복사/template-치환 이원 분기 제거, 단일 경로로 교체
+
+**산출물**: config 하위호환 라우팅 + 통합 결정-평가 파이프라인 (하위호환 보존)
+
+### Optional Goal (v1.3.0): Web UI 단일 페이로드 에디터 (P1)
+
+**범위**: REQ-NODE-004-08-04(폐기), REQ-NODE-004-08-05
+
+**작업 항목**:
+
+1. `PropertyPanel.tsx`: `payload_mode` 가상 필드 유도/정리 로직 제거, 로드 시 `payload`/`payload_template` 병합 로드
+2. `nodeSchemas.ts`: `payload_mode`(select)·별도 `payload_template` 필드 제거, 단일 `payload` object 에디터로 대체
+3. `TriggerScheduleEditor.tsx`: 항목별 payload_mode 서브 토글 제거, 단일 JSON 페이로드 에디터로 통일
+4. 인라인 힌트: `$.<var>` 4종 목록 + `$$` 이스케이프 설명 노출 (AC-51)
+
+**산출물**: 단일 페이로드 에디터 UI (백엔드 통합 엔진과 호환)
+
+---
+
+## 11. v1.3.0 기술적 접근
+
+### 11.1 통합 문자열 평가 규칙
+
+```
+evalString(s):
+  if s == "$." + name  and name ∈ knownVars:   // 통째 일치
+      return nativeValue(name)                  // 숫자/문자열 등 네이티브 타입 (any)
+  else:                                          // 문자 단위 스캔 (interpolation)
+      buf := ""
+      i := 0
+      while i < len(s):
+          if s[i:i+2] == "$$":      buf += "$"; i += 2
+          elif s[i:i+2] == "$.":    name := scanName(s, i+2)
+                                    if name ∈ knownVars: buf += stringForm(name)
+                                    else:                 err = unknownVar(name); return null, err
+                                    i += 2 + len(name)
+          else:                     buf += s[i]; i += 1
+      return buf
+```
+
+- **통째 일치만 네이티브 타입 보존**: 부분 일치(interpolation)에서는 항상 문자열 형태로 삽입한다 (예: `"count=$.tick_count"` → `"count=7"`).
+- **알려진 변수 4종 불변**: `$.trigger_time`, `$.tick_count`, `$.schedule_id`, `$.trigger_id` (v1.2.0 컨텍스트 재사용).
+
+### 11.2 config 하위호환 라우팅
+
+```
+normalizeSource(v):
+  if v is map[string]any: return v            // 직접 평가
+  else:                   return {"value": v} // 구 static 스칼라/배열 래핑
+
+evalPayload(src):
+  m := normalizeSource(src)
+  out := {}
+  errs := []
+  for k, val := range m:
+      if val is string:  out[k], e := evalString(val); if e: errs.append(e)
+      else:              out[k] = deepCopy(val)   // 비문자열 리터럴 패스스루 (중첩 맵 미재귀)
+  return out, errs
+```
+
+- **중첩 맵 미재귀**: `evalPayload`는 최상위 맵의 문자열 값만 평가한다. 중첩 map/배열은 `deepCopy`로 리터럴 패스스루된다 (알려진 한계, A17).
+- **에러 처리**: `errs`가 비어있지 않으면 `trigger.error` 메타데이터를 첨부하고, 문제 키는 이미 `null`로 설정되어 있다 (REQ-06-04).
+
+### 11.3 결정-평가 파이프라인 통합
+
+v1.2.0 `resolvePayload()`(항목→노드→기본 3단계 폴백)는 그대로 유지하되, 반환값을 `normalizeSource → evalPayload` 로 흘려보낸다. static-깊은복사/template-치환의 이원 분기는 제거되고, 모든 경로가 동일 파이프라인을 통과한다. 기본 페이로드 `{"trigger_time": now}`는 이미 map이므로 동일하게 평가된다(리터럴 통과).
+
+### 11.4 마이그레이션 영향 (문서화)
+
+- 구 static 맵 `{"cmd":"open"}` → 동일 출력 (리터럴 통과).
+- 두 경계 케이스만 의미 변화: (1) 리터럴 `$.trigger_time` 포함 static 문자열 → interpolation, (2) 리터럴 `$` → `$$` 필요. run-phase 구현 시 CHANGELOG/마이그레이션 노트에 명시한다.
+
+---
+
+## 12. v1.3.0 리스크 및 대응
+
+### Risk 10: 통째 일치 vs interpolation 경계 판정 오류
+
+- **위험**: `"$.tick_count"`(통째, 숫자)와 `"$.tick_count "`(뒤 공백, 문자열)의 구분 실패로 타입 손상
+- **대응**: 통째 일치는 `s == "$." + name` **정확 일치**로만 판정. 공백/추가 문자 포함 시 즉시 interpolation 경로. 경계 테스트(AC-48) 추가
+
+### Risk 11: `$$`/`$.`/lone `$` 스캐너 상태 오류
+
+- **위험**: 문자열 끝 단독 `$`, `$$$` 연속, `$.`뒤 빈 이름 등 엣지 케이스에서 스캐너 오작동
+- **대응**: char 스캐너 상태별 단위 테스트(문자열 끝 `$`, 연속 `$$`, `$.` 뒤 비영숫자) 추가. 이름 스캔은 알려진 변수 이름 문자 집합으로 한정
+
+### Risk 12: config 하위호환 회귀 (스칼라 래핑 의미 변화)
+
+- **위험**: 구 static 스칼라(`payload: 42`)가 `{"value":42}`로 래핑되어 기존 소비자가 최상위 스칼라를 기대할 경우 파손
+- **대응**: 스칼라 래핑은 **의도된 하위호환 규약**임을 마이그레이션 노트에 명시(AC-50). 맵 페이로드는 래핑 없이 동일 동작(AC-49)하여 대부분의 실사용 케이스는 영향 없음

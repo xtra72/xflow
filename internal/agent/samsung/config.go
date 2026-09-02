@@ -65,6 +65,56 @@ type Hvacr01Config struct {
 	//
 	// 기본 1.0℃. 0 이하면 게이트 비활성. report 시점에도 lastReportTemp 갱신.
 	EventTempThreshold float64
+
+	// ---------------------------------------------------------------------
+	// SPEC-HVACR-SYNC-001: 게이트웨이↔서버 미러링/동기화 (over MQTT)
+	// ---------------------------------------------------------------------
+
+	// MirrorMode 는 서버 역할 여부이다(transport_type:"mirror-mqtt"). true 면 MQTT 업링크
+	// 구독으로 디코드 메시지를 replay 받으며, 제어는 다운링크로 위임한다.
+	MirrorMode bool
+	// MirrorMessageMode 는 메시지 모드 여부이다(transport_type:"mirror-message", M10).
+	// true 면 에이전트가 MQTT 에 직접 접속하지 않고, 플로우 노드가 mirror-in/mirror-out
+	// 포트로 디코드 메시지를 중계한다(채널 급전형 NasaTransport 재사용, MQTT 없음).
+	// MirrorMode 와 상호배타이며, 브로커/게이트웨이 식별자를 요구하지 않는다.
+	MirrorMessageMode bool
+	// MirrorUplinkEnabled 는 게이트웨이 역할의 업링크 tap 활성 여부이다. false 면
+	// 기존 단독 에이전트로 동작한다(행위 보존, REQ-SYNC-001-03-02).
+	MirrorUplinkEnabled bool
+	// MirrorBrokerAddr 는 MQTT 브로커 주소이다(예: "tcp://broker:1883"). 미러/업링크
+	// 활성 시 필수(REQ-SYNC-001-02-02).
+	MirrorBrokerAddr string
+	// MirrorGatewayID 는 게이트웨이 식별자이다(토픽에 인코딩). 미러/업링크 활성 시 필수.
+	MirrorGatewayID string
+	// MirrorTopicPrefix 는 토픽 prefix 이다(기본 "xflow/hvacr").
+	MirrorTopicPrefix string
+	// MirrorQoS 는 미러 발행 QoS 이다(기본 1, REQ-SYNC-001-07-03).
+	MirrorQoS byte
+	// MirrorControlEnabled 는 제어 역경로 활성 여부이다(기본 true). 게이트웨이는
+	// down/control 을 구독해 Process 로 실행하고, 서버는 제어를 down/control 로 발행한다.
+	MirrorControlEnabled bool
+	// MirrorAckEnabled 는 제어 ack(up/ack) 활성 여부이다(선택, REQ-SYNC-001-04-03).
+	MirrorAckEnabled bool
+	// MirrorSnapshotEnabled 는 retain 스냅샷(7a) 활성 여부이다(재동기화, REQ-SYNC-001-07-02).
+	MirrorSnapshotEnabled bool
+
+	// ---------------------------------------------------------------------
+	// SPEC-HVACR-SYNC-001 M9: 미러 브로커 보안 (인증 + TLS)
+	// ---------------------------------------------------------------------
+	// 아래 필드는 선택이며 미러/업링크 활성 시에만 적용된다(신규 required 에러 없음).
+	// 보안 브로커(인증 + per-topic ACL) 사용을 위한 자격증명/TLS 설정이다.
+	// thingplus_agent 패턴(SetUsername/SetPassword/SetTLSConfig)을 그대로 따른다.
+
+	// MirrorUsername 은 MQTT 브로커 인증 사용자명이다(mirror_username 키). 빈 값이면 미적용.
+	MirrorUsername string
+	// MirrorPassword 는 MQTT 브로커 인증 비밀번호이다(mirror_password 키). 빈 값이면 미적용.
+	MirrorPassword string
+	// MirrorTLS 는 TLS(ssl://) 브로커 연결 암호화 활성 여부이다(mirror_tls 키, 기본 false).
+	MirrorTLS bool
+	// MirrorCACert 는 서버 인증서 검증용 CA 인증서이다(mirror_ca_cert 키).
+	// PEM 문자열 또는 파일 경로를 모두 허용한다(thingplus buildTLSConfig 와 동일).
+	// 빈 값이면 시스템 루트 CA 를 사용한다. TLS 활성 시에만 적용된다.
+	MirrorCACert string
 }
 
 // parseHvacr01Config 는 Transport.Options 맵에서 Hvacr01Config 를 파싱한다.
@@ -124,6 +174,13 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	switch cfg.TransportType {
 	case "serial", "tcp-client", "tcp-server":
 		// valid transport types
+	case "mirror-mqtt":
+		// SPEC-HVACR-SYNC-001: 서버측 mirror 입력(채널 급전형 NasaTransport, MQTT 업링크 구독).
+		cfg.MirrorMode = true
+	case "mirror-message":
+		// SPEC-HVACR-SYNC-001 M10: 플로우 노드가 mirror-in/mirror-out 포트로 I/O 를 중계하는
+		// 메시지 모드. 에이전트는 MQTT 에 접속하지 않고 채널 급전형 NasaTransport 만 재사용한다.
+		cfg.MirrorMessageMode = true
 	case "tcp":
 		// 2026-05-29 breaking: explicit migration error pointing user to new value.
 		return Hvacr01Config{}, ErrDeprecatedTCPTransport
@@ -434,6 +491,89 @@ func parseHvacr01Config(opts map[string]any) (Hvacr01Config, error) {
 	// (connection_report_interval / startup_probe_timeout / deprecated connection_notify_interval)
 	// 은 더 이상 파싱하지 않는다. 기존 config 에 이 키들이 남아 있어도 hard-error 없이 조용히
 	// 무시된다(알 수 없는 키 무시 정책). 주기 보고는 report_interval(device_state) 로 수렴한다.
+
+	// -------------------------------------------------------------------------
+	// SPEC-HVACR-SYNC-001: 미러링/동기화 옵션 파싱 (Module 2/3/4/6/7)
+	// -------------------------------------------------------------------------
+	cfg.MirrorQoS = 1               // 기본 QoS 1 (REQ-SYNC-001-07-03)
+	cfg.MirrorControlEnabled = true // 제어 역경로 기본 활성
+
+	if v, ok := opts["mirror_uplink_enabled"]; ok {
+		cfg.MirrorUplinkEnabled = toBool(v)
+	}
+	if v, ok := opts["mirror_broker"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_broker must be a string")
+		}
+		cfg.MirrorBrokerAddr = s
+	}
+	if v, ok := opts["mirror_gateway_id"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_gateway_id must be a string")
+		}
+		cfg.MirrorGatewayID = s
+	}
+	if v, ok := opts["mirror_topic_prefix"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_topic_prefix must be a string")
+		}
+		cfg.MirrorTopicPrefix = s
+	}
+	if v, ok := opts["mirror_qos"]; ok {
+		q := toInt(v)
+		if q < 0 || q > 2 {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_qos must be 0, 1, or 2 (got %d)", q)
+		}
+		cfg.MirrorQoS = byte(q)
+	}
+	if v, ok := opts["mirror_control_enabled"]; ok {
+		cfg.MirrorControlEnabled = toBool(v)
+	}
+	if v, ok := opts["mirror_ack_enabled"]; ok {
+		cfg.MirrorAckEnabled = toBool(v)
+	}
+	if v, ok := opts["mirror_snapshot_enabled"]; ok {
+		cfg.MirrorSnapshotEnabled = toBool(v)
+	}
+
+	// M9: 미러 브로커 보안 (인증 + TLS). 모두 선택 — 미설정 시 기존 무인증/평문 동작 보존.
+	if v, ok := opts["mirror_username"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_username must be a string")
+		}
+		cfg.MirrorUsername = s
+	}
+	if v, ok := opts["mirror_password"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_password must be a string")
+		}
+		cfg.MirrorPassword = s
+	}
+	if v, ok := opts["mirror_tls"]; ok {
+		cfg.MirrorTLS = toBool(v)
+	}
+	if v, ok := opts["mirror_ca_cert"]; ok {
+		s, sok := v.(string)
+		if !sok {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_ca_cert must be a string")
+		}
+		cfg.MirrorCACert = s
+	}
+
+	// 미러/업링크 활성 시 브로커·게이트웨이 식별자 필수 (REQ-SYNC-001-02-02, silent default 금지).
+	if cfg.MirrorMode || cfg.MirrorUplinkEnabled {
+		if cfg.MirrorBrokerAddr == "" {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_broker is required for mirror/uplink mode")
+		}
+		if cfg.MirrorGatewayID == "" {
+			return Hvacr01Config{}, fmt.Errorf("samsung_hvacr01: mirror_gateway_id is required for mirror/uplink mode")
+		}
+	}
 
 	return cfg, nil
 }

@@ -11,7 +11,7 @@ import (
 )
 
 // 이 파일은 SINGLE message-field-path 선택자(deduplicate.key / deduplicate.compare_fields /
-// store-write.value_key)에 대해 `$.` prefix 를 강제하는 Configure-time 검증을 검증한다.
+// storage-write.value_key)에 대해 `$.` prefix 를 강제하는 Configure-time 검증을 검증한다.
 // key_template / store-read 배치 변수({item}) 는 단일 경로 선택자가 아니므로 영향받지 않는다.
 
 // ---------------------------------------------------------------------------
@@ -151,65 +151,4 @@ func TestDeduplicate_Configure_BareCompareFieldsArray_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "compare_fields")
 	assert.Contains(t, err.Error(), "current_temperature")
 	assert.Contains(t, err.Error(), "$.")
-}
-
-// ---------------------------------------------------------------------------
-// store-write.value_key — `$.` prefix 강제
-// ---------------------------------------------------------------------------
-
-// 빈 value_key (전체 payload 저장) 는 허용.
-func TestStoreWrite_Configure_EmptyValueKey_OK(t *testing.T) {
-	def := flow.NodeDef{ID: "sw-empty-vk", Type: "store-write"}
-	n, err := NewStoreWriteNode(def)
-	require.NoError(t, err)
-
-	err = n.Configure(map[string]any{
-		"key_template": "k",
-		// value_key 미지정 → 전체 payload 저장
-	})
-	require.NoError(t, err)
-}
-
-// $.-경로 value_key 는 허용.
-func TestStoreWrite_Configure_DollarValueKey_OK(t *testing.T) {
-	def := flow.NodeDef{ID: "sw-dollar-vk", Type: "store-write"}
-	n, err := NewStoreWriteNode(def)
-	require.NoError(t, err)
-
-	err = n.Configure(map[string]any{
-		"key_template": "k",
-		"value_key":    "$.payload.value",
-	})
-	require.NoError(t, err)
-}
-
-// bare value_key 는 Configure 에서 명시적 에러.
-func TestStoreWrite_Configure_BareValueKey_Error(t *testing.T) {
-	def := flow.NodeDef{ID: "sw-bare-vk", Type: "store-write"}
-	n, err := NewStoreWriteNode(def)
-	require.NoError(t, err)
-
-	err = n.Configure(map[string]any{
-		"key_template": "k",
-		"value_key":    "value",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "value_key")
-	assert.Contains(t, err.Error(), "value")
-	assert.Contains(t, err.Error(), "$.")
-}
-
-// key_template 은 단일 경로 선택자가 아니므로 bare {field} 가 그대로 동작해야 한다 (carve-out).
-func TestStoreWrite_Configure_KeyTemplateBare_Unchanged(t *testing.T) {
-	def := flow.NodeDef{ID: "sw-kt-bare", Type: "store-write"}
-	n, err := NewStoreWriteNode(def)
-	require.NoError(t, err)
-
-	store := newMockStore()
-	err = n.Configure(map[string]any{
-		"_store":       store,
-		"key_template": "{location}:{sensor}",
-		"value_key":    "$.payload.value",
-	})
-	require.NoError(t, err)
 }

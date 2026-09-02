@@ -130,11 +130,102 @@ export async function setLogStyle(style: LogStyle): Promise<void> {
  *   - `refetchIntervalInBackground: false` — 다른 탭으로 전환 시 폴링 일시 중지
  *     (노드 부하/네트워크 절감).
  */
-export function useSystemMetrics(): UseQueryResult<SystemMetrics, Error> {
+export function useSystemMetrics(
+  refetchIntervalMs: number = 5_000,
+): UseQueryResult<SystemMetrics, Error> {
   return useQuery<SystemMetrics, Error>({
     queryKey: ['monitor', 'metrics'],
     queryFn: getMetrics,
-    refetchInterval: 5_000,
+    // 인자를 받도록 넓혔지만 기본값은 기존 5초 그대로다 — 주기를 넘기지 않는
+    // 기존 호출부(SystemInfoCard 등)의 동작은 바뀌지 않는다. 캐시 키는 그대로라
+    // 여러 소비자가 같은 쿼리를 공유하며, 각자 자기 주기로 재요청한다.
+    refetchInterval: refetchIntervalMs,
     refetchIntervalInBackground: false,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 네트워크 인터페이스 통계
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * 인터페이스 하나의 누적 카운터.
+ *
+ * 백엔드 `NetworkInterfaceStat`(internal/api/handler/monitor_network.go) 와 1:1 이다.
+ * 값은 모두 부팅 이후 누적치이며, 초당 전송량 같은 비율은 두 시점의 차이로 계산한다.
+ */
+export interface NetworkInterfaceStat {
+  /** 인터페이스 이름. 합산 항목은 "total". */
+  name: string;
+  bytes_sent: number;
+  bytes_recv: number;
+  packets_sent: number;
+  packets_recv: number;
+  err_in: number;
+  err_out: number;
+  drop_in: number;
+  drop_out: number;
+}
+
+/** `GET /api/v1/monitor/network` 응답 (envelope 풀린 후) */
+export interface NetworkStats {
+  /** 모든 인터페이스의 합산 */
+  total: NetworkInterfaceStat;
+  /** 인터페이스별 통계 (이름 사전순) */
+  interfaces: NetworkInterfaceStat[];
+}
+
+/** 네트워크 인터페이스 통계를 조회한다. */
+export async function getNetworkStats(): Promise<NetworkStats> {
+  return get<NetworkStats>('/monitor/network');
+}
+
+/**
+ * 네트워크 인터페이스 통계 폴링 훅.
+ *
+ * `useSystemMetrics` 와 같은 이유로 queryKey 를 고정해 여러 소비자가 캐시를 공유한다.
+ */
+export function useNetworkStats(
+  refetchIntervalMs: number = 5_000,
+): UseQueryResult<NetworkStats, Error> {
+  return useQuery<NetworkStats, Error>({
+    queryKey: ['monitor', 'network'],
+    queryFn: getNetworkStats,
+    refetchInterval: refetchIntervalMs,
+    refetchIntervalInBackground: false,
+  });
+}
+
+/**
+ * `GET /api/v1/monitor/sysresources` 응답 (envelope 풀린 후).
+ *
+ * 값이 아니라 "선택 가능한 이름 목록"이다. sysmetrics 에이전트 설정에서 마운트·
+ * 장치·인터페이스를 손으로 적는 대신 골라 쓰게 하기 위한 조회다.
+ */
+export interface SysResources {
+  /** 물리 파티션의 마운트 지점 (사전순) */
+  mountpoints: string[];
+  /** I/O 통계를 낼 수 있는 디스크 장치 이름 (사전순) */
+  devices: string[];
+  /** 네트워크 인터페이스 이름 (사전순) */
+  interfaces: string[];
+}
+
+/** 선택 가능한 관측 대상 목록을 조회한다. */
+export async function getSysResources(): Promise<SysResources> {
+  return get<SysResources>('/monitor/sysresources');
+}
+
+/**
+ * 관측 대상 목록 조회 훅.
+ *
+ * 목록은 거의 변하지 않으므로(마운트·NIC 추가는 드물다) 폴링하지 않고 캐시한다.
+ * 설정 화면을 여는 동안만 필요한 값이라 재요청 비용을 들일 이유가 없다.
+ */
+export function useSysResources(): UseQueryResult<SysResources, Error> {
+  return useQuery<SysResources, Error>({
+    queryKey: ['monitor', 'sysresources'],
+    queryFn: getSysResources,
+    staleTime: 60_000,
   });
 }

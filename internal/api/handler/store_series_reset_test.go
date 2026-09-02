@@ -4,7 +4,7 @@
 // 누락 정책 + 다중 시리즈 집계 정합(시리즈별 적용) 검증.
 //
 // 실제 system.UserStoreAgent 를 라우터에 연결하고, SetWithMeta 로 여러 시리즈를 쓴 뒤
-// DELETE /keys/{key} (metric/tags 식별자) 와 POST /query (interval_ms+aggregation) 동작을 검증한다.
+// DELETE /keys/{key} (field/tags 식별자) 와 POST /query (interval_ms+aggregation) 동작을 검증한다.
 
 package handler
 
@@ -52,7 +52,7 @@ func remainingSeriesCount(t *testing.T, router *api.Router, agentName, key strin
 	return queryBody(t, rec).Count
 }
 
-// AC-15: metric/tags 식별자로 단일 시리즈만 reset, 다른 시리즈 무영향.
+// AC-15: field/tags 식별자로 단일 시리즈만 reset, 다른 시리즈 무영향.
 func TestHTTP_ResetSeries_SingleSeries_OthersUnaffected(t *testing.T) {
 	ag, adapter := newSeriesStoreAgent(t, "store-s")
 	seedThreeSeries(t, adapter) // (room,temperature,{}), (room,humidity,{}), (room,temperature,{area:a})
@@ -60,7 +60,7 @@ func TestHTTP_ResetSeries_SingleSeries_OthersUnaffected(t *testing.T) {
 
 	// humidity 단일 시리즈만 삭제.
 	req := httptest.NewRequest(http.MethodDelete,
-		"/api/v1/store/store-s/keys/room?metric_type=humidity", nil)
+		"/api/v1/store/store-s/keys/room?field=humidity", nil)
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
 
@@ -78,14 +78,14 @@ func TestHTTP_ResetSeries_SingleSeries_OthersUnaffected(t *testing.T) {
 	assert.Equal(t, 2, got, "humidity 삭제 후 temperature 2개 시리즈만 남음")
 }
 
-// AC-15 변형: metric+tags 로 더 좁혀 단일 시리즈 reset.
+// AC-15 변형: field+tags 로 더 좁혀 단일 시리즈 reset.
 func TestHTTP_ResetSeries_MetricAndTags_NarrowsToOne(t *testing.T) {
 	ag, adapter := newSeriesStoreAgent(t, "store-s")
 	seedThreeSeries(t, adapter)
 	router := setupStoreQueryRouter(t, ag)
 
 	req := httptest.NewRequest(http.MethodDelete,
-		"/api/v1/store/store-s/keys/room?metric_type=temperature&tag=area:a", nil)
+		"/api/v1/store/store-s/keys/room?field=temperature&tag=area:a", nil)
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
 
@@ -95,13 +95,13 @@ func TestHTTP_ResetSeries_MetricAndTags_NarrowsToOne(t *testing.T) {
 		"(temperature, area=a) 단일 시리즈만 처리")
 }
 
-// 식별자 누락 정책: metric/tags 없이 DELETE → 그 key 의 모든 시리즈가 대상.
+// 식별자 누락 정책: field/tags 없이 DELETE → 그 key 의 모든 시리즈가 대상.
 func TestHTTP_ResetSeries_NoIdentifier_AllSeriesOfKey(t *testing.T) {
 	ag, adapter := newSeriesStoreAgent(t, "store-s")
 	seedThreeSeries(t, adapter) // room 아래 3개 시리즈
 	// 다른 key 의 시리즈는 영향받지 않아야 한다.
 	ctx := context.Background()
-	require.NoError(t, adapter.SetWithMeta(ctx, "other", 9, system.StoreWriteMeta{MetricType: "temperature"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "other", 9, system.StoreWriteMeta{Field: "temperature"}))
 	router := setupStoreQueryRouter(t, ag)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/store/store-s/keys/room", nil)
@@ -151,7 +151,7 @@ func TestHTTP_ResetSeries_NoMatch_Zero200(t *testing.T) {
 	router := setupStoreQueryRouter(t, ag)
 
 	req := httptest.NewRequest(http.MethodDelete,
-		"/api/v1/store/store-s/keys/room?metric_type=pressure", nil)
+		"/api/v1/store/store-s/keys/room?field=pressure", nil)
 	rec := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rec, req)
 
@@ -183,20 +183,20 @@ func TestHTTP_QuerySeries_Aggregation_PerSeries(t *testing.T) {
 	ctx := context.Background()
 
 	// 두 시리즈를 float 으로 고정(coercion 으로 string 화되지 않게)하여 동일 버킷에 다중 포인트.
-	// 같은 (key, metric) 시리즈에 여러 값을 누적 → history 가 집계 입력이 된다.
+	// 같은 (key, field) 시리즈에 여러 값을 누적 → history 가 집계 입력이 된다.
 	// temperature 시리즈: 두 값.
 	require.NoError(t, adapter.SetWithMeta(ctx, "room", float64(10), system.StoreWriteMeta{
-		MetricType: "temperature", DataType: "float",
+		Field: "temperature", DataType: "float",
 	}))
 	require.NoError(t, adapter.SetWithMeta(ctx, "room", float64(20), system.StoreWriteMeta{
-		MetricType: "temperature", DataType: "float",
+		Field: "temperature", DataType: "float",
 	}))
 	// humidity 시리즈: 두 값.
 	require.NoError(t, adapter.SetWithMeta(ctx, "room", float64(40), system.StoreWriteMeta{
-		MetricType: "humidity", DataType: "float",
+		Field: "humidity", DataType: "float",
 	}))
 	require.NoError(t, adapter.SetWithMeta(ctx, "room", float64(60), system.StoreWriteMeta{
-		MetricType: "humidity", DataType: "float",
+		Field: "humidity", DataType: "float",
 	}))
 	router := setupStoreQueryRouter(t, ag)
 
@@ -213,11 +213,11 @@ func TestHTTP_QuerySeries_Aggregation_PerSeries(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	resp := queryBody(t, rec)
 
-	// metric 별로 집계값을 모은다(시리즈별 독립 집계 검증).
+	// field 별로 집계값을 모은다(시리즈별 독립 집계 검증).
 	byMetric := map[string][]float64{}
 	for _, e := range resp.Entries {
 		require.NotNil(t, e.Labels, "집계 엔트리도 labels 를 유지해야 한다")
-		m := e.Labels["__metric__"]
+		m := e.Labels["__field__"]
 		f, ok := e.Value.(float64)
 		require.True(t, ok, "집계 결과는 float64")
 		byMetric[m] = append(byMetric[m], f)

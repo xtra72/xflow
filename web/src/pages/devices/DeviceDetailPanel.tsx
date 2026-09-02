@@ -3,12 +3,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Activity,
   AlertCircle,
   ChevronsUpDown,
   Clock,
+  Download,
   Droplets,
   Edit2,
   Flame,
+  Gauge,
   History,
   Loader2,
   Lock,
@@ -18,6 +21,7 @@ import {
   Play,
   Plus,
   Power,
+  RadioTower,
   RefreshCw,
   Snowflake,
   Tag,
@@ -29,12 +33,26 @@ import {
 
 import { useDeviceHistory, useExecuteCommand, useUpdateMetadata } from '@/hooks/useDevice';
 import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
+import PermissionButton from '@/components/common/PermissionButton';
+import { usePermission } from '@/hooks/usePermission';
 import { useTranslation } from '@/lib/i18n';
 import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { cn } from '@/lib/utils/cn';
-import { getPropertyLabel, getCommandLabel, getParamLabel, getEnumLabel, sortProperties, sortCommands, formatPropertyValue, getDeviceDisplayName } from '@/lib/utils/deviceLabels';
+import { getPropertyLabel, getCommandLabel, getParamLabel, getEnumLabel, sortProperties, sortCommands, formatPropertyValue, getDeviceDisplayName, expandMeasurementEntries, excludeDedicatedSectionKeys, extractGatewayLinks, type DeviceGatewayLink } from '@/lib/utils/deviceLabels';
+import { formatEpochMs, formatFrequencyHz, formatModulation, formatRelativeEpochMs, formatSnr } from '@/lib/utils/format';
+import { downloadCsv } from '@/pages/dashboard/panels/charts/csvExport';
+import { sanitizeFilenamePart } from '@/pages/agents/tsdbCsvExport';
+import {
+  buildMeasurementHistory,
+  flattenGatewayHistory,
+  gatewayHistoryToCsv,
+  measurementHistoryToCsv,
+  UTF8_BOM,
+  type GatewayHistoryRow,
+  type MeasurementHistoryTable,
+} from './deviceHistoryTables';
 import { normalizeAcMode, normalizeFanSpeed } from '@/pages/dashboard/panels/acControlTypes';
 import { APIError } from '@/types/api';
 import type { CommandSpec, DeviceHistoryEntry, ParamSpec } from '@/types/device';
@@ -98,14 +116,15 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
         {/* 원격 타깃은 READ-ONLY(REQ-J03) — 편집/명령은 디바이스 페이지의 그룹 D
             경로에서만 수행하므로 편집 버튼을 숨긴다. */}
         {!editing && !remote && (
-          <button
+          <PermissionButton
             type="button"
+            permission="device.update"
             onClick={() => setEditing(true)}
             className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
           >
             <Edit2 className="h-3 w-3" />
             {t('devices.detail.editDevice')}
-          </button>
+          </PermissionButton>
         )}
       </div>
 
@@ -161,22 +180,6 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
 /** limit 선택 옵션 (서버가 max 로 clamp 하므로 상한 초과는 안전). */
 const HISTORY_LIMIT_OPTIONS = [50, 100, 200] as const;
 
-/** epoch milliseconds → 사람이 읽는 로컬 시간 문자열. */
-function formatTimestamp(ms: number): string {
-  if (!ms || ms <= 0) return '-';
-  const d = new Date(ms);
-  if (isNaN(d.getTime())) return '-';
-  return d.toLocaleString('ko-KR', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
-}
-
 function DeviceHistorySection({
   deviceId,
   protocol,
@@ -192,15 +195,22 @@ function DeviceHistorySection({
 
   // 이력 비활성(404) 안내. 그 외 오류는 일반 오류 안내.
   const disabled = error instanceof APIError && error.status === 404;
-  const entries: DeviceHistoryEntry[] = data?.entries ?? [];
+  // `?? []` 는 매 렌더마다 새 배열을 만들어 아래 useMemo 들의 의존성을 항상 바꾼다.
+  // 파생 표가 셋으로 늘어나 재계산 비용이 실질적이므로 참조를 고정한다.
+  const entries = useMemo<DeviceHistoryEntry[]>(() => data?.entries ?? [], [data]);
 
   // 속성을 개별 컬럼으로 분리한다. 컬럼 키 집합은 최신 엔트리 기준 순서로
   // 합집합을 구성한다(최신 엔트리에 없는 옛 키도 뒤에 추가해 누락 방지).
+  //
+  // gateways / measurements 는 아래 전용 표가 담당하므로 제외한다. 제외하지 않으면
+  // 같은 데이터가 두 번 나오는 데다, 일반 셀에서는 80자에서 잘린 JSON 덩어리로
+  // 렌더되어(formatPropertyValue 의 객체 폴백) 읽을 수 없다.
   const propColumns = useMemo<string[]>(() => {
     const ordered: string[] = [];
     const seen = new Set<string>();
     for (const e of entries) {
       for (const k of Object.keys(e.properties ?? {})) {
+        if (k === 'gateways' || k === 'measurements') continue;
         if (!seen.has(k)) {
           seen.add(k);
           ordered.push(k);
@@ -209,6 +219,22 @@ function DeviceHistorySection({
     }
     return ordered;
   }, [entries]);
+
+  // 전용 표 데이터. 해당 속성이 없는 디바이스(대부분의 비 chirpstack 디바이스)는
+  // 빈 결과가 되어 표 자체가 렌더되지 않는다.
+  const gatewayRows = useMemo(() => flattenGatewayHistory(entries), [entries]);
+  const measurementTable = useMemo(() => buildMeasurementHistory(entries), [entries]);
+
+  // 최근 통신 컬럼은 last_seen 이 첫 컬럼(timestamp)과 다를 때만 정보를 갖는다.
+  // chirpstack 처럼 프로바이더가 HistoryEventTimed 를 구현하면 엔트리 시각 자체가
+  // 업링크 시각(= last_seen)이라 두 컬럼이 항상 같은 값이 되어 자리만 차지한다.
+  // 반대로 주기 스냅샷만 하는 프로바이더는 timestamp 가 10초 샘플링 격자라
+  // last_seen 이 실제 정보를 가지므로 그대로 남긴다. 프로바이더를 판별하지 않고
+  // 데이터로 결정하므로 새 프로바이더가 생겨도 따로 손볼 곳이 없다.
+  const showLastSeen = useMemo(
+    () => entries.some((e) => e.last_seen !== e.timestamp),
+    [entries],
+  );
 
   return (
     <div className="mt-6 border-t border-(--color-border-default) pt-4">
@@ -254,7 +280,32 @@ function DeviceHistorySection({
           {t('devices.detail.noHistory')}
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-md border border-(--color-border-default)">
+        <div className="space-y-6">
+          {/* 게이트웨이 수신 이력 (chirpstack 등 gateways 속성이 있는 디바이스만) */}
+          {gatewayRows.length > 0 && (
+            <GatewayHistoryTable rows={gatewayRows} deviceId={deviceId} />
+          )}
+
+          {/* 측정치 이력 (measurements 속성이 있는 디바이스만) */}
+          {measurementTable.columns.length > 0 && (
+            <MeasurementHistoryTableView
+              table={measurementTable}
+              deviceId={deviceId}
+              protocol={protocol}
+              type={type}
+            />
+          )}
+
+          {/* 상태 변경 이력. 전용 표가 가져간 키를 뺀 나머지 top-level 속성을 담당하며,
+              두 전용 속성이 없는 디바이스에서는 종전과 동일하게 렌더된다.
+              남은 속성이 없어도 온·오프라인 상태 이력은 다른 표가 보여주지 않는
+              정보이므로 계속 렌더한다. */}
+          <div>
+          <h5 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-(--color-text-secondary)">
+            <Activity className="h-3.5 w-3.5" />
+            {t('devices.detail.statusHistoryTitle')}
+          </h5>
+          <div className="overflow-x-auto rounded-md border border-(--color-border-default)">
           <table className="min-w-full divide-y divide-(--color-border-default)">
             <thead className="bg-(--color-bg-primary)">
               <tr>
@@ -273,9 +324,11 @@ function DeviceHistorySection({
                     {getPropertyLabel(k, protocol, type)}
                   </th>
                 ))}
-                <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
-                  {t('devices.detail.lastSeen')}
-                </th>
+                {showLastSeen && (
+                  <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
+                    {t('devices.detail.lastSeen')}
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
@@ -284,12 +337,268 @@ function DeviceHistorySection({
                   key={`${entry.timestamp}-${idx}`}
                   entry={entry}
                   propColumns={propColumns}
+                  showLastSeen={showLastSeen}
                 />
               ))}
             </tbody>
           </table>
+          </div>
+          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** 표 우측 상단 CSV 내보내기 버튼. LineChartPanel 의 내보내기 버튼 표기를 따른다. */
+function CsvExportButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
+    >
+      <Download className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
+/**
+ * 게이트웨이 수신 이력 표.
+ *
+ * 이력 엔트리 하나가 게이트웨이 **배열**을 담으므로 (엔트리, 게이트웨이) 쌍마다 한
+ * 행으로 평탄화해 보여준다 — 시계열은 펼침/접기보다 평탄한 표가 읽기 쉽다.
+ *
+ * `stale` 컬럼은 의도적으로 렌더하지 않는다. `stale` 은 서버가 **조회 시각(now)** 을
+ * 기준으로 파생하는 값이라, 과거 시점의 행에 붙으면 "그때 오래된 링크였는가" 가
+ * 아니라 "그 last_seen 이 지금 기준으로 오래되었는가" 를 뜻한다. 시계열 표에 그대로
+ * 실으면 오래된 행이 전부 stale 로 보이는 등 적극적으로 오해를 부른다.
+ */
+function GatewayHistoryTable({ rows, deviceId }: { rows: GatewayHistoryRow[]; deviceId: string }) {
+  const { t } = useTranslation();
+
+  const handleExport = () => {
+    const csv = gatewayHistoryToCsv(rows, {
+      time: t('devices.detail.time'),
+      gatewayId: t('agents.detail.gateways.gatewayId'),
+      rssi: t('agents.detail.gateways.rssi'),
+      snr: t('agents.detail.gateways.snr'),
+      channel: t('agents.detail.gateways.channel'),
+      frequencyHz: t('devices.detail.csvFrequencyHz'),
+      spreadingFactor: t('devices.detail.csvSpreadingFactor'),
+      bandwidthHz: t('devices.detail.csvBandwidthHz'),
+      linkLastSeen: t('devices.detail.csvGatewayLastSeen'),
+    });
+    // 헤더가 로케일 라벨이라 Excel 을 위해 BOM 을 붙인다(UTF8_BOM 주석 참고).
+    downloadCsv(UTF8_BOM + csv, `device-gateway-history-${sanitizeFilenamePart(deviceId)}.csv`);
+  };
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <h5 className="flex items-center gap-1.5 text-xs font-semibold text-(--color-text-secondary)">
+          <RadioTower className="h-3.5 w-3.5" />
+          {t('devices.detail.gatewayHistoryTitle')}
+        </h5>
+        <CsvExportButton
+          label={t('devices.detail.exportGatewayHistoryCsv')}
+          onClick={handleExport}
+        />
+      </div>
+
+      <div className="overflow-x-auto rounded-md border border-(--color-border-default)">
+        <table className="min-w-full divide-y divide-(--color-border-default)">
+          <thead className="bg-(--color-bg-primary)">
+            <tr className="text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+              <th className="whitespace-nowrap px-3 py-2">{t('devices.detail.time')}</th>
+              <th className="whitespace-nowrap px-3 py-2">
+                {t('agents.detail.gateways.gatewayId')}
+              </th>
+              <th className="whitespace-nowrap px-3 py-2">{t('agents.detail.gateways.rssi')}</th>
+              <th className="whitespace-nowrap px-3 py-2">{t('agents.detail.gateways.snr')}</th>
+              {/* channel 은 게이트웨이 로컬 IF 인덱스다 — 주파수 컬럼과 반드시 분리한다. */}
+              <th
+                className="whitespace-nowrap px-3 py-2"
+                title={t('agents.detail.gateways.channelHelp')}
+              >
+                {t('agents.detail.gateways.channel')}
+              </th>
+              <th
+                className="whitespace-nowrap px-3 py-2"
+                title={t('agents.detail.gateways.frequencyHelp')}
+              >
+                {t('agents.detail.gateways.frequency')}
+              </th>
+              <th className="whitespace-nowrap px-3 py-2">
+                {t('agents.detail.gateways.modulation')}
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
+            {rows.map(({ timestamp, entryIndex, link }) => (
+              <tr
+                key={`${timestamp}-${entryIndex}-${link.gateway_id}`}
+                className="hover:bg-(--color-bg-elevated)"
+              >
+                <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-secondary)">
+                  <span className="inline-flex items-center gap-1">
+                    <Clock className="h-3 w-3 text-gray-400" />
+                    {formatEpochMs(timestamp)}
+                  </span>
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-(--color-text-primary)">
+                  {link.gateway_id}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-xs tabular-nums text-(--color-text-secondary)">
+                  {link.rssi}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-xs tabular-nums text-(--color-text-secondary)">
+                  {formatSnr(link.snr)}
+                </td>
+                <td
+                  className="whitespace-nowrap px-3 py-2 text-xs tabular-nums text-(--color-text-secondary)"
+                  title={t('agents.detail.gateways.channelHelp')}
+                >
+                  {link.channel}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-xs tabular-nums text-(--color-text-secondary)">
+                  {formatFrequencyHz(link.frequency_hz)}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-muted)">
+                  {formatModulation(link.spreading_factor, link.bandwidth)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 측정치 이력 표. 컬럼은 전체 엔트리에 걸친 측정치 키의 합집합이다.
+ *
+ * 이월 값 구분: measurements 는 병합 캐시라 갱신되지 않은 키도 이전 값과 이전
+ * `time_ms` 를 그대로 갖고 다음 엔트리에 다시 나타난다. 아무 표시 없이 그리면 같은
+ * 값이 컬럼을 따라 반복되어 매 시점 수신된 것처럼 보인다. 셀의 `time_ms` 가 행의
+ * 시각보다 이전이면 이월 값이므로, 흐린 색으로 낮춰 표시하고 실제 수신 시각을
+ * title 로 제공한다(표 위 범례가 흐림의 의미를 글로 설명한다 — 색만으로 정보를
+ * 전달하지 않기 위함).
+ */
+function MeasurementHistoryTableView({
+  table,
+  deviceId,
+  protocol,
+  type,
+}: {
+  table: MeasurementHistoryTable;
+  deviceId: string;
+  protocol: string;
+  type: string;
+}) {
+  const { t } = useTranslation();
+
+  const handleExport = () => {
+    const csv = measurementHistoryToCsv(
+      table,
+      {
+        time: t('devices.detail.time'),
+        measuredAtSuffix: t('devices.detail.csvMeasuredAtSuffix'),
+      },
+      (key) => getPropertyLabel(key, protocol, type),
+    );
+    downloadCsv(UTF8_BOM + csv, `device-measurement-history-${sanitizeFilenamePart(deviceId)}.csv`);
+  };
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <h5 className="flex items-center gap-1.5 text-xs font-semibold text-(--color-text-secondary)">
+          <Gauge className="h-3.5 w-3.5" />
+          {t('devices.detail.measurementHistoryTitle')}
+        </h5>
+        <CsvExportButton
+          label={t('devices.detail.exportMeasurementHistoryCsv')}
+          onClick={handleExport}
+        />
+      </div>
+
+      {/* 흐린 셀의 의미를 글로 설명한다(색/명도만으로 정보를 전달하지 않는다). */}
+      <p className="mb-2 text-[11px] leading-relaxed text-(--color-text-muted)">
+        {t('devices.detail.measurementCarriedOverLegend')}
+      </p>
+
+      <div className="overflow-x-auto rounded-md border border-(--color-border-default)">
+        <table className="min-w-full divide-y divide-(--color-border-default)">
+          <thead className="bg-(--color-bg-primary)">
+            <tr>
+              <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+                {t('devices.detail.time')}
+              </th>
+              {table.columns.map((key) => (
+                <th
+                  key={key}
+                  className="whitespace-nowrap px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
+                >
+                  {getPropertyLabel(key, protocol, type)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
+            {table.rows.map((row, idx) => (
+              <tr key={`${row.timestamp}-${idx}`} className="hover:bg-(--color-bg-elevated)">
+                <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-secondary)">
+                  <span className="inline-flex items-center gap-1">
+                    <Clock className="h-3 w-3 text-gray-400" />
+                    {formatEpochMs(row.timestamp)}
+                  </span>
+                </td>
+                {table.columns.map((key) => {
+                  const cell = row.cells[key];
+                  if (!cell) {
+                    return (
+                      <td
+                        key={key}
+                        className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-muted)"
+                      >
+                        -
+                      </td>
+                    );
+                  }
+                  // 측정 시각을 아는 경우에만 신선/이월을 단정한다.
+                  const timeText =
+                    cell.timeMs !== undefined ? formatEpochMs(cell.timeMs) : undefined;
+                  const title =
+                    timeText === undefined
+                      ? undefined
+                      : (cell.carriedOver
+                          ? t('devices.detail.measurementCarriedOverAt')
+                          : t('devices.detail.measurementFreshAt')
+                        ).replace('{time}', timeText);
+                  return (
+                    <td
+                      key={key}
+                      title={title}
+                      className={cn(
+                        'whitespace-nowrap px-3 py-2 text-xs',
+                        cell.carriedOver
+                          ? 'text-(--color-text-muted)'
+                          : 'font-medium text-(--color-text-primary)',
+                      )}
+                    >
+                      {formatPropertyValue(key, cell.value)}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -298,9 +607,11 @@ function DeviceHistorySection({
 function HistoryRow({
   entry,
   propColumns,
+  showLastSeen,
 }: {
   entry: DeviceHistoryEntry;
   propColumns: string[];
+  showLastSeen: boolean;
 }) {
   const { t } = useTranslation();
   const props = entry.properties ?? {};
@@ -312,7 +623,7 @@ function HistoryRow({
       <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-secondary)">
         <span className="inline-flex items-center gap-1">
           <Clock className="h-3 w-3 text-gray-400" />
-          {formatTimestamp(entry.timestamp)}
+          {formatEpochMs(entry.timestamp)}
         </span>
       </td>
       <td className="whitespace-nowrap px-3 py-2">
@@ -336,9 +647,11 @@ function HistoryRow({
           {k in props ? formatPropertyValue(k, props[k], { powerOff }) : '-'}
         </td>
       ))}
-      <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-muted)">
-        {formatTimestamp(entry.last_seen)}
-      </td>
+      {showLastSeen && (
+        <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-muted)">
+          {formatEpochMs(entry.last_seen)}
+        </td>
+      )}
     </tr>
   );
 }
@@ -409,7 +722,10 @@ const LGAP_FAN_LABELS: Record<string, string> = {
 function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentElements }: { properties: Record<string, unknown>; compact?: boolean; deviceId?: string; accentColor?: string; accentElements?: Record<string, string | boolean> }) {
   const { t } = useTranslation();
   const executeMutation = useExecuteCommand();
-  const interactive = !!deviceId;
+  const { hasPermission } = usePermission();
+  // SPEC-AUTH-006 E1 (M4): 제어 위젯 12개가 이 게이트를 공유하므로 권한을 여기서
+  // 합성한다. 버튼마다 따로 붙이면 이 2000줄 파일에서 누락이 생긴다.
+  const interactive = !!deviceId && hasPermission('device.execute');
 
   const serverPower = properties['power'] as boolean | undefined;
   // 낙관적 전원 토글: 즉시 UI 반영 → 서버 확인 후 동기화 / 타임아웃 시 복원
@@ -653,7 +969,12 @@ function GenericPropertiesGrid({
     if (typeof val === 'string') return val;
     return accentColor;
   };
-  const entries = sortProperties(Object.entries(properties));
+  // measurements 는 측정치별 개별 카드로 펼친다(측정치마다 갱신 시각이 다르다).
+  // gateways 는 전용 섹션(DeviceGatewaysSection)이 렌더하므로 그리드에서 제외한다.
+  const entries = expandMeasurementEntries(
+    excludeDedicatedSectionKeys(sortProperties(Object.entries(properties))),
+  );
+  const gatewayLinks = extractGatewayLinks(properties);
   // 전원 OFF 시 운전 계열 속성(모드/온도/풍량/스윙)은 정규화된 기본값이라 실제 값이
   // 아니므로 '-' 로 표시한다(formatPropertyValue 의 powerOff 옵션).
   const powerOff = properties['power'] === false;
@@ -662,9 +983,9 @@ function GenericPropertiesGrid({
     <div className={compact ? 'px-4 py-3' : ''}>
       {!compact && <h4 className="mb-3 text-sm font-semibold text-(--color-text-primary)">{t('devices.detail.stateProperties')}</h4>}
       <div className={cn('grid gap-3', compact ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5')}>
-        {entries.map(([key, value]) => (
+        {entries.map(({ id, key, value, timeMs }) => (
           <div
-            key={key}
+            key={id}
             className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2"
             style={acColor('borders') ? { borderColor: `${acColor('borders')}30` } : undefined}
           >
@@ -674,8 +995,144 @@ function GenericPropertiesGrid({
             <p className="mt-0.5 text-sm font-medium text-(--color-text-primary)">
               {formatPropertyValue(key, value, { powerOff })}
             </p>
+            {/* 측정치별 갱신 시각. 값과 경쟁하지 않도록 작고 흐리게, 상대 시간으로 표시하고
+                정확한 시각은 title(hover)로 제공한다. */}
+            {timeMs !== undefined && (
+              <p className="mt-0.5 text-[10px] text-(--color-text-muted)" title={formatEpochMs(timeMs)}>
+                {formatRelativeEpochMs(timeMs)}
+              </p>
+            )}
           </div>
         ))}
+      </div>
+
+      {/* 게이트웨이 링크는 일반 속성이 아니라 (디바이스, 게이트웨이) 쌍의 목록이므로
+          key/value 그리드가 아닌 전용 섹션으로 분리한다. */}
+      {gatewayLinks && <DeviceGatewaysSection links={gatewayLinks} />}
+    </div>
+  );
+}
+
+// ---- 게이트웨이 링크 섹션 (chirpstack) ----
+
+/**
+ * 이 디바이스를 수신한 게이트웨이 목록.
+ *
+ * 하나의 업링크를 여러 게이트웨이가 동시에 수신하므로 RSSI/SNR/채널은 (디바이스,
+ * 게이트웨이) 쌍에 귀속된다 — 링크가 여러 건인 것이 정상이며 예외 상황이 아니다.
+ * 5개 이상의 정렬된 숫자 컬럼을 나란히 비교해야 하므로 카드가 아닌 표로 렌더한다.
+ *
+ * 정렬: 백엔드가 준 `gateway_id` 오름차순을 그대로 유지한다. RSSI 는 업링크마다
+ * 요동쳐 신호 세기로 정렬하면 폴링마다 행이 뒤바뀌어 특정 게이트웨이를 눈으로
+ * 추적할 수 없다. 대신 최고 RSSI 링크에 배지를 달아 "가장 잘 잡히는 게이트웨이"를
+ * 정렬을 흔들지 않고 표시한다.
+ *
+ * 표기 주의: `channel` 은 수신 게이트웨이의 concentrator IF 채널 인덱스로
+ * 게이트웨이 로컬 하드웨어 값이다. 주파수가 아니며 게이트웨이 간 비교할 수 없다.
+ * 라벨/도움말은 에이전트 게이트웨이 탭과 같은 i18n 키를 공유해 표기를 일치시킨다.
+ */
+function DeviceGatewaysSection({ links }: { links: DeviceGatewayLink[] }) {
+  const { t } = useTranslation();
+
+  // 최고 신호 링크. 동률이면 먼저 나온(=gateway_id 가 작은) 링크가 유지된다.
+  const bestGatewayId =
+    links.length > 1
+      ? links.reduce((best, l) => (l.rssi > best.rssi ? l : best)).gateway_id
+      : undefined;
+
+  return (
+    <div className="mt-6 border-t border-(--color-border-default) pt-4">
+      <h4 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-(--color-text-primary)">
+        <RadioTower className="h-4 w-4" />
+        {t('devices.detail.gatewaysTitle')}
+        <span className="font-normal text-xs text-(--color-text-muted)">
+          {t('agents.detail.gateways.count').replace('{count}', String(links.length))}
+        </span>
+      </h4>
+
+      <div className="overflow-x-auto rounded-md border border-(--color-border-default)">
+        <table className="min-w-full text-sm">
+          <thead className="bg-(--color-bg-elevated)">
+            <tr className="text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)">
+              <th className="whitespace-nowrap px-3 py-2">
+                {t('agents.detail.gateways.gatewayId')}
+              </th>
+              <th className="whitespace-nowrap px-3 py-2">{t('agents.detail.gateways.rssi')}</th>
+              <th className="whitespace-nowrap px-3 py-2">{t('agents.detail.gateways.snr')}</th>
+              {/* channel 은 게이트웨이 로컬 IF 인덱스다 — 주파수 컬럼과 반드시 분리한다. */}
+              <th
+                className="whitespace-nowrap px-3 py-2"
+                title={t('agents.detail.gateways.channelHelp')}
+              >
+                {t('agents.detail.gateways.channel')}
+              </th>
+              <th
+                className="whitespace-nowrap px-3 py-2"
+                title={t('agents.detail.gateways.frequencyHelp')}
+              >
+                {t('agents.detail.gateways.frequency')}
+              </th>
+              <th className="whitespace-nowrap px-3 py-2">
+                {t('agents.detail.gateways.lastSeen')}
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-(--color-border-default) bg-(--color-bg-surface)">
+            {links.map((link) => (
+              <tr
+                key={link.gateway_id}
+                className={cn(
+                  'hover:bg-(--color-bg-elevated)',
+                  // stale 링크는 흐리게 처리해 live 링크와 시각적으로 구분한다.
+                  // 흐림만으로는 신호가 약하므로 아래 배지로 텍스트 단서를 함께 준다.
+                  link.stale && 'opacity-60',
+                )}
+              >
+                <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-(--color-text-primary)">
+                  <span className="inline-flex items-center gap-1.5">
+                    {link.gateway_id}
+                    {link.stale && (
+                      <span className="rounded-full bg-gray-100 px-1.5 py-0.5 font-sans text-[10px] font-medium text-gray-500 dark:bg-gray-700 dark:text-gray-400">
+                        {t('agents.detail.gateways.stale')}
+                      </span>
+                    )}
+                  </span>
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 tabular-nums text-(--color-text-secondary)">
+                  <span className="inline-flex items-center gap-1.5">
+                    {link.rssi}
+                    {link.gateway_id === bestGatewayId && (
+                      <span
+                        className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                        title={t('devices.detail.gatewaysBestSignalHelp')}
+                      >
+                        {t('devices.detail.gatewaysBestSignal')}
+                      </span>
+                    )}
+                  </span>
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 tabular-nums text-(--color-text-secondary)">
+                  {formatSnr(link.snr)}
+                </td>
+                <td
+                  className="whitespace-nowrap px-3 py-2 tabular-nums text-(--color-text-secondary)"
+                  title={t('agents.detail.gateways.channelHelp')}
+                >
+                  {link.channel}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 tabular-nums text-(--color-text-secondary)">
+                  {formatFrequencyHz(link.frequency_hz)}
+                </td>
+                <td
+                  className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-muted)"
+                  title={formatEpochMs(link.last_seen_ms)}
+                >
+                  {formatRelativeEpochMs(link.last_seen_ms)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -818,15 +1275,16 @@ function CommandControl({
   if (params.length === 0) {
     return (
       <CommandRow label={getCommandLabel(command.name)} description={command.description}>
-        <button
+        <PermissionButton
           type="button"
+          permission="device.execute"
           onClick={() => execute()}
           disabled={isPending || disabled}
           className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
         >
           {isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
           {t('devices.detail.execute')}
-        </button>
+        </PermissionButton>
       </CommandRow>
     );
   }
@@ -1148,15 +1606,16 @@ function MultiParamCommandControl({
         ))}
       </div>
       <div className="flex items-center gap-2">
-        <button
+        <PermissionButton
           type="button"
+          permission="device.execute"
           onClick={handleSubmit}
           disabled={executeMutation.isPending}
           className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
         >
           {executeMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
           {t('devices.detail.execute')}
-        </button>
+        </PermissionButton>
         {result && (
           <span className={cn('text-xs', result.success ? 'text-green-600' : 'text-red-600')}>
             {result.success ? t('devices.detail.done') : result.error}
@@ -1556,15 +2015,16 @@ function MetadataSection({ deviceId, fullId, source, name, metadata, editing, on
 
           {/* 저장/취소 버튼 */}
           <div className="flex items-center gap-2">
-            <button
+            <PermissionButton
               type="button"
+              permission="device.update"
               onClick={handleSave}
               disabled={updateMutation.isPending}
               className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
             >
               {updateMutation.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
               {t('devices.detail.save')}
-            </button>
+            </PermissionButton>
             <button
               type="button"
               onClick={() => onEditChange(false)}

@@ -2,7 +2,7 @@
 // 에이전트 목록을 테이블로 표시하며, 행 클릭으로 상세 패널을 토글한다.
 // 검색, 상태 필터, 페이지네이션을 지원한다.
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
@@ -30,8 +30,9 @@ import { useAgentsTarget } from '@/hooks/useResourceTargets';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTargetParam } from '@/hooks/useTargetParam';
 import { useTranslation } from '@/lib/i18n';
+import { useNameDeepLink } from '@/hooks/useNameDeepLink';
 import { omitMaskedSecrets } from '@/lib/remote/secretOmission';
-import { TargetProvider } from '@/lib/remote/TargetContext';
+import { TargetProvider } from '@/lib/remote/TargetProvider';
 import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
 import { downloadJSON } from '@/lib/utils/download';
 import { exportAllAgents } from '@/services/api/agentService';
@@ -42,6 +43,8 @@ import AgentActionButtons from './AgentActionButtons';
 import AgentDetailPanel from './AgentDetailPanel';
 import AgentEnabledBadge from './AgentEnabledBadge';
 import AgentSearchFilter from './AgentSearchFilter';
+import PermissionButton from '@/components/common/PermissionButton';
+
 import CreateAgentModal from './CreateAgentModal';
 
 /** 페이지 크기 옵션 */
@@ -142,7 +145,16 @@ export default function AgentListPage({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  const allAgents: AgentInfo[] = data?.data ?? [];
+  const allAgents: AgentInfo[] = useMemo(() => data?.data ?? [], [data?.data]);
+
+  // 시스템 로그에서 `/agents?name=...` 로 넘어온 경우 그 이름으로 목록을 좁히고
+  // 일치하는 에이전트를 펼친다. 이름이 중복되면 검색어가 남아 사용자가 고를 수 있다.
+  const applyNameLink = useCallback((name: string, matchedId: string | null) => {
+    setSearch(name);
+    setPage(1);
+    setExpandedId(matchedId);
+  }, []);
+  useNameDeepLink(allAgents, (a) => a.name, (a) => a.id, applyNameLink);
 
   /** 에이전트의 표시 상태를 결정한다 (connected/disconnected/error). */
   const getDisplayStatus = (agent: AgentInfo): string => {
@@ -326,8 +338,9 @@ export default function AgentListPage({
             </>
           )}
           {/* 생성: 로컬은 모달, 원격은 원격 에이전트 편집 다이얼로그(create 명령). */}
-          <button
+          <PermissionButton
             type="button"
+            permission="agent.create"
             disabled={remote && !gating.nodeReady}
             title={remote && !gating.nodeReady ? t('remote.edit.createGateHint') : undefined}
             onClick={() => (remote ? setRemoteCreateOpen(true) : setModalOpen(true))}
@@ -335,7 +348,7 @@ export default function AgentListPage({
           >
             <Plus className="h-4 w-4" />
             {t('agents.newAgent')}
-          </button>
+          </PermissionButton>
         </div>
       </div>
 
@@ -357,14 +370,15 @@ export default function AgentListPage({
               : t('agents.noSearchResults')}
           </p>
           {allAgents.length === 0 && (showLocalWrites || gating.nodeReady) && (
-            <button
+            <PermissionButton
               type="button"
+              permission="agent.create"
               onClick={() => (remote ? setRemoteCreateOpen(true) : setModalOpen(true))}
               className="mt-4 inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
             >
               <Plus className="h-4 w-4" />
               {t('agents.newAgent')}
-            </button>
+            </PermissionButton>
           )}
         </div>
       ) : (

@@ -11,16 +11,62 @@ import (
 // 설정 구조체
 // ---------------------------------------------------------------------------
 
-// ModbusServerConfig 는 MODBUS/TCP 서버 에이전트의 설정을 나타낸다.
+// 트랜스포트 디스크리미네이터 상수.
+const (
+	// TransportTCP 는 MODBUS/TCP(MBAP) 서버 트랜스포트이다(기본값).
+	TransportTCP = "tcp"
+	// TransportRTU 는 MODBUS RTU(시리얼 슬레이브) 서버 트랜스포트이다.
+	TransportRTU = "rtu"
+)
+
+// 백킹 모드 디스크리미네이터 상수(REQ-MODBUS-010-01).
+const (
+	// BackingModeDirect 는 마스터 읽기 요청 시 실제(upstream) 디바이스를 즉시 조회하는 모드이다.
+	BackingModeDirect = "direct"
+	// BackingModeIndirect 는 백그라운드 폴러가 주기적으로 upstream 을 폴링하고 마스터 읽기는
+	// RegisterMap 저장값으로 서빙하는 모드이다.
+	BackingModeIndirect = "indirect"
+)
+
+// ModbusServerConfig 는 MODBUS 서버 에이전트의 설정을 나타낸다.
 type ModbusServerConfig struct {
-	ListenAddress  string        // 리슨 주소 (기본값 "0.0.0.0")
-	ListenPort     int           // 리슨 포트 (기본값 502, 범위 1-65535)
-	UnitID         byte          // 유닛 ID (기본값 1, 범위 0-247) — 하위 호환용, Devices 가 없을 때 사용
-	MaxConnections int           // 최대 연결 수 (기본값 10, > 0)
-	IdleTimeout    time.Duration // 유휴 타임아웃 (기본값 60s)
-	MsgChannelSize int           // 메시지 채널 버퍼 크기 (기본값 256)
+	Transport      string            // "tcp" | "rtu" (기본값 "tcp")
+	Serial         SerialConfig      // Transport == "rtu" 일 때만 유효한 시리얼 파라미터
+	ListenAddress  string            // 리슨 주소 (기본값 "0.0.0.0", TCP 전용)
+	ListenPort     int               // 리슨 포트 (기본값 502, 범위 1-65535, TCP 전용)
+	UnitID         byte              // 유닛 ID (기본값 1, 범위 0-247) — 하위 호환용, Devices 가 없을 때 사용
+	MaxConnections int               // 최대 연결 수 (기본값 10, > 0, TCP 전용)
+	IdleTimeout    time.Duration     // 유휴 타임아웃 (기본값 60s, TCP 전용)
+	MsgChannelSize int               // 메시지 채널 버퍼 크기 (기본값 256)
 	RegisterMap    RegisterMapConfig // 하위 호환용, Devices 가 없을 때 사용
-	Devices        []DeviceConfig    // 다중 디바이스 설정 (M1: 멀티-디바이스 지원)
+	Devices        []DeviceConfig    // 다중 디바이스 설정 (멀티-디바이스 지원)
+	NotifyOnWrite  bool              // 외부 통신(원격 마스터 와이어 쓰기)로 레지스터가 변경될 때만 register_change 알림 발행 (기본값 false, opt-in)
+	LogFrames      bool              // TX/RX 프레임 요약 로그 활성 여부 (기본값 false, Configure 로 라이브 갱신)
+	LogRawFrames   bool              // 프레임 로그에 전체 ADU hex 포함 여부 (LogFrames 가 켜져 있을 때만 의미, 기본값 false, 라이브 갱신)
+}
+
+// SerialConfig 는 RTU 트랜스포트의 시리얼 포트 파라미터이다.
+// 클라이언트 에이전트(internal/agent/modbus)의 SerialConfig 와 동일한 옵션 키를 사용한다.
+// transport == "rtu" 일 때 Transport.Options 에서 파싱·검증된다.
+type SerialConfig struct {
+	Port     string // 시리얼 포트 경로 (필수, 예: /dev/ttyUSB0)
+	BaudRate int    // 기본값 9600
+	DataBits int    // 기본값 8
+	StopBits int    // 기본값 1 (1 또는 2)
+	Parity   string // "none" | "even" | "odd" (기본값 "none")
+}
+
+// BackingConfig 는 가상 디바이스가 백킹하는 실제(upstream) MODBUS 디바이스의 설정이다.
+// nil 이면 순수 slave(하위 호환)이며, upstream 연결을 전혀 수립하지 않는다.
+type BackingConfig struct {
+	Transport    string        // "tcp" | "rtu" (기본값 "tcp")
+	Host         string        // TCP endpoint host (transport == "tcp" 일 때 필수)
+	Port         int           // TCP endpoint port (transport == "tcp" 일 때 필수, 1-65535)
+	Serial       SerialConfig  // RTU 시리얼 파라미터 (transport == "rtu" 일 때 필수)
+	UnitID       byte          // upstream 디바이스 unit id (가상 UnitID 와 독립, 기본값 1)
+	Mode         string        // "direct" | "indirect" (필수)
+	PollInterval time.Duration // indirect 전용, > 0
+	Timeout      time.Duration // upstream 요청 데드라인 + (indirect) stale 허용 한도
 }
 
 // DeviceConfig 는 단일 가상 디바이스의 설정을 나타낸다.
@@ -29,6 +75,7 @@ type DeviceConfig struct {
 	Name         string            // 디바이스 이름 (선택, 로깅/식별용)
 	RegisterMap  RegisterMapConfig // 디바이스별 레지스터 맵
 	RegisterDefs []any             // 디바이스별 레지스터 정의 (Bridge Adapter 매핑용)
+	Backing      *BackingConfig    // upstream 백킹 설정 (nil = 순수 slave, 하위 호환)
 }
 
 // RegisterMapConfig 는 레지스터 맵의 설정을 나타낸다.
@@ -42,11 +89,20 @@ type RegisterMapConfig struct {
 
 // RegisterAreaConfig 는 단일 레지스터 영역의 설정을 나타낸다.
 type RegisterAreaConfig struct {
-	StartAddress  uint16              // 시작 주소
-	Count         uint16              // 레지스터 수 (필수, > 0)
-	InitialValues []any               // 초기값 (선택); 코일/DI 는 bool, 레지스터는 숫자
-	DataType      string              // 영역 기본 데이터 타입 (기본: "uint16")
-	TypeMap       []modbus.TypeMapEntry // 주소별 타입 오버라이드 (선택)
+	StartAddress  uint16                // 디바이스 주소 (config 키 "address", 하위 호환 "start_address")
+	Count         uint16                // 레지스터 수 (필수, > 0)
+	InitialValues []any                 // 초기값 (선택); 코일/DI 는 bool, 레지스터는 숫자 (로컬 세그먼트 전용)
+	DataType      string                // 영역 기본 데이터 타입 (기본: "uint16", 로컬 세그먼트 전용)
+	TypeMap       []modbus.TypeMapEntry // 주소별 타입 오버라이드 (선택, 로컬 세그먼트 전용)
+
+	// 공유 세그먼트(intra-server): shared_address 가 있으면 IsShared=true 이며,
+	// 디바이스 주소 [StartAddress, StartAddress+Count) 는 unit_id 0(공유 컨테이너)의
+	// 같은 영역 [SharedAddress, SharedAddress+Count) 로 앨리어싱된다. data_type/type
+	// 오버레이는 컨테이너 맵에서 상속하므로 공유 세그먼트에는 요구하지 않는다.
+	IsShared      bool   // shared_address 존재 여부 (로컬 vs 공유 판별자)
+	SharedAddress uint16 // 공유 컨테이너(unit_id 0)에서의 시작 주소 (IsShared 일 때만 유효)
+
+	Description string // 세그먼트 설명 (선택, 메타데이터 전용 — 와이어 서빙에 영향 없음)
 }
 
 // ---------------------------------------------------------------------------
@@ -56,12 +112,36 @@ type RegisterAreaConfig struct {
 // parseModbusServerConfig 는 Transport.Options 맵에서 ModbusServerConfig 를 파싱한다.
 func parseModbusServerConfig(opts map[string]any) (ModbusServerConfig, error) {
 	cfg := ModbusServerConfig{
+		Transport:      TransportTCP,
 		ListenAddress:  "0.0.0.0",
 		ListenPort:     502,
 		UnitID:         1,
 		MaxConnections: 10,
 		IdleTimeout:    60 * time.Second,
 		MsgChannelSize: 256,
+	}
+
+	// transport (선택, 기본 "tcp" — 생략 시 기존 TCP 동작 보존)
+	if v, ok := opts["transport"]; ok {
+		s, _ := v.(string)
+		switch s {
+		case TransportTCP, "":
+			cfg.Transport = TransportTCP
+		case TransportRTU:
+			cfg.Transport = TransportRTU
+		default:
+			return ModbusServerConfig{}, fmt.Errorf(
+				"modbus-server: transport %q must be %q or %q", s, TransportTCP, TransportRTU)
+		}
+	}
+
+	// RTU 시리얼 파라미터 (transport == "rtu" 일 때 파싱·검증)
+	if cfg.Transport == TransportRTU {
+		sc, err := parseServerSerialConfig(opts)
+		if err != nil {
+			return ModbusServerConfig{}, err
+		}
+		cfg.Serial = sc
 	}
 
 	// listen_address
@@ -115,6 +195,30 @@ func parseModbusServerConfig(opts map[string]any) (ModbusServerConfig, error) {
 		cfg.MsgChannelSize = toInt(v)
 	}
 
+	// notify_on_write (선택, 기본 false — opt-in). true 이면 외부 통신(원격 마스터의
+	// 와이어 쓰기)으로 레지스터가 변경될 때만 register_change 알림을 발행한다. 플로우 입력
+	// 포트(set_*/bulk_write)로 인한 변경 알림(sendChangeEvent)에는 영향을 주지 않는다.
+	if v, ok := opts["notify_on_write"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.NotifyOnWrite = b
+		}
+	}
+
+	// log_frames (선택, 기본 false — 라이브 갱신). true 이면 TX/RX 프레임 요약을 INFO 로 남긴다.
+	if v, ok := opts["log_frames"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.LogFrames = b
+		}
+	}
+
+	// log_raw_frames (선택, 기본 false — 라이브 갱신). true 이고 log_frames 도 true 일 때만
+	// 프레임 로그에 전체 ADU hex 를 포함한다(log_frames 가 꺼져 있으면 무의미).
+	if v, ok := opts["log_raw_frames"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.LogRawFrames = b
+		}
+	}
+
 	// ---------------------------------------------------------------
 	// devices (멀티-디바이스) 또는 register_map (하위 호환)
 	// ---------------------------------------------------------------
@@ -153,14 +257,20 @@ func parseModbusServerConfig(opts map[string]any) (ModbusServerConfig, error) {
 			},
 		}
 	} else {
-		// register_map 도 devices 도 없는 경우
-		return ModbusServerConfig{}, fmt.Errorf(
-			"modbus-server: register_map or devices is required: %w", ErrInvalidRegisterMap)
+		// devices/register_map 둘 다 없으면 zero-device 서버로 구성한다.
+		// role=sub(공유 상속) 뿐 아니라 role=main 도 허용한다: 디바이스는 생성 이후
+		// config 업데이트(device 탭 → PUT /agents/{id}/config)로 추가되므로 생성 폼은
+		// 더 이상 devices 를 공급하지 않는다. cfg.Devices 는 빈 채로 두고,
+		// NewModbusServerAgent 가 NewEmptyDeviceManager 로 빈 서빙 집합을 구성한다
+		// (어떤 unit_id 요청도 디바이스를 못 찾을 뿐 panic 없음).
 	}
 
-	// Devices 유효성 검증
-	if err := validateDevices(cfg.Devices); err != nil {
-		return ModbusServerConfig{}, err
+	// Devices 유효성 검증: 자체 디바이스를 가진 경우에만 검증한다.
+	// (main-상속 서브는 이 시점에 디바이스가 없으며 Start 에서 채워진다.)
+	if len(cfg.Devices) > 0 {
+		if err := validateDevices(cfg.Devices); err != nil {
+			return ModbusServerConfig{}, err
+		}
 	}
 
 	return cfg, nil
@@ -185,12 +295,12 @@ func parseDevicesConfig(raw any) ([]DeviceConfig, error) {
 
 		var dev DeviceConfig
 
-		// unit_id (필수, 1-247)
+		// unit_id (필수). 0 은 공유 컨테이너(와이어 미서빙), 1-247 은 서빙 디바이스.
 		if v, ok := devMap["unit_id"]; ok {
 			id := toInt(v)
-			if id < 1 || id > 247 {
+			if id < 0 || id > 247 {
 				return nil, fmt.Errorf(
-					"modbus-server: devices[%d].unit_id must be 1-247 (got %d)", i, id)
+					"modbus-server: devices[%d].unit_id must be 0-247 (got %d)", i, id)
 			}
 			dev.UnitID = byte(id)
 		} else {
@@ -229,32 +339,280 @@ func parseDevicesConfig(raw any) ([]DeviceConfig, error) {
 			}
 		}
 
+		// backing (선택: upstream 백킹 설정). 부재 시 nil → 순수 slave(하위 호환).
+		if rawBacking, ok := devMap["backing"]; ok {
+			bc, err := parseBackingConfig(rawBacking, i)
+			if err != nil {
+				return nil, err
+			}
+			dev.Backing = bc
+		}
+
 		devices = append(devices, dev)
 	}
 
 	return devices, nil
 }
 
+// parseBackingConfig 는 device 설정의 backing 서브맵을 파싱·검증한다(REQ-MODBUS-010-01).
+//   - mode 는 필수이며 "direct" | "indirect" 중 하나여야 한다.
+//   - transport 는 "tcp"(기본) | "rtu"; tcp 는 host/port, rtu 는 시리얼 파라미터를 요구한다.
+//   - mode == indirect 이면 poll_interval 과 timeout 이 필수이며 양수여야 한다.
+//
+// 검증 실패 시 부분 적용 없이 오류를 반환한다(AC-02).
+func parseBackingConfig(raw any, deviceIdx int) (*BackingConfig, error) {
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf(
+			"modbus-server: devices[%d].backing must be a map: %w", deviceIdx, ErrInvalidBackingConfig)
+	}
+
+	bc := &BackingConfig{
+		Transport: TransportTCP,
+		UnitID:    1,
+	}
+
+	// transport (선택, 기본 "tcp")
+	if v, ok := m["transport"]; ok {
+		s, _ := v.(string)
+		switch s {
+		case TransportTCP, "":
+			bc.Transport = TransportTCP
+		case TransportRTU:
+			bc.Transport = TransportRTU
+		default:
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].backing.transport %q must be %q or %q: %w",
+				deviceIdx, s, TransportTCP, TransportRTU, ErrInvalidBackingConfig)
+		}
+	}
+
+	// mode (필수)
+	modeStr, _ := m["mode"].(string)
+	switch modeStr {
+	case BackingModeDirect, BackingModeIndirect:
+		bc.Mode = modeStr
+	case "":
+		return nil, fmt.Errorf(
+			"modbus-server: devices[%d].backing.mode is required: %w", deviceIdx, ErrInvalidBackingConfig)
+	default:
+		return nil, fmt.Errorf(
+			"modbus-server: devices[%d].backing.mode %q must be %q or %q: %w",
+			deviceIdx, modeStr, BackingModeDirect, BackingModeIndirect, ErrInvalidBackingConfig)
+	}
+
+	// unit_id (선택, 0-247, 기본 1)
+	if v, ok := m["unit_id"]; ok {
+		id := toInt(v)
+		if id < 0 || id > 247 {
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].backing.unit_id must be 0-247 (got %d): %w",
+				deviceIdx, id, ErrInvalidBackingConfig)
+		}
+		bc.UnitID = byte(id)
+	}
+
+	// endpoint 검증 (transport 별)
+	switch bc.Transport {
+	case TransportTCP:
+		host, _ := m["host"].(string)
+		if host == "" {
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].backing.host is required for tcp transport: %w",
+				deviceIdx, ErrInvalidBackingConfig)
+		}
+		bc.Host = host
+
+		portRaw, ok := m["port"]
+		if !ok {
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].backing.port is required for tcp transport: %w",
+				deviceIdx, ErrInvalidBackingConfig)
+		}
+		bc.Port = toInt(portRaw)
+		if bc.Port < 1 || bc.Port > 65535 {
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].backing.port must be 1-65535 (got %d): %w",
+				deviceIdx, bc.Port, ErrInvalidBackingConfig)
+		}
+
+	case TransportRTU:
+		// 시리얼 파라미터는 서버 리스너용 parseServerSerialConfig 를 재사용한다
+		// (serial_port/port 필수, 나머지는 관례적 기본값).
+		sc, err := parseServerSerialConfig(m)
+		if err != nil {
+			return nil, err
+		}
+		bc.Serial = sc
+	}
+
+	// timeout (선택 문자열; indirect 에서 필수)
+	if d, ok, err := parseDurationField(m, "timeout", deviceIdx); err != nil {
+		return nil, err
+	} else if ok {
+		bc.Timeout = d
+	}
+
+	// poll_interval (선택 문자열; indirect 에서 필수)
+	if d, ok, err := parseDurationField(m, "poll_interval", deviceIdx); err != nil {
+		return nil, err
+	} else if ok {
+		bc.PollInterval = d
+	}
+
+	// mode 별 필수 검증
+	if bc.Mode == BackingModeIndirect {
+		if bc.PollInterval <= 0 {
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].backing.poll_interval is required and must be > 0 for indirect mode: %w",
+				deviceIdx, ErrInvalidBackingConfig)
+		}
+		if bc.Timeout <= 0 {
+			return nil, fmt.Errorf(
+				"modbus-server: devices[%d].backing.timeout is required and must be > 0 for indirect mode: %w",
+				deviceIdx, ErrInvalidBackingConfig)
+		}
+	} else if bc.Timeout < 0 {
+		return nil, fmt.Errorf(
+			"modbus-server: devices[%d].backing.timeout must be >= 0 (got %s): %w",
+			deviceIdx, bc.Timeout, ErrInvalidBackingConfig)
+	}
+
+	return bc, nil
+}
+
+// parseDurationField 는 맵에서 key 에 해당하는 duration 문자열(예: "500ms", "2s")을 파싱한다.
+// 키가 없으면 (0, false, nil) 을 반환한다(선택적 필드용).
+func parseDurationField(m map[string]any, key string, deviceIdx int) (time.Duration, bool, error) {
+	v, ok := m[key]
+	if !ok {
+		return 0, false, nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return 0, false, fmt.Errorf(
+			"modbus-server: devices[%d].backing.%s must be a duration string: %w",
+			deviceIdx, key, ErrInvalidBackingConfig)
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, false, fmt.Errorf(
+			"modbus-server: devices[%d].backing.%s invalid duration %q: %w",
+			deviceIdx, key, s, ErrInvalidBackingConfig)
+	}
+	return d, true, nil
+}
+
+// areaNames 는 register_map 의 4개 표준 영역 이름이다.
+var areaNames = []string{"coils", "discrete_inputs", "holding_registers", "input_registers"}
+
+// areaSegments 는 RegisterMapConfig 에서 영역 이름에 해당하는 세그먼트 슬라이스를 반환한다.
+func areaSegments(cfg RegisterMapConfig, area string) []*RegisterAreaConfig {
+	switch area {
+	case "coils":
+		return cfg.Coils
+	case "discrete_inputs":
+		return cfg.DiscreteInputs
+	case "holding_registers":
+		return cfg.HoldingRegisters
+	case "input_registers":
+		return cfg.InputRegisters
+	default:
+		return nil
+	}
+}
+
+// hasSharedSegment 는 register_map 에 공유 세그먼트가 하나라도 있으면 true 를 반환한다.
+func hasSharedSegment(cfg RegisterMapConfig) bool {
+	for _, area := range areaNames {
+		for _, seg := range areaSegments(cfg, area) {
+			if seg.IsShared {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// rangeWithinAnySegment 는 [start, start+count) 가 segs 중 하나의 범위에 완전히 포함되면 true.
+func rangeWithinAnySegment(segs []*RegisterAreaConfig, start, count uint16) bool {
+	end := uint32(start) + uint32(count)
+	for _, s := range segs {
+		if uint32(start) >= uint32(s.StartAddress) && end <= uint32(s.StartAddress)+uint32(s.Count) {
+			return true
+		}
+	}
+	return false
+}
+
 // validateDevices 는 디바이스 목록의 유효성을 검증한다.
-// - 최소 1개 디바이스 필요
-// - Unit ID 범위: 1-247
-// - Unit ID 중복 불가
+//   - Unit ID 범위: 0(공유 컨테이너) 또는 1-247(서빙), 중복 불가
+//   - 서빙 디바이스(1-247) 최소 1개 필요
+//   - 공유 세그먼트(shared_address)는 컨테이너(unit_id 0)가 존재해야 하며, 컨테이너의
+//     같은 영역 선언 범위 안에 있어야 한다
+//   - unit_id 0 의 세그먼트는 모두 로컬이어야 한다(shared_address 금지)
 func validateDevices(devices []DeviceConfig) error {
 	if len(devices) == 0 {
 		return fmt.Errorf("modbus-server: at least one device is required: %w", ErrInvalidDeviceConfig)
 	}
 
 	seen := make(map[byte]bool, len(devices))
-	for i, dev := range devices {
-		if dev.UnitID < 1 || dev.UnitID > 247 {
+	var container *DeviceConfig
+	servedCount := 0
+	for i := range devices {
+		dev := &devices[i]
+		if dev.UnitID > 247 {
 			return fmt.Errorf(
-				"modbus-server: devices[%d].unit_id must be 1-247 (got %d)", i, dev.UnitID)
+				"modbus-server: devices[%d].unit_id must be 0-247 (got %d)", i, dev.UnitID)
 		}
 		if seen[dev.UnitID] {
 			return fmt.Errorf(
 				"modbus-server: duplicate unit_id %d in devices: %w", dev.UnitID, ErrDuplicateUnitID)
 		}
 		seen[dev.UnitID] = true
+
+		if dev.UnitID == 0 {
+			container = dev
+			// 컨테이너 세그먼트는 모두 로컬이어야 한다.
+			if hasSharedSegment(dev.RegisterMap) {
+				return fmt.Errorf(
+					"modbus-server: unit_id 0 (shared container) segments must be local (no shared_address): %w",
+					ErrSharedUnderContainer)
+			}
+		} else {
+			servedCount++
+		}
+	}
+
+	if servedCount == 0 {
+		return fmt.Errorf(
+			"modbus-server: at least one served device (unit_id 1-247) is required: %w", ErrInvalidDeviceConfig)
+	}
+
+	// 공유 세그먼트 검증: 컨테이너 존재 + 범위 포함.
+	for i := range devices {
+		dev := &devices[i]
+		if dev.UnitID == 0 {
+			continue
+		}
+		for _, area := range areaNames {
+			for _, seg := range areaSegments(dev.RegisterMap, area) {
+				if !seg.IsShared {
+					continue
+				}
+				if container == nil {
+					return fmt.Errorf(
+						"modbus-server: devices unit_id %d %s has a shared segment but no unit_id 0 container exists: %w",
+						dev.UnitID, area, ErrSharedMapMissing)
+				}
+				if !rangeWithinAnySegment(areaSegments(container.RegisterMap, area), seg.SharedAddress, seg.Count) {
+					return fmt.Errorf(
+						"modbus-server: unit_id %d %s shared range [%d,%d) is out of container %s bounds: %w",
+						dev.UnitID, area, seg.SharedAddress, uint32(seg.SharedAddress)+uint32(seg.Count),
+						area, ErrSharedRangeOutOfBounds)
+				}
+			}
+		}
 	}
 
 	return nil
@@ -378,8 +736,10 @@ func validateSegmentOverlap(segments []*RegisterAreaConfig, areaName string) err
 func parseRegisterAreaConfig(m map[string]any, areaName string) (RegisterAreaConfig, error) {
 	var area RegisterAreaConfig
 
-	// start_address
-	if v, ok := m["start_address"]; ok {
+	// address (신규 키) — 하위 호환으로 start_address 도 허용
+	if v, ok := m["address"]; ok {
+		area.StartAddress = toUint16(v)
+	} else if v, ok := m["start_address"]; ok {
 		area.StartAddress = toUint16(v)
 	}
 
@@ -392,7 +752,24 @@ func parseRegisterAreaConfig(m map[string]any, areaName string) (RegisterAreaCon
 			"modbus-server: register_map.%s.count must be > 0", areaName)
 	}
 
-	// initial_values (선택)
+	// description (선택, 메타데이터 전용) — 로컬/공유 세그먼트 모두 적용.
+	// shared_address 조기 반환 이전에 읽어 두 경로 모두에서 보존한다.
+	if v, ok := m["description"]; ok {
+		if s, ok := v.(string); ok {
+			area.Description = s
+		}
+	}
+
+	// shared_address (선택) — 존재하면 공유 세그먼트로 판별된다.
+	// 공유 세그먼트는 data_type/initial_values/type_map 를 컨테이너(unit_id 0)에서
+	// 상속하므로 로컬 전용 필드를 파싱하지 않는다.
+	if v, ok := m["shared_address"]; ok {
+		area.IsShared = true
+		area.SharedAddress = toUint16(v)
+		return area, nil
+	}
+
+	// initial_values (선택, 로컬 세그먼트 전용)
 	if v, ok := m["initial_values"]; ok {
 		if vals, ok := v.([]any); ok {
 			if len(vals) > int(area.Count) {
@@ -527,6 +904,70 @@ func validateTypeMap(typeMap []modbus.TypeMapEntry, startAddr, count uint16, are
 	}
 
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// RTU 시리얼 설정 파싱
+// ---------------------------------------------------------------------------
+
+// parseServerSerialConfig 는 Transport.Options 에서 RTU 시리얼 파라미터를 파싱·검증한다.
+// 클라이언트 에이전트(internal/agent/modbus)의 parseSerialConfig 와 동일한 옵션 키를
+// 사용한다: serial_port(또는 port)는 필수이며, 나머지는 관례적 기본값을 가진다.
+func parseServerSerialConfig(opts map[string]any) (SerialConfig, error) {
+	sc := SerialConfig{
+		BaudRate: 9600,
+		DataBits: 8,
+		StopBits: 1,
+		Parity:   "none",
+	}
+
+	// serial_port / port (필수)
+	if v, ok := opts["serial_port"]; ok {
+		sc.Port, _ = v.(string)
+	} else if v, ok := opts["port"]; ok {
+		sc.Port, _ = v.(string)
+	}
+	if sc.Port == "" {
+		return SerialConfig{}, ErrMissingSerialPort
+	}
+
+	// baud_rate (기본 9600, > 0)
+	if v, ok := opts["baud_rate"]; ok {
+		sc.BaudRate = toInt(v)
+	}
+	if sc.BaudRate <= 0 {
+		return SerialConfig{}, fmt.Errorf("modbus-server: baud_rate must be > 0 (got %d): %w", sc.BaudRate, ErrInvalidSerialParam)
+	}
+
+	// data_bits (기본 8, 5-8)
+	if v, ok := opts["data_bits"]; ok {
+		sc.DataBits = toInt(v)
+	}
+	if sc.DataBits < 5 || sc.DataBits > 8 {
+		return SerialConfig{}, fmt.Errorf("modbus-server: data_bits must be 5-8 (got %d): %w", sc.DataBits, ErrInvalidSerialParam)
+	}
+
+	// stop_bits (기본 1, 1 또는 2)
+	if v, ok := opts["stop_bits"]; ok {
+		sc.StopBits = toInt(v)
+	}
+	if sc.StopBits != 1 && sc.StopBits != 2 {
+		return SerialConfig{}, fmt.Errorf("modbus-server: stop_bits must be 1 or 2 (got %d): %w", sc.StopBits, ErrInvalidSerialParam)
+	}
+
+	// parity (기본 "none", none|even|odd)
+	if v, ok := opts["parity"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			sc.Parity = s
+		}
+	}
+	switch sc.Parity {
+	case "none", "even", "odd":
+	default:
+		return SerialConfig{}, fmt.Errorf("modbus-server: parity %q must be none|even|odd: %w", sc.Parity, ErrInvalidSerialParam)
+	}
+
+	return sc, nil
 }
 
 // ---------------------------------------------------------------------------

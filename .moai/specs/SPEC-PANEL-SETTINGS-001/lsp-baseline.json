@@ -1,0 +1,17 @@
+{
+  "spec_id": "SPEC-PANEL-SETTINGS-001",
+  "phase": "plan",
+  "captured_at": "2026-08-08",
+  "scope": "web",
+  "commands": {
+    "typecheck": "cd web && npx tsc --noEmit",
+    "lint": "cd web && npx eslint ."
+  },
+  "counts": {
+    "errors": 1,
+    "warnings": 43,
+    "type_errors": 0,
+    "lint_errors": 1
+  },
+  "notes": "Pre-implementation baseline. tsc --noEmit exit=0 (0 type errors). eslint exit=1: 44 problems (1 error, 43 warnings). The single lint error is web/vite.config.js:10:26 '__dirname is not defined' (no-undef) — pre-existing, unrelated to this SPEC. The 43 warnings are pre-existing react-hooks/exhaustive-deps and react-refresh advisories across the existing codebase. No SPEC-PANEL-SETTINGS-001 code exists yet (plan phase). Run-phase target: no NEW errors/type-errors/lint-errors introduced (quality.yaml lsp_quality_gates.run.max_* = 0, allow_regression=false)."
+}

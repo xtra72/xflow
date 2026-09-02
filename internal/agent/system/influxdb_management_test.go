@@ -193,6 +193,14 @@ func mockInfluxClientNil() *mockInfluxClient { return &mockInfluxClient{} }
 
 // ===== v3 어댑터 스텁 =====
 
+// TestInfluxV3Client_관리메서드_미지원 은 v3 가 지원하지 않는 관리 조작 **5 종**을
+// 잠근다.
+//
+// [SPEC-TSDB-002 §2.10 반전] 이전에는 6 종이었고 ListMeasurements 가 그중
+// 하나였다. measurement 목록 조회는 관리 조작이 아니라 스키마 조회이며 v3 의
+// SHOW MEASUREMENTS 로 실제 동작하므로, 그 단언만 제거하고 아래
+// TestInfluxV3Client_ListMeasurements_501해제 로 반전했다. 나머지 5 종의 501 은
+// 그대로 유지한다 — 본 SPEC 은 읽기 전용 디스커버리만 다룬다(spec.md §1.3).
 func TestInfluxV3Client_관리메서드_미지원(t *testing.T) {
 	c := &influxV3Client{}
 	ctx := context.Background()
@@ -206,8 +214,19 @@ func TestInfluxV3Client_관리메서드_미지원(t *testing.T) {
 	assert.ErrorIs(t, c.DeleteBucket(ctx, "x"), ErrManagementNotSupported)
 	assert.ErrorIs(t, c.TruncateBucket(ctx, "x"), ErrManagementNotSupported)
 
-	_, err = c.ListMeasurements(ctx, "x")
-	assert.ErrorIs(t, err, ErrManagementNotSupported)
-
 	assert.ErrorIs(t, c.DeleteMeasurement(ctx, "x", "cpu"), ErrManagementNotSupported)
+}
+
+// TestInfluxV3Client_ListMeasurements_501해제 는 위 테스트에서 빠진 한 종의
+// 반전을 명시적으로 잠근다(spec.md §2.10 D1 · acceptance.md AC-32).
+//
+// 단언은 "ErrManagementNotSupported 가 아니다" 이다. 실제 조회는 네트워크를
+// 타므로 여기서는 실패하지만, 그 실패가 미지원 센티넬이어서는 안 된다 — 그것이
+// 501 을 만들던 원인이다. 쿼리 문자열과 컬럼 파싱은 influxdb_schema_test.go 가
+// 네트워크 없이 검증한다.
+func TestInfluxV3Client_ListMeasurements_501해제(t *testing.T) {
+	c := &influxV3Client{}
+	_, err := c.ListMeasurements(context.Background(), "x")
+	assert.NotErrorIs(t, err, ErrManagementNotSupported,
+		"v3 의 measurement 목록 조회는 SHOW MEASUREMENTS 로 동작해야 한다")
 }

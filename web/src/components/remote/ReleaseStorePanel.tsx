@@ -5,7 +5,7 @@
 // 이미지를 자동 다운로드한다(RPi armv6/armv7 은 모두 arm 으로 보고).
 //
 // 구성:
-//   - 헤더 + 설명.
+//   - 설명(제목은 앱 헤더가 그린다).
 //   - "새 버전" 폼: 버전(semver) + 채널 + 노트 → createRelease.
 //   - 버전 목록: 각 버전마다 5슬롯 아키텍처 매트릭스(업로드됨/누락) + 슬롯별 업로드
 //     컨트롤(바이너리 + 서명 파일) + 자산/버전 삭제(ConfirmDialog).
@@ -155,18 +155,11 @@ export function ReleaseStorePanel(): React.JSX.Element {
 
   return (
     <div className="space-y-6" data-testid="release-store-panel">
-      {/* 헤더 */}
-      <header>
-        <div className="flex items-center gap-2">
-          <Package className="h-5 w-5 text-(--color-text-muted)" aria-hidden="true" />
-          <h1 className="text-2xl font-semibold text-(--color-text-primary)">
-            {t('remote.releaseStore.title')}
-          </h1>
-        </div>
-        <p className="mt-1 text-sm text-(--color-text-muted)">
-          {t('remote.releaseStore.subtitle')}
-        </p>
-      </header>
+      {/* 설명 — 제목은 앱 헤더(Header 의 PAGE_TITLE_KEYS)가 그린다.
+          제목이 빠지면서 짝을 이루던 Package 아이콘과 flex 래퍼도 함께 걷어냈다. */}
+      <p className="text-sm text-(--color-text-muted)">
+        {t('remote.releaseStore.subtitle')}
+      </p>
 
       {/* 새 버전 폼 */}
       <section

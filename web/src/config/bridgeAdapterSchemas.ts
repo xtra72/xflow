@@ -55,7 +55,7 @@ const MODBUS_CLIENT_ADAPTER_FIELDS: ConfigField[] = [
   },
 ];
 
-// --- Modbus 서버 어댑터 설정 필드 (modbus-tcp-server) ---
+// --- Modbus 서버 어댑터 설정 필드 (modbus-gateway) ---
 // 서버는 외부 클라이언트 요청에 응답하므로 폴링 간격이 불필요하다.
 // 레지스터 맵은 에이전트 설정(register_defs, register_map)에서 관리한다.
 
@@ -101,7 +101,7 @@ const ADAPTER_SCHEMA_MAP: Record<string, ConfigField[]> = {
   'mqtt': MQTT_ADAPTER_FIELDS,
   'modbus-tcp': MODBUS_CLIENT_ADAPTER_FIELDS,
   'modbus-rtu': MODBUS_CLIENT_ADAPTER_FIELDS,
-  'modbus-tcp-server': MODBUS_SERVER_ADAPTER_FIELDS,
+  'modbus-gateway': MODBUS_SERVER_ADAPTER_FIELDS,
   'http': HTTP_ADAPTER_FIELDS,
 };
 
@@ -131,7 +131,7 @@ export function getAdapterCategoryLabel(agentType?: string): string | undefined 
     'mqtt': 'MQTT 설정',
     'modbus-tcp': 'Modbus 설정',
     'modbus-rtu': 'Modbus 설정',
-    'modbus-tcp-server': 'Modbus 설정',
+    'modbus-gateway': 'Modbus 설정',
     'http': 'HTTP 설정',
   };
   return labels[agentType];

@@ -134,3 +134,63 @@ describe('EnrollmentManagementPage', () => {
     expect(useManagedNodesMock).toHaveBeenCalledWith(undefined, false);
   });
 });
+
+// 제목은 앱 헤더(Header 의 PAGE_TITLE_KEYS)로 옮겼다. 제목을 걷어내면서 헤더가
+// `제목+설명 래퍼 | 버튼` 2단에서 `설명 | 버튼` 2단으로 바뀌었으므로, 사전 등록
+// 버튼이 사라지거나 좌측으로 밀리지 않는지 함께 못 박는다.
+describe('EnrollmentManagementPage — 본문 제목 제거', () => {
+  it('자체 제목(h1)을 그리지 않고 설명만 남긴다', () => {
+    renderPage();
+
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    expect(screen.queryByRole('heading', { name: '등록 관리' })).toBeNull();
+    expect(screen.getByTestId('enrollment-management-header')).toHaveTextContent(
+      '노드 등록 요청을 승인·거부·폐기하고, enrollment 토큰을 발급·관리합니다.',
+    );
+  });
+
+  it('사전 등록 버튼은 헤더의 마지막 자식으로 남는다(설명 뒤 = 우측 정렬 유지)', () => {
+    renderPage();
+
+    const header = screen.getByTestId('enrollment-management-header');
+    const button = screen.getByTestId('node-pre-register-button');
+    // 버튼은 헤더의 직계 자식이며, justify-between 의 우측 항목(마지막 자식)이다.
+    expect(button.parentElement).toBe(header);
+    expect(header.lastElementChild).toBe(button);
+    // 좌측 항목은 설명 문단 하나 = 총 2개 자식(래퍼 div 는 걷어냈다).
+    expect(header.children).toHaveLength(2);
+    expect(header.firstElementChild?.tagName).toBe('P');
+  });
+
+  it('사전 등록 버튼 노출 조건은 그대로다 — 비-server 모드에서는 렌더하지 않는다', () => {
+    useRemoteModeMock.mockReturnValue({ data: { mode: 'client' } });
+    renderPage();
+
+    expect(screen.getByTestId('enrollment-management-header')).toBeInTheDocument();
+    expect(screen.queryByTestId('node-pre-register-button')).toBeNull();
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+  });
+
+  it('로딩 상태에서도 버튼 없이 헤더만 렌더한다(기존 게이팅 유지)', () => {
+    useRemoteModeMock.mockReturnValue({ data: undefined });
+    renderPage();
+
+    expect(screen.getByTestId('enrollment-management-loading')).toBeInTheDocument();
+    expect(screen.queryByTestId('node-pre-register-button')).toBeNull();
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+  });
+
+  it('에러 상태에서도 버튼 없이 헤더만 렌더한다(기존 게이팅 유지)', () => {
+    useManagedNodesMock.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error('boom'),
+      refetch: vi.fn(),
+    });
+    renderPage();
+
+    expect(screen.getByTestId('enrollment-management-error')).toBeInTheDocument();
+    expect(screen.queryByTestId('node-pre-register-button')).toBeNull();
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+  });
+});

@@ -1,7 +1,7 @@
 # Store Engine Agent Example
 # 인메모리 키-값 저장소를 관리하는 에이전트
 #
-# store-write, store-read 노드가 agent_ref로 이 에이전트를 참조하여
+# storage-write, store-read 노드가 agent_ref로 이 에이전트를 참조하여
 # Store 인스턴스에 접근한다.
 #
 # 사용법:

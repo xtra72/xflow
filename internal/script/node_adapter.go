@@ -14,8 +14,10 @@ package script
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/xtra/xflow/pkg/message"
 )
@@ -129,6 +131,34 @@ func (a *NodeEngineAdapter) Close() error {
 func mapToMessage(m map[string]any, original message.Message) message.Message {
 	opts := []message.Option{}
 
+	// SPEC-MESSAGE-SPLIT-001: top-level type/timestamp/id 도 부분 갱신 계약을
+	// 적용한다. docstring("누락된 키는 원본 msg 의 값을 보존")을 payload/metadata
+	// 뿐 아니라 type/timestamp/id 에도 확장한다: 반환 map 에 값이 있으면 그 값을,
+	// 없으면 original 의 값을 사용한다. 이전에는 이 세 필드를 읽지 않아
+	// message.New() 가 type 을 "" 로 리셋하고 새 uuid / time.Now() 를 발급했다.
+
+	// type: m["type"] 가 string 이면 사용, 아니면 original.Type().
+	if t, ok := m["type"].(string); ok {
+		opts = append(opts, message.WithType(t))
+	} else if original != nil {
+		opts = append(opts, message.WithType(original.Type()))
+	}
+
+	// timestamp: m["timestamp"] 가 numeric(epoch ms)이면 사용, 아니면 original.
+	// FromLuaValue 는 Lua number 를 float64 로 변환하므로 주 경로는 float64.
+	if ms, ok := luaTimestampMs(m["timestamp"]); ok {
+		opts = append(opts, message.WithTimestamp(time.UnixMilli(ms)))
+	} else if original != nil {
+		opts = append(opts, message.WithTimestamp(original.Timestamp()))
+	}
+
+	// id: m["id"] 가 비어있지 않은 string 이면 사용, 아니면 original.ID().
+	if id, ok := m["id"].(string); ok && id != "" {
+		opts = append(opts, message.WithID(id))
+	} else if original != nil {
+		opts = append(opts, message.WithID(original.ID()))
+	}
+
 	if rawPayload, ok := m["payload"]; ok {
 		if payloadMap, ok := rawPayload.(map[string]any); ok {
 			opts = append(opts, message.WithPayload(message.NewPayload(payloadMap)))
@@ -191,4 +221,33 @@ func mapToMessage(m map[string]any, original message.Message) message.Message {
 		message.CopyMetadataGroups(out.Metadata(), original.Metadata())
 	}
 	return out
+}
+
+// luaTimestampMs 는 반환 map 의 timestamp 값(epoch milliseconds)을 int64 로
+// 변환한다. FromLuaValue 가 Lua number 를 float64 로 변환하므로 주 경로는
+// float64 이나, 다른 수치 형태(int64/int/json.Number)도 방어적으로 수용한다.
+// 두 번째 반환값이 false 면 값이 없거나 수치가 아니어서 원본 보존이 필요함을 뜻한다.
+func luaTimestampMs(v any) (int64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int64(n), true
+	case float32:
+		return int64(n), true
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case int32:
+		return int64(n), true
+	case json.Number:
+		if i, err := n.Int64(); err == nil {
+			return i, true
+		}
+		if f, err := n.Float64(); err == nil {
+			return int64(f), true
+		}
+		return 0, false
+	default:
+		return 0, false
+	}
 }

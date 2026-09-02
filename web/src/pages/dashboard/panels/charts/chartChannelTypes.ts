@@ -11,8 +11,18 @@
 // 컴파일 시 erase 되어 런타임 순환 의존을 만들지 않는다(store.ts 는 chartChannelTypes 를
 // import 하지 않는다).
 import type { DataType } from '@/services/api/store';
+// 표시 라벨 포맷은 매트릭스 컬럼명과 같은 곳(seriesLabels)에서 온다 — 같은 시리즈가 화면마다
+// 다른 표기를 갖지 않도록 두 번째 포맷터를 만들지 않는다. 순수 모듈이라 순환 의존이 없다.
+import { seriesRefDisplayName } from '@/services/api/seriesLabels';
+
+import { resolveSeriesAlias, type AliasContext } from './aliasTemplate';
 
 /** 단일 차트 항목 (WS 로 전송되는 entry) */
+import type { SeriesRange } from './seriesRange';
+import type { GraphStyle } from './graphStyle';
+import type { ChartFontFamily } from './textStyle';
+import type { SysMetricsCounterMode } from '@/pages/dashboard/panels/sysmetrics/sysMetricsItemOptions';
+
 export interface ChartEntry {
   /** epoch milliseconds (int64) */
   timestamp: number;
@@ -37,16 +47,24 @@ export type ChartConnectionStatus =
  * 차트 패널의 데이터 소스 종류.
  *
  * - `channel`: 기존 chart-emitter WebSocket 채널 경로(기본값).
- * - `store`: Store 에이전트의 시리즈 매트릭스 폴링 경로.
+ * - `store`: Store 에이전트(인메모리 TSDB)의 시리즈 매트릭스 폴링 경로.
+ * - `tsdb`: **에이전트를 통해 접근하는 외부 시계열 DB**(InfluxDB 가 첫 백엔드).
+ * - `sysmetrics`: **sysmetrics 에이전트의 라이브 스냅샷을 클라이언트가 누적**한 시계열.
+ *   에이전트는 이력을 보관하지 않으므로 패널이 마운트된 이후 구간만 그려진다 —
+ *   과거 구간이 필요하면 `sysmetrics-in` 노드로 Store 에 쌓고 `store` 소스를 쓴다.
  *
- * @spec SPEC-WEB-005
+ * memTSDB(`internal/tsdb/` · `/api/v1/tsdb/*`)는 플로우 노드 · WS 구독자용 내부
+ * 설비이며 **패널 데이터소스가 아니다** — 이 유니온에 대응 값이 없다.
+ * `SeriesDataSourceKind` 쪽 memTSDB 값은 `'memtsdb'` 다.
+ *
+ * @spec SPEC-WEB-005 · SPEC-TSDB-002 §2.1 (U1)
  */
-export type ChartDataSourceKind = 'channel' | 'store';
+export type ChartDataSourceKind = 'store' | 'tsdb' | 'sysmetrics';
 
 /**
  * Store 소스에서 조회할 단일 시리즈 참조.
  *
- * `key` 는 Store 키 이름이고, `metric_type`/`tags` 가 지정되면 해당 key 의
+ * `key` 는 Store 키 이름이고, `field`/`tags` 가 지정되면 해당 key 의
  * 특정 시리즈(저장소 기준 분류)로 좁혀 조회한다. 미지정이면 그 key 의 모든
  * 시리즈를 조회한다. `alias`/`color` 는 표시 전용이다.
  *
@@ -55,14 +73,40 @@ export type ChartDataSourceKind = 'channel' | 'store';
 export interface StoreSeriesRef {
   /** Store 키 이름. */
   key: string;
-  /** 시리즈별 선택 시 metric_type 필터(선택). */
-  metric_type?: string;
+  /** 시리즈별 선택 시 field 필터(선택). */
+  field?: string;
   /** 시리즈별 선택 시 tag 필터(선택). */
   tags?: Record<string, string>;
   /** 키 데이터 타입(표시/필터 메타데이터). */
   data_type?: DataType;
   /** 표시 별칭(미지정 시 key). */
   alias?: string;
+  /**
+   * 시리즈를 나눌 태그 키 목록(TSDB group by 축). @spec SPEC-TSDB-004 §2.1
+   *
+   * Store 소스는 이 축을 만들지 않지만, TSDB config 가 같은 어휘로 이 변환기를
+   * 공유하므로(`asSeriesConfig`) 여기에도 둔다. 없으면 정확 일치 모드다.
+   */
+  group_by?: string[];
+  /**
+   * **그룹별** 개별 표시 이름. 키는 `group_by` 를 정렬한 순서의 조합 서명이다
+   * (`groupComboSignature`). @spec SPEC-TSDB-004 §2.12
+   *
+   * `alias` 는 항목 하나에 이름 하나라 group by 로 펼쳐진 N개 그룹에 서로 다른
+   * 이름을 줄 수 없다. 토큰 템플릿(`CPU {$.tags.host}`)은 규칙이 있는 이름만
+   * 만들 수 있으므로, 그룹마다 임의의 이름을 붙이려면 별도 축이 필요하다.
+   *
+   * 우선순위: 그룹별 이름 > 항목 `alias` > 패널 형식 > 내장 서술 표기.
+   */
+  group_alias?: Record<string, string>;
+  /**
+   * **그룹별** 라인 색. 키는 `group_alias` 와 같은 조합 서명이다.
+   * @spec SPEC-TSDB-004 §2.14
+   *
+   * 항목의 `color` 는 group by 파생 줄에 쓰이지 않는다(OQ1) — 색 하나를 N개
+   * 그룹에 나눠 줄 수 없기 때문이다. 지정하지 않은 그룹은 자동 팔레트를 쓴다.
+   */
+  group_color?: Record<string, string>;
   /** 라인/카테고리 색상(미지정 시 자동 팔레트). */
   color?: string;
   /**
@@ -72,6 +116,13 @@ export interface StoreSeriesRef {
    */
   /** 라인 스타일(solid/dashed/dotted). 기본 'solid'. */
   stroke_style?: StrokeStyle;
+  /**
+   * 이 시리즈를 그리는 모양. 미지정이면 **패널 기본값을 따른다**.
+   *
+   * `undefined` 와 `'line'` 은 다르다 — 전자는 패널 기본값이 바뀌면 같이 바뀌고,
+   * 후자는 고정이다. 온도는 라인, 가동량은 바처럼 한 차트 안에서 섞어 그릴 때 쓴다.
+   */
+  graph_style?: GraphStyle;
   /** 라인 두께(px). 기본 2. */
   stroke_width?: number;
   /** 부드러운 곡선. 기본 false. */
@@ -115,17 +166,483 @@ export interface StoreSourceConfig {
   agent_name: string;
   /** Store 네임스페이스(미지정 시 'default'). */
   namespace?: string;
-  /** 조회할 시리즈 목록. 비어있으면 store 소스는 비활성으로 취급한다. */
+  /**
+   * 이름을 지정하지 않은 시리즈의 표시 이름 형식(템플릿). @spec SPEC-WEB-005
+   *
+   * `{$.measurement}` / `{$.field}` / `{$.tags.NAME}` 토큰과 리터럴을 섞어 쓴다
+   * (aliasTemplate 과 같은 문법). 시리즈에 이름(alias)을 직접 입력하면 그 이름이
+   * 항상 이기고, 이 형식은 이름이 비어 있는 시리즈에만 적용된다.
+   *
+   * 미지정이면 내장 서술 표기(`measurement · field{k=v}`)로 폴백한다.
+   */
+  series_name_format?: string;
+  /**
+   * 시리즈 선택 방식. @spec SPEC-WEB-005
+   *
+   * - `'keys'`(기본): 사용자가 `series[]` 를 직접 멀티셀렉트한다(기존 동작).
+   * - `'tag'`: `tag_filters` 로 매칭되는 모든 store 키를 폴링 시점마다 동적으로
+   *   시리즈로 확장한다. 태그 하위 키가 추가/삭제되면 자동 반영된다. `series[]` 는 무시된다.
+   *
+   * 미지정/undefined 는 `'keys'` 로 해석되어 하위 호환을 보존한다(기존 패널 무영향).
+   */
+  selection_mode?: 'keys' | 'tag';
+  /**
+   * 태그 AND 필터(`selection_mode === 'tag'` 일 때만 사용). @spec SPEC-WEB-005
+   *
+   * 예) `{ room: '1', type: 'temperature' }` → room=1 AND type=temperature 를 가진
+   * 모든 키가 시리즈가 된다. 폴링마다 재해석되므로 키 추가/삭제가 자동 반영된다.
+   * 비어있으면(키 0개) tag 모드는 비활성(idle)으로 취급한다.
+   */
+  tag_filters?: Record<string, string>;
+  /**
+   * 조회할 시리즈 목록. `'keys'` 모드의 정본이다. 비어있으면 store 소스는 비활성으로
+   * 취급한다. `'tag'` 모드에서는 무시되며 키가 동적으로 해석된다.
+   */
   series: StoreSeriesRef[];
-  /** 상대 시간 윈도우 길이(ms). now - time_window_ms 가 시작 시각. */
+  /**
+   * 상대 시간 윈도우 길이(ms). now - time_window_ms 가 시작 시각.
+   *
+   * `range` 가 없는 구 config 의 정본이며, `range` 가 있으면 상대 방식의 폴백 값으로만
+   * 쓰인다(`readSeriesRange`). 지우지 않는 이유는 되돌리기 때문이다 — 절대/갯수로
+   * 바꿨다가 상대로 되돌렸을 때 예전 창 길이가 살아나야 한다.
+   */
   time_window_ms: number;
+  /**
+   * 가져올 데이터 범위 — 기간(상대·절대) 또는 갯수. 미지정이면 `time_window_ms` 를
+   * 상대 기간으로 해석한다(구 config 하위 호환).
+   */
+  range?: SeriesRange;
   /** 버킷 크기(ms). */
   interval_ms: number;
   /** 집계 함수(UI 표기 그대로). */
   aggregation: 'min' | 'max' | 'average' | 'first' | 'last';
+  /**
+   * 빈 버킷 채우기 전략(인터벌 구간에 값이 없을 때). 미지정/'' 이면 빈 버킷을 생략한다.
+   *
+   * 어휘와 의미는 {@link TsdbSourceConfig.fill} 와 **같은 정본**이다 — 소스를 갈아탄
+   * 사용자가 같은 설정에서 다른 그림을 보지 않아야 한다. 계산은 서버(store `/query`)가
+   * 한다. `'avg'` 는 어느 백엔드에도 대응물이 없어 어휘에 없다.
+   */
+  fill?: '' | 'null' | 'zero' | 'previous';
+  /** `previous` 로 직전값을 이어 쓸 수 있는 최대 기간(ms). 0/미지정이면 무제한. */
+  fill_previous_max_ms?: number;
+  /** 사용 기간을 넘긴 버킷의 처리. 미지정이면 비운다(null). */
+  fill_previous_overflow?: '' | 'value';
+  /** 위가 `'value'` 일 때 채울 값. */
+  fill_previous_overflow_value?: number;
   /** 폴링 주기(ms). 미지정 시 기본값(약 5000ms)을 사용한다. */
   refresh_interval_ms?: number;
 }
+
+/**
+ * Store 소스의 **조회 창 기본값**(시간창 · 버킷 · 집계 · 폴링 주기) 단일 정본.
+ * @spec SPEC-CHART-002 §2.8 [E2] 1항
+ *
+ * 두 곳이 같은 값을 써야 한다.
+ *
+ *   1. `ChartPanelSections.tsx` 의 `defaultStoreSource()` — 사용자가 데이터 소스를
+ *      처음 Store 로 토글할 때.
+ *   2. `gaugeLegacyBinding.ts` 의 `buildGaugeStoreMigrationPatch()` — 게이지 레거시
+ *      바인딩을 이관할 때(spec 이 "기본값(`defaultStoreSource()`)" 이라고 못박았다).
+ *
+ * 값을 각자 복제하면 한쪽만 바뀔 때 이관 결과가 조용히 어긋난다. 그렇다고
+ * `defaultStoreSource()` 를 직접 import 하면 순수 모듈인 `gaugeLegacyBinding.ts` 가
+ * React 트리를 끌어와 단위 테스트가 무거워진다. 그래서 **양쪽이 이미 import 하는
+ * 의존성 없는 타입 모듈**인 여기에 값만 올린다.
+ */
+export const DEFAULT_STORE_SOURCE_WINDOW = {
+  time_window_ms: 60 * 60 * 1000, // 지난 1시간
+  interval_ms: 60 * 1000, // 1분 버킷
+  aggregation: 'average',
+  refresh_interval_ms: 5000,
+} as const satisfies Pick<
+  StoreSourceConfig,
+  'time_window_ms' | 'interval_ms' | 'aggregation' | 'refresh_interval_ms'
+>;
+
+/**
+ * 아무 것도 바인딩되지 않은 **기본 Store 소스**. `DEFAULT_STORE_SOURCE_WINDOW` 를 감싼
+ * 유일한 팩토리이며, 이 형상을 필요로 하는 모든 지점이 여기를 부른다.
+ *
+ *   1. `ChartPanelSections.tsx` 의 `defaultStoreSource()` — 데이터 소스를 처음 Store 로
+ *      토글할 때.
+ *   2. `uiStore.ts` 의 `createDefaultPanel()` — 통계/게이지/바/파이 신규 패널의 기본
+ *      데이터 소스(생성 위저드가 채널 이름을 묻지 않고 곧바로 Store 로 시작한다).
+ *   3. `AddPanelDialog.tsx` 의 Store 라인 차트 프리셋.
+ *
+ * 세 지점이 값을 각자 복제하고 있으면 한 곳만 바뀔 때 "같은 기본값" 이라는 전제가
+ * 조용히 깨진다 — 특히 (2)와 (3)은 사용자가 나란히 만드는 패널이라 어긋남이 바로
+ * 드러난다. 함수로 두는 이유는 `series` 배열이 패널마다 독립이어야 하기 때문이다
+ * (상수를 공유하면 한 패널의 시리즈 추가가 다른 패널로 샌다).
+ *
+ * `selection_mode` 를 넣지 않는 것이 기존 동작이다 — 부재는 `'keys'` 와 동일하게
+ * 해석되며(`panelDataSource.isStoreSourceActive`), 태그 모드는 설정 화면의 태그 피커로
+ * 진입한다.
+ */
+export function buildDefaultStoreSource(): StoreSourceConfig {
+  return {
+    agent_name: '',
+    namespace: 'default',
+    series: [],
+    ...DEFAULT_STORE_SOURCE_WINDOW,
+  };
+}
+
+/**
+ * TSDB 소스가 지원하는 백엔드. 확장 지점.
+ *
+ * 백엔드가 늘어도 `ChartDataSourceKind` 는 늘지 않는다 — 백엔드는 종류가 아니라
+ * TSDB 종류의 하위 축이며, 질의 라우팅의 정본은 참조된 에이전트의 실제 타입이다.
+ *
+ * @spec SPEC-TSDB-002 §2.2 (U2) · §2.18 (U11)
+ */
+export type TsdbBackend = 'influxdb';
+
+/**
+ * TSDB 시리즈 참조. **어휘는 `StoreSeriesRef` 와 동일**하며, 백엔드별 개념 대응은
+ * 쓰기 경로(`internal/node/storage_backend_*.go`)의 매핑 규약을 그대로 따른다.
+ *
+ *   key → measurement (influxdb)
+ *   field → field
+ *   tags → tags
+ *
+ * @spec SPEC-TSDB-002 §2.2 (U2)
+ */
+export interface TsdbSeriesRef {
+  /** 시리즈 키. influxdb 백엔드에서는 measurement 이름이다. */
+  key: string;
+  /**
+   * 값 필드. TSDB 소스에서는 **필수**다.
+   *
+   * `StoreSeriesRef.field` 와 달리 옵셔널이 아닌 이유는 "첫 번째 숫자 필드" 같은
+   * 폴백이 조용한 오답이기 때문이다(§2.16 #4).
+   */
+  field: string;
+  /** 시리즈 태그 필터(사전 필터 — 어느 데이터를 볼지). */
+  tags?: Record<string, string>;
+  /**
+   * 시리즈를 나눌 태그 키 목록(분할 축 — 어떻게 나눌지). @spec SPEC-TSDB-004 §2.1
+   *
+   * 비어 있거나 없으면 **정확 일치 모드**이며 이 항목은 시리즈 1개다(현행 동작).
+   * 키가 하나 이상이면 **group by 모드**이며 그 키들의 값 조합마다 시리즈가
+   * 하나씩 생긴다 — 항목 1개가 런타임에 N개로 펼쳐진다.
+   *
+   * `tags` 와 직교한다. `tags: {region:'kr'}` + `group_by: ['host']` 는
+   * "kr 리전 안에서 host 별로" 를 뜻한다. 같은 키를 양쪽에 두면 서버가 400 으로
+   * 거부한다 — 값이 고정된 키로 나누면 그룹이 항상 1개이기 때문이다.
+   *
+   * group by 모드에서 `color` 는 무시되고 자동 팔레트가 그룹마다 배정된다
+   * (색 하나를 N개 그룹에 나눠 줄 수 없다). `stroke_style`·`stroke_width`·
+   * `smooth` 는 전 그룹이 공유한다.
+   */
+  group_by?: string[];
+  /**
+   * 표시할 그룹을 태그 값 **조합 목록**으로 고른 것. @spec SPEC-TSDB-004 §2.7.1
+   *
+   * 없거나 비면 `group_by` 가 만드는 **전 그룹**을 표시한다(하위호환 · 백엔드 규약과
+   * 동일). 설정 UI 는 사용자가 표에서 고른 조합을 여기에 명시한다.
+   *
+   * 조합 목록인 이유는 다중 키 때문이다 — 키별 허용값 맵으로 두면 데카르트 곱이
+   * 되어 실재하지 않는 조합까지 고르게 된다.
+   */
+  group_filter?: Array<Record<string, string>>;
+  /** 표시 별칭(미지정 시 형식/서술 표기로 폴백). group by 항목에서는 템플릿이다. */
+  alias?: string;
+  /**
+   * **그룹별** 개별 표시 이름. 키는 `group_by` 를 정렬한 순서의 조합 서명이다
+   * (`groupComboSignature`). @spec SPEC-TSDB-004 §2.12
+   *
+   * `alias` 하나로는 펼쳐진 N개 그룹에 서로 다른 이름을 줄 수 없다. 토큰
+   * 템플릿은 규칙 있는 이름만 만들므로, 그룹마다 임의의 이름(예: "실습실")을
+   * 붙이려면 이 축이 필요하다. 우선순위는 그룹별 이름 > `alias` > 패널 형식.
+   *
+   * 조합을 해제해도 여기 남은 이름은 지우지 않는다 — 다시 켰을 때 이름이
+   * 돌아오는 편이 놀랍지 않다. 항목을 지우면 함께 사라진다.
+   */
+  group_alias?: Record<string, string>;
+  /**
+   * **그룹별** 라인 색. 키는 `group_alias` 와 같은 조합 서명이다.
+   * @spec SPEC-TSDB-004 §2.14
+   *
+   * 항목의 `color` 는 group by 파생 줄에 쓰이지 않는다(OQ1) — 색 하나를 N개
+   * 그룹에 나눠 줄 수 없기 때문이다. 지정하지 않은 그룹은 자동 팔레트를 쓴다.
+   */
+  group_color?: Record<string, string>;
+  /**
+   * 라인/카테고리 색상(미지정 시 자동 팔레트).
+   *
+   * `group_by` 가 지정된 항목에서는 무시된다(위 참조).
+   */
+  color?: string;
+  /** 라인 스타일(solid/dashed/dotted). 라인 차트 전용. */
+  stroke_style?: StrokeStyle;
+  /** 라인 두께(px). 라인 차트 전용. */
+  stroke_width?: number;
+  /** 부드러운 곡선. 라인 차트 전용. */
+  smooth?: boolean;
+}
+
+/**
+ * 외부 시계열 DB 소스 설정(`data_source: 'tsdb'` 일 때 사용).
+ *
+ * 백엔드 중립 키와 백엔드 전용 키가 한 블록에 **평탄하게 공존**한다. 이는 쓰기
+ * 경로의 선례를 따른 것이다 — `storage_write.go` 가 "백엔드 전용 키(해당 없는
+ * 백엔드는 무시)"를 같은 방식으로 다룬다. 백엔드마다 블록을 쪼개면 같은 개념이
+ * 두 형태로 존재하게 된다(§2.16 #2).
+ *
+ * @spec SPEC-TSDB-002 §2.2 (U2)
+ */
+export interface TsdbSourceConfig {
+  /**
+   * 기록된 백엔드(스냅샷). **질의 라우팅의 정본이 아니다** — 정본은 항상 참조된
+   * 에이전트의 실제 타입이다(§2.18). 이 값은 (a) 에이전트 목록이 로드되기 전
+   * 설정 UI 를 그리기 위한 낙관적 표시값이고, (b) 불일치를 감지하기 위한 대조군이다.
+   */
+  backend: TsdbBackend;
+
+  /** 에이전트의 안정적 ID(정본). @spec SPEC-WEB-006 */
+  agent_id?: string;
+  /** 에이전트 이름(표시용 스냅샷 + 하위호환 폴백). @spec SPEC-WEB-006 */
+  agent_name: string;
+
+  /** [influxdb 전용] v2 = bucket, v3 = database. 미지정이면 에이전트 기본값. */
+  bucket?: string;
+
+  /** 조회할 시리즈. 비어 있으면 소스는 비활성이다(§2.3). */
+  series: TsdbSeriesRef[];
+
+  /** 상대 시간 윈도우 길이(ms). `range` 의 상대 방식 폴백 값이다(Store 와 같은 규칙). */
+  time_window_ms: number;
+  /** 가져올 데이터 범위 — 기간(상대·절대) 또는 갯수. Store 와 같은 어휘를 쓴다. */
+  range?: SeriesRange;
+  /** 버킷 크기(ms). */
+  interval_ms: number;
+  /**
+   * 인터벌(버킷) 집계 함수. @spec SPEC-TSDB-004 §2.18
+   *
+   * `StoreSourceConfig.aggregation` 보다 **넓다** — Store 백엔드는 min/max/avg 세
+   * 종만 처리하고, InfluxDB 는 일곱 종을 처리한다. 어휘를 억지로 맞추면 한쪽에
+   * 없는 값이 조용히 400 이 된다.
+   */
+  aggregation: 'min' | 'max' | 'average' | 'first' | 'last' | 'sum' | 'count';
+  /** 빈 버킷 처리 전략. `'avg'` 는 InfluxDB 양쪽 모두 대응물이 없어 지원하지 않는다(§2.7). */
+  fill?: '' | 'null' | 'zero' | 'previous';
+  /**
+   * `previous` 채우기로 직전값을 이어 쓸 수 있는 **최대 기간(ms)**.
+   *
+   * 없거나 0 이면 제한 없이 계속 이어 쓴다(종전 동작). 버킷 개수가 아니라
+   * 시간이라, 인터벌을 바꿔도 "최대 5분까지 쓴다" 는 뜻이 그대로 유지된다.
+   * `fill === 'previous'` 가 아니면 읽지 않는다.
+   */
+  fill_previous_max_ms?: number;
+  /** 사용 기간을 넘긴 버킷의 처리. 미지정이면 비운다(null). */
+  fill_previous_overflow?: '' | 'value';
+  /** 위가 `'value'` 일 때 채울 값. */
+  fill_previous_overflow_value?: number;
+  /** 폴링 주기(ms). 미지정 시 기본값(약 5000ms)을 사용한다. */
+  refresh_interval_ms?: number;
+  /**
+   * 한 페이지에 조회할 그룹 수(시리즈축 페이지네이션). @spec SPEC-TSDB-004 §2.7
+   *
+   * 0 이거나 없으면 페이지네이션이 비활성이고 그룹 전량을 조회한다 — 저장된
+   * config 의 동작이 변하지 않는다. 페이지 **인덱스**는 여기 두지 않는다.
+   * 그것은 보기 커서이며 페이지를 넘길 때마다 config 가 저장되면 안 된다.
+   */
+  group_page_size?: number;
+  /** 이름을 지정하지 않은 시리즈의 표시 이름 형식(템플릿). @spec SPEC-WEB-005 */
+  series_name_format?: string;
+}
+
+/**
+ * TSDB 소스 블록의 초기값. 사용자가 데이터 소스를 처음 TSDB 로 토글할 때 쓴다.
+ * @spec SPEC-TSDB-002 §2.2 (U2) · §2.12 (E2)
+ *
+ * 조회 창(시간창 · 인터벌 · 집계 · 폴링 주기)은 `DEFAULT_STORE_SOURCE_WINDOW` 를
+ * **전개**한다. 값을 복제하면 한쪽만 바뀔 때, 소스를 갈아탄 사용자가 조용히 다른
+ * 창을 보게 된다.
+ *
+ * `agent_name` 이 빈 문자열이고 `series` 가 빈 배열이므로 이 블록은 **비활성**이다
+ * (§2.3) — 에이전트를 고르기 전에는 조회하지 않는다.
+ */
+export function defaultTsdbSource(): TsdbSourceConfig {
+  return {
+    backend: 'influxdb',
+    agent_name: '',
+    series: [],
+    ...DEFAULT_STORE_SOURCE_WINDOW,
+  };
+}
+
+// ---- sysmetrics 소스 ----
+
+/**
+ * sysmetrics 시리즈 참조 — 그릴 **값 하나**를 가리킨다.
+ *
+ * `key` 는 값 카탈로그(`sysmetrics/sysMetricsFields.ts` 의 `SYSMETRIC_CHART_FIELDS`)의
+ * 키이며 스냅샷 경로와 같다(`cpu.usage_percent` · `network.bytes_recv`). 인스턴스 축이
+ * 있는 값(storage · disk_io · network)은 소스 수준의 대상 목록과 곱해져 대상마다 한
+ * 줄이 된다 — 참조 자체에는 대상을 담지 않는다.
+ *
+ * 표시 축(`alias` · `color` · 선 모양)은 `StoreSeriesRef` 와 **같은 이름**을 쓴다.
+ * 라인 차트의 per-line 스타일 편집기가 세 소스를 하나의 어휘로 다루기 때문이다.
+ */
+export interface SysmetricsSeriesRef {
+  /** 값 카탈로그 키 (`cpu.usage_percent`). Store 어휘의 **measurement** 다. */
+  key: string;
+  /**
+   * 인스턴스 대상 이름(`en0` · `disk0` · `/data`). Store 어휘의 **tag 값**이다.
+   *
+   * 인스턴스 축이 있는 값(storage · disk_io · network)에서만 뜻이 있고, **미지정은
+   * 종합**(모든 인스턴스 합)을 뜻한다. 시리즈 하나가 대상 하나를 가리키므로 (값, 대상)
+   * 조합을 자유롭게 고를 수 있다 — 값 목록과 대상 목록의 곱으로 두면 "값 A 는 en0,
+   * 값 B 는 en1" 같은 조합을 표현할 수 없다.
+   */
+  target?: string;
+  /** 표시 별칭. 미지정이면 내장 표기(`measurement · {k=v}`). */
+  alias?: string;
+  /** 선/카테고리 색. 미지정이면 자동 팔레트. */
+  color?: string;
+  /** 라인 스타일(solid/dashed/dotted). 기본 'solid'. */
+  stroke_style?: StrokeStyle;
+  /** 이 시리즈를 그리는 모양. 미지정이면 패널 기본값을 따른다. */
+  graph_style?: GraphStyle;
+  /** 라인 두께(px). 기본 2. */
+  stroke_width?: number;
+  /** 부드러운 곡선. 기본 false. */
+  smooth?: boolean;
+  /**
+   * 누적 카운터의 표현 — `rate`(초당 증가량, 기본) · `total`(부팅 이후 누적 원값).
+   *
+   * `rate: false` 인 값(비율·용량)에는 뜻이 없다. 두 표현은 **다른 시리즈**이므로
+   * 태그의 `mode` 축으로 갈리며, 같은 (값, 대상)을 두 줄로 고르면 증가량과 총량을
+   * 나란히 그릴 수 있다.
+   */
+  mode?: SysMetricsCounterMode;
+}
+
+/**
+ * 차트 패널 sysmetrics 소스 설정 블록.
+ *
+ * **이력이 없는 소스다.** 에이전트는 `State()` 로 그 시점 스냅샷 하나만 주므로, 훅이
+ * 폴링하며 창(window)에 점을 쌓는다. 패널이 언마운트되면 계열도 사라진다 — 이것은
+ * 결함이 아니라 소스의 성질이며, 과거 구간이 필요하면 저장 경로를 거쳐 `store` 소스를
+ * 쓰는 것이 옳은 해법이다(`sysmetrics-in` → storage-write).
+ *
+ * 대상 목록(`interfaces` / `devices` / `mountpoints`)의 규약은 sysmetrics 전용 패널과
+ * **같다**: 빈 배열은 "종합"이며 기본값이다. 두 계열이 나란히 놓이는데 같은 설정이
+ * 다른 뜻을 가지면 사용자가 매번 다시 배워야 한다.
+ */
+export interface SysmetricsSourceConfig {
+  /**
+   * sysmetrics 에이전트의 안정적 ID. **조회의 유일한 정본**이며 없으면 비활성이다.
+   * 이름이 바뀌어도 연결이 끊기지 않는다(@spec SPEC-WEB-006 과 같은 규약).
+   */
+  agent_id?: string;
+  /**
+   * 표시용 이름 스냅샷. 조회에는 쓰지 않는다.
+   *
+   * Store · TSDB 는 이름만 있는 구 config 를 위해 이름 폴백을 두지만, 이 소스에는
+   * 그런 config 가 없어 폴백을 두지 않는다(`isSysmetricsSourceActive` 주석 참조).
+   */
+  agent_name: string;
+  /**
+   * 그릴 시리즈 목록. 비어 있으면 소스는 비활성이다.
+   *
+   * **한 항목이 한 줄**이다. 종전에는 값 목록과 대상 목록을 따로 두고 곱했는데, 그
+   * 모델로는 "값 A 는 en0, 값 B 는 en1" 을 표현할 수 없고 설정 화면도 Store 처럼
+   * 시리즈 표로 그릴 수 없었다(표의 한 행이 곧 한 시리즈여야 한다).
+   */
+  series: SysmetricsSeriesRef[];
+  /**
+   * 무엇을 그릴지가 아니라 **언제 것을 그릴지**를 고르는 축. 미지정은 `'history'` 다
+   * (이 필드가 생기기 전에 저장된 패널은 이력 조회였으므로 기본이 곧 하위호환이다).
+   *
+   *   - `history`: 에이전트가 보관한 구간을 질의한다. 열자마자 과거가 그려지고 닫았다
+   *     열어도 선이 남지만, 값은 버킷·집계로 접힌 대표값이다.
+   *   - `live`: 에이전트 스냅샷을 폴링해 오는 대로 이어 붙인다. 접지 않아 표본이 그대로
+   *     보이는 대신 **패널을 연 뒤 구간만** 남고 닫으면 사라진다.
+   *
+   * 아래 조회 창·인터벌·집계는 `history` 에서만 뜻이 있다. `live` 는 폴링 주기와
+   * 표시 창(오래된 점을 버리는 기준)만 쓴다.
+   */
+  query_mode?: 'history' | 'live';
+  /**
+   * 조회 창 · 인터벌 · 집계 · 폴링 주기 — **Store 와 같은 이름, 같은 뜻**이다.
+   *
+   * 에이전트가 이력을 들고 있으므로(`sysmetrics_history.go`) 패널은 Store 처럼 구간을
+   * 질의하고 버킷으로 접기만 한다. 종전의 `unit_time`(증가량 단위)은 없어졌다 —
+   * 누적 카운터는 에이전트가 저장 시점에 **초당 증가량**으로 환산해 두므로 패널이
+   * 환산할 것이 없고, 그래서 이 소스 전용 축이 화면에 남지 않는다.
+   *
+   * 질의 구간이 에이전트의 보관 기간보다 길면 앞쪽이 비어 나온다. 그것은 오류가 아니라
+   * 버퍼가 거기까지밖에 없다는 사실이며, 더 긴 이력이 필요하면 저장 경로를 쓴다.
+   */
+  time_window_ms: number;
+  /** 조회 범위(상대·절대·개수). `range` 가 있으면 `time_window_ms` 보다 우선한다. */
+  range?: SeriesRange;
+  /** 버킷 크기(ms). */
+  interval_ms: number;
+  /** 버킷 집계. Store 와 같은 어휘이며 같은 함수(`aggregateValues`)로 계산한다. */
+  aggregation: 'min' | 'max' | 'average' | 'first' | 'last';
+  /** 폴링 주기(ms). 미지정 시 5000. */
+  refresh_interval_ms?: number;
+  /**
+   * 이름을 지정하지 않은 시리즈의 표시 이름 형식(템플릿).
+   *
+   * 토큰 어휘는 **Store 와 같다** — 소스를 갈아탄 사용자가 형식을 다시 배우지 않는다.
+   *
+   *   `{$.measurement}`     → 필드 이름(`bytes_recv`)
+   *   `{$.tags.category}`   → 지표 분류(`network` · `cpu` · `disk_io`)
+   *   `{$.tags.interface}`  → 네트워크 인터페이스(`en0`)
+   *   `{$.tags.device}`     → 디스크 장치(`disk0`)
+   *   `{$.tags.mountpoint}` → 스토리지 마운트(`/data`)
+   *
+   * 미지정이면 내장 표기(`measurement · {k=v}`)로 폴백한다.
+   */
+  series_name_format?: string;
+}
+
+/**
+ * 아무 것도 바인딩되지 않은 **기본 sysmetrics 소스**.
+ *
+ * `agent_name` 이 비고 `series` 가 비어 있으므로 **비활성**이다 — 에이전트와 값을
+ * 고르기 전에는 폴링하지 않는다.
+ *
+ * 조회 창은 `DEFAULT_STORE_SOURCE_WINDOW` 를 **전개**한다. 값을 복제하면 한쪽만 바뀔 때,
+ * 소스를 갈아탄 사용자가 조용히 다른 창을 보게 된다(Store · TSDB 와 같은 규칙).
+ */
+export function defaultSysmetricsSource(): SysmetricsSourceConfig {
+  return {
+    agent_name: '',
+    series: [],
+    ...DEFAULT_STORE_SOURCE_WINDOW,
+  };
+}
+
+/**
+ * 윈도우 단위 **구간 대표값** 함수. @spec SPEC-CHART-002 §2.2
+ *
+ * 한 시리즈의 시간 윈도우 타임라인 전체를 숫자 1개로 접는다. 계산 규칙은
+ * `seriesReduce.ts` 의 `reduceSeries` 가 단일 정본으로 소유한다.
+ *
+ * `'first'` 는 사용자 선택지로 노출하지 않는다 — `delta`(= last − first)의 내부
+ * 입력으로만 쓴다. `StoreSourceConfig.aggregation` 의 `'first'` 는 **다른 축**의
+ * 값이며 이것과 무관하다(아래 두 축 구분 참조).
+ */
+export type SeriesReduceFunc = 'max' | 'avg' | 'min' | 'last' | 'sum' | 'count' | 'delta';
+
+/**
+ * 구간 대표값 선택기를 노출하는 패널 타입 집합. @spec SPEC-CHART-002 §2.3
+ *
+ * `line-chart` · `table` · `heatmap` 은 같은 `StoreSourceSection` 을 쓰지만
+ * 선택기가 노출되지 않으며 `series_reduce` 를 읽지도 않는다(UB1-10).
+ */
+export const REDUCE_PANEL_TYPES: ReadonlySet<string> = new Set([
+  'stat',
+  'gauge',
+  'bar-chart',
+  'pie-chart',
+]);
 
 /** 모든 차트 패널이 공유하는 공통 config (REQ-M4-02) */
 export interface ChartPanelConfigBase {
@@ -141,6 +658,63 @@ export interface ChartPanelConfigBase {
   data_source?: ChartDataSourceKind;
   /** Store 소스 설정(data_source === 'store' 일 때 사용). @spec SPEC-WEB-005 */
   store_source?: StoreSourceConfig;
+  /**
+   * 외부 TSDB 소스 설정(data_source: 'tsdb' 일 때 사용). @spec SPEC-TSDB-002 §2.2
+   *
+   * `store_source` 와 **공존**한다 — 소스를 전환해도 다른 소스의 블록은 삭제하지
+   * 않는다(§2.12 [E2]). 되돌리기가 가능해야 사용자가 전환을 시도한다.
+   */
+  tsdb_source?: TsdbSourceConfig;
+  /**
+   * 윈도우 단위 구간 대표값. @spec SPEC-CHART-002 §2.1 [U1]
+   *
+   * **`store_source.aggregation` 과는 서로 다른 축이며 절대 겸용하지 않는다.**
+   *
+   * | 축 | 필드 | 적용 시점 | 결과 형상 |
+   * |----|------|-----------|-----------|
+   * | 버킷 집계 | `store_source.aggregation` | 조회 시점(서버) | 시리즈당 `interval_ms` 버킷마다 값 1개 → **타임라인** |
+   * | 윈도우 대표값 | `series_reduce` (이 필드) | 렌더 시점(클라이언트 순수 계산) | 시리즈당 **숫자 1개** |
+   *
+   * 두 축은 순차 합성된다:
+   *   `원시 표본 → (aggregation) → 버킷 타임라인 → (series_reduce) → 대표값 1개`.
+   * 예) `aggregation:'average'` + `series_reduce:'max'` = "1분 평균들의 구간 최댓값"
+   * 이며, `aggregation:'max'` + `series_reduce:'max'`("구간 최댓값")와 결과가 다르다.
+   *
+   * `store_source` **블록 밖**에 두는 이유: `store_source` 는 `useStoreChartData`
+   * 의 `pollKey` 소재지이고 pollKey 는 "재조회가 필요한가" 를 판정한다. 대표값은
+   * 조회 파라미터가 아니라 표현 파라미터이므로, 같은 블록에 두면 대표값 변경이
+   * 불필요한 재조회를 유발하거나(포함 시) 한 블록 안에서 필드별 취급이 갈린다
+   * (제외 시). 블록을 나누면 "조회 축은 store_source, 표현 축은 패널 config" 가
+   * 타입 수준에서 드러난다(§4.1).
+   *
+   * **미지정(부재) = 레거시 렌더 경로**다(§2.9 [S1]). 기본값을 정의하지 않는다 —
+   * 부재를 `'last'` 로 해석하면 저장된 config 를 건드리지 않고도 기존 패널 외형이
+   * 바뀐다. `data_source !== 'store'` 인 경우에도 읽지 않는다(§2.10 [S2]).
+   */
+  series_reduce?: SeriesReduceFunc;
+  /**
+   * 다중 출력(타일/게이지/막대/조각)의 표시 개수 상한. @spec SPEC-CHART-002 §2.4 [U4]
+   *
+   * 미지정이면 `DEFAULT_MULTI_OUTPUT_LIMIT`(= 12, `SeriesTileGrid.tsx` 소유)를 쓴다.
+   * 상한을 넘는 출력은 순서상 뒤에서부터 잘리고 `+K` 표기로 잘린 개수를 알린다.
+   *
+   * 시리즈 **선택** 상한(`STORE_SERIES_LIMIT` = 48)과는 다른 축이다 — 선택 상한은
+   * 조회 부하를, 이 상한은 가독성을 보호한다(§4.6). 48개를 조회하되 12개만 그리는
+   * 상태는 정상이다.
+   *
+   * `series_reduce` 부재(레거시) 경로에서는 읽지 않는다.
+   */
+  multi_output_limit?: number;
+  /**
+   * 다중 출력 타일 배열의 **목표 행 수**. 미지정이면 `DEFAULT_TILE_ROWS`(= 1) — 한 줄.
+   *
+   * 열 수는 `ceil(N / tile_rows)` 로 파생된다(`tileColumnCount`). 상한이 아니라 목표라서,
+   * 패널이 좁아 타일 최소 폭을 확보하지 못하면 열이 줄고 행이 목표보다 늘어난다.
+   *
+   * 타일 배열을 쓰는 **통계 · 게이지**만 읽는다. 바 · 파이는 시리즈를 한 차트 안의 막대 ·
+   * 조각으로 그리므로 배열 개념이 없고, `series_reduce` 부재(레거시) 경로에서도 읽지 않는다.
+   */
+  tile_rows?: number;
 }
 
 // --- 차트 타입별 config (SPEC-CHART-001 §4.2.2) ---
@@ -149,6 +723,22 @@ export interface StatPanelConfig extends ChartPanelConfigBase {
   unit?: string;
   decimal_places?: number;
   threshold_color_rules?: Array<{ min: number; color: string }>;
+}
+
+/**
+ * 툴팁 표시 설정 (line-chart).
+ *
+ * 두 값 모두 미지정이 종전 동작이다 — 툴팁을 켜고, 가리킨 시각의 **모든** 시리즈를
+ * 한 상자에 모아 보여 준다. 저장된 대시보드의 동작이 변하지 않도록 기본값을 그렇게 둔다.
+ */
+export interface TooltipConfig {
+  /** 툴팁을 띄울지. 미지정이면 켬. */
+  enabled?: boolean;
+  /**
+   * 가리킨 **한 시리즈**의 값만 보여줄지. 미지정이면 전체 시리즈를 함께 보여 준다.
+   * 시리즈가 많아 상자가 화면을 덮을 때 쓴다.
+   */
+  single?: boolean;
 }
 
 /** Y축 도메인 결정 방식 (line-chart) */
@@ -220,6 +810,92 @@ export function pickSeriesColor(index: number): string {
 }
 
 /**
+ * StoreSeriesRef 의 동일성 식별자(key + field + 정렬된 tags). keys 모드에서 선택된
+ * 시리즈를 판정/추가/제거할 때 쓴다. 반환 형식은 `"<key> <metric> <k=v,...>"` 로 고정한다.
+ * @spec SPEC-PANEL-SETTINGS-001 (시리즈 선택 단일화 — 체크박스 ↔ series)
+ */
+export function storeSeriesId(
+  key: string,
+  metric: string,
+  tags: Record<string, string>,
+): string {
+  const tagPart = Object.keys(tags)
+    .sort()
+    .map((k) => `${k}=${tags[k]}`)
+    .join(',');
+  return `${key} ${metric} ${tagPart}`;
+}
+
+/**
+ * StoreSeriesRef 의 **표시 라벨**(사람이 읽는 이름). `storeSeriesId` 의 표시 짝이다.
+ *
+ * 결함 배경: 시리즈의 동일성은 (key, field, tags) 인데 표시에는 key 만 쓰여서, 한 key 를
+ * metric/tags 로 나눠 갖는 형제 시리즈들이 목록·마커에서 **같은 글자**로 보였다. 좌표/매칭은
+ * 이미 동일성 키로 분리되어 있었으므로(SPEC-HEATMAP-PANEL-001 재키잉) 남은 것은 표기뿐이며,
+ * 이 함수가 그 표기를 한 곳으로 모은다.
+ *
+ * 규칙:
+ *   - 사용자가 붙인 이름(alias)이 있으면 그 이름이 항상 이긴다.
+ *   - 그 외에는 매트릭스 컬럼과 동일한 서술 표기(`key · metric{k=v}`)를 쓴다. metric/tags 가
+ *     없으면 자연히 `key` 하나로 줄어든다(구분자 잔여물 없음).
+ *
+ * 과거에는 `alias === key` 를 "이름 없음"으로 취급했다. 시리즈 생성 시 `alias: key` 를
+ * 기본값으로 기록했기 때문에 alias 존재만으로는 기본값과 사용자 입력을 구분할 수 없었다.
+ * 그 대가로 사용자가 measurement 와 똑같은 이름을 **직접 입력해도** 무시되어, 설정의 이름
+ * 입력·미리보기(이름 그대로)와 목록의 표시 이름(서술 표기)이 갈리는 결함이 있었다.
+ * 이제 생성 시 alias 를 비워 두고(기본값 제거), 읽는 시점에 legacy 기본값을 걷어내므로
+ * (normalizeStoreSeriesAlias) alias 존재 = 사용자 입력이 되어 이 예외가 필요 없다.
+ *
+ * 매칭·동일성에는 절대 쓰지 않는다 — 이름을 바꿔도 좌표/선택이 끊기면 안 된다.
+ */
+export function storeSeriesLabel(
+  ref: Pick<StoreSeriesRef, 'key' | 'field' | 'tags' | 'alias'>,
+  nameFormat?: string,
+): string {
+  const ctx = aliasContextOf(ref);
+  // 1) 시리즈에 직접 붙인 이름이 항상 이긴다. 토큰을 쓴 이름도 해석한다.
+  const alias = ref.alias?.trim() ?? '';
+  if (alias !== '') return resolveSeriesAlias(alias, ctx);
+  // 2) 패널이 지정한 이름 형식. 해석 결과가 비면(참조 토큰이 전부 빈 값) 폴백한다.
+  const fmt = nameFormat?.trim() ?? '';
+  if (fmt !== '') {
+    const resolved = resolveSeriesAlias(fmt, ctx).trim();
+    if (resolved !== '') return resolved;
+  }
+  // 3) 내장 서술 표기.
+  return seriesRefDisplayName(ref.key, ref.field, ref.tags);
+}
+
+/** 시리즈 참조를 이름 템플릿 해석 컨텍스트로 변환한다(표시 경로 공통). */
+export function aliasContextOf(
+  ref: Pick<StoreSeriesRef, 'key' | 'field' | 'tags'>,
+): AliasContext {
+  return { measurement: ref.key, field: ref.field, tags: ref.tags ?? {} };
+}
+
+/**
+ * 저장된 시리즈에서 legacy 기본 alias(`alias === key`)를 "이름 없음"으로 되돌린다.
+ *
+ * 과거 생성 경로가 `alias: key` 를 기본값으로 기록했기 때문에, 그 값을 그대로 두면
+ * 사용자 입력과 구분할 수 없다. 읽는 시점에 한 번 걷어내면 이후로는 alias 존재 여부가
+ * 곧 "사용자가 이름을 붙였는가" 가 된다(설정 화면의 이름 입력·미리보기와 목록 표시가 일치).
+ *
+ * config 를 저장하지는 않는다 — 표시·편집용 정규화이며, 사용자가 이름을 입력하면 그때
+ * 정상 값으로 기록된다.
+ */
+export function normalizeStoreSeriesAlias(series: readonly StoreSeriesRef[]): StoreSeriesRef[] {
+  return series.map((s) =>
+    s.alias !== undefined && s.alias.trim() === s.key ? { ...s, alias: undefined } : s,
+  );
+}
+
+/**
+ * 선택 계열(series) 상한. 라이브 미리보기 성능 보호를 위한 합리적 상한(수십 개).
+ * @spec SPEC-PANEL-SETTINGS-001 (AC-15)
+ */
+export const STORE_SERIES_LIMIT = 48;
+
+/**
  * 축 텍스트(레이블/눈금) 폰트 스타일. 미지정 필드는 렌더 측 기본값으로 폴백한다.
  * 라인 차트의 X/Y 축 레이블(제목)과 값(눈금) 폰트를 축별로 독립 설정한다.
  */
@@ -286,7 +962,30 @@ export interface LegendConfig {
   show_line?: boolean;
   /** 마지막 값 표시. 기본 false */
   show_last_value?: boolean;
+  /**
+   * 글자 크기(px). 미지정은 기본 11 — 저장된 패널의 범례 크기가 그대로여야 한다.
+   *
+   * 마지막 값 칸은 이 크기에 비례해 조금 작게 그린다(`em`). 두 값을 따로 저장하면
+   * 크기를 키웠을 때 이름만 커지고 값은 그대로인 어긋난 범례가 된다.
+   */
+  font_size?: number;
+  /** 글꼴 토큰. 미지정은 상속(파이 범례와 같은 어휘). */
+  font_family?: ChartFontFamily;
+  /** 글자색. 미지정은 테마 글자색(`--color-text-primary`). */
+  font_color?: string;
+  /**
+   * 끌어 옮긴 변위(담는 상자 대비 %). 기본 자리에서 얼마나 밀렸는지.
+   *
+   * 파이 범례(`legend_offset_x`)와 **같은 저장 규약**이되 배치 방식이 다르다 — 파이는
+   * 겹쳐 뜨고 이쪽은 흐름에 남아 상대 변위만 얹는다(`inlineLegendOffsetStyle`).
+   * 0 이면 스타일 자체를 붙이지 않아 저장된 대시보드의 그림이 변하지 않는다.
+   */
+  offset_x?: number;
+  offset_y?: number;
 }
+
+/** 범례 기본 글자 크기(px). 종전 하드코딩(`text-[11px]`)과 같은 값이다. */
+export const DEFAULT_CHART_LEGEND_FONT_SIZE = 11;
 
 export interface LineChartPanelConfig extends ChartPanelConfigBase {
   /** 채널 목록 — 기본 입력 */
@@ -324,15 +1023,67 @@ export interface LineChartPanelConfig extends ChartPanelConfigBase {
   /** 경계 라인 (threshold) */
   y_thresholds?: YThreshold[];
 
-  // X축 시간 윈도우
+  /**
+   * X축 범위 — 구간(absolute) · 최근(relative) · 포인트(count).
+   *
+   * 데이터 소스(Store · TSDB)가 쓰는 `SeriesRange` 와 **같은 어휘**다. 조회 범위와
+   * 표시 범위는 같은 개념이므로 한 이름으로 쓴다.
+   *
+   * 없으면 아래 구 필드(`time_window_mode` 계열)를 읽어 해석한다 —
+   * `readChartXRange` 가 그 폴백을 담당하므로 저장된 패널은 그대로 동작한다.
+   */
+  x_range?: SeriesRange;
+
+  // X축 시간 윈도우 — `x_range` 로 대체됨. 읽기 폴백으로만 남는다(신규 저장 없음).
+  /** @deprecated `x_range` 사용. `readChartXRange` 가 count/relative/absolute 로 옮긴다. */
   time_window_mode?: TimeWindowMode;
+  /** @deprecated `x_range.window_ms` 사용(초 → ms). */
   recent_window_sec?: number;
+  /** @deprecated `x_range.start_ms` 사용. */
   fixed_start_ms?: number;
+  /** @deprecated `x_range.end_ms` 사용. */
   fixed_end_ms?: number;
+  /** 최근 범위에서 X축 끝(now)을 전진시키는 주기(ms). */
   time_window_refresh_ms?: number;
+
+  /**
+   * 패널 기본 그래프 스타일. 미지정이면 라인(종전 동작)이다.
+   * 시리즈가 개별로 덮어쓸 수 있다(`StoreSeriesRef.graph_style`).
+   */
+  graph_style?: GraphStyle;
+  /**
+   * 시리즈를 쌓아 누적으로 볼지. 영역·바에서만 뜻이 있다 —
+   * 라인은 쌓아도 겹친 선이 되고, 캔들은 네 값이 한 덩어리라 쌓을 수 없다.
+   */
+  stacked?: boolean;
+
+  /**
+   * Y축 눈금의 소수점 이하 자릿수. 미지정이면 값을 그대로 쓴다(종전 동작).
+   * 숫자형 축에서만 의미가 있다 — 열거형·불리언 축은 눈금이 라벨이다.
+   */
+  decimal_places?: number;
 
   /** 범례 */
   legend?: LegendConfig;
+
+  /** 툴팁 표시 설정. 미지정이면 켬 + 전체 시리즈(종전 동작). */
+  tooltip?: TooltipConfig;
+
+  /**
+   * 값이 없는 구간을 **점선으로 이어** 표기할 최소 연속 결측 개수.
+   * @spec SPEC-TSDB-004 §2.19
+   *
+   * 없거나 0 이하이면 끈다 — 이때 라인은 종전대로 결측을 조용히 이어 그린다
+   * (`connectNulls`), 저장된 대시보드의 그림이 변하지 않는다.
+   *
+   * 켜면 원래 라인은 결측에서 끊기고, 그 구간만 점선 덧그림으로 이어진다.
+   * 이은 것과 잰 것을 눈으로 가를 수 있게 하는 것이 목적이다 — 3시간 정전이
+   * "그렇게 측정된 직선" 과 똑같이 보이면 안 된다.
+   *
+   * 빈 구간 채우기(`fill: 'zero' | 'previous'`)를 쓰면 결측 자체가 생기지 않아
+   * 이 설정은 아무 일도 하지 않는다.
+   */
+  gap_dash_threshold?: number;
 
   /** @deprecated 채널별로 이동됨 — 하위 호환 fallback */
   smooth?: boolean;
@@ -362,10 +1113,81 @@ export interface BarChartPanelConfig extends ChartPanelConfigBase {
   agg_func?: AggFunc;
 }
 
+/**
+ * 파이 범례 위치. 그래프 차트(`legend.position`)와 같은 어휘를 쓴다 — 같은 개념이
+ * 패널마다 다른 값을 갖지 않게 한다.
+ */
+export type PieLegendPosition = 'bottom' | 'left' | 'right';
+
+/** 조각 라벨을 조각 안쪽에 적을지 바깥에 적을지. */
+export type PieLabelPosition = 'inside' | 'outside';
+
+/** 범례 기본 글자 크기(px) — 종전 `0.75rem` 과 같다. */
+export const DEFAULT_PIE_LEGEND_FONT_SIZE = 12;
+
 export interface PiePanelConfig extends ChartPanelConfigBase {
   agg_func?: AggFunc;
-  show_legend?: boolean;
+
+  // --- 조각 라벨 ---
   show_percentage?: boolean;
+  /** 조각에 값을 함께 적는다. 미지정은 끔 — 종전에는 비율만 적었다. */
+  show_value?: boolean;
+  /**
+   * 조각 라벨 글자 크기(px). **미지정은 상속**이다(종전 동작) — 기본값을 채우면
+   * 저장된 패널의 글자 크기가 조용히 바뀐다.
+   */
+  label_font_size?: number;
+  /** 조각 라벨 글꼴(토큰). 미지정은 상속. */
+  label_font_family?: ChartFontFamily;
+  /**
+   * 조각 라벨 글자색. 미지정이면 위치에 따라 고른다 — 안쪽은 조각 색과 대비되는 색,
+   * 바깥은 테마 글자색. 지정하면 위치와 무관하게 그 색을 쓴다.
+   */
+  label_font_color?: string;
+  /**
+   * 조각 라벨 위치. 미지정은 `'inside'`.
+   *
+   * 안쪽은 패널 경계에서 잘리지 않지만 좁은 조각에는 글자가 들어가지 않고, 바깥은
+   * 좁은 조각도 적을 수 있지만 지시선 + 글자 폭만큼 영역을 더 쓴다. 어느 쪽이 나은지는
+   * 조각 구성에 달렸으므로 고르게 한다.
+   */
+  label_position?: PieLabelPosition;
+  /**
+   * 라벨을 적을 최소 비중(%). 이보다 작은 조각은 라벨과 지시선을 그리지 않는다 —
+   * 안쪽에서는 글자가 조각을 넘치고, 바깥에서는 나란한 라벨끼리 겹친다.
+   */
+  label_min_percent?: number;
+
+  // --- 파이 자체 ---
+  /**
+   * 파이 반지름(차트 영역 대비 %). 미지정이면 라벨 위치에 따라 자동으로 정한다 —
+   * 안쪽 라벨은 80%, 바깥 라벨은 지시선과 글자가 들어갈 자리를 내느라 62%.
+   */
+  pie_size?: number;
+  /**
+   * 파이 중심의 오프셋(차트 영역 대비 백분율 포인트). 기본 중심(50%, 50%)에서
+   * 얼마나 밀렸는지를 뜻하며, 백분율이라야 패널 크기가 바뀌어도 상대 위치가 유지된다.
+   */
+  pie_offset_x?: number;
+  pie_offset_y?: number;
+
+  // --- 범례 ---
+  show_legend?: boolean;
+  /** 미지정은 `'bottom'` — 종전 recharts 기본 배치와 같다(하위 호환). */
+  legend_position?: PieLegendPosition;
+  legend_show_percentage?: boolean;
+  legend_show_value?: boolean;
+  legend_font_size?: number;
+  /** 범례 글꼴(토큰). 미지정은 상속. */
+  legend_font_family?: ChartFontFamily;
+  /** 범례 글자색. 미지정은 테마 글자색. */
+  legend_font_color?: string;
+  /**
+   * 범례를 끌어 옮긴 오프셋(px). 위치(`legend_position`)가 정하는 자리를 기준으로
+   * 한 **미세 조정**이며, 위치를 바꾸면 그 자리에서 다시 같은 만큼 밀린다.
+   */
+  legend_offset_x?: number;
+  legend_offset_y?: number;
 }
 
 export type TableColumnFormat = 'datetime' | 'number' | 'string';
@@ -374,6 +1196,32 @@ export interface TableColumn {
   field: string;
   header: string;
   format?: TableColumnFormat;
+  /**
+   * 열 너비 비율(가중치). 지정한 열끼리의 상대 비율로 폭을 나눈다 — 절대 px 이 아니다.
+   *
+   * 패널은 그리드 안에서 임의 폭으로 늘어나므로 px 로 고정하면 좁은 패널에서 넘치고
+   * 넓은 패널에서 남는다. 비율은 두 경우 모두 자연스럽게 늘어난다.
+   *
+   * 미지정(undefined)은 "자동" 이다 — 지정된 열이 비율만큼 가져가고 나머지 열이 남은
+   * 폭을 균등하게 나눈다. 전 열이 미지정이면 브라우저 기본 테이블 레이아웃과 같다.
+   */
+  width?: number;
+  /**
+   * 헤더 클릭 정렬 허용 여부. 미지정은 `true`(허용) — 기존 동작이 전 열 정렬 가능이었다.
+   */
+  sortable?: boolean;
+  /**
+   * 값 단위. `format: 'number'` 열에만 붙는다 — 시각·문자열 열에 단위를 붙이면
+   * 뜻이 없다.
+   *
+   * 표는 열마다 지표가 다르므로(온도 열 · 전력 열이 한 표에 있다) 단위를 패널이
+   * 아니라 **열**이 갖는다. 미지정은 단위 없음이다.
+   */
+  unit?: string;
+  /**
+   * 열 필터 입력 노출 여부. 미지정은 `false` — 필터 행은 자리를 차지하므로 켠 열에만 준다.
+   */
+  filterable?: boolean;
 }
 
 export type SortOrder = 'asc' | 'desc';
@@ -382,7 +1230,23 @@ export interface TablePanelConfig extends ChartPanelConfigBase {
   columns: TableColumn[];
   rows_per_page?: number;
   default_sort?: { field: string; order: SortOrder };
+  /**
+   * 행을 무엇으로 세는가. @see tablePivot.ts
+   *
+   * - `'entry'`(기본): 엔트리 하나가 행 하나 — 종전 동작.
+   * - `'timestamp'`: 시각 하나가 행 하나이고 시리즈마다 열이 하나(넓은 형식).
+   *
+   * 미지정은 `'entry'` 다 — 기존 패널의 표는 달라지지 않는다.
+   */
+  row_mode?: TableRowMode;
+  /** 시각 기준 행에서 시각 열의 이름. 미지정이면 기본 문구. */
+  pivot_time_header?: string;
+  /** 시각 기준 행에서 시리즈 열에 공통으로 붙는 단위. */
+  pivot_unit?: string;
 }
+
+/** 표의 행 기준. @see TablePanelConfig.row_mode */
+export type TableRowMode = 'entry' | 'timestamp';
 
 /**
  * 유효한 열거형 매핑만 추려 값→라벨 Map 을 만든다.

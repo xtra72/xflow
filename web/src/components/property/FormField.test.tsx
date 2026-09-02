@@ -257,7 +257,7 @@ describe('FormField select default fallback', () => {
 
 // field.placeholder opt-in 회귀 테스트.
 //
-// influxdb-write 의 measurement_key 처럼 placeholder 로 $. JSONPath 예시를
+// storage-write 의 measurement_key 처럼 placeholder 로 $. JSONPath 예시를
 // 보여줘야 하는 string 필드를 위해 field.placeholder 를 추가했다.
 // 미지정 시에는 기존 동작(default 값을 placeholder 로 표시)을 유지해야 한다.
 describe('FormField string placeholder', () => {

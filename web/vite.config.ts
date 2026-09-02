@@ -42,6 +42,10 @@ export default defineConfig({
         'src/pages/dashboard/panels/charts/**',
         'src/pages/dashboard/AddPanelDialog.tsx',
         'src/pages/dashboard/ChartPanelSections.tsx',
+        'src/pages/dashboard/TsdbSourceSection.tsx',
+        'src/services/api/seriesMatrixPivot.ts',
+        'src/services/api/seriesDataSource.ts',
+        'src/services/api/tsdbSource.ts',
       ],
       exclude: [
         '**/*.test.ts',

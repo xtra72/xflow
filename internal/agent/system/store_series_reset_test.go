@@ -16,14 +16,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// AC-15: metric 식별자로 단일 시리즈만 reset, 다른 시리즈 무영향.
+// AC-15: field 식별자로 단일 시리즈만 reset, 다른 시리즈 무영향.
 func TestResetSeries_SingleSeries_OthersUntouched(t *testing.T) {
 	ctx := context.Background()
 	a := newAutoStoreAgentWithHistory(t, 10)
 	adapter := seriesAdapter(t, a, "default")
 
-	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{MetricType: "temperature"}))
-	require.NoError(t, adapter.SetWithMeta(ctx, "room", 55, StoreWriteMeta{MetricType: "humidity"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{Field: "temperature"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "room", 55, StoreWriteMeta{Field: "humidity"}))
 
 	cleared, deleted, err := a.ResetSeries(ctx, "default", "room", "humidity", nil)
 	require.NoError(t, err)
@@ -38,19 +38,19 @@ func TestResetSeries_SingleSeries_OthersUntouched(t *testing.T) {
 	assert.Equal(t, "22", results[0].Entries[0].Value, "temperature 현재값 보존(무영향)")
 }
 
-// 식별자 누락 정책: metric/tags 없이 → 그 key 의 모든 시리즈가 대상.
+// 식별자 누락 정책: field/tags 없이 → 그 key 의 모든 시리즈가 대상.
 func TestResetSeries_NoIdentifier_AllSeriesOfKey(t *testing.T) {
 	ctx := context.Background()
 	a := newAutoStoreAgentWithHistory(t, 10)
 	adapter := seriesAdapter(t, a, "default")
 
-	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{MetricType: "temperature"}))
-	require.NoError(t, adapter.SetWithMeta(ctx, "room", 55, StoreWriteMeta{MetricType: "humidity"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{Field: "temperature"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "room", 55, StoreWriteMeta{Field: "humidity"}))
 	require.NoError(t, adapter.SetWithMeta(ctx, "room", 23, StoreWriteMeta{
-		MetricType: "temperature", Tags: map[string]string{"area": "a"},
+		Field: "temperature", Tags: map[string]string{"area": "a"},
 	}))
 	// 다른 key.
-	require.NoError(t, adapter.SetWithMeta(ctx, "other", 9, StoreWriteMeta{MetricType: "temperature"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "other", 9, StoreWriteMeta{Field: "temperature"}))
 
 	cleared, deleted, err := a.ResetSeries(ctx, "default", "room", "", nil)
 	require.NoError(t, err)
@@ -62,15 +62,15 @@ func TestResetSeries_NoIdentifier_AllSeriesOfKey(t *testing.T) {
 	assert.Len(t, results, 1, "다른 key 의 시리즈는 보존")
 }
 
-// metric+tags 로 더 좁힌 단일 시리즈 reset (부분집합이 아닌 정확 일치 1개).
+// field+tags 로 더 좁힌 단일 시리즈 reset (부분집합이 아닌 정확 일치 1개).
 func TestResetSeries_MetricAndTags_NarrowsToOne(t *testing.T) {
 	ctx := context.Background()
 	a := newAutoStoreAgentWithHistory(t, 10)
 	adapter := seriesAdapter(t, a, "default")
 
-	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{MetricType: "temperature"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{Field: "temperature"}))
 	require.NoError(t, adapter.SetWithMeta(ctx, "room", 23, StoreWriteMeta{
-		MetricType: "temperature", Tags: map[string]string{"area": "a"},
+		Field: "temperature", Tags: map[string]string{"area": "a"},
 	}))
 
 	cleared, deleted, err := a.ResetSeries(ctx, "default", "room",
@@ -89,7 +89,7 @@ func TestResetSeries_NoMatch_Zero(t *testing.T) {
 	ctx := context.Background()
 	a := newAutoStoreAgentWithHistory(t, 10)
 	adapter := seriesAdapter(t, a, "default")
-	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{MetricType: "temperature"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{Field: "temperature"}))
 
 	cleared, deleted, err := a.ResetSeries(ctx, "default", "room", "pressure", nil)
 	require.NoError(t, err)
@@ -104,9 +104,9 @@ func TestIsStaticKey_DynamicSeriesNotStatic(t *testing.T) {
 	ctx := context.Background()
 	a := newAutoStoreAgentWithHistory(t, 10)
 	adapter := seriesAdapter(t, a, "default")
-	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{MetricType: "temperature"}))
+	require.NoError(t, adapter.SetWithMeta(ctx, "room", 22, StoreWriteMeta{Field: "temperature"}))
 
-	encoded := EncodeSeriesKey(SeriesID{Key: "room", MetricType: "temperature"})
+	encoded := EncodeSeriesKey(SeriesID{Measurement: "room", Field: "temperature"})
 
 	assert.False(t, a.IsStaticKey(encoded), "동적(auto) 인코딩 키 → 정적 아님")
 	assert.False(t, a.IsStaticKey("room"), "동적 시리즈만 있는 사용자 key → 정적 아님")

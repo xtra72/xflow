@@ -1,20 +1,33 @@
 // UI 상태 관리 - 선택적 localStorage 영속화 포함.
 //
-// SPEC-DASHBOARD-001 v0.2.0:
-// - 대시보드 구성(`dashboardPages`, `activeDashboardId`, 그리드 설정,
-//   `deviceGridLayout`) 은 더 이상 localStorage 에 영속화되지 않으며,
-//   `sharedSnapshot` / `mineSnapshot` 두 슬롯에서 서버 snapshot 으로 관리된다.
-// - 기존 컴포넌트가 직접 접근하는 legacy 필드(`dashboardPages` 등) 는
-//   읽기 호환을 위해 상태로 유지하되, 활성 스코프(`activeDashboardScope`)
-//   의 snapshot.payload 와 mutation 시 동기 갱신된다.
-// - v0.2.0 첫 부팅 시 1회만 기존 localStorage 의 대시보드 키들을 제거하고
-//   useDashboardSync 가 토스트로 안내한다 (`migrationToastPendingFlag()` 참조).
+// SPEC-DASHBOARD-004 (M5):
+// - 서버 상태 축은 **`dashboards: Dashboard[]` 하나**다. 구 모델의 스코프 2슬롯
+//   (공유 스냅샷 · 개인 스냅샷과 그 활성 스코프 키)은 제거되었다 — 대시보드가 1급
+//   엔티티가 되면서 "공유 묶음 / 내 묶음" 이라는 축 자체가 사라졌다
+//   (spec.md §2.14 UB2 #1).
+// - `dashboards` 는 목록 API 가 주는 **메타**(uid·name·version·can_edit 등)만 담는다.
+//   본문(패널·레이아웃)은 `dashboardPages` 가 uid 를 키로 들고 있으며, 활성 대시보드
+//   1장을 GET 할 때 채워진다. 두 배열은 `setDashboards` 가 uid 기준으로 정렬을 맞춘다.
+// - `activeDashboardId` 는 이제 **활성 대시보드의 uid** 다. 서버의
+//   `/dashboard-state.active_dashboard_uid` 와 대응한다.
+// - 대시보드 구성은 localStorage 에 영속화되지 않는다. v0.2.0 첫 부팅 시 1회만 기존
+//   localStorage 의 대시보드 키들을 제거하고 useDashboardSync 가 토스트로 안내한다.
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-import type { DashboardScope, DashboardSnapshot } from '@/types/dashboard';
+import type { Dashboard, DashboardContent, DashboardDetail } from '@/types/dashboard';
 import { generateUUID } from '@/lib/utils/uuid';
+// 신규 차트 패널의 기본 Store 소스 형상(설정 화면의 기본값과 같은 정본).
+import { buildDefaultStoreSource } from '@/pages/dashboard/panels/charts/chartChannelTypes';
+// SPEC-HEATMAP-PANEL-001: 히트맵 패널 기본 config 빌더(파서와 기본값 일치 보장).
+import { buildDefaultHeatmapConfig } from '@/pages/dashboard/panels/heatmap/heatmapConfig';
+// 모니터링 패널의 기본 표시 항목은 모니터링 페이지의 기본 레이아웃과 같은 값을 쓴다.
+import { DEFAULT_LAYOUT as MONITOR_DEFAULT_LAYOUT } from '@/pages/monitoring/monitoringLayout';
+import { STORAGE_ITEMS as SYSMETRICS_STORAGE_ITEMS } from '@/pages/dashboard/panels/sysmetrics/sysMetricsPanelConfig';
+// 시스템 패널의 항목은 값 단위다(cpu.usage_percent 등) — 그룹 키를 쓰면 설정·미리보기가
+// 값 카탈로그와 대조에 실패해 빈 목록이 된다.
+import { DEFAULT_SYSTEM_FIELDS } from '@/pages/dashboard/panels/sysmetrics/sysMetricsFields';
 
 export interface Notification {
   id: string;
@@ -45,9 +58,6 @@ const LEGACY_DASHBOARD_KEYS: readonly string[] = [
 
 /** v0.2 첫 부팅에서 마이그레이션이 실제로 수행되었음을 useDashboardSync 에 알리는 모듈 플래그. */
 let migrationToastPending = false;
-
-/** 활성 스코프 sessionStorage 키 (탭 새로고침 시 유지). */
-const ACTIVE_SCOPE_SESSION_KEY = 'xflow-ui:active-dashboard-scope';
 
 /**
  * v0.2 블랭크-슬레이트 마이그레이션을 시도한다.
@@ -116,32 +126,6 @@ export function consumeMigrationToastFlag(): boolean {
   return false;
 }
 
-/** 활성 스코프를 sessionStorage 에서 읽는다. 없거나 잘못된 값이면 null. */
-export function readActiveScopeFromSession(): DashboardScope | 'shared' | 'mine' | null {
-  if (typeof globalThis === 'undefined' || typeof globalThis.sessionStorage === 'undefined') {
-    return null;
-  }
-  try {
-    const v = globalThis.sessionStorage.getItem(ACTIVE_SCOPE_SESSION_KEY);
-    if (v === 'shared' || v === 'mine') return v;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/** 활성 스코프를 sessionStorage 에 기록한다. */
-function writeActiveScopeToSession(scope: 'shared' | 'mine'): void {
-  if (typeof globalThis === 'undefined' || typeof globalThis.sessionStorage === 'undefined') {
-    return;
-  }
-  try {
-    globalThis.sessionStorage.setItem(ACTIVE_SCOPE_SESSION_KEY, scope);
-  } catch {
-    // 무시
-  }
-}
-
 // 모듈 로드 시 1회 마이그레이션 실행 (테스트 환경에서 localStorage 가 없으면 no-op).
 runDashboardLocalStorageMigration();
 
@@ -168,8 +152,9 @@ export type FlowColumnKey = (typeof ALL_FLOW_COLUMNS)[number];
 export const ALL_AGENT_COLUMNS = ['name', 'type', 'status', 'uptime', 'messages', 'actions'] as const;
 export type AgentColumnKey = (typeof ALL_AGENT_COLUMNS)[number];
 
-export const ALL_DEVICE_COLUMNS = ['name', 'type', 'status', 'agent', 'last_seen'] as const;
-export type DeviceColumnKey = (typeof ALL_DEVICE_COLUMNS)[number];
+// 디바이스 목록 컬럼은 디바이스 탭과 대시보드 패널이 같은 집합을 써야 하므로
+// `@/hooks/useDeviceColumns` 의 ALL_DEVICE_COLUMNS / DeviceListColumnKey 를 SSOT 로 쓴다.
+// (과거 여기 있던 5컬럼 사본은 탭이 8컬럼으로 늘어난 뒤에도 따라가지 못했다.)
 
 // ---- 멀티-대시보드 타입 ----
 
@@ -183,7 +168,7 @@ export type PanelType =
   | 'logs'
   | 'stat'
   | 'gauge'
-  | 'line-chart'
+  | 'graph-chart'
   | 'bar-chart'
   | 'pie-chart'
   | 'text'
@@ -192,7 +177,71 @@ export type PanelType =
   | 'hvac-control'
   | 'custom-control'
   | 'outdoor-control'
-  | 'properties-grid';
+  | 'properties-grid'
+  | 'facility-line'
+  | 'facility-station'
+  | 'facility-device'
+  | 'facility-group'
+  // SPEC-TRIGGER-PANEL-001 M2: trigger 노드 스케줄/페이로드 설정 패널.
+  | 'trigger-config'
+  // SPEC-TRIGGER-SCHED-001 M2: 설비 제어 예약 패널(규칙 테이블 + 모달). trigger-config 와 공존.
+  | 'facility-schedule'
+  // SPEC-MODBUS-012 M1: MODBUS Gateway 대시보드 패널 스위트 6종.
+  // 모두 modbus-gateway 에이전트에 바인딩(config.agentId)되며 레지스터 맵 2종은 관측 전용이다.
+  | 'modbus-real-devices' // 실제 연결(upstream 백킹) 디바이스 목록
+  | 'modbus-virtual-devices' // 가상 디바이스(U01~) 목록
+  | 'modbus-shared-registers' // 공유(unit 0) 레지스터 맵 그리드
+  | 'modbus-device-registers' // 가상 디바이스(unitId) 레지스터 맵 그리드
+  | 'modbus-bus-stats' // 버스 통계 미니차트
+  | 'modbus-summary-stats' // 종합 통계 바
+  // SPEC-DASHBOARD-002: 단일 에이전트(타입 무관) 상태·통계 패널.
+  // config.agentId 로 임의 타입의 에이전트 하나에 바인딩되며 관측 전용이다.
+  | 'agent-status'
+  // SPEC-HEATMAP-PANEL-001 (MVP): store 태그 바인딩 온도 센서를 IDW 로 보간해
+  // Canvas 2D 에 렌더하는 히트맵 패널. config 는 불투명 JSON(store_source + sensor_positions).
+  | 'heatmap'
+  // 모니터링 패널 4종. 모니터링 페이지와 같은 항목 어휘를 쓰며(`config.items`),
+  // 실시간 스트림은 프로세스 전역 단일 구독(`monitorStream`)을 공유한다.
+  // 기존 'resource'/'logs' 를 대체하며, 그 둘은 추가 메뉴에서만 내려가고 렌더는 유지된다.
+  | 'monitor-stats'
+  | 'monitor-metrics'
+  // 네트워크는 출처(REST 누적 카운터)·단위시간·인터페이스별 계열이 모두 달라
+  // 실시간 메트릭과 한 패널에 묶이지 않는다.
+  | 'monitor-network'
+  | 'monitor-logs'
+  | 'monitor-events'
+  // SPEC-SYSMETRICS-PANEL-001: sysmetrics 에이전트에 바인딩된 호스트 지표 패널 3종.
+  // 위 monitor-* 와 출처가 다르다 — 이쪽은 호스트 전체(CPU·메모리·디스크·네트워크)를
+  // 보고, monitor-* 는 xflowd 런타임을 본다. 대상(인터페이스·마운트) 선택이 비면
+  // 종합, 고르면 개별이므로 "종합/개별"을 별도 타입으로 두지 않는다.
+  | 'sysmetrics-system'
+  | 'sysmetrics-network'
+  | 'sysmetrics-storage';
+
+/**
+ * 옛 패널 타입 이름 → 현재 이름.
+ *
+ * 저장된 대시보드는 `line-chart` 를 담고 있다. 이름만 바뀌었을 뿐 같은 패널이므로,
+ * 읽는 자리에서 옮겨 준다 — 저장을 강제로 다시 쓰지 않는다. 사용자가 그 대시보드를
+ * 저장하는 순간 새 이름으로 자연히 넘어간다.
+ */
+const LEGACY_PANEL_TYPES: Record<string, PanelType> = {
+  'line-chart': 'graph-chart',
+};
+
+/** 저장된 패널 타입을 현재 어휘로 옮긴다. 모르는 값은 그대로 둔다. */
+export function normalizePanelType(type: string): PanelType {
+  return LEGACY_PANEL_TYPES[type] ?? (type as PanelType);
+}
+
+/** 패널 목록의 타입을 일괄 정규화한다. 바뀔 것이 없으면 원본을 그대로 돌려준다. */
+export function normalizePanels(panels: PanelConfig[]): PanelConfig[] {
+  if (!panels.some((p) => p.type in LEGACY_PANEL_TYPES)) return panels;
+  return panels.map((p) =>
+    p.type in LEGACY_PANEL_TYPES ? { ...p, type: normalizePanelType(p.type) } : p,
+  );
+}
+
 
 /** 개별 패널 설정 */
 export interface PanelConfig {
@@ -230,7 +279,7 @@ const DEFAULT_PANELS: PanelConfig[] = [
   {
     id: 'resource-default',
     type: 'resource',
-    title: '프로세스 리소스',
+    title: '프로세스 상태',
     config: { visibleMetrics: ['cpu', 'memory', 'throughput', 'errorRate'] },
   },
 ];
@@ -249,43 +298,153 @@ const DEFAULT_DASHBOARD_PAGE: DashboardPageConfig = {
   layout: DEFAULT_DASHBOARD_LAYOUT,
 };
 
-/** 패널 타입별 기본 그리드 크기.
+/** 그리드 배치 크기(생성 시점 기본값). */
+type PanelGridSize = Pick<DashboardLayoutItem, 'w' | 'h' | 'minW' | 'minH'>;
+
+/**
+ * 패널 타입별 **생성 시점** 기본 그리드 크기.
  *
- * 차트 계열 5종 (stat/line-chart/bar-chart/pie-chart/table) 크기는
- * SPEC-CHART-001 REQ-M5-05 에 정의되어 있다.
+ * 그리드 셀은 **정사각형**이다 — 행 높이를 열 폭에서 계산한다(`DashboardPage` 의
+ * `gridRowHeight`). 기본 10열이므로 폭 1400px 화면에서 한 칸은 약 140×140px 이고,
+ * 패널 헤더가 그중 위쪽 ~36px 을 먹는다. 아래 값들은 그 셈을 기준으로 잡았다.
+ *
+ * 기준은 하나다: **만들자마자 크기를 조절하지 않아도 내용이 읽혀야 한다.** 종전에는
+ * 여러 타입이 아래 표에 없어 일괄 폴백(5×4)으로 태어났고, 통계·게이지처럼 표에 있는
+ * 것도 헤더를 빼면 내용이 들어갈 자리가 남지 않는 값이었다.
+ *
+ * `Record<PanelType, …>` 로 두어 **컴파일러가 전수성을 강제**한다. 종전의 `switch` +
+ * `default` 는 새 타입이 조용히 일괄 폴백으로 떨어졌고, 그 폴백이 맞는지는 아무도
+ * 확인하지 않았다 — sysmetrics 패널 3종이 실제로 그 상태였다.
+ *
+ * `minW`/`minH` 는 **그대로 둔다.** 여기는 "태어날 때의 크기"이지 "허용되는 최소"가
+ * 아니다. 최소를 함께 올리면 사용자가 일부러 줄여 둔 패널을 다음 렌더에서 그리드가
+ * 도로 키운다.
+ *
+ * 차트 계열 5종의 종전 값은 SPEC-CHART-001 REQ-M5-05 에서 왔다. 그 값들이 헤더·축·범례를
+ * 셈에 넣지 않아 실사용에서 좁다는 피드백을 받아 이번에 키웠다.
  */
-function panelDefaultSize(type: PanelType): Pick<DashboardLayoutItem, 'w' | 'h' | 'minW' | 'minH'> {
-  switch (type) {
-    case 'stat':
-      // SPEC REQ-M5-05: stat {w:2, h:1}
-      return { w: 2, h: 1, minW: 2, minH: 1 };
-    case 'gauge':
-      return { w: 2, h: 3, minW: 2, minH: 2 };
-    case 'text':
-      return { w: 3, h: 2, minW: 2, minH: 2 };
-    case 'ac-control':
-      return { w: 3, h: 5, minW: 2, minH: 4 };
-    case 'hvac-control':
-      return { w: 5, h: 5, minW: 4, minH: 4 };
-    case 'custom-control':
-      return { w: 3, h: 5, minW: 2, minH: 3 };
-    case 'properties-grid':
-      return { w: 4, h: 4, minW: 2, minH: 2 };
-    case 'line-chart':
-      // SPEC REQ-M5-05: line-chart {w:6, h:3}
-      return { w: 6, h: 3, minW: 3, minH: 2 };
-    case 'bar-chart':
-      // SPEC REQ-M5-05: bar-chart {w:4, h:3}
-      return { w: 4, h: 3, minW: 3, minH: 2 };
-    case 'pie-chart':
-      // SPEC REQ-M5-05: pie-chart {w:3, h:3}
-      return { w: 3, h: 3, minW: 3, minH: 3 };
-    case 'table':
-      // SPEC REQ-M5-05: table {w:6, h:4}
-      return { w: 6, h: 4, minW: 4, minH: 3 };
-    default:
-      return { w: 5, h: 4, minW: 3, minH: 3 };
-  }
+const PANEL_DEFAULT_SIZES: Record<PanelType, PanelGridSize> = {
+  // --- 차트 계열 ---
+  //
+  // 통계는 종전 2×1 이었다. 한 칸 높이에서 헤더를 빼면 ~100px 이라 값 한 줄이 겨우
+  // 들어가고, 다중 출력 타일 격자(SPEC-CHART-002)는 아예 보이지 않았다.
+  stat: { w: 3, h: 2, minW: 2, minH: 1 },
+  // 게이지는 원형이라 **정사각**이 맞다. 종전 2×3 은 폭이 원의 지름을 묶고 남는
+  // 세로가 빈 채로 남았다.
+  gauge: { w: 3, h: 3, minW: 2, minH: 2 },
+  // 라인/영역/막대/캔들 공용. 축 라벨과 범례가 붙으면 3행에서는 그림이 절반이다.
+  'graph-chart': { w: 6, h: 4, minW: 3, minH: 2 },
+  // 카테고리 라벨이 가로로 늘어선다.
+  'bar-chart': { w: 5, h: 4, minW: 3, minH: 2 },
+  // 조각 + 범례. 파이 자체가 정사각을 요구한다.
+  'pie-chart': { w: 4, h: 4, minW: 3, minH: 3 },
+  // 컬럼 여러 개 + 헤더 행. 가로가 모자라면 컬럼이 잘린다.
+  table: { w: 7, h: 5, minW: 4, minH: 3 },
+  text: { w: 4, h: 3, minW: 2, minH: 2 },
+  // 히트맵은 2차원 공간장을 그리므로 정사각이 자연스럽다.
+  heatmap: { w: 5, h: 5, minW: 3, minH: 3 },
+
+  // --- 목록/테이블 계열 ---
+  //
+  // 플로우·에이전트는 기본 대시보드가 쓰는 값과 같다(5×4 를 둘 나란히 = 10열).
+  flows: { w: 5, h: 4, minW: 3, minH: 3 },
+  agents: { w: 5, h: 4, minW: 3, minH: 3 },
+  devices: { w: 5, h: 4, minW: 3, minH: 3 },
+  // 로그는 컬럼이 많아 가로로 넓어야 읽힌다(monitor-logs 와 같은 근거).
+  logs: { w: 8, h: 5, minW: 5, minH: 3 },
+  // 지표 카드가 가로로 늘어서는 낮고 넓은 띠. 기본 대시보드는 전체 폭(10×3)을 준다.
+  resource: { w: 6, h: 3, minW: 4, minH: 2 },
+
+  // --- 단일 대상 카드 ---
+  device: { w: 4, h: 5, minW: 3, minH: 3 },
+  'properties-grid': { w: 4, h: 4, minW: 2, minH: 2 },
+  // SPEC-DASHBOARD-002: 단일 에이전트 상태·통계(통계 타일 그리드 + 헤더).
+  'agent-status': { w: 4, h: 5, minW: 3, minH: 3 },
+
+  // --- 제어 카드 (세로로 긴 조작 패널) ---
+  'ac-control': { w: 3, h: 5, minW: 2, minH: 4 },
+  'outdoor-control': { w: 3, h: 5, minW: 2, minH: 4 },
+  'hvac-control': { w: 5, h: 5, minW: 4, minH: 4 },
+  'custom-control': { w: 3, h: 5, minW: 2, minH: 3 },
+
+  // --- 설비 (SPEC-FACILITY-DASHBOARD-001 M5 / SPEC-XSFM-GROUP-001 M7) ---
+  // 단일 기기는 에어컨 제어와 유사한 세로 카드.
+  'facility-device': { w: 3, h: 5, minW: 2, minH: 4 },
+  // 역사(통계 + 기기 목록 + 일괄 제어).
+  'facility-station': { w: 5, h: 6, minW: 3, minH: 4 },
+  // 호선(라인도 포함으로 더 넓게).
+  'facility-line': { w: 8, h: 6, minW: 4, minH: 4 },
+  // 그룹(그룹별 통계 + 일괄 제어 목록).
+  'facility-group': { w: 5, h: 6, minW: 3, minH: 4 },
+  // SPEC-TRIGGER-SCHED-001 M2: 예약 규칙 테이블(6컬럼). 가로로 넓은 카드.
+  'facility-schedule': { w: 8, h: 6, minW: 5, minH: 4 },
+  // SPEC-TRIGGER-PANEL-001 M2: 스케줄 리스트 + 카탈로그 편집을 담는 세로 카드.
+  'trigger-config': { w: 4, h: 7, minW: 3, minH: 4 },
+
+  // --- MODBUS Gateway (SPEC-MODBUS-012 M1) ---
+  // 레지스터 맵 그리드는 넓게, 목록은 세로로, 미니차트/요약 바는 낮게.
+  'modbus-shared-registers': { w: 6, h: 5, minW: 4, minH: 3 },
+  'modbus-device-registers': { w: 6, h: 5, minW: 4, minH: 3 },
+  'modbus-real-devices': { w: 4, h: 5, minW: 3, minH: 3 },
+  'modbus-virtual-devices': { w: 4, h: 5, minW: 3, minH: 3 },
+  'modbus-bus-stats': { w: 6, h: 3, minW: 3, minH: 2 },
+  'modbus-summary-stats': { w: 8, h: 2, minW: 4, minH: 2 },
+
+  // --- 모니터링 (xflowd 런타임) ---
+  // 통계 카드 그리드 — 낮고 넓게.
+  'monitor-stats': { w: 4, h: 3, minW: 2, minH: 2 },
+  // 라인 차트 2열 배치 기준.
+  'monitor-metrics': { w: 6, h: 4, minW: 3, minH: 3 },
+  // 범례가 붙어 메트릭보다 넓어야 읽힌다.
+  'monitor-network': { w: 6, h: 5, minW: 4, minH: 3 },
+  // 로그 테이블은 컬럼이 6개라 가로로 넓어야 읽힌다.
+  'monitor-logs': { w: 8, h: 5, minW: 5, minH: 3 },
+  // 타임라인은 세로로 흐른다.
+  'monitor-events': { w: 4, h: 5, minW: 3, minH: 3 },
+
+  // --- sysmetrics (호스트 지표, SPEC-SYSMETRICS-PANEL-001) ---
+  //
+  // 세 타입 모두 종전에는 표에 없어 일괄 폴백(5×4)으로 태어났다. 각 패널이 선언한
+  // 최소 항목 폭에서 필요한 칸 수를 되짚어 넣는다.
+  //
+  // 시스템: 기본 항목 4개 × 최소 카드 폭 160px = 640px → 5칸(700px)이 하한, 6칸이 여유.
+  // 타일은 낮으므로 높이는 3칸이면 한 줄이 편하게 들어간다.
+  'sysmetrics-system': { w: 6, h: 3, minW: 3, minH: 2 },
+  // 네트워크: 기본 스타일이 라인이라 monitor-network 와 같은 근거로 넓고 높다.
+  'sysmetrics-network': { w: 6, h: 5, minW: 4, minH: 3 },
+  // 스토리지: 마운트마다 한 행(최소 행 폭 220px), 기본 스타일은 진행 막대.
+  'sysmetrics-storage': { w: 5, h: 4, minW: 3, minH: 3 },
+};
+
+/** 표에 없는 타입(구 config 의 미지 문자열)이 들어왔을 때의 폴백. */
+const FALLBACK_PANEL_SIZE: PanelGridSize = { w: 5, h: 4, minW: 3, minH: 3 };
+
+/**
+ * 패널 타입별 생성 시점 기본 크기.
+ *
+ * 표는 전수이지만 런타임에는 저장된 대시보드에서 미지의 타입 문자열이 올 수 있으므로
+ * 폴백을 남긴다(`normalizePanelType` 이 걸러 주지만 그 밖의 경로가 생길 수 있다).
+ */
+function panelDefaultSize(type: PanelType): PanelGridSize {
+  return PANEL_DEFAULT_SIZES[type] ?? FALLBACK_PANEL_SIZE;
+}
+
+/**
+ * 신규 차트 계열 패널의 기본 데이터 소스 — 채널이 아니라 **Store** 로 시작한다.
+ *
+ * 히트맵(`buildDefaultHeatmapConfig`)이 이미 쓰던 방식을 통계/게이지/바/파이로 넓힌 것이다.
+ * 이전에는 생성 위저드가 채널 이름을 **필수**로 물어봐서(`AddPanelDialog` 의 chart-config
+ * 스텝) 신규 패널이 항상 channel 모드로 태어났고, store/tsdb 로 가려면 만든 뒤 설정에서
+ * 소스를 다시 바꿔야 했다. 렌더 경로는 이미 세 소스를 모두 지원하고 있었으므로
+ * (`usePanelSeriesData`) 남은 격차는 이 기본값 하나였다.
+ *
+ * `channel_name: ''` 은 **지우지 않는다.** 기본 store 소스는 시리즈가 비어 있어 비활성이고
+ * (`isStoreSourceActive` false), 그 상태의 패널은 채널 경로로 폴백해 기존과 똑같은
+ * "채널 미설정" 빈 상태를 보여준다. 키를 지우면 설정에서 채널 모드로 되돌렸을 때 편집할
+ * 필드가 사라진다.
+ */
+function defaultChartSourceConfig(): Record<string, unknown> {
+  return { data_source: 'store', store_source: buildDefaultStoreSource() };
 }
 
 /** 패널 타입별 기본값 생성 */
@@ -296,24 +455,87 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
     case 'agents':
       return { type, title: '에이전트 현황', config: { visibleColumns: [...ALL_AGENT_COLUMNS] } };
     case 'resource':
-      return { type, title: '프로세스 리소스', config: { visibleMetrics: [...ALL_METRIC_KEYS] } };
+      return { type, title: '프로세스 상태', config: { visibleMetrics: [...ALL_METRIC_KEYS] } };
     case 'devices':
       return { type, title: '디바이스', config: {} };
     case 'device':
       return { type, title: '디바이스', config: {} };
     case 'logs':
       return { type, title: '로그', config: { maxLines: 100 } };
+    // 모니터링 패널 4종 — 기본 표시 항목은 모니터링 페이지의 기본 레이아웃과 같다.
+    case 'monitor-stats':
+      return { type, title: '시스템 통계', config: { items: [...MONITOR_DEFAULT_LAYOUT.stats] } };
+    case 'monitor-metrics':
+      return { type, title: '실시간 메트릭', config: { items: [...MONITOR_DEFAULT_LAYOUT.metrics] } };
+    case 'monitor-network':
+      return {
+        type,
+        title: '네트워크',
+        config: { items: [...MONITOR_DEFAULT_LAYOUT.network], interfaces: [], unitTime: 'sec' },
+      };
+    case 'monitor-logs':
+      return { type, title: '시스템 로그', config: { items: [...MONITOR_DEFAULT_LAYOUT.logs] } };
+    case 'monitor-events':
+      return { type, title: '시스템 이벤트', config: { items: [...MONITOR_DEFAULT_LAYOUT.events] } };
+    // sysmetrics 패널 3종 (SPEC-SYSMETRICS-PANEL-001).
+    //
+    // 대상 목록(interfaces / mountpoints)의 기본값은 **빈 배열 = 종합**이다. 기본을
+    // "전체 개별"로 두면 마운트가 10개인 호스트에서 첫 화면부터 읽을 수 없다.
+    //
+    // agent_id 는 추가 다이얼로그의 선택 스텝이 채운다. 여기서는 키만 비워 둔다 —
+    // 키가 없으면 설정 화면이 어떤 필드를 편집해야 할지 알 수 없다.
+    case 'sysmetrics-system':
+      return {
+        type,
+        title: '시스템 지표',
+        config: { agent_id: '', agent_name: '', items: [...DEFAULT_SYSTEM_FIELDS], unitTime: 'sec' },
+      };
+    case 'sysmetrics-network':
+      return {
+        type,
+        title: '네트워크 지표',
+        config: { agent_id: '', agent_name: '', interfaces: [], unitTime: 'sec' },
+      };
+    case 'sysmetrics-storage':
+      return {
+        type,
+        title: '스토리지 지표',
+        config: { agent_id: '', agent_name: '', mountpoints: [], items: [...SYSMETRICS_STORAGE_ITEMS] },
+      };
     case 'stat':
       // SPEC-CHART-001 §4.2.2 stat config
       return {
         type,
         title: '통계',
-        config: { channel_name: '', display_field: 'value', unit: '', decimal_places: 2 },
+        config: {
+          channel_name: '',
+          display_field: 'value',
+          unit: '',
+          decimal_places: 2,
+          ...defaultChartSourceConfig(),
+        },
       };
     case 'gauge':
-      return { type, title: '게이지', config: { value: 75, min: 0, max: 100, unit: '%', gaugeType: 'simple' } };
-    case 'line-chart':
-      // SPEC-CHART-001 §4.2.2 line-chart config
+      // `series_reduce` 가 함께 있어야 store/tsdb 경로가 실제로 이긴다 — 게이지는
+      // `data_source` + 소스 활성 + `series_reduce` 의 논리곱일 때만 레거시
+      // `dataSources[]` 를 밀어낸다(SPEC-CHART-002 §2.9, `gaugeLegacyBinding.ts` 진리표).
+      // 빠뜨리면 사용자가 시리즈를 골라도 게이지만 조용히 static `value` 를 계속 그린다.
+      // `value: 75` 는 바인딩 이전의 표시값이므로 그대로 둔다(기존 동작 보존).
+      return {
+        type,
+        title: '게이지',
+        config: {
+          value: 75,
+          min: 0,
+          max: 100,
+          unit: '%',
+          gaugeType: 'simple',
+          series_reduce: 'last',
+          ...defaultChartSourceConfig(),
+        },
+      };
+    case 'graph-chart':
+      // SPEC-CHART-001 §4.2.2 그래프 차트 config
       return {
         type,
         title: '라인 차트',
@@ -332,6 +554,7 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
           bin_sec: 60,
           agg_func: 'avg',
           max_points: 20,
+          ...defaultChartSourceConfig(),
         },
       };
     case 'pie-chart':
@@ -347,12 +570,15 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
           show_legend: true,
           show_percentage: true,
           max_points: 20,
+          ...defaultChartSourceConfig(),
         },
       };
     case 'text':
       return { type, title: '텍스트', config: { content: '', format: 'markdown' } };
     case 'table':
-      // SPEC-CHART-001 §4.2.2 table config
+      // SPEC-CHART-001 §4.2.2 table config.
+      // 통계/게이지/바/파이와 같이 store 기본 소스로 태어난다 — 생성 시 채널 이름을
+      // 묻지 않고, 채널/Store/TSDB 전환은 패널 설정의 데이터 소스 섹션에서 한다.
       return {
         type,
         title: '테이블',
@@ -364,6 +590,7 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
           ],
           rows_per_page: 20,
           max_points: 200,
+          ...defaultChartSourceConfig(),
         },
       };
     case 'ac-control':
@@ -375,7 +602,66 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
     case 'outdoor-control':
       return { type, title: '실외기 모니터링', config: { deviceId: '' } };
     case 'properties-grid':
-      return { type, title: '속성 그리드', config: { deviceId: '', gridCols: 3, visibleProperties: [] } };
+      return { type, title: '디바이스 상태', config: { deviceId: '', gridCols: 3, visibleProperties: [] } };
+    // SPEC-FACILITY-DASHBOARD-001 M5: 설비 패널 3종. config 는 agentId + 대상(라인/역사/기기).
+    // 표시 옵션(nodeSize 5단계 / offlineAsOff / showStats / stationsPerRow)은 config-only 영속(UB-003).
+    case 'facility-device':
+      return { type, title: '설비 기기', config: { agentId: '', deviceId: '' } };
+    case 'facility-station':
+      return {
+        type,
+        title: '설비 역사',
+        // deviceLabelMode: 개별 기기 라벨(placeIndex=위치+번호 기본 / name=기기 이름).
+        // offlineAsOff: 오프라인을 꺼짐으로 표시(라인 패널과 동일 옵션, 기본 false).
+        config: {
+          agentId: '',
+          station: '',
+          showStats: true,
+          deviceLabelMode: 'placeIndex',
+          offlineAsOff: false,
+        },
+      };
+    case 'facility-line':
+      return {
+        type,
+        title: '설비 호선',
+        // stationsPerRow: 0 = 자동(nodeSize 기반) 폴백. 1 이상 지정 시 1줄당 역사 수를 직접 제어.
+        config: { agentId: '', line: '', nodeSize: '2', offlineAsOff: false, stationsPerRow: 0 },
+      };
+    // SPEC-XSFM-GROUP-001 M7: 설비 그룹 패널(역사/라인/커스텀 그룹을 한 종류로 표시·제어).
+    // config 는 agentId 만 필요(그룹 전체를 나열하므로 단일 대상 없음). showStats 는 그룹 통계 토글.
+    case 'facility-group':
+      return { type, title: '설비 그룹', config: { agentId: '', showStats: true } };
+    // SPEC-TRIGGER-PANEL-001 M2: trigger 노드 설정 패널.
+    // config 는 대상 노드({flowId,nodeId}) + 대시보드-로컬 페이로드 카탈로그(RD-9).
+    // 스케줄은 노드 config 가 SSOT 이므로 패널 config 에 복제하지 않는다(REQ-02-04).
+    case 'trigger-config':
+      return { type, title: '트리거 설정', config: { flowId: '', nodeId: '', payloadCatalog: {} } };
+    // SPEC-TRIGGER-SCHED-001 M2: 설비 제어 예약 패널.
+    // config 는 대상 trigger 노드({flowId,nodeId}) + TARGET 열거용 xsfm 에이전트(agentId).
+    // 예약 규칙(스케줄 + 확장 메타 + 제어 payload)은 노드 config 가 SSOT 이므로 복제하지 않는다.
+    case 'facility-schedule':
+      return { type, title: '설비 제어 예약', config: { flowId: '', nodeId: '', agentId: '' } };
+    // SPEC-MODBUS-012 M1: MODBUS Gateway 패널 6종. 모두 modbus-gateway 에이전트에 바인딩된다.
+    // 가상 디바이스 레지스터 맵만 대상 unit(unitId)을 추가로 저장한다(2차 선택 스텝).
+    case 'modbus-real-devices':
+      return { type, title: '디바이스 상태', config: { agentId: '' } };
+    case 'modbus-virtual-devices':
+      return { type, title: '가상 디바이스', config: { agentId: '' } };
+    case 'modbus-shared-registers':
+      return { type, title: '공유 레지스터 맵', config: { agentId: '' } };
+    case 'modbus-device-registers':
+      return { type, title: '가상 디바이스 레지스터', config: { agentId: '', unitId: 0 } };
+    case 'modbus-bus-stats':
+      return { type, title: '버스 통계', config: { agentId: '' } };
+    case 'modbus-summary-stats':
+      return { type, title: '종합 통계', config: { agentId: '' } };
+    // SPEC-DASHBOARD-002: 단일 에이전트(타입 무관) 상태 패널. config 는 agentId 만 필요.
+    case 'agent-status':
+      return { type, title: '에이전트 상태', config: { agentId: '' } };
+    // SPEC-HEATMAP-PANEL-001: 히트맵 패널. 기본 config 는 store 태그 모드 + 빈 좌표 + 기본 IDW.
+    case 'heatmap':
+      return { type, title: '히트맵', config: buildDefaultHeatmapConfig() };
   }
 }
 
@@ -430,14 +716,27 @@ interface UIState {
    * (SPEC-REMOTE-001 M11.4). 'fixed' 는 노드 해상도 고정 캔버스를 사용한다.
    */
   remoteDashboardRenderMode: RemoteDashboardRenderMode;
-  /** 멀티-대시보드 페이지 목록 — 활성 스코프 snapshot.payload 와 동기. */
+  /**
+   * 대시보드 본문 목록 — `dashboards` 와 uid 기준으로 1:1 대응한다.
+   *
+   * `panels` / `layout` 은 그 대시보드를 GET 하기 전까지 빈 배열이다. 목록 API 는
+   * payload 를 주지 않기 때문이다(spec.md §2.3).
+   */
   dashboardPages: DashboardPageConfig[];
-  /** 현재 활성 대시보드 페이지 ID — 활성 스코프 snapshot.payload 와 동기. */
+  /** 활성 대시보드의 uid. 접근 가능한 대시보드가 0장이면 빈 문자열. */
   activeDashboardId: string;
   /** 대시보드 편집 모드 (비영속) */
   dashboardEditMode: boolean;
   /** 대시보드 그리드 칼럼 수 */
   dashboardGridCols: number;
+  /**
+   * 대시보드 그리드 컨테이너의 실측 폭(px, 비영속·비동기화).
+   *
+   * 셀 한 변을 이 폭에서 파생하므로(gridGeometry.gridCellSize) 패널 설정 화면이 "이 패널이
+   * 대시보드에서 실제로 몇 대 몇인지"를 계산할 수 있다. 대시보드를 한 번도 열지 않았으면 0 이며
+   * 호출부는 마진 무시 근사로 폴백한다.
+   */
+  dashboardGridWidth: number;
   /** 대시보드 그리드 라인 표시 여부 */
   dashboardShowGridLines: boolean;
   /** 디바이스 그리드 레이아웃 (deviceId -> layout) */
@@ -456,14 +755,15 @@ interface UIState {
   flowDisplaySettings: Record<string, FlowDisplaySettings>;
   notifications: Notification[];
 
-  // ---- SPEC-DASHBOARD-001 v0.2.0: 서버 snapshot 슬롯 ----
+  // ---- SPEC-DASHBOARD-004: 서버 상태 단일 축 ----
 
-  /** 공유(global) 대시보드 snapshot. 부팅 GET 404 시 version=0 의 기본 snapshot. */
-  sharedSnapshot: DashboardSnapshot | null;
-  /** 본인(user) 대시보드 snapshot. */
-  mineSnapshot: DashboardSnapshot | null;
-  /** 활성 스코프. UI 탭 ("공유" / "내 대시보드") 와 1:1. */
-  activeDashboardScope: 'shared' | 'mine';
+  /**
+   * 요청자가 접근 가능한 대시보드 메타 목록 (`GET /api/v1/dashboards`).
+   *
+   * 인가 판정(`can_edit` 등)은 서버가 실어 보낸 값을 그대로 쓴다 — 프론트에서
+   * 재계산하면 규칙이 두 곳에 생겨 한쪽만 갱신된다(spec.md §2.3).
+   */
+  dashboards: Dashboard[];
 }
 
 interface UIActions {
@@ -481,11 +781,12 @@ interface UIActions {
   setDashboardGridCols: (cols: number) => void;
   setDashboardShowGridLines: (show: boolean) => void;
 
-  // 대시보드 페이지 CRUD
-  addDashboardPage: (name: string) => void;
-  removeDashboardPage: (pageId: string) => void;
-  renameDashboardPage: (pageId: string, name: string) => void;
-  setDefaultDashboardPage: (pageId: string) => void;
+  // 대시보드 활성 전환.
+  // SPEC-DASHBOARD-004 M8: 구 모델의 페이지 CRUD 4종
+  // (addDashboardPage / removeDashboardPage / renameDashboardPage /
+  //  setDefaultDashboardPage)은 서버 API 로 대체되어 호출자가 사라졌으므로 제거했다.
+  // 생성·삭제·이름변경·기본지정은 이제 useCreateDashboard / useDashboardMutations 가
+  // 서버 왕복 후 setDashboards · applyDashboardDetail 로 반영한다.
   setActiveDashboard: (pageId: string) => void;
 
   // 패널 CRUD (활성 대시보드 대상)
@@ -498,6 +799,8 @@ interface UIActions {
   // 활성 대시보드 레이아웃 관리
   setDashboardLayout: (layout: DashboardLayoutItem[]) => void;
   resetDashboardLayout: () => void;
+  /** 그리드 컨테이너 실측 폭 게시(대시보드 → 설정 화면). 같은 값이면 no-op. */
+  setDashboardGridWidth: (width: number) => void;
 
   // 디바이스 그리드
   setDeviceGridLayout: (layout: Record<string, DashboardLayoutItem>) => void;
@@ -516,118 +819,73 @@ interface UIActions {
   dismissNotification: (id: string) => void;
   clearNotifications: () => void;
 
-  // ---- SPEC-DASHBOARD-001 v0.2.0: snapshot 슬롯 액션 ----
+  // ---- SPEC-DASHBOARD-004: 대시보드 단일 축 액션 ----
 
   /**
-   * 공유(global) snapshot 을 교체한다. 활성 스코프가 'shared' 이면 legacy 필드
-   * (dashboardPages 등) 도 함께 sync 된다.
+   * 목록 API 결과로 대시보드 축을 교체한다.
    *
-   * @param opts.fromServer 서버 응답으로 인한 적용임을 표시 (useDashboardSync 가 사용).
+   * 이미 본문을 받아둔 대시보드의 `panels` / `layout` 은 uid 기준으로 보존한다 —
+   * 목록 재조회(권한 상실·삭제 복구)가 편집 중인 본문을 지워서는 안 된다.
+   * 목록에서 사라진 대시보드는 본문도 함께 버린다.
    */
-  setSharedSnapshot: (snapshot: DashboardSnapshot | null, opts?: { fromServer?: boolean }) => void;
+  setDashboards: (dashboards: Dashboard[]) => void;
 
-  /** 본인(user) snapshot 을 교체한다. 활성 스코프가 'mine' 이면 legacy 필드 sync. */
-  setMineSnapshot: (snapshot: DashboardSnapshot | null, opts?: { fromServer?: boolean }) => void;
+  /**
+   * 단건 조회·저장 응답을 반영한다 (메타 + 본문).
+   *
+   * 활성 대시보드이면 그 대시보드의 그리드 설정 3종도 함께 적용한다 — 그리드 설정은
+   * 대시보드마다 다르므로(spec.md §2.1) 전환 시 이전 값이 남아서는 안 된다.
+   */
+  applyDashboardDetail: (detail: DashboardDetail) => void;
 
-  /** 활성 스코프를 변경한다 — 해당 snapshot.payload 를 legacy 필드로 복사. sessionStorage 영속. */
-  setActiveDashboardScope: (scope: 'shared' | 'mine') => void;
+  /**
+   * 저장 응답의 메타(특히 `version`)만 반영한다.
+   *
+   * 본문을 함께 덮지 않는 이유: PUT 이 비행 중일 때 사용자가 가한 변경을 서버
+   * 에코가 되돌려버리기 때문이다. 보낸 본문은 이미 로컬에 있으므로 되받을 필요가 없다.
+   */
+  applyDashboardMeta: (meta: Dashboard) => void;
 }
 
 let notificationCounter = 0;
 
-/** snapshot.payload 를 legacy state 필드 형태로 투영한다 (snapshot → legacy sync). */
-function projectPayloadToLegacy(payload: import('@/types/dashboard').DashboardPayload): Partial<UIState> {
-  return {
-    dashboardPages: payload.dashboardPages,
-    activeDashboardId: payload.activeDashboardId,
-    dashboardGridCols: payload.dashboardGridCols,
-    dashboardShowGridLines: payload.dashboardShowGridLines,
-    dashboardRefreshInterval: payload.dashboardRefreshInterval,
-    deviceGridLayout: payload.deviceGridLayout,
-  };
-}
-
-/** 현재 store 상태에서 활성 페이로드(서버 PUT 형태) 를 모은다 (legacy → payload). */
-export function collectActivePayload(
-  state: UIState,
-): import('@/types/dashboard').DashboardPayload {
-  return {
-    dashboardPages: state.dashboardPages,
-    activeDashboardId: state.activeDashboardId,
-    dashboardGridCols: state.dashboardGridCols,
-    dashboardShowGridLines: state.dashboardShowGridLines,
-    dashboardRefreshInterval: state.dashboardRefreshInterval,
-    deviceGridLayout: state.deviceGridLayout,
-  };
-}
-
-/** 활성 스코프의 snapshot 을 반환한다 (없으면 null). */
-export function getActiveSnapshot(state: UIState): DashboardSnapshot | null {
-  return state.activeDashboardScope === 'shared' ? state.sharedSnapshot : state.mineSnapshot;
-}
-
-/** 활성 스코프의 dashboardPages 를 반환 (snapshot 우선, fallback: state.dashboardPages, 최후: DEFAULT). */
-export function getActiveDashboardPages(state: UIState): DashboardPageConfig[] {
-  const snap = getActiveSnapshot(state);
-  if (snap) return snap.payload.dashboardPages;
-  if (state.dashboardPages.length > 0) return state.dashboardPages;
-  return [{ ...DEFAULT_DASHBOARD_PAGE, panels: [...DEFAULT_PANELS] }];
-}
-
-/** 빌트인 기본 페이로드 (서버 GET 404 시 fallback 용). */
-export function buildDefaultDashboardPayload(): import('@/types/dashboard').DashboardPayload {
-  return {
-    dashboardPages: [{ ...DEFAULT_DASHBOARD_PAGE, panels: [...DEFAULT_PANELS] }],
-    activeDashboardId: 'default',
-    dashboardGridCols: 10,
-    dashboardShowGridLines: true,
-    dashboardRefreshInterval: 10,
-    deviceGridLayout: {},
-  };
-}
-
-/** 빌트인 기본 snapshot (version=0 = "서버에 아직 없음" 의 marker). */
-export function buildDefaultSnapshot(
-  scope: 'global' | 'user',
-  owner: string | null,
-): DashboardSnapshot {
-  return {
-    scope,
-    owner,
-    version: 0,
-    updatedAt: 0,
-    payload: buildDefaultDashboardPayload(),
-  };
-}
+/** 대시보드 그리드 설정 기본값 — 서버 payload 가 값을 생략했을 때 쓴다. */
+const DEFAULT_GRID_COLS = 10;
+const DEFAULT_SHOW_GRID_LINES = true;
+const DEFAULT_REFRESH_INTERVAL = 10;
 
 /**
- * legacy 필드 변경 (`dashboardPages` 등) 을 활성 스코프 snapshot.payload 로 mirror 한다.
+ * 활성 대시보드 1장의 본문(서버 PUT 형태)을 모은다.
  *
- * - 활성 snapshot 이 없으면 빌트인 기본값을 기반으로 새 snapshot (version=0) 을 만든다.
- * - version/updatedAt 은 그대로 둔다 — 서버 PUT 응답으로 갱신될 예정.
+ * 구 모델의 `collectActivePayload` 를 대체한다 — 전송 단위가 "묶음 전체" 에서
+ * "대시보드 1장" 으로 바뀌었으므로 `dashboardPages` 배열도, 사용자 UI 상태
+ * (`activeDashboardId` · `deviceGridLayout`) 도 여기에 포함되지 않는다(spec.md §2.1).
+ * 활성 대시보드가 없으면 null.
  */
-function mirrorLegacyToActiveSnapshot(
-  prev: UIState,
-  patch: Partial<UIState>,
-): Partial<UIState> {
-  // mutation 결과를 적용한 가상 state 를 만들어 payload 를 추출한다.
-  const merged: UIState = { ...prev, ...patch };
-  const payload = collectActivePayload(merged);
-  const active = merged.activeDashboardScope;
+export function collectActiveDashboardContent(state: UIState): DashboardContent | null {
+  const page = state.dashboardPages.find((p) => p.id === state.activeDashboardId);
+  if (!page) return null;
+  return {
+    panels: page.panels,
+    layout: page.layout,
+    gridCols: state.dashboardGridCols,
+    showGridLines: state.dashboardShowGridLines,
+    refreshInterval: state.dashboardRefreshInterval,
+  };
+}
 
-  if (active === 'shared') {
-    const base = merged.sharedSnapshot ?? buildDefaultSnapshot('global', null);
-    return {
-      ...patch,
-      sharedSnapshot: { ...base, payload },
-    };
-  } else {
-    const base = merged.mineSnapshot ?? buildDefaultSnapshot('user', null);
-    return {
-      ...patch,
-      mineSnapshot: { ...base, payload },
-    };
-  }
+/** 대시보드 메타에서 본문 페이지 항목을 만든다(기존 본문이 있으면 승계). */
+function toDashboardPage(
+  meta: Pick<Dashboard, 'uid' | 'name' | 'is_default'>,
+  prev?: DashboardPageConfig,
+): DashboardPageConfig {
+  return {
+    id: meta.uid,
+    name: meta.name,
+    isDefault: meta.is_default,
+    panels: prev?.panels ?? [],
+    layout: prev?.layout ?? [],
+  };
 }
 
 /** 활성 대시보드 페이지를 찾는 헬퍼 */
@@ -662,6 +920,7 @@ export const useUIStore = create<UIState & UIActions>()(
       activeDashboardId: 'default',
       dashboardEditMode: false,
       dashboardGridCols: 10,
+      dashboardGridWidth: 0,
       dashboardShowGridLines: true,
       deviceGridLayout: {},
       deviceGridEditMode: false,
@@ -670,10 +929,10 @@ export const useUIStore = create<UIState & UIActions>()(
       flowDisplaySettings: {},
       notifications: [],
 
-      // v0.2.0: snapshot 슬롯 — sessionStorage 우선, 없으면 'shared' 기본.
-      sharedSnapshot: null,
-      mineSnapshot: null,
-      activeDashboardScope: (readActiveScopeFromSession() ?? 'shared') as 'shared' | 'mine',
+      // SPEC-DASHBOARD-004: 서버 목록이 도착하기 전까지는 빈 축이다. 위의 기본
+      // dashboardPages 1장은 부팅 전 렌더용 자리표시자이며, setDashboards 가
+      // 목록으로 통째로 교체한다.
+      dashboards: [],
 
       // ---- Actions ----
 
@@ -696,7 +955,7 @@ export const useUIStore = create<UIState & UIActions>()(
 
       // 대시보드 전역 설정
       setDashboardRefreshInterval: (seconds) =>
-        set((state) => mirrorLegacyToActiveSnapshot(state, { dashboardRefreshInterval: seconds })),
+        set({ dashboardRefreshInterval: seconds }),
 
       setDashboardEditMode: (on) =>
         set({ dashboardEditMode: on }),
@@ -705,81 +964,15 @@ export const useUIStore = create<UIState & UIActions>()(
         set({ remoteDashboardRenderMode: mode }),
 
       setDashboardGridCols: (cols) =>
-        set((state) =>
-          mirrorLegacyToActiveSnapshot(state, {
-            dashboardGridCols: Math.max(4, Math.min(100, cols)),
-          }),
-        ),
+        set({ dashboardGridCols: Math.max(4, Math.min(100, cols)) }),
 
       setDashboardShowGridLines: (show) =>
-        set((state) => mirrorLegacyToActiveSnapshot(state, { dashboardShowGridLines: show })),
+        set({ dashboardShowGridLines: show }),
 
-      // 대시보드 페이지 CRUD
-
-      addDashboardPage: (name) =>
-        set((state) => {
-          const newPage: DashboardPageConfig = {
-            id: generateUUID(),
-            name,
-            isDefault: false,
-            panels: [],
-            layout: [],
-          };
-          return mirrorLegacyToActiveSnapshot(state, {
-            dashboardPages: [...state.dashboardPages, newPage],
-            activeDashboardId: newPage.id,
-          });
-        }),
-
-      removeDashboardPage: (pageId) =>
-        set((state) => {
-          // 페이지가 1개뿐이면 삭제 차단
-          if (state.dashboardPages.length <= 1) return state;
-
-          const target = state.dashboardPages.find((p) => p.id === pageId);
-          if (!target) return state;
-
-          let pages = state.dashboardPages.filter((p) => p.id !== pageId);
-
-          // 기본 페이지를 삭제한 경우 다른 페이지를 기본으로 설정
-          if (target.isDefault && pages.length > 0) {
-            pages = pages.map((p, idx) => (idx === 0 ? { ...p, isDefault: true } : p));
-          }
-
-          // 활성 페이지를 삭제한 경우 기본 페이지로 전환
-          let newActiveId = state.activeDashboardId;
-          if (pageId === state.activeDashboardId) {
-            const defaultPage = pages.find((p) => p.isDefault);
-            newActiveId = defaultPage ? defaultPage.id : pages[0]!.id;
-          }
-
-          return mirrorLegacyToActiveSnapshot(state, {
-            dashboardPages: pages,
-            activeDashboardId: newActiveId,
-          });
-        }),
-
-      renameDashboardPage: (pageId, name) =>
-        set((state) =>
-          mirrorLegacyToActiveSnapshot(state, {
-            dashboardPages: state.dashboardPages.map((p) =>
-              p.id === pageId ? { ...p, name } : p,
-            ),
-          }),
-        ),
-
-      setDefaultDashboardPage: (pageId) =>
-        set((state) =>
-          mirrorLegacyToActiveSnapshot(state, {
-            dashboardPages: state.dashboardPages.map((p) => ({
-              ...p,
-              isDefault: p.id === pageId,
-            })),
-          }),
-        ),
+      // 대시보드 활성 전환
 
       setActiveDashboard: (pageId) =>
-        set((state) => mirrorLegacyToActiveSnapshot(state, { activeDashboardId: pageId })),
+        set({ activeDashboardId: pageId }),
 
       // 패널 CRUD (활성 대시보드 대상)
 
@@ -800,7 +993,7 @@ export const useUIStore = create<UIState & UIActions>()(
             panels: [...page.panels, newPanel],
             layout: [...page.layout, newLayoutItem],
           }));
-          return mirrorLegacyToActiveSnapshot(state, patch);
+          return patch;
         }),
 
       addPanelWithConfig: (type, config, title) =>
@@ -825,7 +1018,7 @@ export const useUIStore = create<UIState & UIActions>()(
             panels: [...page.panels, newPanel],
             layout: [...page.layout, newLayoutItem],
           }));
-          return mirrorLegacyToActiveSnapshot(state, patch);
+          return patch;
         }),
 
       removePanel: (panelId) =>
@@ -835,7 +1028,7 @@ export const useUIStore = create<UIState & UIActions>()(
             panels: page.panels.filter((p) => p.id !== panelId),
             layout: page.layout.filter((l) => l.i !== panelId),
           }));
-          return mirrorLegacyToActiveSnapshot(state, patch);
+          return patch;
         }),
 
       updatePanelConfig: (panelId, config) =>
@@ -846,7 +1039,7 @@ export const useUIStore = create<UIState & UIActions>()(
               p.id === panelId ? { ...p, config: { ...p.config, ...config } } : p,
             ),
           }));
-          return mirrorLegacyToActiveSnapshot(state, patch);
+          return patch;
         }),
 
       updatePanelTitle: (panelId, title) =>
@@ -857,7 +1050,7 @@ export const useUIStore = create<UIState & UIActions>()(
               p.id === panelId ? { ...p, title } : p,
             ),
           }));
-          return mirrorLegacyToActiveSnapshot(state, patch);
+          return patch;
         }),
 
       // 활성 대시보드 레이아웃
@@ -865,7 +1058,7 @@ export const useUIStore = create<UIState & UIActions>()(
       setDashboardLayout: (layout) =>
         set((state) => {
           const patch = updateActivePage(state, (page) => ({ ...page, layout }));
-          return mirrorLegacyToActiveSnapshot(state, patch);
+          return patch;
         }),
 
       resetDashboardLayout: () =>
@@ -875,18 +1068,23 @@ export const useUIStore = create<UIState & UIActions>()(
             panels: [...DEFAULT_PANELS],
             layout: [...DEFAULT_DASHBOARD_LAYOUT],
           }));
-          return mirrorLegacyToActiveSnapshot(state, patch);
+          return patch;
         }),
+
+      // 그리드 실측 폭 게시. ResizeObserver 가 매 프레임 부르므로 동일 값이면 set 을 건너뛴다
+      // (불필요한 구독자 재렌더 방지 — 이 값은 대시보드 렌더 경로에서도 읽힌다).
+      setDashboardGridWidth: (width) =>
+        set((state) => (state.dashboardGridWidth === width ? {} : { dashboardGridWidth: width })),
 
       // 디바이스 그리드
       setDeviceGridLayout: (layout) =>
-        set((state) => mirrorLegacyToActiveSnapshot(state, { deviceGridLayout: layout })),
+        set({ deviceGridLayout: layout }),
 
       setDeviceGridEditMode: (on) =>
         set({ deviceGridEditMode: on }),
 
       resetDeviceGridLayout: () =>
-        set((state) => mirrorLegacyToActiveSnapshot(state, { deviceGridLayout: {} })),
+        set({ deviceGridLayout: {} }),
 
       // 플로우 에디터: 그리드 스냅 (v0.18.4)
       setEditorSnapToGrid: (on) =>
@@ -932,37 +1130,61 @@ export const useUIStore = create<UIState & UIActions>()(
       clearNotifications: () =>
         set({ notifications: [] }),
 
-      // ---- SPEC-DASHBOARD-001 v0.2.0: snapshot 액션 ----
+      // ---- SPEC-DASHBOARD-004: 대시보드 단일 축 액션 ----
 
-      setSharedSnapshot: (snapshot, _opts) =>
+      setDashboards: (dashboards) =>
         set((state) => {
-          const next: Partial<UIState> = { sharedSnapshot: snapshot };
-          if (state.activeDashboardScope === 'shared' && snapshot) {
-            Object.assign(next, projectPayloadToLegacy(snapshot.payload));
-          }
-          return next as UIState;
+          const prevByUid = new Map(state.dashboardPages.map((page) => [page.id, page]));
+          return {
+            dashboards,
+            dashboardPages: dashboards.map((d) => toDashboardPage(d, prevByUid.get(d.uid))),
+          };
         }),
 
-      setMineSnapshot: (snapshot, _opts) =>
-        set((state) => {
-          const next: Partial<UIState> = { mineSnapshot: snapshot };
-          if (state.activeDashboardScope === 'mine' && snapshot) {
-            Object.assign(next, projectPayloadToLegacy(snapshot.payload));
-          }
-          return next as UIState;
-        }),
+      applyDashboardMeta: (meta) =>
+        set((state) => ({
+          dashboards: state.dashboards.some((d) => d.uid === meta.uid)
+            ? state.dashboards.map((d) => (d.uid === meta.uid ? meta : d))
+            : [...state.dashboards, meta],
+          dashboardPages: state.dashboardPages.map((p) =>
+            p.id === meta.uid ? { ...p, name: meta.name, isDefault: meta.is_default } : p,
+          ),
+        })),
 
-      setActiveDashboardScope: (scope) =>
+      applyDashboardDetail: (detail) =>
         set((state) => {
-          writeActiveScopeToSession(scope);
-          const target = scope === 'shared' ? state.sharedSnapshot : state.mineSnapshot;
-          const legacy = target ? projectPayloadToLegacy(target.payload) : {};
-          return { activeDashboardScope: scope, ...legacy } as Partial<UIState> as UIState;
+          // payload 를 뺀 메타만 축에 남긴다 — 본문은 dashboardPages 가 소유한다.
+          const { payload, ...meta } = detail;
+          const exists = state.dashboards.some((d) => d.uid === meta.uid);
+          const dashboards = exists
+            ? state.dashboards.map((d) => (d.uid === meta.uid ? meta : d))
+            : [...state.dashboards, meta];
+
+          const page: DashboardPageConfig = {
+            id: meta.uid,
+            name: meta.name,
+            isDefault: meta.is_default,
+            // 서버가 옛 이름(line-chart)을 담고 있어도 여기서 현재 이름으로 읽는다.
+            panels: normalizePanels(payload?.panels ?? []),
+            layout: payload?.layout ?? [],
+          };
+          const hasPage = state.dashboardPages.some((p) => p.id === meta.uid);
+          const dashboardPages = hasPage
+            ? state.dashboardPages.map((p) => (p.id === meta.uid ? page : p))
+            : [...state.dashboardPages, page];
+
+          const next: Partial<UIState> = { dashboards, dashboardPages };
+          if (state.activeDashboardId === meta.uid) {
+            next.dashboardGridCols = payload?.gridCols ?? DEFAULT_GRID_COLS;
+            next.dashboardShowGridLines = payload?.showGridLines ?? DEFAULT_SHOW_GRID_LINES;
+            next.dashboardRefreshInterval = payload?.refreshInterval ?? DEFAULT_REFRESH_INTERVAL;
+          }
+          return next;
         }),
     }),
     {
       name: 'xflow-ui',
-      version: 4,
+      version: 5,
       migrate: (persistedState: unknown, version: number) => {
         const state = persistedState as Record<string, unknown>;
 
@@ -1004,7 +1226,7 @@ export const useUIStore = create<UIState & UIActions>()(
                 {
                   id: 'resource-default',
                   type: 'resource' as PanelType,
-                  title: (state.resourcePanelTitle as string) || '프로세스 리소스',
+                  title: (state.resourcePanelTitle as string) || '프로세스 상태',
                   config: {
                     visibleMetrics:
                       (state.dashboardVisibleMetrics as string[]) ||
@@ -1058,14 +1280,29 @@ export const useUIStore = create<UIState & UIActions>()(
           }
         }
 
+        // v4 -> v5: 라인 차트 → 그래프 차트 (이름만 변경, 같은 패널).
+        // 스타일 축(라인·영역·바·캔들)이 생기면서 이름이 한 스타일에 묶여 있는 것이
+        // 어색해졌다. config 는 손대지 않는다 — 바뀐 것은 이름뿐이다.
+        if (version < 5) {
+          const pages = state.dashboardPages as DashboardPageConfig[] | undefined;
+          if (Array.isArray(pages)) {
+            for (const page of pages) {
+              if (!Array.isArray(page.panels)) continue;
+              for (const panel of page.panels) {
+                if ((panel.type as string) === 'line-chart') panel.type = 'graph-chart';
+              }
+            }
+          }
+        }
+
         return state as unknown as UIState & UIActions;
       },
-      // SPEC-DASHBOARD-001 v0.2.0: 대시보드 관련 키 6 개를 partialize 에서 제외.
-      //   - dashboardPages, activeDashboardId
+      // 대시보드 관련 키는 partialize 에서 제외한다.
+      //   - dashboardPages, dashboards (서버 목록 + 본문)
       //   - dashboardGridCols, dashboardShowGridLines, dashboardRefreshInterval
-      //   - deviceGridLayout
-      // 위 값들은 서버 snapshot (`sharedSnapshot` / `mineSnapshot`) 으로 관리되며
-      // 활성 스코프에서 derive 된다. 기기별 환경설정만 영속.
+      //     (대시보드 payload 에 속한다 — spec.md §2.1)
+      //   - activeDashboardId, deviceGridLayout (서버 /dashboard-state 소유)
+      // 기기별 환경설정만 영속한다.
       partialize: (state) => ({
         sidebarCollapsed: state.sidebarCollapsed,
         theme: state.theme,

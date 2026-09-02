@@ -10,6 +10,8 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 | HTTP Framework | Fiber v3 또는 Echo v4 | REST API 서버 |
 | Frontend | React 19 + TypeScript 5.x | 웹 대시보드 SPA |
 | Node Editor | React Flow | 플로우 에디터 UI |
+| Canvas 렌더 | HTML Canvas 2D API (네이티브) | 히트맵 패널 IDW 온도장 픽셀 렌더 (SPEC-HEATMAP-PANEL-001) |
+| 벡터 오버레이 | SVG `<path>` (네이티브) | 히트맵 패널 등치선(marching squares) 오버레이 렌더 (SPEC-HEATMAP-PANEL-003) |
 | CSS | Tailwind CSS v4 | 유틸리티 퍼스트 스타일링 |
 | State Management | Zustand | 경량 상태 관리 |
 | Build Tool | Vite | 프론트엔드 번들러 |
@@ -17,7 +19,7 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 | WebSocket | gorilla/websocket | 양방향 실시간 통신 |
 | gRPC | google.golang.org/grpc | 고성능 서비스 간 통신 |
 | Samsung NASA | 자체 프로토콜 구현 | 삼성 시스템 에어컨 제어 (RS-485/TCP) |
-| MODBUS/TCP | 표준 라이브러리 (net) | MODBUS/TCP 클라이언트/서버 (FC01-FC06, FC15-FC16) |
+| MODBUS TCP/RTU | 표준 라이브러리 (net) + go.bug.st/serial (RTU) | MODBUS 클라이언트(TCP/RTU)/서버(TCP) (FC01-FC06, FC15-FC16) |
 | TCP/UDP Socket | 표준 라이브러리 (net) | TCP/UDP Server/Client 에이전트 (4종 프레이밍, 자동 재연결) |
 | DB (기본) | SQLite (modernc.org/sqlite) | CGo-free SQLite |
 | DB (프로덕션) | PostgreSQL 16+ | 프로덕션 저장소 |
@@ -83,6 +85,42 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 - 성능 최적화 (가상화, 지연 렌더링)
 - 활발한 커뮤니티 및 지속적인 업데이트
 
+### Canvas 2D 렌더 + IDW 보간 (히트맵 패널, SPEC-HEATMAP-PANEL-001)
+
+히트맵 패널은 코드베이스에 **HTML Canvas 2D API**(`CanvasRenderingContext2D` + `ImageData`)를 순-신규 프론트엔드 렌더 기법으로 도입한다. 기존 차트/대시보드 패널은 SVG/DOM 기반(React Flow, recharts 등) 렌더였으므로, 픽셀 단위로 온도장을 채우는 실제 2D drawing canvas 는 본 패널이 처음이다.
+
+**선택 이유**:
+- 공간 온도 센서의 IDW(Inverse Distance Weighting, 역거리 가중) 보간 온도장은 격자 픽셀마다 색을 채워야 하므로 SVG/DOM 대비 `ImageData` 직접 채움이 자연스럽고 성능이 우수하다.
+- 성능을 위해 저해상 격자에서만 IDW 를 계산하고 표시 크기로 업스케일하며(디스플레이 픽셀마다 IDW 계산하지 않음), 선명도를 위해 `devicePixelRatio` 로 백킹 버퍼를 스케일하고 `ResizeObserver` 로 리사이즈 시 재계산한다.
+- 신규 외부 의존성 없이 브라우저 네이티브 API 만 사용한다(추가 차트/그래픽 라이브러리 도입 회피).
+
+**활용 범위**: 순수 보간/색 매핑 로직(`idw.ts`)은 DOM 의존 없이 분리하여 단위 테스트로 커버하고, 렌더(`HeatmapCanvas.tsx`)와 격리한다. 후속 SPEC(002 floor-plan 배경, 003 등고선)에서 동일 canvas 기반을 확장할 예정이다.
+
+### 도면 배경 임베딩 + 포인터 드래그 정규화 좌표 배치 (히트맵 패널 002, SPEC-HEATMAP-PANEL-002)
+
+MVP Canvas 2D 히트맵(001) 위에 두 가지 프론트엔드 기법을 가산한다. 모두 브라우저 네이티브 API 만 사용하며 신규 의존성이 없다.
+
+**data-URL 이미지 임베딩(FileReader)**:
+- 사용자가 첨부한 도면 이미지를 `FileReader.readAsDataURL` 로 **data-URL 문자열**로 인코딩하여 패널 config(`floor_plan.image`)에 직접 임베드한다. 백엔드 asset 업로드 엔드포인트가 없어도 즉시 구현 가능하며, config 는 기존과 동일한 불투명 JSON 으로 영속되어 백엔드 변경이 없다.
+- 대용량 data-URL 의 config 페이로드 팽창을 완화하기 위해 **2MB 크기 상한**(초과 시 경고/차단)을 둔다. 순수 로직(`readImageAsDataUrl`/`assertImageSizeUnderLimit`, `imageAsset.ts`)은 FileReader 를 모킹하여 단위 테스트로 커버한다.
+- 도면 배경 합성은 히트맵 canvas 를 canvas 내부에서 다시 그리지 않고, **별도 배경 DOM 레이어 + CSS `opacity`** 로 히트맵 레이어를 그 위에 겹치는 방식이다(`HeatmapCanvas.tsx` 불변).
+
+**포인터 드래그 정규화 좌표 배치**:
+- 센서 마커 배치 에디터는 컨테이너 실측 rect 를 기준으로 포인터의 화면 픽셀 위치를 **정규화 상대 좌표(0..1)** 로 변환(`toNormalized`)하고, 역변환(`fromNormalized`)으로 마커를 absolute 배치한다. 좌표를 정규화로 저장하므로 패널/도면 리사이즈에 불변이다.
+- 좌표 변환·그리드 스냅(`applySnap`)·범위 방어([0,1] `clamp01`)는 순수 함수(`placement.ts`)로 분리하여 DOM 없이 단위 테스트(커버리지 100%)로 커버한다. 드래그 상호작용 테스트는 `@testing-library/user-event` 없이 `fireEvent` + MouseEvent 기반 PointerEvent 폴리필로 작성한다(신규 의존성 0).
+
+### 등치선(marching squares) + SVG 오버레이 (히트맵 패널 003, SPEC-HEATMAP-PANEL-003)
+
+MVP Canvas 2D 히트맵(001)의 IDW 보간 스칼라 격자 위에 **등고선(contour lines / iso-lines)** 을 그리는 기법을 가산한다. 브라우저 네이티브 SVG 만 사용하며 신규 의존성이 없다.
+
+**marching squares(등치선 산출)**:
+- 스칼라 격자의 각 셀 4코너를 등치값(iso-value) 기준으로 이진화(case 0..15)하고, 셀 모서리에서 **선형 보간**으로 교차점을 구해 등치선 세그먼트를 잇는다. 순수 로직(`computeContours`/`resolveLevels`/`segmentsToPath`, `marchingSquares.ts`)은 DOM 없이 골든 케이스 단위 테스트(커버리지 95.5%)로 커버한다.
+- **saddle(모호) 케이스(5·10)** 는 셀 중앙값(4코너 평균) 기준 분기로 **결정적**으로 해소해 비결정적/끊긴 선을 방지한다. `resolveLevels` 는 명시 값 목록을 개수 균등분할보다 우선 적용하고, 격자 값 범위(min/max) 밖 레벨은 필터하며 빈 격자를 방어한다.
+- **재보간 금지(핵심 제약)**: 등고선은 MVP `idw.ts` 가 이미 계산한 동일 격자를 재사용한다. 이를 위해 `interpolateIDW` 호출을 `HeatmapPanel` 로 상승시켜 패널당 1회만 실행하고, 동일 `Float32Array` 를 히트맵 canvas(`HeatmapCanvas`)와 등고선 레이어(`ContourLayer`)가 공유한다. `HeatmapCanvas` 는 격자를 자체 계산하지 않고 field props 를 consume 하도록 리팩터(행위 보존)한다.
+
+**SVG `<path>` 벡터 오버레이**:
+- 등치선은 히트맵 canvas 를 canvas 내부에서 다시 그리지 않고(방식 (b) `ctx.stroke` 미채택), **별도 SVG 레이어(`ContourLayer`)** 를 히트맵 위 z-15(마커 z-20 아래)에 겹치는 방식(방식 (a))이다. `viewBox 0..1` + `preserveAspectRatio=none` 로 패널 리사이즈에 정합되며, 선 스타일(색/두께/dash)과 등치값 라벨(`<text>`)을 벡터로 표현한다. 격자 참조 기준 `useMemo` 로 재계산을 억제한다.
+
 ### MQTT: Eclipse Paho Go
 
 **선택 이유**:
@@ -136,13 +174,13 @@ xflow는 Go 기반 고성능 백엔드와 React 기반 인터랙티브 프론트
 - Protocol: NASA 프로토콜 정의(nasa.yaml)로 바이트 구조 설정
 - 디바이스 자동 탐색, 실내기/실외기 제어 및 모니터링
 
-**MODBUS/TCP (표준 Agent)**:
-- 산업 자동화 표준 프로토콜 MODBUS/TCP 클라이언트 및 서버 구현
-- Go 표준 라이브러리 net 패키지만 사용 (외부 MODBUS 라이브러리 미사용)
+**MODBUS (표준 Agent — TCP/RTU)**:
+- 산업 자동화 표준 프로토콜 MODBUS 클라이언트 및 서버 구현
+- 외부 MODBUS 라이브러리 미사용 — TCP 는 Go 표준 라이브러리 net 패키지, RTU 는 go.bug.st/serial(century 재사용)만 사용
 - 지원 기능 코드: FC01(Read Coils), FC02(Read Discrete Inputs), FC03(Read Holding Registers), FC04(Read Input Registers), FC05(Write Single Coil), FC06(Write Single Register), FC15(Write Multiple Coils), FC16(Write Multiple Registers)
-- 클라이언트: PLC/센서 등 슬레이브 디바이스 레지스터 폴링, 캐시 기반 최적화, 디바이스 관리
+- 클라이언트: PLC/센서 등 슬레이브 디바이스 레지스터 폴링, 캐시 기반 최적화, 디바이스 관리. 트랜스포트 선택(`transport: tcp | rtu`, 미지정 시 tcp — 하위 호환), RTU 반이중 시리얼 마스터(in-house CRC-16 poly 0xA001), 레지스터 그룹별 독립 폴링 주기, 플로우 노드를 통한 런타임 재구성(`set_config`) 지원 (SPEC-MODBUS-006). type id `modbus-tcp` 보존
 - 서버: xflow를 MODBUS/TCP 서버로 동작, 외부 SCADA/HMI 시스템 연동, 레지스터 맵 관리
-- 공유 데이터 타입 변환: internal/modbus/ 패키지에서 uint16/int16/float32/uint32/int32 레지스터 변환 유틸리티 제공
+- 공유 데이터 타입 변환: internal/modbus/ 패키지에서 uint16/int16/float32/uint32/int32 + raw 패스스루 + 4순열 바이트순서(ABCD/BADC/CDAB/DCBA) 레지스터 변환 유틸리티 제공
 
 ### Storage: SQLite + PostgreSQL 이중 전략
 
@@ -317,7 +355,7 @@ Agent는 Transport Interface(통신 인터페이스)와 Protocol Definition(프�
 
 - **Transport Interface**: Serial(RS-485/RS-232), TCP, UDP 등 통신 인터페이스 추상화
 - **Protocol Definition**: 사용자 설정 기반 바이트 파싱 엔진 (메시지 포맷, 필드, 체크섬 정의)
-- **표준 Agent**: MQTT, HTTP, WebSocket, gRPC, MODBUS/TCP, ThingsBoard Gateway MQTT(`thingplus-gateway`, `v1/gateway/*` 다중화 게이트웨이 — 기존 Eclipse Paho 재사용, 신규 의존성 없음) (사전 정의된 프로토콜)
+- **표준 Agent**: MQTT, HTTP, WebSocket, gRPC, MODBUS/TCP, ThingsBoard Gateway MQTT(`thingplus-gateway`, `v1/gateway/*` 다중화 게이트웨이 — 기존 Eclipse Paho 재사용, 신규 의존성 없음), ChirpStack LoRaWAN(`chirpstack` 에이전트 + `chirpstack-in` 노드 — ChirpStack MQTT 업링크 `application/#` 수신 → 측정값별 팬아웃, 기존 Eclipse Paho 재사용, 신규 의존성 없음) (사전 정의된 프로토콜)
 - **커스텀 Agent**: Samsung NASA 등 사용자 정의 프로토콜 (YAML 설정 기반)
 - Agent 프레임워크: 독립 생명주기, 다중 플로우 공유, 참조 카운팅 기반 관리
 - 커넥션 풀링: Agent가 연결을 유지하여 플로우 재배포 시에도 연결 단절 없음

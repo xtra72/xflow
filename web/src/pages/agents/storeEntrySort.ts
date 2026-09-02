@@ -12,7 +12,7 @@ export type StoreEntry = Record<string, unknown>;
 export type SortColumn =
   | 'key'
   | 'binding'
-  | 'metric'
+  | 'field'
   | 'value'
   | 'namespace'
   | 'updated';
@@ -27,11 +27,11 @@ export interface SortState {
 }
 
 /**
- * 엔트리의 metric_type 을 추출한다. 누락/비문자열은 빈 문자열을 반환한다.
+ * 엔트리의 field 을 추출한다. 누락/비문자열은 빈 문자열을 반환한다.
  * (호출자는 표시/정렬 시 "unknown" 으로 정규화)
  */
 export function entryMetricType(entry: StoreEntry): string {
-  const raw = entry.metric_type;
+  const raw = entry.field;
   return typeof raw === 'string' ? raw : '';
 }
 
@@ -76,7 +76,7 @@ function entryUpdatedAt(entry: StoreEntry): number {
 /**
  * 검색어로 엔트리를 필터링한다 (부분일치, 대소문자 무시).
  *
- * 매칭 대상: key, metric_type, tags(키=값 모두). metric 은 key 컬럼에
+ * 매칭 대상: key, field, tags(키=값 모두). metric 은 key 컬럼에
  * 이어붙이지 않고(별도 컬럼) 검색 대상에만 포함한다.
  *
  * @param entries 원본 엔트리 배열
@@ -90,7 +90,7 @@ export function filterEntries(
   if (q === '') return [...entries];
   return entries.filter((e) => {
     if (entryKey(e).toLowerCase().includes(q)) return true;
-    // metric_type: 빈 값은 "unknown" 으로 정규화하여 검색 가능하게 한다.
+    // field: 빈 값은 "unknown" 으로 정규화하여 검색 가능하게 한다.
     const mt = (entryMetricType(e) || 'unknown').toLowerCase();
     if (mt.includes(q)) return true;
     const tags = entryTags(e);
@@ -135,7 +135,7 @@ function compareByColumn(
       const r = bindingRank(a, ctx) - bindingRank(b, ctx);
       return r;
     }
-    case 'metric':
+    case 'field':
       return (entryMetricType(a) || 'unknown').localeCompare(
         entryMetricType(b) || 'unknown',
       );
@@ -156,7 +156,7 @@ function compareByColumn(
  * 엔트리를 정렬한다. 안정성과 결정성을 위해 보조 정렬(key → metric)을 적용한다.
  *
  * - column 이 null 이면 원본 순서를 그대로 반환(복사본).
- * - 1차 정렬이 동률이면 key, 그 다음 metric_type 으로 결정적 정렬한다.
+ * - 1차 정렬이 동률이면 key, 그 다음 field 으로 결정적 정렬한다.
  *   (같은 key 의 다중 시리즈가 metric 으로 결정적으로 정렬되도록)
  * - direction 은 1차 정렬에만 적용하고, 보조 정렬은 항상 오름차순으로 두어
  *   결과가 안정적이도록 한다.
@@ -182,7 +182,7 @@ export function sortEntries(
       const byKey = entryKey(a).localeCompare(entryKey(b));
       if (byKey !== 0) return byKey;
     }
-    if (column !== 'metric') {
+    if (column !== 'field') {
       return (entryMetricType(a) || 'unknown').localeCompare(
         entryMetricType(b) || 'unknown',
       );
@@ -220,7 +220,7 @@ export function nextSortState(
 /** 컬럼별 필터가 가능한 컬럼 식별자. */
 export type FilterColumnId =
   | 'key'
-  | 'metric'
+  | 'field'
   | 'value'
   | 'namespace'
   | 'binding'
@@ -278,7 +278,7 @@ export function columnCellValues(
   switch (column) {
     case 'key':
       return [entryKey(entry)];
-    case 'metric':
+    case 'field':
       return [entryMetricType(entry) || 'unknown'];
     case 'value':
       return [entryValueString(entry)];

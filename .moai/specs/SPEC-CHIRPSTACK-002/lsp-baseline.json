@@ -1,0 +1,13 @@
+{
+  "captured_at": "2026-08-12",
+  "corrected_at": "2026-08-12",
+  "spec": "SPEC-CHIRPSTACK-002",
+  "tool": "go build ./... + go vet ./... + golangci-lint run",
+  "measurement_note": "Run-phase 감사에서 clean HEAD 트리(git archive HEAD)를 추출해 실측 재현한 값으로 정정. 최초 plan-phase 기록(build 0 / type 0 / lint 3)은 스코프 실행이었거나 vet/lint 가 실행되지 않아 재현 불가였다.",
+  "build_errors": 0,
+  "type_errors": 1,
+  "type_errors_detail": "internal/schedulelog/observer_test.go:30,91,145 — fakeScheduleLogRepo.List 가 storage.ScheduleLogRepository 를 미구현(string 파라미터 누락). 커밋 8881d9c7 에서 유입된 선재 결함. SPEC-CHIRPSTACK-002 와 무관하며 clean HEAD 에서 동일 재현됨.",
+  "lint_findings_pre_existing": "4",
+  "lint_findings_detail": "전부 unused: internal/node/deduplicate.go:303 extractValues, internal/node/flow_node.go:17 flowNodeConfigMode, internal/node/modbus_common.go:82 readOnlyAreas, internal/node/modbus_common.go:430 applyMessageOverrides. chirpstack 무관.",
+  "regression_gate": "본 SPEC 의 무회귀 판정은 delta 기준이다: build delta 0, type_errors delta 0, chirpstack 범위 신규 lint 0. 저장소 전체 게이트가 선재 결함으로 RED 인 동안 'zero errors' 를 절대값으로 주장하지 않는다."
+}

@@ -224,3 +224,17 @@ describe('ReleaseStorePanel', () => {
     expect(extra).toBeDefined();
   });
 });
+
+// 제목은 앱 헤더(Header 의 PAGE_TITLE_KEYS, /admin/remote/releases)로 옮겼다.
+// 릴리스 저장소 제목은 페이지가 아니라 이 패널이 그리고 있었으므로 여기서 막는다.
+describe('ReleaseStorePanel — 본문 제목 제거', () => {
+  it('자체 제목(h1)을 그리지 않고 설명만 남긴다', () => {
+    renderPanel();
+
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    expect(screen.queryByRole('heading', { name: '릴리스 저장소' })).toBeNull();
+    expect(
+      screen.getByText(/아키텍처별 xflowd 이미지를 이 관리 서버에 저장합니다/),
+    ).toBeInTheDocument();
+  });
+});

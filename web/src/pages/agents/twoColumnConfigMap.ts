@@ -1,0 +1,107 @@
+// 에이전트 타입별 2열 설정 레이아웃 매핑.
+//
+// 레이아웃 컴포넌트 파일(twoColumnConfig.tsx)에서 분리했다. 컴포넌트 파일이 컴포넌트만
+// 내보내야 Fast Refresh 가 동작하기 때문이다(react-refresh/only-export-components).
+
+/**
+ * 에이전트 타입별 좌측 컬럼 필드 및 컬럼 라벨.
+ * 모듈 스코프에서는 t()를 호출할 수 없으므로 라벨은 i18n 키로 보관하고
+ * 렌더 시점(TwoColumnConfigLayout)에 변환한다.
+ */
+export const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabelKey: string; rightLabelKey: string }> = {
+  xsfm: {
+    left: new Set(['transport_mode', 'broker', 'tls', 'ca_cert', 'client_id', 'username', 'password', 'qos', 'lwt_enabled']),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+  'mqtt-client': {
+    left: new Set(['broker', 'client_id', 'username', 'password', 'keep_alive_sec', 'connect_timeout_sec']),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+  // chirpstack 은 MQTT 기반 에이전트이므로 mqtt-client 선례를 따르고, 연결 의미가
+  // 명확한 노브(auto_reconnect / clean_session)를 좌측(연결)에 추가한다.
+  // 우측(운영) = topics / qos / buffer_size / measurement_emit_mode / timestamp_source /
+  // comm-state 3종. 우측은 명시 목록이 아니라 left 여집합이므로, 운영 노브를 추가할 때
+  // 여기를 고칠 필요가 없다(스키마에만 추가하면 자동으로 운영 컬럼에 실린다).
+  'chirpstack-client': {
+    left: new Set([
+      'broker', 'client_id', 'username', 'password',
+      'keep_alive_sec', 'connect_timeout_sec', 'auto_reconnect', 'clean_session',
+    ]),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+  'modbus-client': {
+    left: new Set(['mode', 'read_mode', 'reconnect_interval', 'request_timeout', 'max_retries']),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+  'modbus-gateway': {
+    left: new Set(['transport', 'listen_address', 'listen_port', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'max_connections', 'idle_timeout']),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+  http: {
+    left: new Set(['listen_addr', 'path', 'method']),
+    leftLabelKey: 'agents.detail.config.receive',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+  'http-sender': {
+    left: new Set(['url', 'method', 'content_type']),
+    leftLabelKey: 'agents.detail.config.send',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+  influxdb: {
+    left: new Set(['url', 'token', 'org', 'bucket', 'version']),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+  logger: {
+    left: new Set(['output', 'output_path', 'format', 'max_size', 'max_age', 'max_backups', 'compress']),
+    leftLabelKey: 'agents.detail.config.output',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+  lgap: {
+    left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'connect_timeout', 'read_timeout']),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+  lg_hvacr02: {
+    left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'read_timeout', 'tcp_host', 'tcp_port']),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+  // samsung_hvacr01: 생성 팝업(CreateAgentModal)에서 연결(좌)|운영(우) 2분할로 렌더한다.
+  // 상세 패널(AgentDetailPanel)은 HVACR_QUADRANT_AGENT_TYPES 체크가 우선하므로 4-분면을 유지한다.
+  // 좌(연결) = 전송(serial/tcp/mirror-mqtt/mirror-message) + 미러 MQTT/보안, 우(운영) = 상태확인/상태보고/미러 제어·ack·스냅샷.
+  samsung_hvacr01: {
+    left: new Set([
+      'transport_type',
+      'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity',
+      'tcp_host', 'tcp_port', 'connect_timeout', 'read_timeout',
+      'reconnect_interval', 'max_reconnect_backoff',
+      // 미러 동기화 연결 + MQTT 보안(SPEC-HVACR-SYNC-001 M9)
+      'mirror_uplink_enabled', 'mirror_broker', 'mirror_gateway_id',
+      'mirror_topic_prefix', 'mirror_qos',
+      'mirror_username', 'mirror_password', 'mirror_tls', 'mirror_ca_cert',
+    ]),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+  serial: {
+    left: new Set(['port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'read_timeout', 'buffer_size']),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+  'tcp-server': {
+    left: new Set(['host', 'port', 'buffer_size']),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+  'thingplus-gateway': {
+    left: new Set(['broker', 'port', 'tls', 'ca_cert', 'access_token', 'client_id', 'keep_alive_sec', 'connect_timeout_sec', 'auto_reconnect']),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
+};

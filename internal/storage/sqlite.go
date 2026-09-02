@@ -4,10 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
+	"github.com/xtra/xflow/internal/rbac"
 	"github.com/xtra/xflow/pkg/flow"
 
 	_ "modernc.org/sqlite" // Pure Go SQLite driver registration
@@ -57,11 +61,20 @@ func NewSQLiteRepository(ctx context.Context, dbPath string) (*SQLiteRepository,
 	// 본 호출이 flow 저장소 초기화 시점에 항상 실행되므로 부팅 순서와 무관하게 스키마가
 	// 보장된다. dashboard / users 저장소가 별도 *sql.DB 핸들을 열어도 IF NOT EXISTS
 	// 패턴이므로 멱등하다.
-	if err := migrateDashboardSchema(ctx, db); err != nil {
+	if err := migrateUsersSchema(ctx, db); err != nil {
 		db.Close()
 		return nil, err
 	}
-	if err := migrateUsersSchema(ctx, db); err != nil {
+	// @SPEC:SPEC-AUTH-005 (M1) — roles / role_permissions 스키마와 빌트인 역할 시드.
+	// users 스키마(CHECK 제약 제거 포함) 이후에 수행되어야 한다.
+	if err := migrateRolesSchema(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// @SPEC:SPEC-DASHBOARD-004 (M3, spec.md §2.4) — 대시보드 1급 엔티티 이관.
+	// users 이관 이후에 수행되어야 한다. 전역 스냅샷의 소유자를 users 에서 찾기
+	// 때문이다(최초 admin 사용자).
+	if err := migrateDashboardEntities(ctx, db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -69,49 +82,604 @@ func NewSQLiteRepository(ctx context.Context, dbPath string) (*SQLiteRepository,
 	return &SQLiteRepository{db: db}, nil
 }
 
-// migrateDashboardSchema 는 dashboards 테이블과 (scope, owner) 부분 유니크 인덱스를
-// 멱등하게 생성한다. modernc.org/sqlite 환경에서 COALESCE(owner, ”) 기반 표현식
-// 인덱스는 정상 동작한다 (SPEC-DASHBOARD-001 v0.2.0 Risk Mitigation).
+// @SPEC:SPEC-DASHBOARD-004 (M4, spec.md §2.3, §4.4)
+// 레거시 (scope, owner) 스냅샷 스키마는 더 이상 운영 경로에서 생성·사용되지 않는다.
 //
-// 본 함수는 sqlite.go / dashboard_sqlite.go / 테스트 어디서 호출되어도 동일하게 동작
-// 한다 (CREATE TABLE/INDEX IF NOT EXISTS).
-func migrateDashboardSchema(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS dashboards (
-		id         INTEGER PRIMARY KEY AUTOINCREMENT,
-		scope      TEXT    NOT NULL CHECK (scope IN ('global', 'user')),
-		owner      TEXT,
-		version    INTEGER NOT NULL DEFAULT 0,
-		updated_at INTEGER NOT NULL,
-		payload    TEXT    NOT NULL
-	)`); err != nil {
-		return fmt.Errorf("create dashboards table: %w", err)
-	}
+// M3 는 구 dashboards 를 dashboard_snapshots_v1 로 개명하면서, 아직 남아 있던
+// 레거시 묶음 쓰기 경로가 신규 테이블 이름과 충돌하지 않도록 별도 테이블
+// (dashboard_snapshots_legacy)로 우회시켰다. M4 가 그 쓰기 경로를 제거했으므로
+// 우회 자체가 불필요해졌다 — 읽기 전용 호환 shim 은 신규 모델에서 응답을 합성한다.
+//
+// 이미 dashboard_snapshots_legacy 가 만들어진 DB 는 그대로 둔다. 빈 테이블이며
+// 어떤 경로도 참조하지 않는다. DROP 하지 않는 이유는 보존 원본과 같다 — 스키마
+// 삭제는 되돌릴 수 없고 얻는 것이 없다.
 
-	// (scope, COALESCE(owner, '')) 부분 유니크: scope=global+NULL 은 빈 문자열로
-	// 정규화되어 단일 row 만 허용되고, scope=user+owner 별로 1개씩 허용된다.
-	if _, err := db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS dashboards_scope_owner_uidx
-		ON dashboards(scope, COALESCE(owner, ''))`); err != nil {
-		return fmt.Errorf("create dashboards index: %w", err)
+// migrateSchemaMarkersSchema 는 schema_markers 테이블을 멱등하게 생성한다.
+//
+// @SPEC:SPEC-DASHBOARD-004 (M2, spec.md §2.4)
+//
+// 마커 행의 **존재 여부**가 1회성 DB 전역 이관의 판정 기준이 된다. 행 수로
+// 판정하면 "이관 안 됨" 과 "관리자가 의도적으로 비운 상태" 를 구분할 수 없어,
+// 삭제한 대시보드가 재기동마다 되살아난다.
+//
+// roles.nav_migrated 는 역할별 1회 이관이라 컬럼이 맞고, 대시보드 엔티티 이관은
+// DB 전역 1회이므로 행이 맞다. 두 패턴의 혼용이 아니라 이관 단위에 맞춘 선택이다
+// (spec.md §4.6).
+func migrateSchemaMarkersSchema(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_markers (
+		key        TEXT PRIMARY KEY,
+		value      TEXT    NOT NULL,
+		applied_at INTEGER NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create schema_markers table: %w", err)
 	}
 	return nil
 }
 
-// migrateUsersSchema 는 users 테이블을 멱등하게 생성한다.
+// migrateDashboardSchemaV2 는 대시보드 1급 엔티티 모델의 테이블 3종
+// (dashboards / dashboard_acl / dashboard_user_state) 과 schema_markers 를
+// 멱등하게 생성한다.
+//
+// @SPEC:SPEC-DASHBOARD-004 (M2, spec.md §2.1)
+//
+// **본 함수는 데이터를 이관하지 않는다.** 구 스키마 → 신 스키마 데이터 이관은
+// M3(migrateDashboardEntities)의 책임이며 롤백 불가 지점이므로 분리되어 있다.
+// 그래서 본 함수는 부팅 경로(NewSQLiteRepository / OpenSQLiteDB)에서 호출되지
+// 않는다 — 신규 저장소 생성자와 M3 이관 절차만 호출한다.
+//
+// 선행 조건: dashboards 테이블이 구 스키마(scope 컬럼 보유)로 존재하면 안 된다.
+// CREATE TABLE IF NOT EXISTS 는 이미 존재하는 테이블에 대해 조용히 no-op 이므로,
+// 구 스키마 위에서 호출하면 신규 컬럼이 없는 채로 성공한 것처럼 보이고 이후 모든
+// 질의가 런타임에 깨진다. 그 조용한 실패를 명시적 오류로 바꾼다. M3 는 RENAME 을
+// 먼저 수행하므로 이 검사를 통과한다.
+func migrateDashboardSchemaV2(ctx context.Context, db *sql.DB) error {
+	legacy, err := hasLegacyDashboardSchema(ctx, db)
+	if err != nil {
+		return err
+	}
+	if legacy {
+		return fmt.Errorf("migrate dashboard schema v2: dashboards table still uses the legacy (scope, owner) schema; " +
+			"run the dashboard entity migration first")
+	}
+
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS dashboards (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		uid        TEXT    NOT NULL UNIQUE,
+		name       TEXT    NOT NULL,
+		owner      TEXT    NOT NULL,
+		visibility TEXT    NOT NULL CHECK (visibility IN ('private', 'shared', 'acl')),
+		is_default INTEGER NOT NULL DEFAULT 0,
+		sort_order INTEGER NOT NULL DEFAULT 0,
+		version    INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL,
+		payload    TEXT    NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create dashboards table (v2): %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS dashboards_owner_idx ON dashboards(owner)`); err != nil {
+		return fmt.Errorf("create dashboards owner index: %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS dashboards_visibility_idx ON dashboards(visibility)`); err != nil {
+		return fmt.Errorf("create dashboards visibility index: %w", err)
+	}
+
+	// ON DELETE CASCADE 는 PRAGMA foreign_keys=ON 일 때만 동작한다. 본 프로젝트는
+	// 해당 PRAGMA 를 켜지 않으므로, 대시보드 삭제 시 ACL 정리는 저장소 계층이
+	// 같은 트랜잭션에서 명시적으로 수행한다(dashboard_sqlite.go Delete).
+	// 제약을 그대로 두는 이유는 스키마가 의도를 표현하고, 향후 PRAGMA 를 켜면
+	// 그대로 유효해지기 때문이다.
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS dashboard_acl (
+		dashboard_id INTEGER NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+		subject      TEXT    NOT NULL,
+		level        TEXT    NOT NULL CHECK (level IN ('view', 'edit')),
+		granted_by   TEXT    NOT NULL,
+		granted_at   INTEGER NOT NULL,
+		PRIMARY KEY (dashboard_id, subject)
+	)`); err != nil {
+		return fmt.Errorf("create dashboard_acl table: %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS dashboard_acl_subject_idx ON dashboard_acl(subject)`); err != nil {
+		return fmt.Errorf("create dashboard_acl subject index: %w", err)
+	}
+
+	// activeDashboardId 와 deviceGridLayout 은 개별 대시보드에 속하지 않는
+	// 사용자 UI 상태이므로 별도 테이블로 분리한다(spec.md §2.1).
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS dashboard_user_state (
+		username             TEXT    PRIMARY KEY,
+		active_dashboard_uid TEXT    NOT NULL DEFAULT '',
+		device_grid_layout   TEXT    NOT NULL DEFAULT '{}',
+		version              INTEGER NOT NULL DEFAULT 0,
+		updated_at           INTEGER NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create dashboard_user_state table: %w", err)
+	}
+
+	return migrateSchemaMarkersSchema(ctx, db)
+}
+
+// hasLegacyDashboardSchema 는 dashboards 테이블이 구 스키마(scope 컬럼 보유)인지
+// 판정한다. 테이블 자체가 없으면 false 이다.
+func hasLegacyDashboardSchema(ctx context.Context, db *sql.DB) (bool, error) {
+	rows, err := db.QueryContext(ctx, `SELECT name FROM pragma_table_info('dashboards')`)
+	if err != nil {
+		return false, fmt.Errorf("inspect dashboards columns: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return false, fmt.Errorf("scan dashboards column: %w", err)
+		}
+		if name == "scope" {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate dashboards columns: %w", err)
+	}
+	return false, nil
+}
+
+// usersTableBody 는 users 테이블의 컬럼 정의이다 (CREATE TABLE 이후 부분).
+//
+// @SPEC:SPEC-AUTH-005 (M2)
+// role 의 CHECK (role IN ('admin','editor','viewer')) 제약은 제거되었다.
+// 관리자가 생성한 커스텀 역할을 사용자에게 부여할 수 있어야 하기 때문이다
+// (spec.md §4.2). 신규 DB 는 처음부터 제약 없이 생성되고, 기존 DB 는
+// migrateUsersRoleConstraint 가 테이블 재생성으로 제약을 제거한다.
+const usersTableBody = ` (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	username      TEXT    NOT NULL UNIQUE,
+	password_hash TEXT    NOT NULL,
+	role          TEXT    NOT NULL DEFAULT 'viewer',
+	created_at    INTEGER NOT NULL,
+	updated_at    INTEGER NOT NULL
+)`
+
+// usersColumns 는 users 테이블 재생성 시 복사할 컬럼 목록이다.
+// SELECT * 대신 명시적 목록을 사용해 컬럼 순서 변화에 영향받지 않게 한다.
+const usersColumns = `id, username, password_hash, role, created_at, updated_at`
+
+// migrateUsersSchema 는 users 테이블을 멱등하게 생성하고, 기존 DB 에 남아 있는
+// role CHECK 제약을 제거한다.
 //
 // @SPEC:SPEC-DASHBOARD-001 v0.2.0 (M-1)
 // 자격증명 yaml 을 대체하는 단일 source-of-truth 저장소.
 // password_hash 는 bcrypt 결과를 그대로 저장한다.
+//
+// @SPEC:SPEC-AUTH-005 (M2)
+// CHECK 제약 제거를 본 함수 내부에서 호출하여, 어느 호출 경로로 진입하든
+// 커스텀 역할 저장이 가능한 상태가 보장되게 한다 (호출 누락 = 기능 결함).
 func migrateUsersSchema(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS users (
-		id            INTEGER PRIMARY KEY AUTOINCREMENT,
-		username      TEXT    NOT NULL UNIQUE,
-		password_hash TEXT    NOT NULL,
-		role          TEXT    NOT NULL DEFAULT 'viewer'
-		              CHECK (role IN ('admin', 'editor', 'viewer')),
-		created_at    INTEGER NOT NULL,
-		updated_at    INTEGER NOT NULL
-	)`); err != nil {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS users`+usersTableBody); err != nil {
 		return fmt.Errorf("create users table: %w", err)
+	}
+	return migrateUsersRoleConstraint(ctx, db)
+}
+
+// migrateUsersRoleConstraint 는 기존 users 테이블의 role CHECK 제약을 제거한다.
+//
+// @SPEC:SPEC-AUTH-005 (M2, acceptance.md AC-02)
+// SQLite 는 ALTER TABLE ... DROP CONSTRAINT 를 지원하지 않으므로 테이블 재생성
+// 절차를 수행한다. 전 과정이 단일 트랜잭션이라 실패 시 원본 users 가 그대로
+// 남는다 (plan.md §M2 롤백 계획).
+//
+// 절차:
+//  1. sqlite_master 의 DDL 로 CHECK 존재 여부 판정 — 없으면 즉시 반환 (멱등).
+//  2. 재생성 후 복원할 명시적 인덱스 DDL 수집 (UNIQUE(username) 은 테이블 정의에 포함).
+//  3. users_new 생성 → 전체 행 복사 → 행 수 대조 (불일치 시 롤백).
+//  4. DROP TABLE users → ALTER TABLE users_new RENAME TO users → 인덱스 재생성.
+func migrateUsersRoleConstraint(ctx context.Context, db *sql.DB) error {
+	var ddl string
+	err := db.QueryRowContext(ctx,
+		`SELECT sql FROM sqlite_master WHERE type='table' AND name='users'`).Scan(&ddl)
+	if errors.Is(err, sql.ErrNoRows) {
+		// users 테이블 자체가 없음 → 마이그레이션 대상 아님.
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read users table ddl: %w", err)
+	}
+	if !strings.Contains(strings.ToUpper(ddl), "CHECK") {
+		// 이미 제약이 없다 → no-op (재실행 안전).
+		return nil
+	}
+
+	// 명시적으로 생성된 인덱스만 수집한다. UNIQUE 제약이 만드는 자동 인덱스는
+	// sql 이 NULL 이며 새 테이블 정의에 의해 자동 재생성된다.
+	idxRows, err := db.QueryContext(ctx,
+		`SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='users' AND sql IS NOT NULL`)
+	if err != nil {
+		return fmt.Errorf("read users indexes: %w", err)
+	}
+	var indexDDLs []string
+	for idxRows.Next() {
+		var s string
+		if err := idxRows.Scan(&s); err != nil {
+			idxRows.Close()
+			return fmt.Errorf("scan users index ddl: %w", err)
+		}
+		indexDDLs = append(indexDDLs, s)
+	}
+	if err := idxRows.Err(); err != nil {
+		idxRows.Close()
+		return fmt.Errorf("iterate users indexes: %w", err)
+	}
+	idxRows.Close()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin users constraint migration: %w", err)
+	}
+	// 커밋에 성공하면 Rollback 은 no-op 이다.
+	defer func() { _ = tx.Rollback() }()
+
+	var before int64
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&before); err != nil {
+		return fmt.Errorf("count users before constraint migration: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE users_new`+usersTableBody); err != nil {
+		return fmt.Errorf("create users_new table: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO users_new(`+usersColumns+`) SELECT `+usersColumns+` FROM users`); err != nil {
+		return fmt.Errorf("copy users rows: %w", err)
+	}
+
+	var after int64
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users_new`).Scan(&after); err != nil {
+		return fmt.Errorf("count users after copy: %w", err)
+	}
+	if before != after {
+		// defer Rollback 이 원본 users 를 보존한다.
+		return fmt.Errorf("users row count mismatch during constraint migration: before=%d after=%d", before, after)
+	}
+
+	if _, err := tx.ExecContext(ctx, `DROP TABLE users`); err != nil {
+		return fmt.Errorf("drop old users table: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE users_new RENAME TO users`); err != nil {
+		return fmt.Errorf("rename users_new to users: %w", err)
+	}
+	for _, idxDDL := range indexDDLs {
+		if _, err := tx.ExecContext(ctx, idxDDL); err != nil {
+			return fmt.Errorf("recreate users index: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit users constraint migration: %w", err)
+	}
+	return nil
+}
+
+// migrateRolesSchema 는 roles / role_permissions 테이블을 멱등하게 생성하고
+// 빌트인 역할 3종을 시드한다.
+//
+// @SPEC:SPEC-AUTH-005 (M1, acceptance.md AC-01)
+// 시드는 INSERT OR IGNORE + 복합 PK 로 멱등하다. 재실행 시 행이 중복 생성되지
+// 않으며 오류도 발생하지 않는다. 카탈로그에 권한이 추가되면 다음 기동 시
+// 빌트인 역할에 자동으로 반영된다 (기존 행은 유지).
+func migrateRolesSchema(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS roles (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		name        TEXT    NOT NULL UNIQUE,
+		description TEXT    NOT NULL DEFAULT '',
+		builtin     INTEGER NOT NULL DEFAULT 0,
+		created_at  INTEGER NOT NULL,
+		updated_at  INTEGER NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create roles table: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS role_permissions (
+		role_id    INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+		permission TEXT    NOT NULL,
+		PRIMARY KEY (role_id, permission)
+	)`); err != nil {
+		return fmt.Errorf("create role_permissions table: %w", err)
+	}
+	// nav_migrated: 이 역할이 메뉴 축(nav.*) 으로 한 번 이관되었는지 표시한다.
+	//
+	// 이 표시가 없으면 "nav.* 를 하나도 안 가진 역할" 이 두 가지를 동시에 뜻하게 된다 —
+	// (1) 메뉴 축 도입 이전 역할, (2) 관리자가 모든 메뉴를 의도적으로 끈 역할.
+	// 둘을 키 개수로 구분하려 하면 후자가 불가능해진다(끄면 전자로 오인되어 폴백).
+	// 명시적 표시를 두어 "전부 끄기" 가 실제로 동작하게 한다.
+	if err := addColumnIfMissing(ctx, db, "roles", "nav_migrated",
+		`ALTER TABLE roles ADD COLUMN nav_migrated INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	// dashboard_migrated: 이 역할이 대시보드 엔티티 축으로 한 번 이관되었는지 표시한다.
+	//
+	// nav_migrated 를 재사용할 수 없다. 기존 역할은 이미 nav_migrated = 1 로
+	// 표시되어 있어 migrateRoleNavPermissions 가 재실행되지 않으므로, 같은 표시를
+	// 공유하면 대시보드 이관이 아예 일어나지 않는다. 이관 단위가 다르면 표시도
+	// 따로 둔다 (spec.md §4.6).
+	if err := addColumnIfMissing(ctx, db, "roles", "dashboard_migrated",
+		`ALTER TABLE roles ADD COLUMN dashboard_migrated INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+
+	if err := seedBuiltinRoles(ctx, db); err != nil {
+		return err
+	}
+	if err := migrateRoleNavPermissions(ctx, db); err != nil {
+		return err
+	}
+	return migrateRoleDashboardPermissions(ctx, db)
+}
+
+// addColumnIfMissing 은 컬럼이 없을 때만 ALTER 를 수행한다 (멱등).
+func addColumnIfMissing(ctx context.Context, db *sql.DB, table, column, ddl string) error {
+	rows, err := db.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return fmt.Errorf("inspect %s columns: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("scan %s column: %w", table, err)
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate %s columns: %w", table, err)
+	}
+	if _, err := db.ExecContext(ctx, ddl); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", table, column, err)
+	}
+	return nil
+}
+
+// migrateRoleNavPermissions 는 메뉴 축 도입 이전 역할에 nav.* 를 1회 부여한다.
+//
+// 부여 기준은 그 역할이 이미 보유한 데이터 read 권한이다 — agent.read 를 가진
+// 역할은 nav.agent 를 받는다. 이관 전후로 보이는 메뉴가 동일하므로 업그레이드가
+// 사용자에게 보이지 않는다.
+//
+// 1회성이다. 이관을 마치면 nav_migrated=1 로 표시하고 다시 건드리지 않으므로,
+// 이후 관리자가 nav.* 를 전부 제거하면 그 상태가 그대로 유지된다.
+func migrateRoleNavPermissions(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx,
+		`SELECT id FROM roles WHERE nav_migrated = 0`)
+	if err != nil {
+		return fmt.Errorf("list unmigrated roles: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan role id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate unmigrated roles: %w", err)
+	}
+	rows.Close()
+	if len(ids) == 0 {
+		return nil
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin nav migration: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, id := range ids {
+		existing, err := listPermissionsByRoleIDTx(ctx, tx, id)
+		if err != nil {
+			return fmt.Errorf("read permissions of role %d: %w", id, err)
+		}
+		held := make(map[string]struct{}, len(existing))
+		for _, p := range existing {
+			held[p] = struct{}{}
+		}
+		for _, navKey := range rbac.NavPermissions() {
+			menu := strings.TrimPrefix(navKey, rbac.ResourceNav+".")
+			if _, ok := held[menu+"."+rbac.ActionRead]; !ok {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT OR IGNORE INTO role_permissions(role_id, permission) VALUES (?, ?)
+			`, id, navKey); err != nil {
+				return fmt.Errorf("grant %q to role %d: %w", navKey, id, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE roles SET nav_migrated = 1 WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("mark role %d migrated: %w", id, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit nav migration: %w", err)
+	}
+	return nil
+}
+
+// migrateRoleDashboardPermissions 는 대시보드 엔티티 도입 이전 역할에
+// dashboard.create 와 nav.dashboard 를 1회 부여한다.
+//
+// @SPEC:SPEC-DASHBOARD-004 (M1, spec.md §2.5, acceptance.md AC-09)
+//
+// 부여 기준은 그 역할이 이미 보유한 대시보드 편집 능력이다 — dashboard.read 와
+// dashboard.update 를 **모두** 가진 역할은 이관 전에도 대시보드를 만들고 고칠 수
+// 있었다. 그 능력을 신규 키로 옮겨 주면 이관 전후로 할 수 있는 일이 같아지므로
+// 업그레이드가 사용자에게 보이지 않는다 (migrateRoleNavPermissions 와 같은 취지).
+//
+// dashboard.delete 는 부여하지 않는다. 삭제 권한을 조용히 늘리는 것은 "보이지 않는
+// 업그레이드" 의 범위를 벗어난다 — 관리자가 역할 관리 화면에서 명시적으로 준다.
+//
+// 1회성이다. 이관을 마치면 dashboard_migrated = 1 로 표시하고 다시 건드리지 않으므로,
+// 이후 관리자가 해당 키를 제거하면 그 상태가 그대로 유지된다.
+func migrateRoleDashboardPermissions(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx,
+		`SELECT id FROM roles WHERE dashboard_migrated = 0`)
+	if err != nil {
+		return fmt.Errorf("list dashboard-unmigrated roles: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan role id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate dashboard-unmigrated roles: %w", err)
+	}
+	rows.Close()
+	if len(ids) == 0 {
+		return nil
+	}
+
+	granted := []string{
+		rbac.ResourceDashboard + "." + rbac.ActionCreate,
+		rbac.ResourceNav + "." + rbac.ResourceDashboard,
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin dashboard migration: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, id := range ids {
+		existing, err := listPermissionsByRoleIDTx(ctx, tx, id)
+		if err != nil {
+			return fmt.Errorf("read permissions of role %d: %w", id, err)
+		}
+		held := make(map[string]struct{}, len(existing))
+		for _, p := range existing {
+			held[p] = struct{}{}
+		}
+		_, hasRead := held[rbac.ResourceDashboard+"."+rbac.ActionRead]
+		_, hasUpdate := held[rbac.ResourceDashboard+"."+rbac.ActionUpdate]
+		if hasRead && hasUpdate {
+			for _, perm := range granted {
+				if _, err := tx.ExecContext(ctx, `
+					INSERT OR IGNORE INTO role_permissions(role_id, permission) VALUES (?, ?)
+				`, id, perm); err != nil {
+					return fmt.Errorf("grant %q to role %d: %w", perm, id, err)
+				}
+			}
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE roles SET dashboard_migrated = 1 WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("mark role %d dashboard-migrated: %w", id, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit dashboard migration: %w", err)
+	}
+	return nil
+}
+
+// seedBuiltinRoles 는 빌트인 역할과 권한을 멱등하게 시드한다 (builtin = 1).
+func seedBuiltinRoles(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin builtin role seed: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().UnixMilli()
+	for _, role := range rbac.BuiltinRoles() {
+		res, err := tx.ExecContext(ctx, `
+			INSERT OR IGNORE INTO roles(name, description, builtin, nav_migrated, dashboard_migrated, created_at, updated_at)
+			VALUES (?, ?, 1, 1, 1, ?, ?)
+		`, role.Name, role.Description, now, now)
+		if err != nil {
+			return fmt.Errorf("seed role %q: %w", role.Name, err)
+		}
+		created, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("rows affected for role %q: %w", role.Name, err)
+		}
+
+		var roleID int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT id FROM roles WHERE name = ?`, role.Name).Scan(&roleID); err != nil {
+			return fmt.Errorf("resolve seeded role id %q: %w", role.Name, err)
+		}
+
+		// 신규 생성한 역할에만 권한을 시드한다. 이미 존재하던 역할의 권한 집합은
+		// 관리자의 소유물이며(spec.md §2.1 — 서버가 editor/viewer 의 권한 수정을
+		// 허용한다), 부팅마다 덮어쓰면 관리자의 수정이 재시작 때 조용히 사라진다.
+		if created == 1 {
+			for _, perm := range role.Permissions {
+				if _, err := tx.ExecContext(ctx, `
+					INSERT OR IGNORE INTO role_permissions(role_id, permission) VALUES (?, ?)
+				`, roleID, perm); err != nil {
+					return fmt.Errorf("seed permission %q for role %q: %w", perm, role.Name, err)
+				}
+			}
+			continue
+		}
+
+		// 예외: admin 은 항상 카탈로그 전체 권한을 보유해야 한다(spec.md §2.4 UB1-4).
+		// 관리자도 수정할 수 없는 불변식이므로 부팅 시 코드 정의로 되맞춘다. 이 자동
+		// 복구가 없으면 어떤 이유로든 축소된 admin 이 스스로 회복하지 못하고, 관리
+		// 권한을 가진 사용자가 조용히 기능을 잃는다.
+		if role.Name == rbac.RoleAdmin {
+			if err := reconcileRolePermissions(ctx, tx, roleID, role.Permissions); err != nil {
+				return fmt.Errorf("reconcile role %q: %w", role.Name, err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit builtin role seed: %w", err)
+	}
+	return nil
+}
+
+// reconcileRolePermissions 는 role_id 의 권한 집합을 want 와 정확히 일치시킨다.
+// 누락분은 추가하고 카탈로그에 없는 잔여분은 제거한다. 매 부팅 전량 삭제·재삽입을
+// 피하기 위해 차집합만 건드린다.
+func reconcileRolePermissions(ctx context.Context, tx *sql.Tx, roleID int64, want []string) error {
+	for _, perm := range want {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT OR IGNORE INTO role_permissions(role_id, permission) VALUES (?, ?)
+		`, roleID, perm); err != nil {
+			return fmt.Errorf("add permission %q: %w", perm, err)
+		}
+	}
+
+	if len(want) == 0 {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM role_permissions WHERE role_id = ?`, roleID); err != nil {
+			return fmt.Errorf("clear permissions: %w", err)
+		}
+		return nil
+	}
+
+	args := make([]any, 0, len(want)+1)
+	args = append(args, roleID)
+	placeholders := make([]string, len(want))
+	for i, perm := range want {
+		placeholders[i] = "?"
+		args = append(args, perm)
+	}
+	query := `DELETE FROM role_permissions WHERE role_id = ? AND permission NOT IN (` +
+		strings.Join(placeholders, ",") + `)`
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("prune permissions: %w", err)
 	}
 	return nil
 }
@@ -138,11 +706,20 @@ func OpenSQLiteDB(ctx context.Context, dbPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 
-	if err := migrateDashboardSchema(ctx, db); err != nil {
+	if err := migrateUsersSchema(ctx, db); err != nil {
 		db.Close()
 		return nil, err
 	}
-	if err := migrateUsersSchema(ctx, db); err != nil {
+	// @SPEC:SPEC-AUTH-005 (M1) — roles / role_permissions 스키마와 빌트인 역할 시드.
+	if err := migrateRolesSchema(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// @SPEC:SPEC-DASHBOARD-004 (M3, spec.md §2.4) — 대시보드 1급 엔티티 이관.
+	// 구 dashboards 를 dashboard_snapshots_v1 로 개명하고 신규 테이블 4종을 만든
+	// 뒤, 마커가 없을 때만 단일 트랜잭션으로 데이터를 옮긴다. users 이관 이후여야
+	// 전역 스냅샷의 소유자(최초 admin 사용자)를 결정할 수 있다.
+	if err := migrateDashboardEntities(ctx, db); err != nil {
 		db.Close()
 		return nil, err
 	}

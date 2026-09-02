@@ -7,8 +7,18 @@ import (
 	modbus "github.com/xtra/xflow/internal/modbus"
 )
 
-// ModbusConfig 는 MODBUS/TCP 에이전트의 설정을 나타낸다.
+// 트랜스포트 디스크리미네이터 상수.
+const (
+	// TransportTCP 는 MODBUS/TCP(MBAP) 트랜스포트이다(기본값).
+	TransportTCP = "tcp"
+	// TransportRTU 는 MODBUS RTU(시리얼, CRC 프레이밍) 트랜스포트이다.
+	TransportRTU = "rtu"
+)
+
+// ModbusConfig 는 MODBUS 클라이언트 에이전트의 설정을 나타낸다.
 type ModbusConfig struct {
+	Transport         string        // "tcp" | "rtu" (기본값 "tcp", 생략 시 하위 호환)
+	Serial            SerialConfig  // Transport == "rtu" 일 때만 유효한 시리얼 파라미터
 	Mode              string        // "interval" | "event"
 	ReadMode          string        // "direct" | "cached"
 	PollInterval      time.Duration // 기본값 5s
@@ -20,7 +30,24 @@ type ModbusConfig struct {
 	MaxRetries        int           // 기본값 3
 	RequestTimeout    time.Duration // 기본값 3s
 	MsgChannelSize    int           // 기본값 256
+	LogFrames         bool          // log_frames: TX/RX 프레임 요약 로그 (기본 false → no-op, F4)
+	LogRawFrames      bool          // log_raw_frames: 전체 ADU hex 포함 (log_frames 활성 시에만 의미, F4)
+	ShareSession      bool          // share_session: 동일 엔드포인트 디바이스의 트랜스포트/연결 공유 (기본 false → 현 토폴로지, F3)
+	// MaxBlockRegisters 는 블록 병합 읽기의 블록당 최대 레지스터 수이다
+	// (SPEC-MODBUS-013 REQ-03, 기본 DefaultMaxBlockRegisters=32, 범위 [1, MaxRegistersRead]).
+	// 디바이스 레벨 오버라이드가 없으면 이 값이 상속된다.
+	MaxBlockRegisters uint16
 	Devices           []DeviceConfig
+}
+
+// SerialConfig 는 RTU 트랜스포트의 시리얼 포트 파라미터이다(A-10).
+// transport == "rtu" 일 때 Transport.Options 에서 파싱·검증된다.
+type SerialConfig struct {
+	Port     string // 시리얼 포트 경로 (필수, 예: /dev/ttyUSB0)
+	BaudRate int    // 기본값 9600
+	DataBits int    // 기본값 8
+	StopBits int    // 기본값 1 (1 또는 2)
+	Parity   string // "none" | "even" | "odd" (기본값 "none")
 }
 
 // DeviceConfig 는 단일 MODBUS 디바이스의 설정을 나타낸다.
@@ -30,21 +57,52 @@ type DeviceConfig struct {
 	Port           int // 기본값 502
 	UnitID         byte
 	RegisterGroups []RegisterGroupConfig
+	// Transport 는 per-device 트랜스포트 오버라이드이다(F2, 선택). 빈 값이면 에이전트 레벨
+	// transport 를 상속한다(하위 호환 — 기존 설정과 바이트 동일 동작, AC-03). "tcp" | "rtu".
+	Transport string
+	// Serial 은 per-device RTU 오버라이드(Transport == "rtu")의 시리얼 파라미터이다(F2).
+	// Transport 가 "rtu" 로 명시된 디바이스에서만 파싱·검증되며, 상속 rtu 디바이스는
+	// 에이전트 레벨 Serial 을 사용하므로 이 필드를 채우지 않는다.
+	Serial SerialConfig
+	// ShareSession 은 per-device 세션 공유 오버라이드이다(F3, 선택). nil 이면 에이전트 레벨
+	// share_session 을 상속한다. 명시되면 해당 값(true/false)이 에이전트 기본을 오버라이드한다.
+	ShareSession *bool
+	// MaxBlockRegisters 는 per-device 블록 상한 오버라이드이다(SPEC-MODBUS-013 REQ-03, 선택).
+	// nil 이면 에이전트 레벨 max_block_registers 를 상속한다. 기종별 자체 상한이 규격 상한(125)보다
+	// 작은 장비(예: GIPAM-115FI 는 56)를 위해 필요하다.
+	MaxBlockRegisters *uint16
 }
 
 // RegisterGroupConfig 는 레지스터 그룹의 설정을 나타낸다.
 type RegisterGroupConfig struct {
 	Name         string
-	FunctionCode byte   // 1, 2, 3, 4
+	FunctionCode byte // 1, 2, 3, 4
 	StartAddress uint16
 	Quantity     uint16
-	DataType     string              // 그룹 기본 데이터 타입 (기본: "uint16")
+	DataType     string                // 그룹 기본 데이터 타입 (기본: "uint16")
 	TypeMap      []modbus.TypeMapEntry // 주소별 타입 오버라이드 (선택)
+	PollInterval time.Duration         // 그룹별 폴링 주기 (선택, M5). 0 이면 에이전트 기본 주기로 폴백(A-7)
+	// Enabled 는 그룹 사용 여부이다(SPEC-MODBUS-013 REQ-01, 선택).
+	// nil(미지정)이면 사용으로 간주한다 — 기존 설정과 동일 동작(하위 호환).
+	// false 면 읽기 계획에서 제외되어 폴링·캐시 갱신·메시지 방출이 모두 일어나지 않으며,
+	// 그룹 정의 자체는 보존되어 재활성화 시 재입력이 불필요하다.
+	//
+	// 값 타입이 아닌 포인터인 이유: 값 타입이면 구조체 리터럴의 zero value(false)가
+	// "미사용"이 되어 기존 그룹을 무음 정지시키는 회귀가 발생한다.
+	// DeviceConfig.ShareSession *bool 과 동일한 선례를 따른다.
+	Enabled *bool
+}
+
+// IsEnabled 는 그룹의 유효 사용 여부를 반환한다(SPEC-MODBUS-013 REQ-01).
+// Enabled 가 nil(설정에서 생략)이면 사용(true)으로 간주한다.
+func (rg RegisterGroupConfig) IsEnabled() bool {
+	return rg.Enabled == nil || *rg.Enabled
 }
 
 // parseModbusConfig 는 Transport.Options 맵에서 ModbusConfig 를 파싱한다.
 func parseModbusConfig(opts map[string]any) (ModbusConfig, error) {
 	cfg := ModbusConfig{
+		Transport:         TransportTCP,
 		Mode:              "interval",
 		ReadMode:          "cached",
 		PollInterval:      5 * time.Second,
@@ -55,6 +113,35 @@ func parseModbusConfig(opts map[string]any) (ModbusConfig, error) {
 		MaxRetries:        3,
 		RequestTimeout:    3 * time.Second,
 		MsgChannelSize:    256,
+		MaxBlockRegisters: DefaultMaxBlockRegisters,
+	}
+
+	// max_block_registers (선택, SPEC-MODBUS-013 REQ-03). 미지정이면 기본 32.
+	// 범위를 벗어난 값은 오류가 아니라 [1, MaxRegistersRead] 로 클램프한다(AC-13).
+	if v, ok := opts["max_block_registers"]; ok {
+		cfg.MaxBlockRegisters = clampMaxBlock(toUint16(v))
+	}
+
+	// transport (선택, 기본 "tcp" — 생략 시 기존 TCP 동작 보존, AC-03)
+	if v, ok := opts["transport"]; ok {
+		s, _ := v.(string)
+		switch s {
+		case TransportTCP, "":
+			cfg.Transport = TransportTCP
+		case TransportRTU:
+			cfg.Transport = TransportRTU
+		default:
+			return ModbusConfig{}, fmt.Errorf("modbus: transport %q: %w", s, ErrInvalidTransport)
+		}
+	}
+
+	// RTU 시리얼 파라미터 (transport == "rtu" 일 때 파싱·검증, A-10)
+	if cfg.Transport == TransportRTU {
+		sc, err := parseSerialConfig(opts)
+		if err != nil {
+			return ModbusConfig{}, err
+		}
+		cfg.Serial = sc
 	}
 
 	// mode
@@ -146,6 +233,30 @@ func parseModbusConfig(opts map[string]any) (ModbusConfig, error) {
 		cfg.MsgChannelSize = toInt(v)
 	}
 
+	// log_frames (선택, 기본 false — no-op). true 이면 TX/RX 프레임 요약을 INFO 로 남긴다(F4).
+	if v, ok := opts["log_frames"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.LogFrames = b
+		}
+	}
+
+	// log_raw_frames (선택, 기본 false). true 이고 log_frames 도 true 일 때만 프레임 로그에
+	// 전체 ADU hex 를 포함한다(log_frames 가 꺼져 있으면 무의미, F4).
+	if v, ok := opts["log_raw_frames"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.LogRawFrames = b
+		}
+	}
+
+	// share_session (선택, 기본 false — no-op → 현 토폴로지 유지, F3). true 이면 동일 엔드포인트
+	// 키(TCP (host,port) / RTU serial_port)를 갖는 디바이스가 하나의 트랜스포트/연결을 공유한다.
+	// per-device share_session 오버라이드가 있으면 buildDevices 에서 디바이스별로 재판정한다(AC-05).
+	if v, ok := opts["share_session"]; ok {
+		if b, ok := v.(bool); ok {
+			cfg.ShareSession = b
+		}
+	}
+
 	// devices (필수)
 	if v, ok := opts["devices"]; ok {
 		switch devList := v.(type) {
@@ -155,7 +266,7 @@ func parseModbusConfig(opts map[string]any) (ModbusConfig, error) {
 				if !ok {
 					return ModbusConfig{}, fmt.Errorf("modbus: devices[%d] is not a map", i)
 				}
-				dc, err := parseDeviceConfig(devMap, i)
+				dc, err := parseDeviceConfig(devMap, i, cfg.Transport)
 				if err != nil {
 					return ModbusConfig{}, err
 				}
@@ -164,9 +275,9 @@ func parseModbusConfig(opts map[string]any) (ModbusConfig, error) {
 		}
 	}
 
-	if len(cfg.Devices) == 0 {
-		return ModbusConfig{}, fmt.Errorf("modbus: devices is required and must not be empty")
-	}
+	// 디바이스는 선택 사항이다. 디바이스 없이 에이전트를 먼저 생성하고
+	// 이후 설정(또는 런타임 set_config)으로 디바이스를 추가할 수 있다.
+	// 0 디바이스일 때 Start/pollLoop 는 빈 순회(no-op), Health 는 "0/0 online" Healthy 로 안전하다.
 
 	// stale_threshold 기본값: PollInterval * 3
 	if !staleSet {
@@ -176,8 +287,74 @@ func parseModbusConfig(opts map[string]any) (ModbusConfig, error) {
 	return cfg, nil
 }
 
+// parseSerialConfig 는 Transport.Options 에서 RTU 시리얼 파라미터를 파싱·검증한다(A-10).
+// serial_port(또는 port)는 필수이며, 나머지는 관례적 기본값을 가진다.
+// 검증은 파싱 단계에서 수행되며, 무효 값은 설정 오류로 거부한다.
+func parseSerialConfig(opts map[string]any) (SerialConfig, error) {
+	sc := SerialConfig{
+		BaudRate: 9600,
+		DataBits: 8,
+		StopBits: 1,
+		Parity:   "none",
+	}
+
+	// serial_port / port (필수)
+	if v, ok := opts["serial_port"]; ok {
+		sc.Port, _ = v.(string)
+	} else if v, ok := opts["port"]; ok {
+		sc.Port, _ = v.(string)
+	}
+	if sc.Port == "" {
+		return SerialConfig{}, ErrMissingSerialPort
+	}
+
+	// baud_rate (기본 9600, > 0)
+	if v, ok := opts["baud_rate"]; ok {
+		sc.BaudRate = toInt(v)
+	}
+	if sc.BaudRate <= 0 {
+		return SerialConfig{}, fmt.Errorf("modbus: baud_rate must be > 0 (got %d): %w", sc.BaudRate, ErrInvalidSerialParam)
+	}
+
+	// data_bits (기본 8, 5-8)
+	if v, ok := opts["data_bits"]; ok {
+		sc.DataBits = toInt(v)
+	}
+	if sc.DataBits < 5 || sc.DataBits > 8 {
+		return SerialConfig{}, fmt.Errorf("modbus: data_bits must be 5-8 (got %d): %w", sc.DataBits, ErrInvalidSerialParam)
+	}
+
+	// stop_bits (기본 1, 1 또는 2)
+	if v, ok := opts["stop_bits"]; ok {
+		sc.StopBits = toInt(v)
+	}
+	if sc.StopBits != 1 && sc.StopBits != 2 {
+		return SerialConfig{}, fmt.Errorf("modbus: stop_bits must be 1 or 2 (got %d): %w", sc.StopBits, ErrInvalidSerialParam)
+	}
+
+	// parity (기본 "none", none|even|odd)
+	if v, ok := opts["parity"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			sc.Parity = s
+		}
+	}
+	switch sc.Parity {
+	case "none", "even", "odd":
+	default:
+		return SerialConfig{}, fmt.Errorf("modbus: parity %q must be none|even|odd: %w", sc.Parity, ErrInvalidSerialParam)
+	}
+
+	return sc, nil
+}
+
 // parseDeviceConfig 는 디바이스 설정 맵을 DeviceConfig 로 파싱한다.
-func parseDeviceConfig(m map[string]any, idx int) (DeviceConfig, error) {
+// transport 파라미터(에이전트 레벨 기본값)로 상속 대상을 정하고, 디바이스 맵에 per-device
+// transport 오버라이드가 있으면 이를 우선한다(F2). 유효 트랜스포트(override ?? 에이전트 기본)로
+// host 필수 여부가 갈린다: TCP 는 host:port 가 필요하므로 host 가 필수이지만, RTU 는 공유
+// 시리얼 버스에서 unit_id 만으로 디바이스를 식별하므로 host 가 선택이다.
+// per-device RTU 오버라이드(transport == "rtu" 명시)는 시리얼 파라미터(serial_port 등)를
+// 반드시 가져야 하며, 누락 시 설정 오류로 거부한다(AC-04).
+func parseDeviceConfig(m map[string]any, idx int, transport string) (DeviceConfig, error) {
 	dc := DeviceConfig{
 		Port:   502,
 		UnitID: 1,
@@ -188,12 +365,49 @@ func parseDeviceConfig(m map[string]any, idx int) (DeviceConfig, error) {
 		dc.ID, _ = v.(string)
 	}
 
-	// host (필수)
+	// per-device transport 오버라이드 (선택, F2). 빈 값/부재 시 에이전트 기본을 상속한다.
+	if v, ok := m["transport"]; ok {
+		s, _ := v.(string)
+		switch s {
+		case "":
+			// 명시적 빈 값은 상속으로 취급한다(오버라이드 없음).
+		case TransportTCP, TransportRTU:
+			dc.Transport = s
+		default:
+			return DeviceConfig{}, fmt.Errorf("modbus: devices[%d].transport %q: %w", idx, s, ErrInvalidTransport)
+		}
+	}
+
+	// 유효 트랜스포트 = per-device 오버라이드 ?? 에이전트 기본값(host 필수 판정 기준).
+	effTransport := transport
+	if dc.Transport != "" {
+		effTransport = dc.Transport
+	}
+
+	// host (유효 트랜스포트가 TCP 면 필수, RTU 면 선택)
 	if v, ok := m["host"]; ok {
 		dc.Host, _ = v.(string)
 	}
-	if dc.Host == "" {
+	if effTransport == TransportTCP && dc.Host == "" {
 		return DeviceConfig{}, fmt.Errorf("modbus: devices[%d].host is required", idx)
+	}
+
+	// per-device RTU 오버라이드는 시리얼 파라미터를 반드시 가져야 한다(AC-04). 디바이스 맵에서
+	// 파싱·검증하며, serial_port 누락/무효 파라미터는 설정 오류로 거부한다. 상속 rtu 디바이스는
+	// 에이전트 레벨 Serial 을 사용하므로 이 블록을 타지 않는다(dc.Transport 미지정).
+	if dc.Transport == TransportRTU {
+		sc, err := parseSerialConfig(m)
+		if err != nil {
+			return DeviceConfig{}, fmt.Errorf("modbus: devices[%d]: %w", idx, err)
+		}
+		dc.Serial = sc
+	}
+
+	// per-device share_session 오버라이드 (선택, F3). 명시되면 에이전트 기본을 오버라이드한다.
+	if v, ok := m["share_session"]; ok {
+		if b, ok := v.(bool); ok {
+			dc.ShareSession = &b
+		}
 	}
 
 	// port
@@ -204,6 +418,13 @@ func parseDeviceConfig(m map[string]any, idx int) (DeviceConfig, error) {
 	// unit_id
 	if v, ok := m["unit_id"]; ok {
 		dc.UnitID = toByte(v)
+	}
+
+	// per-device max_block_registers 오버라이드 (선택, SPEC-MODBUS-013 REQ-03).
+	// 명시되면 클램프 후 저장하고, 부재면 nil 로 남겨 에이전트 값을 상속한다(AC-12).
+	if v, ok := m["max_block_registers"]; ok {
+		clamped := clampMaxBlock(toUint16(v))
+		dc.MaxBlockRegisters = &clamped
 	}
 
 	// register_groups
@@ -263,6 +484,30 @@ func parseRegisterGroupConfig(m map[string]any, devIdx, rgIdx int) (RegisterGrou
 		)
 	}
 
+	// poll_interval (선택, M5). 지정 시 양수여야 하며, 생략/0 이면 에이전트 기본 주기로 폴백(A-7).
+	if v, ok := m["poll_interval"]; ok {
+		s, isStr := v.(string)
+		if !isStr {
+			return RegisterGroupConfig{}, fmt.Errorf(
+				"modbus: devices[%d].register_groups[%d].poll_interval must be a duration string",
+				devIdx, rgIdx)
+		}
+		if s != "" {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return RegisterGroupConfig{}, fmt.Errorf(
+					"modbus: devices[%d].register_groups[%d].poll_interval invalid: %w",
+					devIdx, rgIdx, err)
+			}
+			if d <= 0 {
+				return RegisterGroupConfig{}, fmt.Errorf(
+					"modbus: devices[%d].register_groups[%d].poll_interval must be > 0 (got %v)",
+					devIdx, rgIdx, d)
+			}
+			rg.PollInterval = d
+		}
+	}
+
 	// data_type (선택, 기본값 "uint16")
 	if v, ok := m["data_type"]; ok {
 		if s, ok := v.(string); ok {
@@ -285,6 +530,18 @@ func parseRegisterGroupConfig(m map[string]any, devIdx, rgIdx int) (RegisterGrou
 			}
 			rg.TypeMap = typeMap
 		}
+	}
+
+	// enabled (선택, SPEC-MODBUS-013 REQ-01). 생략하면 nil → IsEnabled()==true(하위 호환).
+	// bool 이 아닌 값은 설정 오류로 거부한다(무음 오해석 방지).
+	if v, ok := m["enabled"]; ok {
+		b, isBool := v.(bool)
+		if !isBool {
+			return RegisterGroupConfig{}, fmt.Errorf(
+				"modbus: devices[%d].register_groups[%d].enabled must be a boolean",
+				devIdx, rgIdx)
+		}
+		rg.Enabled = &b
 	}
 
 	// type_map 검증
@@ -333,10 +590,17 @@ func parseClientTypeMap(entries []any, prefix string) ([]modbus.TypeMapEntry, er
 				"modbus: %s.type_map[%d].data_type is required", prefix, i)
 		}
 
-		// byte_order (선택, 기본값 "big_endian")
+		// byte_order (선택, 기본값 "big_endian"). 지정 시 유효성 검증(REQ-03):
+		// 별칭(big_endian/little_endian) + 4순열(ABCD/BADC/CDAB/DCBA)만 허용,
+		// 알 수 없는 값은 설정 오류로 거부한다.
 		tme.ByteOrder = modbus.ByteOrderBigEndian
 		if v, ok := m["byte_order"]; ok {
-			if s, ok := v.(string); ok {
+			if s, ok := v.(string); ok && s != "" {
+				if !modbus.IsValidByteOrder(s) {
+					return nil, fmt.Errorf(
+						"modbus: %s.type_map[%d].byte_order is not supported: %q: %w",
+						prefix, i, s, ErrUnsupportedByteOrder)
+				}
 				tme.ByteOrder = s
 			}
 		}

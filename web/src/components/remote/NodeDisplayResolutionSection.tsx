@@ -21,7 +21,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Loader2, Monitor } from 'lucide-react';
 
 import { useClearNodeDisplay, useSetNodeDisplay } from '@/hooks/useRemote';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermission } from '@/hooks/usePermission';
 import { useTranslation } from '@/lib/i18n';
 import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { useUIStore } from '@/stores/uiStore';
@@ -86,10 +86,13 @@ export function NodeDisplayResolutionSection({
 }: NodeDisplayResolutionSectionProps): React.JSX.Element {
   const { t } = useTranslation();
   const addNotification = useUIStore((s) => s.addNotification);
-  const { user, authEnabled } = useAuth();
-  // admin 판단: authEnabled=false(dev 단일 사용자) → admin 간주, 그 외 role 검증.
+  const { hasPermission } = usePermission();
+  // SPEC-AUTH-006 AC-10: 역할 이름 비교 → 권한 키 판정.
+  //   이 플래그가 여는 컨트롤은 해상도 오버라이드 SET/CLEAR — 원격 노드의 상태를
+  //   바꾸는 조작이므로 remote.update 로 판정한다(하위 세분 권한은 범위 밖,
+  //   spec.md §1.3). authEnabled=false 폴백은 usePermission 이 흡수한다.
   // UI 노출 제어용이며 실제 권한은 백엔드가 검증한다(SystemStatusPage 와 동일 패턴).
-  const isAdmin = !authEnabled || user?.role === 'admin';
+  const canUpdateRemote = hasPermission('remote.update');
 
   const setDisplay = useSetNodeDisplay();
   const clearDisplay = useClearNodeDisplay();
@@ -224,7 +227,7 @@ export function NodeDisplayResolutionSection({
       </p>
 
       {/* admin 컨트롤: 오버라이드 SET (프리셋/직접 입력) + CLEAR */}
-      {isAdmin && (
+      {canUpdateRemote && (
         <div
           className="mt-4 border-t border-(--color-border-default) pt-4"
           data-testid="display-controls"

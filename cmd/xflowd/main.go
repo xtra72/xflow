@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/agent/century"
+	"github.com/xtra/xflow/internal/agent/chirpstack"
 	"github.com/xtra/xflow/internal/agent/lg"
 	"github.com/xtra/xflow/internal/agent/modbus"
 	"github.com/xtra/xflow/internal/agent/modbusserver"
@@ -22,6 +23,7 @@ import (
 	"github.com/xtra/xflow/internal/agent/serial"
 	"github.com/xtra/xflow/internal/agent/socket"
 	"github.com/xtra/xflow/internal/agent/system"
+	"github.com/xtra/xflow/internal/agent/xsfm"
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/handler"
 	"github.com/xtra/xflow/internal/api/service"
@@ -34,6 +36,7 @@ import (
 	_ "github.com/xtra/xflow/internal/node/adapter" // 브릿지 어댑터 init() 등록
 	"github.com/xtra/xflow/internal/observe"
 	"github.com/xtra/xflow/internal/remote"
+	"github.com/xtra/xflow/internal/schedulelog"
 	"github.com/xtra/xflow/internal/script"
 	"github.com/xtra/xflow/internal/storage"
 	"github.com/xtra/xflow/internal/updater"
@@ -388,6 +391,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	if err := century.RegisterHvacr01Types(agentMgr); err != nil {
 		return fmt.Errorf("Century HVACR-01 agent type registration failed: %w", err)
 	}
+	if err := chirpstack.RegisterChirpStackTypes(agentMgr); err != nil {
+		return fmt.Errorf("ChirpStack LoRaWAN agent type registration failed: %w", err)
+	}
+	if err := xsfm.RegisterXSFMTypes(agentMgr); err != nil {
+		return fmt.Errorf("XSFM agent type registration failed: %w", err)
+	}
 	if err := modbus.RegisterModbusTypes(agentMgr); err != nil {
 		return fmt.Errorf("MODBUS TCP agent type registration failed: %w", err)
 	}
@@ -402,6 +411,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	}
 	if err := system.RegisterTSDBTypes(agentMgr); err != nil {
 		return fmt.Errorf("TSDB agent type registration failed: %w", err)
+	}
+	if err := system.RegisterSysMetricsTypes(agentMgr); err != nil {
+		return fmt.Errorf("sysmetrics 에이전트 타입 등록 실패: %w", err)
 	}
 	if err := system.RegisterStoreTypes(agentMgr); err != nil {
 		return fmt.Errorf("Store agent type registration failed: %w", err)
@@ -628,6 +640,13 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	defer deviceIDRepo.Close()
 	agent.SetDeviceIDRepository(deviceIDRepo)
 
+	// 설비 역사/위치/기기 레지스트리 기본 영속 경로 배선(SPEC-XSFM-001).
+	// registry_path/station_registry_path 설정이 비어 있어도 영속화가 기본 ON 이 되도록
+	// 서버 데이터 디렉터리를 기본 베이스로 주입한다. 실제 경로는 각 에이전트 Init 에서
+	// <dataDir>/xsfm/<agentID>/ 로 유도된다(설정 경로가 있으면 그 경로가 우선).
+	// device_metadata/device_ids 와 동일한 베이스(dir(sqlite_path))를 재사용한다.
+	xsfm.SetDefaultRegistryDir(filepath.Dir(storageCfg.SQLitePath))
+
 	// device_id / device_info 키를 항상 에이전트 ID 기준으로 정규화하는 resolver 를
 	// 주입한다. agentRef 가 이름("LG HVACR2")으로 들어오든 ID(UUID)로 들어오든
 	// 동일한 device_id 가 발급되도록 보장한다 (SPEC-DEVICE-IDENTITY-001).
@@ -718,6 +737,15 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 	serverOpts = append(serverOpts, api.WithBasicAuth(jwtSvc))
 
+	// 7.3a. 인가(RBAC) 초기화 — 역할→권한 캐시 (@SPEC:SPEC-AUTH-005 M4).
+	//
+	// 권한은 토큰이 아니라 요청 시점에 역할 이름으로 조회되므로, 역할 권한을 수정하면
+	// 토큰 재발급 없이 다음 요청부터 즉시 반영된다. 캐시 무효화는 역할 쓰기 경로
+	// (RoleHandler) 단일 지점에서 수행한다.
+	permResolver := auth.NewSQLPermissionResolver(authDashboardDB)
+	permCache := auth.NewPermissionCache(permResolver).WithUserRoles(permResolver)
+	serverOpts = append(serverOpts, api.WithAuthorizer(permCache))
+
 	logger.Info("기본 인증 활성화",
 		"yaml_migration_path", credYAMLPath,
 		"token_expiry", serverCfg.BasicAuth.TokenExpiry,
@@ -801,6 +829,10 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		obs.Loggers.NewLogger("api.handler.influxdb_query").Logger())
 	influxdbManagementHandler := handler.NewInfluxDBManagementHandler(agentMgr,
 		obs.Loggers.NewLogger("api.handler.influxdb_management").Logger())
+	// @spec SPEC-TSDB-002 §2.6 (U6): 패널이 쓰는 InfluxDB 구조화 시리즈 질의.
+	// 원문 통과 경로(influxdbQueryHandler)와는 별개 라우트다.
+	influxdbSeriesHandler := handler.NewInfluxDBSeriesHandler(agentMgr,
+		obs.Loggers.NewLogger("api.handler.influxdb_series").Logger())
 	monitorMgr := handler.NewDefaultMonitorManager(obs.Loggers.NewLogger("api.handler.monitor").Logger(), obs.Levels)
 	monitorHandler := handler.NewMonitorHandler(monitorMgr, obs.Loggers.NewLogger("api.handler.monitor").Logger())
 
@@ -835,17 +867,53 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// 이 인스턴스의 client 모드 설정을 조회/편집하며, config 오버라이드 레이어에 영속화한다.
 	remoteConfigHandler := handler.NewRemoteConfigHandler(cfg, obs.Loggers.NewLogger("api.handler.remote_config").Logger())
 
-	// 9.4. @SPEC:SPEC-DASHBOARD-001 v0.2.0 (M-8)
-	// Dashboard API 핸들러 등록 — 공유/개인 snapshot 영속화.
+	// 스케줄 로그 저장소 백엔드 타입 설정 핸들러 (설정 UI 용, admin 전용).
+	// storage.schedule_log.type 을 config 오버라이드 레이어에 영속화한다(재시작 후 적용).
+	scheduleLogConfigHandler := handler.NewScheduleLogConfigHandler(cfg, obs.Loggers.NewLogger("api.handler.schedule_log_config").Logger())
+
+	// 9.4. @SPEC:SPEC-DASHBOARD-004 (M4, spec.md §2.3)
+	// Dashboard API 핸들러 등록 — 대시보드 1급 엔티티 CRUD + ACL + 사용자 UI 상태.
 	// authDashboardDB 는 7.2 에서 열린 공유 *sql.DB (credentials 와 공유).
-	dashboardRepo, err := storage.NewDashboardSQLiteRepository(context.Background(), authDashboardDB)
+	//
+	// 구 (scope, owner) 스냅샷 저장소는 제거되었다. 레거시 응답 형상이 필요한
+	// 경로(읽기 전용 shim, 원격 노드 프록시)는 신규 모델에서 합성한다
+	// (handler.SynthesizeDashboardSnapshot / handler.NewDashboardSnapshotShim).
+	dashboardRepo, err := storage.NewDashboardEntitySQLiteRepository(context.Background(), authDashboardDB)
 	if err != nil {
 		return fmt.Errorf("dashboard 저장소 초기화 실패: %w", err)
 	}
+	dashboardACLRepo, err := storage.NewDashboardACLSQLiteRepository(context.Background(), authDashboardDB)
+	if err != nil {
+		return fmt.Errorf("dashboard ACL 저장소 초기화 실패: %w", err)
+	}
+	dashboardStateRepo, err := storage.NewDashboardUserStateSQLiteRepository(context.Background(), authDashboardDB)
+	if err != nil {
+		return fmt.Errorf("dashboard UI 상태 저장소 초기화 실패: %w", err)
+	}
 	dashboardHandler := handler.NewDashboardHandler(
 		dashboardRepo,
+		dashboardACLRepo,
+		dashboardStateRepo,
 		server.JWTService(),
 		obs.Loggers.NewLogger("api.handler.dashboard").Logger(),
+	).
+		// 권한은 토큰이 아니라 요청 시점에 조회한다(SPEC-AUTH-005 §4.3) — 역할 변경이
+		// 기존 토큰에도 즉시 반영되어야 한다(acceptance.md AC-07/AC-16).
+		WithPermissions(permCache).
+		WithAuthEnabled(serverCfg.BasicAuth.Enabled).
+		// ACL subject(user:/role:)의 실재 검증에 사용한다(acceptance.md AC-17).
+		WithSubjectDB(authDashboardDB)
+
+	// 대시보드 자산(도면 이미지 등) 저장소 — snapshot 과 분리해 보관한다.
+	// snapshot PUT 은 256KB 상한이 있어 이미지를 config 에 data-URL 로 박으면 대시보드
+	// 저장 자체가 실패한다. 자산을 별도 행으로 빼고 snapshot 에는 id 만 남긴다.
+	dashboardAssetRepo, err := storage.NewDashboardAssetSQLiteRepository(context.Background(), authDashboardDB)
+	if err != nil {
+		return fmt.Errorf("dashboard 자산 저장소 초기화 실패: %w", err)
+	}
+	dashboardAssetHandler := handler.NewDashboardAssetHandler(
+		dashboardAssetRepo,
+		obs.Loggers.NewLogger("api.handler.dashboard_asset").Logger(),
 	)
 
 	// 9.5. 전역 설정(settings) API 핸들러 등록.
@@ -863,9 +931,18 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 
 		// 인증 핸들러 (basic_auth 활성화 시)
 		if serverCfg.BasicAuth.Enabled && credentialsMgr != nil && server.JWTService() != nil {
-			authHandler := handler.NewAuthHandler(credentialsMgr, server.JWTService(), obs.Loggers.NewLogger("api.handler.auth").Logger())
+			authHandler := handler.NewAuthHandler(credentialsMgr, server.JWTService(), obs.Loggers.NewLogger("api.handler.auth").Logger()).
+				WithPermissions(permCache) // @SPEC:SPEC-AUTH-005 (M6) — /auth/me 의 permissions
 			authHandler.RegisterRoutes(g)
 		}
+
+		// @SPEC:SPEC-AUTH-005 (M6) — 사용자·역할 관리 API.
+		// 웹 UI 없이 API 만으로 사용자·역할 운영이 완결되어야 하므로 인증 활성화 여부와
+		// 무관하게 항상 등록한다 (인증 비활성 시 권한 검사는 패스스루된다).
+		handler.NewUserHandler(authDashboardDB, permCache,
+			obs.Loggers.NewLogger("api.handler.user").Logger()).RegisterRoutes(g)
+		handler.NewRoleHandler(authDashboardDB, permCache,
+			obs.Loggers.NewLogger("api.handler.role").Logger()).RegisterRoutes(g)
 
 		flowHandler.RegisterRoutes(g)
 		agentHandler.RegisterRoutes(g)
@@ -878,6 +955,8 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		storeQueryHandler.RegisterRoutes(g)
 		influxdbQueryHandler.RegisterRoutes(g)
 		influxdbManagementHandler.RegisterRoutes(g)
+		// @spec SPEC-TSDB-002 §2.6 (U6): POST /influxdb/{agent_name}/series/query
+		influxdbSeriesHandler.RegisterRoutes(g)
 
 		// SPEC-UPDATE-001 v0.1.0 M10: 시스템 / 업데이트 라우트.
 		systemHandler.RegisterRoutes(g)
@@ -885,8 +964,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		// SPEC-REMOTE-001: 원격 관리 클라이언트 설정 라우트 (admin 전용).
 		remoteConfigHandler.RegisterRoutes(g)
 
+		// 스케줄 로그 저장소 백엔드 타입 설정 라우트 (admin 전용).
+		scheduleLogConfigHandler.RegisterRoutes(g)
+
 		// SPEC-DASHBOARD-001 v0.2.0 M-8: 대시보드 라우트 (shared / mine).
 		dashboardHandler.RegisterRoutes(g)
+		dashboardAssetHandler.RegisterRoutes(g)
 
 		// 전역 설정 라우트 (GET/PUT /settings/{key}) — 디바이스 컬럼 구성 등.
 		settingsHandler.RegisterRoutes(g)
@@ -913,6 +996,8 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	var (
 		remoteServer            *remote.Server
 		remoteAdminHandler      *handler.RemoteAdminHandler
+		scheduleLogHandler      *handler.ScheduleLogHandler
+		scheduleLogRepo         storage.ScheduleLogRepository
 		remoteEnrollmentHandler *handler.RemoteEnrollmentHandler
 		remoteEditHandler       *handler.RemoteEditHandler
 		remoteQueryHandler      *handler.RemoteQueryHandler
@@ -952,6 +1037,31 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		}
 		remoteAuditRepo = auRepo
 		defer remoteAuditRepo.Close()
+
+		// 설비 제어 감사 저장소 배선(REQ-XSFM-001-F05): xsfm 패키지의
+		// 감사 저장소 슬롯에 원격 감사 저장소를 주입한다. 미주입 시 감사는 no-op.
+		xsfm.SetAuditRepository(remoteAuditRepo)
+
+		// 스케줄(예약) 실행 로그 저장소 배선(SPEC-SCHEDULE-VIEW-001 M2): 공유 SQLite DB 에
+		// schedule_log 테이블을 멱등 추가한다. fire 이벤트(trigger 발화)와 result 이벤트(xsfm
+		// 제어 실행)를 각각 별도 경로로 기록하므로, 두 슬롯을 모두 주입한다 — node 측 발화 관측자
+		// (fire)와 xsfm 측 저장소(result). 초기화 실패는 audit 배선과 동일하게 best-effort 로 로깅만
+		// 하고 계속하며(미설정 시 양측 no-op), 제어/발화 경로를 죽이지 않는다.
+		// 백엔드는 시작 설정(storage.schedule_log.type)으로 선택한다. 미설정 시 "sqlite"
+		// 기본값(defaults.go)으로 기존 동작이 유지된다. memory/jsonl 은 path 를 팩토리가
+		// 유도/무시한다(sqlitePath 는 sqlite 경로 및 jsonl 형제 경로 산출에 재사용).
+		scheduleLogStorageType := storageCfg.ScheduleLogType
+		if scheduleLogStorageType == "" {
+			scheduleLogStorageType = "sqlite"
+		}
+		if slRepo, slErr := storage.NewScheduleLogRepository(context.Background(), scheduleLogStorageType, storageCfg.SQLitePath); slErr != nil {
+			logger.Error("스케줄 로그 저장소 초기화 실패 — 스케줄 로그 비활성(제어/발화는 정상)", "error", slErr)
+		} else {
+			defer slRepo.Close()
+			scheduleLogRepo = slRepo                                                  // 읽기 측(GET /schedules/logs) 재사용을 위한 공유 인스턴스 캡처(M3)
+			xsfm.SetScheduleLogRepository(slRepo)                                     // result 이벤트(제어 실행 측)
+			node.SetScheduleFireObserver(schedulelog.NewFireObserver(slRepo, logger)) // fire 이벤트(발화 측 어댑터)
+		}
 
 		// enrollment 토큰 저장소(v1.1 그룹 H) — 동일 SQLite DB 에 enrollment_tokens
 		// 테이블을 멱등 추가. 토큰은 SHA-256 해시로만 저장된다(REQ-H06).
@@ -1036,6 +1146,12 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			WithAudit(remoteAuditRepo).
 			WithSettings(settingsRepo)
 
+		// 스케줄(예약) 실행 로그 조회 API(SPEC-SCHEDULE-VIEW-001 M3, RD-5). remote_admin 의
+		// Audit 핸들러를 미러링하되 admin 게이팅 없이 인증된 전체 사용자에게 서비스한다(AC-17).
+		// M2 에서 fire(node)/result(xsfm) 기록에 주입한 것과 동일한 저장소 인스턴스를 읽기 측으로
+		// 재사용한다. 저장소 미구성(nil)이어도 핸들러는 등록하며 빈 목록을 반환한다(AC-5, audit 준용).
+		scheduleLogHandler = handler.NewScheduleLogHandler(scheduleLogRepo)
+
 		// 수동 enrollment 관리자 API(v1.1 그룹 H): 사전 등록 노드 생성/삭제 + enrollment
 		// 토큰 발급/목록/폐기. *remote.Server 가 PreRegistrationService 를 만족한다.
 		remoteEnrollmentHandler = handler.NewRemoteEnrollmentHandler(
@@ -1090,6 +1206,14 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	if remoteAdminHandler != nil {
 		server.RegisterRoutes(func(g *api.RouteGroup) {
 			remoteAdminHandler.RegisterRoutes(g)
+		})
+	}
+
+	// 9.5c'. 스케줄 로그 조회 API 등록(SPEC-SCHEDULE-VIEW-001 M3, RD-5). server 모드에서만
+	// 등록한다. remote_admin 과 동일 /api/v1 인증 그룹에 추가하되 admin 게이팅은 없다(AC-17).
+	if scheduleLogHandler != nil {
+		server.RegisterRoutes(func(g *api.RouteGroup) {
+			scheduleLogHandler.RegisterRoutes(g)
 		})
 	}
 
@@ -1240,7 +1364,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		// M10(그룹 L): 대시보드 config(get_shared/get_mine) + 시스템 메트릭(monitor.metrics)
 		// read 소스를 바인딩한다(REQ-L01/L05). 로컬 /dashboards·/monitor/metrics 와 동일
 		// 인스턴스를 재사용하여 노드-로컬 권위(A17)·동형 응답을 보장한다. READ-ONLY(REQ-J03).
-		querySource.dashboard = dashboardRepo
+		//
+		// @SPEC:SPEC-DASHBOARD-004 (M4, spec.md §4.4) — 구 (scope, owner) 저장소가
+		// 제거되었으므로, 신규 1급 엔티티 모델에서 레거시 스냅샷을 합성하는 shim 을
+		// 바인딩한다. 원격 프록시가 소비하는 응답 형상은 그대로다.
+		querySource.dashboard = handler.NewDashboardSnapshotShim(dashboardRepo)
 		querySource.metrics = monitorMgr
 		streamSource := newRemoteStreamSource(agentSvc, deviceRegistry, seriesReader, 0)
 		// M10(그룹 L): 차트(chart.chart)는 in-process 차트 채널 레지스트리를 직접 탭하고

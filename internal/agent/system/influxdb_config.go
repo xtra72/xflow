@@ -52,7 +52,7 @@ type InfluxDBConfig struct {
 // 옵션 + 관련 파싱 분기 + filterNonEmpty 헬퍼 제거됨.
 func parseInfluxDBConfig(cfg agent.AgentConfig) (InfluxDBConfig, error) {
 	// 기본값 설정.
-	// v0.16.5: Precision 기본값을 "ms" 로 변경 — influxdb-write 노드가
+	// v0.16.5: Precision 기본값을 "ms" 로 변경 — storage-write 노드가
 	// msg.Timestamp().UnixMilli() 를 보내기 때문 (이전 "ns" 는 1000× 오차 발생).
 	ic := InfluxDBConfig{
 		TimeoutSec:      10,

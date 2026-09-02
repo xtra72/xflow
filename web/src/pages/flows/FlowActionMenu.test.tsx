@@ -9,7 +9,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { TargetProvider } from '@/lib/remote/TargetContext';
+import { TargetProvider } from '@/lib/remote/TargetProvider';
 import { LOCAL_TARGET, type ResourceTarget } from '@/lib/remote/target';
 import type { FlowInfo } from '@/types/flow';
 

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/node"
@@ -1285,6 +1287,41 @@ func debugPortLog(ctx context.Context, logger observe.ComponentLogger, direction
 	)
 }
 
+// errorMessageSummaryLimit 는 에러 로그에 싣는 원인 메시지 요약의 바이트 상한이다.
+// 에러가 메시지 단위로 반복될 때 대용량 payload 가 로그를 잠식하지 않도록 자른다.
+const errorMessageSummaryLimit = 2048
+
+// errorMessageSummary 는 노드 처리 에러 로그에 붙일 원인 메시지 요약을 만든다.
+//
+// 에러 문구만으로는 "어떤 메시지가 터졌는지" 알 수 없어 재현이 어렵다 — 특히 같은
+// 노드에 형태가 다른 메시지가 섞여 들어오는 경우(예: metadata 키가 있는 메시지와
+// 없는 메시지). 그래서 metadata 와 payload 를 함께 싣는다.
+//
+// 출력은 디버그 노드와 같은 모양(epoch ms timestamp)의 단일 JSON 문자열이므로
+// 로그에서 그대로 복사해 재현에 쓸 수 있다.
+func errorMessageSummary(msg message.Message) string {
+	b, err := json.Marshal(map[string]any{
+		"id":        msg.ID(),
+		"type":      msg.Type(),
+		"timestamp": msg.Timestamp().UnixMilli(),
+		"metadata":  msg.Metadata().Raw(),
+		"payload":   msg.Payload().ToMap(),
+	})
+	if err != nil {
+		return fmt.Sprintf("<message marshal failed: %v>", err)
+	}
+	if len(b) <= errorMessageSummaryLimit {
+		return string(b)
+	}
+	// 멀티바이트 문자(한글 디바이스 이름 등) 중간에서 잘려 깨진 UTF-8 이 남지
+	// 않도록 유효한 경계까지 뒤로 물러선다.
+	cut := b[:errorMessageSummaryLimit]
+	for len(cut) > 0 && !utf8.Valid(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return string(cut) + "...(truncated)"
+}
+
 // sendToWires 는 메시지를 와이어 목록으로 fan-out 전송한다.
 // 마지막 와이어에는 원본을, 나머지에는 Clone을 전송한다.
 // sendToWires 는 메시지를 매칭된 와이어들로 전송(fan-out)하고,
@@ -1600,6 +1637,56 @@ func (e *Engine) runNode(
 		return
 	}
 
+	// MultiSourceNode 이면서 입력 와이어를 가진 노드: fan-in Process 경로와 병행하여
+	// 추가 소스 포트(ExtraSourceChannels)도 배출한다. 순수 소스(입력 와이어 없음)는 위
+	// len(inputWires)==0 경로에서 이미 처리되므로, 이 경로는 "MultiSourceNode + 입력 와이어"
+	// 조합에만 적용된다(현재 유일 대상: Samsung mirror-message 결합 노드의 mirror-out).
+	// 타입 게이트로 다른 노드(순수 소스 SerialInNode 등)는 영향받지 않는다(행위 보존).
+	// "out" 포트는 Process 결과가 담당하며, ExtraSourceChannels 는 "out" 이 아닌 추가 포트만
+	// 반환하므로 결과 라우팅(SourcePort=="out")과 충돌하지 않는다.
+	if multi, ok := n.(node.MultiSourceNode); ok {
+		portWires := groupWiresBySourcePort(outWires)
+		for pn, pch := range multi.ExtraSourceChannels() {
+			targetWires := portWires[pn]
+			if len(targetWires) == 0 {
+				continue // 연결된 와이어가 없으면 건너뜀
+			}
+			go func(portName string, portCh <-chan message.Message, wires []*RuntimeWire) {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case msg, ok := <-portCh:
+						if !ok {
+							return
+						}
+						// 일시정지 대기
+						for rt.paused.Load() {
+							select {
+							case <-ctx.Done():
+								return
+							case <-time.After(10 * time.Millisecond):
+							}
+						}
+						rt.messageCount.Add(1)
+						var pc *portCounter
+						if nc := rt.nodeCounters[n.ID()]; nc != nil {
+							nc.processed.Add(1)
+							if pc = nc.portCounters[portName]; pc != nil {
+								pc.Record() // emitted (생산)
+							}
+						}
+						// 노드 출력 관측(tap): 와이어 연결 여부와 무관하게 방출 시점에 통지한다.
+						e.notifyOutputObserver(flowID, n.ID(), portName, msg)
+						if e.sendToWires(ctx, msg, wires, n.ID()) > 0 && pc != nil {
+							pc.RecordDelivered() // delivered (실제 전달)
+						}
+					}
+				}
+			}(pn, pch, targetWires)
+		}
+	}
+
 	// 여러 입력 와이어를 하나의 merged 채널로 합친다 (fan-in).
 	merged := e.mergeInputWires(ctx, inputWires)
 
@@ -1654,6 +1741,8 @@ func (e *Engine) runNode(
 					e.logger.Error("node process error",
 						"nodeID", n.ID(),
 						"error", err,
+						"msgID", msg.ID(),
+						"msg", errorMessageSummary(msg),
 					)
 				}
 				// 에러 포트 디버그 로깅

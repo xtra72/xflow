@@ -1,6 +1,8 @@
 // StoreSourceSection 의 시리즈 표시 이름(alias) 편집 테스트 (SPEC-WEB-005).
 // useAgents / useStoreKeysWithTags 를 모킹해 네트워크 없이 렌더한다.
 
+import type React from 'react';
+import { useState } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
@@ -34,21 +36,21 @@ vi.mock('@/services/api/store', () => ({
           key: 'room:1:temp',
           registration: 'manual',
           data_type: 'float',
-          metric_type: 'gauge',
+          field: 'gauge',
           tags: { room: '1' },
         },
         {
           key: 'room:2:humidity',
           registration: 'manual',
           data_type: 'int',
-          metric_type: 'counter',
+          field: 'counter',
           tags: { room: '2' },
         },
         {
           key: 'system:status',
           registration: 'auto',
           data_type: 'string',
-          metric_type: 'state',
+          field: 'state',
           tags: {},
         },
       ],
@@ -64,17 +66,12 @@ function makePanel(config: Record<string, unknown>): PanelConfig {
   return { id: 'p1', type: 'stat', title: '테스트', config };
 }
 
-/** 라인 차트 패널(통합 per-line 스타일 편집 노출). */
-function makeLinePanel(config: Record<string, unknown>): PanelConfig {
-  return { id: 'p1', type: 'line-chart', title: '테스트', config };
-}
-
 /** store 모드 + 시리즈 1개를 가진 기본 config. */
 function storeConfig(seriesOverride?: Partial<StoreSourceConfig['series'][number]>): Record<string, unknown> {
   const store_source: StoreSourceConfig = {
     agent_name: 'store-1',
     namespace: 'default',
-    series: [{ key: 'room:1:temp', metric_type: 'gauge', tags: { room: '1' }, ...seriesOverride }],
+    series: [{ key: 'room:1:temp', field: 'gauge', tags: { room: '1' }, ...seriesOverride }],
     time_window_ms: 60_000,
     interval_ms: 10_000,
     aggregation: 'average',
@@ -83,391 +80,21 @@ function storeConfig(seriesOverride?: Partial<StoreSourceConfig['series'][number
   return { data_source: 'store', store_source };
 }
 
-describe('StoreSourceSection 시리즈 이름(alias) 편집', () => {
+describe('StoreSourceSection 시리즈 세부 편집은 별도 섹션으로 렌더하지 않는다 (SPEC-PANEL-SETTINGS-001 v0.4.0)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('store 모드에서 선택된 시리즈 목록과 이름 입력을 렌더한다', () => {
+  // v0.4.0(REQ-20/AC-22): 시리즈 세부 편집(이름/색상/선 스타일/토큰)은 더 이상 StoreSourceSection
+  // 의 별도 섹션(SelectedSeriesList)이 아니라, 선택 행 인라인 펼침으로 이동했다. 위젯 동작 커버리지는
+  // PanelSettingsDataSource.test.tsx(행 펼침 상세)로 이관됐다. 여기서는 별도 섹션 부재만 확인한다.
+  it('store 모드에서 별도 SelectedSeriesList 섹션(그룹)을 렌더하지 않는다', () => {
     render(
       <StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={vi.fn()} />,
     );
-    expect(screen.getByTestId('chart-store-selected-series')).toBeInTheDocument();
-    expect(screen.getByTestId('chart-store-series-row-0')).toBeInTheDocument();
-    expect(screen.getByTestId('chart-store-series-alias-0')).toBeInTheDocument();
-  });
-
-  it('이름 입력 시 series[i].alias 가 갱신된 store_source 가 저장된다', () => {
-    const onConfigChange = vi.fn();
-    render(
-      <StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={onConfigChange} />,
-    );
-    const input = screen.getByTestId('chart-store-series-alias-0');
-    fireEvent.change(input, { target: { value: '실내 온도' } });
-
-    expect(onConfigChange).toHaveBeenCalledTimes(1);
-    const patch = onConfigChange.mock.calls[0]![0] as {
-      store_source: StoreSourceConfig;
-    };
-    expect(patch.store_source.series[0]!.alias).toBe('실내 온도');
-    // 키/메타데이터는 보존된다.
-    expect(patch.store_source.series[0]!.key).toBe('room:1:temp');
-    expect(patch.store_source.series[0]!.metric_type).toBe('gauge');
-  });
-
-  it('빈 문자열 입력 시 alias 를 undefined 로 저장한다(키명 폴백)', () => {
-    const onConfigChange = vi.fn();
-    render(
-      <StoreSourceSection
-        panel={makePanel(storeConfig({ alias: '기존 이름' }))}
-        onConfigChange={onConfigChange}
-      />,
-    );
-    const input = screen.getByTestId('chart-store-series-alias-0');
-    // 기존 alias 가 입력값으로 반영되어야 한다.
-    expect((input as HTMLInputElement).value).toBe('기존 이름');
-
-    fireEvent.change(input, { target: { value: '   ' } });
-    const patch = onConfigChange.mock.calls[0]![0] as {
-      store_source: StoreSourceConfig;
-    };
-    expect(patch.store_source.series[0]!.alias).toBeUndefined();
-  });
-
-  it('시리즈 제거 버튼이 해당 시리즈를 series[] 에서 제외한다', () => {
-    const onConfigChange = vi.fn();
-    render(
-      <StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={onConfigChange} />,
-    );
-    fireEvent.click(screen.getByTestId('chart-store-series-remove-0'));
-    const patch = onConfigChange.mock.calls[0]![0] as {
-      store_source: StoreSourceConfig;
-    };
-    expect(patch.store_source.series).toHaveLength(0);
-  });
-});
-
-/** 선택된 시리즈가 없는 store config(후보 테이블 행이 비선택 상태로 렌더됨). */
-function emptyStoreConfig(): Record<string, unknown> {
-  const store_source: StoreSourceConfig = {
-    agent_name: 'store-1',
-    namespace: 'default',
-    series: [],
-    time_window_ms: 60_000,
-    interval_ms: 10_000,
-    aggregation: 'average',
-    refresh_interval_ms: 5_000,
-  };
-  return { data_source: 'store', store_source };
-}
-
-describe('StoreSourceSection 후보 키 테이블', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('후보 키 목록을 테이블(키/메트릭/데이터/태그 컬럼)로 렌더한다', () => {
-    render(
-      <StoreSourceSection panel={makePanel(emptyStoreConfig())} onConfigChange={vi.fn()} />,
-    );
-    // 테이블과 정렬 가능한 컬럼 헤더가 렌더된다.
-    const table = screen.getByTestId('chart-store-key-table');
-    expect(table).toBeInTheDocument();
-    expect(screen.getByTestId('chart-store-sort-key')).toBeInTheDocument();
-    expect(screen.getByTestId('chart-store-sort-metric_type')).toBeInTheDocument();
-    expect(screen.getByTestId('chart-store-sort-data_type')).toBeInTheDocument();
-    expect(screen.getByTestId('chart-store-sort-tags')).toBeInTheDocument();
-
-    // 첫 행 셀 내용(키/metric/data_type)이 렌더되고, 태그는 "키: 값" 칩이다.
-    const row = screen.getByTestId('chart-store-key-row-0');
-    expect(row.textContent).toContain('room:1:temp');
-    expect(row.textContent).toContain('gauge'); // metric_type 값
-    expect(row.textContent).toContain('float'); // data_type 값
-    // 태그 칩은 "키: 값" 형식(연결 문자열 'room=1' 아님).
-    expect(row.textContent).toContain('room: 1');
-    expect(row.textContent).not.toContain('room=1');
-  });
-
-  it('필터는 컬럼 헤더 안에 인라인으로 배치된다(별도 필터 바 없음)', () => {
-    render(
-      <StoreSourceSection panel={makePanel(emptyStoreConfig())} onConfigChange={vi.fn()} />,
-    );
-    // 헤더 내 필터 컨트롤이 테이블 내부에 존재한다.
-    const table = screen.getByTestId('chart-store-key-table');
-    expect(table.contains(screen.getByTestId('chart-store-key-search'))).toBe(true);
-    expect(table.contains(screen.getByTestId('chart-store-metric-filter'))).toBe(true);
-    expect(table.contains(screen.getByTestId('chart-store-datatype-filter'))).toBe(true);
-    expect(table.contains(screen.getByTestId('chart-store-tag-filter'))).toBe(true);
-  });
-
-  it('키 컬럼 헤더 클릭 시 행이 키 기준으로 정렬된다(asc → desc)', () => {
-    render(
-      <StoreSourceSection panel={makePanel(emptyStoreConfig())} onConfigChange={vi.fn()} />,
-    );
-    const keyOf = (idx: number): string =>
-      screen.getByTestId(`chart-store-key-row-${idx}`).querySelector('td:nth-child(2)')!
-        .textContent ?? '';
-
-    // 정렬 전 원래 순서: room:1:temp, room:2:humidity, system:status.
-    expect(keyOf(0)).toBe('room:1:temp');
-
-    // asc 정렬: 사전순(localeCompare).
-    fireEvent.click(screen.getByTestId('chart-store-sort-key'));
-    expect(keyOf(0)).toBe('room:1:temp');
-    expect(keyOf(2)).toBe('system:status');
-
-    // 재클릭 → desc.
-    fireEvent.click(screen.getByTestId('chart-store-sort-key'));
-    expect(keyOf(0)).toBe('system:status');
-    expect(keyOf(2)).toBe('room:1:temp');
-  });
-
-  it('헤더 인라인 검색 필터가 행을 좁힌다', () => {
-    render(
-      <StoreSourceSection panel={makePanel(emptyStoreConfig())} onConfigChange={vi.fn()} />,
-    );
-    fireEvent.change(screen.getByTestId('chart-store-key-search'), {
-      target: { value: 'humidity' },
-    });
-    expect(screen.getByTestId('chart-store-key-row-0').textContent).toContain(
-      'room:2:humidity',
-    );
-    // 다른 키 행은 사라진다.
-    expect(screen.queryByTestId('chart-store-key-row-1')).toBeNull();
-  });
-
-  it('구조화 태그 필터: 태그 키 선택 → 값 칩 토글로 행을 좁힌다', () => {
-    render(
-      <StoreSourceSection panel={makePanel(emptyStoreConfig())} onConfigChange={vi.fn()} />,
-    );
-    // 태그 키 'room' 선택 시 값 칩(1, 2)이 노출된다.
-    fireEvent.change(screen.getByTestId('chart-store-tag-key-select'), {
-      target: { value: 'room' },
-    });
-    const chip1 = screen.getByTestId('chart-store-tag-value-room-1');
-    expect(chip1).toBeInTheDocument();
-    expect(screen.getByTestId('chart-store-tag-value-room-2')).toBeInTheDocument();
-
-    // room=1 칩 토글 → room=1 태그를 가진 행만 남는다.
-    fireEvent.click(chip1);
-    expect(screen.getByTestId('chart-store-key-row-0').textContent).toContain(
-      'room:1:temp',
-    );
-    expect(screen.queryByTestId('chart-store-key-row-1')).toBeNull();
-    // 선택된 태그 요약 칩이 "키: 값" 으로 표시된다.
-    expect(screen.getByTestId('chart-store-tag-selected').textContent).toContain('room: 1');
-  });
-
-  it('행 체크박스 선택 시 store_source.series[] 에 시리즈가 추가된다', () => {
-    const onConfigChange = vi.fn();
-    render(
-      <StoreSourceSection panel={makePanel(emptyStoreConfig())} onConfigChange={onConfigChange} />,
-    );
-    const checkbox = screen.getByTestId('chart-store-key-checkbox-room:1:temp');
-    expect((checkbox as HTMLInputElement).checked).toBe(false);
-
-    fireEvent.click(checkbox);
-    expect(onConfigChange).toHaveBeenCalledTimes(1);
-    const patch = onConfigChange.mock.calls[0]![0] as {
-      store_source: StoreSourceConfig;
-    };
-    expect(patch.store_source.series).toHaveLength(1);
-    expect(patch.store_source.series[0]!.key).toBe('room:1:temp');
-    expect(patch.store_source.series[0]!.metric_type).toBe('gauge');
-    expect(patch.store_source.series[0]!.tags).toEqual({ room: '1' });
-  });
-
-  it('이미 선택된 키의 행 체크박스는 체크 상태로 렌더된다', () => {
-    // storeConfig() 는 room:1:temp(gauge, room=1)를 선택 상태로 가진다.
-    render(
-      <StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={vi.fn()} />,
-    );
-    const checkbox = screen.getByTestId('chart-store-key-checkbox-room:1:temp');
-    expect((checkbox as HTMLInputElement).checked).toBe(true);
-  });
-
-  it('선택된 행 체크박스 해제 시 해당 시리즈가 series[] 에서 제거된다', () => {
-    const onConfigChange = vi.fn();
-    render(
-      <StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={onConfigChange} />,
-    );
-    const checkbox = screen.getByTestId('chart-store-key-checkbox-room:1:temp');
-    fireEvent.click(checkbox);
-    const patch = onConfigChange.mock.calls[0]![0] as {
-      store_source: StoreSourceConfig;
-    };
-    expect(patch.store_source.series).toHaveLength(0);
-  });
-});
-
-describe('StoreSourceSection 라인 차트 통합 per-line 스타일(store 모드)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('stat 패널에서는 선택 시리즈 행에 라인 스타일 펼침 토글이 없다', () => {
-    render(
-      <StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={vi.fn()} />,
-    );
-    expect(screen.queryByTestId('chart-store-series-expand-0')).toBeNull();
-  });
-
-  it('라인 차트 패널에서는 선택 시리즈 행에 라인 스타일 펼침 토글이 있다', () => {
-    render(
-      <StoreSourceSection panel={makeLinePanel(storeConfig())} onConfigChange={vi.fn()} />,
-    );
-    expect(screen.getByTestId('chart-store-series-expand-0')).toBeInTheDocument();
-  });
-
-  it('펼침 후 stroke_style 변경 시 store_source.series[i].stroke_style 가 갱신된다', () => {
-    const onConfigChange = vi.fn();
-    render(
-      <StoreSourceSection
-        panel={makeLinePanel(storeConfig())}
-        onConfigChange={onConfigChange}
-      />,
-    );
-    fireEvent.click(screen.getByTestId('chart-store-series-expand-0'));
-    const styleSelect = screen.getByTestId('chart-store-series-0-stroke-style');
-    fireEvent.change(styleSelect, { target: { value: 'dashed' } });
-
-    const patch = onConfigChange.mock.calls[0]![0] as {
-      store_source: StoreSourceConfig;
-    };
-    expect(patch.store_source.series[0]!.stroke_style).toBe('dashed');
-    // 키/메타데이터는 보존된다.
-    expect(patch.store_source.series[0]!.key).toBe('room:1:temp');
-  });
-
-  it('펼침 후 두께/곡선/표시필드 변경이 series[i] 에 반영된다', () => {
-    const onConfigChange = vi.fn();
-    render(
-      <StoreSourceSection
-        panel={makeLinePanel(storeConfig())}
-        onConfigChange={onConfigChange}
-      />,
-    );
-    fireEvent.click(screen.getByTestId('chart-store-series-expand-0'));
-
-    fireEvent.change(screen.getByTestId('chart-store-series-0-stroke-width'), {
-      target: { value: '4' },
-    });
-    expect(
-      (onConfigChange.mock.calls.at(-1)![0] as { store_source: StoreSourceConfig })
-        .store_source.series[0]!.stroke_width,
-    ).toBe(4);
-
-    fireEvent.click(screen.getByTestId('chart-store-series-0-smooth'));
-    expect(
-      (onConfigChange.mock.calls.at(-1)![0] as { store_source: StoreSourceConfig })
-        .store_source.series[0]!.smooth,
-    ).toBe(true);
-
-    fireEvent.change(screen.getByTestId('chart-store-series-0-display-field'), {
-      target: { value: 'value.inner' },
-    });
-    expect(
-      (onConfigChange.mock.calls.at(-1)![0] as { store_source: StoreSourceConfig })
-        .store_source.series[0]!.display_field,
-    ).toBe('value.inner');
-  });
-});
-
-/** 다중 태그를 가진 store config(토큰 버튼/미리보기 테스트용). */
-function taggedStoreConfig(
-  seriesOverride?: Partial<StoreSourceConfig['series'][number]>,
-): Record<string, unknown> {
-  const store_source: StoreSourceConfig = {
-    agent_name: 'store-1',
-    namespace: 'default',
-    series: [
-      {
-        key: 'room:1:temp',
-        metric_type: 'gauge',
-        tags: { name: 'TempSensor', type: 'inside' },
-        ...seriesOverride,
-      },
-    ],
-    time_window_ms: 60_000,
-    interval_ms: 10_000,
-    aggregation: 'average',
-    refresh_interval_ms: 5_000,
-  };
-  return { data_source: 'store', store_source };
-}
-
-describe('StoreSourceSection alias 태그 토큰 템플릿(SPEC-WEB-005)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('태그가 있는 시리즈는 태그 키마다 토큰 삽입 버튼을 노출한다', () => {
-    render(
-      <StoreSourceSection panel={makePanel(taggedStoreConfig())} onConfigChange={vi.fn()} />,
-    );
-    expect(screen.getByTestId('chart-store-series-token-0-name')).toBeInTheDocument();
-    expect(screen.getByTestId('chart-store-series-token-0-type')).toBeInTheDocument();
-    // 버튼 라벨은 {$.key} 토큰 형태다.
-    expect(screen.getByTestId('chart-store-series-token-0-name').textContent).toBe(
-      '{$.name}',
-    );
-  });
-
-  it('토큰 버튼 클릭 시 alias 에 {$.key} 토큰이 삽입된다(빈 alias → 끝에 추가)', () => {
-    const onConfigChange = vi.fn();
-    render(
-      <StoreSourceSection
-        panel={makePanel(taggedStoreConfig())}
-        onConfigChange={onConfigChange}
-      />,
-    );
-    fireEvent.click(screen.getByTestId('chart-store-series-token-0-name'));
-    const patch = onConfigChange.mock.calls[0]![0] as {
-      store_source: StoreSourceConfig;
-    };
-    expect(patch.store_source.series[0]!.alias).toBe('{$.name}');
-  });
-
-  it('미리보기가 해석된 이름을 보여준다(여러 토큰 + 리터럴)', () => {
-    render(
-      <StoreSourceSection
-        panel={makePanel(taggedStoreConfig({ alias: '{$.name}-{$.type}' }))}
-        onConfigChange={vi.fn()}
-      />,
-    );
-    const preview = screen.getByTestId('chart-store-series-preview-0');
-    // i18n 스텁은 키를 그대로 반환하므로 '{value}' 슬롯이 해석값으로 치환된다.
-    expect(preview.textContent).toContain('TempSensor-inside');
-  });
-
-  it('누락 태그 토큰은 미리보기에서 빈 문자열로 해석된다', () => {
-    render(
-      <StoreSourceSection
-        panel={makePanel(taggedStoreConfig({ alias: '{$.name}-{$.missing}' }))}
-        onConfigChange={vi.fn()}
-      />,
-    );
-    const preview = screen.getByTestId('chart-store-series-preview-0');
-    expect(preview.textContent).toContain('TempSensor-');
-    expect(preview.textContent).not.toContain('missing');
-  });
-
-  it('alias 가 비어있으면 미리보기는 키명으로 폴백한다', () => {
-    render(
-      <StoreSourceSection panel={makePanel(taggedStoreConfig())} onConfigChange={vi.fn()} />,
-    );
-    const preview = screen.getByTestId('chart-store-series-preview-0');
-    expect(preview.textContent).toContain('room:1:temp');
-  });
-
-  it('태그가 없는 시리즈는 토큰 서브행을 렌더하지 않는다', () => {
-    render(
-      <StoreSourceSection
-        panel={makePanel(taggedStoreConfig({ tags: undefined }))}
-        onConfigChange={vi.fn()}
-      />,
-    );
-    expect(screen.queryByTestId('chart-store-series-tokens-0')).toBeNull();
+    expect(screen.queryByTestId('chart-store-selected-series')).toBeNull();
+    expect(screen.queryByTestId('chart-store-series-row-0')).toBeNull();
+    expect(screen.queryByTestId('chart-store-series-alias-0')).toBeNull();
   });
 });
 
@@ -544,5 +171,628 @@ describe('StoreSourceSection agent_id 정본 저장(SPEC-WEB-006)', () => {
     expect(select.value).toBe('store-uuid-1');
     // 현재 이름 옵션이 렌더된다(옛 이름이 아닌 현재 이름).
     expect(screen.getByRole('option', { name: 'renamed-store' })).toBeInTheDocument();
+  });
+});
+
+describe('Store 조회 설정 정보 "i" 말풍선 (SPEC-PANEL-SETTINGS-001)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** store 모드 config — 조회 설정 값 지정(정보 말풍선 표시용). */
+  function infoConfig(): Record<string, unknown> {
+    const store_source: StoreSourceConfig = {
+      agent_id: 'store-uuid-1',
+      agent_name: 'store-1',
+      namespace: 'default',
+      series: [],
+      time_window_ms: 3_600_000, // 3600초
+      interval_ms: 60_000, // 60초
+      aggregation: 'last',
+      refresh_interval_ms: 5_000, // 5초
+    };
+    return { data_source: 'store', store_source };
+  }
+
+  it('시간 윈도우는 여전히 정보 표시 전용이다(인라인 편집 없음)', () => {
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
+    expect(screen.queryByTestId('chart-store-time-window')).toBeNull();
+  });
+
+  it('집계 함수는 저장된 값을 선택한 셀렉트로 편집한다', () => {
+    // 종전에는 config 에만 있고 조작 통로가 없어 `average` 로 고정이었다.
+    const onConfigChange = vi.fn();
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={onConfigChange} />);
+    const sel = screen.getByTestId('chart-store-aggregation') as HTMLSelectElement;
+    expect(sel.value).toBe('last');
+
+    fireEvent.change(sel, { target: { value: 'min' } });
+    const patch = onConfigChange.mock.calls.at(-1)?.[0] as {
+      store_source: StoreSourceConfig;
+    };
+    expect(patch.store_source.aggregation).toBe('min');
+  });
+
+  // ---- 빈 버킷 채우기 (Store 도 서버가 계산한다) ----
+
+  it('채우기 셀렉트가 활성이고 고른 전략이 저장된다', () => {
+    // 종전에는 "Store 백엔드가 지원하지 않는다" 사유와 함께 통째로 비활성이었다.
+    const onConfigChange = vi.fn();
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={onConfigChange} />);
+    const sel = screen.getByTestId('chart-store-fill') as HTMLSelectElement;
+    expect(sel.disabled).toBe(false);
+
+    fireEvent.change(sel, { target: { value: 'zero' } });
+    const patch = onConfigChange.mock.calls.at(-1)?.[0] as { store_source: StoreSourceConfig };
+    expect(patch.store_source.fill).toBe('zero');
+  });
+
+  it('채우지 않음을 고르면 config 에서 지운다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <StoreSourceSection
+        panel={makePanel({
+          data_source: 'store',
+          store_source: { ...(infoConfig().store_source as StoreSourceConfig), fill: 'zero' },
+        })}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    fireEvent.change(screen.getByTestId('chart-store-fill'), { target: { value: '' } });
+    const patch = onConfigChange.mock.calls.at(-1)?.[0] as { store_source: StoreSourceConfig };
+    expect(patch.store_source.fill).toBeUndefined();
+  });
+
+  it('avg 선택지는 남기되 비활성이다 — 없애면 "왜 없지" 가 된다', () => {
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
+    const avg = screen.getByTestId('chart-store-fill-avg') as HTMLOptionElement;
+    expect(avg.disabled).toBe(true);
+  });
+
+  it('사용 기간 제한은 직전값 사용을 골랐을 때만 나온다', () => {
+    const { rerender } = render(
+      <StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />,
+    );
+    expect(screen.queryByTestId('chart-store-fill-prev-max')).toBeNull();
+
+    rerender(
+      <StoreSourceSection
+        panel={makePanel({
+          data_source: 'store',
+          store_source: { ...(infoConfig().store_source as StoreSourceConfig), fill: 'previous' },
+        })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('chart-store-fill-prev-max')).toBeInTheDocument();
+  });
+
+  // ---- 인터벌 편집 (Store 도 TSDB 와 같은 조작) ----
+
+  it('Store 모드에서 인터벌 셀렉트를 렌더하고 저장된 값을 선택한다', () => {
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
+    const sel = screen.getByTestId('chart-store-interval') as HTMLSelectElement;
+    expect(sel.value).toBe('60000');
+  });
+
+  it('프리셋을 고르면 store_source.interval_ms 만 갱신한다', () => {
+    const onConfigChange = vi.fn();
+    const cfg = infoConfig();
+    render(<StoreSourceSection panel={makePanel(cfg)} onConfigChange={onConfigChange} />);
+    fireEvent.change(screen.getByTestId('chart-store-interval'), { target: { value: '300000' } });
+    expect(onConfigChange).toHaveBeenCalledWith({
+      store_source: { ...(cfg.store_source as object), interval_ms: 300_000 },
+    });
+  });
+
+  it('"직접 입력" 선택만으로는 값을 바꾸지 않는다', () => {
+    const onConfigChange = vi.fn();
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={onConfigChange} />);
+    fireEvent.change(screen.getByTestId('chart-store-interval'), { target: { value: 'custom' } });
+    expect(onConfigChange).not.toHaveBeenCalled();
+  });
+
+  it('프리셋에 없는 값이면 직접 입력칸을 초 단위로 보여준다', () => {
+    const cfg = infoConfig();
+    (cfg.store_source as { interval_ms: number }).interval_ms = 45_000;
+    render(<StoreSourceSection panel={makePanel(cfg)} onConfigChange={vi.fn()} />);
+    expect((screen.getByTestId('chart-store-interval') as HTMLSelectElement).value).toBe('custom');
+    expect((screen.getByTestId('chart-store-interval-custom') as HTMLInputElement).value).toBe('45');
+  });
+
+  it('직접 입력은 초를 ms 로 저장하고, 0 이하는 무시한다', () => {
+    const onConfigChange = vi.fn();
+    const cfg = infoConfig();
+    (cfg.store_source as { interval_ms: number }).interval_ms = 45_000;
+    render(<StoreSourceSection panel={makePanel(cfg)} onConfigChange={onConfigChange} />);
+    const input = screen.getByTestId('chart-store-interval-custom');
+
+    fireEvent.change(input, { target: { value: '0' } });
+    expect(onConfigChange).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: '90' } });
+    expect(onConfigChange).toHaveBeenCalledWith({
+      store_source: { ...(cfg.store_source as object), interval_ms: 90_000 },
+    });
+  });
+
+  it('인터벌이 시간 윈도우보다 크면 경고를 표시한다', () => {
+    const cfg = infoConfig();
+    (cfg.store_source as { interval_ms: number }).interval_ms = 86_400_000; // 1d > 1h
+    render(<StoreSourceSection panel={makePanel(cfg)} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('chart-store-interval-warning')).toBeInTheDocument();
+  });
+
+  it('정상 범위에서는 경고를 표시하지 않는다', () => {
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
+    expect(screen.queryByTestId('chart-store-interval-warning')).toBeNull();
+  });
+
+  it('Store 모드에서 데이터소스 토글 옆에 "i" 정보 아이콘을 렌더한다', () => {
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('chart-store-info-button')).toBeInTheDocument();
+    // Store 토글과 같은 영역에 있다(데이터소스 토글 존재 확인).
+    expect(screen.getByTestId('chart-data-source-store')).toBeInTheDocument();
+  });
+
+  it('기본(닫힘)에서는 말풍선이 없고, "i" 클릭 시 열린다', () => {
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
+    expect(screen.queryByTestId('chart-store-info-popover')).toBeNull();
+    fireEvent.click(screen.getByTestId('chart-store-info-button'));
+    expect(screen.getByTestId('chart-store-info-popover')).toBeInTheDocument();
+  });
+
+  it('말풍선은 현재 조회 설정 값 + 설명을 읽기전용으로 표시한다(입력 없음)', () => {
+    render(<StoreSourceSection panel={makePanel(infoConfig())} onConfigChange={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('chart-store-info-button'));
+    const popover = screen.getByTestId('chart-store-info-popover');
+    const text = popover.textContent ?? '';
+    // 값: 3600초 / 60초 / 5초(단위 키는 i18n 스텁이 키를 그대로 반환).
+    expect(text).toContain('3600');
+    expect(text).toContain('60');
+    expect(text).toContain('5');
+    // 집계 라벨(last → tsdb.aggLast, i18n 스텁이 키 반환).
+    expect(text).toContain('tsdb.aggLast');
+    // 설명(기존 hint 키 재사용).
+    expect(text).toContain('dashboard.chart.storeTimeWindowHint');
+    // 읽기전용: 편집 입력/셀렉트가 없다.
+    expect(popover.querySelector('input')).toBeNull();
+    expect(popover.querySelector('select')).toBeNull();
+  });
+});
+
+describe('시리즈 이름 형식 (패널 옵션)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('Store 모드에서 이름 형식 입력을 노출한다', () => {
+    render(<StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('chart-store-series-name-format')).toBeInTheDocument();
+  });
+
+  it('선택된 시리즈 기준 토큰 버튼을 물음표 뒤에 제공한다', () => {
+    render(<StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={vi.fn()} />);
+
+    // 토큰은 접혀 있다 — 상시 펼치면 입력·미리보기를 밀어낸다.
+    expect(screen.queryByTestId('chart-store-series-name-format-token-measurement')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('chart-store-series-name-format-token-help'));
+
+    expect(
+      screen.getByTestId('chart-store-series-name-format-token-measurement'),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('chart-store-series-name-format-token-field')).toBeInTheDocument();
+    expect(screen.getByTestId('chart-store-series-name-format-token-room')).toBeInTheDocument();
+  });
+
+  it('입력값이 store_source.series_name_format 로 저장된다', () => {
+    const onConfigChange = vi.fn();
+    render(<StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={onConfigChange} />);
+    fireEvent.change(screen.getByTestId('chart-store-series-name-format-input'), {
+      target: { value: '{$.measurement}/{$.field}' },
+    });
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        store_source: expect.objectContaining({
+          series_name_format: '{$.measurement}/{$.field}',
+        }),
+      }),
+    );
+  });
+
+  it('공백만 입력하면 undefined 로 저장되어 기본 표기로 돌아간다', () => {
+    const onConfigChange = vi.fn();
+    render(<StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={onConfigChange} />);
+    fireEvent.change(screen.getByTestId('chart-store-series-name-format-input'), {
+      target: { value: '   ' },
+    });
+    expect(onConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        store_source: expect.objectContaining({ series_name_format: undefined }),
+      }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-TSDB-002 M2 — 특성화 테스트 (DDD PRESERVE) + M6.9/M6.10 제자리 반전.
+//
+// 4개 설정 UI 게이트(StoreInfoPopover · 에이전트 셀렉트 · 이름 형식 · 대표값)의 참 조건을
+// 잠근다. 네 지점 모두 이제 `config.data_source` 파생 모드가 `'store'` 인지만 본다 —
+// 로컬 `tsdbMode` 상태는 §2.11 [E1] 이 제거했다(CT-21 이 그 이전 동작을 기준선으로 잠갔다).
+//
+// @spec SPEC-TSDB-002 §2.3 (U3) · §2.11 (E1) — plan.md §3.6 CT-19 ~ CT-21
+// ---------------------------------------------------------------------------
+describe('설정 UI 게이팅 특성화 (SPEC-TSDB-002 M2, CT-19~CT-21)', () => {
+  /** 4개 게이트의 렌더 여부(순서: StoreInfoPopover · 에이전트 셀렉트 · 이름 형식 · 대표값). */
+  function gates(): boolean[] {
+    return [
+      screen.queryByTestId('chart-store-info-button') !== null,
+      screen.queryByTestId('chart-store-agent-select') !== null,
+      screen.queryByTestId('chart-store-series-name-format') !== null,
+      screen.queryByTestId('chart-series-reduce') !== null,
+    ];
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("CT-19: data_source:'store' 면 4개 게이트가 모두 렌더된다", () => {
+    // panel.type='stat' 은 REDUCE_PANEL_TYPES 에 속하므로 대표값 선택기까지 노출된다.
+    render(<StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={vi.fn()} />);
+    expect(gates()).toEqual([true, true, true, true]);
+  });
+
+  it('CT-21 [반전]: TSDB 선택이 config 에 기록되고 tsdb config 에서는 4개 게이트가 미렌더다', () => {
+    // [SPEC-TSDB-002 §2.11 반전] SPEC-PANEL-SETTINGS-001 REQ-05 는 TSDB 토글을
+    // config 무기록(no-op)으로 규정했고 이 테스트가 그것을 잠갔다. SPEC-TSDB-002 가
+    // 그 비목표를 대체하므로 단언을 반전한다. 삭제하지 않는 이유는 "왜 바뀌었는가"의
+    // 기록을 diff 밖으로 내보내지 않기 위함이다.
+    const onConfigChange = vi.fn();
+    const { unmount } = render(
+      <StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={onConfigChange} />,
+    );
+    // 전제(무변경): store 모드에서는 4개 게이트가 살아 있다.
+    expect(gates()).toEqual([true, true, true, true]);
+
+    fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
+
+    // 반전 (a): 로컬 상태 no-op 이 아니라 config 기록이다.
+    // 다중 소스가 들어오면서 버튼은 토글이 됐다 — store 는 그대로 남고 tsdb 가 더해진다.
+    const written = onConfigChange.mock.calls[0]![0] as Record<string, unknown>;
+    expect((written.sources as Array<{ kind: string }>).map((e) => e.kind)).toEqual([
+      'store',
+      'tsdb',
+    ]);
+    unmount();
+
+    // 반전 (b): 모드가 config 파생이므로 게이트는 tsdb config 에서 닫힌다.
+    render(
+      <StoreSourceSection
+        panel={makePanel({ ...storeConfig(), data_source: 'tsdb' })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(gates()).toEqual([false, false, false, false]);
+    // 반전 (c): placeholder 는 렌더 트리에서 은퇴했다(testid 소멸).
+  });
+
+  it('CT-21 [반전]: 종류 버튼은 더하기이므로 tsdb 를 붙여도 store 게이트가 살아 있고, 지워야 닫힌다', () => {
+    // 위와 같은 사유의 반전이다(§2.11). 이전에는 `setTsdbMode(false)` 로 로컬 상태만
+    // 풀렸고 config 는 내내 store 였다. 이제는 게이트가 config 의 소스 목록에서 나오고,
+    // 종류 버튼은 **더하기**다 — 닫는 길은 그 인스턴스를 지우는 것뿐이다.
+    function Harness(): React.ReactElement {
+      const [config, setConfig] = useState<Record<string, unknown>>(storeConfig());
+      return (
+        <StoreSourceSection
+          panel={makePanel(config)}
+          onConfigChange={(patch) => setConfig((prev) => ({ ...prev, ...patch }))}
+        />
+      );
+    }
+    render(<Harness />);
+    expect(gates()).toEqual([true, true, true, true]);
+
+    // tsdb 를 켜도 store 가 함께 켜져 있으므로 store 게이트는 살아 있다 — 이것이
+    // 다중 소스의 뜻이다(두 소스의 편집기가 함께 뜬다).
+    fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
+    expect(gates()).toEqual([true, true, true, true]);
+
+    // store 인스턴스를 **지워야** tsdb 만 남고 store 게이트가 닫힌다.
+    fireEvent.click(screen.getByTestId('panel-source-remove-0'));
+    expect(gates()).toEqual([false, false, false, false]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-TSDB-002 §2.12 [E2] — 소스 전환이 비파괴다 (AC-36)
+//
+// 되돌리기가 가능해야 사용자가 전환을 시도한다. 파괴적 전환은 "다른 소스를 한번
+// 눌러보는" 행위를 되돌릴 수 없는 결정으로 만든다.
+// ---------------------------------------------------------------------------
+describe('소스 전환 비파괴 (SPEC-TSDB-002 §2.12 [E2], AC-36)', () => {
+  it('store → tsdb 전환 시 store_source 가 보존된다', () => {
+    const onConfigChange = vi.fn();
+    const initial = storeConfig();
+    render(
+      <StoreSourceSection panel={makePanel(initial)} onConfigChange={onConfigChange} />,
+    );
+
+    fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
+
+    const patch = onConfigChange.mock.calls[0]?.[0] as Record<string, unknown>;
+    // 패치가 store_source 를 건드리지 않는다 — 목록만 바꾸고 다른 소스의 블록은 그대로 둔다.
+    expect(patch).not.toHaveProperty('store_source');
+    expect((patch.sources as Array<{ kind: string }>).map((e) => e.kind)).toEqual([
+      'store',
+      'tsdb',
+    ]);
+    // 병합된 결과에도 원본 store 블록이 그대로 남는다.
+    const merged = { ...initial, ...patch };
+    expect(merged.store_source).toEqual(initial.store_source);
+  });
+
+  it('tsdb 를 붙였다 store 를 지웠다 다시 붙여도 두 블록이 모두 보존된다', () => {
+    // 제어 컴포넌트로 감싸 실제 왕복(부모가 패치를 반영)을 재현한다.
+    const seen: Array<Record<string, unknown>> = [];
+    function Harness(): React.ReactElement {
+      const [config, setConfig] = useState<Record<string, unknown>>(storeConfig());
+      seen.push(config);
+      return (
+        <StoreSourceSection
+          panel={makePanel(config)}
+          onConfigChange={(patch) => setConfig((prev) => ({ ...prev, ...patch }))}
+        />
+      );
+    }
+    render(<Harness />);
+    const original = seen[0]!.store_source;
+
+    // 왕복 — tsdb 를 붙이고, store 인스턴스를 지우고, store 를 다시 붙인다.
+    fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
+    fireEvent.click(screen.getByTestId('panel-source-remove-0'));
+    fireEvent.click(screen.getByTestId('chart-data-source-store'));
+
+    const final = seen[seen.length - 1]!;
+    expect((final.sources as Array<{ kind: string }>).map((e) => e.kind)).toEqual([
+      'tsdb',
+      'store',
+    ]);
+    // 왕복 후에도 두 블록이 공존한다 — tsdb 로 갔다 왔다고 store 선택이 사라지지 않고,
+    // store 로 돌아왔다고 방금 만든 tsdb 블록이 지워지지도 않는다.
+    expect(final.store_source).toEqual(original);
+    expect(final.tsdb_source).toBeDefined();
+    expect((final.tsdb_source as { backend: string }).backend).toBe('influxdb');
+  });
+});
+
+describe('가져올 데이터 범위 — 기간(상대·절대) / 갯수', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function rangeConfig(range?: Record<string, unknown>): Record<string, unknown> {
+    const store_source = {
+      agent_id: 'store-uuid-1',
+      agent_name: 'store-1',
+      namespace: 'default',
+      series: [],
+      time_window_ms: 3_600_000,
+      interval_ms: 60_000,
+      aggregation: 'last',
+      refresh_interval_ms: 5_000,
+      ...(range ? { range } : {}),
+    } as unknown as StoreSourceConfig;
+    return { data_source: 'store', store_source };
+  }
+
+  it('range 가 없는 구 config 는 상대 기간으로 열리고 창 길이를 그대로 보여준다', () => {
+    render(<StoreSourceSection panel={makePanel(rangeConfig())} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('chart-store-range-mode-relative')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect((screen.getByTestId('chart-store-range-window') as HTMLSelectElement).value)
+      .toBe('3600000');
+  });
+
+  it('세 방식 모두 선택지로 노출된다', () => {
+    render(<StoreSourceSection panel={makePanel(rangeConfig())} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('chart-store-range-mode-relative')).toBeInTheDocument();
+    expect(screen.getByTestId('chart-store-range-mode-absolute')).toBeInTheDocument();
+    expect(screen.getByTestId('chart-store-range-mode-count')).toBeInTheDocument();
+  });
+
+  it('갯수로 바꾸면 기본 갯수를 채워 저장한다', () => {
+    const onConfigChange = vi.fn();
+    render(<StoreSourceSection panel={makePanel(rangeConfig())} onConfigChange={onConfigChange} />);
+    fireEvent.click(screen.getByTestId('chart-store-range-mode-count'));
+    const patch = onConfigChange.mock.calls[0]![0] as { store_source: StoreSourceConfig };
+    expect(patch.store_source.range).toMatchObject({ mode: 'count', count: 100 });
+  });
+
+  it('방식을 바꿔도 다른 방식의 값은 지우지 않는다 (되돌리면 살아난다)', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <StoreSourceSection
+        panel={makePanel(rangeConfig({ mode: 'relative', window_ms: 900_000, count: 42 }))}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('chart-store-range-mode-count'));
+    const patch = onConfigChange.mock.calls[0]![0] as { store_source: StoreSourceConfig };
+    expect(patch.store_source.range).toMatchObject({ mode: 'count', count: 42, window_ms: 900_000 });
+  });
+
+  it('절대 구간에서는 시작/끝 입력을 보여준다', () => {
+    render(
+      <StoreSourceSection
+        panel={makePanel(rangeConfig({ mode: 'absolute', start_ms: 1, end_ms: 2 }))}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('chart-store-range-start')).toBeInTheDocument();
+    expect(screen.getByTestId('chart-store-range-end')).toBeInTheDocument();
+    expect(screen.queryByTestId('chart-store-range-window')).toBeNull();
+  });
+
+  it('절대 구간이 뒤집혔거나 비면 경고를 표시한다', () => {
+    const { unmount } = render(
+      <StoreSourceSection
+        panel={makePanel(rangeConfig({ mode: 'absolute', start_ms: 500, end_ms: 100 }))}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('chart-store-range-absolute-warning')).toBeInTheDocument();
+    unmount();
+
+    render(
+      <StoreSourceSection
+        panel={makePanel(rangeConfig({ mode: 'absolute' }))}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('chart-store-range-absolute-warning')).toBeInTheDocument();
+  });
+
+  it('정상 절대 구간에서는 경고가 없다', () => {
+    render(
+      <StoreSourceSection
+        panel={makePanel(rangeConfig({ mode: 'absolute', start_ms: 100, end_ms: 500 }))}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('chart-store-range-absolute-warning')).toBeNull();
+  });
+
+  it('갯수 입력은 0 이하를 무시하고 상한으로 클램프한다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <StoreSourceSection
+        panel={makePanel(rangeConfig({ mode: 'count', count: 10 }))}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    const input = screen.getByTestId('chart-store-range-count');
+
+    fireEvent.change(input, { target: { value: '0' } });
+    expect(onConfigChange).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: '999999' } });
+    const patch = onConfigChange.mock.calls[0]![0] as { store_source: StoreSourceConfig };
+    expect(patch.store_source.range).toMatchObject({ count: 10_000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 같은 종류 여러 인스턴스 — 종류 토글로는 표현되지 않는 축.
+//
+// 종류 목록 시절에는 Store 두 개(에이전트 A·B)를 한 차트에 겹쳐 볼 수 없었다. 저장 단위가
+// 인스턴스로 옮겨진 뒤 설정 화면이 실제로 그것을 만들 수 있는지 본다.
+// ---------------------------------------------------------------------------
+
+describe('소스 인스턴스 추가·제거', () => {
+  /** 부모가 패치를 반영하는 제어 하네스 — 실제 왕복을 재현한다. */
+  function Harness({ initial }: { initial: Record<string, unknown> }): React.ReactElement {
+    const [config, setConfig] = useState<Record<string, unknown>>(initial);
+    seen.length = 0;
+    seen.push(config);
+    return (
+      <StoreSourceSection
+        panel={makePanel(config)}
+        onConfigChange={(patch) => setConfig((prev) => ({ ...prev, ...patch }))}
+      />
+    );
+  }
+  const seen: Array<Record<string, unknown>> = [];
+  const latest = (): Record<string, unknown> => seen[seen.length - 1]!;
+  const kinds = (c: Record<string, unknown>): string[] =>
+    ((c.sources as Array<{ kind: string }> | undefined) ?? []).map((e) => e.kind);
+
+  it('Store 를 하나 더 붙일 수 있다 — 같은 종류 둘째', () => {
+    render(<Harness initial={storeConfig()} />);
+    fireEvent.click(screen.getByTestId('chart-data-source-store'));
+    expect(kinds(latest())).toEqual(['store', 'store']);
+  });
+
+  it('둘째 인스턴스는 빈 기본 블록으로 시작한다 — 첫째 설정을 복제하지 않는다', () => {
+    render(<Harness initial={storeConfig()} />);
+    fireEvent.click(screen.getByTestId('chart-data-source-store'));
+    const list = latest().sources as Array<{ store_source?: { agent_name?: string } }>;
+    expect(list[0]!.store_source?.agent_name).toBe(
+      (storeConfig().store_source as { agent_name: string }).agent_name,
+    );
+    expect(list[1]!.store_source?.agent_name).toBe('');
+  });
+
+  it('추가한 인스턴스의 편집기가 함께 뜬다', () => {
+    render(<Harness initial={storeConfig()} />);
+    fireEvent.click(screen.getByTestId('chart-data-source-store'));
+    expect(screen.getByTestId('panel-source-instance-1')).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // 접기 — 소스가 늘어나면 한 화면에 다 들어가지 않는다. 지우지 않고 치울 길이 있어야
+  // "일단 접어두고 다른 소스를 본다" 가 된다. 접힘은 화면 상태이지 설정이 아니므로
+  // config 에 남기지 않는다(패널을 다시 열면 모두 펼쳐진다).
+  // -------------------------------------------------------------------------
+  it('머리를 누르면 그 인스턴스의 본문이 접힌다', () => {
+    render(<Harness initial={storeConfig()} />);
+    fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
+    expect(screen.getByTestId('chart-tsdb-backend')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('panel-source-toggle-1'));
+    expect(screen.queryByTestId('chart-tsdb-backend')).toBeNull();
+    // 머리는 남는다 — 접은 것이지 지운 것이 아니다.
+    expect(screen.getByTestId('panel-source-instance-1')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('panel-source-toggle-1'));
+    expect(screen.getByTestId('chart-tsdb-backend')).toBeInTheDocument();
+  });
+
+  it('접기는 설정을 건드리지 않는다 — config 패치가 나가지 않는다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <StoreSourceSection panel={makePanel(storeConfig())} onConfigChange={onConfigChange} />,
+    );
+    onConfigChange.mockClear();
+    fireEvent.click(screen.getByTestId('panel-source-toggle-0'));
+    expect(onConfigChange).not.toHaveBeenCalled();
+  });
+
+  it('대표 인스턴스도 접힌다 — 첫째만 예외로 두지 않는다', () => {
+    render(<Harness initial={storeConfig()} />);
+    expect(screen.getByTestId('chart-store-agent-select')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('panel-source-toggle-0'));
+    expect(screen.queryByTestId('chart-store-agent-select')).toBeNull();
+    // 소스를 더 붙이는 길은 접어도 그대로 있다.
+    expect(screen.getByTestId('chart-data-source-store')).toBeInTheDocument();
+  });
+
+  it('인스턴스를 제거할 수 있다', () => {
+    render(<Harness initial={storeConfig()} />);
+    fireEvent.click(screen.getByTestId('chart-data-source-store'));
+    expect(kinds(latest())).toHaveLength(2);
+    fireEvent.click(screen.getByTestId('panel-source-remove-1'));
+    expect(kinds(latest()).length <= 1).toBe(true);
+  });
+
+  it('하나뿐일 때는 제거 버튼을 내지 않는다 — 소스 0개 패널을 만들 수 없다', () => {
+    render(<Harness initial={storeConfig()} />);
+    expect(screen.queryByTestId('panel-source-remove-0')).toBeNull();
+  });
+
+  it('상한에 닿으면 추가 버튼이 비활성이 된다', () => {
+    render(<Harness initial={storeConfig()} />);
+    for (let i = 0; i < 8; i++) {
+      const btn = screen.getByTestId('chart-data-source-store');
+      if ((btn as HTMLButtonElement).disabled) break;
+      fireEvent.click(btn);
+    }
+    // 버튼은 남되 비활성이 된다 — 사라지면 왜 더 못 넣는지 화면이 말하지 못한다.
+    expect(screen.getByTestId('chart-data-source-store')).toBeDisabled();
+    expect(kinds(latest())).toHaveLength(4);
   });
 });

@@ -8,15 +8,15 @@ import (
 )
 
 // @spec SPEC-STORE-003 v0.4.0
-// MetricTypeUnknown 은 metric_type 미지정 시 적용되는 기본값이다.
-// auto 등록 키 및 yaml 에서 metric_type 을 생략한 키에 일관되게 부여된다.
-// 정규식 ^[a-zA-Z0-9_-]+$ 를 만족하므로 ErrInvalidMetricType 과 충돌하지 않는다.
-const MetricTypeUnknown = "unknown"
+// FieldUnknown 은 field 미지정 시 적용되는 기본값이다.
+// auto 등록 키 및 yaml 에서 field 을 생략한 키에 일관되게 부여된다.
+// 정규식 ^[a-zA-Z0-9_-]+$ 를 만족하므로 ErrInvalidField 과 충돌하지 않는다.
+const FieldUnknown = "unknown"
 
 // @spec SPEC-STORE-003 v0.3.0
 // store_data_type.go — Store 의 v0.3.0 진화에서 도입된 타입 시스템 기반.
 // DataType / RegistrationType / RegistrationSource enum 과 inferDataType,
-// matchesDataType, validateDataTypeEnum, validateMetricType, validateRegistrationType,
+// matchesDataType, validateDataTypeEnum, validateField, validateRegistrationType,
 // isJSONMarshalable 같은 헬퍼들이 응집되어 있다. 단위 테스트 격리가 쉽도록 분리되었다.
 
 // =============================================================================
@@ -27,6 +27,15 @@ const MetricTypeUnknown = "unknown"
 // DataType 은 정적 키에 등록되는 6종 타입 enum 이다.
 // yaml 의 `data_type` 필드와 매핑되며, manual 모드에서는 명시 필수, auto 모드에서는 추론된다.
 type DataType string
+
+// DataTypeAuto 는 storage-write config 의 data_type sentinel 이다. 6종 enum 이 아니라
+// "쓰기 값의 Go 타입에서 구체 타입을 추론해 키를 고정하라"는 지시이다.
+// 단일 storage-write 노드가 측정별로 서로 다른 값 타입(boolean/int/float 등)을 저장할 때,
+// 고정 리터럴 data_type 은 한 타입만 담을 수 있어 타입 불일치를 유발한다. "auto" 는
+// SetWithMeta 시점에 inferDataType 로 값 타입을 추론해 키별로 올바른 타입을 고정한다.
+// key_template 이 측정별로 다른 키를 만들면 키 단위 타입은 일정하므로, 첫 쓰기의 추론
+// 결과가 그대로 유효하다. 추론 불가(nil/channel/func)면 고정을 생략하고 동적 string 폴백에 맡긴다.
+const DataTypeAuto = "auto"
 
 // @spec SPEC-STORE-003 v0.3.0
 // 6종 DataType enum 상수 정의.
@@ -70,14 +79,14 @@ const (
 //
 // 필드:
 //   - DataType: 6종 enum 중 하나 (manual: yaml 명시, auto: 추론)
-//   - MetricType: free string, ^[a-zA-Z0-9_-]+$ 정규식, default "unknown"
+//   - Field: free string, ^[a-zA-Z0-9_-]+$ 정규식, default "unknown"
 //   - Tags: 기존 v0.2.0 태그 맵 (^[a-zA-Z0-9_-]+$)
 //   - Source: yaml manual 등록 vs 런타임 auto 등록 구분
 type StaticKeyMeta struct {
-	DataType   DataType
-	MetricType string
-	Tags       map[string]string
-	Source     RegistrationSource
+	DataType DataType
+	Field    string
+	Tags     map[string]string
+	Source   RegistrationSource
 }
 
 // =============================================================================
@@ -85,10 +94,10 @@ type StaticKeyMeta struct {
 // =============================================================================
 
 // @spec SPEC-STORE-003 v0.3.0
-// metricTypePattern 은 metric_type 의 허용 정규식이다.
+// fieldPattern 은 field 의 허용 정규식이다.
 // 영문 대소문자, 숫자, 언더스코어, 하이픈만 허용한다.
 // 주의: 정규식 자체는 leading dash ("-foo") 를 허용한다 — 이는 의도된 design choice 이다.
-var metricTypePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+var fieldPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // =============================================================================
 // inferDataType: auto 모드의 핵심 추론 함수
@@ -130,6 +139,28 @@ func inferDataType(value any) (DataType, error) {
 		}
 		return "", ErrUnsupportedValueType
 	}
+}
+
+// resolveWriteDataType 는 storage-write config 의 data_type 값을 실제 쓰기 값에 맞춰
+// 고정할 구체 DataType 으로 해석한다. SetWithMeta 의 타입 고정 경로에서 사용된다.
+//
+//   - DataTypeAuto("auto"): inferDataType 로 값의 Go 타입을 추론한다. 성공 시 (추론타입, true),
+//     추론 불가(nil/channel/func) 시 ("", false) 를 반환하여 호출자가 고정을 생략(동적 string 폴백)하게 한다.
+//   - 그 외(6종 enum 리터럴): (DataType(configured), true) 그대로 반환한다.
+//
+// 빈 문자열은 호출 측(SetWithMeta)에서 이미 걸러지므로 여기 도달하지 않지만, 방어적으로 ("", false) 를 반환한다.
+func resolveWriteDataType(configured string, value any) (DataType, bool) {
+	if configured == "" {
+		return "", false
+	}
+	if configured == DataTypeAuto {
+		inferred, err := inferDataType(value)
+		if err != nil {
+			return "", false
+		}
+		return inferred, true
+	}
+	return DataType(configured), true
 }
 
 // =============================================================================
@@ -247,22 +278,22 @@ func validateDataTypeEnum(s string) error {
 }
 
 // =============================================================================
-// validateMetricType: yaml 파싱 helper (M8)
+// validateField: yaml 파싱 helper (M8)
 // =============================================================================
 
 // @spec SPEC-STORE-003 v0.3.0
-// validateMetricType 은 yaml 의 metric_type 문자열을 검증/normalize 한다.
+// validateField 은 yaml 의 field 문자열을 검증/normalize 한다.
 //
 // 동작:
 //   - 빈 문자열 → ("unknown", nil) — default 적용
 //   - 정규식 ^[a-zA-Z0-9_-]+$ 만족 → (s, nil)
-//   - 정규식 위반 → ("", ErrInvalidMetricType)
-func validateMetricType(s string) (string, error) {
+//   - 정규식 위반 → ("", ErrInvalidField)
+func validateField(s string) (string, error) {
 	if s == "" {
 		return "unknown", nil
 	}
-	if !metricTypePattern.MatchString(s) {
-		return "", ErrInvalidMetricType
+	if !fieldPattern.MatchString(s) {
+		return "", ErrInvalidField
 	}
 	return s, nil
 }

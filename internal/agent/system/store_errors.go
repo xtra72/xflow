@@ -58,8 +58,8 @@ var (
 	ErrInvalidDataType = errors.New("store: invalid or missing data_type (must be one of: int, float, string, boolean, bytes, json)")
 
 	// @spec SPEC-STORE-003 v0.3.0
-	// ErrInvalidMetricType 은 yaml 의 metric_type 이 정규식 ^[a-zA-Z0-9_-]+$ 를 위반할 때 반환된다.
-	ErrInvalidMetricType = errors.New("store: invalid metric_type (must match ^[a-zA-Z0-9_-]+$)")
+	// ErrInvalidField 은 yaml 의 field 이 정규식 ^[a-zA-Z0-9_-]+$ 를 위반할 때 반환된다.
+	ErrInvalidField = errors.New("store: invalid field (must match ^[a-zA-Z0-9_-]+$)")
 
 	// @spec SPEC-STORE-004
 	// ErrInvalidSeriesKey 는 인코딩된 시리즈 키를 DecodeSeriesKey 로 역직렬화할 때

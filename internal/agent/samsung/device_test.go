@@ -304,6 +304,37 @@ func TestUpdateFromMessageSets_CurrentTemp(t *testing.T) {
 	}
 }
 
+// TestUpdateFromMessageSets_CurrentHumidity 는 현재 습도 메시지 세트(NASA V1.1 지표
+// 세트 #10, 0x4038)가 1바이트 uint8 percent 로 처리되고 관측 기반 emit 되는지 검증한다.
+func TestUpdateFromMessageSets_CurrentHumidity(t *testing.T) {
+	s := &NasaDeviceState{
+		RawMessageSets: make(map[uint16][]byte),
+	}
+	// 62% = 0x3E = [0x3E]
+	s.UpdateFromMessageSets([]NasaMessageSet{
+		{Index: MsgCurrentHumidity, Value: []byte{0x3E}},
+	})
+	if s.CurrentHumidity != 62 {
+		t.Errorf("CurrentHumidity = %v, want %v", s.CurrentHumidity, 62)
+	}
+
+	// 관측 기반 emit: 관측된 current_humidity 는 StateForJSON 에 나타나야 한다.
+	result := s.StateForJSON(false)
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if v, ok := m["current_humidity"]; !ok {
+		t.Error("관측된 current_humidity 는 emit 되어야 함")
+	} else if v != float64(62) { // JSON 숫자는 float64 로 역직렬화
+		t.Errorf("current_humidity = %v, want 62", v)
+	}
+}
+
 // TestUpdateFromMessageSets_SwingVertical 는 수직 스윙 메시지 세트가 올바르게 처리되는지 검증한다.
 func TestUpdateFromMessageSets_SwingVertical(t *testing.T) {
 	s := &NasaDeviceState{
@@ -537,10 +568,26 @@ func TestStateForJSON_OmitsUnobserved(t *testing.T) {
 	if v, ok := m["power"]; ok {
 		t.Errorf("관측되지 않은 power 는 생략되어야 함(기본값 방출 금지): got %v (present=%v)", v, ok)
 	}
-	for _, k := range []string{"mode", "target_temperature", "current_temperature", "fan_speed", "swing_vertical", "filter_alarm", "error_code"} {
+	for _, k := range []string{"mode", "target_temperature", "current_temperature", "current_humidity", "fan_speed", "swing_vertical", "filter_alarm", "error_code"} {
 		if _, ok := m[k]; ok {
 			t.Errorf("관측되지 않은 필드 %q 는 생략되어야 함: got %v", k, m[k])
 		}
+	}
+
+	// 관측된 경우: current_humidity 관측 시 payload 에 present 해야 한다.
+	sObs := &NasaDeviceState{CurrentHumidity: 55, observedCore: observedHumidity}
+	obsData, err := json.Marshal(sObs.StateForJSON(false))
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	var mObs map[string]any
+	if err := json.Unmarshal(obsData, &mObs); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if v, ok := mObs["current_humidity"]; !ok {
+		t.Error("관측된 current_humidity 는 present 해야 함")
+	} else if v != float64(55) {
+		t.Errorf("current_humidity = %v, want 55", v)
 	}
 }
 

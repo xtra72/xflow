@@ -34,6 +34,9 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("storage.sqlite.path", "./data/xflow.db")
 	v.SetDefault("storage.file.directory", "./data/flows")
 	v.SetDefault("storage.pool_size", 10)
+	// 스케줄(예약) 실행 로그 저장소 백엔드(시작 설정, 재시작 시 적용).
+	// "sqlite"(기본, 영속) | "memory"(비영속) | "file"/"jsonl"(append-only JSONL).
+	v.SetDefault("storage.schedule_log.type", "sqlite")
 
 	// 디바이스 수신 데이터 이력(주기 스냅샷) 기본값.
 	// 주기 스냅샷 방식: interval 마다 전체 디바이스의 현재 상태를 디바이스별

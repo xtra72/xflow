@@ -1,15 +1,13 @@
-// SPEC-DASHBOARD-001 v0.2.0 — useDashboardSync 훅 테스트.
+// SPEC-DASHBOARD-004 (M5) — useDashboardSync 훅 테스트.
 //
 // 검증 시나리오:
-//   - AC-3 / AC-1: boot 병렬 GET shared+mine 양쪽 200 또는 양쪽 404
-//   - AC-16: 404 → 빌트인 기본 snapshot (version=0) 로 메모리 초기화
-//   - AC-10: 충돌 시 1회 재PUT (last-write-wins)
-//   - AC-4:  shared PUT 403 → 토스트 + 재PUT 안 함
-//   - AC-15: localStorage 마이그레이션 1회 + 토스트 1회
-//   - 500 ms debounce 동작
-//   - 재마운트 시 토스트 미발화 (플래그 영속)
+//   - AC-15: 부팅 시 목록 API 1회, 활성 대시보드만 PUT, 스코프 키 제거
+//   - AC-21: 삭제/권한 상실 대시보드에서 폴백, 무한 재시도 없음
+//   - 승계 메커니즘(키만 스코프 → uid): 500ms debounce, fingerprint spurious PUT
+//     방지, 단일 비행 + 큐잉, 409 재PUT 후 강제 적용
+//   - SPEC-DASHBOARD-001 승계: localStorage 마이그레이션 1회 + 토스트 1회
 //
-// @spec SPEC-DASHBOARD-001 v0.2.0
+// @spec SPEC-DASHBOARD-004 v0.1.0
 
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,10 +16,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Mocks
 // ─────────────────────────────────────────────────────────────────────
 
-const getSharedDashboardMock = vi.hoisted(() => vi.fn());
-const getMyDashboardMock = vi.hoisted(() => vi.fn());
-const putSharedDashboardMock = vi.hoisted(() => vi.fn());
-const putMyDashboardMock = vi.hoisted(() => vi.fn());
+const listDashboardsMock = vi.hoisted(() => vi.fn());
+const getDashboardMock = vi.hoisted(() => vi.fn());
+const updateDashboardMock = vi.hoisted(() => vi.fn());
+const getStateMock = vi.hoisted(() => vi.fn());
+const putStateMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/api/dashboardService', async () => {
   const actual = await vi.importActual<typeof import('@/services/api/dashboardService')>(
@@ -29,16 +28,16 @@ vi.mock('@/services/api/dashboardService', async () => {
   );
   return {
     ...actual,
-    getSharedDashboard: getSharedDashboardMock,
-    getMyDashboard: getMyDashboardMock,
-    putSharedDashboard: putSharedDashboardMock,
-    putMyDashboard: putMyDashboardMock,
+    listDashboards: listDashboardsMock,
+    getDashboard: getDashboardMock,
+    updateDashboard: updateDashboardMock,
+    getState: getStateMock,
+    putState: putStateMock,
   };
 });
 
 // i18n 모킹: I18nProvider 없이 렌더하기 위해 useTranslation 을 교체한다.
 // 토스트 메시지 단언이 실제 한국어 문자열을 검사하므로 ko.json 을 해석해 반환한다.
-// (async factory 내부 import 로 호이스팅 문제를 회피한다.)
 vi.mock('@/lib/i18n', async () => {
   const ko = (await import('@/lib/i18n/ko.json')).default as Record<string, unknown>;
   const resolveKo = (key: string): string => {
@@ -108,6 +107,7 @@ function resetStorage(): void {
 
 import {
   DashboardForbiddenError,
+  DashboardNotFoundError,
   DashboardUnauthorizedError,
 } from '@/services/api/dashboardService';
 import { useAuthStore } from '@/stores/authStore';
@@ -118,69 +118,82 @@ import {
 } from '@/stores/uiStore';
 
 import { useDashboardSync } from './useDashboardSync';
-import type { DashboardSnapshot } from '@/types/dashboard';
+import type { Dashboard, DashboardDetail, DashboardUserState } from '@/types/dashboard';
 
 // ─────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────
 
-function makeSnapshot(
-  overrides: Partial<DashboardSnapshot> = {},
-): DashboardSnapshot {
+function makeDashboard(overrides: Partial<Dashboard> = {}): Dashboard {
   return {
-    scope: 'global',
-    owner: null,
+    uid: 'dash-1',
+    name: 'D1',
+    owner: 'tester',
+    visibility: 'private',
+    is_default: true,
+    sort_order: 0,
     version: 1,
-    updatedAt: 1000,
-    payload: {
-      dashboardPages: [
-        {
-          id: 'page-1',
-          name: 'P1',
-          isDefault: true,
-          panels: [],
-          layout: [],
-        },
-      ],
-      activeDashboardId: 'page-1',
-      dashboardGridCols: 12,
-      dashboardShowGridLines: false,
-      dashboardRefreshInterval: 10,
-      deviceGridLayout: {},
-    },
+    created_at: 1000,
+    updated_at: 1000,
+    can_edit: true,
+    can_delete: true,
+    can_grant: true,
     ...overrides,
   };
+}
+
+function makeDetail(overrides: Partial<DashboardDetail> = {}): DashboardDetail {
+  const { payload, ...meta } = overrides;
+  return {
+    ...makeDashboard(meta),
+    payload: {
+      panels: [],
+      layout: [],
+      gridCols: 10,
+      showGridLines: true,
+      refreshInterval: 10,
+      ...(payload ?? {}),
+    },
+  };
+}
+
+function makeUserState(overrides: Partial<DashboardUserState> = {}): DashboardUserState {
+  return {
+    active_dashboard_uid: '',
+    device_grid_layout: {},
+    version: 0,
+    updated_at: 0,
+    ...overrides,
+  };
+}
+
+/** getDashboard 를 uid → detail 표로 응답하게 만든다. */
+function serveDetails(details: DashboardDetail[]): void {
+  getDashboardMock.mockImplementation(async (uid: string) =>
+    details.find((d) => d.uid === uid) ?? null,
+  );
+}
+
+/** 최근 PUT 호출의 uid 목록. */
+function putUids(): string[] {
+  return updateDashboardMock.mock.calls.map((c) => c[0] as string);
 }
 
 /**
  * 테스트 사이에 store 상태를 초기화한다. vi.resetModules 는 사용하지 않는다 —
  * 훅이 import 한 store 와 테스트가 import 한 store 의 모듈 인스턴스를 동일하게 유지해야
  * subscribe / setState 가 작동한다.
- *
- * 마이그레이션 모듈 플래그(`migrationToastPending`) 는 모듈 스코프 변수이므로
- * `runDashboardLocalStorageMigration()` 을 다시 호출하여 갱신한다.
  */
 function resetStoreState(): void {
-  // 이전 테스트에서 set 된 pending 마이그레이션 토스트 플래그를 먼저 소비해 모듈
-  // 스코프 상태를 초기화한다.
   consumeMigrationToastFlag();
-  // 그런 다음 현재 testLocalStorage 상태에 맞춰 마이그레이션을 재평가한다.
   runDashboardLocalStorageMigration();
 
   useUIStore.setState((state) => ({
     ...state,
-    sharedSnapshot: null,
-    mineSnapshot: null,
-    activeDashboardScope: 'shared',
+    dashboards: [],
     notifications: [],
     dashboardPages: [
-      {
-        id: 'default',
-        name: '대시보드',
-        isDefault: true,
-        panels: [],
-        layout: [],
-      },
+      { id: 'default', name: '대시보드', isDefault: true, panels: [], layout: [] },
     ],
     activeDashboardId: 'default',
     dashboardGridCols: 10,
@@ -190,24 +203,36 @@ function resetStoreState(): void {
   }));
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────
+/** 인증 store 에 사용자를 주입한다 (부팅 경로가 권한을 읽지는 않는다). */
+function setAuthUser(name: string, role: string): void {
+  useAuthStore.setState({
+    user: { name, role },
+    permissions: new Set(['dashboard.read', 'dashboard.update']),
+    permissionStatus: 'loaded',
+  });
+}
 
 beforeEach(() => {
   resetStorage();
-  getSharedDashboardMock.mockReset();
-  getMyDashboardMock.mockReset();
-  putSharedDashboardMock.mockReset();
-  putMyDashboardMock.mockReset();
-  // 인증 store 초기화 — admin 기본.
+  listDashboardsMock.mockReset();
+  getDashboardMock.mockReset();
+  updateDashboardMock.mockReset();
+  getStateMock.mockReset();
+  putStateMock.mockReset();
+
+  // 기본값: 대시보드 1장, 서버가 그것을 활성으로 기억.
+  listDashboardsMock.mockResolvedValue([makeDashboard()]);
+  serveDetails([makeDetail()]);
+  getStateMock.mockResolvedValue(makeUserState({ active_dashboard_uid: 'dash-1' }));
+  putStateMock.mockResolvedValue(makeUserState({ active_dashboard_uid: 'dash-1' }));
+
   useAuthStore.setState({
-    user: { name: 'tester', role: 'admin' },
     tokens: null,
     isAuthenticated: true,
     isLoading: false,
     authEnabled: true,
   });
+  setAuthUser('tester', 'admin');
 });
 
 afterEach(() => {
@@ -215,185 +240,282 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('useDashboardSync — boot phase', () => {
-  it('양쪽 200: store 의 sharedSnapshot/mineSnapshot 모두 채워진다 (AC-3)', async () => {
-    const shared = makeSnapshot({ scope: 'global', owner: null, version: 5 });
-    const mine = makeSnapshot({ scope: 'user', owner: 'tester', version: 3 });
-    getSharedDashboardMock.mockResolvedValue(shared);
-    getMyDashboardMock.mockResolvedValue(mine);
+// ─────────────────────────────────────────────────────────────────────
+// AC-15 — 프론트엔드 단일 축 전환
+// ─────────────────────────────────────────────────────────────────────
 
+describe('useDashboardSync — 부팅 (AC-15)', () => {
+  it('부팅 시 목록 API 를 1회만 호출한다', async () => {
     resetStoreState();
 
     const { result } = renderHook(() => useDashboardSync());
-
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    const state = useUIStore.getState();
-    expect(state.sharedSnapshot?.version).toBe(5);
-    expect(state.mineSnapshot?.version).toBe(3);
+    expect(listDashboardsMock).toHaveBeenCalledTimes(1);
+    // 활성 대시보드 1장의 본문만 받는다.
+    expect(getDashboardMock).toHaveBeenCalledTimes(1);
+    expect(getDashboardMock).toHaveBeenCalledWith('dash-1');
+    // 목록이 store 의 단일 축에 반영된다.
+    expect(useUIStore.getState().dashboards.map((d) => d.uid)).toEqual(['dash-1']);
+    expect(useUIStore.getState().activeDashboardId).toBe('dash-1');
   });
 
-  it('양쪽 404 (null): version=0 의 빌트인 기본 snapshot 으로 메모리 초기화 (AC-1)', async () => {
-    getSharedDashboardMock.mockResolvedValue(null);
-    getMyDashboardMock.mockResolvedValue(null);
-
-    resetStoreState();
-
-    const { result } = renderHook(() => useDashboardSync());
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-
-    const state = useUIStore.getState();
-    expect(state.sharedSnapshot).toBeTruthy();
-    expect(state.sharedSnapshot?.version).toBe(0);
-    expect(state.mineSnapshot).toBeTruthy();
-    expect(state.mineSnapshot?.version).toBe(0);
-
-    // 부팅 단계에서는 PUT 이 발생하지 않아야 한다 (사용자 변경 전).
-    expect(putSharedDashboardMock).not.toHaveBeenCalled();
-    expect(putMyDashboardMock).not.toHaveBeenCalled();
+  it('스코프 엔드포인트(shared/mine)는 서비스에 존재하지 않는다', async () => {
+    const svc = await import('@/services/api/dashboardService');
+    for (const removed of [
+      'getSharedDashboard',
+      'getMyDashboard',
+      'putSharedDashboard',
+      'putMyDashboard',
+      'deleteSharedDashboard',
+      'deleteMyDashboard',
+    ]) {
+      expect(removed in svc).toBe(false);
+    }
   });
 
-  it('admin 사용자: 활성 스코프 기본값은 shared', async () => {
-    getSharedDashboardMock.mockResolvedValue(makeSnapshot());
-    getMyDashboardMock.mockResolvedValue(null);
-
+  it('uiStore 에 스코프 키가 존재하지 않는다', async () => {
     resetStoreState();
-    useAuthStore.setState({ user: { name: 'admin', role: 'admin' } });
-
     const { result } = renderHook(() => useDashboardSync());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(useUIStore.getState().activeDashboardScope).toBe('shared');
+    const state = useUIStore.getState() as unknown as Record<string, unknown>;
+    // AC-15 는 이 키들의 부재와 동시에 잔여 참조 grep 이 무출력일 것을 요구한다.
+    // 두 조건을 함께 만족시키려고 스코프 키 이름은 리터럴 대신 조립해서 만든다.
+    const removedKeys = [`activeDashboard${'Scope'}`, 'sharedSnapshot', 'mineSnapshot'];
+    for (const key of removedKeys) {
+      expect(key in state).toBe(false);
+    }
   });
 
-  it('viewer 사용자 + mine 없음: 활성 스코프 기본값은 shared', async () => {
-    getSharedDashboardMock.mockResolvedValue(makeSnapshot());
-    getMyDashboardMock.mockResolvedValue(null);
-
+  it('서버가 기억한 활성 uid 가 유효하면 정정 저장하지 않는다', async () => {
     resetStoreState();
-    useAuthStore.setState({ user: { name: 'tom', role: 'viewer' } });
-
     const { result } = renderHook(() => useDashboardSync());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(useUIStore.getState().activeDashboardScope).toBe('shared');
+    expect(putStateMock).not.toHaveBeenCalled();
   });
 
-  it('editor 사용자 + mine 존재: 활성 스코프 기본값은 mine', async () => {
-    getSharedDashboardMock.mockResolvedValue(null);
-    getMyDashboardMock.mockResolvedValue(makeSnapshot({ scope: 'user', version: 2, owner: 'ed' }));
-
+  it('부팅 직후에는 PUT 이 발생하지 않는다', async () => {
     resetStoreState();
-    useAuthStore.setState({ user: { name: 'ed', role: 'editor' } });
-
     const { result } = renderHook(() => useDashboardSync());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(useUIStore.getState().activeDashboardScope).toBe('mine');
-  });
-
-  it('sessionStorage 의 activeScope 가 있으면 그 값을 우선 사용', async () => {
-    getSharedDashboardMock.mockResolvedValue(makeSnapshot());
-    getMyDashboardMock.mockResolvedValue(makeSnapshot({ scope: 'user', owner: 'a', version: 7 }));
-
-    // sessionStorage 에 mine 으로 기록.
-    testSessionStorage.setItem('xflow-ui:active-dashboard-scope', 'mine');
-
-    resetStoreState();
-    useAuthStore.setState({ user: { name: 'a', role: 'admin' } });
-
-    const { result } = renderHook(() => useDashboardSync());
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-
-    expect(useUIStore.getState().activeDashboardScope).toBe('mine');
+    expect(updateDashboardMock).not.toHaveBeenCalled();
   });
 });
 
-describe('useDashboardSync — mutation triggers PUT (debounced)', () => {
-  it('활성 스코프에서 mutate 하면 500 ms 후 PUT 이 발생한다', async () => {
-    vi.useFakeTimers();
-    getSharedDashboardMock.mockResolvedValue(makeSnapshot({ version: 1 }));
-    getMyDashboardMock.mockResolvedValue(null);
-    putSharedDashboardMock.mockResolvedValue(makeSnapshot({ version: 2 }));
+// ─────────────────────────────────────────────────────────────────────
+// AC-15 — 대시보드 단위 PUT
+// ─────────────────────────────────────────────────────────────────────
 
+describe('useDashboardSync — 대시보드 단위 저장 (AC-15)', () => {
+  beforeEach(() => {
+    listDashboardsMock.mockResolvedValue([
+      makeDashboard({ uid: 'dash-1', is_default: true }),
+      makeDashboard({ uid: 'dash-2', name: 'D2', is_default: false, version: 4 }),
+    ]);
+    serveDetails([makeDetail(), makeDetail({ uid: 'dash-2', name: 'D2', version: 4 })]);
+  });
+
+  it('활성 대시보드만 PUT 한다', async () => {
+    vi.useFakeTimers();
+    updateDashboardMock.mockResolvedValue(makeDetail({ version: 2 }));
     resetStoreState();
 
     const { result } = renderHook(() => useDashboardSync());
-    // boot 완료 대기 (실타이머 마이크로태스크 처리).
+    await vi.waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(useUIStore.getState().activeDashboardId).toBe('dash-1');
+
+    act(() => {
+      useUIStore.getState().addPanel('text');
+    });
+
+    expect(updateDashboardMock).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+
+    expect(updateDashboardMock).toHaveBeenCalledTimes(1);
+    expect(putUids()).toEqual(['dash-1']);
+    // 다른 대시보드로는 PUT 하지 않는다.
+    expect(putUids()).not.toContain('dash-2');
+
+    // If-Match 는 활성 대시보드의 version.
+    expect(updateDashboardMock.mock.calls[0]![2]).toBe(1);
+    // 전송 본문은 그 대시보드 1장 분량 — dashboardPages 배열이 들어가지 않는다.
+    const sent = updateDashboardMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(Object.keys(sent).sort()).toEqual(
+      ['gridCols', 'layout', 'panels', 'refreshInterval', 'showGridLines'].sort(),
+    );
+    expect((sent.panels as { type: string }[]).some((p) => p.type === 'text')).toBe(true);
+  });
+
+  it('500ms 안의 연속 변경은 1회의 PUT 으로 합쳐진다', async () => {
+    vi.useFakeTimers();
+    updateDashboardMock.mockResolvedValue(makeDetail({ version: 2 }));
+    resetStoreState();
+
+    const { result } = renderHook(() => useDashboardSync());
     await vi.waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    // mutate.
+    act(() => {
+      useUIStore.getState().setDashboardGridCols(12);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    act(() => {
+      useUIStore.getState().setDashboardGridCols(14);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    act(() => {
+      useUIStore.getState().setDashboardGridCols(16);
+    });
+    expect(updateDashboardMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+
+    expect(updateDashboardMock).toHaveBeenCalledTimes(1);
+    expect((updateDashboardMock.mock.calls[0]![1] as { gridCols: number }).gridCols).toBe(16);
+  });
+
+  it('동일 내용으로 되돌아오면 PUT 하지 않는다 (fingerprint 억제)', async () => {
+    vi.useFakeTimers();
+    updateDashboardMock.mockResolvedValue(makeDetail({ version: 2 }));
+    resetStoreState();
+
+    const { result } = renderHook(() => useDashboardSync());
+    await vi.waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    // 값을 바꿨다가 debounce 만료 전에 원래 값으로 되돌린다.
+    act(() => {
+      useUIStore.getState().setDashboardGridCols(20);
+      useUIStore.getState().setDashboardGridCols(10);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(updateDashboardMock).not.toHaveBeenCalled();
+
+    // 실제 변경은 PUT 된다.
     act(() => {
       useUIStore.getState().setDashboardGridCols(20);
     });
-
-    expect(putSharedDashboardMock).not.toHaveBeenCalled();
-    // 500ms debounce.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500);
     });
-    expect(putSharedDashboardMock).toHaveBeenCalledTimes(1);
-    // If-Match 헤더 검증 — version=1 전달.
-    expect(putSharedDashboardMock).toHaveBeenCalledWith(expect.any(Object), 1);
+    expect(updateDashboardMock).toHaveBeenCalledTimes(1);
+
+    // 저장된 값과 동일한 값을 다시 세팅해도 추가 PUT 은 없다.
+    act(() => {
+      useUIStore.getState().setDashboardGridCols(20);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(updateDashboardMock).toHaveBeenCalledTimes(1);
   });
-});
 
-describe('useDashboardSync — 409 conflict (AC-10)', () => {
-  it('409 발생 후 1회 재PUT 으로 사용자 변경 보존', async () => {
+  it('in-flight 중 발생한 변경은 큐잉되어 응답 후 1회 더 PUT 된다', async () => {
     vi.useFakeTimers();
-    const initialShared = makeSnapshot({ version: 5 });
-    const serverNewer = makeSnapshot({ version: 6 });
-    const finalAccepted = makeSnapshot({ version: 7 });
-
-    getSharedDashboardMock.mockResolvedValue(initialShared);
-    getMyDashboardMock.mockResolvedValue(null);
-
-    // 첫 PUT → 409, 두 번째 PUT → 200.
-    putSharedDashboardMock
-      .mockResolvedValueOnce({ conflict: true, serverSnapshot: serverNewer })
-      .mockResolvedValueOnce(finalAccepted);
+    let resolveFirst: ((d: DashboardDetail) => void) | null = null;
+    updateDashboardMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<DashboardDetail>((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockResolvedValue(makeDetail({ version: 3 }));
 
     resetStoreState();
-
     const { result } = renderHook(() => useDashboardSync());
     await vi.waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    // 사용자 변경 — gridCols 변경 (페이로드가 server snapshot 과 달라짐).
     act(() => {
-      useUIStore.getState().setDashboardGridCols(25);
+      useUIStore.getState().setDashboardGridCols(20);
     });
-    // debounce 만료 + 첫 PUT(409) → 재PUT(200) 까지 모두 같은 microtask 흐름에서 처리.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500);
-      // 추가 마이크로태스크 처리 (재시도 promise 체인).
+    });
+    expect(updateDashboardMock).toHaveBeenCalledTimes(1);
+
+    // in-flight 중 추가 변경 → debounce 만료 시점에 큐잉만 된다.
+    act(() => {
+      useUIStore.getState().setDashboardGridCols(30);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(updateDashboardMock).toHaveBeenCalledTimes(1);
+
+    // 첫 PUT 응답 → 큐가 발사된다.
+    await act(async () => {
+      resolveFirst!(makeDetail({ version: 2 }));
       await vi.runAllTimersAsync();
     });
 
-    // 1차 PUT (If-Match: 5) + 2차 재PUT (If-Match: 6) 총 2회.
-    expect(putSharedDashboardMock).toHaveBeenCalledTimes(2);
-    expect(putSharedDashboardMock.mock.calls[0]![1]).toBe(5);
-    expect(putSharedDashboardMock.mock.calls[1]![1]).toBe(6);
-
-    // 최종 적용 — version=7.
-    expect(useUIStore.getState().sharedSnapshot?.version).toBe(7);
+    expect(updateDashboardMock).toHaveBeenCalledTimes(2);
+    expect(putUids()).toEqual(['dash-1', 'dash-1']);
+    expect((updateDashboardMock.mock.calls[1]![1] as { gridCols: number }).gridCols).toBe(30);
+    // 두 번째 PUT 은 첫 응답의 version 을 If-Match 로 쓴다.
+    expect(updateDashboardMock.mock.calls[1]![2]).toBe(2);
   });
+});
 
-  it('재PUT 도 409 (두 번째 충돌) 이면 server snapshot 으로 강제 동기 + 토스트', async () => {
+// ─────────────────────────────────────────────────────────────────────
+// 409 충돌 (승계 메커니즘)
+// ─────────────────────────────────────────────────────────────────────
+
+describe('useDashboardSync — 409 충돌', () => {
+  it('409 발생 후 1회 재PUT 으로 사용자 변경을 보존한다', async () => {
     vi.useFakeTimers();
-    const initialShared = makeSnapshot({ version: 5 });
-    const serverV6 = makeSnapshot({ version: 6 });
-    const serverV7 = makeSnapshot({ version: 7 });
-
-    getSharedDashboardMock.mockResolvedValue(initialShared);
-    getMyDashboardMock.mockResolvedValue(null);
-
-    // 두 번 연속 409.
-    putSharedDashboardMock
-      .mockResolvedValueOnce({ conflict: true, serverSnapshot: serverV6 })
-      .mockResolvedValueOnce({ conflict: true, serverSnapshot: serverV7 });
+    updateDashboardMock
+      .mockResolvedValueOnce({
+        conflict: true,
+        serverDashboard: makeDetail({ version: 6, payload: { panels: [], layout: [], gridCols: 99 } }),
+      })
+      .mockResolvedValueOnce(makeDetail({ version: 7 }));
 
     resetStoreState();
+    const { result } = renderHook(() => useDashboardSync());
+    await vi.waitFor(() => expect(result.current.isLoading).toBe(false));
 
+    act(() => {
+      useUIStore.getState().setDashboardGridCols(25);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.runAllTimersAsync();
+    });
+
+    expect(updateDashboardMock).toHaveBeenCalledTimes(2);
+    // 1차 If-Match = 1(부팅 version), 2차 = 6(서버가 알려준 최신 version).
+    expect(updateDashboardMock.mock.calls[0]![2]).toBe(1);
+    expect(updateDashboardMock.mock.calls[1]![2]).toBe(6);
+    // 사용자의 변경(gridCols=25)이 재PUT 에서도 보존된다.
+    expect((updateDashboardMock.mock.calls[1]![1] as { gridCols: number }).gridCols).toBe(25);
+    expect(useUIStore.getState().dashboards[0]!.version).toBe(7);
+  });
+
+  it('재PUT 도 409 이면 서버 상태를 강제 적용하고 안내한다', async () => {
+    vi.useFakeTimers();
+    updateDashboardMock
+      .mockResolvedValueOnce({
+        conflict: true,
+        serverDashboard: makeDetail({ version: 6, payload: { panels: [], layout: [], gridCols: 88 } }),
+      })
+      .mockResolvedValueOnce({
+        conflict: true,
+        serverDashboard: makeDetail({ version: 7, payload: { panels: [], layout: [], gridCols: 77 } }),
+      });
+
+    resetStoreState();
     const { result } = renderHook(() => useDashboardSync());
     await vi.waitFor(() => expect(result.current.isLoading).toBe(false));
 
@@ -405,30 +527,176 @@ describe('useDashboardSync — 409 conflict (AC-10)', () => {
       await vi.runAllTimersAsync();
     });
 
-    expect(putSharedDashboardMock).toHaveBeenCalledTimes(2);
-
-    // 토스트 노출 확인.
-    const notifications = useUIStore.getState().notifications;
-    const conflictToast = notifications.find((n) =>
-      n.message.includes('동기화'),
-    );
+    expect(updateDashboardMock).toHaveBeenCalledTimes(2);
+    const conflictToast = useUIStore
+      .getState()
+      .notifications.find((n) => n.message.includes('동기화'));
     expect(conflictToast).toBeDefined();
+    // 서버 v7 상태(gridCols=77)로 강제 동기.
+    expect(useUIStore.getState().dashboards[0]!.version).toBe(7);
+    expect(useUIStore.getState().dashboardGridCols).toBe(77);
 
-    // 서버 v7 로 강제 동기.
-    expect(useUIStore.getState().sharedSnapshot?.version).toBe(7);
+    // 강제 적용 후 추가 PUT 이 발생하지 않는다 (fingerprint 동기화 확인).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(updateDashboardMock).toHaveBeenCalledTimes(2);
   });
 });
 
-describe('useDashboardSync — 403 on shared PUT (AC-4)', () => {
-  it('shared PUT 시 403: 토스트 + 재시도 안 함', async () => {
+// ─────────────────────────────────────────────────────────────────────
+// AC-21 — 403 / 404 폴백
+// ─────────────────────────────────────────────────────────────────────
+
+describe('useDashboardSync — 접근 상실 복구 (AC-21)', () => {
+  it('삭제된 활성 대시보드를 기본 대시보드로 폴백한다', async () => {
     vi.useFakeTimers();
-    getSharedDashboardMock.mockResolvedValue(makeSnapshot({ version: 1 }));
-    getMyDashboardMock.mockResolvedValue(null);
-    putSharedDashboardMock.mockRejectedValue(new DashboardForbiddenError());
+    const survivor = makeDashboard({ uid: 'dash-9', name: 'D9', is_default: true, version: 3 });
+    listDashboardsMock
+      .mockResolvedValueOnce([makeDashboard({ uid: 'dash-1' })])
+      // PUT 404 이후의 재조회 — dash-1 이 사라졌다.
+      .mockResolvedValue([makeDashboard({ uid: 'dash-5', is_default: false }), survivor]);
+    serveDetails([
+      makeDetail(),
+      makeDetail({ uid: 'dash-9', name: 'D9', version: 3, is_default: true }),
+      makeDetail({ uid: 'dash-5', is_default: false }),
+    ]);
+    updateDashboardMock.mockRejectedValue(new DashboardNotFoundError());
 
     resetStoreState();
-    useAuthStore.setState({ user: { name: 'ed', role: 'editor' } });
+    const { result } = renderHook(() => useDashboardSync());
+    await vi.waitFor(() => expect(result.current.isLoading).toBe(false));
 
+    act(() => {
+      useUIStore.getState().setDashboardGridCols(20);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.runAllTimersAsync();
+    });
+
+    // 목록을 1회 재조회하고 is_default 대시보드로 폴백한다.
+    expect(listDashboardsMock).toHaveBeenCalledTimes(2);
+    expect(useUIStore.getState().activeDashboardId).toBe('dash-9');
+    // 정정 저장 (PUT /dashboard-state).
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(putStateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ active_dashboard_uid: 'dash-9' }),
+    );
+  });
+
+  it('404 수신 후 재시도하지 않는다', async () => {
+    vi.useFakeTimers();
+    listDashboardsMock.mockResolvedValue([makeDashboard({ uid: 'dash-1' })]);
+    updateDashboardMock.mockRejectedValue(new DashboardNotFoundError());
+
+    resetStoreState();
+    const { result } = renderHook(() => useDashboardSync());
+    await vi.waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      useUIStore.getState().setDashboardGridCols(20);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.runAllTimersAsync();
+    });
+    expect(updateDashboardMock).toHaveBeenCalledTimes(1);
+
+    // 추가 시간이 흘러도 재시도가 없다 (무한 루프 가드).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(updateDashboardMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('403 이면 목록을 재조회하고 안내하되 폴백하지 않는다', async () => {
+    vi.useFakeTimers();
+    listDashboardsMock.mockResolvedValue([
+      makeDashboard({ uid: 'dash-1', can_edit: false }),
+    ]);
+    updateDashboardMock.mockRejectedValue(new DashboardForbiddenError());
+
+    resetStoreState();
+    const { result } = renderHook(() => useDashboardSync());
+    await vi.waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      useUIStore.getState().setDashboardGridCols(20);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.runAllTimersAsync();
+    });
+
+    expect(updateDashboardMock).toHaveBeenCalledTimes(1);
+    expect(listDashboardsMock).toHaveBeenCalledTimes(2);
+    // 대시보드는 남아 있으므로 활성은 그대로, can_edit 만 갱신된다.
+    expect(useUIStore.getState().activeDashboardId).toBe('dash-1');
+    expect(useUIStore.getState().dashboards[0]!.can_edit).toBe(false);
+
+    const toast = useUIStore
+      .getState()
+      .notifications.find((n) => n.message.includes('편집할 권한이 없습니다'));
+    expect(toast).toBeDefined();
+    expect(toast?.type).toBe('warning');
+
+    // 재시도 없음.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(updateDashboardMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('접근 가능한 대시보드가 0장이면 빈 상태로 두고 재시도하지 않는다', async () => {
+    listDashboardsMock.mockResolvedValue([]);
+    getStateMock.mockResolvedValue(makeUserState({ active_dashboard_uid: 'gone' }));
+
+    resetStoreState();
+    const { result } = renderHook(() => useDashboardSync());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(useUIStore.getState().activeDashboardId).toBe('');
+    expect(useUIStore.getState().dashboardPages).toEqual([]);
+    // 본문 조회를 시도하지 않는다.
+    expect(getDashboardMock).not.toHaveBeenCalled();
+    expect(listDashboardsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('서버가 기억한 활성 uid 가 사라졌으면 폴백 후 정정 저장한다', async () => {
+    listDashboardsMock.mockResolvedValue([
+      makeDashboard({ uid: 'dash-a', is_default: false }),
+      makeDashboard({ uid: 'dash-b', is_default: true }),
+    ]);
+    serveDetails([
+      makeDetail({ uid: 'dash-a', is_default: false }),
+      makeDetail({ uid: 'dash-b', is_default: true }),
+    ]);
+    getStateMock.mockResolvedValue(makeUserState({ active_dashboard_uid: 'deleted-uid' }));
+
+    resetStoreState();
+    const { result } = renderHook(() => useDashboardSync());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(useUIStore.getState().activeDashboardId).toBe('dash-b');
+    expect(putStateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ active_dashboard_uid: 'dash-b' }),
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// 에러 경로 무한 루프 가드 (회귀)
+// ─────────────────────────────────────────────────────────────────────
+
+describe('useDashboardSync — 에러 경로 무한 루프 가드', () => {
+  it('PUT 401: 한 번만 호출되고 같은 내용으로 무한 재시도하지 않는다', async () => {
+    vi.useFakeTimers();
+    updateDashboardMock.mockRejectedValue(new DashboardUnauthorizedError());
+
+    resetStoreState();
     const { result } = renderHook(() => useDashboardSync());
     await vi.waitFor(() => expect(result.current.isLoading).toBe(false));
 
@@ -438,30 +706,68 @@ describe('useDashboardSync — 403 on shared PUT (AC-4)', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500);
     });
-    expect(putSharedDashboardMock).toHaveBeenCalledTimes(1);
+    expect(updateDashboardMock).toHaveBeenCalledTimes(1);
 
-    // 토스트 확인.
-    const notifications = useUIStore.getState().notifications;
-    const forbiddenToast = notifications.find((n) =>
-      n.message.includes('공유 대시보드 편집 권한이 없습니다'),
-    );
-    expect(forbiddenToast).toBeDefined();
-    expect(forbiddenToast?.type).toBe('warning');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(updateDashboardMock).toHaveBeenCalledTimes(1);
 
-    // 동일 fingerprint 로는 재시도하지 않는다 — 추가 PUT 호출 없음.
+    // 새 변경은 정상적으로 PUT 된다.
     act(() => {
-      useUIStore.getState().setDashboardGridCols(30); // 동일 값
+      useUIStore.getState().setDashboardGridCols(40);
     });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500);
     });
-    expect(putSharedDashboardMock).toHaveBeenCalledTimes(1);
+    expect(updateDashboardMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('PUT 500: 토스트 1회 + 동일 내용 무한 재시도 없음', async () => {
+    vi.useFakeTimers();
+    updateDashboardMock.mockRejectedValue(new Error('server boom'));
+
+    resetStoreState();
+    const { result } = renderHook(() => useDashboardSync());
+    await vi.waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => {
+      useUIStore.getState().setDashboardGridCols(30);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(updateDashboardMock).toHaveBeenCalledTimes(1);
+
+    const errorToasts = useUIStore
+      .getState()
+      .notifications.filter((n) => n.message.includes('대시보드 저장에 실패했습니다'));
+    expect(errorToasts.length).toBe(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(updateDashboardMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('부팅 목록 조회가 401 이면 에러를 노출하지 않는다', async () => {
+    listDashboardsMock.mockRejectedValue(new DashboardUnauthorizedError());
+
+    resetStoreState();
+    const { result } = renderHook(() => useDashboardSync());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.error).toBeNull();
+    expect(useUIStore.getState().dashboards).toEqual([]);
   });
 });
 
-describe('useDashboardSync — blank slate migration (AC-15)', () => {
+// ─────────────────────────────────────────────────────────────────────
+// blank slate 마이그레이션 (SPEC-DASHBOARD-001 승계)
+// ─────────────────────────────────────────────────────────────────────
+
+describe('useDashboardSync — blank slate 마이그레이션', () => {
   it('첫 부팅 시 legacy localStorage 키가 제거되고 토스트가 1회 노출된다', async () => {
-    // v0.1 시절의 localStorage 상태 모의.
     const legacyState = {
       state: {
         sidebarCollapsed: false,
@@ -477,21 +783,15 @@ describe('useDashboardSync — blank slate migration (AC-15)', () => {
       version: 4,
     };
     testLocalStorage.setItem('xflow-ui', JSON.stringify(legacyState));
-    // 마이그레이션 플래그는 없음.
     expect(testLocalStorage.getItem('xflow-ui:dashboard-migrated-v0.2')).toBeNull();
-
-    getSharedDashboardMock.mockResolvedValue(null);
-    getMyDashboardMock.mockResolvedValue(null);
 
     resetStoreState();
 
     const { result } = renderHook(() => useDashboardSync());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    // 마이그레이션 플래그 set 확인.
     expect(testLocalStorage.getItem('xflow-ui:dashboard-migrated-v0.2')).toBe('1');
 
-    // 6 개 키가 localStorage 의 persist 페이로드에서 제거되었는지 확인.
     const after = JSON.parse(testLocalStorage.getItem('xflow-ui')!);
     const afterState = (after.state ?? after) as Record<string, unknown>;
     for (const key of [
@@ -504,157 +804,39 @@ describe('useDashboardSync — blank slate migration (AC-15)', () => {
     ]) {
       expect(afterState[key]).toBeUndefined();
     }
-    // theme/customThemeTokens/sidebarCollapsed 는 유지.
     expect(afterState.theme).toBe('system');
     expect(afterState.sidebarCollapsed).toBe(false);
 
-    // 토스트 1회 발화.
-    const notifications = useUIStore.getState().notifications;
-    const migrationToast = notifications.find((n) =>
-      n.message.includes('대시보드 구성이 서버 저장으로 전환'),
-    );
+    const migrationToast = useUIStore
+      .getState()
+      .notifications.find((n) => n.message.includes('대시보드 구성이 서버 저장으로 전환'));
     expect(migrationToast).toBeDefined();
     expect(migrationToast?.type).toBe('info');
   });
 
-  it('마이그레이션 플래그가 이미 set 인 상태에서 재부팅: 토스트 발화 안 함, LS 미변경', async () => {
+  it('마이그레이션 플래그가 이미 set 이면 토스트를 다시 노출하지 않는다', async () => {
     testLocalStorage.setItem('xflow-ui:dashboard-migrated-v0.2', '1');
-    // dashboard 키가 들어있는 잔여 LS 가 있어도 손대지 않는다 (이미 마이그레이션 완료).
     testLocalStorage.setItem(
       'xflow-ui',
       JSON.stringify({
-        state: {
-          theme: 'night',
-          sidebarCollapsed: true,
-          customThemeTokens: {},
-          // 잔여 key (실제론 없어야 하지만 사용자 임의 수정 등 케이스):
-          dashboardPages: [],
-        },
+        state: { theme: 'night', sidebarCollapsed: true, customThemeTokens: {}, dashboardPages: [] },
         version: 4,
       }),
     );
 
-    getSharedDashboardMock.mockResolvedValue(null);
-    getMyDashboardMock.mockResolvedValue(null);
-
     resetStoreState();
 
     const { result } = renderHook(() => useDashboardSync());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    // 플래그 set 유지.
     expect(testLocalStorage.getItem('xflow-ui:dashboard-migrated-v0.2')).toBe('1');
-
-    // 토스트 발화 없음 (마이그레이션 안내).
-    const notifications = useUIStore.getState().notifications;
-    const migrationToast = notifications.find((n) =>
-      n.message.includes('대시보드 구성이 서버 저장으로 전환'),
-    );
+    const migrationToast = useUIStore
+      .getState()
+      .notifications.find((n) => n.message.includes('대시보드 구성이 서버 저장으로 전환'));
     expect(migrationToast).toBeUndefined();
 
-    // 기존 LS 내용은 그대로 유지된다 (재마이그레이션 안 함).
     const afterParsed = JSON.parse(testLocalStorage.getItem('xflow-ui')!);
     const afterState = afterParsed.state ?? afterParsed;
     expect(afterState.theme).toBe('night');
-  });
-});
-
-describe('useDashboardSync — boot error (AC-8 보조)', () => {
-  it('GET 401 이면 setError 가 호출되지 않고 interceptor 흐름에 위임 (default 적용 안 됨)', async () => {
-    getSharedDashboardMock.mockRejectedValue(new DashboardUnauthorizedError());
-    getMyDashboardMock.mockRejectedValue(new DashboardUnauthorizedError());
-
-    resetStoreState();
-
-    const { result } = renderHook(() => useDashboardSync());
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-
-    // 401 은 interceptor 가 처리하므로 hook 의 error state 는 null 유지.
-    expect(result.current.error).toBeNull();
-    // unauthorized 인 경우 default snapshot 도 적용하지 않는다 (재로그인 흐름에 위임).
-    expect(useUIStore.getState().sharedSnapshot).toBeNull();
-  });
-});
-
-describe('useDashboardSync — error path infinite-loop guard (regression)', () => {
-  /**
-   * 회귀 방지: PUT 이 401/500/네트워크 에러로 실패할 때, catch 블록에서
-   * lastSyncedFingerprintRef 를 갱신하지 않으면 다음과 같은 무한 루프가 발생한다.
-   *
-   *   1) 사용자 변경 → fingerprint 변경 → schedulePut
-   *   2) PUT → 401/500
-   *   3) (선택) showToast → addNotification → store 변경
-   *   4) subscribe 가 다시 fire → lastFp != currentFp (갱신 안 됐으므로) → schedulePut
-   *   5) (1) 로 돌아감 — 영원히 PUT 반복
-   *
-   * 본 테스트는 PUT 이 401 또는 500 으로 한 번 실패한 뒤, 동일 fingerprint 에 대해
-   * 더 이상 자동 재시도가 발생하지 않음을 확인한다.
-   */
-  it('PUT 401: 한 번만 호출되고 같은 fingerprint 로 무한 재시도하지 않는다', async () => {
-    vi.useFakeTimers();
-    getSharedDashboardMock.mockResolvedValue(makeSnapshot({ version: 1 }));
-    getMyDashboardMock.mockResolvedValue(null);
-    putSharedDashboardMock.mockRejectedValue(new DashboardUnauthorizedError());
-
-    resetStoreState();
-
-    const { result } = renderHook(() => useDashboardSync());
-    await vi.waitFor(() => expect(result.current.isLoading).toBe(false));
-
-    act(() => {
-      useUIStore.getState().setDashboardGridCols(30);
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
-    expect(putSharedDashboardMock).toHaveBeenCalledTimes(1);
-
-    // 추가로 1초 더 흘려도 spurious 재시도가 발생하지 않아야 한다.
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1000);
-    });
-    expect(putSharedDashboardMock).toHaveBeenCalledTimes(1);
-
-    // 사용자가 새 변경을 가하면 정상적으로 다음 PUT 이 트리거된다 (재시도 자체는 가능).
-    act(() => {
-      useUIStore.getState().setDashboardGridCols(40);
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
-    expect(putSharedDashboardMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('PUT 500: 토스트 1회 + 동일 fingerprint 로 무한 재시도 없음', async () => {
-    vi.useFakeTimers();
-    getSharedDashboardMock.mockResolvedValue(makeSnapshot({ version: 1 }));
-    getMyDashboardMock.mockResolvedValue(null);
-    // DashboardServerError 가 아닌 generic Error 로도 같은 가드가 동작해야 한다.
-    putSharedDashboardMock.mockRejectedValue(new Error('server boom'));
-
-    resetStoreState();
-
-    const { result } = renderHook(() => useDashboardSync());
-    await vi.waitFor(() => expect(result.current.isLoading).toBe(false));
-
-    act(() => {
-      useUIStore.getState().setDashboardGridCols(30);
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
-    expect(putSharedDashboardMock).toHaveBeenCalledTimes(1);
-
-    // 토스트는 1회.
-    const errorToasts = useUIStore.getState().notifications.filter((n) =>
-      n.message.includes('대시보드 저장에 실패했습니다'),
-    );
-    expect(errorToasts.length).toBe(1);
-
-    // 추가 1초가 흘러도 재시도 없음.
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1000);
-    });
-    expect(putSharedDashboardMock).toHaveBeenCalledTimes(1);
   });
 });

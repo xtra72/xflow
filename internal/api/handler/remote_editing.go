@@ -72,12 +72,15 @@ func NewRemoteEditHandler(svc RemoteEditService, logger *slog.Logger) *RemoteEdi
 
 // RegisterRoutes 는 원격 편집 라우트를 그룹에 등록한다(remote_admin 의 GET 목록과 공존).
 func (h *RemoteEditHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.POST("/remote/nodes/{instance_id}/flows", h.CreateFlow)
-	g.PATCH("/remote/nodes/{instance_id}/flows/{flow_id}", h.UpdateFlow)
-	g.DELETE("/remote/nodes/{instance_id}/flows/{flow_id}", h.DeleteFlow)
-	g.POST("/remote/nodes/{instance_id}/agents", h.CreateAgent)
-	g.PATCH("/remote/nodes/{instance_id}/agents/{agent_id}", h.UpdateAgent)
-	g.DELETE("/remote/nodes/{instance_id}/agents/{agent_id}", h.DeleteAgent)
+	// @SPEC:SPEC-AUTH-005 (M5) — 원격 하위 API 는 remote.* 단일 키로만 다룬다
+	// (spec.md §1.3 비범위: 원격 노드 하위 API 의 세분 권한). 조회는 remote.read,
+	// 그 외 모든 변경·명령은 remote.update 이다.
+	g.POSTPerm("/remote/nodes/{instance_id}/flows", "remote.update", h.CreateFlow)
+	g.PATCHPerm("/remote/nodes/{instance_id}/flows/{flow_id}", "remote.update", h.UpdateFlow)
+	g.DELETEPerm("/remote/nodes/{instance_id}/flows/{flow_id}", "remote.update", h.DeleteFlow)
+	g.POSTPerm("/remote/nodes/{instance_id}/agents", "remote.update", h.CreateAgent)
+	g.PATCHPerm("/remote/nodes/{instance_id}/agents/{agent_id}", "remote.update", h.UpdateAgent)
+	g.DELETEPerm("/remote/nodes/{instance_id}/agents/{agent_id}", "remote.update", h.DeleteAgent)
 }
 
 // nodeResult 는 노드 어댑터(FlowServiceAdapter/AgentServiceAdapter)가 반환하는 결과의

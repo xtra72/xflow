@@ -149,19 +149,22 @@ func NewDeviceHandler(registry DeviceRegistry, metadataRepo MetadataRepository, 
 //   - {id}/{ref}/{agent}/{name} 은 모두 ServeMux 의 path-value 캡처이며
 //     execute/metadata 등 더 긴 패턴이 우선한다 (Go 1.22 spec).
 func (h *DeviceHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.GET("/devices", h.List)
-	g.GET("/devices:resolve", h.ResolveByAgentName) // B-T5
-	g.GET("/devices/{ref}", h.Get)
-	g.GET("/devices/{agent}/{name}", h.GetByAgentName) // B-T4 — 2 세그먼트 dispatch
-	g.POST("/devices/{id}/execute", h.Execute)
-	g.PUT("/devices/{id}/metadata", h.UpdateMetadata)
-	g.DELETE("/devices/{id}/metadata", h.DeleteMetadata)
+	// @SPEC:SPEC-AUTH-005 (M5) — device.* 권한 부착.
+	// metadata 는 디바이스의 하위 속성이므로 PUT/DELETE 모두 device.update 로 매핑한다
+	// (device.delete 는 디바이스 자체의 삭제를 뜻한다 — 본 핸들러에는 해당 라우트가 없다).
+	g.GETPerm("/devices", "device.read", h.List)
+	g.GETPerm("/devices:resolve", "device.read", h.ResolveByAgentName) // B-T5
+	g.GETPerm("/devices/{ref}", "device.read", h.Get)
+	g.GETPerm("/devices/{agent}/{name}", "device.read", h.GetByAgentName) // B-T4 — 2 세그먼트 dispatch
+	g.POSTPerm("/devices/{id}/execute", "device.execute", h.Execute)
+	g.PUTPerm("/devices/{id}/metadata", "device.update", h.UpdateMetadata)
+	g.DELETEPerm("/devices/{id}/metadata", "device.update", h.DeleteMetadata)
 
 	// 디바이스 수신 데이터 이력(주기 스냅샷). 이력 제공자가 주입된 경우에만 등록한다.
 	// "/devices/{id}/history" 는 execute/metadata 와 동일하게 2 세그먼트 + 액션
 	// 리터럴이라 "/devices/{ref}" 보다 우선한다(Go 1.22 ServeMux precedence).
 	if h.history != nil {
-		g.GET("/devices/{id}/history", h.History)
+		g.GETPerm("/devices/{id}/history", "device.read", h.History)
 	}
 }
 

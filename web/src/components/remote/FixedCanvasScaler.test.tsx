@@ -7,7 +7,8 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { computeFitScale, FixedCanvasScaler } from './FixedCanvasScaler';
+import { FixedCanvasScaler } from './FixedCanvasScaler';
+import { computeFitScale } from './computeFitScale';
 
 describe('computeFitScale — 레터박스 배율(REQ-M08)', () => {
   it('가용 영역과 캔버스 종횡비가 같으면 단순 비율을 반환한다', () => {

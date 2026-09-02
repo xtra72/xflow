@@ -13,13 +13,13 @@ import {
   storeColumnsStorageKey,
   STORE_COLUMNS,
   type StoreColumnId,
-} from './storeColumns';
+} from './storeColumnsModel';
 
 describe('STORE_COLUMNS 레지스트리', () => {
   it('논리적 기본 순서를 정의한다', () => {
     expect(STORE_COLUMNS.map((c) => c.id)).toEqual([
       'key',
-      'metric',
+      'field',
       'value',
       'namespace',
       'tags',
@@ -90,7 +90,7 @@ describe('defaultVisibleColumns', () => {
   it('숨김 가능한 모든 컬럼을 포함하고 actions 는 제외한다', () => {
     const set = defaultVisibleColumns();
     expect(set.has('actions')).toBe(false);
-    expect(set.has('metric')).toBe(true);
+    expect(set.has('field')).toBe(true);
     expect(set.has('key')).toBe(true);
     expect(set.size).toBe(STORE_COLUMNS.filter((c) => c.hideable).length);
   });

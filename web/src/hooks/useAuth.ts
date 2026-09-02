@@ -16,6 +16,8 @@ export function useAuth() {
   const storeLogin = useAuthStore((s) => s.login);
   const storeLogout = useAuthStore((s) => s.logout);
   const setLoading = useAuthStore((s) => s.setLoading);
+  const setUser = useAuthStore((s) => s.setUser);
+  const setPermissionsError = useAuthStore((s) => s.setPermissionsError);
   const initialize = useAuthStore((s) => s.initialize);
 
   async function login(username: string, password: string): Promise<void> {
@@ -26,6 +28,16 @@ export function useAuth() {
     } catch (error) {
       setLoading(false);
       throw error;
+    }
+
+    // SPEC-AUTH-006 U1: 로그인 응답에는 permissions 가 없다(서버는 /auth/me 에서만
+    // 제공한다). 토큰이 스토어에 들어간 뒤 이어서 조회해 권한 집합을 적재한다.
+    // 조회 실패는 로그인 자체를 되돌리지 않는다 — 인증은 이미 성공했고, 권한만
+    // '조회 실패'로 남겨 폴백 없이 권한 없음으로 처리한다.
+    try {
+      setUser(await authService.getCurrentUser());
+    } catch {
+      setPermissionsError();
     }
   }
 

@@ -89,6 +89,26 @@ type InfluxClient interface {
 
 	// DeleteMeasurement 는 버킷에서 지정된 measurement 의 모든 데이터를 삭제한다.
 	DeleteMeasurement(ctx context.Context, bucket, measurement string) error
+
+	// --- 스키마 디스커버리 (읽기 전용, v2/v3 양쪽 지원) ---
+	//
+	// @spec SPEC-TSDB-002 §2.10 (U10) — TSDB 선택 UI 가 쓰는 4 종 중 D2~D4 다.
+	// D1(measurement 목록)은 위 ListMeasurements 가 겸한다 — 관리 조작 블록에
+	// 먼저 생긴 메서드이며, 디스커버리로도 같은 계약을 쓴다.
+	//
+	// 구현은 influxdb_schema.go 가 v2/v3 를 나란히 소유한다. 관리 조작과 달리
+	// v3 도 전부 지원한다 — v3 에 없는 것은 관리 API 이지 스키마 조회가 아니다.
+	//
+	// bucket 이 빈 문자열이면 클라이언트 기본 버킷(v3 는 database)을 쓴다.
+
+	// ListTagKeys 는 measurement 의 태그 키 목록을 반환한다(D2).
+	ListTagKeys(ctx context.Context, bucket, measurement string) ([]string, error)
+
+	// ListTagValues 는 (measurement, tagKey) 의 태그 값 목록을 반환한다(D3).
+	ListTagValues(ctx context.Context, bucket, measurement, tagKey string, filters map[string]string, window SchemaWindow) ([]string, error)
+
+	// ListFieldKeys 는 measurement 의 필드 키 목록을 반환한다(D4).
+	ListFieldKeys(ctx context.Context, bucket, measurement string) ([]string, error)
 }
 
 // NewInfluxClient 는 설정에 따라 적절한 InfluxDB 클라이언트를 생성한다.

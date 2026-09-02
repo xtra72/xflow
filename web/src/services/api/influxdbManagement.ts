@@ -112,3 +112,112 @@ export async function deleteInfluxMeasurement(
     `/influxdb/${encodeURIComponent(agentName)}/measurements/${encodeURIComponent(measurement)}?${params}`,
   );
 }
+
+// ---- 스키마 디스커버리 (SPEC-TSDB-002 §2.10 D2/D3/D4) ----
+//
+// 백엔드 REST 계약 (M5 에서 신설, `internal/api/handler/influxdb_management.go`):
+//   GET /api/v1/influxdb/{agent_name}/tag-keys?measurement=&bucket=
+//     → { tag_keys: ["host", "region"], count }
+//   GET /api/v1/influxdb/{agent_name}/tag-values?measurement=&tag_key=&bucket=
+//     → { tag_values: ["a", "b"], count }
+//   GET /api/v1/influxdb/{agent_name}/field-keys?measurement=&bucket=
+//     → { field_keys: ["usage", "idle"], count }
+//
+// 세 라우트는 **관리 조작이 아니라 디스커버리**이므로 v3 에이전트에서도 활성이다
+// (§2.10 · §2.13). 관리 조작(생성 · 삭제 · truncate)만 v3 에서 501 이다.
+//
+// 디스커버리 응답은 캐시하지 않는다(UB1-12) — 스키마는 쓰기와 함께 계속 변하므로
+// 캐시된 목록은 방금 생성된 measurement/field 를 감춘다. 캐시 정책은 호출부 소관이며
+// 이 모듈은 매 호출을 그대로 네트워크로 보낸다.
+
+/**
+ * 디스커버리 응답의 배열 필드를 방어적으로 추출한다.
+ *
+ * `fetchInfluxBuckets` · `fetchInfluxMeasurements` 와 같은 규칙이다 — 서버가 객체
+ * envelope 를 주지만, 구버전/직접 배열 응답과 null 도 빈 배열로 접는다. 소비 측
+ * `.map()` 이 크래시하지 않는 것이 이 폴백의 유일한 목적이다.
+ */
+function pickStringList(
+  data: Record<string, unknown> | string[] | null,
+  field: string,
+): string[] {
+  if (Array.isArray(data)) return data;
+  const list = data?.[field];
+  return Array.isArray(list) ? (list as string[]) : [];
+}
+
+/** `GET /tag-keys` — measurement 한정 태그 키 목록(D2). */
+export async function fetchInfluxTagKeys(
+  agentName: string,
+  measurement: string,
+  bucket?: string,
+): Promise<string[]> {
+  const params = new URLSearchParams({ measurement });
+  if (bucket) params.set('bucket', bucket);
+  const data = await get<Record<string, unknown> | string[] | null>(
+    `/influxdb/${encodeURIComponent(agentName)}/tag-keys?${params}`,
+  );
+  return pickStringList(data, 'tag_keys');
+}
+
+/**
+ * `GET /tag-values` — 지정 태그 키의 값 목록(D3).
+ *
+ * `tagKey` 는 필수다. 백엔드도 빈 값을 400 으로 거부한다 — 어느 키의 값인지 모르는
+ * 목록은 쓸모가 없기 때문이다.
+ */
+export async function fetchInfluxTagValues(
+  agentName: string,
+  measurement: string,
+  tagKey: string,
+  bucket?: string,
+  /**
+   * 사전 필터(`k=v`). 값 목록을 그 조건 아래로 좁힌다.
+   *
+   * 그룹 미리보기가 이 인자를 쓴다 — 시리즈 열거는 접기 전 원시 행 상한에 걸려
+   * 고빈도 measurement 에서 값 일부만 주지만, 태그 값 조회는 메타데이터 질의라
+   * 그 상한과 무관하다. @spec SPEC-TSDB-004
+   */
+  filters?: Record<string, string>,
+  /**
+   * 조회 시간창. **비우면 백엔드의 암묵 기본값이 적용된다** — v3 의
+   * SHOW TAG VALUES 는 최근 창만 훑고 Flux 는 -30d 다. 그 창 밖에서만 보고한
+   * 장비가 목록에서 조용히 빠지므로, 패널이 그리는 창을 넘겨야 한다.
+   * @spec SPEC-TSDB-004 UB1-19
+   */
+  window?: { startMs: number; endMs: number },
+): Promise<string[]> {
+  const params = new URLSearchParams({ measurement, tag_key: tagKey });
+  if (bucket) params.set('bucket', bucket);
+  if (filters && Object.keys(filters).length > 0) {
+    params.set(
+      'tags',
+      Object.keys(filters)
+        .sort()
+        .map((k) => `${k}=${filters[k]}`)
+        .join(','),
+    );
+  }
+  if (window) {
+    params.set('start_ms', String(window.startMs));
+    params.set('end_ms', String(window.endMs));
+  }
+  const data = await get<Record<string, unknown> | string[] | null>(
+    `/influxdb/${encodeURIComponent(agentName)}/tag-values?${params}`,
+  );
+  return pickStringList(data, 'tag_values');
+}
+
+/** `GET /field-keys` — measurement 한정 필드 키 목록(D4). */
+export async function fetchInfluxFieldKeys(
+  agentName: string,
+  measurement: string,
+  bucket?: string,
+): Promise<string[]> {
+  const params = new URLSearchParams({ measurement });
+  if (bucket) params.set('bucket', bucket);
+  const data = await get<Record<string, unknown> | string[] | null>(
+    `/influxdb/${encodeURIComponent(agentName)}/field-keys?${params}`,
+  );
+  return pickStringList(data, 'field_keys');
+}

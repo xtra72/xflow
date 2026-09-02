@@ -6,7 +6,7 @@
 // 검증 대상:
 //   - data_type: 6종 enum (`int|float|string|boolean|bytes|json`).
 //     manual 모드에서는 필수, auto 모드에서는 선택.
-//   - metric_type: 정규식 `^[a-zA-Z0-9_-]+$`.
+//   - field: 정규식 `^[a-zA-Z0-9_-]+$`.
 //     빈 문자열은 통과 (백엔드가 default `"unknown"` 적용).
 //
 // @spec SPEC-WEB-005 v0.7.0 (M12, M13)
@@ -32,7 +32,7 @@ export const DATA_TYPE_OPTIONS = [
 ] as const satisfies readonly DataType[];
 
 /**
- * metric_type 허용 문자: 영문/숫자/언더스코어/하이픈.
+ * field 허용 문자: 영문/숫자/언더스코어/하이픈.
  * 빈 문자열은 통과 (백엔드 default `"unknown"` 적용).
  *
  * @spec SPEC-WEB-005 v0.7.0 (M13)
@@ -86,7 +86,7 @@ export function validateDataType(
 }
 
 /**
- * metric_type 값을 검증한다.
+ * field 값을 검증한다.
  *
  * - 빈 문자열: 통과 (백엔드 default `"unknown"` 적용).
  * - 정규식 `^[a-zA-Z0-9_-]+$` 위반: 에러.

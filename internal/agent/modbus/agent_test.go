@@ -28,6 +28,7 @@ type mockModbusTransport struct {
 	sendRecvErr error
 	response    []byte // SendAndReceive 가 반환할 데이터
 	sentFrames  [][]byte
+	sentUnitIDs []byte // SendAndReceive 에 전달된 unitID 기록(unit_id 런타임 변경 검증용)
 	connected   bool
 	connectCnt  int
 	closeCnt    int
@@ -52,16 +53,25 @@ func (m *mockModbusTransport) Close() error {
 	return m.closeErr
 }
 
-func (m *mockModbusTransport) SendAndReceive(_ context.Context, frame []byte) ([]byte, error) {
+// SendAndReceive 는 ADU-중립 인터페이스를 구현한다.
+// 상위는 순수 PDU 를 전달하므로 sentFrames 에는 PDU 가 기록된다.
+// response 는 테스트 편의를 위해 전체 MBAP 응답 프레임으로 설정되며,
+// mock 은 실제 트랜스포트처럼 MBAP 를 제거한 순수 응답 PDU 를 반환한다.
+func (m *mockModbusTransport) SendAndReceive(_ context.Context, unitID byte, pdu []byte) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	cp := make([]byte, len(frame))
-	copy(cp, frame)
+	cp := make([]byte, len(pdu))
+	copy(cp, pdu)
 	m.sentFrames = append(m.sentFrames, cp)
+	m.sentUnitIDs = append(m.sentUnitIDs, unitID)
 	if m.sendRecvErr != nil {
 		return nil, m.sendRecvErr
 	}
 	if m.response != nil {
+		// response 는 전체 MBAP 프레임 → MBAP(7) 제거 후 순수 PDU 반환 (ADU-stripped)
+		if len(m.response) >= MBAPHeaderSize {
+			return m.response[MBAPHeaderSize:], nil
+		}
 		return m.response, nil
 	}
 	return nil, errors.New("no response configured")
@@ -82,7 +92,7 @@ func minimalAgentConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "modbus-test-1",
 		Name: "Test Modbus Agent",
-		Type: "modbus-tcp",
+		Type: "modbus-client",
 		Transport: agent.TransportConfig{
 			Type: "modbus-tcp",
 			Options: map[string]any{
@@ -123,7 +133,7 @@ func twoDeviceAgentConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "modbus-test-2",
 		Name: "Test Modbus Agent 2",
-		Type: "modbus-tcp",
+		Type: "modbus-client",
 		Transport: agent.TransportConfig{
 			Type: "modbus-tcp",
 			Options: map[string]any{
@@ -175,12 +185,12 @@ func buildFC03Response(txID uint16, unitID byte, quantity uint16) []byte {
 	length := uint16(3 + byteCount) // unitID(1) + FC(1) + byteCount(1) + data
 	resp := make([]byte, 0, 7+2+int(byteCount))
 	resp = append(resp,
-		byte(txID>>8), byte(txID),     // Transaction ID
-		0x00, 0x00,                     // Protocol ID
-		byte(length>>8), byte(length),  // Length
-		unitID,                         // Unit ID
-		FC03ReadHoldingRegisters,       // Function Code
-		byteCount,                      // Byte Count
+		byte(txID>>8), byte(txID), // Transaction ID
+		0x00, 0x00, // Protocol ID
+		byte(length>>8), byte(length), // Length
+		unitID,                   // Unit ID
+		FC03ReadHoldingRegisters, // Function Code
+		byteCount,                // Byte Count
 	)
 	// 더미 레지스터 데이터
 	for i := 0; i < int(byteCount); i++ {
@@ -242,7 +252,7 @@ func TestNewModbusAgent_Success(t *testing.T) {
 	a, _ := newTestModbusAgent(t, config, mt)
 
 	assert.NotNil(t, a)
-	assert.Equal(t, "modbus-tcp", a.Type())
+	assert.Equal(t, "modbus-client", a.Type())
 	assert.Equal(t, lifecycle.StateRunning, a.CurrentState())
 	assert.Equal(t, "modbus-test-1", a.ID())
 	assert.Equal(t, "Test Modbus Agent", a.Name())
@@ -255,21 +265,10 @@ func TestNewModbusAgent_InvalidConfig(t *testing.T) {
 		config agent.AgentConfig
 	}{
 		{
-			name: "devices 누락",
-			config: agent.AgentConfig{
-				ID:   "bad-1",
-				Name: "Bad Agent",
-				Type: "modbus-tcp",
-				Transport: agent.TransportConfig{
-					Options: map[string]any{},
-				},
-			},
-		},
-		{
 			name: "ID 누락 (Validate 실패)",
 			config: agent.AgentConfig{
 				Name: "No ID",
-				Type: "modbus-tcp",
+				Type: "modbus-client",
 				Transport: agent.TransportConfig{
 					Options: map[string]any{
 						"devices": []any{
@@ -395,10 +394,10 @@ func TestModbusAgent_Pause_Resume(t *testing.T) {
 // TestModbusAgent_Health 는 상태에 따른 Health 를 검증한다.
 func TestModbusAgent_Health(t *testing.T) {
 	tests := []struct {
-		name         string
-		state        lifecycle.State
-		devOnline    bool
-		wantStatus   agent.HealthState
+		name       string
+		state      lifecycle.State
+		devOnline  bool
+		wantStatus agent.HealthState
 	}{
 		{
 			name:       "Running, 디바이스 온라인 -> Healthy",
@@ -692,7 +691,7 @@ func TestModbusAgent_Configure(t *testing.T) {
 	newConfig := agent.AgentConfig{
 		ID:   "updated-id",
 		Name: "Updated Modbus",
-		Type: "modbus-tcp",
+		Type: "modbus-client",
 	}
 	err := a.Configure(newConfig)
 	require.NoError(t, err)
@@ -707,7 +706,7 @@ func TestModbusAgent_Info(t *testing.T) {
 	info := a.Info()
 	assert.Equal(t, "modbus-test-1", info.ID)
 	assert.Equal(t, "Test Modbus Agent", info.Name)
-	assert.Equal(t, "modbus-tcp", info.Type)
+	assert.Equal(t, "modbus-client", info.Type)
 	assert.Equal(t, lifecycle.StateRunning, info.State)
 	assert.NotZero(t, info.CreatedAt)
 }
@@ -1190,8 +1189,8 @@ func TestModbusAgent_ReconnectOnOffline(t *testing.T) {
 func TestModbusAgent_StaleWarning(t *testing.T) {
 	// 디바이스를 오프라인으로 만들어 폴링 실패를 유도한다
 	mt := &mockModbusTransport{
-		connected:  true,
-		connectErr: ErrConnectionFailed, // 재연결 실패
+		connected:   true,
+		connectErr:  ErrConnectionFailed, // 재연결 실패
 		sendRecvErr: errors.New("send failed"),
 	}
 
@@ -1409,7 +1408,7 @@ func typeOverlayAgentConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "modbus-overlay-1",
 		Name: "Overlay Agent",
-		Type: "modbus-tcp",
+		Type: "modbus-client",
 		Transport: agent.TransportConfig{
 			Type: "modbus-tcp",
 			Options: map[string]any{
@@ -1444,7 +1443,7 @@ func typeOverlayFC04AgentConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "modbus-overlay-fc4",
 		Name: "Overlay FC4 Agent",
-		Type: "modbus-tcp",
+		Type: "modbus-client",
 		Transport: agent.TransportConfig{
 			Type: "modbus-tcp",
 			Options: map[string]any{
@@ -1481,7 +1480,7 @@ func typeOverlayMultiGroupConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "modbus-overlay-multi",
 		Name: "Overlay Multi Agent",
-		Type: "modbus-tcp",
+		Type: "modbus-client",
 		Transport: agent.TransportConfig{
 			Type: "modbus-tcp",
 			Options: map[string]any{

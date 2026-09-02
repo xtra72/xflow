@@ -4,6 +4,7 @@ import (
 	"context"
 	"path"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,6 +30,10 @@ type VolatileStore struct {
 	maxKeyLength   int
 	maxHistorySize int           // 히스토리 최대 보관 수 (0이면 비활성)
 	historyTTL     time.Duration // 히스토리 항목 최대 보관 시간 (0이면 무제한)
+	// accessCount 는 읽기(접근) 연산 누적 횟수이다. Get/Keys/GetHistory/QueryHistory
+	// 각 호출마다 1씩 증가한다. VolatileStore 는 mutex 가 없으므로(sync.Map 은 자체 동시성
+	// 보장) 락 대신 atomic 으로 카운트한다. 대시보드 요약 통계(접근 수/분당 접근)에 사용된다.
+	accessCount atomic.Int64
 }
 
 // NewVolatileStore 는 주어진 설정으로 VolatileStore를 생성한다.
@@ -48,6 +53,12 @@ func (s *VolatileStore) validateKey(key string) error {
 	return nil
 }
 
+// AccessCount 는 지금까지 누적된 접근(읽기) 연산 횟수를 반환한다.
+// Get/Keys/GetHistory/QueryHistory 호출당 1씩 증가한 값이다.
+func (s *VolatileStore) AccessCount() int64 {
+	return s.accessCount.Load()
+}
+
 // isExpired 는 아이템이 만료되었는지 확인한다.
 func (s *VolatileStore) isExpired(item *storeItem) bool {
 	if item.expiresAt.IsZero() {
@@ -59,6 +70,7 @@ func (s *VolatileStore) isExpired(item *storeItem) bool {
 // Get 은 주어진 키에 해당하는 엔트리를 반환한다.
 // 만료된 키는 lazy expiration으로 삭제한 뒤 ErrKeyNotFound를 반환한다.
 func (s *VolatileStore) Get(_ context.Context, key string) (StoreEntry, error) {
+	s.accessCount.Add(1) // 접근(읽기) 카운트 증가
 	raw, ok := s.data.Load(key)
 	if !ok {
 		return StoreEntry{}, ErrKeyNotFound
@@ -193,6 +205,7 @@ func (s *VolatileStore) Has(_ context.Context, key string) (bool, error) {
 // 빈 문자열이나 "*"은 모든 키를 반환한다.
 // 만료된 키는 결과에서 제외된다.
 func (s *VolatileStore) Keys(_ context.Context, pattern string) ([]string, error) {
+	s.accessCount.Add(1) // 접근(읽기) 카운트 증가
 	matchAll := pattern == "" || pattern == "*"
 	var keys []string
 
@@ -327,6 +340,7 @@ func (s *VolatileStore) atomicStoreWithTTL(key string, value any, now time.Time,
 // 키가 존재하지 않거나 만료된 경우 ErrKeyNotFound를 반환한다.
 // 키가 존재하지만 히스토리가 없으면 빈 슬라이스를 반환한다.
 func (s *VolatileStore) GetHistory(_ context.Context, key string) ([]HistoryEntry, error) {
+	s.accessCount.Add(1) // 접근(읽기) 카운트 증가
 	raw, ok := s.data.Load(key)
 	if !ok {
 		return nil, ErrKeyNotFound
@@ -355,6 +369,7 @@ func (s *VolatileStore) GetHistory(_ context.Context, key string) ([]HistoryEntr
 // GetHistory 와 달리 결과 맨 앞에 현재값(item.value, item.updatedAt)을 포함한다.
 // 키가 존재하지 않거나 만료된 경우 ErrKeyNotFound를 반환한다.
 func (s *VolatileStore) QueryHistory(_ context.Context, key string, q HistoryQuery) ([]HistoryEntry, error) {
+	s.accessCount.Add(1) // 접근(읽기) 카운트 증가
 	if err := q.Validate(); err != nil {
 		return nil, err
 	}

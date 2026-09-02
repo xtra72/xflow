@@ -40,7 +40,7 @@ import { cn } from '@/lib/utils/cn';
 import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { resolveRemoteNodeLabel } from '@/lib/remote/nodeLabel';
 import { LOCAL_TARGET, type ResourceTarget } from '@/lib/remote/target';
-import { TargetProvider } from '@/lib/remote/TargetContext';
+import { TargetProvider } from '@/lib/remote/TargetProvider';
 import {
   getFlowNodes,
   getFlowTaps,

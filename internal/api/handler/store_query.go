@@ -5,6 +5,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/xtra/xflow/internal/agent/system"
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
+	"github.com/xtra/xflow/internal/fillpolicy"
 )
 
 // 서버측 집계 상한: 응답 폭주를 방지하기 위한 안전장치이다.
@@ -24,11 +26,27 @@ import (
 const maxAggregationBuckets = 100_000
 
 // 유효한 집계 연산자 집합.
+//
+// first/last 는 값의 크기가 아니라 **버킷 안에서의 순서**로 고르는 집계다. 종전에는
+// 서버가 받지 않아 프런트가 원시 엔트리를 받아 스스로 버킷을 나눴는데, 그 경로에는
+// 빈 버킷 채우기가 걸리지 않는다 — 같은 fill 설정이 집계 함수에 따라 되기도 하고
+// 안 되기도 하는 상태였다. 다섯 종을 모두 서버에서 처리해 그 갈림을 없앤다.
 const (
-	aggregationMin = "min"
-	aggregationMax = "max"
-	aggregationAvg = "avg"
+	aggregationMin   = "min"
+	aggregationMax   = "max"
+	aggregationAvg   = "avg"
+	aggregationFirst = "first"
+	aggregationLast  = "last"
 )
+
+// validAggregations 는 허용하는 집계 어휘다.
+var validAggregations = map[string]struct{}{
+	aggregationMin:   {},
+	aggregationMax:   {},
+	aggregationAvg:   {},
+	aggregationFirst: {},
+	aggregationLast:  {},
+}
 
 // AgentLookup 은 에이전트 이름으로 에이전트를 조회하기 위한 최소 인터페이스이다.
 // 실제 runtime 에서는 *agent.DefaultManager 가 이 인터페이스를 만족한다.
@@ -49,10 +67,10 @@ type storeHistoryQueryer interface {
 // system.UserStoreAgent 가 이 인터페이스를 만족한다. 핸들러는 type 단언으로 옵셔널하게
 // 시리즈 조회를 사용하며, 미구현 에이전트는 기존 단일 QueryHistory 경로로 폴백한다.
 //
-// metricFilter/tagsFilter 가 모두 비어있으면 해당 key 의 모든 시리즈를 반환하고(E4),
+// fieldFilter/tagsFilter 가 모두 비어있으면 해당 key 의 모든 시리즈를 반환하고(E4),
 // 필터가 주어지면 일치하는 부분집합만 반환한다(E5/S3). 미일치 시 빈 슬라이스(S4).
 type storeSeriesQueryer interface {
-	QuerySeries(ctx context.Context, namespace, key, metricFilter string, tagsFilter map[string]string, q system.HistoryQuery) ([]system.SeriesResult, error)
+	QuerySeries(ctx context.Context, namespace, key, fieldFilter string, tagsFilter map[string]string, q system.HistoryQuery) ([]system.SeriesResult, error)
 }
 
 type storeKeyLister interface {
@@ -82,7 +100,7 @@ type storeKeyTagLister interface {
 // 에이전트 계약이다. system.UserStoreAgent 가 이 인터페이스를 만족한다.
 //
 // GET /store/{name}/keys (v0.3.0 BREAKING) 핸들러가 응답 객체 배열을 빌드할 때
-// data_type, metric_type, registration, tags 를 한 번에 가져오기 위해 사용한다.
+// data_type, field, registration, tags 를 한 번에 가져오기 위해 사용한다.
 // 반환 맵은 호출자 전용 깊은 복사본이며, 핸들러가 임의로 수정해도 안전하다.
 type storeKeyMetaLister interface {
 	StaticKeysSnapshot() map[string]system.StaticKeyMeta
@@ -96,15 +114,15 @@ type storeLiveKeyLister interface {
 }
 
 // @spec SPEC-STORE-003 v0.4.0
-// storeKeyMetaSetter 는 임의 엔트리(정적 + 동적)의 metric_type/tags 를 설정하는
+// storeKeyMetaSetter 는 임의 엔트리(정적 + 동적)의 field/tags 를 설정하는
 // 에이전트 계약이다. system.UserStoreAgent 가 이 인터페이스를 만족한다.
 //
 // PUT /store/{name}/keys/{key}/meta 핸들러가 사용하며, 동적으로 등록된 키에도
 // 사용자가 나중에 타입/태그를 부여할 수 있게 한다. 미등록 키이면 동적 string 키로
-// 신규 등록된다. 입력 검증(metric_type 정규식, tag key 정규식)은 구현체가 수행하며,
-// 검증 실패 시 system.ErrInvalidMetricType / system.ErrInvalidTagKey 를 반환한다.
+// 신규 등록된다. 입력 검증(field 정규식, tag key 정규식)은 구현체가 수행하며,
+// 검증 실패 시 system.ErrInvalidField / system.ErrInvalidTagKey 를 반환한다.
 type storeKeyMetaSetter interface {
-	SetKeyMeta(key string, metricType string, tags map[string]string) error
+	SetKeyMeta(key string, field string, tags map[string]string) error
 }
 
 // @spec SPEC-STORE-003
@@ -128,11 +146,11 @@ type storeResetter interface {
 // system.UserStoreAgent 가 이 인터페이스를 만족한다. 핸들러는 type 단언으로 옵셔널하게
 // 시리즈 reset 을 사용하며, 미구현(레거시/페이크) 에이전트는 기존 bare-key reset 경로로 폴백한다.
 //
-// ResetSeries 는 (namespace, key, metricFilter, tagsFilter) 에 일치하는 시리즈만 reset 하고,
+// ResetSeries 는 (namespace, key, fieldFilter, tagsFilter) 에 일치하는 시리즈만 reset 하고,
 // 시리즈별로 정적 → ClearHistory(historyCleared++), 동적 → DeleteEntry(entriesDeleted++)
 // 정책을 적용한다. 필터가 모두 비어있으면 해당 key 의 모든 시리즈가 대상이다(식별자 누락 정책).
 type storeSeriesResetter interface {
-	ResetSeries(ctx context.Context, namespace, key, metricFilter string, tagsFilter map[string]string) (historyCleared, entriesDeleted int, err error)
+	ResetSeries(ctx context.Context, namespace, key, fieldFilter string, tagsFilter map[string]string) (historyCleared, entriesDeleted int, err error)
 }
 
 // storeKeyRenamer 는 키(그 키의 모든 시리즈) 를 새 키로 이동하는 에이전트 계약이다.
@@ -162,19 +180,23 @@ func NewStoreQueryHandler(agents AgentLookup, logger *slog.Logger) *StoreQueryHa
 
 // RegisterRoutes 는 Store 쿼리 라우트를 등록한다.
 func (h *StoreQueryHandler) RegisterRoutes(g *api.RouteGroup) {
-	g.POST("/store/{agent_name}/query", h.Query)
-	g.GET("/store/{agent_name}/keys", h.ListKeys)
-	// @spec SPEC-STORE-003 v0.4.0: 임의 엔트리(동적 포함)의 metric_type/tags 설정.
-	g.PUT("/store/{agent_name}/keys/{key}/meta", h.SetKeyMeta)
+	// @SPEC:SPEC-AUTH-005 (M5) — store.* 권한 부착.
+	// 카탈로그의 store 는 read/update 2종이므로(spec.md §2.1) 조회는 read,
+	// 나머지 변경(meta 설정·reset·rename)은 모두 update 로 매핑한다.
+	// query 는 POST 이지만 조회이므로 read 이다.
+	g.POSTPerm("/store/{agent_name}/query", "store.read", h.Query)
+	g.GETPerm("/store/{agent_name}/keys", "store.read", h.ListKeys)
+	// @spec SPEC-STORE-003 v0.4.0: 임의 엔트리(동적 포함)의 field/tags 설정.
+	g.PUTPerm("/store/{agent_name}/keys/{key}/meta", "store.update", h.SetKeyMeta)
 	// @spec SPEC-STORE-003
-	g.GET("/store/{agent_name}/tags", h.ListTags)
+	g.GETPerm("/store/{agent_name}/tags", "store.read", h.ListTags)
 	// @spec SPEC-STORE-003: reset 엔드포인트.
 	//   DELETE /store/{agent_name}/keys/{key} → 단일 키 reset (정책 분기)
 	//   DELETE /store/{agent_name}/keys       → 전체 키 reset (벌크)
-	g.DELETE("/store/{agent_name}/keys/{key}", h.ResetKey)
-	g.DELETE("/store/{agent_name}/keys", h.ResetAll)
+	g.DELETEPerm("/store/{agent_name}/keys/{key}", "store.update", h.ResetKey)
+	g.DELETEPerm("/store/{agent_name}/keys", "store.update", h.ResetAll)
 	// 키(그 키의 모든 시리즈) 이름 변경. body: {"new_key": "..."}
-	g.POST("/store/{agent_name}/keys/{key}/rename", h.RenameKey)
+	g.POSTPerm("/store/{agent_name}/keys/{key}/rename", "store.update", h.RenameKey)
 }
 
 // storeQueryRequest 는 REQ-M3-01 요청 바디 형식이다.
@@ -208,12 +230,20 @@ type storeQueryRequest struct {
 	IntervalMs  int64  `json:"interval_ms,omitempty"`
 	Aggregation string `json:"aggregation,omitempty"`
 
+	// 빈 버킷 채우기(선택). 어휘·의미는 InfluxDB 소스와 **같은 정본**을 쓴다
+	// (dto.SeriesFill*) — 소스를 갈아탄 사용자가 같은 설정에서 다른 그림을
+	// 보지 않게 하려는 것이다. 집계가 꺼진 요청에서는 읽지 않는다(채울 버킷이 없다).
+	Fill                      string  `json:"fill,omitempty"`
+	FillPreviousMaxMs         int64   `json:"fill_previous_max_ms,omitempty"`
+	FillPreviousOverflow      string  `json:"fill_previous_overflow,omitempty"`
+	FillPreviousOverflowValue float64 `json:"fill_previous_overflow_value,omitempty"`
+
 	// @spec SPEC-STORE-004: 시리즈 필터 (선택).
-	//   - MetricType 만 주면 그 metric 의 모든 tags 시리즈 (S3).
-	//   - MetricType+Tags 주면 단일/부분집합 시리즈 (E5).
+	//   - Field 만 주면 그 field 의 모든 tags 시리즈 (S3).
+	//   - Field+Tags 주면 단일/부분집합 시리즈 (E5).
 	//   - 둘 다 생략하면 해당 key 의 모든 시리즈 (E4).
-	MetricType string            `json:"metric_type,omitempty"`
-	Tags       map[string]string `json:"tags,omitempty"`
+	Field string            `json:"field,omitempty"`
+	Tags  map[string]string `json:"tags,omitempty"`
 }
 
 // chartQueryEntry 는 표준 응답(REQ-M3-04) 의 entries 항목이다.
@@ -266,7 +296,7 @@ func (h *StoreQueryHandler) Query(ctx api.Context) error {
 
 	// @spec SPEC-STORE-004
 	// 시리즈 fan-out 경로: 에이전트가 QuerySeries 를 구현하면 key → 다중 시리즈로 조회한다.
-	// metric/tags 필터로 부분집합을 좁히고, 각 엔트리에 labels(metric_type + tags)를 채운다.
+	// field/tags 필터로 부분집합을 좁히고, 각 엔트리에 labels(field + tags)를 채운다.
 	if seriesAgent, ok := ag.(storeSeriesQueryer); ok {
 		return h.querySeries(ctx, seriesAgent, &req, q, aggEnabled)
 	}
@@ -298,7 +328,13 @@ func (h *StoreQueryHandler) Query(ctx api.Context) error {
 		if aerr != nil {
 			return api.ErrBadRequest.WithMessage(aerr.Error())
 		}
+		fill, prev, ferr := parseStoreFill(&req)
+		if ferr != nil {
+			return api.ErrBadRequest.WithMessage(ferr.Error())
+		}
 		bucketed := bucketAggregate(entries, originMs, req.IntervalMs, req.Aggregation)
+		bucketed = fillBuckets(
+			bucketed, originMs, resolveAggregationEndMs(&req, q), req.IntervalMs, fill, prev)
 		resp := chartQueryResponse{
 			Entries:   bucketed,
 			Count:     len(bucketed),
@@ -319,8 +355,8 @@ func (h *StoreQueryHandler) Query(ctx api.Context) error {
 // querySeries 는 key → 다중 시리즈 fan-out 조회 결과를 표준 응답으로 직렬화한다.
 //
 // 동작:
-//   - QuerySeries 로 (namespace, key, metric/tags 필터) 에 일치하는 모든 시리즈를 조회한다.
-//   - 각 시리즈의 엔트리에 labels(metric_type + tags)를 부여하여 출처를 식별 가능하게 한다(E4).
+//   - QuerySeries 로 (namespace, key, field/tags 필터) 에 일치하는 모든 시리즈를 조회한다.
+//   - 각 시리즈의 엔트리에 labels(field + tags)를 부여하여 출처를 식별 가능하게 한다(E4).
 //   - 집계가 활성화되면 시리즈별로 bucketAggregate 를 적용하고, 라벨을 유지한다.
 //   - 미일치(빈 결과)는 HTTP 200 + entries 0개로 응답한다(S4).
 //
@@ -332,7 +368,7 @@ func (h *StoreQueryHandler) querySeries(
 	q system.HistoryQuery,
 	aggEnabled bool,
 ) error {
-	seriesList, err := agent.QuerySeries(ctx.Context(), req.Namespace, req.Key, req.MetricType, req.Tags, q)
+	seriesList, err := agent.QuerySeries(ctx.Context(), req.Namespace, req.Key, req.Field, req.Tags, q)
 	if err != nil {
 		// 키/시리즈 부재는 빈 결과(200)로 흡수한다(S4, ErrKeyNotFound→200 정책 보존).
 		if errors.Is(err, system.ErrKeyNotFound) {
@@ -342,15 +378,35 @@ func (h *StoreQueryHandler) querySeries(
 		}
 	}
 
+	// 집계 파라미터 해석은 시리즈 루프 밖에서 한 번만 한다 — 요청 하나에 대한 판정이
+	// 시리즈 수만큼 반복될 이유가 없고, 잘못된 값이면 시리즈를 하나도 처리하기 전에
+	// 거부해야 한다.
+	var (
+		originMs int64
+		endMs    int64
+		fill     string
+		prev     fillpolicy.Previous
+	)
+	if aggEnabled {
+		var aerr error
+		originMs, aerr = resolveAggregationOriginMs(req, q)
+		if aerr != nil {
+			return api.ErrBadRequest.WithMessage(aerr.Error())
+		}
+		var ferr error
+		fill, prev, ferr = parseStoreFill(req)
+		if ferr != nil {
+			return api.ErrBadRequest.WithMessage(ferr.Error())
+		}
+		endMs = resolveAggregationEndMs(req, q)
+	}
+
 	entries := make([]chartQueryEntry, 0)
 	for _, sr := range seriesList {
 		labels := seriesLabels(sr.Series)
 		if aggEnabled {
-			originMs, aerr := resolveAggregationOriginMs(req, q)
-			if aerr != nil {
-				return api.ErrBadRequest.WithMessage(aerr.Error())
-			}
 			bucketed := bucketAggregate(sr.Entries, originMs, req.IntervalMs, req.Aggregation)
+			bucketed = fillBuckets(bucketed, originMs, endMs, req.IntervalMs, fill, prev)
 			for i := range bucketed {
 				bucketed[i].Labels = labels
 			}
@@ -374,11 +430,11 @@ func (h *StoreQueryHandler) querySeries(
 }
 
 // @spec SPEC-STORE-004
-// seriesLabels 는 시리즈 식별자를 응답 labels(metric_type + tags) 맵으로 변환한다.
-// metric_type 은 "__metric__" 키로, 각 tag 는 tag key 그대로 담는다. 항상 non-nil 을 반환한다.
+// seriesLabels 는 시리즈 식별자를 응답 labels(field + tags) 맵으로 변환한다.
+// field 은 "__field__" 키로, 각 tag 는 tag key 그대로 담는다. 항상 non-nil 을 반환한다.
 func seriesLabels(sid system.SeriesID) map[string]string {
 	labels := make(map[string]string, len(sid.Tags)+1)
-	labels["__metric__"] = sid.MetricType
+	labels["__field__"] = sid.Field
 	for k, v := range sid.Tags {
 		labels[k] = v
 	}
@@ -399,11 +455,10 @@ func seriesLabels(sid system.SeriesID) map[string]string {
 //   - 계산된 버킷 수가 상한(maxAggregationBuckets)을 넘으면 거부한다
 func validateAggregationParams(req *storeQueryRequest) (bool, error) {
 	// aggregation 값 자체가 잘못된 경우 (interval_ms 와 무관하게 거부).
-	if req.Aggregation != "" &&
-		req.Aggregation != aggregationMin &&
-		req.Aggregation != aggregationMax &&
-		req.Aggregation != aggregationAvg {
-		return false, errInvalidField("invalid aggregation: " + req.Aggregation)
+	if req.Aggregation != "" {
+		if _, ok := validAggregations[req.Aggregation]; !ok {
+			return false, errInvalidField("invalid aggregation: " + req.Aggregation)
+		}
 	}
 
 	// interval_ms 가 명시적으로 주어졌는데 (0이 아님) 양수가 아니면 거부.
@@ -548,12 +603,18 @@ func bucketAggregate(
 		return []chartQueryEntry{}
 	}
 
-	// 버킷별 집계 상태. avg 는 sum+count, min/max 는 단일 값.
+	// 버킷별 집계 상태. avg 는 sum+count, min/max 는 단일 값,
+	// first/last 는 값과 함께 **그 값의 시각**을 들고 있어야 한다 — 엔트리가 시간순으로
+	// 온다는 보장이 없으므로 도착 순서를 순서로 삼으면 조용히 틀린다.
 	type bucketState struct {
-		sum   float64
-		count int
-		min   float64
-		max   float64
+		sum     float64
+		count   int
+		min     float64
+		max     float64
+		first   float64
+		firstTs int64
+		last    float64
+		lastTs  int64
 	}
 	// map 키는 bucket 시작 시각 (epoch ms). 일반적으로 연속되지만 희소할 수도 있으므로 map 사용.
 	buckets := make(map[int64]*bucketState)
@@ -571,7 +632,10 @@ func bucketAggregate(
 		bucketStartMs := (tsMs / intervalMs) * intervalMs
 		st, exists := buckets[bucketStartMs]
 		if !exists {
-			st = &bucketState{sum: f, count: 1, min: f, max: f}
+			st = &bucketState{
+				sum: f, count: 1, min: f, max: f,
+				first: f, firstTs: tsMs, last: f, lastTs: tsMs,
+			}
 			buckets[bucketStartMs] = st
 			continue
 		}
@@ -582,6 +646,12 @@ func bucketAggregate(
 		}
 		if f > st.max {
 			st.max = f
+		}
+		if tsMs < st.firstTs {
+			st.first, st.firstTs = f, tsMs
+		}
+		if tsMs >= st.lastTs {
+			st.last, st.lastTs = f, tsMs
 		}
 	}
 
@@ -611,6 +681,10 @@ func bucketAggregate(
 			value = st.max
 		case aggregationAvg:
 			value = st.sum / float64(st.count)
+		case aggregationFirst:
+			value = st.first
+		case aggregationLast:
+			value = st.last
 		default:
 			// validateAggregationParams 에서 이미 거부되었어야 하므로 방어 코드.
 			continue
@@ -619,6 +693,129 @@ func bucketAggregate(
 			Timestamp: bucketStartMs,
 			Value:     value,
 		})
+	}
+	return out
+}
+
+// parseStoreFill 은 빈 버킷 채우기 파라미터를 읽고 검증한다.
+//
+// 어휘는 InfluxDB 소스와 같은 정본(`dto.SeriesFill*`)을 쓴다 — 두 소스가 각자
+// 문자열을 정의하면 한쪽만 늘어날 때 같은 설정이 소스에 따라 다르게 동작한다.
+// `avg` 는 어느 백엔드에도 대응물이 없어 여기서도 거부한다.
+func parseStoreFill(req *storeQueryRequest) (string, fillpolicy.Previous, error) {
+	var prev fillpolicy.Previous
+
+	switch req.Fill {
+	case dto.SeriesFillNone, dto.SeriesFillNull, dto.SeriesFillZero, dto.SeriesFillPrevious:
+	default:
+		return "", prev, errInvalidField(fmt.Sprintf(
+			"invalid fill: %q (expected one of: %q, %q, %q, %q)",
+			req.Fill,
+			dto.SeriesFillNone, dto.SeriesFillNull, dto.SeriesFillZero, dto.SeriesFillPrevious))
+	}
+
+	// 사용 기간 제한은 `previous` 에서만 뜻이 있다. 그 밖에서는 제로값(무제한)이다.
+	if req.Fill != dto.SeriesFillPrevious {
+		return req.Fill, prev, nil
+	}
+	if req.FillPreviousMaxMs < 0 {
+		return "", prev, errInvalidField(fmt.Sprintf(
+			"fill_previous_max_ms must be >= 0 (got %d; 0 means unlimited)",
+			req.FillPreviousMaxMs))
+	}
+	prev.MaxMs = req.FillPreviousMaxMs
+
+	switch req.FillPreviousOverflow {
+	case dto.SeriesFillPreviousOverflowEmpty:
+		prev.Overflow = fillpolicy.OverflowEmpty
+	case dto.SeriesFillPreviousOverflowValue:
+		prev.Overflow = fillpolicy.OverflowValue
+		prev.Value = req.FillPreviousOverflowValue
+	default:
+		return "", prev, errInvalidField(fmt.Sprintf(
+			"invalid fill_previous_overflow: %q (allowed: %q, %q)",
+			req.FillPreviousOverflow,
+			dto.SeriesFillPreviousOverflowEmpty, dto.SeriesFillPreviousOverflowValue))
+	}
+	return req.Fill, prev, nil
+}
+
+// resolveAggregationEndMs 는 채울 버킷 범위의 상한(미포함)을 정한다.
+//
+// `resolveAggregationOriginMs` 의 짝이다. 채우기는 "데이터가 있는 구간" 이 아니라
+// "사용자가 요청한 구간" 을 메우는 일이라, 하한만으로는 어디까지 채울지 알 수 없다.
+//   - time_range : req.EndMs
+//   - duration   : q.To 가 있으면 그것, 없으면 지금
+func resolveAggregationEndMs(req *storeQueryRequest, q system.HistoryQuery) int64 {
+	if system.QueryMode(req.Mode) == system.QueryModeTimeRange {
+		return req.EndMs
+	}
+	if !q.To.IsZero() {
+		return q.To.UnixMilli()
+	}
+	return time.Now().UnixMilli()
+}
+
+// fillBuckets 는 집계 결과의 빈 버킷을 채운다.
+//
+// 입력 `bucketed` 는 값이 있는 버킷만 시각 오름차순으로 담고 있다(bucketAggregate 규약).
+// 여기서는 요청 구간 전체의 버킷 격자를 만들고, 비어 있는 자리에 전략에 따라 값을 넣는다.
+//
+// 규칙:
+//   - fill 이 빈 문자열이면 입력을 그대로 돌려준다(종전 동작 — 빈 버킷 생략).
+//   - 버킷 격자는 집계와 **같은 epoch-zero 정렬**을 쓴다. 두 곳이 다른 경계를 쓰면
+//     채운 버킷이 실제 버킷 사이에 끼어 시각이 어긋난다.
+//   - `previous` 는 첫 값이 나오기 전 구간을 채우지 않는다 — 이어 쓸 직전값이 없다.
+//     "0 으로 시작" 은 그 자체로 다른 뜻이므로 zero 전략이 담당한다.
+//   - `previous` 의 사용 기간 제한 판단은 fillpolicy 가 소유한다(소스 공통 정본).
+func fillBuckets(
+	bucketed []chartQueryEntry,
+	startMs, endMs, intervalMs int64,
+	fill string,
+	prev fillpolicy.Previous,
+) []chartQueryEntry {
+	if fill == dto.SeriesFillNone || intervalMs <= 0 || endMs <= startMs {
+		return bucketed
+	}
+
+	byStart := make(map[int64]chartQueryEntry, len(bucketed))
+	for _, e := range bucketed {
+		byStart[e.Timestamp] = e
+	}
+
+	firstStart := (startMs / intervalMs) * intervalMs
+	lastStart := ((endMs - 1) / intervalMs) * intervalMs
+
+	out := make([]chartQueryEntry, 0, len(bucketed))
+	var prevValue float64
+	havePrev := false
+	var run int64 // 직전값을 연속으로 이어 쓴 횟수(1부터).
+
+	for start := firstStart; start <= lastStart; start += intervalMs {
+		if e, ok := byStart[start]; ok {
+			out = append(out, e)
+			if f, isNum := toFloat64(e.Value); isNum {
+				prevValue, havePrev, run = f, true, 0
+			}
+			continue
+		}
+		switch fill {
+		case dto.SeriesFillZero:
+			out = append(out, chartQueryEntry{Timestamp: start, Value: float64(0)})
+		case dto.SeriesFillPrevious:
+			if !havePrev {
+				// 이어 쓸 값이 아직 없다. 구간 앞머리는 비워 둔다.
+				continue
+			}
+			run++
+			if v, ok := prev.FillAt(prevValue, run, intervalMs); ok {
+				out = append(out, chartQueryEntry{Timestamp: start, Value: v})
+			} else {
+				out = append(out, chartQueryEntry{Timestamp: start, Value: nil})
+			}
+		default: // dto.SeriesFillNull
+			out = append(out, chartQueryEntry{Timestamp: start, Value: nil})
+		}
 	}
 	return out
 }
@@ -722,13 +919,13 @@ func encodeTagsForSort(tags map[string]string) string {
 //   - Key:          사용자 관점 key (예: "indoor:1:room_temp")
 //   - Registration: "manual" (yaml 정의) 또는 "auto" (런타임 자동 등록)
 //   - DataType:     6종 enum 중 하나 ("int", "float", "string", "boolean", "bytes", "json")
-//   - MetricType:   free string (기본 "unknown")
+//   - Field:   free string (기본 "unknown")
 //   - Tags:         태그 맵. 빈 맵이라도 항상 포함되며 null 이 되지 않는다 (M9).
 type StoreKeyResponse struct {
 	Key          string            `json:"key"`
 	Registration string            `json:"registration"`
 	DataType     string            `json:"data_type"`
-	MetricType   string            `json:"metric_type"`
+	Field        string            `json:"field"`
 	Tags         map[string]string `json:"tags"`
 }
 
@@ -741,21 +938,21 @@ type StoreKeysListResponse struct {
 }
 
 // @spec SPEC-STORE-003 v0.3.0
-// keyFilter 는 GET /store/{name}/keys 의 다축 필터 (tag, data_type, metric_type,
+// keyFilter 는 GET /store/{name}/keys 의 다축 필터 (tag, data_type, field,
 // registration) 의 AND 결합을 표현한다.
 //
 // 필드별 빈 문자열 시맨틱 (plan §7):
-//   - DataType, MetricType, Registration 이 빈 문자열이면 해당 축은 통과 (no-op).
+//   - DataType, Field, Registration 이 빈 문자열이면 해당 축은 통과 (no-op).
 //   - 비어있지 않으면 정확히 일치해야 한다 (case-sensitive).
 //
-// `?metric_type=` (URL 파라미터가 존재하지만 값이 빈 문자열) 의 경우, 본 구조체는
+// `?field=` (URL 파라미터가 존재하지만 값이 빈 문자열) 의 경우, 본 구조체는
 // 빈 문자열을 "필터 미적용" 으로 처리한다. 이는 plan §7 의 명시적 design choice 로,
-// 실제 staticKeys 의 MetricType 은 항상 normalize 되어 빈 문자열이 될 수 없으므로
-// 동작상 차이가 없다 (auto: "unknown", manual yaml: validateMetricType 으로 보정).
+// 실제 staticKeys 의 Field 은 항상 normalize 되어 빈 문자열이 될 수 없으므로
+// 동작상 차이가 없다 (auto: "unknown", manual yaml: validateField 으로 보정).
 type keyFilter struct {
 	Tags         []tagFilter // 다중 ?tag= AND 결합
 	DataType     string      // "" = no filter
-	MetricType   string      // "" = no filter
+	Field        string      // "" = no filter
 	Registration string      // "" = no filter; else "manual" | "auto"
 }
 
@@ -767,7 +964,7 @@ func (f keyFilter) matches(meta system.StaticKeyMeta) bool {
 	if f.DataType != "" && string(meta.DataType) != f.DataType {
 		return false
 	}
-	if f.MetricType != "" && meta.MetricType != f.MetricType {
+	if f.Field != "" && meta.Field != f.Field {
 		return false
 	}
 	if f.Registration != "" && string(meta.Source) != f.Registration {
@@ -782,12 +979,12 @@ func (f keyFilter) matches(meta system.StaticKeyMeta) bool {
 	return true
 }
 
-// parseKeyFilter 는 ?tag= ?data_type= ?metric_type= ?registration= 쿼리 파라미터를
+// parseKeyFilter 는 ?tag= ?data_type= ?field= ?registration= 쿼리 파라미터를
 // keyFilter 로 변환한다. ?tag= 형식이 잘못되면 (콜론 없음) 400 에러를 반환한다.
 //
 // 다중 값 처리 규칙:
 //   - ?tag= 는 다중 허용 (AND 결합) — parseTagFilters 위임.
-//   - ?data_type=, ?metric_type=, ?registration= 는 동일 이름이 여러 번 와도
+//   - ?data_type=, ?field=, ?registration= 는 동일 이름이 여러 번 와도
 //     첫 번째 값만 사용한다 (단일 axis 필터). 이는 net/url 의 default behavior 와 일치한다.
 //
 // @spec SPEC-STORE-003 v0.3.0
@@ -801,10 +998,10 @@ func parseKeyFilter(ctx api.Context) (keyFilter, error) {
 	}
 	f.Tags = tags
 
-	// ?data_type=, ?metric_type=, ?registration= 단일 axis (첫 값만).
+	// ?data_type=, ?field=, ?registration= 단일 axis (첫 값만).
 	// ctx.Query 는 첫 번째 값을 반환하므로 그대로 사용한다.
 	f.DataType = ctx.Query("data_type")
-	f.MetricType = ctx.Query("metric_type")
+	f.Field = ctx.Query("field")
 	f.Registration = ctx.Query("registration")
 	return f, nil
 }
@@ -814,17 +1011,17 @@ func parseKeyFilter(ctx api.Context) (keyFilter, error) {
 //	GET /store/{agent_name}/keys
 //	GET /store/{agent_name}/keys?tag=room:1&tag=type:temperature
 //	GET /store/{agent_name}/keys?data_type=float
-//	GET /store/{agent_name}/keys?metric_type=temperature
+//	GET /store/{agent_name}/keys?field=temperature
 //	GET /store/{agent_name}/keys?registration=manual
-//	GET /store/{agent_name}/keys?registration=manual&metric_type=temperature&tag=room:1   (AND)
+//	GET /store/{agent_name}/keys?registration=manual&field=temperature&tag=room:1   (AND)
 //
 // @spec SPEC-STORE-003 v0.3.0 (BREAKING — M9)
 //   - 응답 형식이 v0.2.0 의 `{count, keys: []string, tags: map}` 에서
-//     `{count, keys: [{key, registration, data_type, metric_type, tags}, ...]}` 로 변경되었다.
+//     `{count, keys: [{key, registration, data_type, field, tags}, ...]}` 로 변경되었다.
 //   - 키 정렬: 항상 Key 오름차순 (알파벳).
 //   - 태그 필터 (M4): `?tag=key:value` 다중 허용 (AND), 잘못된 형식은 HTTP 400.
-//   - 신규 필터: `?data_type=`, `?metric_type=`, `?registration=` (각 단일 값, AND 결합).
-//   - 자동 등록 키: registration="auto", metric_type 보통 "unknown", tags={}.
+//   - 신규 필터: `?data_type=`, `?field=`, `?registration=` (각 단일 값, AND 결합).
+//   - 자동 등록 키: registration="auto", field 보통 "unknown", tags={}.
 //   - tags 필드는 항상 객체 (빈 맵 `{}` 포함, null 아님).
 //
 // 동작 흐름:
@@ -884,7 +1081,7 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 	// 필터 적용 + 시리즈 행 빌드 (E7/AC-13).
 	// 레지스트리 키는 시리즈 인코딩(SetWithMeta 경로) 또는 bare key(yaml 정적/plain Set)이다.
 	// DecodeSeriesKey 로 디코드하여 행의 key 를 사용자 관점 key 로 복원한다. 디코드 실패(bare)
-	// 시 raw 를 그대로 key 로 쓴다(레거시 호환). metric_type/tags 는 메타에 저장된 라벨을 쓰되,
+	// 시 raw 를 그대로 key 로 쓴다(레거시 호환). field/tags 는 메타에 저장된 라벨을 쓰되,
 	// 디코드 성공 시 시리즈 식별자와 일치한다.
 	objects := make([]StoreKeyResponse, 0, len(snapshot))
 	for regKey, meta := range snapshot {
@@ -900,7 +1097,7 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 		}
 		userKey := regKey
 		if sid, derr := system.DecodeSeriesKey(regKey); derr == nil {
-			userKey = sid.Key
+			userKey = sid.Measurement
 		}
 		// Tags 는 항상 non-nil 보장 (M9: "빈 tags 객체로 표시").
 		// snapshot 이 깊은 복사를 보장하므로 그대로 사용해도 안전하지만, nil 가능성을
@@ -913,20 +1110,20 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 			Key:          userKey,
 			Registration: string(meta.Source),
 			DataType:     string(meta.DataType),
-			MetricType:   meta.MetricType,
+			Field:        meta.Field,
 			Tags:         tags,
 		})
 	}
 
 	// @spec SPEC-STORE-004
-	// 결정적 정렬: key → metric_type → tags 인코딩 순. 같은 key 의 여러 시리즈 행이
+	// 결정적 정렬: key → field → tags 인코딩 순. 같은 key 의 여러 시리즈 행이
 	// 안정적 순서로 노출된다(M9 안정성 + 시리즈 다중 행).
 	sort.Slice(objects, func(i, j int) bool {
 		if objects[i].Key != objects[j].Key {
 			return objects[i].Key < objects[j].Key
 		}
-		if objects[i].MetricType != objects[j].MetricType {
-			return objects[i].MetricType < objects[j].MetricType
+		if objects[i].Field != objects[j].Field {
+			return objects[i].Field < objects[j].Field
 		}
 		return encodeTagsForSort(objects[i].Tags) < encodeTagsForSort(objects[j].Tags)
 	})
@@ -941,33 +1138,33 @@ func (h *StoreQueryHandler) ListKeys(ctx api.Context) error {
 // setKeyMetaRequest 는 PUT /store/{name}/keys/{key}/meta 요청 바디이다.
 //
 // 필드:
-//   - MetricType: 설정할 metric_type (생략/빈 문자열 → "unknown" 으로 normalize).
+//   - Field: 설정할 field (생략/빈 문자열 → "unknown" 으로 normalize).
 //   - Tags:       설정할 태그 맵 전체(replace 시맨틱). 생략하면 빈 맵으로 간주되어 기존 태그가 비워진다.
 //
 // 주의: Tags 는 부분 갱신(merge)이 아니라 전체 교체(replace)이다. 일부만 바꾸려면
 // 클라이언트가 기존 태그를 포함한 전체 맵을 보내야 한다 (단순하고 예측 가능한 시맨틱).
 type setKeyMetaRequest struct {
-	MetricType string            `json:"metric_type"`
-	Tags       map[string]string `json:"tags"`
+	Field string            `json:"field"`
+	Tags  map[string]string `json:"tags"`
 }
 
 // @spec SPEC-STORE-003 v0.4.0
-// SetKeyMeta 는 임의 엔트리(정적 또는 동적)의 metric_type 과 tags 를 설정한다.
+// SetKeyMeta 는 임의 엔트리(정적 또는 동적)의 field 과 tags 를 설정한다.
 //
 //	PUT /store/{agent_name}/keys/{key}/meta
-//	body: {"metric_type": "temperature", "tags": {"room": "1"}}
+//	body: {"field": "temperature", "tags": {"room": "1"}}
 //
 // 동작:
-//   - 정적 키: DataType/Source 보존, metric_type/tags 만 갱신.
-//   - 동적 키: data_type=string/Source=auto 보존, metric_type/tags 갱신.
+//   - 정적 키: DataType/Source 보존, field/tags 만 갱신.
+//   - 동적 키: data_type=string/Source=auto 보존, field/tags 갱신.
 //   - 미등록 키: 동적 string 키로 신규 등록 후 메타 적용(사전 타입/태그 지정).
 //
 // 검증 실패 매핑:
-//   - metric_type 정규식 위반 → 400 (system.ErrInvalidMetricType)
+//   - field 정규식 위반 → 400 (system.ErrInvalidField)
 //   - tag key 정규식 위반     → 400 (system.ErrInvalidTagKey)
 //
 // 키 경로 파라미터는 url.PathUnescape 로 디코딩되어 콜론(%3A) 등 특수문자를 안전히 처리한다.
-// 응답: 200 OK 와 함께 적용된 {key, metric_type, tags} 를 반환한다.
+// 응답: 200 OK 와 함께 적용된 {key, field, tags} 를 반환한다.
 func (h *StoreQueryHandler) SetKeyMeta(ctx api.Context) error {
 	agentName := ctx.Param("agent_name")
 	if agentName == "" {
@@ -1002,27 +1199,27 @@ func (h *StoreQueryHandler) SetKeyMeta(ctx api.Context) error {
 			WithDetails(map[string]string{"error": "not_a_store_agent"})
 	}
 
-	if err := setter.SetKeyMeta(decodedKey, req.MetricType, req.Tags); err != nil {
+	if err := setter.SetKeyMeta(decodedKey, req.Field, req.Tags); err != nil {
 		// 검증 에러는 400 으로 매핑한다 (그 외는 그대로 메시지 노출).
-		if errors.Is(err, system.ErrInvalidMetricType) || errors.Is(err, system.ErrInvalidTagKey) {
+		if errors.Is(err, system.ErrInvalidField) || errors.Is(err, system.ErrInvalidTagKey) {
 			return api.ErrBadRequest.WithMessage(err.Error())
 		}
 		return api.ErrBadRequest.WithMessage(err.Error())
 	}
 
-	// 응답: 적용 결과(normalize 된 metric_type/tags) 를 일관되게 반환한다.
-	metricType := req.MetricType
-	if metricType == "" {
-		metricType = system.MetricTypeUnknown
+	// 응답: 적용 결과(normalize 된 field/tags) 를 일관되게 반환한다.
+	field := req.Field
+	if field == "" {
+		field = system.FieldUnknown
 	}
 	tags := req.Tags
 	if tags == nil {
 		tags = map[string]string{}
 	}
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(map[string]any{
-		"key":         decodedKey,
-		"metric_type": metricType,
-		"tags":        tags,
+		"key":   decodedKey,
+		"field": field,
+		"tags":  tags,
 	}))
 }
 
@@ -1125,11 +1322,11 @@ func findAgentByName(lookup AgentLookup, name string) agent.Agent {
 // ResetKey 는 단일 키 reset 을 처리한다.
 //
 //	DELETE /store/{agent_name}/keys/{key}?namespace=default
-//	DELETE /store/{agent_name}/keys/{key}?metric_type=temperature&tag=room:1   (단일 시리즈, E8)
+//	DELETE /store/{agent_name}/keys/{key}?field=temperature&tag=room:1   (단일 시리즈, E8)
 //
 // 시리즈 모델(M4) — 에이전트가 storeSeriesResetter 를 구현하면 시리즈 단위 reset 을 수행한다:
-//   - ?metric_type= / ?tag=key:value 식별자로 대상 시리즈를 좁힌다.
-//   - 식별자(metric/tags) 가 모두 생략되면 **해당 key 의 모든 시리즈**가 대상이다(식별자
+//   - ?field= / ?tag=key:value 식별자로 대상 시리즈를 좁힌다.
+//   - 식별자(field/tags) 가 모두 생략되면 **해당 key 의 모든 시리즈**가 대상이다(식별자
 //     누락 정책 — 사용자 직관 "이 키 삭제" = 그 키의 전 시리즈, ResetSeries 주석 참조).
 //   - 시리즈별 정책: 정적 → ClearHistory, 동적 → DeleteEntry. 응답은 카운트
 //     {key, history_cleared, entries_deleted} 이다(다중 시리즈 가능하므로 단일 action 대신 카운트).
@@ -1290,7 +1487,7 @@ type renameKeyRequest struct {
 // 구현을 발견했을 때 호출한다.
 //
 // 식별자 파싱:
-//   - ?metric_type= : 단일 값. 빈 문자열이면 metric 축 필터 미적용.
+//   - ?field= : 단일 값. 빈 문자열이면 field 축 필터 미적용.
 //   - ?tag=key:value : 다중 허용(AND). 잘못된 형식(콜론 없음)은 400.
 //   - 둘 다 생략 시 해당 key 의 모든 시리즈가 대상(식별자 누락 정책).
 //
@@ -1301,7 +1498,7 @@ func (h *StoreQueryHandler) resetSeries(
 	resetter storeSeriesResetter,
 	namespace, key string,
 ) error {
-	metricFilter := ctx.Query("metric_type")
+	fieldFilter := ctx.Query("field")
 
 	tagFilters, perr := parseTagFilters(ctx.QueryValues("tag"))
 	if perr != nil {
@@ -1315,7 +1512,7 @@ func (h *StoreQueryHandler) resetSeries(
 		}
 	}
 
-	historyCleared, entriesDeleted, err := resetter.ResetSeries(ctx.Context(), namespace, key, metricFilter, tagsFilter)
+	historyCleared, entriesDeleted, err := resetter.ResetSeries(ctx.Context(), namespace, key, fieldFilter, tagsFilter)
 	if err != nil {
 		return api.MapDomainError(err)
 	}

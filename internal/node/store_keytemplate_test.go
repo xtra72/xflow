@@ -79,9 +79,9 @@ func TestResolveKeyTemplate_MixedSyntax(t *testing.T) {
 	msg := message.New()
 	msg.Metadata().Set("agent", "century")
 	msg.Payload().Set("device_id", "0x3B")
-	msg.Payload().Set("metric", "temp")
+	msg.Payload().Set("field", "temp")
 
-	got, err := resolveKeyTemplate("{$.metadata.agent}/{device_id}/{metric}", msg)
+	got, err := resolveKeyTemplate("{$.metadata.agent}/{device_id}/{field}", msg)
 	if err != nil {
 		t.Fatalf("resolveKeyTemplate: %v", err)
 	}

@@ -17,7 +17,7 @@ import (
 // 배경:
 //   UserStoreAgent.Stop → Start 경로는 내부 StoreAgent(a.inner) 를 새 인스턴스로
 //   교체한다. NodeStoreAdapter 가 생성 시점의 Store 를 스냅샷으로 잡고 있으면,
-//   플로우 노드(store-read/store-write)가 들고 있던 어댑터는 정지된 옛 inner 의
+//   플로우 노드(store-read/storage-write)가 들고 있던 어댑터는 정지된 옛 inner 의
 //   네임스페이스 뷰를 계속 가리켜 쓰기/읽기가 모두 잘못된 저장소를 향하게 된다.
 //
 // 본 테스트는 그 회귀를 재현·방지한다. Adapter 는 매 호출마다 resolver 를

@@ -466,7 +466,7 @@ FBP 런타임 엔진의 핵심 구현이다. 노드 그래프를 실행하고, �
 
 MODBUS 데이터 타입 변환 공유 패키지이다. MODBUS 프로토콜에서 사용하는 16비트 레지스터 값과 Go 네이티브 타입 간의 변환 유틸리티를 제공한다. `internal/agent/modbus/`와 `internal/agent/modbusserver/` 패키지에서 공통으로 사용한다.
 
-- **types.go**: MODBUS 데이터 타입 변환 유틸리티. uint16, int16, float32, uint32, int32 등 MODBUS 레지스터 값과 Go 타입 간 양방향 변환 함수 제공. 빅 엔디안/리틀 엔디안 바이트 오더 지원.
+- **types.go**: MODBUS 데이터 타입 변환 유틸리티. uint16, int16, float32, uint32, int32 등 MODBUS 레지스터 값과 Go 타입 간 양방향 변환 함수 제공. raw 패스스루 + 완전한 4순열 바이트순서(ABCD/BADC/CDAB/DCBA) 지원, 기존 빅/리틀 엔디안은 별칭으로 보존(SPEC-MODBUS-006).
 - **types_test.go**: 타입 변환 테스트. 경계값, 엔디안 변환, 부호 있는/없는 정수, 부동소수점 변환 등 포괄적 테스트 (99.4% 커버리지).
 
 #### internal/agent/
@@ -500,10 +500,11 @@ Agent 시스템의 핵심 구현이다. Agent는 Transport Interface(통신 인�
 - **http/**: HTTP Client/Server Agent - 폴링/웹훅 수신, 요청/응답 관리
 - **websocket/**: WebSocket Client/Server Agent - gorilla/websocket 기반, 자동 재연결
 - **grpc/**: gRPC Client/Server Agent - protobuf 기반, 스트리밍
-- **modbus/ (SPEC-MODBUS-001 구현 완료)**: MODBUS/TCP Client Agent - Go 표준 라이브러리(net) 기반, FC01-FC06/FC15-FC16 기능 코드 지원. 14개 파일(소스 9 + 테스트 5)로 구성. MODBUSAgent(Agent 인터페이스), 디바이스 관리, 레지스터 캐시(폴링 최적화), 프로토콜 인코딩/디코딩, 쓰기 명령 처리. internal/modbus/ 공유 패키지를 활용한 데이터 타입 변환 지원.
+- **modbus/ (SPEC-MODBUS-001/003/006 구현 완료)**: MODBUS Client Agent (TCP/RTU) - TCP 는 Go 표준 라이브러리(net), RTU 는 go.bug.st/serial(century 재사용) 기반, FC01-FC06/FC15-FC16 기능 코드 지원. MODBUSAgent(Agent 인터페이스), 디바이스 관리, 레지스터 캐시(폴링 최적화), ADU-중립 프로토콜 인코딩/디코딩, 쓰기 명령 처리. SPEC-MODBUS-006 확장: `transport: tcp|rtu` 선택(미지정 시 tcp, 하위 호환), in-house RTU 마스터(CRC-16 poly 0xA001, `transport_rtu.go`/`rtu_crc.go`/`rtu_adu.go`), 레지스터 그룹별 독립 폴링 주기, raw + 4순열 바이트순서, 플로우 노드 런타임 재구성(`set_config.go`). type id `modbus-tcp` 보존, 신규 외부 의존성 0. internal/modbus/ 공유 패키지를 활용한 데이터 타입 변환 지원.
 - **socket/ (SPEC-SOCKET-001 구현 완료)**: TCP/UDP 소켓 통신 에이전트. Go 표준 라이브러리(net) 기반. TCP Server/Client, UDP Server/Client 4종 에이전트, net.Conn 기반 Framer로 4종 프레이밍(raw/newline/length_prefix/fixed_size) 지원. ConnectionManager를 통한 TCP 연결 추적/IP 차단. 자동 재연결.
 - **serial/ (SPEC-SERIAL-001 구현 완료)**: 범용 시리얼 포트(RS-232/RS-485) 에이전트. go.bug.st/serial 라이브러리 기반. io.ReadWriteCloser 기반 SerialFramer로 4종 프레이밍 지원. USB 디바이스 분리 감지(ENXIO/EIO). BridgeNode를 통한 Input/Output/InputOutput 방향별 공유 접근. 14개 파일(소스 8 + 테스트 6), 4,120줄, 94.3% 커버리지.
 - **modbusserver/ (SPEC-MODBUS-002 구현 완료)**: MODBUS/TCP Server Agent - Go 표준 라이브러리(net) 기반, FC01-FC06/FC15-FC16 기능 코드 지원. 14개 파일(소스 8 + 테스트 6)로 구성. MODBUSServerAgent(Agent 인터페이스), TCP 리스너 관리, 레지스터 맵 관리, 요청 핸들러, 요청/응답 파싱. 클라이언트 에이전트와 쌍으로 동작하여 MODBUS/TCP 양방향 통신 지원.
+- **chirpstack/ (SPEC-CHIRPSTACK-001 구현 완료)**: ChirpStack LoRaWAN 에이전트(`chirpstack`). ChirpStack LoRaWAN Network Server의 MQTT 업링크(토픽 `application/#`)를 수신 — `system/mqtt_agent.go` 트랜스포트 재사용(Eclipse Paho, stopped 가드). 업링크 JSON(`deviceInfo`/`object`/`rxInfo`/`time`)을 디코드해 `object` 필드를 **측정값 1개당 메시지 1개**(`type="event"`, top-level `timestamp`=업링크 `time`, `payload={value}`, `metadata.measurement`/`device`/`tags` verbatim)로 팬아웃하여 기존 Lua `script`+`split` 파이프라인을 대체하고 다운스트림 read path(`$.payload.value`/`$.metadata.*`/`$.timestamp`)를 보존한다. `devEui`→UUID v4 디바이스 자동 생성(`ResolveDeviceID`) + `deviceName`/tags 지속화(`DeviceMetadata.Labels`, 에이전트는 `unit_id`만 방출하고 노드 device 그룹 승격으로 식별) + 선택적 comm-state(`device_state.<trigger>`, online/rssi/snr/last_seen를 device_state 스트림에 fold, staleness watchdog). 7개 소스(`agent.go`, `config.go`, `decode.go`, `message.go`, `provider.go`, `watchdog.go`, `registration.go`) + 테스트 + `testdata/packet.json`, 89.4% 커버리지. 짝을 이루는 노드 `internal/node/chirpstack.go`(`chirpstack-in` SourceNode, store/influx 직결). Wiring 3곳: `cmd/xflowd/main.go`, `internal/node/registry.go`, `pkg/flow/validate.go`(`agentRefRequiredTypes`).
 
 **시스템 Agent (내장 서비스):**
 - **system/ (Store Agent, SPEC-STORE-001 구현 완료)**: 키-값 저장소 시스템 에이전트. 8개 소스 + 7개 테스트 파일로 구성. Store 인터페이스(7개 메서드), StoreAgent(BaseLifecycle 임베딩), VolatileStore(sync.Map 인메모리), PersistentStore(Write-Through 캐시 + StoreRepository), NamespacedStore("{namespace}:{key}" 데코레이터), ttlManager(lazy + 백그라운드 이중 만료), BridgeHandler(메시지 프로토콜 디스패처). 106개 테스트, 90.9% 커버리지.
@@ -527,12 +528,21 @@ Agent 시스템의 핵심 구현이다. Agent는 Transport Interface(통신 인�
   - `protocol.go`: NASAProtocol 인코딩/디코딩
   - `register.go`: 에이전트 타입 등록
   - `transport.go`: NASATransport 인터페이스 (Serial/TCP)
+- **xsfm/ (SPEC-XSFM-001 구현 완료)**: 지하철 역사 설비 MQTT 관리 에이전트(`xsfm`). 지하철 역사 시설물 관리 비전의 첫 디바이스. 16개 소스 + 12개 테스트로 구성, 85.1% 커버리지. 듀얼 트랜스포트(`transport_mode`: direct는 브로커 sub/pub 직접 소유, port는 외부 mqtt-in/out 노드가 I/O 담당 — 상태 입력 포트 · 제어 출력 포트 분리)를 I/O 경계(CommandSink + 상태 ingress) 추상화로 분리. 개별 2축 제어(`set_power`/`set_fan_speed` 1/2/3/`set_multiple`, 전원 OFF 게이트) + **응답 대기**(디바이스별 pending-command 레지스트리 + 에코 상관, 타임아웃 시 `ErrControlTimeout`, 동시성 안전). 그룹 + 역사(station) + 호선(line) 셀렉터 팬아웃(우선순위 device_id>station>line>group_id, best-effort ok/error/timeout 집계). 역사 레지스트리(station→line SSOT, `device_metadata` 패턴) + 디바이스 위치 계층(station/place/index). 상태 모니터링(observed 기반 방출, 오프라인 감지 LWT+타임아웃, `request_state`), 제어/그룹 감사(`remote_audit_repository`) + 로스터 영속화(device_id 키잉, v0.2.0 하위호환).
+  - 주요 파일: `agent.go`, `transport.go`(듀얼 트랜스포트), `config.go`, `control.go`+`pending.go`(개별 제어·응답 대기), `group.go`(셀렉터 팬아웃), `station_registry.go`(역사 레지스트리), `mapping.go`, `monitor.go`+`status.go`(상태 모니터링), `audit.go`, `persist.go`, `device.go`, `provider.go`, `errors.go`, `register.go`
+  - 짝을 이루는 통합: `internal/node/xsfm.go`(플로우 노드 `xsfm-status`/`xsfm-control`, 상태-입력/제어-출력 포트 분리), `internal/device/adapter/xsfm.go`(디바이스 어댑터 `CommandSpec`), `internal/storage/station_registry_repository.go`(역사 레지스트리 영속화), `cmd/xflowd/main.go` 와이어링, `internal/api/service/agent_adapter.go`(API 어댑터), 웹 설정 스키마(`agentSchemas.ts`/`agentTypeMeta.ts`)
+  - i18n는 코드베이스 관례(에이전트 설정 필드 라벨을 `agentSchemas.ts`/`agentTypeMeta.ts`에 하드코딩)를 따름. 라이브 LWT 토픽 구독 와이어링은 config 기반 확정으로 이연(디바이스 매뉴얼 미확보, SPEC 가정 A-1)
+  - **그룹 1급 개념 확장 (SPEC-XSFM-GROUP-001 구현 완료, 커버리지 88.8%)**: 그룹을 이름·타입·멤버를 가진 1급 엔티티로 승격하는 **비침습 레이어 추가**. 신규 `group_registry.go`(`Group{ID,Name,Type,Ref,Members}`, 접두사 id `station:`/`line:`/`custom:`, 자체 RWMutex + write-through 영속) + `group_membership.go`(에이전트-레벨 멤버십·명령 배선 — `agent.go` diff 최소화). 다대다 멤버십(`Device.GroupID` 는 대표 primary 그룹으로 유지 → 단일 `group_id` 태그 방출 무회귀), 조회 시 로스터 대조 필터(유령 멤버 자동 무시). 커스텀 그룹 CRUD(`add_group`/`remove_group`/`set_group`/`list_groups`), 기본 그룹(station/line)은 `StationRegistry` 에서 **조회 시 순수 파생** — `station_registry.go` 완전 불변. 그룹 셀렉터 일괄 제어는 `handleSelectorControl`(`group.go`) 접두사 분기 후 기존 `fanOutControl` 무변경 재사용(`control.go` 불변). 프런트: `useGroups` 훅 + `XsfmGroupsTab`(그룹 탭) + `FacilityGroupPanel`(`facility-group` 타입, 기존 `FacilityStationPanel` 보존한 가산형).
+  - **라인 1급화 + 코드 기반 주소 + 디바이스 네이밍 (SPEC-XSFM-LINE-001 구현 완료, 커버리지 89.1%)**: 역사의 파생 속성이던 라인을 코드·이름·정렬을 가진 1급 엔티티로 승격하는 **비침습 레이어 추가**(GROUP-001 레지스트리 패턴 재현). 신규 `line_registry.go`(`Line{Code,Name,Order}` + `LineRegistry` 자체 RWMutex + write-through atomic 영속, `add_line`/`remove_line`/`list_lines`, 참조 중 라인 제거 시 `ErrLineInUse`) + `code.go`(통일 코드 포맷 `^[a-z0-9][a-z0-9_-]*$` 검증 `validCode` + slugify: NFC 정규화[golang.org/x/text/unicode/norm 직접 의존] + 한글 Revised Romanization + 충돌 접미 번호). **멤버 미저장** — `line:<code>` 멤버는 `DevicesByLine` 파생(station→line SSOT `ResolveLine` 보존). 커스텀 그룹 id `custom:<name>`→`custom:<code>`(`Group.Code` 추가, name 표시 전용), 제어 셀렉터 `station:<code>`/`line:<code>`/`custom:<code>` 통일. `composeName` 4-세그먼트 `{line}:{station}:{place}:{index:03d}`(라인 미해석 시 라인 세그먼트 생략 3-세그먼트 하위호환, sticky 이름 보존). 로드 마이그레이션(1회성·비파괴·멱등): `station.Line`→Line ensure-create, 레거시 `custom:<name>`→`custom:<slug>`. 노드 레이어 pass-through 무변경. 프런트: `useLine` 훅 + `XsfmLinesTab`(라인 관리 탭) + 그룹 코드 입력 + `AgentDetailPanel` 라인 탭. 분기(as-implemented, spec.md §7): `add_group{code}` optional / station 코드 포맷 미강제 / 라인 코드 slugify 미적용 / 디바이스 이름 프런트 무변경.
+  - **수신 forward 옵션 + 상태 방출 모드 (SPEC-XSFM-AGENT-IO-001 구현 완료, 커버리지 89.3%)**: 기존 on-change 단일 방출 모델에 **비침습 가산 방출 레이어**를 추가. 신규 `emit_mode.go`(`emitStateReceived` — `ingestState`(direct·port 공유 시임) 단일 지점의 mode-agnostic 수신 파싱-상태 forward 탭 `device_state_received`; `startStateEmitter`/`emitStateSnapshot` — 주기 전체 디바이스 풀 스냅샷 `device_state_snapshot` `{timestamp,devices:[...]}` 단일 배열 메시지, `startOfflineMonitor` 미러·`monitorWG`/`stopCh` 공유·스냅샷-후-락해제). config.go 확장: `forward_received_to_node`(기본 off) + `state_emit_mode` enum `{event,interval,both}`(기본 event, 위반 시 `ErrInvalidStateEmitMode`) + `state_emit_interval`(기본 60s + `minStateEmitInterval` 하한 클램프·음수 거부). `ingestState` on-change 게이팅(interval 억제, `both`/`event` 방출)이되 `device_online`/`device_offline` 전이 이벤트는 비게이팅(항상 방출). 기본 config byte-identical 무회귀, MQTT 규약 불변(`msgCh` 방출 계층만). 프런트: `agentSchemas.ts` XSFM_FIELDS 3개 컨트롤(forward 토글·mode select·interval duration). 분기(as-implemented, spec.md §7): mode select raw enum 표시 / on-change 억제 단일 시임 복합 조건 / snapshot 단일 배열 shape / `Stop` 무변경(offline monitor 자원 공유).
+  - **이름 기반 제어 셀렉터 (SPEC-XSFM-NAMESEL-001 핵심 구현 완료 M1~M3, 신규 함수 커버리지 100%)**: 사람이 읽는 이름(`device_name`/`group_name`)으로 제어 대상을 지정하는 **비침습 가산 셀렉터**. 신규 `name_resolver.go`(`DeviceByName`/`GroupByName` — trim 후 정확 일치·**대소문자 구분**[RD-6], ≥2 매치 → 신규 센티널 `ErrAmbiguousName` 무방출 거부[fail-closed, RD-2], 0 매치 → `ErrDeviceNotFound`/`ErrGroupNotFound`, 스냅샷-안전 락 미중첩). `GroupByName` 은 `allGroups()`(custom + 파생 station/line, `handleListGroups` 에서 추출·공유) **전 타입 매칭**(RD-5). `dispatchControl`/`handleSelectorControl` 우선순위 체인 확장 `device_id > device_name > station > line > group_id > group_name`(RD-4, 개별 먼저 — `handleIndividualControl` 추출로 device_id/device_name 공유), 해소 후 기존 개별/fan-out(`controlDevice`/`fanOutControl`) **무변경 재사용**. 신규 `processRequest`{`DeviceName`,`GroupName`} + `fillFromParams` 승격. 노드 `buildXsfmControlCommand` device_name/group_name top-level pass-through + `hasXsfmControlCommand` 라우팅 + `xsfmExtractDeviceName`/`GroupName`. `control.go` 불변, MQTT 규약 불변. 분기(as-implemented, spec.md §7): 우선순위 체인 분산 배치(`handleIndividualControl` 추출) / `allGroups()` 추출 공유 / `selectorRef{Type:"group_name"}` 집계 라벨 / 리졸버 신규 파일. **M4(프런트 이름 제어 UI)는 선택·저우선으로 이연** — 에이전트+노드 레벨에서 기능 완전 사용 가능("completed" 는 M1~M3 핵심에 한함).
 
 Agent 활용 예시:
 - MQTT Client Agent: 브로커 연결을 유지하며 여러 플로우에서 토픽별 구독 공유
 - MODBUS/TCP Client Agent: PLC/센서 등 MODBUS 슬레이브 디바이스에서 레지스터 값을 주기적으로 폴링하여 데이터 수집, 캐시 기반 최적화로 불필요한 통신 최소화
 - MODBUS/TCP Server Agent: xflow를 MODBUS/TCP 서버로 동작시켜 외부 SCADA/HMI 시스템이 xflow의 데이터를 MODBUS 레지스터로 읽기/쓰기 가능
 - Samsung NASA Agent: RS-485로 에어컨 시스템 연결, 프로토콜 정의에 따라 바이트 데이터를 파싱하여 온도/상태 데이터 공유
+- Subway Facilities Manager Agent: 지하철 역사 설비를 MQTT로 개별·그룹·역사(station)·호선(line) 단위 제어/모니터링, state echo 응답 대기로 제어 확인
 - Custom Protocol Agent: 사용자가 YAML로 정의한 산업 프로토콜(BACnet 등)을 Serial/TCP 인터페이스로 통신
 
 #### internal/api/
@@ -678,6 +688,71 @@ React 19 + TypeScript 기반 SPA(Single Page Application)이다.
 - `web/src/components/common/ConfirmDialog.tsx` (SPEC-STORE-003 v0.2.0): 재사용 가능한 확인 다이얼로그 컴포넌트 (default/danger variant). 키 초기화 등 destructive 액션 보호.
 - `web/src/pages/agents/PromoteToStaticDialog.tsx` (SPEC-STORE-003 v0.2.0): 동적 키 → 정적 키 변환 다이얼로그 (태그 입력 + Configure API 재사용, 별도 백엔드 변경 없음).
 - `web/src/services/api/keyTagExtractor.ts` (SPEC-WEB-005 v0.5.0): 키 문자열에서 태그 자동 추출 (InfluxDB 라인 프로토콜 + colon/slash 위치 기반 segments). 정적 태그 미존재 시 fallback.
+
+**지하철 시설물 관리 대시보드 패널** (SPEC-FACILITY-DASHBOARD-001, v0.1.0 — 프론트엔드 전용, 신규 백엔드 0):
+
+- `web/src/lib/facilityAggregation.ts`: 순수 집계 로직. 역사→호선(station→line) 해석, 상태 통계 카운트, 라인도(line-diagram) 순서 레이아웃, 미분류 기기 분리. SPEC-XSFM-001의 exec 표면(`list_devices`/`list_stations`)을 클라이언트에서 집계(신규 집계 엔드포인트 없음).
+- `web/src/hooks/useXsfmControl.ts`: 셀렉터 제어 훅(`set_power`/`set_fan_speed`/`set_multiple`을 device_id/station/line 셀렉터로 execAgent, `fanOutResponse` 타입) + `useFacilityRoster`(refresh 폴링).
+- `web/src/pages/dashboard/panels/FacilityLinePanel.tsx` · `FacilityStationPanel.tsx` · `FacilityDevicePanel.tsx`: 라인/역사/기기 3종 패널. 라인도 + 역사별 요약 + 통계 타일 + 일괄/개별 제어(응답 대기 피드백).
+- `web/src/pages/dashboard/panels/facilityShared.tsx`: 패널 공용 컴포넌트(`StatTiles`/`ControlResultView`/`BulkControl`).
+- 와이어링 4지점: `stores/uiStore.ts`(PanelType/기본값), `pages/dashboard/renderDashboardPanel.tsx`(패널 타입 분기), `pages/dashboard/AddPanelDialog.tsx`(패널 옵션 + facility 대상 선택 단계), `pages/dashboard/PanelSettingsDialog.tsx`(FacilitySection 설정). i18n는 `lib/i18n/{ko,en}.json`(`dashboard.facility.*`).
+
+**Trigger 노드 대시보드 패널 + 백엔드 live 타이머 재등록** (SPEC-TRIGGER-PANEL-001, v0.3.0 — 프런트 가산형 패널 + 백엔드 최소 침습 노드 확장):
+
+- `internal/node/trigger.go` (백엔드 M1): `TriggerNode.Configure` 에 live 타이머 재무장 추가. started-gate + `StateRunning` 게이트로 running 노드 live 재설정(`engine.ReconfigureNode`) 케이스에만 재등록 격리(초기 `Configure→Init` 이중 등록 없음). `rearmGen` generation 토큰으로 cancel→re-register 창의 stale in-flight 발화 drop(double-fire·orphan 없음), 빈 스케줄은 유효 IDLE, 신규 `payloadMu` 로 Configure-vs-fire payload race 보호. 기존 `cancelAllTimers`/`registerSchedules` 재사용(최소 침습). 신규 함수 커버리지 100%, `-race` 클린.
+- `web/src/pages/dashboard/panels/TriggerConfigPanel.tsx` (프런트 M2~M5): 대시보드에서 특정 trigger 노드를 타겟팅해 스케줄/페이로드를 편집하는 신규 패널(`trigger-config` PanelType). `useNodeTypeInstances('trigger')` 타겟 피커(running/stopped 배지), `TriggerScheduleEditor` 재사용 6타입 스케줄 CRUD, 패널-로컬 `payloadCatalog` + 인라인 스냅샷 주입(선택 시점 JSON deep-clone, 비소급). 노드 config(`schedules` 키)가 SSOT, 패널은 live 에디터.
+- `web/src/pages/dashboard/panels/triggerPanelUtils.ts`: 순수 유틸(카탈로그→inline 직렬화, `patchNodeConfigInDefinition` reactflow flat `node.data` 병합). dual-write: LIVE `nodeService.configureNode` + PERSIST `getFlow`→patch→`flowService.updateFlow`(patch-then-PUT). 404 persist-only + 통지, last-write-wins(지속 config vs hydration 기준선 비교) 통지.
+- 와이어링: `stores/uiStore.ts`(PanelType/기본값), `pages/dashboard/renderDashboardPanel.tsx`(디스패치), `pages/dashboard/AddPanelDialog.tsx`(trigger-node 피커 단계). i18n `lib/i18n/{ko,en}.json`. 기존 flow API/패널 시스템 재사용(신규 백엔드 엔드포인트·권한 계층 0).
+
+**설비 제어 예약 패널 + Trigger 스케줄 규칙 메타·발화 게이팅** (SPEC-TRIGGER-SCHED-001, v0.3.0 — 범용 `trigger-config` 패널과 공존하는 특화 패널 + 백엔드 규칙 메타 확장):
+
+- `internal/node/trigger.go` (백엔드 M1~M2): `TriggerSchedule` 에 `name`/`valid_from`/`valid_to`/`priority`/`enabled`(`*bool` 트라이스테이트, 부재→true 무회귀) 5필드 확장. `makeHandler` 가 generation-token 게이트 뒤에서 `enabled` ∧ `withinValidity`(서버 로컬·날짜 단위 양끝 inclusive, 빈 경계=무제한, 잘못된 날짜=무제한, `YYYY-MM-DD`+RFC3339) 로 발화 게이팅 — 비활성/기간외는 emit 스킵하되 타이머 유지(재개 가능). `buildMessage` 는 `rule_name`/`priority` 조건부 pass-through(기존 스케줄 byte-identical). 게이팅 스칼라는 entry 사전 캡처 → 발화 클로저에서 노드 lock 미획득(재귀 RLock 회피). 신규 함수 커버리지 100%, `-race` 클린.
+- `web/src/pages/dashboard/panels/facilitySchedule/FacilitySchedulePanel.tsx` (프런트 M3~M4): 신규 `facility-schedule` PanelType. 트리거 노드 `config.schedules` 를 규칙으로 표현하는 6컬럼 읽기 전용 테이블(SCHEDULE/TARGET/PLAN/ACTION/PRIO/STATE, priority 안정 정렬 + STATE 토글 + 행별 EDIT). `useNodeTypeInstances('trigger')` 노드 피커 재사용.
+- `web/src/pages/dashboard/panels/facilitySchedule/FacilityRuleModal.tsx` (프런트 M4~M5): 규칙 생성/편집 모달 — 이름/유효기간/PLAN(`TriggerScheduleEditor` 단일 원소 재사용, 타이밍 키 전용)/TARGET(`TargetPicker`)/ACTION(`ActionEditor`)/priority/enabled. `TargetPicker` 는 패널 config `agentId` 로 대상 열거(설정 시 `useStations`/`useGroups`/`useXsfmDevices` id 셀렉터, 미설정 시 free-form + 이름 셀렉터 폴백). `ActionEditor` 는 전원/풍량 2축만(모드 축 없음, `mode` 키 무방출), `fan_speed` 1~3 검증.
+- `web/src/pages/dashboard/panels/facilitySchedule/facilityScheduleUtils.ts`: 순수 로직(셀렉터/액션 build·parse·label·정렬·검증). dual-write 는 선행 `triggerPanelUtils`(`buildFullTriggerConfig`/`patchNodeConfigInDefinition`/`detectConflict`) 재사용 — configureNode(live)+updateFlow(persist), 404 persist-only, last-write-wins.
+- 와이어링: `stores/uiStore.ts`(PanelType/기본값), `pages/dashboard/renderDashboardPanel.tsx`(디스패치), `pages/dashboard/AddPanelDialog.tsx`(패널 옵션 + 대상 선택 단계). i18n `lib/i18n/{ko,en}.json`. 범용 `trigger-config` 패널·trigger 노드 무회귀, 신규 백엔드 엔드포인트/저장소 0.
+
+**히트맵 대시보드 패널 (MVP)** (SPEC-HEATMAP-PANEL-001, v1.0.0 — 프론트엔드 전용, 신규 백엔드 0):
+
+신규 PanelType `heatmap`. 공간 온도 센서를 store 태그 필터로 바인딩하고 센서별 수동 배치 좌표 `{x,y}` 기준 IDW(Inverse Distance Weighting) 보간으로 연속 온도장을 HTML Canvas 2D 에 픽셀 단위 렌더한다. 코드베이스 최초의 실제 2D drawing canvas. 신규 디렉토리 `web/src/pages/dashboard/panels/heatmap/` 아래 10개 파일(소스 5 + 테스트 5)로 구성.
+
+- `web/src/pages/dashboard/panels/heatmap/idw.ts`: IDW 보간(`interpolateIDW` — 0-거리 안전 분기) + 값→색 매핑(`mapValueToColor` — clamp + 색상표 정지점 보간) 순수 함수. DOM 의존 없음, 단위 테스트 필수 커버.
+- `web/src/pages/dashboard/panels/heatmap/heatmapConfig.ts`: `HeatmapPanelConfig` 타입(`store_source`/`sensor_positions`/`value_bounds`/`color_table`/`idw`) + `parseHeatmapConfig` 파서. 결측/손상 입력을 예외 없이 기본값으로 보정(하위호환, 불투명 JSON 영속).
+- `web/src/pages/dashboard/panels/heatmap/heatmapJoin.ts`: 센서 최신값(`aggregation:'last'`) + 배치 좌표 결합 순수 로직. 좌표 미배치 센서는 보간 입력 제외 + 설정 UI 노출용 별도 목록. (plan.md 는 `HeatmapPanel.tsx` 내부 배치였으나 단위 테스트 격리 위해 순수 모듈로 분리 — 유일 분기.)
+- `web/src/pages/dashboard/panels/heatmap/HeatmapCanvas.tsx`: `<canvas>` 2D 렌더. 저해상 IDW 격자 → `ImageData` → devicePixelRatio 업스케일 blit, `ResizeObserver` 리사이즈 재계산(선명도/성능).
+- `web/src/pages/dashboard/panels/heatmap/HeatmapPanel.tsx`: 패널 진입점. `LineChartPanel` isStore 분기 미러링으로 `useStoreChartData` 태그 바인딩 + 센서값·좌표 결합, 센서 0개·미배치·폴링 실패 graceful 처리.
+- 와이어링 4지점: `stores/uiStore.ts`(PanelType/기본값/기본 config), `pages/dashboard/renderDashboardPanel.tsx`(렌더 switch), `pages/dashboard/AddPanelDialog.tsx`(chart 카테고리 옵션), `pages/dashboard/PanelSettingsDialog.tsx`(heatmap 전용 설정 섹션 — 태그필터/센서 x·y/value_bounds/color_table/IDW power·resolution). i18n `lib/i18n/{ko,en}.json`. 신규 코드 커버리지 99%, LSP 0. 후속: floor-plan 배경+드래그 배치(002), 등고선(003).
+
+**히트맵 패널 도면 배경 + 드래그 배치 에디터** (SPEC-HEATMAP-PANEL-002, v1.0.0 — 프론트엔드 전용, 신규 백엔드 0, 신규 의존성 0):
+
+MVP 히트맵 패널 위에 floor-plan 이미지 배경 + 히트맵 합성 불투명도 + 시각적 드래그 앤 드롭 센서 배치 에디터를 **가산**(모든 신규 config 필드 additive, MVP 필드 의미 불변). `web/src/pages/dashboard/panels/heatmap/` 아래 신규 4개 소스(+ 동반 테스트).
+
+- `web/src/pages/dashboard/panels/heatmap/placement.ts`: 좌표 순수 로직(`toNormalized`/`fromNormalized`/`clamp01`/`applySnap`). 화면 픽셀 ↔ 정규화(0..1) 변환·그리드 스냅·[0,1] clamp. DOM 의존 없음, 커버리지 100%.
+- `web/src/pages/dashboard/panels/heatmap/imageAsset.ts`: 도면 이미지 처리 순수 로직(`readImageAsDataUrl` — FileReader data-URL 인코딩, `assertImageSizeUnderLimit` — 2MB 상한 경고/차단). FileReader 모킹 테스트.
+- `web/src/pages/dashboard/panels/heatmap/FloorPlanBackground.tsx`: data-URL 도면 배경 레이어(contain/cover fit). 히트맵 canvas 아래 별도 DOM 레이어 + CSS opacity 합성(방식 (a), `HeatmapCanvas.tsx` 불변). 미첨부 시 graceful.
+- `web/src/pages/dashboard/panels/heatmap/SensorPlacementOverlay.tsx`: 정규화 좌표 absolute 마커 오버레이(`FacilityLinePanel` 배치 패턴 참고). 포인터 드래그 배치 + 미배치 센서 배치-인 + 마커 제거, 결과를 `sensor_positions[key]` 로 쓰기.
+- 확장: `heatmapConfig.ts`(`floor_plan`/`heatmap_opacity`/`editor` 하위호환 additive 파싱), `HeatmapPanel.tsx`(배경→히트맵(opacity)→마커 오버레이 z-스택 + 편집 모드 — 편집은 패널 런타임 비영속 상태, 폴링 비파괴), `renderDashboardPanel.tsx`(배선), `PanelSettingsDialog.tsx`(이미지 첨부/제거/미리보기 + opacity 슬라이더 + fit + 에디터 옵션). i18n `lib/i18n/{ko,en}.json`. 신규 코드 커버리지 96~100%, LSP 0, 회귀 826 tests 통과. 드래그 테스트는 `fireEvent`(PointerEvent 폴리필)로 작성 — @testing-library/user-event 미설치(신규 의존성 0). 후속: 등고선(003).
+
+**히트맵 패널 등고선(marching squares) 오버레이** (SPEC-HEATMAP-PANEL-003, v1.0.0 — 프론트엔드 전용, 신규 백엔드 0, 신규 의존성 0):
+
+MVP IDW 보간 격자를 재사용해 marching squares 로 등치선(iso-line)을 산출·렌더하는 **선택 토글** 오버레이를 **가산**(SPEC-002 와 독립, 그 위에 층으로 쌓임). 핵심 제약은 **재보간 금지** — `interpolateIDW` 호출을 `HeatmapPanel` 로 상승시켜 패널당 1회만 실행하고 동일 `Float32Array` 를 히트맵 canvas 와 등고선 레이어가 공유한다. `web/src/pages/dashboard/panels/heatmap/` 아래 신규 2개 소스(+ 동반 테스트).
+
+- `web/src/pages/dashboard/panels/heatmap/marchingSquares.ts`: 순수 로직(**TDD 핵심**). `computeContours`(셀 case 0..15 분기 + 모서리 선형 보간 + saddle 5·10 셀 중앙값 결정적 처리), `resolveLevels`(explicit 우선 · 균등 분할 · 범위 밖 필터 · 빈 격자 방어), `segmentsToPath`(SVG path `d` 문자열 변환). DOM 의존 없음, 커버리지 95.5%.
+- `web/src/pages/dashboard/panels/heatmap/ContourLayer.tsx`: 격자 + contour config → `computeContours` → SVG `<path>` 오버레이(viewBox 0..1 + `preserveAspectRatio=none` 로 리사이즈 정합). field 참조 `useMemo`, 선 스타일(색/두께/dash) + 등치값 `<text>` 라벨. 커버리지 100%.
+- 확장: `heatmapConfig.ts`(`contour` 하위호환 additive 파싱, 미설정 `undefined`/기본 enabled=false), `HeatmapCanvas.tsx`(격자 계산 상위 상승 리팩터 — `field`/`gridW`/`gridH`/`hasData` props consume, 행위 보존·기존 테스트 통과), `HeatmapPanel.tsx`(`interpolateIDW` `useMemo` 상승 + `ContourLayer` z-15 마운트 — 히트맵 z10 위·마커 z20 아래), `PanelSettingsDialog.tsx`(등고선 섹션). i18n `lib/i18n/{ko,en}.json`(+8키). 신규 순수 코드 커버리지 95%+, LSP 0, 회귀 2836 tests 통과. 렌더 방식은 canvas stroke 아닌 SVG `<path>` 채택(오케스트레이터 확정). 후속: 라벨 충돌 회피(향후 SPEC).
+
+**히트맵 좌표계·배치 편집 결함 수정 + 범례 직접 조작** (SPEC 없음 — 사용자 보고 기반 연속 수정, 프론트엔드 전용, 신규 백엔드 0, 신규 의존성 0):
+
+003 까지 쌓인 히트맵 패널에서 "센서가 도면 위 제자리에 있지 않다" 는 계열 결함을 끝까지 추적해 고친 묶음. 표면 증상은 여럿이었지만 **좌표 공간이 어긋나는 한 축**과 **도면 종횡비를 못 구하는 한 축**으로 수렴한다.
+
+- **좌표 키 공간 일치**: 마커 화이트리스트를 `store_source.series` 파생 키로만 두면 조회 결과 키 공간(TSDB·sysmetrics 소스, 또는 컬럼↔series 수 불일치)과 어긋나, 배치한 좌표가 저장되자마자 마커에서 걸러져 사라졌다. 화이트리스트를 refs 파생 키 ∪ `resolved.ids` 합집합으로 바꿨다(`HeatmapPanel.tsx`).
+- **미배치 팔레트의 판독값 독립**: 미배치 목록을 `joinSensorPoints`(최신 유한값 필요)에서 가져와 값이 없으면 배치 자체가 불가능했다. "바인딩된 센서 중 좌표 없는 것" 으로 바꿔 마커(placed)와 같은 규칙을 쓴다.
+- **포인터 우선순위**: 마커 오버레이(z-24)를 도면 이동 오버레이(z-22) 위로 올리고, 마커 오버레이 루트는 유휴 시 `pointer-events-none`·드래그 중 `auto` 로 토글한다 — 빈 자리 누름은 도면 이동으로 내려보내면서 마커를 잡으면 마커가 움직인다(`SensorPlacementOverlay.tsx`).
+- **레거시 좌표 승격 1회 고정**: `sensor_space` 미지정 좌표는 "패널 본문의 몇 %" 라 도면 레터박스를 모른다. 렌더마다 재환산하면 패널 종횡비가 바뀔 때마다 마커가 미끄러지므로, 첫 실측에 고정하고 대시보드 경로에서만 `sensor_space:'stage'` 로 승격 기록한다(설정 미리보기는 실측 기준이 달라 권위 없음).
+- **도면 종횡비 확보 3단**: config 저장값 → `onLoad` → **마운트 시점 `complete` 확인**(캐시된 이미지는 load 이벤트가 오지 않는다). 한 번 읽으면 `floor_plans[0].natural_width/height` 로 영속해 다음 세션은 첫 페인트부터 맞는다. 종횡비 미상 동안에는 레거시 승격을 보류한다(그때의 환산은 항등이라 잘못된 좌표가 굳는다).
+- `web/src/pages/dashboard/panels/heatmap/svgAsset.ts` (**신규 순수 모듈**): SVG 도면 전용. SVG 는 문서 안의 `preserveAspectRatio` 가 CSS `object-fit` 을 이겨 "늘려서 채우기" 가 먹지 않고, 크기 미기재 SVG 는 `naturalWidth/Height` 가 대체 요소 기본값이라 종횡비도 틀어진다. 종횡비를 `viewBox`(폴백 width/height)에서 직접 읽고, stretch 시 루트 `<svg>` 의 `preserveAspectRatio` 를 `none` 으로 바꾼 data-URL 로 갈아 끼운다. **인라인이 아니라 data-URL 재작성** — 계속 `<img>` 로 그려 사용자 SVG 안의 스크립트 실행을 막는다.
+- **범례 직접 조작**(`HeatmapLegend.tsx` + `heatmapConfig.ts`): 4모서리·S/M/L 드롭박스를 걷어내고 자리는 본문 드래그, 크기는 모서리 손잡이 드래그로 정한다(`bar_length`/`bar_thickness`, 죔 24~600 / 4~80px). `position`/`size` 는 이미 저장된 패널의 파생 원본으로만 남는다. 눈금 라벨 상자에 실제 크기를 줘 배경이 라벨을 감싸게 하고, 양 끝 라벨은 가운데 정렬을 버려 막대 범위 안에 유지한다. 글자 크기·색(`font_size`/`font_color`)을 연다.
+- 회귀: 신규 테스트 파일 3종(`svgAsset.test.ts`, `HeatmapPanel.aspect.test.tsx`, `HeatmapPanel.resize.test.tsx`) + 기존 5종 확장. web 전체 378 files / 5923 tests 통과, `tsc --noEmit` 0, eslint 0 error.
 
 **신규 HTTP 엔드포인트** (SPEC-STORE-003):
 

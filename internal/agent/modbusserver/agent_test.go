@@ -21,9 +21,9 @@ func testAgentConfig() agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:   "test-modbus-server",
 		Name: "Test MODBUS Server",
-		Type: "modbus-tcp-server",
+		Type: "modbus-gateway",
 		Transport: agent.TransportConfig{
-			Type: "modbus-tcp-server",
+			Type: "modbus-gateway",
 			Options: map[string]any{
 				"listen_address":   "127.0.0.1",
 				"listen_port":      0,
@@ -87,7 +87,7 @@ func TestNewModbusServerAgent(t *testing.T) {
 	assert.Equal(t, lifecycle.StateRunning, msa.CurrentState())
 	assert.Equal(t, "test-modbus-server", msa.ID())
 	assert.Equal(t, "Test MODBUS Server", msa.Name())
-	assert.Equal(t, "modbus-tcp-server", msa.Type())
+	assert.Equal(t, "modbus-gateway", msa.Type())
 }
 
 func TestModbusServerAgent_StartStop(t *testing.T) {
@@ -634,7 +634,7 @@ func TestModbusServerAgent_Info(t *testing.T) {
 	info := msa.Info()
 	assert.Equal(t, "test-modbus-server", info.ID)
 	assert.Equal(t, "Test MODBUS Server", info.Name)
-	assert.Equal(t, "modbus-tcp-server", info.Type)
+	assert.Equal(t, "modbus-gateway", info.Type)
 	assert.Equal(t, lifecycle.StateRunning, info.State)
 }
 
@@ -642,7 +642,7 @@ func TestModbusServerAgent_Type(t *testing.T) {
 	cfg := testAgentConfig()
 	a, err := NewModbusServerAgent(cfg)
 	require.NoError(t, err)
-	assert.Equal(t, "modbus-tcp-server", a.Type())
+	assert.Equal(t, "modbus-gateway", a.Type())
 }
 
 func TestModbusServerAgent_InvalidCommand(t *testing.T) {
@@ -704,14 +704,14 @@ func TestModbusServerAgent_TCPIntegration(t *testing.T) {
 	txID := uint16(1)
 	pdu := make([]byte, 5)
 	pdu[0] = modbus.FC03ReadHoldingRegisters
-	binary.BigEndian.PutUint16(pdu[1:3], 0)  // start address
-	binary.BigEndian.PutUint16(pdu[3:5], 1)  // quantity
+	binary.BigEndian.PutUint16(pdu[1:3], 0) // start address
+	binary.BigEndian.PutUint16(pdu[3:5], 1) // quantity
 
 	frame := make([]byte, modbus.MBAPHeaderSize+len(pdu))
 	binary.BigEndian.PutUint16(frame[0:2], txID)
 	binary.BigEndian.PutUint16(frame[2:4], modbus.MBAPProtocolID) // protocol ID
 	binary.BigEndian.PutUint16(frame[4:6], uint16(1+len(pdu)))    // length
-	frame[6] = 1                                                   // unit ID
+	frame[6] = 1                                                  // unit ID
 	copy(frame[7:], pdu)
 
 	conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
@@ -742,8 +742,14 @@ func TestModbusServerAgent_TCPIntegration(t *testing.T) {
 }
 
 func TestModbusServerAgent_TCPWriteCoilIntegration(t *testing.T) {
-	msa, cleanup := createAndStartAgent(t)
-	defer cleanup()
+	// 와이어 쓰기(원격 마스터) register_change 알림은 opt-in 이므로 notify_on_write=true 로 활성화한다.
+	cfg := testAgentConfig()
+	cfg.Transport.Options["notify_on_write"] = true
+	a, err := NewModbusServerAgent(cfg)
+	require.NoError(t, err)
+	msa := a.(*ModbusServerAgent)
+	require.NoError(t, msa.Start(context.Background()))
+	defer func() { _ = msa.Stop(context.Background()) }()
 
 	// 소비자 활성화 (TCP handler의 sendChangeNotification이 이벤트를 생성하도록)
 	msa.activateReceiver()
@@ -761,7 +767,7 @@ func TestModbusServerAgent_TCPWriteCoilIntegration(t *testing.T) {
 	pdu := make([]byte, 5)
 	pdu[0] = modbus.FC05WriteSingleCoil
 	binary.BigEndian.PutUint16(pdu[1:3], 5)      // address 5
-	binary.BigEndian.PutUint16(pdu[3:5], 0xFF00)  // ON
+	binary.BigEndian.PutUint16(pdu[3:5], 0xFF00) // ON
 
 	frame := make([]byte, modbus.MBAPHeaderSize+len(pdu))
 	binary.BigEndian.PutUint16(frame[0:2], txID)
@@ -1467,9 +1473,9 @@ func TestGetParamString(t *testing.T) {
 
 func TestGetParamFloat64(t *testing.T) {
 	params := map[string]any{
-		"float":   3.14,
-		"int":     42,
-		"string":  "not a number",
+		"float":  3.14,
+		"int":    42,
+		"string": "not a number",
 	}
 
 	f, ok := getParamFloat64(params, "float")

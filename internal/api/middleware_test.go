@@ -513,20 +513,10 @@ func TestAuth_PassThrough(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
-func TestRequireRole_PassThrough(t *testing.T) {
-	r := NewRouter()
-	r.Use(RequireRole("admin", "user"))
-
-	r.GET("/test", func(ctx Context) error {
-		return ctx.NoContent(http.StatusOK)
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	rec := httptest.NewRecorder()
-	r.Handler().ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-}
+// @SPEC:SPEC-AUTH-005 (M4)
+// TestRequireRole_PassThrough 는 제거되었다. RequireRole 은 인자를 버리는 패스스루라
+// 인가를 강제하지 못했고(spec.md §1.2.1) 운영 호출자가 없었으므로 RequirePermission
+// 으로 대체되었다. 대응 테스트는 middleware_permission_test.go 에 있다.
 
 // --- rateLimiter 단위 테스트 ---
 

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -527,4 +529,240 @@ func (a *InfluxDBAgent) Stats() agent.StatsSnapshot {
 	s := a.stats.Snapshot()
 	s.MsgBufferPending, s.MsgBufferCapacity = a.BufferInfo()
 	return s
+}
+
+// --- 구조화 시리즈 질의 (@spec SPEC-TSDB-002 §2.6 (U6) · §2.8 (U8)) ---
+
+// SeriesBucket 는 구조화 시리즈 질의가 돌려주는 정규화된 버킷 하나이다.
+//
+// StartMs 는 버킷 **시작** 시각(epoch ms)이며 끝이 아니다(§2.8). 정렬 계약의
+// 정본은 Store 의 epoch-zero 식이고 두 소스가 같은 식을 쓴다.
+type SeriesBucket struct {
+	StartMs int64
+	Value   any
+	// Tags 는 이 버킷이 속한 **그룹의 실제 태그 값**이다
+	// (SPEC-TSDB-004 §2.5 U5).
+	//
+	// SeriesQuerySpec.GroupBy 가 비어 있으면 nil 이다 — 정확 일치 모드에서
+	// 태그는 요청이 이미 알고 있으므로 응답에 실을 이유가 없고, nil 이어야
+	// 라벨 구성이 본 축 도입 이전과 같아진다(§2.9 U9).
+	Tags map[string]string
+}
+
+// InfluxSeriesQueryer 는 구조화 시리즈 질의 계약이다.
+// HTTP 핸들러가 타입 단언으로 에이전트를 검증한다.
+type InfluxSeriesQueryer interface {
+	QuerySeriesBuckets(ctx context.Context, spec SeriesQuerySpec) ([]SeriesBucket, error)
+}
+
+// 컴파일 타임 인터페이스 준수 체크.
+var _ InfluxSeriesQueryer = (*InfluxDBAgent)(nil)
+
+// QuerySeriesBuckets 는 구조화 시리즈 질의를 실행하고 버킷 배열을 반환한다.
+//
+// 흐름은 셋이다 — (1) 에이전트 버전으로 방언을 고르고, (2) 순수 함수로 쿼리를
+// 생성하고, (3) 결과 행을 버킷으로 정규화한다. 생성이 순수 함수로 분리되어
+// 있으므로 (v2/v3) × (집계 5) × (fill 5) × (태그 0/1/N) 전수는 네트워크 없이
+// 검증된다.
+func (a *InfluxDBAgent) QuerySeriesBuckets(ctx context.Context, spec SeriesQuerySpec) ([]SeriesBucket, error) {
+	a.mu.RLock()
+	version := a.influxConfig.Version
+	defaultBucket := a.influxConfig.Bucket
+	client := a.client
+	a.mu.RUnlock()
+
+	if client == nil {
+		return nil, errClientNotInitialized
+	}
+	if spec.Bucket == "" {
+		spec.Bucket = defaultBucket
+	}
+
+	query, lang, err := buildSeriesQueryForVersion(version, spec)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := client.Query(ctx, query, lang)
+	if err != nil {
+		return nil, fmt.Errorf("influxdb %s series query: %w", lang, err)
+	}
+	buckets, err := normalizeSeriesBuckets(rows, spec)
+	if err != nil {
+		return nil, err
+	}
+	// 직전값 채우기는 응답을 받은 뒤 여기서 한다(사용 기간 제한을 걸기 위해).
+	// 그 밖의 전략은 DB 가 이미 처리했으므로 손대지 않는다.
+	if spec.Fill == SeriesFillPrevious {
+		buckets = applyPreviousFill(
+			buckets, sortedGroupKeys(spec.GroupBy), spec.IntervalMs, spec.FillPreviousLimit)
+	}
+	return buckets, nil
+}
+
+// buildSeriesQueryForVersion 는 에이전트의 InfluxDB 버전에 따라 방언을 고른다.
+//
+// v3 가 InfluxQL 인 것은 선택이 아니다 — v3 는 Flux 를 지원하지 않고 SQL 은
+// HTTP 계층에서 도달 불가다(§1.2.9).
+func buildSeriesQueryForVersion(version string, spec SeriesQuerySpec) (string, string, error) {
+	switch version {
+	case "2":
+		q, err := BuildFluxSeriesQuery(spec)
+		return q, "flux", err
+	case "3":
+		q, err := BuildInfluxQLSeriesQuery(spec)
+		return q, "influxql", err
+	default:
+		return "", "", fmt.Errorf("influxdb: 지원하지 않는 버전 %q ('2' 또는 '3'을 지정하세요)", version)
+	}
+}
+
+// influxQLTimeColumn 은 InfluxQL 결과의 시간 컬럼 이름이다.
+// Flux 결과는 fluxTimeColumn(_time) 을 쓴다.
+const influxQLTimeColumn = "time"
+
+// normalizeSeriesBuckets 는 결과 행을 버킷 시작 시각 오름차순 배열로 정규화한다.
+//
+// 시간 컬럼과 값 컬럼의 이름이 방언마다 다르다. Flux 는 _time/_value 이고,
+// InfluxQL 은 time 과 **집계 함수 이름**(MEAN → mean)이다. 두 방언의 값 컬럼
+// 이름이 각각 Flux 함수 이름과 일치하므로 같은 매핑 함수를 쓴다.
+func normalizeSeriesBuckets(rows []map[string]any, spec SeriesQuerySpec) ([]SeriesBucket, error) {
+	valueColumn, err := fluxAggregationFn(spec.Aggregation)
+	if err != nil {
+		return nil, err
+	}
+
+	// 그룹 키는 방언과 무관하게 결과 **행의 컬럼**으로 온다. v2 는 keep 이
+	// 남긴 태그 컬럼, v3 는 GROUP BY 가 드러낸 태그 컬럼이며, 이 함수는 둘을
+	// 구분하지 않는다(SPEC-TSDB-004 §2.5).
+	groupKeys := sortedGroupKeys(spec.GroupBy)
+
+	out := make([]SeriesBucket, 0, len(rows))
+	for _, row := range rows {
+		tsMs, ok := seriesRowTimeMs(row)
+		if !ok {
+			// 시간을 읽지 못한 행은 버킷에 배치할 수 없다. 0 으로 두면 1970 년
+			// 버킷이 생겨 차트의 시간축이 통째로 늘어난다.
+			continue
+		}
+		out = append(out, SeriesBucket{
+			StartMs: SeriesBucketStartMs(tsMs, spec.IntervalMs),
+			Value:   seriesRowValue(row, valueColumn),
+			Tags:    seriesRowGroupTags(row, groupKeys),
+		})
+	}
+	// 그룹 태그 값 사전순 → 버킷 시작 시각 순으로 정렬한다(§2.8 UB1-8).
+	//
+	// 그룹 순서가 폴링마다 달라지면 클라이언트의 그룹 등장 순서가 흔들리고
+	// 자동 팔레트 색이 라인 사이를 옮겨 다닌다. 사용자는 같은 색을 같은 대상으로
+	// 읽으므로 이는 조용한 오답이다. groupKeys 가 비면 서명이 전부 빈 문자열이라
+	// 시작 시각 단일 기준으로 되돌아간다 — 본 축 도입 이전과 같다.
+	sort.SliceStable(out, func(i, j int) bool {
+		si := seriesGroupSignature(out[i].Tags, groupKeys)
+		sj := seriesGroupSignature(out[j].Tags, groupKeys)
+		if si != sj {
+			return si < sj
+		}
+		return out[i].StartMs < out[j].StartMs
+	})
+	return out, nil
+}
+
+// seriesRowGroupTags 는 결과 행에서 그룹 키에 해당하는 값을 뽑는다.
+//
+// groupKeys 가 비면 nil 을 돌려준다(§2.5). 행에 그 키가 없거나 값이 문자열이
+// 아니면 **빈 문자열**로 둔다 — 태그가 결손된 시리즈를 조용히 버리면 데이터가
+// 사라지고, 별도 그룹으로 두면 사용자가 결손 사실을 볼 수 있다.
+func seriesRowGroupTags(row map[string]any, groupKeys []string) map[string]string {
+	if len(groupKeys) == 0 {
+		return nil
+	}
+	tags := make(map[string]string, len(groupKeys))
+	for _, k := range groupKeys {
+		tags[k] = seriesTagValueString(row[k])
+	}
+	return tags
+}
+
+// seriesTagValueString 은 결과 행의 태그 값을 문자열로 만든다.
+// 태그는 규약상 문자열이지만 클라이언트가 다른 타입으로 넘길 수 있으므로
+// 문자열이 아니면 표기로 대체한다(nil 은 빈 문자열).
+func seriesTagValueString(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	default:
+		return fmt.Sprint(t)
+	}
+}
+
+// seriesGroupSignature 는 그룹 정렬용 결정적 서명을 만든다.
+//
+// 구분자는 NUL 이다 — 태그 값에 등장할 수 없으므로 "a|b" 와 "a" + "|b" 가
+// 같은 서명이 되는 충돌을 막는다.
+func seriesGroupSignature(tags map[string]string, groupKeys []string) string {
+	if len(groupKeys) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, k := range groupKeys {
+		if i > 0 {
+			b.WriteByte(0)
+		}
+		b.WriteString(tags[k])
+	}
+	return b.String()
+}
+
+// seriesRowTimeMs 는 결과 행에서 시각을 epoch ms 로 뽑는다.
+//
+// 정수형은 InfluxDB 규약대로 나노초로 해석한다. 문자열은 RFC3339Nano 로 읽는다.
+func seriesRowTimeMs(row map[string]any) (int64, bool) {
+	raw, ok := row[fluxTimeColumn]
+	if !ok {
+		raw, ok = row[influxQLTimeColumn]
+	}
+	if !ok {
+		return 0, false
+	}
+	switch v := raw.(type) {
+	case time.Time:
+		if v.IsZero() {
+			return 0, false
+		}
+		return v.UnixMilli(), true
+	case int64:
+		return v / nsPerMs, true
+	case int:
+		return int64(v) / nsPerMs, true
+	case uint64:
+		return int64(v) / nsPerMs, true
+	case float64:
+		return int64(v) / nsPerMs, true
+	case string:
+		t, err := time.Parse(time.RFC3339Nano, v)
+		if err != nil {
+			return 0, false
+		}
+		return t.UnixMilli(), true
+	default:
+		return 0, false
+	}
+}
+
+// seriesRowValue 는 결과 행에서 집계값을 뽑는다.
+//
+// 키가 있으나 값이 nil 인 경우(fill 로 만들어진 빈 버킷)를 키 부재와 구분해야
+// 하므로 comma-ok 로 조회한다. nil 값은 그대로 통과시켜 클라이언트가 "빈 결과"로
+// 표시하게 한다.
+func seriesRowValue(row map[string]any, aggColumn string) any {
+	if v, ok := row[fluxValueColumn]; ok {
+		return v
+	}
+	if v, ok := row[aggColumn]; ok {
+		return v
+	}
+	return nil
 }

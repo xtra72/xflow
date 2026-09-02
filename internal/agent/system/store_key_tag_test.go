@@ -36,8 +36,8 @@ func TestKeyTag_OverridesKeyWithTagValue(t *testing.T) {
 
 	// 시리즈 키는 name 값("livingroom")으로 재구성되며, id 태그가 보존된다.
 	seriesKey := EncodeSeriesKey(SeriesID{
-		Key:  "livingroom",
-		Tags: map[string]string{"name": "livingroom", "id": "dev-uuid-123"},
+		Measurement: "livingroom",
+		Tags:        map[string]string{"name": "livingroom", "id": "dev-uuid-123"},
 	})
 	meta, ok := sa.StaticKeyMetaFor(seriesKey)
 	require.True(t, ok, "name 값을 키로 한 시리즈가 등록되어야 한다")
@@ -66,8 +66,8 @@ func TestKeyTag_FallsBackToProvidedKeyWhenTagAbsent(t *testing.T) {
 
 	// 시리즈 키는 원래 키(dev-uuid-999)로 유지되고 id 태그는 주입되지 않는다.
 	seriesKey := EncodeSeriesKey(SeriesID{
-		Key:  "dev-uuid-999",
-		Tags: map[string]string{"room": "1"},
+		Measurement: "dev-uuid-999",
+		Tags:        map[string]string{"room": "1"},
 	})
 	meta, ok := sa.StaticKeyMetaFor(seriesKey)
 	require.True(t, ok, "폴백 시 원래 키로 시리즈가 등록되어야 한다")
@@ -84,7 +84,7 @@ func TestKeyTag_EmptyTagValueFallsBack(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	seriesKey := EncodeSeriesKey(SeriesID{Key: "dev-uuid-777", Tags: map[string]string{"name": ""}})
+	seriesKey := EncodeSeriesKey(SeriesID{Measurement: "dev-uuid-777", Tags: map[string]string{"name": ""}})
 	_, ok := sa.StaticKeyMetaFor(seriesKey)
 	require.True(t, ok, "빈 name 값이면 원래 키로 폴백")
 }
@@ -100,7 +100,7 @@ func TestKeyTag_Disabled(t *testing.T) {
 	require.NoError(t, err)
 
 	// name 오버라이드 없이 원래 키로 등록.
-	seriesKey := EncodeSeriesKey(SeriesID{Key: "dev-uuid-000", Tags: map[string]string{"name": "shouldNotBeKey"}})
+	seriesKey := EncodeSeriesKey(SeriesID{Measurement: "dev-uuid-000", Tags: map[string]string{"name": "shouldNotBeKey"}})
 	_, ok := sa.StaticKeyMetaFor(seriesKey)
 	require.True(t, ok, "key_tag 미설정 시 원래 키 유지")
 }

@@ -180,7 +180,7 @@ edges:
 
 **Part B — 실시간 append (같은 채널로 추가 공급):**
 
-store-write 결과를 분기해 store-read + chart-emitter 체인에 붙이거나, 별도 플로우에서 chart-emitter 를 **re-use** 하려면 동일 `channel_name` 중복 등록 제약 때문에 1개 emitter 만 배포 가능합니다. 권장 구조는 **하나의 emitter** 에 이력 배치 + 실시간 append 를 동일 노드로 수렴시키는 것입니다:
+storage-write 결과를 분기해 store-read + chart-emitter 체인에 붙이거나, 별도 플로우에서 chart-emitter 를 **re-use** 하려면 동일 `channel_name` 중복 등록 제약 때문에 1개 emitter 만 배포 가능합니다. 권장 구조는 **하나의 emitter** 에 이력 배치 + 실시간 append 를 동일 노드로 수렴시키는 것입니다:
 
 ```yaml
 # 같은 emitter 에 실시간 단일 엔트리도 공급
@@ -256,10 +256,24 @@ edges:
 **대시보드 설정:**
 
 - 패널 추가 → `pie-chart` 선택
-- `channel_name` = `event_categories`
-- `label_field` = `labels.category`
-- `agg_func` = `count`
-- `show_legend` = true, `show_percentage` = true
+- 데이터 소스 = `채널`, `channel_name` = `event_categories`
+- `show_legend` = true, `show_percentage` = true (필요하면 값 표시·범례 위치·글자 스타일)
+
+> **주의 — 라벨 필드·집계 함수는 설정 화면에 없습니다.**
+>
+> 두 값(`label_field` · `agg_func`)은 파이의 주 경로인 **Store 소스 + 구간 대표값**
+> (시리즈당 조각 1개)에서 무시되므로 설정 화면에서 걷어냈습니다. 채널 모드는 기본값
+> (`labels.name` · `sum`)으로 동작하며, 저장된 config 에 값이 있으면 그대로 존중합니다.
+>
+> 위 플로우처럼 **그룹 결과를 조각으로 나누려면** 두 가지 중 하나를 쓰십시오.
+>
+> 1. **Store 소스 + 구간 대표값** (권장): `storage-write` 로 그룹별 시리즈를 쌓고,
+>    패널에서 시리즈를 골라 대표값(`series_reduce`)을 지정하면 시리즈 하나가 조각
+>    하나가 됩니다. 조각 이름·색을 시리즈별로 지정할 수 있습니다.
+> 2. **채널 모드 그대로**: `aggregate` 노드는 그룹 값을 payload 의 `group_value`
+>    (복합 키는 `group_values`)로 싣습니다. 기본 라벨 필드는 `labels.name` 이므로,
+>    `mapping` 노드로 `group_value` 를 `labels.name` 으로 옮겨야 조각이 그룹별로
+>    나뉩니다.
 
 ---
 

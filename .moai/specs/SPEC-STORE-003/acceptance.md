@@ -1,10 +1,10 @@
 ---
 id: SPEC-STORE-003
 title: Store 에이전트 정적 키 정의 및 태그 메타데이터 — 수용 기준
-version: 0.3.0
+version: 0.3.1
 status: in_progress
 created: 2026-04-24
-updated: 2026-05-04
+updated: 2026-08-12
 author: xtra
 priority: medium
 ---
@@ -302,6 +302,37 @@ priority: medium
 
 **Then**
 - `count == 1`, `keys`는 `[{key: "alpha", ...}]`이다 (모든 필터 만족)
+
+---
+
+### Scenario 11: store-write `data_type: "auto"` 가변 타입 저장 (M7) — v0.3.1 신규
+
+**Given**
+- Store 에이전트가 `registration_type: "auto"`, 정적 키 없음으로 구성되어 있다
+- store-write 노드가 `key_template: "{$.metadata.device.name}-{$.metadata.measurement}"`, `metrics[].data_type: "auto"`, `metrics[].value_key: "$.payload.value"`, `metrics[].metric_type: "$.metadata.measurement"` 로 설정되어 있다
+
+**When**
+- 다음 측정 메시지들이 순서대로 유입된다:
+  - `measurement=temperature`, `value=25.4` (float)
+  - `measurement=humidity`, `value=57` (int)
+  - `measurement=power`, `value=false` (bool)
+
+**Then**
+- 각 시리즈 키가 값 타입대로 등록된다: `dev-temperature → float`, `dev-humidity → int`, `dev-power → boolean`
+- 세 쓰기 모두 성공하며 `ErrTypeMismatch` 가 발생하지 않는다 (고정 리터럴 `float` 였다면 `power=false` 에서 실패했을 시나리오)
+- 값이 문자열로 변환되지 않고 원래 숫자/불리언 타입으로 보존된다 (동적 string coercion 우회)
+
+**When (같은 키 후속 쓰기)**
+- `measurement=power`, `value=true` 가 다시 유입된다
+
+**Then**
+- 이미 boolean 으로 고정된 `dev-power` 에 boolean 값이므로 정상 저장된다 (키 단위 타입 일정성)
+
+**When (추론 불가 값)**
+- `value=nil` 인 쓰기가 유입된다
+
+**Then**
+- nil 은 auto 여부와 무관하게 거부된다 (일반 nil 쓰기와 동일; auto 가 nil 거부를 우회하지 않음)
 
 ---
 

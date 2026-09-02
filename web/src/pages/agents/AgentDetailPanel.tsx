@@ -7,11 +7,11 @@
 //   제공한다 (v0.4.0 통합 UI).
 
 import React, { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { Activity, AlertTriangle, ArrowUpCircle, ChevronDown, ChevronRight, HardDrive, LineChart, Lock, Pencil, Plus, RefreshCw, Save, Search, Server, Tag, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, HardDrive, LineChart, ListPlus, Lock, Pencil, Plus, RefreshCw, Save, Search, Server, Trash2, X } from 'lucide-react';
 
 import { useQueryClient } from '@tanstack/react-query';
 
-import { useAgent, useConfigureAgent, useExecAgent } from '@/hooks/useAgent';
+import { useAgent, useConfigureAgent, useExecAgent, useQueryAgent } from '@/hooks/useAgent';
 import { useAgentDetailTarget, useAgentStatsTarget } from '@/hooks/useDetailTargets';
 import { useDeleteDevice, useDevicesRealtime, useSetDeviceReport } from '@/hooks/useDevice';
 import { useUpdateRemoteAgent } from '@/hooks/useRemote';
@@ -44,9 +44,36 @@ import {
   STORE_DATA_FIELDS,
   STORE_OPERATION_FIELDS,
 } from '@/config/agentSchemas';
+import type { AgentStatsInfo } from '@/types/agent';
 import type { ConfigSchema, ConfigSection } from '@/types/node';
 import { DynamicForm } from '@/components/property/DynamicForm';
 import { FormField } from '@/components/property/FormField';
+import { ModbusServerDevicesEditor } from '@/components/property/ModbusServerDevicesEditor';
+import { modbusServerDevicesValid } from '@/components/property/modbusServerDevicesModel';
+import { DeviceEditDialog } from '@/components/property/ModbusDevicesEditor';
+import type { DeviceModelOption } from '@/components/property/modbusDevicesModel';
+import {
+  newDeviceRow,
+  toDeviceRow,
+  toEmitDevice,
+  type DeviceRow,
+} from '@/components/property/modbusDevicesModel';
+import BulkRegisterPanel from './BulkRegisterPanel';
+import {
+  EMPTY_SEGMENTS,
+  INVALID_FC,
+  INVALID_GROUP,
+  INVALID_PORT,
+  INVALID_SEGMENT,
+  INVALID_SHARED_ADDRESS,
+  INVALID_UNIT_ID,
+  NO_CURRENT_DEVICE,
+  useModbusClientBulkAdd,
+  useModbusGatewayBulkAdd,
+} from '@/hooks/useModbusBulk';
+import { EMPTY_REQUIRED, type BulkFailure, type BulkResult } from '@/hooks/useStation';
+import { TwoColumnConfigLayout } from './twoColumnConfig';
+import { TWO_COL_CONFIG } from './twoColumnConfigMap';
 import {
   StoreKeysEditor,
   type StoreKeyEntry,
@@ -62,6 +89,9 @@ import {
 } from '@/components/property/EditKeyMetaDialog';
 import RenameKeyDialog from '@/components/property/RenameKeyDialog';
 import SelectStaticKeyDialog from '@/components/property/SelectStaticKeyDialog';
+// 공용 SortableHeader 의 SortState 는 storeEntrySort 의 동명 타입(column 기반)과
+// 충돌하므로 별칭으로 가져온다.
+import SortableHeader, { type SortState as HeaderSortState } from '@/components/common/SortableHeader';
 import DeviceDetailPanel from '@/pages/devices/DeviceDetailPanel';
 import DeviceStatusBadge from '@/pages/devices/DeviceStatusBadge';
 import { ReportToggleSwitch } from '@/pages/devices/ReportToggleSwitch';
@@ -72,6 +102,11 @@ import {
 } from '@/services/api/monitorService';
 import { useUIStore } from '@/stores/uiStore';
 
+import ChirpstackGatewaysTab from './ChirpstackGatewaysTab';
+import XsfmDevicesTab from './XsfmDevicesTab';
+import XsfmStationsTab from './XsfmStationsTab';
+import XsfmGroupsTab from './XsfmGroupsTab';
+import XsfmLinesTab from './XsfmLinesTab';
 import InfluxdbManagementPanel from './InfluxdbManagementPanel';
 import TsdbDataViewerModal from './TsdbDataViewerModal';
 import TsdbSeriesListPanel from './TsdbSeriesListPanel';
@@ -87,16 +122,16 @@ import {
   type FilterContext,
   type SortState,
 } from './storeEntrySort';
+import { ColumnSettingsMenu } from './storeColumns';
 import {
-  ColumnHeader,
-  ColumnSettingsMenu,
   loadVisibleColumns,
   relevantColumns,
   renderedColumns as computeRenderedColumns,
   saveVisibleColumns,
-  type StoreColumn,
   type StoreColumnId,
-} from './storeColumns';
+} from './storeColumnsModel';
+import { StoreEntryTable } from './StoreEntryTable';
+import { extractEntryMetricType, extractEntryTags } from './storeEntryHelpers';
 
 interface AgentDetailPanelProps {
   agentId: string;
@@ -109,7 +144,7 @@ interface AgentDetailPanelProps {
   agentName?: string;
 }
 
-type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'series' | 'management';
+type Tab = 'stats' | 'config' | 'devices' | 'topics' | 'store' | 'sessions' | 'clients' | 'series' | 'management' | 'stations' | 'lines' | 'groups' | 'gateways';
 
 /** 통계 카드 항목 */
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -126,6 +161,8 @@ const NO_DEVICES_TAB = new Set(['mqtt-client', 'logger', 'http', 'http-sender', 
 
 /** 세션 탭을 표시하는 에이전트 타입 */
 const HAS_SESSIONS_TAB = new Set(['tcp-server']);
+// MODBUS Gateway 는 접속 클라이언트 목록(list_clients exec)을 '클라이언트' 탭으로 노출한다.
+const HAS_CLIENTS_TAB = new Set(['modbus-gateway']);
 
 /** 토픽 탭을 표시하는 에이전트 타입 */
 const HAS_TOPICS_TAB = new Set(['mqtt-client']);
@@ -147,14 +184,43 @@ const HAS_SERIES_TAB = new Set<string>(['tsdb']);
  */
 const HAS_MANAGEMENT_TAB = new Set<string>(['influxdb']);
 
+/**
+ * 역사(station) 탭을 표시하는 에이전트 타입 (SPEC-XSFM-001 Wave 2).
+ * xsfm 에이전트만 역사→위치 계층 관리 탭을 노출한다.
+ */
+const HAS_STATIONS_TAB = new Set<string>(['xsfm']);
+
+/**
+ * 라인(line) 탭을 표시하는 에이전트 타입 (SPEC-XSFM-LINE-001 Module 6).
+ * xsfm 에이전트만 라인 1급 엔티티 CRUD 탭을 노출한다.
+ */
+const HAS_LINES_TAB = new Set<string>(['xsfm']);
+
+/**
+ * 그룹(group) 탭을 표시하는 에이전트 타입 (SPEC-XSFM-GROUP-001 Module 6).
+ * xsfm 에이전트만 그룹 CRUD + 멤버 편집 + 그룹 일괄 제어 탭을 노출한다.
+ */
+const HAS_GROUPS_TAB = new Set<string>(['xsfm']);
+
+/**
+ * 게이트웨이(gateway) 탭을 표시하는 에이전트 타입 (SPEC-CHIRPSTACK-003 M4).
+ * chirpstack 에이전트만 업링크에서 파생된 게이트웨이 로스터 탭을 노출한다.
+ */
+const HAS_GATEWAYS_TAB = new Set<string>(['chirpstack-client']);
+
 export default function AgentDetailPanel({ agentId, agentType, agentName }: AgentDetailPanelProps) {
   const { t } = useTranslation();
   const showDevices = !NO_DEVICES_TAB.has(agentType);
   const showTopics = HAS_TOPICS_TAB.has(agentType);
   const showStore = HAS_STORE_TAB.has(agentType);
   const showSessions = HAS_SESSIONS_TAB.has(agentType);
+  const showClients = HAS_CLIENTS_TAB.has(agentType);
   const showSeries = HAS_SERIES_TAB.has(agentType);
   const showManagement = HAS_MANAGEMENT_TAB.has(agentType);
+  const showStations = HAS_STATIONS_TAB.has(agentType);
+  const showLines = HAS_LINES_TAB.has(agentType);
+  const showGroups = HAS_GROUPS_TAB.has(agentType);
+  const showGateways = HAS_GATEWAYS_TAB.has(agentType);
 
   // TSDB 에이전트는 기본 탭을 '시리즈', Store 에이전트는 '저장소',
   // 그 외에는 '통계' 를 기본 탭으로 선택한다.
@@ -173,7 +239,12 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
         {showStore && <TabButton label={t('agents.detail.tabs.store')} active={tab === 'store'} onClick={() => setTab('store')} />}
         {showSeries && <TabButton label={t('agents.detail.tabs.series')} active={tab === 'series'} onClick={() => setTab('series')} />}
         {showSessions && <TabButton label={t('agents.detail.tabs.sessions')} active={tab === 'sessions'} onClick={() => setTab('sessions')} />}
+        {showClients && <TabButton label={t('agents.detail.tabs.clients')} active={tab === 'clients'} onClick={() => setTab('clients')} />}
         {showDevices && <TabButton label={t('agents.detail.tabs.devices')} active={tab === 'devices'} onClick={() => setTab('devices')} />}
+        {showStations && <TabButton label={t('agents.detail.tabs.stations')} active={tab === 'stations'} onClick={() => setTab('stations')} />}
+        {showLines && <TabButton label={t('agents.detail.tabs.lines')} active={tab === 'lines'} onClick={() => setTab('lines')} />}
+        {showGroups && <TabButton label={t('agents.detail.tabs.groups')} active={tab === 'groups'} onClick={() => setTab('groups')} />}
+        {showGateways && <TabButton label={t('agents.detail.tabs.gateways')} active={tab === 'gateways'} onClick={() => setTab('gateways')} />}
       </div>
 
       {/* 탭 컨텐츠 */}
@@ -186,7 +257,12 @@ export default function AgentDetailPanel({ agentId, agentType, agentName }: Agen
         <SeriesTab agentId={agentId} agentType={agentType} agentName={agentName} />
       )}
       {tab === 'sessions' && showSessions && <SessionsTab agentId={agentId} />}
+      {tab === 'clients' && showClients && <ClientsTab agentId={agentId} />}
       {tab === 'devices' && showDevices && <DevicesTab agentId={agentId} agentType={agentType} />}
+      {tab === 'stations' && showStations && <XsfmStationsTab agentId={agentId} />}
+      {tab === 'lines' && showLines && <XsfmLinesTab agentId={agentId} />}
+      {tab === 'groups' && showGroups && <XsfmGroupsTab agentId={agentId} />}
+      {tab === 'gateways' && showGateways && <ChirpstackGatewaysTab agentId={agentId} />}
     </div>
   );
 }
@@ -219,7 +295,9 @@ function SeriesTab({
   // 기반이라 원격 READ 프록시 매핑이 없다. 원격 타깃은 안내만 표시한다.
   const seriesTarget = useTargetContext();
   const seriesRemote = isRemoteTarget(seriesTarget);
-  const kind: SeriesDataSourceKind = agentType === 'store' ? 'store' : 'tsdb';
+  // memTSDB 어댑터를 가리킨다(외부 시계열 DB 의 `'tsdb'` 와 다른 값).
+  // @spec SPEC-TSDB-002 §2.1 (U1) — 식별자 개명, 화면 동작 무변경(UB1-24)
+  const kind: SeriesDataSourceKind = agentType === 'store' ? 'store' : 'memtsdb';
   const dataSource = useSeriesDataSource({ kind, agentName, agentId });
 
   // 모달의 멀티셀렉트 옵션으로 쓰일 전체 키 풀 (최대 1페이지 = 100개).
@@ -296,6 +374,91 @@ function formatStatsBytes(n: number | undefined | null): string {
   if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${n} B`;
+}
+
+/**
+ * 메시지 버퍼 사용률 색상 임계값 — 표시 전용 휴리스틱이다.
+ *
+ * 주의: 아래 두 비율은 시스템 계약이 아니다. 백엔드에 대응하는 임계값 설정도, 알람 정책도,
+ * 드롭이 시작되는 지점을 정의한 명세도 없다. 순전히 "버퍼가 차오르는 중"임을 눈에 띄게 하려고
+ * 임의로 고른 표시용 값이므로, 이 숫자를 근거로 동작을 분기하거나 백엔드와 맞추려 하지 말 것.
+ */
+const BUFFER_WARN_RATIO = 0.8;
+const BUFFER_CRITICAL_RATIO = 0.95;
+
+type BufferLevel = 'normal' | 'warning' | 'critical';
+
+function bufferLevel(ratio: number): BufferLevel {
+  if (ratio >= BUFFER_CRITICAL_RATIO) return 'critical';
+  if (ratio >= BUFFER_WARN_RATIO) return 'warning';
+  return 'normal';
+}
+
+const BUFFER_LEVEL_COLOR: Record<BufferLevel, string> = {
+  normal: 'var(--color-status-info)',
+  warning: 'var(--color-status-warning)',
+  critical: 'var(--color-status-error)',
+};
+
+/**
+ * 메시지 버퍼 사용률 카드 (BufferInfoProvider 구현 에이전트 전용).
+ *
+ * "버퍼 없음" 판정 기준: 필드 존재 여부가 아니라 capacity <= 0 이다.
+ * 상세 통계 응답(GET /agents/{id}/stats)은 buffer 객체를 항상 채워 보내고
+ * (handler.BufferStatsInfo 의 pending/capacity 에는 omitempty 가 없다),
+ * BufferInfoProvider 미구현 에이전트도 0/0 으로 내려온다. 따라서 옵셔널 체크만으로는
+ * "0 / 0", "NaN%" 타일을 막을 수 없어 용량 자체를 게이트로 삼는다.
+ */
+function BufferUtilizationCard({ stats, t }: { stats: AgentStatsInfo; t: TranslationFn }) {
+  const capacity = stats.buffer?.capacity ?? stats.buffer_capacity ?? 0;
+  const pending = stats.buffer?.pending ?? stats.buffer_pending ?? 0;
+
+  // 버퍼가 없는 에이전트: 타일 자체를 그리지 않는다.
+  if (!Number.isFinite(capacity) || capacity <= 0) return null;
+
+  const ratio = Math.min(Math.max(pending / capacity, 0), 1);
+  const percent = ratio * 100;
+  const level = bufferLevel(ratio);
+  const color = BUFFER_LEVEL_COLOR[level];
+
+  return (
+    <div>
+      <p className="mb-2 text-xs font-medium text-(--color-text-muted)">{t('agents.detail.stats.buffer')}</p>
+      <div
+        className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-3"
+        data-testid="agent-buffer-card"
+        data-buffer-level={level}
+      >
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="text-xs font-medium text-(--color-text-muted)">{t('agents.detail.stats.bufferUsage')}</p>
+          <p className="font-mono text-xs text-(--color-text-secondary)" data-testid="agent-buffer-raw">
+            {pending.toLocaleString()} / {capacity.toLocaleString()}
+          </p>
+        </div>
+        <p className="mt-1 text-lg font-semibold" style={{ color }} data-testid="agent-buffer-percent">
+          {percent.toFixed(1)}%
+        </p>
+        <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-(--color-bg-sunken)">
+          <div
+            data-testid="agent-buffer-bar"
+            role="progressbar"
+            aria-label={t('agents.detail.stats.bufferUsage')}
+            aria-valuemin={0}
+            aria-valuemax={capacity}
+            aria-valuenow={pending}
+            aria-valuetext={`${percent.toFixed(1)}%`}
+            className="h-full rounded-full transition-[width]"
+            style={{ width: `${percent}%`, backgroundColor: color }}
+          />
+        </div>
+        {level !== 'normal' && (
+          <p className="mt-2 text-xs font-medium" style={{ color }} data-testid="agent-buffer-alert">
+            {t('agents.detail.stats.bufferNearFull')}
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function StatsTab({ agentId }: { agentId: string }) {
@@ -390,6 +553,9 @@ function StatsTab({ agentId }: { agentId: string }) {
         </div>
       </div>
 
+      {/* 메시지 버퍼 사용률 (BufferInfoProvider 구현 에이전트만 렌더) */}
+      <BufferUtilizationCard stats={stats} t={t} />
+
       {/* 바이트 통계 */}
       <div>
         <p className="mb-2 text-xs font-medium text-(--color-text-muted)">{t('agents.detail.stats.transfer')}</p>
@@ -474,198 +640,10 @@ function StatsTab({ agentId }: { agentId: string }) {
 
 // ---- 2열 설정 레이아웃 (HVACR 외 에이전트) ----
 //
+// TWO_COL_CONFIG 와 TwoColumnConfigLayout 은 CreateAgentModal 과 공유하기 위해
+// ./twoColumnConfig 로 추출되었다. 여기서는 재-export 없이 import 하여 사용한다.
 // 3 HVACR 에이전트 (samsung_hvacr01 / lg_hvacr01 / century_hvacr01) 는
-// FourQuadrantConfigLayout 으로 분기되므로 여기서 제거되었다
-// (refactor/hvacr-ui-rendering-fix).
-
-/**
- * 에이전트 타입별 좌측 컬럼 필드 및 컬럼 라벨.
- * 모듈 스코프에서는 t()를 호출할 수 없으므로 라벨은 i18n 키로 보관하고
- * 렌더 시점(TwoColumnConfigLayout)에 변환한다.
- */
-const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabelKey: string; rightLabelKey: string }> = {
-  'mqtt-client': {
-    left: new Set(['broker', 'client_id', 'username', 'password', 'keep_alive_sec', 'connect_timeout_sec']),
-    leftLabelKey: 'agents.detail.config.transport',
-    rightLabelKey: 'agents.detail.config.operation',
-  },
-  'modbus-tcp': {
-    left: new Set(['mode', 'read_mode', 'reconnect_interval', 'request_timeout', 'max_retries']),
-    leftLabelKey: 'agents.detail.config.transport',
-    rightLabelKey: 'agents.detail.config.operation',
-  },
-  'modbus-tcp-server': {
-    left: new Set(['listen_address', 'listen_port']),
-    leftLabelKey: 'agents.detail.config.transport',
-    rightLabelKey: 'agents.detail.config.operation',
-  },
-  http: {
-    left: new Set(['listen_addr', 'path', 'method']),
-    leftLabelKey: 'agents.detail.config.receive',
-    rightLabelKey: 'agents.detail.config.operation',
-  },
-  'http-sender': {
-    left: new Set(['url', 'method', 'content_type']),
-    leftLabelKey: 'agents.detail.config.send',
-    rightLabelKey: 'agents.detail.config.operation',
-  },
-  influxdb: {
-    left: new Set(['url', 'token', 'org', 'bucket', 'version']),
-    leftLabelKey: 'agents.detail.config.transport',
-    rightLabelKey: 'agents.detail.config.operation',
-  },
-  logger: {
-    left: new Set(['output', 'output_path', 'format', 'max_size', 'max_age', 'max_backups', 'compress']),
-    leftLabelKey: 'agents.detail.config.output',
-    rightLabelKey: 'agents.detail.config.operation',
-  },
-  lgap: {
-    left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'connect_timeout', 'read_timeout']),
-    leftLabelKey: 'agents.detail.config.transport',
-    rightLabelKey: 'agents.detail.config.operation',
-  },
-  lg_hvacr02: {
-    left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'read_timeout', 'tcp_host', 'tcp_port']),
-    leftLabelKey: 'agents.detail.config.transport',
-    rightLabelKey: 'agents.detail.config.operation',
-  },
-  serial: {
-    left: new Set(['port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'read_timeout', 'buffer_size']),
-    leftLabelKey: 'agents.detail.config.transport',
-    rightLabelKey: 'agents.detail.config.operation',
-  },
-  'tcp-server': {
-    left: new Set(['host', 'port', 'buffer_size']),
-    leftLabelKey: 'agents.detail.config.transport',
-    rightLabelKey: 'agents.detail.config.operation',
-  },
-  'thingplus-gateway': {
-    left: new Set(['broker', 'port', 'tls', 'ca_cert', 'access_token', 'client_id', 'keep_alive_sec', 'connect_timeout_sec', 'auto_reconnect']),
-    leftLabelKey: 'agents.detail.config.transport',
-    rightLabelKey: 'agents.detail.config.operation',
-  },
-};
-
-function TwoColumnConfigLayout({
-  data, schema, onChange, readOnly, agentType, logLevel,
-}: {
-  nodeId: string;
-  data: Record<string, unknown>;
-  schema: ConfigSchema;
-  onChange: (data: Record<string, unknown>) => void;
-  readOnly?: boolean;
-  agentType: string;
-  logLevel?: { agentId: string; value: string; updating: boolean; onChangeLevel: (v: string) => void };
-}) {
-  const { t } = useTranslation();
-  const colConfig = TWO_COL_CONFIG[agentType];
-  if (!colConfig) return null;
-
-  // 로그 섹션(section: 'logging') 필드가 있으면 별도 '로그' 그룹으로 분리하고 로그 레벨
-  // 셀렉터를 그 그룹 상단에 둔다(HVACR 4-분면의 logging 섹션과 동형). 로그 섹션 필드가
-  // 없는 에이전트는 기존 2열 동작을 유지한다(로그 레벨은 우측 컬럼 하단).
-  const leftFields = schema.fields.filter((f) => colConfig.left.has(f.name) && f.section !== 'logging');
-  const rightFields = schema.fields.filter((f) => !colConfig.left.has(f.name) && f.section !== 'logging');
-
-  const filterVisible = (fields: typeof schema.fields) =>
-    fields.filter((f) => {
-      if (!f.visibleWhen) return true;
-      const actual = data[f.visibleWhen.field];
-      const expected = f.visibleWhen.value;
-      if (Array.isArray(expected)) return (expected as unknown[]).includes(actual);
-      return actual === expected;
-    });
-
-  const loggingFields = filterVisible(schema.fields.filter((f) => f.section === 'logging'));
-  const hasLoggingGroup = loggingFields.length > 0;
-
-  const handleChange = (fieldName: string, value: unknown) => {
-    onChange({ ...data, [fieldName]: value });
-  };
-
-  // 로그 레벨 셀렉터(로컬 타깃에서만 logLevel 전달). 로그 그룹 유무에 따라 그룹 상단 또는
-  // 우측 컬럼 하단에 배치한다.
-  const logLevelSelect = logLevel ? (
-    <div className="space-y-1">
-      <label
-        htmlFor={`agent-log-${logLevel.agentId}`}
-        className="block text-xs font-medium text-(--color-text-secondary)"
-      >
-        {t('agents.detail.config.logLevel')}
-      </label>
-      <select
-        id={`agent-log-${logLevel.agentId}`}
-        value={logLevel.value}
-        onChange={(e) => logLevel.onChangeLevel(e.target.value)}
-        disabled={logLevel.updating}
-        className={cn(
-          'block w-full rounded-md border border-(--color-border-strong) px-3 py-2 text-sm shadow-sm',
-          'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500',
-          'bg-(--color-bg-surface) text-(--color-text-primary)',
-          'disabled:cursor-not-allowed disabled:opacity-50',
-        )}
-      >
-        <option value="">{t('agents.detail.config.logLevelDefault')}</option>
-        <option value="debug">DEBUG</option>
-        <option value="info">INFO</option>
-        <option value="warn">WARN</option>
-        <option value="error">ERROR</option>
-      </select>
-    </div>
-  ) : null;
-
-  return (
-    <div className="grid grid-cols-2 gap-4">
-      {/* 좌측 */}
-      <div className="space-y-3">
-        <h4 className="text-xs font-semibold text-(--color-text-muted) uppercase tracking-wide">{t(colConfig.leftLabelKey)}</h4>
-        {filterVisible(leftFields).map((field) => (
-          <FormField
-            key={field.name}
-            field={field}
-            value={data[field.name]}
-            onChange={(v) => handleChange(field.name, v)}
-            readOnly={readOnly}
-          />
-        ))}
-      </div>
-      {/* 우측 */}
-      <div className="space-y-3">
-        <h4 className="text-xs font-semibold text-(--color-text-muted) uppercase tracking-wide">{t(colConfig.rightLabelKey)}</h4>
-        {filterVisible(rightFields).map((field) => (
-          <FormField
-            key={field.name}
-            field={field}
-            value={data[field.name]}
-            onChange={(v) => handleChange(field.name, v)}
-            readOnly={readOnly}
-          />
-        ))}
-        {/* 로그 그룹 (section: 'logging' 필드 보유 에이전트: serial / tcp-server 등) 은
-            우측 컬럼 하단에 별도 '로그' 그룹으로 렌더한다. 로그 레벨을 상단에, 그 아래
-            로그 토글(송/수신 프레임 로그 등)을 둔다. 로그 섹션 필드가 없으면 기존처럼
-            로그 레벨만 우측 하단에 렌더한다. */}
-        {hasLoggingGroup ? (
-          <div className="space-y-3 border-t border-(--color-border-default) pt-3">
-            <h4 className="text-xs font-semibold text-(--color-text-muted) uppercase tracking-wide">{t('agents.detail.config.logging')}</h4>
-            {logLevelSelect}
-            {loggingFields.map((field) => (
-              <FormField
-                key={field.name}
-                field={field}
-                value={data[field.name]}
-                onChange={(v) => handleChange(field.name, v)}
-                readOnly={readOnly}
-              />
-            ))}
-          </div>
-        ) : (
-          logLevelSelect
-        )}
-      </div>
-    </div>
-  );
-}
+// FourQuadrantConfigLayout 으로 분기되므로 여기에 포함되지 않는다.
 
 // ---- 4-분면 설정 레이아웃 (HVACR-01 공용: Samsung / LG / Century) ----
 
@@ -801,7 +779,7 @@ function FourQuadrantConfigLayout({
  * - 운영 섹션: max_key_length, scan_interval, default_ttl, max_history_size, history_ttl
  * - 데이터 섹션:
  *     * registration_type (enum 셀렉트 — v0.7.0 M12, 이전 allow_dynamic_keys 토글 대체)
- *     * keys (정적 키 + data_type + metric_type + 태그) — StoreKeysEditor 를 통해 편집한다.
+ *     * keys (정적 키 + data_type + field + 태그) — StoreKeysEditor 를 통해 편집한다.
  *
  * `keys` 는 ConfigSchema 에 포함되지 않는 커스텀 UI 필드로, 이 컴포넌트에서
  * 직접 data.keys 를 읽고 onChange 로 병합한다.
@@ -935,7 +913,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   // v0.7.0 (M13): Store 에이전트의 keys 행 검증 상태.
-  // StoreConfigEditor → StoreKeysEditor 에서 data_type/metric_type 검증 결과를 받아
+  // StoreConfigEditor → StoreKeysEditor 에서 data_type/field 검증 결과를 받아
   // manual 모드 미입력 시 저장 버튼을 비활성화한다. 다른 에이전트 타입에서는 항상 true.
   const [storeKeysValid, setStoreKeysValid] = useState(true);
 
@@ -986,8 +964,18 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
     }
   }
 
-  const config = agent?.config ?? {};
+  const config = useMemo(() => agent?.config ?? {}, [agent?.config]);
   const schema = getAgentConfigSchema(agentType);
+
+  // M3 (SPEC-MODBUS-009 REQ-03): 실행 중 에이전트의 설정 탭에서 modbus-client 의 devices
+  // 편집기(modbus_devices)를 숨긴다. 디바이스 관리는 장치 탭 전용 섹션으로 일원화한다.
+  // 스키마 자체(agentSchemas.ts)는 보존하므로 생성 모달(CreateAgentModal)의 초기 부트스트랩에는
+  // 영향이 없고, running-agent 설정 렌더에서만 devices 필드를 제외한다. 타입 스코프(modbus-client)
+  // + 필드 스코프(devices) 로 한정하여 다른 agentType/다른 필드에는 영향이 없다(AC-05).
+  const displaySchema = useMemo(() => {
+    if (!schema || agentType !== 'modbus-client') return schema;
+    return { ...schema, fields: schema.fields.filter((f) => f.name !== 'devices') };
+  }, [schema, agentType]);
 
   // 에이전트 데이터 로드 시 드래프트 초기화
   useEffect(() => {
@@ -1148,23 +1136,23 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
       )}
 
       {/* 설정 폼 */}
-      {agentType === 'store' && schema ? (
+      {agentType === 'store' && displaySchema ? (
         // Store 는 운영/데이터 섹션으로 분리된 커스텀 레이아웃을 사용한다.
         // (SPEC-STORE-003)
         // v0.7.0 (M13): keys 검증 결과를 받아 저장 버튼 게이팅에 사용.
         <StoreConfigEditor
           data={editing ? draft : config}
-          schema={schema}
+          schema={displaySchema}
           onChange={setDraft}
           onValidityChange={setStoreKeysValid}
           readOnly={!editing}
         />
-      ) : HVACR_QUADRANT_AGENT_TYPES.has(agentType) && schema ? (
+      ) : HVACR_QUADRANT_AGENT_TYPES.has(agentType) && displaySchema ? (
         // 3 HVACR 에이전트는 4-분면 (transport/protocol/operation/logging) 그리드를 사용한다.
         <FourQuadrantConfigLayout
           nodeId={agentId}
           data={editing ? draft : config}
-          schema={schema}
+          schema={displaySchema}
           onChange={setDraft}
           readOnly={!editing}
           agentType={agentType}
@@ -1179,11 +1167,11 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
                 }
           }
         />
-      ) : agentType in TWO_COL_CONFIG && schema ? (
+      ) : agentType in TWO_COL_CONFIG && displaySchema ? (
         <TwoColumnConfigLayout
           nodeId={agentId}
           data={editing ? draft : config}
-          schema={schema}
+          schema={displaySchema}
           onChange={setDraft}
           readOnly={!editing}
           agentType={agentType}
@@ -1202,7 +1190,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
         <DynamicForm
           nodeId={agentId}
           data={editing ? draft : config}
-          schema={schema}
+          schema={displaySchema}
           onChange={setDraft}
           readOnly={!editing}
         />
@@ -1240,7 +1228,7 @@ function ConfigTab({ agentId, agentType }: { agentId: string; agentType: string 
   );
 }
 
-// ---- Modbus TCP Server 디바이스 섹션 ----
+// ---- Modbus Gateway 디바이스 섹션 ----
 
 /** list_devices 응답 내 개별 디바이스 */
 interface ModbusDevice {
@@ -1402,591 +1390,762 @@ function RegisterMapTable({ registerMap }: { registerMap: ModbusDeviceDetail['re
   );
 }
 
+// ---- MODBUS 일괄 등록 공용 헬퍼 (SPEC-MODBUS-011) ----
+
+/** BulkFailure sentinel → i18n 사유 문자열. sentinel 이 아니면 백엔드 오류 메시지 원문으로 간주. */
+function modbusBulkReason(reason: string, t: TranslationFn): string {
+  switch (reason) {
+    case EMPTY_REQUIRED:
+      return t('agents.detail.devices.bulk.reasonEmptyRequired');
+    case INVALID_UNIT_ID:
+      return t('agents.detail.devices.bulk.reasonInvalidUnitId');
+    case INVALID_PORT:
+      return t('agents.detail.devices.bulk.reasonInvalidPort');
+    case INVALID_FC:
+      return t('agents.detail.devices.bulk.reasonInvalidFc');
+    case INVALID_GROUP:
+      return t('agents.detail.devices.bulk.reasonInvalidGroup');
+    case INVALID_SEGMENT:
+      return t('agents.detail.devices.bulk.reasonInvalidSegment');
+    case INVALID_SHARED_ADDRESS:
+      return t('agents.detail.devices.bulk.reasonInvalidSharedAddress');
+    case NO_CURRENT_DEVICE:
+      return t('agents.detail.devices.bulk.reasonNoCurrentDevice');
+    case EMPTY_SEGMENTS:
+      return t('agents.detail.devices.bulk.reasonEmptySegments');
+    default:
+      return reason;
+  }
+}
+
+/** 실패 행 → 표시 문자열(줄 번호 + 사유). */
+function formatModbusBulkFailure(f: BulkFailure, t: TranslationFn): string {
+  return t('agents.detail.devices.bulk.rowError')
+    .replace('{line}', String(f.line))
+    .replace('{reason}', modbusBulkReason(f.reason, t));
+}
+
+/** 결과 요약 토스트. 전량 성공이면 true(호출부가 textarea 를 비운다). */
+function reportModbusBulk(
+  result: BulkResult,
+  t: TranslationFn,
+  addNotification: (n: { type: 'success' | 'error'; message: string }) => void,
+): boolean {
+  if (result.total === 0) {
+    addNotification({ type: 'error', message: t('agents.detail.devices.bulk.emptyInput') });
+    return false;
+  }
+  if (result.failed.length === 0) {
+    addNotification({
+      type: 'success',
+      message: t('agents.detail.devices.bulk.successToast').replace('{count}', String(result.ok)),
+    });
+    return true;
+  }
+  addNotification({
+    type: 'error',
+    message: t('agents.detail.devices.bulk.partialToast')
+      .replace('{ok}', String(result.ok))
+      .replace('{failed}', String(result.failed.length)),
+  });
+  return false;
+}
+
 function ModbusDevicesSection({ agentId }: { agentId: string }) {
   const { t } = useTranslation();
-  const execAgent = useExecAgent();
+  const target = useTargetContext();
+  const { data: agent, isLoading } = useAgentDetailTarget(target, agentId, 'full');
+  const configureAgent = useConfigureAgent();
+  const queryClient = useQueryClient();
   const addNotification = useUIStore((s) => s.addNotification);
+  // 읽기 전용 조회(list_devices / get_device_status)만 수행하므로 query 경로를 쓴다.
+  const queryAgent = useQueryAgent();
 
-  // 디바이스 목록
-  const [devices, setDevices] = useState<ModbusDevice[]>([]);
-  const [isLoadingDevices, setIsLoadingDevices] = useState(true);
+  // ── config.devices 편집(단일 소스). 저장 시 PUT /agents/{id}/config → 백엔드가
+  //    config 를 영속화하고 modbus-gateway 를 재시작해 DeviceManager 를 재빌드한다.
+  const config = useMemo(
+    () => (agent?.config as Record<string, unknown> | undefined) ?? {},
+    [agent?.config],
+  );
+  const savedDevices = useMemo(() => {
+    const d = config.devices;
+    return Array.isArray(d) ? (d as unknown[]) : [];
+  }, [config.devices]);
 
-  // 상세 보기
+  // 에디터 방출 드래프트. 저장 전까지 로컬 상태.
+  const [draft, setDraft] = useState<unknown>(savedDevices);
+  const [dirty, setDirty] = useState(false);
+
+  // 세그먼트 0개 디바이스가 하나라도 있으면 저장을 차단한다. 백엔드 parseRegisterMapConfig
+  // (config.go:667)는 모든 디바이스의 register_map 이 최소 1개 영역을 갖도록 요구하며,
+  // 위반 시 자동 재시작이 ErrInvalidRegisterMap 으로 실패한다. 여기서 막아 잘못된 config 가
+  // 백엔드에 도달하지 못하게 한다(에디터의 시각 경고와 동일 규칙).
+  const devicesValid = useMemo(() => modbusServerDevicesValid(draft), [draft]);
+
+  // 외부 config 로드/변경 시(저장 후 refetch 포함) 드래프트를 동기화한다.
+  useEffect(() => {
+    setDraft(savedDevices);
+    setDirty(false);
+  }, [savedDevices]);
+
+  const handleSave = useCallback(async () => {
+    const devices = Array.isArray(draft) ? draft : [];
+    // 방어적 가드: 저장 버튼이 게이팅되지만 프로그램적 호출도 차단해 잘못된 config 방출을 막는다.
+    if (!modbusServerDevicesValid(devices)) {
+      addNotification({
+        type: 'error',
+        message: t('property.modbusServerDevices.emptyRegisterMapBanner'),
+      });
+      return;
+    }
+    try {
+      await configureAgent.mutateAsync({
+        id: agentId,
+        config: { ...config, devices },
+      });
+      addNotification({
+        type: 'success',
+        message: t('agents.detail.modbus.configSavedRestart'),
+      });
+      setDirty(false);
+      await queryClient.invalidateQueries({ queryKey: ['agents', agentId] });
+    } catch (err) {
+      addNotification({
+        type: 'error',
+        message: t('agents.detail.modbus.configSaveError').replace(
+          '{message}',
+          err instanceof Error ? err.message : t('agents.detail.modbus.unknownError'),
+        ),
+      });
+    }
+  }, [draft, config, agentId, configureAgent, addNotification, queryClient, t]);
+
+  const handleReset = useCallback(() => {
+    setDraft(savedDevices);
+    setDirty(false);
+  }, [savedDevices]);
+
+  // ── 실시간 상태(읽기 전용). 런타임 list_devices / get_device_status 로 현재
+  //    구동 중인 디바이스와 레지스터 값을 조회한다(설정 편집과 별개).
+  const [liveDevices, setLiveDevices] = useState<ModbusDevice[]>([]);
   const [selectedUnitId, setSelectedUnitId] = useState<number | null>(null);
   const [deviceDetail, setDeviceDetail] = useState<ModbusDeviceDetail | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
 
-  // 추가 모달
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [addUnitId, setAddUnitId] = useState('');
-  const [addName, setAddName] = useState('');
-  const [isAdding, setIsAdding] = useState(false);
-
-  // 레지스터 맵 폼 상태 (영역별 블록 배열, 빈 배열 = 비활성)
-  type RegBlock = { start: string; count: string };
-  const [addRegAreas, setAddRegAreas] = useState<Record<string, RegBlock[]>>({
-    holding_registers: [{ start: '0', count: '100' }],
-    input_registers: [],
-    coils: [],
-    discrete_inputs: [],
-  });
-
-  // 삭제 확인
-  const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
-
-  // 디바이스 목록 로드
-  const fetchDevices = useCallback(() => {
-    setIsLoadingDevices(true);
-    execAgent.mutate(
+  const fetchLiveDevices = useCallback(() => {
+    queryAgent.mutate(
       { id: agentId, req: { command: 'list_devices' } },
       {
         onSuccess: (res) => {
-          const result = res as { result?: { devices?: ModbusDevice[]; total?: number } };
-          const list = result?.result?.devices ?? [];
-          setDevices(list);
-          setIsLoadingDevices(false);
+          const result = res as { result?: { devices?: ModbusDevice[] } };
+          setLiveDevices(result?.result?.devices ?? []);
         },
-        onError: () => {
-          setIsLoadingDevices(false);
-          addNotification({ type: 'error', message: t('agents.detail.modbus.loadDevicesError') });
-        },
+        onError: () => setLiveDevices([]),
       },
     );
-  }, [agentId, execAgent, addNotification, t]);
+  }, [agentId, queryAgent]);
 
   useEffect(() => {
-    fetchDevices();
+    fetchLiveDevices();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);
 
-  // 디바이스 상세 로드
-  const handleSelectDevice = useCallback((unitId: number) => {
-    if (selectedUnitId === unitId) {
-      setSelectedUnitId(null);
-      setDeviceDetail(null);
-      return;
+  // ── 일괄 등록(SPEC-MODBUS-011). 붙여넣기 → 파싱 → 행별 add_device → 결과 요약.
+  const bulkAdd = useModbusGatewayBulkAdd(agentId);
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkFailures, setBulkFailures] = useState<BulkFailure[] | null>(null);
+
+  const submitBulk = useCallback(async () => {
+    const result = await bulkAdd.mutateAsync(bulkText);
+    const fullSuccess = reportModbusBulk(result, t, addNotification);
+    setBulkFailures(result.failed.length > 0 ? result.failed : null);
+    if (fullSuccess) setBulkText('');
+    // 모든 행 처리 후 1회만 목록 갱신(라이브 목록 + config 파생 목록).
+    if (result.ok > 0) {
+      fetchLiveDevices();
+      queryClient.invalidateQueries({ queryKey: ['agents', agentId] });
     }
-    setSelectedUnitId(unitId);
-    setIsLoadingDetail(true);
-    execAgent.mutate(
-      { id: agentId, req: { command: 'get_device_status', params: { unit_id: unitId } } },
-      {
-        onSuccess: (res) => {
-          const result = res as { result?: ModbusDeviceDetail };
-          setDeviceDetail(result?.result ?? null);
-          setIsLoadingDetail(false);
-        },
-        onError: () => {
-          setDeviceDetail(null);
-          setIsLoadingDetail(false);
-        },
-      },
-    );
-  }, [agentId, selectedUnitId, execAgent]);
+  }, [bulkAdd, bulkText, t, addNotification, fetchLiveDevices, queryClient, agentId]);
 
-  // 디바이스 추가
-  const handleAddDevice = useCallback(() => {
-    const unitId = parseInt(addUnitId, 10);
-    if (isNaN(unitId) || unitId < 1 || unitId > 247) {
-      addNotification({ type: 'error', message: t('agents.detail.modbus.unitIdRangeError') });
-      return;
-    }
-
-    const params: Record<string, unknown> = { unit_id: unitId };
-    if (addName.trim()) params.name = addName.trim();
-
-    // 구조화된 레지스터 맵 조립 (영역당 다중 블록 지원)
-    const regMap: Record<string, unknown> = {};
-    for (const [area, blocks] of Object.entries(addRegAreas)) {
-      if (!blocks || blocks.length === 0) continue;
-      const parsed: { start_address: number; count: number }[] = [];
-      for (const blk of blocks) {
-        const start = parseInt(blk.start, 10);
-        const cnt = parseInt(blk.count, 10);
-        if (isNaN(start) || isNaN(cnt) || cnt <= 0) {
-          addNotification({ type: 'error', message: t('agents.detail.modbus.blockInputError').replace('{area}', REGISTER_AREA_LABELS[area] ?? area) });
-          return;
-        }
-        parsed.push({ start_address: start, count: cnt });
+  const handleSelectLive = useCallback(
+    (unitId: number) => {
+      if (selectedUnitId === unitId) {
+        setSelectedUnitId(null);
+        setDeviceDetail(null);
+        return;
       }
-      // 블록 1개면 객체, 2개 이상이면 배열 (백엔드 호환)
-      regMap[area] = parsed.length === 1 ? parsed[0] : parsed;
-    }
-    if (Object.keys(regMap).length === 0) {
-      addNotification({ type: 'error', message: t('agents.detail.modbus.noRegisterArea') });
-      return;
-    }
-    params.register_map = regMap;
-
-    setIsAdding(true);
-    execAgent.mutate(
-      { id: agentId, req: { command: 'add_device', params } },
-      {
-        onSuccess: (res) => {
-          const result = res as { result?: { success?: boolean; error?: string } };
-          if (result?.result?.success === false) {
-            addNotification({ type: 'error', message: result.result.error ?? t('agents.detail.modbus.addDeviceFailed') });
-          } else {
-            addNotification({ type: 'success', message: t('agents.detail.modbus.addDeviceSuccess').replace('{unit}', String(unitId)) });
-            setShowAddModal(false);
-            setAddUnitId('');
-            setAddName('');
-            setAddRegAreas({
-              holding_registers: [{ start: '0', count: '100' }],
-              input_registers: [],
-              coils: [],
-              discrete_inputs: [],
-            });
-            fetchDevices();
-          }
-          setIsAdding(false);
+      setSelectedUnitId(unitId);
+      setIsLoadingDetail(true);
+      queryAgent.mutate(
+        { id: agentId, req: { command: 'get_device_status', params: { unit_id: unitId } } },
+        {
+          onSuccess: (res) => {
+            const result = res as { result?: ModbusDeviceDetail };
+            setDeviceDetail(result?.result ?? null);
+            setIsLoadingDetail(false);
+          },
+          onError: () => {
+            setDeviceDetail(null);
+            setIsLoadingDetail(false);
+          },
         },
-        onError: (err) => {
-          addNotification({ type: 'error', message: t('agents.detail.modbus.addDeviceError').replace('{message}', err instanceof Error ? err.message : t('agents.detail.modbus.unknownError')) });
-          setIsAdding(false);
-        },
-      },
-    );
-  }, [agentId, addUnitId, addName, addRegAreas, execAgent, addNotification, fetchDevices, t]);
+      );
+    },
+    [agentId, selectedUnitId, queryAgent],
+  );
 
-  // 디바이스 삭제
-  const handleDeleteDevice = useCallback((unitId: number) => {
-    execAgent.mutate(
-      { id: agentId, req: { command: 'remove_device', params: { unit_id: unitId } } },
-      {
-        onSuccess: (res) => {
-          const result = res as { result?: { success?: boolean; error?: string } };
-          if (result?.result?.success === false) {
-            addNotification({ type: 'error', message: result.result.error ?? t('agents.detail.modbus.removeDeviceFailed') });
-          } else {
-            addNotification({ type: 'success', message: t('agents.detail.modbus.removeDeviceSuccess').replace('{unit}', String(unitId)) });
-            if (selectedUnitId === unitId) {
-              setSelectedUnitId(null);
-              setDeviceDetail(null);
-            }
-            fetchDevices();
-          }
-          setDeleteTarget(null);
-        },
-        onError: (err) => {
-          addNotification({ type: 'error', message: t('agents.detail.modbus.removeDeviceError').replace('{message}', err instanceof Error ? err.message : t('agents.detail.modbus.unknownError')) });
-          setDeleteTarget(null);
-        },
-      },
-    );
-  }, [agentId, selectedUnitId, execAgent, addNotification, fetchDevices, t]);
-
-  const canDelete = useMemo(() => devices.length > 1, [devices.length]);
-
-  if (isLoadingDevices) {
+  if (isLoading) {
     return (
-      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div
-            key={i}
-            className="h-32 animate-pulse rounded-lg bg-(--color-bg-elevated)"
-          />
-        ))}
+      <div className="space-y-3 p-4">
+        <div className="h-40 animate-pulse rounded-lg bg-(--color-bg-elevated)" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-3 p-4">
-      {/* 헤더 */}
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-(--color-text-muted)">
-          {t('agents.detail.modbus.devicesCount').replace('{count}', String(devices.length))}
-        </span>
-        <button
-          type="button"
-          onClick={() => setShowAddModal(true)}
-          className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          {t('agents.detail.modbus.addDevice')}
-        </button>
-      </div>
-
-      {/* 추가 모달 */}
-      {showAddModal && (
-        <div className="space-y-2 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-950">
-          <div className="text-sm font-medium text-(--color-text-primary)">{t('agents.detail.modbus.addDevice')}</div>
-          <div>
-            <label htmlFor="modbus-add-unit-id" className="mb-1 block text-xs font-medium text-(--color-text-muted)">
-              {t('agents.detail.modbus.unitId')}
-            </label>
-            <input
-              id="modbus-add-unit-id"
-              type="number"
-              min={1}
-              max={247}
-              placeholder="1"
-              value={addUnitId}
-              onChange={(e) => setAddUnitId(e.target.value)}
-              className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
-            />
-          </div>
-          <div>
-            <label htmlFor="modbus-add-name" className="mb-1 block text-xs font-medium text-(--color-text-muted)">
-              {t('agents.detail.modbus.name')}
-            </label>
-            <input
-              id="modbus-add-name"
-              type="text"
-              placeholder={t('agents.detail.modbus.namePlaceholder')}
-              value={addName}
-              onChange={(e) => setAddName(e.target.value)}
-              className="block w-full rounded-md border border-(--color-border-strong) px-3 py-1.5 text-sm bg-(--color-bg-surface) text-(--color-text-primary)"
-            />
-          </div>
-          <div>
-            <p className="mb-1.5 text-xs font-medium text-(--color-text-muted)">
-              {t('agents.detail.modbus.registerMap')}
-            </p>
-            <div className="space-y-1.5">
-              {REGISTER_AREA_ORDER.map((area) => {
-                const blocks = addRegAreas[area] ?? [];
-                const isActive = blocks.length > 0;
-                const label = REGISTER_AREA_LABELS[area] ?? area;
-                const defaultCount = area === 'coils' || area === 'discrete_inputs' ? '8' : '100';
-                return (
-                  <div
-                    key={area}
-                    className={cn(
-                      'rounded-md border p-2 transition-colors',
-                      isActive
-                        ? 'border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/30'
-                        : 'border-(--color-border-default) bg-(--color-bg-primary)',
-                    )}
-                  >
-                    <div className="flex items-center justify-between">
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={isActive}
-                          onChange={(e) => {
-                            setAddRegAreas((prev) => ({
-                              ...prev,
-                              [area]: e.target.checked ? [{ start: '0', count: defaultCount }] : [],
-                            }));
-                          }}
-                          className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
-                        />
-                        <span className="text-xs font-medium text-(--color-text-secondary)">
-                          {label}
-                        </span>
-                      </label>
-                      {isActive && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAddRegAreas((prev) => {
-                              const cur = prev[area] ?? [];
-                              return { ...prev, [area]: [...cur, { start: '0', count: defaultCount }] };
-                            });
-                          }}
-                          className="text-[10px] font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-                        >
-                          {t('agents.detail.modbus.addBlock')}
-                        </button>
-                      )}
-                    </div>
-                    {isActive && (
-                      <div className="mt-1.5 space-y-1 pl-5">
-                        {blocks.map((blk, idx) => (
-                          <div key={idx} className="flex items-center gap-2">
-                            <div className="flex items-center gap-1">
-                              <span className="text-[10px] text-(--color-text-muted)">Start:</span>
-                              <input
-                                type="number"
-                                min={0}
-                                value={blk.start}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setAddRegAreas((prev) => {
-                                    const cur = [...(prev[area] ?? [])];
-                                    cur[idx] = { start: val, count: cur[idx]?.count ?? defaultCount };
-                                    return { ...prev, [area]: cur };
-                                  });
-                                }}
-                                className="w-20 rounded border border-(--color-border-strong) px-1.5 py-0.5 font-mono text-xs bg-(--color-bg-surface) text-(--color-text-primary)"
-                              />
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span className="text-[10px] text-(--color-text-muted)">Count:</span>
-                              <input
-                                type="number"
-                                min={1}
-                                value={blk.count}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setAddRegAreas((prev) => {
-                                    const cur = [...(prev[area] ?? [])];
-                                    cur[idx] = { start: cur[idx]?.start ?? '0', count: val };
-                                    return { ...prev, [area]: cur };
-                                  });
-                                }}
-                                className="w-20 rounded border border-(--color-border-strong) px-1.5 py-0.5 font-mono text-xs bg-(--color-bg-surface) text-(--color-text-primary)"
-                              />
-                            </div>
-                            {blocks.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setAddRegAreas((prev) => {
-                                    const cur = [...(prev[area] ?? [])];
-                                    cur.splice(idx, 1);
-                                    return { ...prev, [area]: cur };
-                                  });
-                                }}
-                                className="rounded p-0.5 text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950"
-                                title={t('agents.detail.modbus.deleteBlock')}
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+    <div className="space-y-5 p-4">
+      {/* ── 디바이스 설정(config.devices) ── */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-(--color-text-muted)">
+            {t('agents.detail.modbus.configSectionTitle')}
+          </h4>
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleAddDevice}
-              disabled={!addUnitId.trim() || isAdding}
-              className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-500"
+              onClick={() => setShowBulk((v) => !v)}
+              aria-expanded={showBulk}
+              data-testid="modbus-gateway-bulk-toggle"
+              className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
             >
-              {isAdding ? t('agents.detail.modbus.adding') : t('agents.detail.modbus.add')}
+              <ListPlus className="h-3.5 w-3.5" />
+              {t('agents.detail.devices.bulk.toggle')}
             </button>
+            {dirty && (
+              <button
+                type="button"
+                onClick={handleReset}
+                disabled={configureAgent.isPending}
+                className="rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-secondary) disabled:opacity-50"
+              >
+                {t('agents.detail.modbus.reset')}
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => {
-                setShowAddModal(false);
-                setAddUnitId('');
-                setAddName('');
-                setAddRegAreas({
-                  holding_registers: [{ start: '0', count: '100' }],
-                  input_registers: [],
-                  coils: [],
-                  discrete_inputs: [],
-                });
-              }}
-              className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
+              onClick={handleSave}
+              disabled={!dirty || configureAgent.isPending || !devicesValid}
+              title={
+                !devicesValid
+                  ? t('property.modbusServerDevices.emptyRegisterMapBanner')
+                  : undefined
+              }
+              className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {t('agents.detail.modbus.cancel')}
+              {configureAgent.isPending
+                ? t('agents.detail.modbus.saving')
+                : t('agents.detail.modbus.saveConfig')}
             </button>
           </div>
         </div>
-      )}
 
-      {/* 삭제 확인 다이얼로그 */}
-      {deleteTarget !== null && (
-        <div className="flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-800 dark:bg-red-950">
-          <AlertTriangle className="h-4 w-4 flex-shrink-0 text-red-500" />
-          <div className="flex-1">
-            <p className="text-sm text-red-700 dark:text-red-300">
-              {t('agents.detail.modbus.confirmDelete').replace('{unit}', String(deleteTarget))}
-            </p>
+        {/* 일괄 등록 패널(gateway) */}
+        {showBulk && (
+          <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) p-3">
+            <h4 className="mb-2 text-xs font-semibold text-(--color-text-secondary)">
+              {t('agents.detail.devices.bulk.title')}
+            </h4>
+            <BulkRegisterPanel
+              placeholder={t('agents.detail.devices.bulk.gatewayPlaceholder')}
+              formatHint={t('agents.detail.devices.bulk.gatewayFormatHint')}
+              value={bulkText}
+              onChange={setBulkText}
+              onSubmit={submitBulk}
+              submitting={bulkAdd.isPending}
+              submitLabel={t('agents.detail.devices.bulk.submit')}
+              failures={bulkFailures}
+              formatFailure={(f) => formatModbusBulkFailure(f, t)}
+            />
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => handleDeleteDevice(deleteTarget)}
-              className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
-            >
-              {t('agents.detail.modbus.delete')}
-            </button>
-            <button
-              type="button"
-              onClick={() => setDeleteTarget(null)}
-              className="rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
-            >
-              {t('agents.detail.modbus.cancel')}
-            </button>
+        )}
+
+        {/* 적용 시 재시작 안내 */}
+        <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700 dark:border-amber-500/40 dark:bg-amber-900/20 dark:text-amber-300">
+          {t('agents.detail.modbus.restartNotice')}
+        </p>
+
+        <ModbusServerDevicesEditor
+          value={draft}
+          onChange={(v) => {
+            setDraft(v);
+            setDirty(true);
+          }}
+        />
+      </div>
+
+      {/* ── 실시간 상태(읽기 전용) ── */}
+      <div className="space-y-2 border-t border-(--color-border-default) pt-4">
+        <div className="flex items-center justify-between">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-(--color-text-muted)">
+            {t('agents.detail.modbus.liveSectionTitle')}
+          </h4>
+          <button
+            type="button"
+            onClick={fetchLiveDevices}
+            className="rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2 py-1 text-[11px] font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-secondary)"
+          >
+            {t('agents.detail.modbus.refresh')}
+          </button>
+        </div>
+
+        {liveDevices.length === 0 ? (
+          <p className="py-2 text-center text-xs text-(--color-text-muted)">
+            {t('agents.detail.modbus.noLiveDevices')}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-1.5">
+              {liveDevices.map((d) => (
+                <button
+                  key={d.unit_id}
+                  type="button"
+                  onClick={() => handleSelectLive(d.unit_id)}
+                  className={
+                    selectedUnitId === d.unit_id
+                      ? 'rounded-md border border-blue-400 bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700 dark:border-blue-500 dark:bg-blue-900/20 dark:text-blue-300'
+                      : 'rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-[11px] text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)'
+                  }
+                >
+                  {d.unit_id === 0
+                    ? t('agents.detail.modbus.sharedUnit')
+                    : `unit ${d.unit_id}`}
+                  {d.name ? ` · ${d.name}` : ''}
+                </button>
+              ))}
+            </div>
+
+            {selectedUnitId !== null && (
+              <div className="rounded-md border border-(--color-border-default) bg-(--color-bg-surface) p-2">
+                {isLoadingDetail ? (
+                  <div className="h-16 animate-pulse rounded bg-(--color-bg-elevated)" />
+                ) : deviceDetail ? (
+                  <RegisterMapTable registerMap={deviceDetail.register_map} />
+                ) : (
+                  <p className="py-2 text-center text-[11px] text-(--color-text-muted)">
+                    {t('agents.detail.modbus.noDetail')}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---- Modbus Client 디바이스 섹션 (SPEC-MODBUS-009 F3b) ----
+
+/** modbus-client list_devices(백엔드 F1) 응답 내 개별 디바이스. */
+interface ModbusClientListDevice {
+  device_id: string;
+  id: string;
+  host: string;
+  port: number;
+  unit_id: number;
+  transport: string;
+  online: boolean;
+  share_session: boolean;
+  register_groups: Array<{
+    name?: string;
+    function_code: number;
+    start_address: number;
+    quantity: number;
+    data_type?: string;
+    poll_interval?: string;
+  }>;
+}
+
+/** 편집 다이얼로그 대상. add=신규, edit=기존 디바이스 in-place 수정(update_device). */
+type ModbusClientEditTarget =
+  | { mode: 'add' }
+  | { mode: 'edit'; device: ModbusClientListDevice };
+
+/**
+ * modbus-client 전용 디바이스 관리 섹션(REQ-MODBUS-009-04, M4).
+ *
+ * modbus-gateway 의 ModbusDevicesSection 을 구조 참조로 삼되, 관리 경로는 런타임 exec 명령이다:
+ *   - 목록: list_devices(F1) 응답의 res.data 배열(AgentDetailPanel:3617 소비 패턴과 정렬).
+ *   - 추가: add_device — DeviceEditDialog 로 신규 디바이스 폼(연결 필드 포함) → toEmitDevice 방출.
+ *   - 수정: update_device(F2) — DeviceEditDialog 를 lockConnection 으로 열어 register_groups/
+ *           unit_id 만 in-place 변경한다. 트랜스포트/host/port 는 백엔드가 init 전용으로 거부하므로
+ *           수정 폼에서 잠근다.
+ *   - 제거: remove_device — ConfirmDialog 후 실행.
+ * 편집 필드는 ModbusDevicesEditor 의 DeviceEditDialog 를 재사용한다(AC-07). 모든 문자열은
+ * agents.detail.devices.* i18n 키를 사용한다(하드코딩 금지).
+ */
+function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
+  const { t } = useTranslation();
+  const { data: agent } = useAgent(agentId);
+  const execAgent = useExecAgent();
+  // 목록 조회(list_devices)는 읽기 전용이라 query 경로로 분리한다.
+  const queryAgent = useQueryAgent();
+  // 모델 카탈로그 조회는 **별도 mutation 인스턴스**를 쓴다.
+  // useMutation 인스턴스 하나에 mutate 를 연속 호출하면 MutationObserver 가
+  // 이전 mutation 에서 스스로를 removeObserver 하고 #mutateOptions 를 덮어쓴다
+  // (@tanstack/query-core mutationObserver.ts mutate()). 그 결과 먼저 보낸
+  // list_devices 의 per-call onSuccess 가 영영 실행되지 않아 isLoading 이
+  // true 로 굳고 스켈레톤만 계속 돈다. 인스턴스를 나눠 서로를 밀어내지 않게 한다.
+  const queryModels = useQueryAgent();
+  const addNotification = useUIStore((s) => s.addNotification);
+
+  const [devices, setDevices] = useState<ModbusClientListDevice[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [editTarget, setEditTarget] = useState<ModbusClientEditTarget | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<ModbusClientListDevice | null>(null);
+  // 디바이스 모델 카탈로그(SPEC-MODBUS-013 REQ-05). 조회 실패는 조용히 빈 목록으로 둔다 —
+  // 모델이 없어도 수동 등록·일괄등록 경로는 그대로 동작해야 하기 때문이다(fail-open).
+  const [models, setModels] = useState<DeviceModelOption[]>([]);
+
+  // 에이전트 기본 트랜스포트(per-device 오버라이드 미지정 시 host/port 노출 판정 기준).
+  const agentTransport =
+    typeof agent?.config?.transport === 'string' ? (agent.config.transport as string) : 'tcp';
+
+  const fetchDevices = useCallback(() => {
+    setIsLoading(true);
+    queryAgent.mutate(
+      { id: agentId, req: { command: 'list_devices' } },
+      {
+        onSuccess: (res) => {
+          // 백엔드 F1 은 { data: [...], device_count } 를 반환한다(AgentDetailPanel:3617 소비 패턴).
+          const items = (res as { data?: ModbusClientListDevice[] })?.data;
+          setDevices(Array.isArray(items) ? items : []);
+          setIsLoading(false);
+        },
+        onError: () => {
+          setDevices([]);
+          setIsLoading(false);
+          addNotification({ type: 'error', message: t('agents.detail.devices.modbusLoadError') });
+        },
+      },
+    );
+  }, [agentId, queryAgent, addNotification, t]);
+
+  const fetchModels = useCallback(() => {
+    queryModels.mutate(
+      { id: agentId, req: { command: 'list_models' } },
+      {
+        onSuccess: (res) => {
+          const items = (res as { data?: DeviceModelOption[] })?.data;
+          setModels(Array.isArray(items) ? items : []);
+        },
+        // 카탈로그는 부가 기능이므로 실패해도 사용자에게 알리지 않는다(선택기만 숨겨진다).
+        onError: () => setModels([]),
+      },
+    );
+  }, [agentId, queryModels]);
+
+  useEffect(() => {
+    fetchDevices();
+    fetchModels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId]);
+
+  // ── 일괄 등록(SPEC-MODBUS-011). 붙여넣기 → 파싱(agentTransport 상속) → 행별 add_device → 요약.
+  const bulkAdd = useModbusClientBulkAdd(agentId);
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkFailures, setBulkFailures] = useState<BulkFailure[] | null>(null);
+
+  const submitBulk = useCallback(async () => {
+    const result = await bulkAdd.mutateAsync({ text: bulkText, transport: agentTransport });
+    const fullSuccess = reportModbusBulk(result, t, addNotification);
+    setBulkFailures(result.failed.length > 0 ? result.failed : null);
+    if (fullSuccess) setBulkText('');
+    // 모든 행 처리 후 1회만 목록 갱신(list_devices refetch).
+    if (result.ok > 0) fetchDevices();
+  }, [bulkAdd, bulkText, agentTransport, t, addNotification, fetchDevices]);
+
+  // add_device: 편집 다이얼로그가 방출한 DeviceRow → toEmitDevice(백엔드 device 전체 형상) → params.
+  const handleAdd = useCallback(
+    (row: DeviceRow) => {
+      const device = toEmitDevice(row, agentTransport) as unknown as Record<string, unknown>;
+      execAgent.mutate(
+        { id: agentId, req: { command: 'add_device', params: device } },
+        {
+          onSuccess: () => {
+            setEditTarget(null);
+            addNotification({ type: 'success', message: t('agents.detail.devices.modbusAddSuccess') });
+            fetchDevices();
+          },
+          onError: (err) =>
+            addNotification({
+              type: 'error',
+              message: t('agents.detail.devices.modbusAddError').replace(
+                '{message}',
+                err instanceof Error ? err.message : t('agents.detail.devices.unknownError'),
+              ),
+            }),
+        },
+      );
+    },
+    [agentId, agentTransport, execAgent, addNotification, t, fetchDevices],
+  );
+
+  // update_device(F2): register_groups/unit_id 만 전송한다(연결/init 전용 필드는 백엔드가 거부).
+  const handleUpdate = useCallback(
+    (row: DeviceRow, deviceId: string) => {
+      const emitted = toEmitDevice(row, agentTransport) as {
+        unit_id: number;
+        register_groups: unknown[];
+        host?: string;
+        port?: number;
+      };
+      const params: Record<string, unknown> = {
+        device_id: deviceId,
+        unit_id: emitted.unit_id,
+        register_groups: emitted.register_groups,
+      };
+      // 엔드포인트(host/port)는 TCP 디바이스에서만 방출된다(toEmitDevice 가 rtu 면 생략).
+      // 백엔드는 값이 기존과 같으면 연결을 건드리지 않으므로 항상 실어 보내도 안전하다.
+      if (emitted.host !== undefined) params.host = emitted.host;
+      if (emitted.port !== undefined) params.port = emitted.port;
+      execAgent.mutate(
+        { id: agentId, req: { command: 'update_device', params } },
+        {
+          onSuccess: () => {
+            setEditTarget(null);
+            addNotification({ type: 'success', message: t('agents.detail.devices.modbusUpdateSuccess') });
+            fetchDevices();
+          },
+          onError: (err) =>
+            addNotification({
+              type: 'error',
+              message: t('agents.detail.devices.modbusUpdateError').replace(
+                '{message}',
+                err instanceof Error ? err.message : t('agents.detail.devices.unknownError'),
+              ),
+            }),
+        },
+      );
+    },
+    [agentId, agentTransport, execAgent, addNotification, t, fetchDevices],
+  );
+
+  const handleRemove = useCallback(() => {
+    if (!removeTarget) return;
+    const deviceId = removeTarget.device_id || removeTarget.id;
+    execAgent.mutate(
+      { id: agentId, req: { command: 'remove_device', params: { device_id: deviceId } } },
+      {
+        onSuccess: () => {
+          setRemoveTarget(null);
+          addNotification({ type: 'success', message: t('agents.detail.devices.modbusRemoveSuccess') });
+          fetchDevices();
+        },
+        onError: (err) => {
+          setRemoveTarget(null);
+          addNotification({
+            type: 'error',
+            message: t('agents.detail.devices.modbusRemoveError').replace(
+              '{message}',
+              err instanceof Error ? err.message : t('agents.detail.devices.unknownError'),
+            ),
+          });
+        },
+      },
+    );
+  }, [agentId, removeTarget, execAgent, addNotification, t, fetchDevices]);
+
+  // 편집 다이얼로그 초기값: 추가=빈 폼, 수정=기존 디바이스를 편집기 형상으로 변환(register_groups 를
+  // function_code 기준 영역별로 재구성).
+  const dialogInitial = useMemo<DeviceRow | null>(() => {
+    if (!editTarget) return null;
+    if (editTarget.mode === 'add') return newDeviceRow();
+    return toDeviceRow(editTarget.device);
+  }, [editTarget]);
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3 p-4">
+        <div className="h-40 animate-pulse rounded-lg bg-(--color-bg-elevated)" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 p-4">
+      {/* 헤더: 제목 + 새로고침 + 추가 */}
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-(--color-text-muted)">
+          {t('agents.detail.devices.modbusSectionTitle')}
+        </h4>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={fetchDevices}
+            disabled={queryAgent.isPending}
+            className="inline-flex items-center gap-1 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-secondary) disabled:opacity-50"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            {t('agents.detail.devices.modbusRefresh')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowBulk((v) => !v)}
+            aria-expanded={showBulk}
+            data-testid="modbus-client-bulk-toggle"
+            className="inline-flex items-center gap-1 rounded-md border border-(--color-border-strong) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)"
+          >
+            <ListPlus className="h-3.5 w-3.5" />
+            {t('agents.detail.devices.bulk.toggle')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditTarget({ mode: 'add' })}
+            data-testid="modbus-client-add-device"
+            className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t('agents.detail.devices.modbusAddDevice')}
+          </button>
+        </div>
+      </div>
+
+      {/* 일괄 등록 패널(client) */}
+      {showBulk && (
+        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) p-3">
+          <h4 className="mb-2 text-xs font-semibold text-(--color-text-secondary)">
+            {t('agents.detail.devices.bulk.title')}
+          </h4>
+          <BulkRegisterPanel
+            placeholder={t('agents.detail.devices.bulk.clientPlaceholder')}
+            formatHint={t('agents.detail.devices.bulk.clientFormatHint')}
+            value={bulkText}
+            onChange={setBulkText}
+            onSubmit={submitBulk}
+            submitting={bulkAdd.isPending}
+            submitLabel={t('agents.detail.devices.bulk.submit')}
+            failures={bulkFailures}
+            formatFailure={(f) => formatModbusBulkFailure(f, t)}
+          />
         </div>
       )}
 
       {/* 디바이스 목록 */}
       {devices.length === 0 ? (
-        <div className="p-6 text-center">
-          <Server className="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600" />
-          <p className="mt-2 text-sm text-(--color-text-muted)">
-            {t('agents.detail.modbus.noDevices')}
-          </p>
-        </div>
+        <p className="py-8 text-center text-sm text-(--color-text-muted)">
+          {t('agents.detail.devices.modbusEmpty')}
+        </p>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {devices.map((d) => (
-            <div
-              key={d.unit_id}
-              className={cn(
-                'cursor-pointer rounded-lg border bg-(--color-bg-surface) p-3 transition-colors',
-                selectedUnitId === d.unit_id
-                  ? 'border-blue-400 ring-1 ring-blue-400 dark:border-blue-500'
-                  : 'border-(--color-border-default) hover:border-gray-300 dark:hover:border-gray-600',
-              )}
-              onClick={() => handleSelectDevice(d.unit_id)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleSelectDevice(d.unit_id);
-                }
-              }}
-            >
-              {/* 카드 헤더 */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded bg-(--color-bg-elevated) px-1.5 text-xs font-bold text-(--color-text-secondary)">
-                    {d.unit_id}
-                  </span>
-                  <span className="text-sm font-medium text-(--color-text-primary)">
-                    {d.name || `Device ${d.unit_id}`}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className={cn(
-                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
-                      d.status === 'active'
-                        ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-400'
-                        : 'bg-(--color-bg-elevated) text-(--color-text-muted)',
-                    )}
-                  >
+        <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-(--color-bg-primary) text-left text-(--color-text-muted)">
+                <th className="px-3 py-2 font-medium">{t('agents.detail.devices.modbusColId')}</th>
+                <th className="px-3 py-2 font-medium">{t('agents.detail.devices.modbusColConnection')}</th>
+                <th className="px-3 py-2 font-medium">{t('agents.detail.devices.modbusColUnitId')}</th>
+                <th className="px-3 py-2 font-medium">{t('agents.detail.devices.modbusColTransport')}</th>
+                <th className="px-3 py-2 font-medium">{t('agents.detail.devices.modbusColStatus')}</th>
+                <th className="px-3 py-2 font-medium">{t('agents.detail.devices.modbusColShareSession')}</th>
+                <th className="px-3 py-2 font-medium">{t('agents.detail.devices.modbusColGroups')}</th>
+                <th className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-(--color-border-default)">
+              {devices.map((device) => (
+                <tr key={device.device_id || device.id} className="hover:bg-(--color-bg-elevated)">
+                  <td className="px-3 py-2 font-mono text-(--color-text-primary)">{device.id}</td>
+                  <td className="px-3 py-2 font-mono text-(--color-text-secondary)">
+                    {device.transport === 'rtu' ? '—' : `${device.host}:${device.port}`}
+                  </td>
+                  <td className="px-3 py-2 text-(--color-text-secondary)">{device.unit_id}</td>
+                  <td className="px-3 py-2 uppercase text-(--color-text-secondary)">{device.transport}</td>
+                  <td className="px-3 py-2">
                     <span
                       className={cn(
-                        'h-1.5 w-1.5 rounded-full',
-                        d.status === 'active' ? 'bg-green-500' : 'bg-gray-400',
+                        'inline-block rounded px-1.5 py-0.5 text-[10px] font-medium',
+                        device.online
+                          ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-400'
+                          : 'bg-(--color-bg-elevated) text-(--color-text-muted)',
                       )}
-                    />
-                    {d.status === 'active' ? t('agents.detail.modbus.active') : t('agents.detail.modbus.inactive')}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeleteTarget(d.unit_id);
-                    }}
-                    disabled={!canDelete}
-                    className={cn(
-                      'rounded p-1 transition-colors',
-                      canDelete
-                        ? 'text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950'
-                        : 'cursor-not-allowed text-gray-300 dark:text-gray-600',
-                    )}
-                    title={canDelete ? t('agents.detail.modbus.deleteTooltip') : t('agents.detail.modbus.lastDeviceTooltip')}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              {/* 레지스터 영역 카운트 */}
-              <div className="mt-2 grid grid-cols-2 gap-1">
-                <div className="text-[10px] text-(--color-text-muted)">
-                  <span className="font-medium">Coils:</span> {d.register_counts.coils}
-                </div>
-                <div className="text-[10px] text-(--color-text-muted)">
-                  <span className="font-medium">DI:</span> {d.register_counts.discrete_inputs}
-                </div>
-                <div className="text-[10px] text-(--color-text-muted)">
-                  <span className="font-medium">HR:</span> {d.register_counts.holding_registers}
-                </div>
-                <div className="text-[10px] text-(--color-text-muted)">
-                  <span className="font-medium">IR:</span> {d.register_counts.input_registers}
-                </div>
-              </div>
-
-              {/* 통계 요약 */}
-              <div className="mt-2 flex items-center gap-3 border-t border-(--color-border-default) pt-2">
-                <span className="flex items-center gap-1 text-[10px] text-(--color-text-muted)">
-                  <Activity className="h-3 w-3" />
-                  R:{d.stats.read_count} W:{d.stats.write_count}
-                </span>
-                {d.stats.error_count > 0 && (
-                  <span className="text-[10px] text-red-500">
-                    E:{d.stats.error_count}
-                  </span>
-                )}
-              </div>
-            </div>
-          ))}
+                    >
+                      {device.online
+                        ? t('agents.detail.devices.modbusOnline')
+                        : t('agents.detail.devices.modbusOffline')}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-(--color-text-secondary)">
+                    {device.share_session
+                      ? t('agents.detail.devices.modbusShared')
+                      : t('agents.detail.devices.modbusIndependent')}
+                  </td>
+                  <td className="px-3 py-2 text-(--color-text-secondary)">
+                    {(device.register_groups ?? []).length}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setEditTarget({ mode: 'edit', device })}
+                        aria-label={t('agents.detail.devices.modbusEditTooltip')}
+                        title={t('agents.detail.devices.modbusEditTooltip')}
+                        className="rounded p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRemoveTarget(device)}
+                        aria-label={t('agents.detail.devices.modbusRemoveTooltip')}
+                        title={t('agents.detail.devices.modbusRemoveTooltip')}
+                        className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
-      {/* 디바이스 상세 보기 */}
-      {selectedUnitId !== null && (
-        <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-primary) p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h4 className="text-sm font-medium text-(--color-text-primary)">
-              {t('agents.detail.modbus.unitDetail').replace('{unit}', String(selectedUnitId))}
-            </h4>
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedUnitId(null);
-                setDeviceDetail(null);
-              }}
-              className="rounded p-1 text-gray-400 hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          {isLoadingDetail ? (
-            <div className="space-y-2">
-              <div className="h-4 w-1/3 animate-pulse rounded bg-(--color-bg-elevated)" />
-              <div className="h-4 w-2/3 animate-pulse rounded bg-(--color-bg-elevated)" />
-            </div>
-          ) : deviceDetail ? (
-            <div className="space-y-3">
-              {/* 요청 통계 */}
-              <div>
-                <p className="mb-1 text-xs font-medium text-(--color-text-muted)">{t('agents.detail.modbus.requestStats')}</p>
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="rounded border border-(--color-border-default) bg-(--color-bg-surface) p-2 text-center">
-                    <p className="text-xs text-(--color-text-muted)">{t('agents.detail.field.read')}</p>
-                    <p className="text-sm font-semibold text-(--color-text-primary)">{deviceDetail.stats.read_count}</p>
-                  </div>
-                  <div className="rounded border border-(--color-border-default) bg-(--color-bg-surface) p-2 text-center">
-                    <p className="text-xs text-(--color-text-muted)">{t('agents.detail.field.write')}</p>
-                    <p className="text-sm font-semibold text-(--color-text-primary)">{deviceDetail.stats.write_count}</p>
-                  </div>
-                  <div className="rounded border border-(--color-border-default) bg-(--color-bg-surface) p-2 text-center">
-                    <p className="text-xs text-(--color-text-muted)">{t('agents.detail.field.error')}</p>
-                    <p className={cn(
-                      'text-sm font-semibold',
-                      deviceDetail.stats.error_count > 0 ? 'text-red-500' : 'text-(--color-text-primary)',
-                    )}>{deviceDetail.stats.error_count}</p>
-                  </div>
-                </div>
-              </div>
+      {/* 추가/수정 편집 다이얼로그(ModbusDevicesEditor 필드 재사용). 추가=id 필수 + 연결 필드,
+          수정=연결 잠금(register_groups/unit_id 만). */}
+      {dialogInitial && editTarget && (
+        <DeviceEditDialog
+          initial={dialogInitial}
+          transport={agentTransport}
+          requireId={editTarget.mode === 'add'}
+          lockConnection={editTarget.mode === 'edit'}
+          models={models}
+          onSave={(row) =>
+            editTarget.mode === 'add'
+              ? handleAdd(row)
+              : handleUpdate(row, editTarget.device.device_id || editTarget.device.id)
+          }
+          onClose={() => setEditTarget(null)}
+        />
+      )}
 
-              {/* 레지스터 맵 정보 */}
-              {deviceDetail.register_map && Object.keys(deviceDetail.register_map).length > 0 && (
-                <RegisterMapTable registerMap={deviceDetail.register_map} />
-              )}
-
-              {/* 생성 시간 */}
-              {deviceDetail.created_at && (
-                <p className="text-xs text-(--color-text-muted)">
-                  {t('agents.detail.modbus.createdAt').replace('{date}', new Date(deviceDetail.created_at).toLocaleString('ko-KR'))}
-                </p>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs text-(--color-text-muted)">
-              {t('agents.detail.modbus.detailLoadError')}
-            </p>
+      {/* 제거 확인 */}
+      {removeTarget && (
+        <ConfirmDialog
+          isOpen
+          onClose={() => setRemoveTarget(null)}
+          onConfirm={handleRemove}
+          title={t('agents.detail.devices.modbusRemoveConfirmTitle')}
+          message={t('agents.detail.devices.modbusRemoveConfirmMessage').replace(
+            '{id}',
+            removeTarget.id,
           )}
-        </div>
+          confirmLabel={t('common.delete')}
+          variant="danger"
+          isSubmitting={execAgent.isPending}
+        />
       )}
     </div>
   );
@@ -2349,445 +2508,6 @@ function TopicStatsTable({
 
 // ---- 저장소 탭 ----
 
-// 모듈 스코프에서는 t()를 호출할 수 없으므로 번역 함수를 인자로 받는다.
-function formatTimeAgo(date: Date, t: TranslationFn): string {
-  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-  if (seconds < 60) return t('agents.detail.time.secondsAgo').replace('{n}', String(seconds));
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return t('agents.detail.time.minutesAgo').replace('{n}', String(minutes));
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return t('agents.detail.time.hoursAgo').replace('{n}', String(hours));
-  const days = Math.floor(hours / 24);
-  return t('agents.detail.time.daysAgo').replace('{n}', String(days));
-}
-
-/**
- * 엔트리의 `tags` 필드에서 태그 맵을 추출한다.
- * 정적 키가 아닌 동적 키 엔트리는 `tags` 를 가지지 않아 null 을 반환한다.
- *
- * @spec SPEC-STORE-003
- */
-function extractEntryTags(
-  entry: Record<string, unknown>,
-): Record<string, string> | null {
-  const raw = entry.tags;
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof v === 'string') out[k] = v;
-  }
-  return Object.keys(out).length > 0 ? out : null;
-}
-
-/**
- * 엔트리의 `metric_type` 필드를 추출한다.
- * 백엔드는 모든 엔트리에 metric_type 을 포함하며(동적 키는 "unknown"),
- * 누락/비문자열인 경우 빈 문자열을 반환해 호출자가 "unknown" 으로 표시하도록 한다.
- *
- * @spec SPEC-STORE-003 v0.4.0
- */
-function extractEntryMetricType(entry: Record<string, unknown>): string {
-  const raw = entry.metric_type;
-  return typeof raw === 'string' ? raw : '';
-}
-
-function StoreEntryRow({
-  entry,
-  columns,
-  keyExpanded,
-  maxHistorySize,
-  agentId,
-  isStatic,
-  onPromote,
-  onRename,
-  onReset,
-  onEditMeta,
-  readOnly = false,
-}: {
-  entry: Record<string, unknown>;
-  /**
-   * 렌더할(보이는) 컬럼 목록. 헤더(thead)와 동일한 단일 출처를 공유하여 숨김 컬럼이
-   * 헤더/본문에서 함께 사라지고, 히스토리 확장 행의 colSpan 이 항상 일치하도록 한다.
-   */
-  columns: readonly StoreColumn[];
-  /**
-   * 키 컬럼 전체 확장 상태. 개별 행이 아니라 키 컬럼 헤더에서 일괄 제어한다.
-   * true 면 전체 키를, false 면 앞 8자만 표시한다.
-   */
-  keyExpanded: boolean;
-  maxHistorySize: number;
-  agentId: string;
-  /** READ-ONLY(원격 타깃): 변환/초기화/히스토리(exec) 어포던스를 숨긴다. */
-  readOnly?: boolean;
-  /**
-   * 이 엔트리의 키가 정적(설정의 keys 배열에 등록됨)인지 여부.
-   * @spec SPEC-STORE-003
-   */
-  isStatic: boolean;
-  /**
-   * 동적 키를 정적으로 승격할 때 호출되는 핸들러.
-   * 정적 키 행에서는 사용되지 않는다.
-   * @spec SPEC-STORE-003
-   */
-  onPromote: (key: string) => void;
-  /**
-   * 동적 키(그 키의 모든 시리즈)를 새 키로 이동하는 핸들러. 동적 키에서만 노출된다.
-   * @spec SPEC-STORE-004
-   */
-  onRename: (key: string) => void;
-  /**
-   * 행별 초기화 핸들러. 정적/동적 모두에서 노출되며 클릭 시 부모가
-   * 확인 다이얼로그를 띄운다.
-   * @spec SPEC-STORE-003
-   */
-  onReset: (key: string) => void;
-  /**
-   * 타입(metric_type)/태그 편집 핸들러. 정적/동적 모두에서 노출되며 클릭 시
-   * 부모가 편집 다이얼로그를 띄운다.
-   * @spec SPEC-STORE-003 v0.4.0
-   */
-  onEditMeta: (key: string) => void;
-}) {
-  const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyData, setHistoryData] = useState<Array<{ value: unknown; timestamp: string }> | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const execAgent = useExecAgent();
-
-  const valueStr = typeof entry.value === 'string' ? entry.value : JSON.stringify(entry.value);
-  const truncated = valueStr.length > 60;
-  const displayValue = truncated && !expanded ? valueStr.slice(0, 60) + '...' : valueStr;
-
-  const updatedAt = entry.updated_at ? new Date(entry.updated_at as string) : null;
-  const timeAgo = updatedAt ? formatTimeAgo(updatedAt, t) : '-';
-
-  const stateHistoryCount = (entry.history_count as number) || 0;
-  const historyCount = historyData !== null ? historyData.length : stateHistoryCount;
-  // 히스토리 토글은 exec(get_history) 에 의존하므로 원격 READ-ONLY 에서는 비활성.
-  const hasHistory = maxHistorySize > 0 && !readOnly;
-
-  // fetchHistory 는 get_history(exec)로 현재 히스토리를 조회하여 로컬 state 에 반영한다.
-  const fetchHistory = useCallback(() => {
-    setHistoryLoading(true);
-    execAgent.mutate(
-      {
-        id: agentId,
-        req: {
-          command: 'get_history',
-          params: {
-            // @spec SPEC-STORE-004: 히스토리는 인코딩 시리즈 키(storage_key)로 저장되므로
-            // 디코드된 표시용 key 가 아니라 storage_key 로 조회해야 한다(없으면 key 폴백 — 레거시).
-            key: (entry.storage_key as string) || (entry.key as string),
-            // 네임스페이스 라운드트립 버그 수정 (v0.7.0 M14):
-            // entry.namespace="" (빈 문자열)인 경우도 그대로 전송.
-            // || 'default' 는 falsy 체크로 "" 를 "default" 로 강제했는데,
-            // 백엔드의 ForNamespace("") 조회와 불일치 → 히스토리 0개 버그 발생.
-            // ?? '' 를 사용하여 undefined/null 만 기본값으로, "" 는 유지.
-            namespace: (entry.namespace as string) ?? '',
-          },
-        },
-      },
-      {
-        onSuccess: (res) => {
-          const data = res as unknown as Record<string, unknown>;
-          const history = (data?.history as Array<{ value: unknown; timestamp: string }>) ?? [];
-          setHistoryData(history);
-          setHistoryLoading(false);
-        },
-        onError: () => {
-          setHistoryData([]);
-          setHistoryLoading(false);
-        },
-      },
-    );
-  }, [execAgent, agentId, entry.storage_key, entry.key, entry.namespace]);
-
-  const handleRowClick = useCallback(() => {
-    if (!hasHistory) return;
-    setHistoryOpen((open) => !open);
-  }, [hasHistory]);
-
-  // 히스토리가 열려 있는 동안 엔트리가 갱신되면(새로고침으로 값/카운트/갱신시각 변경)
-  // 히스토리를 다시 가져온다. 이전에는 히스토리가 펼칠 때 단 한 번만 로컬 state 에
-  // 캐시되어, 새로고침해도 갱신되지 않고 행을 닫았다 다시 열어야만 반영됐다.
-  useEffect(() => {
-    if (!historyOpen) return;
-    fetchHistory();
-    // entry 의 변경 지표(history_count/updated_at/value)가 바뀔 때만 재조회한다.
-    // 값이 동일하면 deps 가 그대로라 불필요한 재조회가 발생하지 않는다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyOpen, entry.history_count, entry.updated_at, entry.value]);
-
-  // 히스토리 확장 행의 colSpan 은 실제 렌더된 컬럼 개수와 항상 일치한다(단일 출처).
-  const colSpan = columns.length;
-
-  const entryTags = extractEntryTags(entry);
-
-  // 키 컬럼 표시: 키 컬럼 헤더의 전체 확장 토글(keyExpanded)로 일괄 제어한다.
-  // 축약 시 앞 8자만, 확장 시 전체 키를 노출한다(전체 키는 title 로도 유지).
-  const fullKey = entry.key as string;
-  const displayKey =
-    !keyExpanded && fullKey.length > 8 ? fullKey.slice(0, 8) : fullKey;
-
-  // 동적 키의 "정적으로 변환" 버튼 클릭 핸들러.
-  // 행 클릭(히스토리 토글)과 분리하기 위해 이벤트 전파를 막는다.
-  const handlePromoteClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      // @spec SPEC-STORE-004: 승격은 config 정적 키(=사용자 key)에 추가하므로 디코드된
-      // 사용자 key 를 쓴다(히스토리/메타편집의 storage_key 와 다름).
-      onPromote(entry.key as string);
-    },
-    [entry.key, onPromote],
-  );
-
-  // 동적 키 "이름 변경" 버튼 클릭 핸들러. 사용자 관점 key(그 키의 모든 시리즈)를 대상으로 한다.
-  // @spec SPEC-STORE-004
-  const handleRenameClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      onRename(entry.key as string);
-    },
-    [entry.key, onRename],
-  );
-
-  // 행별 초기화 버튼 클릭 핸들러. 행 클릭(히스토리 토글)과 분리한다.
-  // @spec SPEC-STORE-003
-  const handleResetClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      onReset(entry.key as string);
-    },
-    [entry.key, onReset],
-  );
-
-  // 타입/태그 편집 버튼 클릭 핸들러. 행 클릭(히스토리 토글)과 분리한다.
-  // @spec SPEC-STORE-003 v0.4.0
-  const handleEditMetaClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      // @spec SPEC-STORE-004: 메타 편집은 인코딩 시리즈 키(storage_key)로 동작해야 한다.
-      onEditMeta((entry.storage_key as string) || (entry.key as string));
-    },
-    [entry.storage_key, entry.key, onEditMeta],
-  );
-
-  // 모든 엔트리가 metric_type 을 갖는다 (동적 키는 "unknown"). 빈 값은 "unknown" 표시.
-  // @spec SPEC-STORE-003 v0.4.0
-  const metricType = extractEntryMetricType(entry);
-  const metricTypeLabel = metricType || 'unknown';
-  const isUnknownMetric = metricTypeLabel === 'unknown';
-
-  // 컬럼 id → 셀 내용 렌더 함수. 헤더/본문이 공유하는 컬럼 목록을 매핑하며,
-  // 각 셀의 JSX(이름/키8자/바인딩 배지/메트릭 배지/값 확장/태그 칩/TTL ∞/히스토리/갱신/액션)를
-  // 여기서 반환한다. td 래퍼(정렬/키)는 아래 map 에서 부여한다.
-  function renderCell(columnId: StoreColumnId): React.ReactNode {
-    switch (columnId) {
-      case 'key':
-        return (
-          <span className="inline-flex items-center gap-1">
-            {hasHistory && (
-              <ChevronRight className={cn('h-3 w-3 text-(--color-text-muted) transition-transform', historyOpen && 'rotate-90')} />
-            )}
-            <span className={keyExpanded ? 'break-all' : 'truncate'} title={fullKey}>
-              {displayKey}
-            </span>
-          </span>
-        );
-      case 'binding':
-        return isStatic ? (
-          <span
-            className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-            title={t('agents.detail.store.staticTooltip')}
-          >
-            <Lock className="h-2.5 w-2.5" aria-hidden="true" />
-            {t('agents.detail.store.static')}
-          </span>
-        ) : (
-          <span
-            className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-            title={t('agents.detail.store.dynamicTooltip')}
-          >
-            {t('agents.detail.store.dynamic')}
-          </span>
-        );
-      case 'metric':
-        return (
-          <span
-            className={cn(
-              'inline-flex max-w-[120px] items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-medium',
-              isUnknownMetric
-                ? 'bg-(--color-bg-elevated) text-(--color-text-muted)'
-                : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
-            )}
-            title={t('agents.detail.store.metricTypeTooltip').replace('{type}', metricTypeLabel)}
-          >
-            <span className="truncate">{metricTypeLabel}</span>
-          </span>
-        );
-      case 'value':
-        return (
-          <span
-            className={truncated ? 'cursor-pointer hover:text-(--color-text-primary)' : ''}
-            onClick={(e) => {
-              if (truncated) {
-                e.stopPropagation();
-                setExpanded(!expanded);
-              }
-            }}
-          >
-            {displayValue}
-          </span>
-        );
-      case 'namespace':
-        return (entry.namespace as string) || '-';
-      case 'tags':
-        return entryTags ? (
-          <div className="flex flex-wrap gap-1">
-            {Object.entries(entryTags).map(([k, v]) => (
-              <span
-                key={k}
-                className="inline-flex items-center rounded-full bg-(--color-bg-elevated) px-1.5 py-0.5 font-mono text-[10px] font-medium text-(--color-text-secondary)"
-              >
-                {k}={v}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <span className="text-(--color-text-muted)">-</span>
-        );
-      case 'ttl':
-        return (entry.ttl as string) || '\u221E';
-      case 'history':
-        return historyCount;
-      case 'updated':
-        return timeAgo;
-      case 'actions':
-        // 액션 컬럼 (SPEC-STORE-003): 타입/태그 편집 + 정적으로 변환 + 이름변경 + 초기화.
-        //   동적 키: [편집] [정적으로 변환] [이름변경] [초기화]
-        //   정적 키: [편집] [초기화]
-        return (
-          <span className="inline-flex items-center gap-1">
-            {!readOnly && (
-              <button
-                type="button"
-                onClick={handleEditMetaClick}
-                className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/20 dark:hover:text-indigo-400"
-                title={t('agents.detail.store.editMetaTooltip')}
-                aria-label={t('agents.detail.store.editMetaAriaLabel').replace('{key}', entry.key as string)}
-              >
-                <Tag className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            )}
-            {!readOnly && !isStatic && (
-              <button
-                type="button"
-                onClick={handlePromoteClick}
-                className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
-                title={t('agents.detail.store.promoteTooltip')}
-                aria-label={t('agents.detail.store.promoteAriaLabel').replace('{key}', entry.key as string)}
-              >
-                <ArrowUpCircle className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            )}
-            {!readOnly && !isStatic && (
-              <button
-                type="button"
-                onClick={handleRenameClick}
-                className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-900/20 dark:hover:text-amber-400"
-                title={t('agents.detail.store.renameTooltip')}
-                aria-label={t('agents.detail.store.renameAriaLabel').replace('{key}', entry.key as string)}
-              >
-                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            )}
-            {!readOnly && (
-              <button
-                type="button"
-                onClick={handleResetClick}
-                className="inline-flex items-center gap-0.5 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                title={isStatic ? t('agents.detail.store.resetHistoryTooltip') : t('agents.detail.store.deleteEntryTooltip')}
-                aria-label={t('agents.detail.store.resetAriaLabel').replace('{key}', entry.key as string)}
-              >
-                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            )}
-            {readOnly && <span className="text-(--color-text-muted)">-</span>}
-          </span>
-        );
-      default:
-        return null;
-    }
-  }
-
-  // 컬럼별 td 래퍼 클래스. 기존 셀 스타일을 컬럼 id 로 매핑하여 보존한다.
-  function cellClassName(column: StoreColumn): string {
-    switch (column.id) {
-      case 'key':
-        // 폭은 column.widthClass(min-w-[260px])가 관리한다.
-        return 'px-3 py-2 font-mono text-xs text-(--color-text-primary)';
-      case 'binding':
-      case 'metric':
-        return 'px-3 py-2 text-xs';
-      case 'value':
-        return 'px-3 py-2 font-mono text-xs text-(--color-text-secondary) max-w-[300px]';
-      case 'actions':
-        return 'px-3 py-2 text-right text-xs';
-      default:
-        return 'px-3 py-2 text-xs text-(--color-text-muted)';
-    }
-  }
-
-  return (
-    <>
-      <tr
-        className={cn('hover:bg-(--color-bg-secondary)/50', hasHistory && 'cursor-pointer')}
-        onClick={handleRowClick}
-      >
-        {columns.map((column) => (
-          <td
-            key={column.id}
-            className={cn(cellClassName(column), column.widthClass)}
-            title={column.id === 'updated' ? (entry.updated_at as string) : undefined}
-          >
-            {renderCell(column.id)}
-          </td>
-        ))}
-      </tr>
-      {historyOpen && (
-        <tr>
-          <td colSpan={colSpan} className="bg-(--color-bg-secondary)/30 px-6 py-3">
-            {historyLoading ? (
-              <p className="text-xs text-(--color-text-muted)">{t('agents.detail.store.loading')}</p>
-            ) : historyData && historyData.length > 0 ? (
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-(--color-text-muted) mb-2">
-                  {t('agents.detail.store.historyTitle').replace('{count}', String(historyData.length))}
-                </p>
-                <div className="space-y-1">
-                  {historyData.map((h, i) => (
-                    <div key={i} className="flex items-baseline gap-3 text-xs">
-                      <span className="text-(--color-text-muted) whitespace-nowrap">
-                        {new Date(h.timestamp).toLocaleString('ko-KR')}
-                      </span>
-                      <span className="font-mono text-(--color-text-secondary)">
-                        {typeof h.value === 'string' ? h.value : JSON.stringify(h.value)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <p className="text-xs text-(--color-text-muted)">{t('agents.detail.store.historyEmpty')}</p>
-            )}
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
-
 /** 저장소 탭의 페이지네이션 옵션 값. */
 const STORE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 type StorePageSize = (typeof STORE_PAGE_SIZE_OPTIONS)[number];
@@ -2795,7 +2515,7 @@ type StorePageSize = (typeof STORE_PAGE_SIZE_OPTIONS)[number];
 /** Excel 유사 필터가 가능한 컬럼 id 목록(고유 값 사전 계산 대상). */
 const STORE_COLUMNS_WITH_FILTER: readonly FilterColumnId[] = [
   'key',
-  'metric',
+  'field',
   'value',
   'namespace',
   'binding',
@@ -2862,7 +2582,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   const [pageSize, setPageSize] = useState<StorePageSize>(10);
 
   // --- 검색 필터 상태 (store key 테이블) ---
-  // key / metric_type / tags 에 대한 부분일치(대소문자 무시) 검색어.
+  // key / field / tags 에 대한 부분일치(대소문자 무시) 검색어.
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // --- 컬럼 정렬 상태 (store key 테이블) ---
@@ -2884,13 +2604,12 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
   }, [agentId]);
 
   // --- Excel 유사 컬럼별 필터 상태 (store key 테이블) ---
-  // 컬럼 id → { text, values }. AND 결합으로 태그/메트릭/검색 필터와 함께 적용한다.
+  // 컬럼 id → { text, values }. AND 결합으로 태그/필드/검색 필터와 함께 적용한다.
   // @spec SPEC-WEB-005
   const [columnFilters, setColumnFilters] = useState<ColumnFilterMap>(() => ({}));
 
   // 키 컬럼 전체 확장 상태. 개별 행이 아니라 키 컬럼 헤더의 토글로 일괄 제어한다.
   // false(기본): 앞 8자만 표시, true: 전체 키 표시.
-  const [keyColumnExpanded, setKeyColumnExpanded] = useState(false);
 
   // v0.7.0 (M14, Phase D): 백엔드에서 자동 등록된 키의 메타데이터(data_type 포함)를
   // 가져온다. PromoteToStaticDialog 가 defaultDataType 으로 사전 채움하기 위함이다.
@@ -3186,9 +2905,9 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
    * 백엔드의 Configure 가 런타임 정책을 즉시 적용하고, NodeStoreAdapter 의 lazy resolver
    * 가 흐름 연속성을 보장한다.
    *
-   * v0.7.0 (M14, Phase D): payload 시그니처가 진화하여 data_type / metric_type 을
+   * v0.7.0 (M14, Phase D): payload 시그니처가 진화하여 data_type / field 을
    * 포함한다. data_type 은 dialog 가 manual 모드 검증으로 강제하므로 항상 존재한다.
-   * metric_type 은 비어있으면 백엔드 default `"unknown"` 적용을 위해 entry 에서 생략한다.
+   * field 은 비어있으면 백엔드 default `"unknown"` 적용을 위해 entry 에서 생략한다.
    *
    * 에러 핸들링: SPEC-STORE-003 v0.3.0 신규 4종 + 마이그레이션 에러를 mapStoreError 로
    * 사용자 친화 한글 메시지로 매핑한다.
@@ -3213,14 +2932,14 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         setPromotingKey(null);
         return;
       }
-      // v0.7.0 (M14): data_type 은 항상 포함, metric_type 은 비어있을 때만 생략.
+      // v0.7.0 (M14): data_type 은 항상 포함, field 은 비어있을 때만 생략.
       const newEntry: StoreKeyEntry = {
         key: promotingKey,
         data_type: payload.data_type,
         tags: payload.tags,
       };
-      if (payload.metric_type && payload.metric_type !== '') {
-        newEntry.metric_type = payload.metric_type;
+      if (payload.field && payload.field !== '') {
+        newEntry.field = payload.field;
       }
       const newKeys: StoreKeyEntry[] = [...currentKeys, newEntry];
       try {
@@ -3282,10 +3001,10 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
     setEditingKey(null);
   }, [setKeyMeta.isPending]);
 
-  // 편집 대상 엔트리의 현재 metric_type / tags 를 사전 채움 값으로 제공한다.
+  // 편집 대상 엔트리의 현재 field / tags 를 사전 채움 값으로 제공한다.
   // State 엔트리(allEntries)를 단일 출처로 사용한다.
   // @spec SPEC-STORE-004: editingKey 는 storage_key(인코딩 시리즈 키)이다. 엔트리는
-  // storage_key 로 찾아 그 시리즈의 metric_type/tags 를 사전 채움한다(없으면 key 폴백 — 레거시).
+  // storage_key 로 찾아 그 시리즈의 field/tags 를 사전 채움한다(없으면 key 폴백 — 레거시).
   const editingEntry = useMemo(() => {
     if (!editingKey) return undefined;
     return allEntries.find(
@@ -3312,7 +3031,7 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
 
   /**
    * 타입/태그 편집 확정 — PUT /store/{name}/keys/{key}/meta.
-   * tags 는 전체 교체이며, metric_type 빈 값은 백엔드가 "unknown" 으로 처리한다.
+   * tags 는 전체 교체이며, field 빈 값은 백엔드가 "unknown" 으로 처리한다.
    * 성공 시 훅이 store 키 캐시를, 여기서 추가로 agents(State 엔트리) 캐시를 invalidate 한다.
    *
    * @spec SPEC-STORE-003 v0.4.0
@@ -3324,14 +3043,14 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         await setKeyMeta.mutateAsync({
           agentName,
           key: editingKey,
-          meta: { metric_type: payload.metric_type, tags: payload.tags },
+          meta: { field: payload.field, tags: payload.tags },
         });
         addNotification({
           type: 'success',
           message: t('agents.detail.store.editMetaSuccess').replace('{key}', editingDisplayKey),
         });
         setEditingKey(null);
-        // State 엔트리(metric_type/tags 표시 출처)를 즉시 갱신.
+        // State 엔트리(field/tags 표시 출처)를 즉시 갱신.
         await queryClient.invalidateQueries({ queryKey: ['agents', agentId] });
       } catch (err) {
         // 다이얼로그를 닫지 않고 재시도 가능하게 한다.
@@ -3526,8 +3245,8 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         </div>
       </div>
 
-      {/* 검색 필터 (store key 테이블): key / metric_type / tags 부분일치(대소문자 무시).
-          메트릭은 key 컬럼에 이어붙이지 않되 검색 대상에는 포함한다. */}
+      {/* 검색 필터 (store key 테이블): key / field / tags 부분일치(대소문자 무시).
+          필드은 key 컬럼에 이어붙이지 않되 검색 대상에는 포함한다. */}
       <div className="relative">
         <Search
           className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-text-muted)"
@@ -3565,55 +3284,26 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
         </div>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-lg border border-(--color-border-default)">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-(--color-border-default) bg-(--color-bg-secondary)">
-                  {/* 헤더/본문이 동일한 orderedColumns 를 매핑 — 숨김 컬럼이 함께 사라진다. */}
-                  {orderedColumns.map((column) => (
-                    <ColumnHeader
-                      key={column.id}
-                      column={column}
-                      sort={sort}
-                      onSort={handleSort}
-                      filter={column.filterColumn ? columnFilters[column.filterColumn] : undefined}
-                      uniqueValues={
-                        column.filterColumn
-                          ? uniqueValuesByColumn.get(column.filterColumn) ?? []
-                          : []
-                      }
-                      onFilterChange={handleColumnFilterChange}
-                      keyExpanded={column.id === 'key' ? keyColumnExpanded : undefined}
-                      onToggleKeyExpanded={
-                        column.id === 'key'
-                          ? () => setKeyColumnExpanded((v) => !v)
-                          : undefined
-                      }
-                      t={t}
-                    />
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-(--color-border-default)">
-                {visibleEntries.map((entry) => (
-                  <StoreEntryRow
-                    key={entry.key as string}
-                    entry={entry}
-                    columns={orderedColumns}
-                    keyExpanded={keyColumnExpanded}
-                    maxHistorySize={maxHistorySize}
-                    agentId={agentId}
-                    isStatic={staticKeyNames.has(entry.key as string)}
-                    onPromote={handleOpenPromote}
-                    onRename={handleOpenRename}
-                    onReset={handleOpenReset}
-                    onEditMeta={handleOpenEditMeta}
-                    readOnly={remote}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {/* 공용 Store 테이블(단일 소스). @spec SPEC-PANEL-SETTINGS-001 (T5) */}
+          <StoreEntryTable
+            entries={visibleEntries}
+            columns={orderedColumns}
+            sort={sort}
+            onSort={handleSort}
+            columnFilters={columnFilters}
+            onColumnFilterChange={handleColumnFilterChange}
+            uniqueValuesByColumn={uniqueValuesByColumn}
+            maxHistorySize={maxHistorySize}
+            staticKeyNames={staticKeyNames}
+            rowActions={{
+              agentId,
+              onPromote: handleOpenPromote,
+              onRename: handleOpenRename,
+              onReset: handleOpenReset,
+              onEditMeta: handleOpenEditMeta,
+              readOnly: remote,
+            }}
+          />
 
           {/* 페이지 네비게이션: 한 페이지에 모두 들어갈 때는 비노출 */}
           {totalPages > 1 && (
@@ -3681,12 +3371,12 @@ function StoreTab({ agentId, agentName }: { agentId: string; agentName?: string 
       />
 
       {/* 타입/태그 편집 모달 (SPEC-STORE-003 v0.4.0). 임의 엔트리(동적 포함)의
-          metric_type/tags 를 PUT .../keys/{key}/meta 로 갱신한다. */}
+          field/tags 를 PUT .../keys/{key}/meta 로 갱신한다. */}
       <EditKeyMetaDialog
         isOpen={editingKey !== null}
         onClose={handleCloseEditMeta}
         keyName={editingDisplayKey}
-        initialMetricType={editingInitialMetricType}
+        initialField={editingInitialMetricType}
         initialTags={editingInitialTags}
         onConfirm={handleEditMetaConfirm}
         isSubmitting={setKeyMeta.isPending}
@@ -3797,7 +3487,7 @@ function SessionsTab({ agentId }: { agentId: string }) {
 
     const fetchSessions = async () => {
       try {
-        const res = await agentService.execAgent(agentId, { command: 'list_connections' });
+        const res = await agentService.queryAgent(agentId, { command: 'list_connections' });
         if (cancelled) return;
         // API envelope unwrap 결과에 따라 connections가 직접 또는 result 내부에 있을 수 있음
         const raw = res as unknown as Record<string, unknown>;
@@ -3913,6 +3603,153 @@ function SessionsTab({ agentId }: { agentId: string }) {
   );
 }
 
+// ---- 클라이언트 탭 (MODBUS Gateway) ----
+
+/** list_clients 응답의 접속 클라이언트 1개. */
+interface ClientInfo {
+  remote_addr: string;
+  connected_at: string;
+  unit_ids: number[];
+  request_count: number;
+  last_seen: string;
+}
+
+/**
+ * MODBUS Gateway 에 접속한 클라이언트 목록 탭. SessionsTab 을 그대로 복제하여
+ * exec(list_clients) 5초 폴링으로 갱신한다. RTU 게이트웨이는 clients:[] 를 반환하므로
+ * 빈 목록으로 표시된다(시리얼 버스는 per-client 개념 없음). 원격 타깃은 READ 프록시가
+ * exec 을 매핑하지 않으므로 안내만 표시한다(SessionsTab 과 동일 graceful).
+ */
+function ClientsTab({ agentId }: { agentId: string }) {
+  const { t } = useTranslation();
+  const target = useTargetContext();
+  const remote = isRemoteTarget(target);
+  const [clients, setClients] = useState<ClientInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    if (remote) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+
+    const fetchClients = async () => {
+      try {
+        const res = await agentService.queryAgent(agentId, { command: 'list_clients' });
+        if (cancelled) return;
+        // envelope unwrap: clients 가 직접 또는 result 내부에 위치할 수 있음.
+        const raw = res as unknown as Record<string, unknown>;
+        const list = (
+          (raw?.clients as ClientInfo[] | undefined)
+          ?? ((raw?.result as Record<string, unknown> | undefined)?.clients as ClientInfo[] | undefined)
+          ?? []
+        );
+        setClients(list);
+      } catch (err) {
+        console.error('[ClientsTab] list_clients failed:', err);
+        if (!cancelled) setClients([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void fetchClients();
+    const timer = setInterval(() => void fetchClients(), 5000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [agentId, refreshKey, remote]);
+
+  if (remote) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-12 text-(--color-text-muted)">
+        <Server className="h-8 w-8 opacity-40" aria-hidden="true" />
+        <p className="text-sm">{t('agents.detail.clients.remoteUnavailable')}</p>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12 text-sm text-(--color-text-muted)">
+        {t('agents.detail.clients.loading')}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 p-4">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Server className="h-4 w-4 text-(--color-text-muted)" aria-hidden="true" />
+          <span className="text-sm font-medium text-(--color-text-primary)">
+            {t('agents.detail.clients.clientsCount').replace('{count}', String(clients.length))}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setRefreshKey((k) => k + 1)}
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated)"
+        >
+          <RefreshCw className="h-3 w-3" aria-hidden="true" />
+          {t('agents.detail.clients.refresh')}
+        </button>
+      </div>
+
+      {clients.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 py-12 text-(--color-text-muted)">
+          <Server className="h-8 w-8 opacity-40" aria-hidden="true" />
+          <p className="text-sm">{t('agents.detail.clients.empty')}</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-(--color-border-default)">
+                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">{t('agents.detail.clients.colIp')}</th>
+                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">{t('agents.detail.clients.colPort')}</th>
+                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">{t('agents.detail.clients.colUnitIds')}</th>
+                <th className="py-2 pr-4 text-right font-medium text-(--color-text-muted)">{t('agents.detail.clients.colRequests')}</th>
+                <th className="py-2 pr-4 text-left font-medium text-(--color-text-muted)">{t('agents.detail.clients.colConnected')}</th>
+                <th className="py-2 text-left font-medium text-(--color-text-muted)">{t('agents.detail.clients.colLastSeen')}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-(--color-border-default)">
+              {clients.map((c) => {
+                const [ip, port] = c.remote_addr.includes(']')
+                  ? [c.remote_addr.slice(0, c.remote_addr.lastIndexOf(':')), c.remote_addr.slice(c.remote_addr.lastIndexOf(':') + 1)]
+                  : c.remote_addr.split(':').length === 2
+                    ? c.remote_addr.split(':')
+                    : [c.remote_addr, '-'];
+                const unitIds = Array.isArray(c.unit_ids) && c.unit_ids.length > 0
+                  ? c.unit_ids.join(', ')
+                  : '—';
+                return (
+                  <tr key={c.remote_addr}>
+                    <td className="py-2 pr-4 font-mono text-(--color-text-primary)">{ip}</td>
+                    <td className="py-2 pr-4 font-mono text-(--color-text-muted)">{port}</td>
+                    <td className="py-2 pr-4 font-mono text-(--color-text-muted)">{unitIds}</td>
+                    <td className="py-2 pr-4 text-right font-mono text-(--color-text-muted)">
+                      {(c.request_count ?? 0).toLocaleString()}
+                    </td>
+                    <td className="py-2 pr-4 text-(--color-text-muted)" title={new Date(c.connected_at).toLocaleString()}>
+                      {formatDuration(c.connected_at, t)}
+                    </td>
+                    <td className="py-2 text-(--color-text-muted)" title={new Date(c.last_seen).toLocaleString()}>
+                      {formatDuration(c.last_seen, t)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- 디바이스 탭 ----
 
 // 디바이스 source 값을 사용자 친화적 라벨/색상으로 매핑.
@@ -3934,6 +3771,27 @@ function sourceVariant(source: string): { labelKey: string | null; rawLabel: str
   }
 }
 
+// 디바이스 탭 정렬용 문자열 비교자.
+// 이 배포의 디바이스 이름은 한글이 많다(예: 실습실, 사무실 밖). raw `<`/`>` 나
+// 로케일 미지정 localeCompare 는 한글 순서가 어긋나므로 로케일을 명시한다.
+//   - 'ko-KR': 한글 자모 순서(가나다) 보장.
+//   - numeric: true: "실습실2" < "실습실10" 자연 정렬(문자열 비교면 10 이 2 앞에 온다).
+//   - sensitivity: 'base': 대소문자/악센트 무시(ID 열 hex 표기 대비, 기존
+//     DeviceListPage 의 toLowerCase() 비교와 동일한 결과).
+// Intl.Collator 인스턴스를 모듈 스코프에 캐시한다 —
+// localeCompare(b, 'ko-KR', {...}) 와 동작은 같고 행마다 옵션 객체를 만들지 않는다.
+const deviceTextCollator = new Intl.Collator('ko-KR', { numeric: true, sensitivity: 'base' });
+
+// 정렬 키가 비어 있는 행(이름/타입 미지정)의 위치를 결정한다.
+// 정책: 빈 값은 정렬 방향과 무관하게 항상 마지막 (asc/desc 어느 쪽에서도 뒤로 모임).
+// 반환값 null 이면 둘 다 비어 있어 상위 비교로 위임(= tiebreak).
+function emptyLastOrder(a: string, b: string): number | null {
+  if (a === b) return null; // 둘 다 '' 인 경우 포함
+  if (!a) return 1;
+  if (!b) return -1;
+  return null;
+}
+
 function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string }) {
   // SPEC-REMOTE-001 M8 (그룹 J): 디바이스 탭은 exec(list_devices/add/remove)
   // 기반이라 원격 READ 프록시 매핑이 제한적이다. 원격 타깃은 안내만 표시한다.
@@ -3950,6 +3808,8 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   // 클릭 시 상세 패널 expand. 동시 1개만 펼침.
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const execAgent = useExecAgent();
+  // 소스/주소 맵 구성을 위한 list_devices 는 읽기 전용이라 query 경로로 분리한다.
+  const queryAgent = useQueryAgent();
   const deleteDevice = useDeleteDevice();
   const setDeviceReport = useSetDeviceReport();
   const addNotification = useUIStore((s) => s.addNotification);
@@ -3981,7 +3841,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   const [addressMap, setAddressMap] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!canManageDevices || !agent) return;
-    execAgent.mutate(
+    queryAgent.mutate(
       { id: agentId, req: { command: 'list_devices' } },
       {
         onSuccess: (res) => {
@@ -4004,6 +3864,21 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, agent?.name]);
 
+  // 정렬 상태(클라이언트 사이드). 기본: 이름(colName) 오름차순.
+  // XsfmDevicesTab / ChirpstackGatewaysTab 과 동일한 로컬 state 방식이므로
+  // 데이터 refetch(useDevicesRealtime 갱신) 후에도 정렬은 유지되고,
+  // 탭 전환 시에는 DevicesTab 이 언마운트되어 기본값으로 되돌아간다.
+  const [sort, setSort] = useState<HeaderSortState>({ field: 'name', direction: 'asc' });
+
+  // 같은 필드 재클릭이면 방향 토글, 다른 필드면 asc 로 시작(공용 SortableHeader 규약).
+  function handleSort(field: string) {
+    setSort((prev) =>
+      prev.field === field
+        ? { field, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+        : { field, direction: 'asc' },
+    );
+  }
+
   // 추가 폼 상태
   const [showAddForm, setShowAddForm] = useState(false);
   const [newAddress, setNewAddress] = useState('');
@@ -4025,9 +3900,22 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
     );
   }
 
-  // Modbus TCP Server: 전용 디바이스 섹션 사용 (hooks 이후에 분기)
-  if (agentType === 'modbus-tcp-server') {
+  // Modbus Gateway: 전용 디바이스 섹션 사용 (hooks 이후에 분기)
+  if (agentType === 'modbus-gateway') {
     return <ModbusDevicesSection agentId={agentId} />;
+  }
+
+  // Modbus Client: 전용 디바이스 관리 섹션(list/add/remove/update). ModbusDevicesSection 을
+  // 구조 참조로 삼되, 관리 경로는 런타임 exec 명령(add_device/remove_device/update_device)이다
+  // (SPEC-MODBUS-009 REQ-04). 기존 분기(modbus-gateway/xsfm/NASA/LGAP/LG-ICP)는 불변이다.
+  if (agentType === 'modbus-client') {
+    return <ModbusClientDevicesSection agentId={agentId} />;
+  }
+
+  // xsfm: device_id 기반 + 역사/위치 계층 속성. 전용 탭으로 분기
+  // (samsung/lgap/lg-icp 분기와 독립 — SPEC-XSFM-001 Wave 2).
+  if (agentType === 'xsfm') {
+    return <XsfmDevicesTab agentId={agentId} />;
   }
 
   function handleAddDevice() {
@@ -4175,6 +4063,43 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
     const spaced = addr.replace(/\./g, ' ');
     return sourceMap[spaced] ?? sourceMap[addr] ?? '';
   }
+
+  // 정렬 키는 "화면에 실제로 보이는 값" 기준이다(렌더 셀과 1:1).
+  // 이름 열은 셀과 동일하게 name 이 비면 addressLabel 로 폴백하므로,
+  // 이름 미지정 디바이스도 사용자가 보는 문자열대로 정렬된다.
+  function sortKey(d: { id: string; uid?: string; name: string; type: string }): string {
+    switch (sort.field) {
+      case 'name':
+        return d.name || deviceAddressLabel(d);
+      case 'id':
+        return deviceAddressLabel(d);
+      case 'type':
+        return getDeviceTypeLabel(d.type); // 타입 미지정이면 '' → 빈 값 정책 적용
+      default:
+        return '';
+    }
+  }
+
+  // 정렬은 페이지 슬라이스가 아닌 전체 목록에 적용한다(이 탭은 페이지네이션이 없어
+  // devices 전체가 곧 렌더 대상이다). 원본 배열은 불변 — 복사 후 정렬.
+  const sortedDevices = [...devices].sort((a, b) => {
+    const dir = sort.direction === 'asc' ? 1 : -1;
+    if (sort.field === 'connection') {
+      // asc = 온라인 우선(연결된 디바이스를 먼저 보는 것이 기본 관심사).
+      if (a.online !== b.online) return (a.online ? -1 : 1) * dir;
+    } else {
+      const ka = sortKey(a);
+      const kb = sortKey(b);
+      // 빈 값은 방향과 무관하게 항상 마지막 — asc/desc 에서 뒤섞이지 않는다.
+      const empty = emptyLastOrder(ka, kb);
+      if (empty !== null) return empty;
+      const c = deviceTextCollator.compare(ka, kb);
+      if (c !== 0) return c * dir;
+    }
+    // 결정적 tiebreak: 동률이면 항상 디바이스 식별자 오름차순(방향 무관).
+    // 렌더 key(uid ?? id)와 동일한 값이라 리렌더 간 순서가 흔들리지 않는다.
+    return deviceTextCollator.compare(a.uid ?? a.id, b.uid ?? b.id);
+  });
 
   if (isLoading) {
     return (
@@ -4326,16 +4251,20 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-(--color-border-default) text-left text-xs text-(--color-text-muted)">
-                <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colName')}</th>
-                <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colId')}</th>
-                <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colType')}</th>
-                <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colConnection')}</th>
+                <SortableHeader label={t('agents.detail.devices.colName')} field="name" currentSort={sort} onSort={handleSort} className="pb-2 pr-3" />
+                <SortableHeader label={t('agents.detail.devices.colId')} field="id" currentSort={sort} onSort={handleSort} className="pb-2 pr-3" />
+                <SortableHeader label={t('agents.detail.devices.colType')} field="type" currentSort={sort} onSort={handleSort} className="pb-2 pr-3" />
+                <SortableHeader label={t('agents.detail.devices.colConnection')} field="connection" currentSort={sort} onSort={handleSort} className="pb-2 pr-3" />
+                {/* '등록' 컬럼은 정렬 비대상 — DeviceListPage 와 동일 정책이며,
+                    이 값(getSource)은 별도 exec(list_devices) 응답이 늦게 도착해
+                    정렬 대상으로 삼으면 로드 직후 행 순서가 흔들린다. */}
                 <th className="pb-2 pr-3 font-medium">{t('agents.detail.devices.colSource')}</th>
+                {/* 액션(상태 전송 토글 + 삭제) 컬럼 — 정렬 비대상 빈 헤더. */}
                 {canManageDevices && <th className="pb-2 font-medium" />}
               </tr>
             </thead>
             <tbody className="divide-y divide-(--color-border-default)">
-              {devices.map((d) => {
+              {sortedDevices.map((d) => {
                 const source = getSource(d);
                 const variant = sourceVariant(source);
                 const isManual = variant?.manual ?? false;

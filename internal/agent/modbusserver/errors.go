@@ -43,4 +43,36 @@ var (
 
 	// ErrDeviceNotFound 는 요청된 Unit ID 에 해당하는 디바이스를 찾을 수 없을 때 반환된다.
 	ErrDeviceNotFound = errors.New("modbus-server: device not found")
+
+	// ErrMissingSerialPort 는 RTU 트랜스포트에서 serial_port 가 지정되지 않았을 때 반환된다.
+	ErrMissingSerialPort = errors.New("modbus-server: serial_port is required for RTU transport")
+
+	// ErrInvalidSerialParam 는 RTU 시리얼 파라미터가 유효하지 않을 때 반환된다.
+	ErrInvalidSerialParam = errors.New("modbus-server: invalid serial parameter")
+
+	// ErrSharedMapMissing 는 공유 세그먼트(shared_address)가 있으나 unit_id 0
+	// 공유 컨테이너가 없을 때 반환된다(intra-server 공유).
+	ErrSharedMapMissing = errors.New("modbus-server: shared segment requires a unit_id 0 container")
+
+	// ErrNoSharedContainer 는 exec 명령이 unit_id 0(공유 컨테이너)을 대상으로 했으나
+	// 이 서버에 공유 컨테이너가 구성되어 있지 않을 때 반환된다.
+	ErrNoSharedContainer = errors.New("modbus-server: no shared container (unit_id 0) configured")
+
+	// ErrSharedRangeOutOfBounds 는 공유 세그먼트의 shared_address 범위가 컨테이너의
+	// 같은 영역 선언 범위를 벗어날 때 반환된다.
+	ErrSharedRangeOutOfBounds = errors.New("modbus-server: shared range out of container bounds")
+
+	// ErrSharedUnderContainer 는 unit_id 0 컨테이너의 세그먼트에 shared_address 가
+	// 지정되었을 때 반환된다(컨테이너 세그먼트는 모두 로컬이어야 함).
+	ErrSharedUnderContainer = errors.New("modbus-server: shared_address not allowed under unit_id 0")
+
+	// ErrInvalidBackingConfig 는 upstream 백킹 설정(backing)이 유효하지 않을 때 반환된다
+	// (REQ-MODBUS-010-01: mode 누락/오류, tcp host·port 누락, indirect poll_interval·timeout 누락 등).
+	ErrInvalidBackingConfig = errors.New("modbus-server: invalid backing configuration")
+
+	// ErrGatewayTargetFailed 는 백킹된 가상 디바이스가 실제(upstream) 디바이스에 도달하지
+	// 못했을 때 backedStore 가 반환하는 sentinel 오류이다. RequestHandler 는 이 오류를
+	// errors.Is 로 식별하여 MODBUS 예외 0x0B(Gateway Target Device Failed to Respond)로
+	// 매핑한다(REQ-MODBUS-010-05). 순수 slave 경로는 이 오류를 결코 반환하지 않는다(하위 호환).
+	ErrGatewayTargetFailed = errors.New("modbus-server: gateway target device failed to respond")
 )

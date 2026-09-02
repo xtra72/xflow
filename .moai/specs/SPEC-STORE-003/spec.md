@@ -1,10 +1,10 @@
 ---
 id: SPEC-STORE-003
 title: Store 에이전트 정적 키 정의 및 태그 메타데이터
-version: 0.3.0
+version: 0.3.1
 status: in_progress
 created: 2026-04-24
-updated: 2026-05-04
+updated: 2026-08-12
 author: xtra
 priority: medium
 ---
@@ -13,6 +13,10 @@ priority: medium
 
 ## HISTORY
 
+- **0.3.1** (2026-08-12): store-write 노드 `data_type: "auto"` 값 기반 타입 추론 sentinel 추가 (additive, non-breaking):
+  (1) store-write config 의 `data_type` 이 6종 enum 외에 `"auto"` sentinel 을 허용한다. `"auto"` 는 쓰기 값의 Go 타입을 M7 추론 매핑으로 판별해 **키별로** 구체 타입을 고정한다.
+  (2) 단일 store-write 노드가 측정별로 서로 다른 값 타입(예: 온도=float, 모드=int, 전원=boolean)을 저장할 때, 고정 리터럴 `data_type` 은 한 타입만 담을 수 있어 `ErrTypeMismatch` 를 유발했다. `key_template` 이 측정별로 다른 키를 만들면 키 단위 타입은 일정하므로, `"auto"` 의 첫 쓰기 추론 결과가 그대로 유효하다.
+  (3) 추론 불가(`nil`/channel/func) 시 타입 고정을 생략하고 동적 string 폴백에 맡긴다. 기존 빈 `data_type` 의 string 동작은 보존(비회귀).
 - **0.3.0** (2026-05-04): Store 키 메타데이터 모델 진화 (BREAKING CHANGE):
   (1) `allow_dynamic_keys` (bool) → `registration_type` (enum: `manual` | `auto`) **clean rename**. 하위호환 shim 없음. 기존 yaml 파일은 마이그레이션 필수.
   (2) **`data_type` 1급 필드 신설** — 6종 enum (`int` | `float` | `string` | `boolean` | `bytes` | `json`). manual 모드는 명시 선언 필수, auto 모드는 첫 쓰기에서 추론·고정.
@@ -29,6 +33,7 @@ priority: medium
 
 | Version | Date       | Author | Change                                                                      |
 | ------- | ---------- | ------ | --------------------------------------------------------------------------- |
+| 0.3.1   | 2026-08-12 | xtra   | store-write `data_type: "auto"` 값 기반 타입 추론 sentinel 추가 (additive) — 단일 노드가 가변 타입 측정값을 키별 올바른 타입으로 저장 |
 | 0.3.0   | 2026-05-04 | xtra   | **BREAKING**: allow_dynamic_keys → registration_type, data_type/metric_type 1급 필드, API keys 응답 객체 배열 진화, 신규 필터 쿼리, 신규 에러 4종 |
 | 0.2.0   | 2026-04-27 | xtra   | 동적→정적 변환 UI, 키 초기화 (DELETE 2개 엔드포인트), 버킷 벽시계 정렬, 태그 blur commit, UI 개선 |
 | 0.1.0   | 2026-04-24 | xtra   | 최초 작성 — 정적 키 목록, 태그 메타데이터, 동적 키 제어, 태그 필터링 API 도입 |
@@ -149,6 +154,13 @@ Store 에이전트(SPEC-STORE-001, SPEC-STORE-002 기반)는 v0.2.0에서 정적
 - **Unwanted**: WHEN 쓰기 값의 Go 타입이 등록된 `data_type`과 일치하지 않으면 (manual 또는 auto 등록 후 후속 쓰기), THEN 시스템은 쓰기를 거부하고 `ErrTypeMismatch`를 반환해야 한다.
 - **Unwanted**: 한번 결정된 키의 `data_type`은 변경 불가하다 (auto 모드의 첫 쓰기 타입은 영구 고정). 타입 변경이 필요하면 키 삭제 후 재등록한다.
 - **Unwanted**: WHEN yaml의 `data_type` 값이 6종 enum 외의 임의 문자열이면, THEN 설정 로드를 실패시키고 `ErrInvalidDataType`을 반환해야 한다.
+
+**store-write `data_type: "auto"` sentinel (v0.3.1 신규)**
+
+- **Ubiquitous**: store-write 노드 config 의 `data_type` (노드 레벨 및 `metrics[].data_type`)은 6종 enum 외에 `"auto"` sentinel 을 허용한다. `"auto"` 는 저장 값이 아니라 "쓰기 값에서 타입을 추론하라"는 지시이다.
+- **Event-driven**: WHEN `data_type == "auto"` 로 쓰기가 발생하면, THEN 시스템은 쓰기 값의 Go 타입을 위 추론 매핑으로 판별해 그 구체 타입으로 (시리즈) 키를 등록/고정한 뒤 값을 기록해야 한다.
+- **State-driven**: IF 추론이 불가능한 값(`nil`/channel/func 등)이면, THEN 타입 고정을 생략하고 기존 동적 string 폴백 경로로 처리한다 (새로운 실패 모드를 만들지 않는다).
+- **Rationale**: 단일 store-write 노드가 `key_template` 로 측정별 키를 만들며 boolean/int/float 등 가변 타입 측정값을 저장할 때, 고정 리터럴 `data_type` 은 한 타입만 담을 수 있어 `ErrTypeMismatch` 를 유발한다. 키 단위 타입은 일정하므로 `"auto"` 의 키별 첫 쓰기 추론이 올바른 타입 고정을 보장한다.
 
 ---
 

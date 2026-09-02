@@ -34,7 +34,7 @@ vi.mock('@/lib/i18n', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 
-import { TargetProvider } from '@/lib/remote/TargetContext';
+import { TargetProvider } from '@/lib/remote/TargetProvider';
 
 import AcControlPanel from './AcControlPanel';
 
@@ -55,7 +55,7 @@ function deviceWithControl() {
       ready: true,
       last_seen: '',
       error_count: 0,
-      properties: { power: true, current_temperature: 24, target_temperature: 24, mode: 'cool' },
+      properties: { power: true, current_temperature: 24, target_temperature: 24, mode: 'cool' } as Record<string, unknown>,
     },
   };
 }
@@ -99,5 +99,30 @@ describe('AcControlPanel — 원격 명령 라우팅', () => {
       </TargetProvider>,
     );
     expect(useDeviceDetailTargetMock).toHaveBeenCalled();
+  });
+});
+
+describe('AcControlPanel — 현재 습도 표시', () => {
+  function renderPanel() {
+    return render(
+      <TargetProvider target={{ type: 'remote', instanceId: 'node-1' }}>
+        <AcControlPanel panelId="p" title="AC" config={{ deviceId: 'dev-1' }} />
+      </TargetProvider>,
+    );
+  }
+
+  it('current_humidity 가 있으면 습도(%)를 표시한다', () => {
+    const dev = deviceWithControl();
+    dev.state.properties = { ...dev.state.properties, current_humidity: 62 };
+    useDeviceDetailTargetMock.mockReturnValue({ data: dev, isLoading: false, error: null });
+    renderPanel();
+    const hum = screen.getByTitle('dashboard.acControl.currentHumidity');
+    expect(hum).toHaveTextContent('62%');
+  });
+
+  it('current_humidity 가 없으면 습도를 표시하지 않는다(미지원 기기 graceful)', () => {
+    // beforeEach 기본 device 에는 current_humidity 가 없다.
+    renderPanel();
+    expect(screen.queryByTitle('dashboard.acControl.currentHumidity')).toBeNull();
   });
 });

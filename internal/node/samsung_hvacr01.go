@@ -39,6 +39,19 @@ const (
 	nasaCmdSetTemp         = "target_temperature"
 	nasaCmdSetFanSpeed     = "set_fan_speed"
 	nasaCmdSetMultiple     = "set_multiple"
+
+	// SPEC-HVACR-SYNC-001 M10: mirror-message 노드 I/O marker.
+	//
+	// 엔진은 입력 와이어를 하나의 fan-in 스트림으로 병합한 뒤 Process 를 호출하므로,
+	// mirror-in 포트는 포트 이름으로 제어 in 포트와 구별할 수 없다. 따라서 Process 는
+	// 메시지 타입 marker(mirrorUplinkMsgType)로 판별해 mirror 업링크면 FeedMirrorWire 로
+	// 급전하고, 아니면 기존 제어/상태 처리로 폴백한다.
+	mirrorUplinkMsgType = "mirror.uplink"
+	// mirrorWirePayloadKey 는 미러 업링크 와이어 JSON 을 담는 payload 키이다.
+	// mirror-out 은 이 키로 방출하고, mirror-in 은 이 키에서 읽어 FeedMirrorWire 에 넘긴다.
+	mirrorWirePayloadKey = "mirror_wire"
+	// mirrorOutSourceBufferSize 는 mirror-out 소스 포트 채널의 버퍼 크기이다.
+	mirrorOutSourceBufferSize = 64
 )
 
 // ---------------------------------------------------------------------------
@@ -833,12 +846,19 @@ type SamsungHvacr01Node struct {
 	stopCh            chan struct{}
 	pollOnce          sync.Once
 	lastSeq           int64
+
+	// SPEC-HVACR-SYNC-001 M10: mirror-out 소스 포트 채널. mirror-message 모드
+	// 에이전트(MirrorOutCh() != nil)일 때만 non-nil 이며, mirrorOutLoop 이 에이전트의
+	// MirrorOutCh 를 드레인해 이 채널로 message.Message 를 방출한다. ExtraSourceChannels
+	// 가 "mirror-out" 포트로 노출한다(SerialInNode raw_out 선례).
+	mirrorOutCh chan message.Message
 }
 
 // 인터페이스 컴파일 체크
 var (
-	_ Node       = (*SamsungHvacr01Node)(nil)
-	_ SourceNode = (*SamsungHvacr01Node)(nil)
+	_ Node            = (*SamsungHvacr01Node)(nil)
+	_ SourceNode      = (*SamsungHvacr01Node)(nil)
+	_ MultiSourceNode = (*SamsungHvacr01Node)(nil)
 )
 
 // NewSamsungHvacr01Node 는 새로운 SamsungHvacr01Node를 생성하는 팩토리 함수이다.
@@ -906,6 +926,8 @@ func (n *SamsungHvacr01Node) Init(ctx context.Context) error {
 	}
 
 	go n.receiveLoop()
+	// M10: mirror-message 모드면 mirror-out 드레인 고루틴 기동(비-message 모드는 no-op).
+	n.startMirrorOut()
 
 	return n.BaseNode.TransitionTo(lifecycle.StateRunning)
 }
@@ -1063,6 +1085,13 @@ func (n *SamsungHvacr01Node) drainNewFrames(cfg SamsungHvacr01NodeConfig) {
 // payload에 제어 키(power, mode, temperature, fan_speed)가 있으면 제어 명령,
 // 없으면 상태 조회 명령을 전송한다.
 func (n *SamsungHvacr01Node) Process(ctx context.Context, msg message.Message) ([]message.Message, error) {
+	// SPEC-HVACR-SYNC-001 M10: mirror-in 판별 (엔진 fan-in 병합으로 포트 이름 구별 불가).
+	// 메시지 타입 marker 가 mirror 업링크면 에이전트 ingress 로 급전하고 하류 emit 없이
+	// 반환한다. 아니면 아래 기존 제어/상태 처리로 폴백한다(행위 보존).
+	if msg.Type() == mirrorUplinkMsgType {
+		return n.handleMirrorIn(msg)
+	}
+
 	n.mu.RLock()
 	cfg := n.hvacr01Cfg
 	n.mu.RUnlock()
@@ -1145,12 +1174,112 @@ func (n *SamsungHvacr01Node) Reinit(ctx context.Context) error {
 	n.mu.Unlock()
 
 	go n.receiveLoop()
+	// M10: 에이전트 재시작 후 mirror-out 드레인 고루틴도 재기동(비-message 모드는 no-op).
+	n.startMirrorOut()
 	return nil
 }
 
 // SourceCh 는 receiveLoop 가 생성한 메시지를 수신하는 채널을 반환한다.
 func (n *SamsungHvacr01Node) SourceCh() <-chan message.Message {
 	return n.sourceCh
+}
+
+// ExtraSourceChannels 는 추가 출력 포트 채널을 반환한다 (SPEC-HVACR-SYNC-001 M10).
+// mirror-message 모드 에이전트일 때만 "mirror-out" 포트 채널을 포함한다. 그 외에는
+// nil 을 반환해 기존 결합 노드 동작을 보존한다(SerialInNode.ExtraSourceChannels 선례).
+func (n *SamsungHvacr01Node) ExtraSourceChannels() map[string]<-chan message.Message {
+	n.mu.RLock()
+	ch := n.mirrorOutCh
+	n.mu.RUnlock()
+	if ch == nil {
+		return nil
+	}
+	return map[string]<-chan message.Message{
+		"mirror-out": ch,
+	}
+}
+
+// startMirrorOut 은 에이전트가 mirror-message 모드이면 mirror-out 소스 채널을 준비하고
+// 드레인 고루틴을 기동한다. Init/Reinit 에서 에이전트 resolve 이후 호출한다. 비-message
+// 에이전트(MirrorOutCh()==nil)에서는 no-op 이라 기존 동작을 보존한다.
+func (n *SamsungHvacr01Node) startMirrorOut() {
+	hv, ok := n.agent.(*samsung.Hvacr01Agent)
+	if !ok {
+		return
+	}
+	outCh := hv.MirrorOutCh()
+	if outCh == nil {
+		return // mirror-message 모드가 아님
+	}
+	n.mu.Lock()
+	if n.mirrorOutCh == nil {
+		n.mirrorOutCh = make(chan message.Message, mirrorOutSourceBufferSize)
+	}
+	n.mu.Unlock()
+	go n.mirrorOutLoop(outCh)
+}
+
+// mirrorOutLoop 은 에이전트의 MirrorOutCh(디코드 메시지 tap, 와이어 JSON)를 드레인해
+// message.Message 로 감싸 mirror-out 소스 채널로 전달하는 고루틴이다. stopCh 로 종료한다
+// (Shutdown 시 close). 재사용 버퍼 우려는 없으나(MirrorOutCh 는 매번 새 JSON) 방어적으로
+// 문자열로 복사해 담는다.
+func (n *SamsungHvacr01Node) mirrorOutLoop(outCh <-chan []byte) {
+	for {
+		select {
+		case <-n.stopCh:
+			return
+		case wire, ok := <-outCh:
+			if !ok {
+				return
+			}
+			msg := message.New()
+			msg.SetType(mirrorUplinkMsgType)
+			msg.Payload().Set(mirrorWirePayloadKey, string(wire))
+			select {
+			case n.mirrorOutCh <- msg:
+			case <-n.stopCh:
+				return
+			}
+		}
+	}
+}
+
+// handleMirrorIn 은 mirror-in marker 메시지를 에이전트 ingress 로 급전한다 (M10).
+// 하류 emit 없이 반환한다. 에이전트가 mirror-message 모드가 아니거나 와이어를 추출할 수
+// 없으면 명시적 에러를 반환한다(silent 무시 금지).
+func (n *SamsungHvacr01Node) handleMirrorIn(msg message.Message) ([]message.Message, error) {
+	hv, ok := n.agent.(*samsung.Hvacr01Agent)
+	if !ok {
+		return nil, fmt.Errorf("%w: mirror-in: 에이전트가 samsung Hvacr01Agent 가 아님", ErrNASAProcessFailed)
+	}
+	payload, err := mirrorWireBytes(msg)
+	if err != nil {
+		return nil, fmt.Errorf("%w: mirror-in: %v", ErrNASAProcessFailed, err)
+	}
+	if err := hv.FeedMirrorWire(payload); err != nil {
+		return nil, fmt.Errorf("%w: mirror-in feed: %v", ErrNASAProcessFailed, err)
+	}
+	return nil, nil // mirror-in 은 하류로 emit 하지 않음
+}
+
+// mirrorWireBytes 는 mirror-in 메시지 payload 에서 와이어 JSON 바이트를 추출한다.
+// mirror-out 이 string 으로 저장하므로 string 을 우선 처리하되, []byte/json.RawMessage 도
+// 방어적으로 수용한다(노드 간 직렬화 변형 대비).
+func mirrorWireBytes(msg message.Message) ([]byte, error) {
+	v, ok := msg.Payload().Get(mirrorWirePayloadKey)
+	if !ok {
+		return nil, fmt.Errorf("payload 키 %q 누락", mirrorWirePayloadKey)
+	}
+	switch b := v.(type) {
+	case string:
+		return []byte(b), nil
+	case []byte:
+		return b, nil
+	case json.RawMessage:
+		return []byte(b), nil
+	default:
+		return nil, fmt.Errorf("payload 키 %q 타입 미지원: %T", mirrorWirePayloadKey, v)
+	}
 }
 
 // ===========================================================================

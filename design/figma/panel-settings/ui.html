@@ -1,0 +1,42 @@
+<style>
+  body { font: 12px -apple-system, system-ui, sans-serif; margin: 0; padding: 12px; color: #222; }
+  h3 { margin: 0 0 6px; font-size: 12px; }
+  p { margin: 0 0 8px; color: #666; line-height: 1.5; }
+  textarea { width: 100%; height: 150px; box-sizing: border-box; font: 11px ui-monospace, monospace;
+             border: 1px solid #ddd; border-radius: 6px; padding: 6px; resize: vertical; }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  button { flex: 1; padding: 8px; border-radius: 6px; border: 1px solid #ddd; background: #fff;
+           cursor: pointer; font-size: 12px; }
+  button.primary { background: #18a0fb; border-color: #18a0fb; color: #fff; }
+  .err { color: #d33; margin-top: 8px; min-height: 14px; }
+</style>
+
+<h3>실제 화면에서 뽑은 JSON</h3>
+<p>
+  설정 화면을 연 브라우저 콘솔에서 <code>extract.js</code> 를 실행하면
+  <code>panel-settings-dom.json</code> 이 내려받아집니다. 그 내용을 아래에 붙여 넣으세요.
+</p>
+<textarea id="json" placeholder='{"w":1440,"h":900,...}'></textarea>
+<div class="row">
+  <button id="build" class="primary">붙여 넣은 화면 그리기</button>
+  <button id="mock">목업으로 그리기</button>
+</div>
+<div class="err" id="err"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  $('build').onclick = () => {
+    const raw = $('json').value.trim();
+    if (!raw) return ($('err').textContent = 'JSON 을 붙여 넣어 주세요.');
+    let tree;
+    try {
+      tree = JSON.parse(raw);
+    } catch (e) {
+      return ($('err').textContent = 'JSON 을 읽지 못했습니다: ' + e.message);
+    }
+    if (!tree || !tree.root) return ($('err').textContent = 'root 가 없는 JSON 입니다.');
+    $('err').textContent = '';
+    parent.postMessage({ pluginMessage: { type: 'build-dom', tree } }, '*');
+  };
+  $('mock').onclick = () => parent.postMessage({ pluginMessage: { type: 'build-mock' } }, '*');
+</script>

@@ -10,6 +10,7 @@ import { useTranslation, type TranslationFn } from '@/lib/i18n';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 
 // ---- 타입 정의 ----
 
@@ -68,6 +69,8 @@ export default function OutdoorControlPanel({
   onConfigChange: _onConfigChange,
   onTitleChange: _onTitleChange,
 }: OutdoorControlPanelProps) {
+  const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
   // 현재 값 (압축기 주파수 / 토출 온도) 표시 색상 — 패널 설정에서 지정 가능.
@@ -96,10 +99,12 @@ export default function OutdoorControlPanel({
   if (isLoading) {
     return (
       <div className="flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-3 ring-1 ring-(--color-border-default)">
-        <div className="mb-2 flex shrink-0 items-center gap-2">
-          <Cpu className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-          <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
-        </div>
+        {showTitle && (
+          <div className="mb-2 flex shrink-0 items-center gap-2">
+            <Cpu className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
+            <span className="truncate text-sm font-semibold text-(--color-text-primary)" style={titleStyle}>{title}</span>
+          </div>
+        )}
         <div className="flex flex-1 items-center justify-center">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-(--color-border-default) border-t-blue-600" />
         </div>
@@ -135,10 +140,12 @@ export default function OutdoorControlPanel({
     <div className="flex min-h-0 flex-1 flex-col gap-4 rounded-2xl bg-(--color-bg-surface) p-5 ring-1 ring-(--color-border-default)">
       {/* ---- 헤더: 아이콘+타이틀 | 상태배지+모드 ---- */}
       <div className="flex shrink-0 items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <Gauge className="h-5 w-5 text-blue-500" />
-          <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
-        </div>
+        {showTitle && (
+          <div className="flex items-center gap-2.5">
+            <Gauge className="h-5 w-5 text-blue-500" />
+            <span className="truncate text-base font-bold text-(--color-text-primary)" style={titleStyle}>{title}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <span title={t('dashboard.panel.monitorOnly')}><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label={t('dashboard.panel.monitorOnly')} /></span>
           <span className={cn(
@@ -259,16 +266,20 @@ function LgIcp01OutdoorLayout({
   currentValueColor?: string;
   t: TranslationFn;
 }) {
+  const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const outdoorTemp = typeof rawProps['outdoor_temperature'] === 'number' ? rawProps['outdoor_temperature'] : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 rounded-2xl bg-(--color-bg-surface) p-5 ring-1 ring-(--color-border-default)">
       {/* 헤더 */}
       <div className="flex shrink-0 items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <Gauge className="h-5 w-5 text-blue-500" />
-          <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
-        </div>
+        {showTitle && (
+          <div className="flex items-center gap-2.5">
+            <Gauge className="h-5 w-5 text-blue-500" />
+            <span className="truncate text-base font-bold text-(--color-text-primary)" style={titleStyle}>{title}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <span title={t('dashboard.panel.monitorOnly')}><Eye className="h-4 w-4 text-amber-500 dark:text-amber-400" aria-label={t('dashboard.panel.monitorOnly')} /></span>
           <span className={cn(

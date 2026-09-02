@@ -93,43 +93,46 @@ func (h *RemoteQueryHandler) WithAudit(audit storage.RemoteAuditRepository) *Rem
 // RegisterRoutes 는 원격 READ 프록시 라우트를 그룹에 등록한다(목록은 remote_admin.go 의
 // 미러 엔드포인트 사용 — 여기서는 자원-타깃 디테일/라이브 READ 만).
 func (h *RemoteQueryHandler) RegisterRoutes(g *api.RouteGroup) {
+	// @SPEC:SPEC-AUTH-005 (M5) — 원격 하위 API 는 remote.* 단일 키로만 다룬다
+	// (spec.md §1.3 비범위: 원격 노드 하위 API 의 세분 권한). 조회는 remote.read,
+	// 그 외 모든 변경·명령은 remote.update 이다.
 	// 라이브 목록(M8 보강): 노드의 FULL 로컬 목록(runtime 필드 포함)을 프록시한다
 	// (agent/flow/device list query-action). 미러 요약(remote_admin.go)과 달리
 	// connected/uptime/stats 등 라이브 필드를 운반한다. 노드-레벨 READ(per-resource
 	// 노출 범위 없음 — 목록 자체가 노출 필터된 자원만 운반)이므로 IsManaged 만 게이트한다.
 	// 리터럴 "/live" 세그먼트는 ".../flows/{flow_id}" 같은 자원-타깃 경로보다 우선
 	// 매칭되어야 하므로 자원 라우트보다 먼저 등록한다(라우터 우선순위).
-	g.GET("/remote/nodes/{instance_id}/agents/live", h.agentsLive)
-	g.GET("/remote/nodes/{instance_id}/flows/live", h.flowsLive)
-	g.GET("/remote/nodes/{instance_id}/devices/live", h.devicesLive)
+	g.GETPerm("/remote/nodes/{instance_id}/agents/live", "remote.read", h.agentsLive)
+	g.GETPerm("/remote/nodes/{instance_id}/flows/live", "remote.read", h.flowsLive)
+	g.GETPerm("/remote/nodes/{instance_id}/devices/live", "remote.read", h.devicesLive)
 
 	// flow
-	g.GET("/remote/nodes/{instance_id}/flows/{flow_id}", h.flowGet)
-	g.GET("/remote/nodes/{instance_id}/flows/{flow_id}/status", h.flowStatus)
-	g.GET("/remote/nodes/{instance_id}/flows/{flow_id}/nodes", h.flowNodes)
-	g.GET("/remote/nodes/{instance_id}/flows/{flow_id}/nodes/{node_id}", h.flowNode)
-	g.GET("/remote/nodes/{instance_id}/flows/{flow_id}/logs", h.flowLogs)
+	g.GETPerm("/remote/nodes/{instance_id}/flows/{flow_id}", "remote.read", h.flowGet)
+	g.GETPerm("/remote/nodes/{instance_id}/flows/{flow_id}/status", "remote.read", h.flowStatus)
+	g.GETPerm("/remote/nodes/{instance_id}/flows/{flow_id}/nodes", "remote.read", h.flowNodes)
+	g.GETPerm("/remote/nodes/{instance_id}/flows/{flow_id}/nodes/{node_id}", "remote.read", h.flowNode)
+	g.GETPerm("/remote/nodes/{instance_id}/flows/{flow_id}/logs", "remote.read", h.flowLogs)
 	// agent
-	g.GET("/remote/nodes/{instance_id}/agents/{agent_id}", h.agentGet)
-	g.GET("/remote/nodes/{instance_id}/agents/{agent_id}/stats", h.agentStats)
-	g.GET("/remote/nodes/{instance_id}/agents/{agent_id}/config", h.agentConfig)
-	g.GET("/remote/nodes/{instance_id}/agents/{agent_id}/devices", h.agentDevices)
-	g.GET("/remote/nodes/{instance_id}/agents/{agent_id}/topics", h.agentTopics)
-	g.GET("/remote/nodes/{instance_id}/agents/{agent_id}/store", h.agentStore)
-	g.GET("/remote/nodes/{instance_id}/agents/{agent_id}/sessions", h.agentSessions)
-	g.GET("/remote/nodes/{instance_id}/agents/{agent_id}/series", h.agentSeries)
+	g.GETPerm("/remote/nodes/{instance_id}/agents/{agent_id}", "remote.read", h.agentGet)
+	g.GETPerm("/remote/nodes/{instance_id}/agents/{agent_id}/stats", "remote.read", h.agentStats)
+	g.GETPerm("/remote/nodes/{instance_id}/agents/{agent_id}/config", "remote.read", h.agentConfig)
+	g.GETPerm("/remote/nodes/{instance_id}/agents/{agent_id}/devices", "remote.read", h.agentDevices)
+	g.GETPerm("/remote/nodes/{instance_id}/agents/{agent_id}/topics", "remote.read", h.agentTopics)
+	g.GETPerm("/remote/nodes/{instance_id}/agents/{agent_id}/store", "remote.read", h.agentStore)
+	g.GETPerm("/remote/nodes/{instance_id}/agents/{agent_id}/sessions", "remote.read", h.agentSessions)
+	g.GETPerm("/remote/nodes/{instance_id}/agents/{agent_id}/series", "remote.read", h.agentSeries)
 	// device
-	g.GET("/remote/nodes/{instance_id}/devices/{device_id}", h.deviceGet)
-	g.GET("/remote/nodes/{instance_id}/devices/{device_id}/state", h.deviceState)
-	g.GET("/remote/nodes/{instance_id}/devices/{device_id}/commands", h.deviceCommands)
-	g.GET("/remote/nodes/{instance_id}/devices/{device_id}/metadata", h.deviceMetadata)
+	g.GETPerm("/remote/nodes/{instance_id}/devices/{device_id}", "remote.read", h.deviceGet)
+	g.GETPerm("/remote/nodes/{instance_id}/devices/{device_id}/state", "remote.read", h.deviceState)
+	g.GETPerm("/remote/nodes/{instance_id}/devices/{device_id}/commands", "remote.read", h.deviceCommands)
+	g.GETPerm("/remote/nodes/{instance_id}/devices/{device_id}/metadata", "remote.read", h.deviceMetadata)
 
 	// M10 그룹 L: 노드-레벨 READ(대시보드 config + 시스템 메트릭). per-resource 노출
 	// 범위가 없으므로(REQ-L03) IsManaged 만 게이트한다(노출 범위 미평가). 라우트는
 	// 자원-타깃 경로(.../flows/{id} 등)보다 path 세그먼트가 짧거나 리터럴이므로 충돌 없음.
-	g.GET("/remote/nodes/{instance_id}/dashboards/shared", h.dashboardShared)
-	g.GET("/remote/nodes/{instance_id}/dashboards/mine", h.dashboardMine)
-	g.GET("/remote/nodes/{instance_id}/metrics", h.monitorMetrics)
+	g.GETPerm("/remote/nodes/{instance_id}/dashboards/shared", "remote.read", h.dashboardShared)
+	g.GETPerm("/remote/nodes/{instance_id}/dashboards/mine", "remote.read", h.dashboardMine)
+	g.GETPerm("/remote/nodes/{instance_id}/metrics", "remote.read", h.monitorMetrics)
 }
 
 // --- 라이브 목록(M8 보강) ------------------------------------------------------

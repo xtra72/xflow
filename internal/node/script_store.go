@@ -13,7 +13,7 @@ import (
 // 네임스페이스 스코프 스토어를 해석하여, 실행별로 xflow.store 에 바인딩할 수 있도록
 // 하는 헬퍼를 제공한다.
 //
-// 해석 경로는 store-read/store-write 노드와 동일하다:
+// 해석 경로는 store-read/storage-write 노드와 동일하다:
 //   AgentResolver.ResolveAgent(agent_ref) → AgentAccessor → storeProvider →
 //   NodeStoreForNamespace(namespace) → *system.NodeStoreAdapter.
 //

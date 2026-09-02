@@ -1,0 +1,513 @@
+// heatmapConfig 파서 단위 테스트 (SPEC-HEATMAP-PANEL-001 T1).
+// 하위호환 기본값 분기(결측 좌표/bounds/color_table/기본 power/손상 입력)를 커버한다.
+
+import { describe, it, expect } from 'vitest';
+
+import {
+  parseHeatmapConfig,
+  buildDefaultHeatmapConfig,
+  buildDefaultHeatmapStoreSource,
+  DEFAULT_IDW_POWER,
+  DEFAULT_GRID_RESOLUTION,
+  DEFAULT_HEATMAP_OPACITY,
+  DEFAULT_CONTOUR_LEVEL_COUNT,
+  DEFAULT_LEGEND_TICK_COUNT,
+} from './heatmapConfig';
+
+describe('parseHeatmapConfig', () => {
+  it('결측 sensor_positions 는 빈 객체로 보정한다', () => {
+    const cfg = parseHeatmapConfig({ store_source: buildDefaultHeatmapStoreSource() });
+    expect(cfg.sensor_positions).toEqual({});
+  });
+
+  it('결측 value_bounds 는 undefined(자동)로 둔다', () => {
+    const cfg = parseHeatmapConfig({});
+    expect(cfg.value_bounds).toBeUndefined();
+  });
+
+  it('결측 color_table 은 undefined(기본 gradient 폴백)로 둔다', () => {
+    const cfg = parseHeatmapConfig({});
+    expect(cfg.color_table).toBeUndefined();
+  });
+
+  it('결측 idw 는 기본 power/grid_resolution 으로 채운다', () => {
+    const cfg = parseHeatmapConfig({});
+    expect(cfg.idw.power).toBe(DEFAULT_IDW_POWER);
+    expect(cfg.idw.grid_resolution).toBe(DEFAULT_GRID_RESOLUTION);
+  });
+
+  it('idw.power 만 지정하면 grid_resolution 은 기본값으로 채운다', () => {
+    const cfg = parseHeatmapConfig({ idw: { power: 3 } });
+    expect(cfg.idw.power).toBe(3);
+    expect(cfg.idw.grid_resolution).toBe(DEFAULT_GRID_RESOLUTION);
+  });
+
+  it('power<=0 / grid_resolution<=0 은 기본값으로 폴백한다', () => {
+    const cfg = parseHeatmapConfig({ idw: { power: 0, grid_resolution: -5 } });
+    expect(cfg.idw.power).toBe(DEFAULT_IDW_POWER);
+    expect(cfg.idw.grid_resolution).toBe(DEFAULT_GRID_RESOLUTION);
+  });
+
+  it.each([null, undefined, 'not-an-object', 42, []])(
+    '손상/비객체 입력(%p)도 예외 없이 기본값으로 파싱한다',
+    (raw) => {
+      expect(() => parseHeatmapConfig(raw as unknown)).not.toThrow();
+      const cfg = parseHeatmapConfig(raw as unknown);
+      expect(cfg.sensor_positions).toEqual({});
+      expect(cfg.idw.power).toBe(DEFAULT_IDW_POWER);
+      expect(cfg.store_source.selection_mode).toBe('keys');
+    },
+  );
+
+  it('x/y 가 유한 숫자가 아닌 sensor_positions 항목은 걸러낸다', () => {
+    const cfg = parseHeatmapConfig({
+      sensor_positions: {
+        ok: { x: 0.2, y: 0.8 },
+        nanX: { x: NaN, y: 0.5 },
+        missingY: { x: 0.5 },
+        stringVal: { x: '0.1', y: 0.1 },
+        infX: { x: Infinity, y: 0.1 },
+      },
+    });
+    expect(cfg.sensor_positions).toEqual({ ok: { x: 0.2, y: 0.8 } });
+  });
+
+  it('유효한 value_bounds / color_table 은 그대로 통과시킨다', () => {
+    const cfg = parseHeatmapConfig({
+      value_bounds: { min: 18, max: 26 },
+      color_table: [
+        { stop: 0, color: '#0000ff' },
+        { stop: 1, color: '#ff0000' },
+      ],
+    });
+    expect(cfg.value_bounds).toEqual({ min: 18, max: 26 });
+    expect(cfg.color_table).toEqual([
+      { stop: 0, color: '#0000ff' },
+      { stop: 1, color: '#ff0000' },
+    ]);
+  });
+
+  it('무효 color_table(빈 배열/비정지점)은 undefined 로 폴백한다', () => {
+    expect(parseHeatmapConfig({ color_table: [] }).color_table).toBeUndefined();
+    expect(
+      parseHeatmapConfig({ color_table: [{ stop: 'x', color: 5 }] }).color_table,
+    ).toBeUndefined();
+  });
+
+  it('무효 value_bounds(min/max 비숫자)는 undefined 로 폴백한다', () => {
+    expect(parseHeatmapConfig({ value_bounds: { min: 1 } }).value_bounds).toBeUndefined();
+    expect(
+      parseHeatmapConfig({ value_bounds: { min: 'a', max: 'b' } }).value_bounds,
+    ).toBeUndefined();
+  });
+});
+
+// SPEC-HEATMAP-PANEL-002 T1: floor_plan / heatmap_opacity / editor 신규 필드 파싱.
+describe('parseHeatmapConfig — SPEC-002 additive fields', () => {
+  it('AC-E5: MVP 시절 config(신규 필드 없음)는 기본값으로 채우고 기존 필드는 불변이다', () => {
+    // floor_plan/heatmap_opacity/editor 가 전혀 없는 MVP config.
+    const mvp = {
+      data_source: 'store',
+      store_source: buildDefaultHeatmapStoreSource(),
+      sensor_positions: { s1: { x: 0.3, y: 0.7 } },
+      idw: { power: 2, grid_resolution: 32 },
+    };
+    const cfg = parseHeatmapConfig(mvp);
+    // 신규 필드 기본값(배경 없음 / opacity 0.6 / editor 없음).
+    expect(cfg.floor_plan).toBeUndefined();
+    expect(cfg.heatmap_opacity).toBe(DEFAULT_HEATMAP_OPACITY);
+    expect(cfg.editor).toBeUndefined();
+    // 기존 MVP 필드 의미 불변.
+    expect(cfg.sensor_positions).toEqual({ s1: { x: 0.3, y: 0.7 } });
+    expect(cfg.idw).toEqual({ power: 2, grid_resolution: 32 });
+  });
+
+  it('floor_plan.image 가 있으면 image + 기본 fit(contain)으로 파싱한다', () => {
+    const cfg = parseHeatmapConfig({
+      floor_plan: { image: 'data:image/png;base64,AAAA' },
+    });
+    expect(cfg.floor_plan).toEqual({ image: 'data:image/png;base64,AAAA', fit: 'contain' });
+  });
+
+  it('floor_plan.fit=cover 와 natural_width/height 를 통과시킨다', () => {
+    const cfg = parseHeatmapConfig({
+      floor_plan: {
+        image: 'data:image/png;base64,BBBB',
+        fit: 'cover',
+        natural_width: 800,
+        natural_height: 600,
+      },
+    });
+    expect(cfg.floor_plan).toEqual({
+      image: 'data:image/png;base64,BBBB',
+      fit: 'cover',
+      natural_width: 800,
+      natural_height: 600,
+    });
+  });
+
+  it('image 가 없거나 빈 문자열이면 floor_plan 은 undefined(배경 없음)', () => {
+    expect(parseHeatmapConfig({ floor_plan: { fit: 'cover' } }).floor_plan).toBeUndefined();
+    expect(parseHeatmapConfig({ floor_plan: { image: '   ' } }).floor_plan).toBeUndefined();
+    expect(parseHeatmapConfig({ floor_plan: 'not-an-object' }).floor_plan).toBeUndefined();
+  });
+
+  it('무효 fit / natural 크기는 무시한다(기본 contain, 크기 미포함)', () => {
+    const cfg = parseHeatmapConfig({
+      floor_plan: {
+        image: 'data:image/png;base64,CCCC',
+        fit: 'stretch',
+        natural_width: -1,
+        natural_height: 0,
+      },
+    });
+    expect(cfg.floor_plan).toEqual({ image: 'data:image/png;base64,CCCC', fit: 'contain' });
+  });
+
+  it('heatmap_opacity 는 0..1 로 clamp 하고 비숫자는 기본값(0.6)으로 폴백한다', () => {
+    expect(parseHeatmapConfig({ heatmap_opacity: 0.3 }).heatmap_opacity).toBe(0.3);
+    expect(parseHeatmapConfig({ heatmap_opacity: 1.5 }).heatmap_opacity).toBe(1);
+    expect(parseHeatmapConfig({ heatmap_opacity: -0.4 }).heatmap_opacity).toBe(0);
+    expect(parseHeatmapConfig({ heatmap_opacity: 'x' }).heatmap_opacity).toBe(DEFAULT_HEATMAP_OPACITY);
+    expect(parseHeatmapConfig({}).heatmap_opacity).toBe(DEFAULT_HEATMAP_OPACITY);
+  });
+
+  it('editor 는 양의 snap/marker_size 만 통과, 그 외/없음은 undefined', () => {
+    expect(parseHeatmapConfig({ editor: { snap: 0.05, marker_size: 12 } }).editor).toEqual({
+      snap: 0.05,
+      marker_size: 12,
+    });
+    expect(parseHeatmapConfig({ editor: { snap: 0.1 } }).editor).toEqual({ snap: 0.1 });
+    expect(parseHeatmapConfig({ editor: { snap: -1, marker_size: 0 } }).editor).toBeUndefined();
+    expect(parseHeatmapConfig({ editor: {} }).editor).toBeUndefined();
+    expect(parseHeatmapConfig({}).editor).toBeUndefined();
+  });
+});
+
+// SPEC-HEATMAP-PANEL-003 T2: contour 필드 하위호환 파싱(additive-only).
+describe('parseHeatmapConfig — SPEC-003 contour field', () => {
+  it('회귀 0: MVP/002 config(contour 없음)는 contour undefined 로 두고 기존 필드 불변', () => {
+    const mvp = {
+      data_source: 'store',
+      store_source: buildDefaultHeatmapStoreSource(),
+      sensor_positions: { s1: { x: 0.3, y: 0.7 } },
+      idw: { power: 2, grid_resolution: 32 },
+      floor_plan: { image: 'data:image/png;base64,AAAA' },
+      heatmap_opacity: 0.5,
+    };
+    const cfg = parseHeatmapConfig(mvp);
+    expect(cfg.contour).toBeUndefined();
+    // 기존 필드 의미 불변.
+    expect(cfg.sensor_positions).toEqual({ s1: { x: 0.3, y: 0.7 } });
+    expect(cfg.idw).toEqual({ power: 2, grid_resolution: 32 });
+    expect(cfg.floor_plan).toEqual({ image: 'data:image/png;base64,AAAA', fit: 'contain' });
+    expect(cfg.heatmap_opacity).toBe(0.5);
+  });
+
+  it('contour 객체가 있으면 기본값(enabled=false, level_count=5, labels=false, line={})으로 채운다', () => {
+    const cfg = parseHeatmapConfig({ contour: {} });
+    expect(cfg.contour).toEqual({
+      enabled: false,
+      level_count: DEFAULT_CONTOUR_LEVEL_COUNT,
+      labels: false,
+      line: {},
+    });
+  });
+
+  it('enabled/labels 는 boolean true 일 때만 켜진다', () => {
+    expect(parseHeatmapConfig({ contour: { enabled: true, labels: true } }).contour).toMatchObject({
+      enabled: true,
+      labels: true,
+    });
+    expect(parseHeatmapConfig({ contour: { enabled: 'yes', labels: 1 } }).contour).toMatchObject({
+      enabled: false,
+      labels: false,
+    });
+  });
+
+  it('level_count 는 양의 정수만, 그 외는 기본값(5)로 폴백', () => {
+    expect(parseHeatmapConfig({ contour: { level_count: 8 } }).contour?.level_count).toBe(8);
+    expect(parseHeatmapConfig({ contour: { level_count: 3.9 } }).contour?.level_count).toBe(3);
+    expect(parseHeatmapConfig({ contour: { level_count: 0 } }).contour?.level_count).toBe(
+      DEFAULT_CONTOUR_LEVEL_COUNT,
+    );
+    expect(parseHeatmapConfig({ contour: { level_count: -2 } }).contour?.level_count).toBe(
+      DEFAULT_CONTOUR_LEVEL_COUNT,
+    );
+  });
+
+  it('levels 는 유한 숫자 배열만 통과, 무효/빈 배열은 undefined(level_count 사용)', () => {
+    expect(parseHeatmapConfig({ contour: { levels: [20, 24] } }).contour?.levels).toEqual([20, 24]);
+    // 비유한 항목은 걸러진다.
+    expect(parseHeatmapConfig({ contour: { levels: [20, NaN, 'x', 24] } }).contour?.levels).toEqual([
+      20, 24,
+    ]);
+    expect(parseHeatmapConfig({ contour: { levels: [] } }).contour?.levels).toBeUndefined();
+    expect(parseHeatmapConfig({ contour: { levels: 'nope' } }).contour?.levels).toBeUndefined();
+  });
+
+  it('line 스타일은 유효 필드만 채운다(색/양의 두께/유한 dash)', () => {
+    expect(
+      parseHeatmapConfig({ contour: { line: { color: '#123456', width: 2, dash: [4, 2] } } })
+        .contour?.line,
+    ).toEqual({ color: '#123456', width: 2, dash: [4, 2] });
+    // 무효 필드는 제외(음수 두께/빈 색/음수 dash 항목).
+    expect(
+      parseHeatmapConfig({ contour: { line: { color: '  ', width: -1, dash: [-1] } } }).contour
+        ?.line,
+    ).toEqual({});
+    expect(parseHeatmapConfig({ contour: { line: 'x' } }).contour?.line).toEqual({});
+  });
+
+  it('contour 가 비객체(문자열/숫자)면 undefined(additive off)', () => {
+    expect(parseHeatmapConfig({ contour: 'on' }).contour).toBeUndefined();
+    expect(parseHeatmapConfig({ contour: 5 }).contour).toBeUndefined();
+  });
+});
+
+// 색표 범례 필드 하위호환 파싱(additive-only).
+describe('parseHeatmapConfig — legend field', () => {
+  it('회귀 0: legend 없는 config 는 legend undefined 로 두고 기존 필드 불변', () => {
+    const cfg = parseHeatmapConfig({
+      data_source: 'store',
+      store_source: buildDefaultHeatmapStoreSource(),
+      sensor_positions: { s1: { x: 0.3, y: 0.7 } },
+      idw: { power: 2, grid_resolution: 32 },
+      contour: { enabled: true },
+    });
+    expect(cfg.legend).toBeUndefined();
+    expect(cfg.sensor_positions).toEqual({ s1: { x: 0.3, y: 0.7 } });
+    expect(cfg.contour).toMatchObject({ enabled: true });
+  });
+
+  it('legend 객체가 있으면 기본값(vertical/bottom-right/md/5, enabled=false)으로 채운다', () => {
+    expect(parseHeatmapConfig({ legend: {} }).legend).toEqual({
+      enabled: false,
+      orientation: 'vertical',
+      position: 'bottom-right',
+      size: 'md',
+      tick_count: DEFAULT_LEGEND_TICK_COUNT,
+    });
+  });
+
+  it('offset(드래그 자유 위치)은 x/y 가 모두 유한할 때만 0..1 로 clamp 되어 살아남는다', () => {
+    expect(parseHeatmapConfig({ legend: { offset: { x: 0.25, y: 0.75 } } }).legend?.offset).toEqual({
+      x: 0.25,
+      y: 0.75,
+    });
+    // 범위 밖은 clamp.
+    expect(parseHeatmapConfig({ legend: { offset: { x: -3, y: 9 } } }).legend?.offset).toEqual({
+      x: 0,
+      y: 1,
+    });
+    // 한 축만 있거나 손상되면 프리셋으로 폴백(offset 미설정).
+    expect(parseHeatmapConfig({ legend: { offset: { x: 0.5 } } }).legend?.offset).toBeUndefined();
+    expect(
+      parseHeatmapConfig({ legend: { offset: { x: 'a', y: 0.5 } } }).legend?.offset,
+    ).toBeUndefined();
+    expect(parseHeatmapConfig({ legend: { offset: 'center' } }).legend?.offset).toBeUndefined();
+    // 회귀 0: offset 미설정 config 는 키 자체가 없다.
+    expect(parseHeatmapConfig({ legend: {} }).legend).not.toHaveProperty('offset');
+  });
+
+  it('enabled 는 boolean true 일 때만 켜진다', () => {
+    expect(parseHeatmapConfig({ legend: { enabled: true } }).legend?.enabled).toBe(true);
+    expect(parseHeatmapConfig({ legend: { enabled: 'yes' } }).legend?.enabled).toBe(false);
+  });
+
+  it('orientation/position/size 는 화이트리스트 밖이면 기본값으로 폴백', () => {
+    expect(parseHeatmapConfig({ legend: { orientation: 'horizontal' } }).legend?.orientation).toBe(
+      'horizontal',
+    );
+    expect(parseHeatmapConfig({ legend: { orientation: 'diagonal' } }).legend?.orientation).toBe(
+      'vertical',
+    );
+    expect(parseHeatmapConfig({ legend: { position: 'top-left' } }).legend?.position).toBe(
+      'top-left',
+    );
+    expect(parseHeatmapConfig({ legend: { position: 'center' } }).legend?.position).toBe(
+      'bottom-right',
+    );
+    expect(parseHeatmapConfig({ legend: { size: 'lg' } }).legend?.size).toBe('lg');
+    expect(parseHeatmapConfig({ legend: { size: 'xl' } }).legend?.size).toBe('md');
+  });
+
+  it('tick_count 는 정수화 후 2..10 clamp, 비유한은 기본값(5)', () => {
+    expect(parseHeatmapConfig({ legend: { tick_count: 7 } }).legend?.tick_count).toBe(7);
+    expect(parseHeatmapConfig({ legend: { tick_count: 6.8 } }).legend?.tick_count).toBe(6);
+    expect(parseHeatmapConfig({ legend: { tick_count: 1 } }).legend?.tick_count).toBe(2);
+    expect(parseHeatmapConfig({ legend: { tick_count: 99 } }).legend?.tick_count).toBe(10);
+    expect(parseHeatmapConfig({ legend: { tick_count: 'x' } }).legend?.tick_count).toBe(
+      DEFAULT_LEGEND_TICK_COUNT,
+    );
+  });
+
+  it('legend 치수(bar_length/bar_thickness)는 정수화 + 범위로 죈다', () => {
+    const of = (l: Record<string, unknown>) => parseHeatmapConfig({ legend: l }).legend;
+    expect(of({ bar_length: 200 })?.bar_length).toBe(200);
+    expect(of({ bar_length: 200.4 })?.bar_length).toBe(200);
+    expect(of({ bar_length: 1 })?.bar_length).toBe(24);
+    expect(of({ bar_length: 9999 })?.bar_length).toBe(600);
+    expect(of({ bar_thickness: 24 })?.bar_thickness).toBe(24);
+    expect(of({ bar_thickness: 0 })?.bar_thickness).toBe(4);
+    expect(of({ bar_thickness: 9999 })?.bar_thickness).toBe(80);
+  });
+
+  it('legend 치수/글꼴 미지정·손상 입력은 기본값으로 채우지 않고 비운다(프리셋 파생 신호)', () => {
+    // 여기서 기본값을 채우면 "미지정 = size 프리셋에서 파생" 이라는 뜻이 사라진다.
+    const of = (l: Record<string, unknown>) => parseHeatmapConfig({ legend: l }).legend;
+    expect(of({})?.bar_length).toBeUndefined();
+    expect(of({ bar_length: 'x' })?.bar_length).toBeUndefined();
+    expect(of({ font_size: null })?.font_size).toBeUndefined();
+    expect(of({ font_color: '' })?.font_color).toBeUndefined();
+    expect(of({ font_color: 42 })?.font_color).toBeUndefined();
+  });
+
+  it('legend 글자 크기는 범위로 죄고, 글자 색은 문자열이면 그대로 둔다', () => {
+    const of = (l: Record<string, unknown>) => parseHeatmapConfig({ legend: l }).legend;
+    expect(of({ font_size: 20 })?.font_size).toBe(20);
+    expect(of({ font_size: 1 })?.font_size).toBe(6);
+    expect(of({ font_size: 999 })?.font_size).toBe(48);
+    // 색은 CSS 문자열이라 값 검증을 하지 않는다(무효 색은 브라우저가 무시해 상속색이 된다).
+    expect(of({ font_color: '#ff0000' })?.font_color).toBe('#ff0000');
+    expect(of({ font_color: 'var(--x)' })?.font_color).toBe('var(--x)');
+  });
+
+  it('legend 가 비객체(문자열/숫자)면 undefined(additive off)', () => {
+    expect(parseHeatmapConfig({ legend: 'on' }).legend).toBeUndefined();
+    expect(parseHeatmapConfig({ legend: 5 }).legend).toBeUndefined();
+  });
+});
+
+describe('buildDefaultHeatmapStoreSource / buildDefaultHeatmapConfig', () => {
+  it('기본 store 소스는 keys 모드(미체크) + last 집계다', () => {
+    const src = buildDefaultHeatmapStoreSource();
+    // 신규 패널은 아무 것도 바인딩되지 않은 keys 모드로 시작한다(체크박스 전부 미체크).
+    expect(src.selection_mode).toBe('keys');
+    expect(src.aggregation).toBe('last');
+    expect(src.tag_filters).toBeUndefined();
+    expect(src.series).toEqual([]);
+  });
+
+  it('기본 config 는 data_source=store + 기본 idw 를 포함한다', () => {
+    const config = buildDefaultHeatmapConfig();
+    expect(config.data_source).toBe('store');
+    expect(config.sensor_positions).toEqual({});
+    expect(config.idw).toEqual({
+      power: DEFAULT_IDW_POWER,
+      grid_resolution: DEFAULT_GRID_RESOLUTION,
+    });
+    // 기본 config 는 parseHeatmapConfig 를 통과해도 안정적이어야 한다(round-trip).
+    const parsed = parseHeatmapConfig(config);
+    expect(parsed.store_source.selection_mode).toBe('keys');
+    expect(parsed.idw.power).toBe(DEFAULT_IDW_POWER);
+  });
+});
+
+describe('parseHeatmapConfig — floor_plans (다중 이미지 레이어)', () => {
+  const IMG = 'data:image/png;base64,AAAA';
+
+  it('회귀 0: 도면이 전혀 없으면 빈 배열이다(배경 없음)', () => {
+    expect(parseHeatmapConfig({}).floor_plans).toEqual([]);
+  });
+
+  it('구 단일 floor_plan 은 스테이지를 가득 채우는 레이어 1장으로 이관된다(하위호환)', () => {
+    const cfg = parseHeatmapConfig({
+      floor_plan: { image: IMG, fit: 'cover', natural_width: 800, natural_height: 400 },
+    });
+    expect(cfg.floor_plans).toEqual([
+      {
+        image: IMG,
+        x: 0,
+        y: 0,
+        w: 1,
+        h: 1,
+        opacity: 1,
+        fit: 'cover',
+        natural_width: 800,
+        natural_height: 400,
+      },
+    ]);
+    // 구 필드도 그대로 남겨 읽기 전용 소비처가 깨지지 않는다(파괴적 쓰기 없음).
+    expect(cfg.floor_plan?.image).toBe(IMG);
+  });
+
+  it('floor_plans 가 있으면 그쪽이 우선하고 결측 필드는 기본값으로 채운다', () => {
+    const cfg = parseHeatmapConfig({
+      floor_plan: { image: 'data:image/png;base64,OLD' },
+      floor_plans: [{ image: IMG }],
+    });
+    expect(cfg.floor_plans).toEqual([
+      { image: IMG, x: 0, y: 0, w: 1, h: 1, opacity: 1, fit: 'contain' },
+    ]);
+  });
+
+  it('빈 배열은 "배경 없음" 으로 존중한다 — 구 단일 이미지가 되살아나지 않는다', () => {
+    const cfg = parseHeatmapConfig({ floor_plan: { image: IMG }, floor_plans: [] });
+    expect(cfg.floor_plans).toEqual([]);
+  });
+
+  it('박스/불투명도는 범위 밖이면 clamp, 손상되면 기본값으로 보정한다', () => {
+    const [layer] = parseHeatmapConfig({
+      floor_plans: [{ image: IMG, x: -1, y: 5, w: 0, h: 'x', opacity: 9 }],
+    }).floor_plans;
+    expect(layer).toEqual({ image: IMG, x: 0, y: 1, w: 1, h: 1, opacity: 1, fit: 'contain' });
+  });
+
+  it('image 가 없는 항목은 버린다(빈 레이어로 렌더 예외를 만들지 않는다)', () => {
+    expect(
+      parseHeatmapConfig({ floor_plans: [{ x: 0.5 }, { image: '   ' }, { image: IMG }] })
+        .floor_plans,
+    ).toHaveLength(1);
+  });
+
+  it('배열 순서를 보존한다(그리기 순서 = 배열 순서)', () => {
+    const imgs = ['data:1', 'data:2', 'data:3'];
+    expect(
+      parseHeatmapConfig({ floor_plans: imgs.map((image) => ({ image })) }).floor_plans.map(
+        (l) => l.image,
+      ),
+    ).toEqual(imgs);
+  });
+});
+
+describe('parseHeatmapConfig — sensor_space', () => {
+  it("명시적 'stage' 만 신규 공간으로 인정한다", () => {
+    expect(parseHeatmapConfig({ sensor_space: 'stage' }).sensor_space).toBe('stage');
+  });
+
+  it('미지정/손상은 레거시(컨테이너)로 본다 — undefined', () => {
+    expect(parseHeatmapConfig({}).sensor_space).toBeUndefined();
+    expect(parseHeatmapConfig({ sensor_space: 'container' }).sensor_space).toBeUndefined();
+    expect(parseHeatmapConfig({ sensor_space: 42 }).sensor_space).toBeUndefined();
+  });
+});
+
+describe('parseHeatmapConfig — 레이어 fit 화이트리스트', () => {
+  const IMG = 'data:image/png;base64,AAAA';
+  it.each(['contain', 'cover', 'fill'] as const)('%s 는 그대로 통과시킨다', (fit) => {
+    expect(parseHeatmapConfig({ floor_plans: [{ image: IMG, fit }] }).floor_plans[0]!.fit).toBe(fit);
+  });
+
+  it('미인정 값은 기본값(contain)으로 폴백한다', () => {
+    expect(
+      parseHeatmapConfig({ floor_plans: [{ image: IMG, fit: 'stretch' }] }).floor_plans[0]!.fit,
+    ).toBe('contain');
+    expect(parseHeatmapConfig({ floor_plans: [{ image: IMG }] }).floor_plans[0]!.fit).toBe('contain');
+  });
+});
+
+describe('parseHeatmapConfig — stage_fit 화이트리스트', () => {
+  it.each(['cover', 'stretch'] as const)('%s 는 그대로 통과시킨다', (fit) => {
+    expect(parseHeatmapConfig({ stage_fit: fit }).stage_fit).toBe(fit);
+  });
+
+  it('미설정/기본값(contain)/미인정 값은 undefined 다 — 기본 동작(contain)과 동일', () => {
+    // undefined 로 정규화해 두면 config 에 죽은 필드가 남지 않고, 패널은 computeStageBox 의
+    // 기본 인자(contain)를 그대로 탄다.
+    expect(parseHeatmapConfig({}).stage_fit).toBeUndefined();
+    expect(parseHeatmapConfig({ stage_fit: 'contain' }).stage_fit).toBeUndefined();
+    expect(parseHeatmapConfig({ stage_fit: 'nope' }).stage_fit).toBeUndefined();
+    expect(parseHeatmapConfig({ stage_fit: 3 }).stage_fit).toBeUndefined();
+  });
+});
