@@ -5,9 +5,9 @@
 // 보내 이 결함을 닫는다.
 //
 // 여기서 검증하는 것:
-//   1. 10개 읽기 전용 명령이 실제로 `/agents/{id}/query` URL 로 나간다(엔드포인트 고정).
+//   1. 12개 읽기 전용 명령이 실제로 `/agents/{id}/query` URL 로 나간다(엔드포인트 고정).
 //   2. 쓰기 명령은 그대로 `/agents/{id}/exec` 로 나간다.
-//   3. AGENT_QUERY_COMMANDS 가 서버 화이트리스트와 같은 10개 이름으로 고정된다(드리프트 감지).
+//   3. AGENT_QUERY_COMMANDS 가 서버 화이트리스트와 같은 12개 이름으로 고정된다(드리프트 감지).
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -39,19 +39,21 @@ const SERVER_ALLOWLIST = [
   'list_groups',
   'list_gateways',
   'list_connections',
+  'list_models',
   'get_status',
   'get_map',
   'get_device_status',
+  'get_history',
 ] as const;
 
 describe('AGENT_QUERY_COMMANDS (드리프트 가드)', () => {
-  it('서버 화이트리스트와 정확히 같은 10개 이름을 가진다', () => {
+  it('서버 화이트리스트와 정확히 같은 12개 이름을 가진다', () => {
     expect([...AGENT_QUERY_COMMANDS].sort()).toEqual([...SERVER_ALLOWLIST].sort());
   });
 
-  it('10개이며 중복이 없다', () => {
-    expect(AGENT_QUERY_COMMANDS).toHaveLength(10);
-    expect(new Set(AGENT_QUERY_COMMANDS).size).toBe(10);
+  it('12개이며 중복이 없다', () => {
+    expect(AGENT_QUERY_COMMANDS).toHaveLength(12);
+    expect(new Set(AGENT_QUERY_COMMANDS).size).toBe(12);
   });
 });
 

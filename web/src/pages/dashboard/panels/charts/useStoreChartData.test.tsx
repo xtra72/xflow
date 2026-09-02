@@ -283,6 +283,26 @@ describe('useStoreChartData', () => {
     expect(result.current.seriesStyles.get('Temp')?.smooth).toBe(true);
   });
 
+  it('시리즈별 그래프 스타일이 seriesStyles 에 남는다 (시리즈 모양 미적용 회귀)', async () => {
+    // 스타일 전용 변경은 재조회 없이 config 에서 다시 매핑된다. 그 매핑이 필드를
+    // 하나라도 빠뜨리면 조회 시점에는 있던 값이 조용히 사라져, 시리즈에 고른 모양이
+    // 패널 기본값으로 되돌아간다 — 화면에는 "골랐는데 안 바뀜" 으로만 보인다.
+    const queryFn = vi.fn<QueryMatrixFn>().mockResolvedValue({
+      columns: ['room:temp'],
+      rows: [{ bucketStartMs: 1000, values: [21.5] }],
+    });
+    const cfg = makeConfig({
+      series: [{ key: 'room:temp', alias: 'Temp', graph_style: 'bar', color: '#ff0000' }],
+    });
+    const { result } = renderHook(() =>
+      useStoreChartData(cfg, true, { queryMatrixFn: queryFn, nowFn: () => 100_000 }),
+    );
+    await flushMicrotasks();
+
+    expect(result.current.seriesStyles.get('Temp')?.graph_style).toBe('bar');
+    expect(result.current.seriesStyles.get('Temp')?.color).toBe('#ff0000');
+  });
+
   it('alias(시리즈 표시 이름) 변경 시 재구독하여 범례 이름이 갱신된다 (범례 이름 안바뀜 회귀)', async () => {
     const queryFn = vi.fn<QueryMatrixFn>().mockResolvedValue({
       columns: ['room:temp'],
@@ -1122,5 +1142,82 @@ describe('matrixToEntries — 기본 이름의 고정 태그', () => {
     const cfg = makeConfig({ series: [{ key: 'temperature', field: 'value', tags: { location: '실습실' } }] });
     // 시리즈가 하나면 "모든 줄에서 같다" 는 판정이 성립하지 않는다 — 유일한 식별 정보다.
     expect(matrixToEntries(flat, cfg).seriesNames[0]).toContain('location');
+  });
+});
+
+describe('matrixToEntries — 엔트리 라벨은 매트릭스의 실제 컬럼 태그를 싣는다', () => {
+  // 사용자 보고: TSDB 소스에서 테이블의 `$.tags.<키>` 컬럼이 빈칸이었다.
+  // 원인 — 엔트리 라벨을 `ref.tags`(사용자가 건 **사전 필터**)로만 만들어서,
+  // 필터에 쓰지 않은 태그(host 등)는 백엔드가 실어 줘도 버려졌다.
+  // group by 로 펼쳐진 컬럼만 실제 태그를 받고 있었다.
+
+  const matrix = {
+    columns: ['cpu.usage'],
+    rows: [{ bucketStartMs: 1000, values: [1.5] }],
+    columnLabels: [{ host: 'srv1', region: 'kr' }],
+  } as unknown as Parameters<typeof matrixToEntries>[0];
+
+  it('사전 필터가 없어도 실제 컬럼 태그가 라벨에 들어온다 (회귀 대상)', () => {
+    const { entries } = matrixToEntries(matrix, {
+      series: [{ key: 'cpu', field: 'usage' }],
+    } as never);
+    expect(entries[0]!.labels).toMatchObject({ host: 'srv1', region: 'kr' });
+  });
+
+  it('사전 필터 태그와 실제 태그를 합친다', () => {
+    const { entries } = matrixToEntries(matrix, {
+      series: [{ key: 'cpu', field: 'usage', tags: { region: 'kr' } }],
+    } as never);
+    expect(entries[0]!.labels).toMatchObject({ region: 'kr', host: 'srv1' });
+  });
+
+  it('시리즈 표시 이름은 바뀌지 않는다 (범례 회귀 방지)', () => {
+    // 이름은 종전대로 ref 에서 파생된다 — 늘어난 태그가 이름에 새면 모든
+    // store/tsdb 패널의 범례가 한꺼번에 길어진다.
+    const withFilter = matrixToEntries(matrix, {
+      series: [{ key: 'cpu', field: 'usage', tags: { region: 'kr' } }],
+    } as never);
+    expect(withFilter.entries[0]!.labels?.name).toBe('cpu · usage{region=kr}');
+
+    const noFilter = matrixToEntries(matrix, {
+      series: [{ key: 'cpu', field: 'usage' }],
+    } as never);
+    expect(noFilter.entries[0]!.labels?.name).toBe('cpu · usage');
+  });
+
+  it('name 은 태그에 name 키가 있어도 시리즈 이름이 이긴다', () => {
+    const m = {
+      columns: ['c'],
+      rows: [{ bucketStartMs: 1, values: [1] }],
+      columnLabels: [{ name: 'tag-name-should-lose' }],
+    } as unknown as Parameters<typeof matrixToEntries>[0];
+    const { entries } = matrixToEntries(m, {
+      series: [{ key: 'cpu', field: 'usage', alias: '내 이름' }],
+    } as never);
+    expect(entries[0]!.labels?.name).toBe('내 이름');
+  });
+
+  it('컬럼 라벨이 없으면 종전과 같다', () => {
+    const m = {
+      columns: ['c'],
+      rows: [{ bucketStartMs: 1, values: [1] }],
+    } as unknown as Parameters<typeof matrixToEntries>[0];
+    const { entries } = matrixToEntries(m, {
+      series: [{ key: 'cpu', field: 'usage', tags: { region: 'kr' } }],
+    } as never);
+    expect(entries[0]!.labels).toEqual({ region: 'kr', name: 'cpu · usage{region=kr}' });
+  });
+
+  it('group by 파생 컬럼은 종전대로 그룹 태그를 싣는다 (회귀 없음)', () => {
+    const m = {
+      columns: ['a', 'b'],
+      rows: [{ bucketStartMs: 1000, values: [1, 2] }],
+      columnLabels: [{ host: 'srv1' }, { host: 'srv2' }],
+      columnOrigins: [0, 0],
+    } as unknown as Parameters<typeof matrixToEntries>[0];
+    const { entries } = matrixToEntries(m, {
+      series: [{ key: 'cpu', field: 'usage', group_by: ['host'] }],
+    } as never);
+    expect(entries.map((e) => e.labels?.host)).toEqual(['srv1', 'srv2']);
   });
 });

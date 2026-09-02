@@ -31,7 +31,7 @@ import { TsdbSourceSection, type TsdbDiscoveryFetchers } from './TsdbSourceSecti
 import { defaultTsdbSource, type TsdbSourceConfig } from './panels/charts/chartChannelTypes';
 
 function makePanel(config: Record<string, unknown>): PanelConfig {
-  return { id: 'p1', type: 'line-chart', title: '테스트', config };
+  return { id: 'p1', type: 'graph-chart', title: '테스트', config };
 }
 
 /** 시리즈 목록을 새로 만든다 — 새 모델에서 목록은 리프레시로만 갱신된다. */
@@ -340,7 +340,10 @@ describe('TsdbSourceSection — 시리즈 48 상한 (§2.9 [U9])', () => {
     );
     await selectMeasurement('cpu');
     await refreshList();
-    await waitFor(() => expect(seriesTableCheckboxes()).toHaveLength(60));
+    // 표는 페이지로 나뉘므로 체크박스 수로 후보 수를 세지 않는다. 여기서는 목록이
+    // 채워졌다는 것만 기다리면 되고, 후보가 60 개라는 사실은 아래 48 단언이 지킨다
+    // — 후보가 모자라면 48 이 나올 수 없다.
+    await waitFor(() => expect(seriesTableCheckboxes().length).toBeGreaterThan(0));
 
     fireEvent.click(screen.getByTestId('tsdb-select-all'));
 
@@ -1265,6 +1268,8 @@ describe('TsdbSourceSection — 이름 형식 토큰', () => {
   it('그룹 축의 태그 키도 토큰으로 제시한다', async () => {
     render(<Harness initial={groupedConfig()} fetchers={makeFetchers()} />);
     const field = await screen.findByTestId('chart-tsdb-series-name-format');
+    // 토큰 목록은 물음표 뒤에 접혀 있다.
+    fireEvent.click(screen.getByTestId('chart-tsdb-series-name-format-token-help'));
     // 줄을 실제로 가르는 키가 dev_eui 인데 종전에는 목록에 없어, 사용자가
     // 없는 토큰(device.id)을 추측하게 됐다.
     expect(field.textContent).toContain('device.dev_eui');

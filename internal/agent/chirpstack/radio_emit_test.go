@@ -320,7 +320,7 @@ func TestEmitRadio_ConfigureRuntimeToggle(t *testing.T) {
 
 	disabled := false
 	if err := a.Configure(agent.AgentConfig{
-		ID: "id-radio-toggle", Name: "radio-toggle", Type: "chirpstack", Enabled: &disabled,
+		ID: "id-radio-toggle", Name: "radio-toggle", Type: "chirpstack-client", Enabled: &disabled,
 		Transport: agent.TransportConfig{Options: map[string]any{"emit_radio": true}},
 	}); err != nil {
 		t.Fatalf("Configure: %v", err)

@@ -15,8 +15,18 @@ const mockResult = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('./useChartChannel', () => ({
-  useChartChannel: () => mockResult.current,
+// 채널이 패널 소스에서 빠지면서 데이터 이음매가 하나로 줄었다(`usePanelSeriesData`).
+// 이 파일의 테스트들은 채널 형상(`mockResult.current`)을 심으므로, 그 형상을 시리즈 소스
+// 결과로 옮겨 준다 — 테스트 본문을 그대로 두기 위한 어댑터다.
+vi.mock('./usePanelSeriesData', () => ({
+  usePanelSeriesData: () => ({
+    ...mockResult.current,
+    seriesEntries: new Map(),
+    seriesStyles: new Map(),
+    seriesNames: [],
+    booleanSeries: new Set(),
+  }),
+  isPanelSeriesSource: () => true,
 }));
 
 // useStoreChartData 가 내부에서 useAgents(React Query)를 호출하므로, QueryClient
@@ -74,6 +84,36 @@ describe('StatPanel', () => {
     const delta = screen.getByTestId('stat-delta');
     expect(delta.textContent).toContain('↑');
     expect(delta.textContent).toContain('+1.5');
+  });
+
+  it('자동 데이터 량은 값과 단위가 함께 정해진다', () => {
+    mockResult.current.entries = [{ timestamp: 1, value: 1024 * 1024 * 3 }];
+    render(
+      <StatPanel
+        panelId="p1"
+        config={{ channel_name: 'c', decimal_places: 0, unit: 'auto:bytes' }}
+      />,
+    );
+    const val = screen.getByTestId('stat-value');
+    expect(val.textContent).toContain('3');
+    expect(val.textContent).toContain('MB');
+    // 저장값이 그대로 새어 나오면 안 된다.
+    expect(val.textContent).not.toContain('auto:bytes');
+  });
+
+  it('증감도 같은 단위 규칙으로 접힌다', () => {
+    mockResult.current.entries = [
+      { timestamp: 1, value: 1024 * 1024 },
+      { timestamp: 2, value: 1024 * 1024 * 3 },
+    ];
+    render(
+      <StatPanel
+        panelId="p1"
+        config={{ channel_name: 'c', decimal_places: 0, unit: 'auto:bytes' }}
+      />,
+    );
+    // 증감 2MB — 본값은 MB 인데 증감만 원시 바이트로 나오면 같은 축인지 알 수 없다.
+    expect(screen.getByTestId('stat-delta').textContent).toContain('+2MB');
   });
 
   it('값이 감소하면 ↓ 화살표', () => {
@@ -243,8 +283,10 @@ describe('StatPanel 특성화 (SPEC-CHART-002 M2)', () => {
     high.unmount();
 
     // 규칙이 없으면 inline color 를 붙이지 않는다(기본 텍스트 색 유지).
+    // style 속성 자체는 남는다 — 현재값 크기 배율이 항상 fontSize 를 싣기 때문이다.
+    // 색이 없다는 것을 style 부재로 판정하면 크기 설정이 들어온 순간 깨진다.
     mockResult.current.entries = [{ timestamp: 1, value: 80 }];
     render(<StatPanel panelId="p1" config={{ channel_name: 'c', decimal_places: 0 }} />);
-    expect(screen.getByTestId('stat-value').getAttribute('style')).toBeNull();
+    expect(screen.getByTestId('stat-value').style.color).toBe('');
   });
 });

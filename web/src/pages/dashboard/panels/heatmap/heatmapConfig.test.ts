@@ -342,6 +342,37 @@ describe('parseHeatmapConfig — legend field', () => {
     );
   });
 
+  it('legend 치수(bar_length/bar_thickness)는 정수화 + 범위로 죈다', () => {
+    const of = (l: Record<string, unknown>) => parseHeatmapConfig({ legend: l }).legend;
+    expect(of({ bar_length: 200 })?.bar_length).toBe(200);
+    expect(of({ bar_length: 200.4 })?.bar_length).toBe(200);
+    expect(of({ bar_length: 1 })?.bar_length).toBe(24);
+    expect(of({ bar_length: 9999 })?.bar_length).toBe(600);
+    expect(of({ bar_thickness: 24 })?.bar_thickness).toBe(24);
+    expect(of({ bar_thickness: 0 })?.bar_thickness).toBe(4);
+    expect(of({ bar_thickness: 9999 })?.bar_thickness).toBe(80);
+  });
+
+  it('legend 치수/글꼴 미지정·손상 입력은 기본값으로 채우지 않고 비운다(프리셋 파생 신호)', () => {
+    // 여기서 기본값을 채우면 "미지정 = size 프리셋에서 파생" 이라는 뜻이 사라진다.
+    const of = (l: Record<string, unknown>) => parseHeatmapConfig({ legend: l }).legend;
+    expect(of({})?.bar_length).toBeUndefined();
+    expect(of({ bar_length: 'x' })?.bar_length).toBeUndefined();
+    expect(of({ font_size: null })?.font_size).toBeUndefined();
+    expect(of({ font_color: '' })?.font_color).toBeUndefined();
+    expect(of({ font_color: 42 })?.font_color).toBeUndefined();
+  });
+
+  it('legend 글자 크기는 범위로 죄고, 글자 색은 문자열이면 그대로 둔다', () => {
+    const of = (l: Record<string, unknown>) => parseHeatmapConfig({ legend: l }).legend;
+    expect(of({ font_size: 20 })?.font_size).toBe(20);
+    expect(of({ font_size: 1 })?.font_size).toBe(6);
+    expect(of({ font_size: 999 })?.font_size).toBe(48);
+    // 색은 CSS 문자열이라 값 검증을 하지 않는다(무효 색은 브라우저가 무시해 상속색이 된다).
+    expect(of({ font_color: '#ff0000' })?.font_color).toBe('#ff0000');
+    expect(of({ font_color: 'var(--x)' })?.font_color).toBe('var(--x)');
+  });
+
   it('legend 가 비객체(문자열/숫자)면 undefined(additive off)', () => {
     expect(parseHeatmapConfig({ legend: 'on' }).legend).toBeUndefined();
     expect(parseHeatmapConfig({ legend: 5 }).legend).toBeUndefined();

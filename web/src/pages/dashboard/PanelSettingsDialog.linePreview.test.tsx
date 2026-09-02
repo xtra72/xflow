@@ -9,7 +9,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import type { PanelConfig } from '@/stores/uiStore';
 
 const storeMock = vi.hoisted(() => ({
-  panel: { id: 'p1', type: 'line-chart', title: '라인', config: {} } as PanelConfig,
+  panel: { id: 'p1', type: 'graph-chart', title: '라인', config: {} } as PanelConfig,
   updatePanelConfig: vi.fn(),
   updatePanelTitle: vi.fn(),
 }));
@@ -55,7 +55,7 @@ import PanelSettingsDialog from './PanelSettingsDialog';
 function storeLinePanel(series: unknown[]): PanelConfig {
   return {
     id: 'p1',
-    type: 'line-chart',
+    type: 'graph-chart',
     title: '라인',
     config: {
       data_source: 'store',
@@ -91,7 +91,7 @@ describe('store 라인 차트 미리보기 — 실제 데이터 패널 사용', 
   it('채널 모드는 시리즈 유무와 무관하게 합성 미니 프리뷰를 쓴다', () => {
     storeMock.panel = {
       id: 'p1',
-      type: 'line-chart',
+      type: 'graph-chart',
       title: '라인',
       config: { data_source: 'channel', channel_name: 'ch-a' },
     } as unknown as PanelConfig;
@@ -101,10 +101,61 @@ describe('store 라인 차트 미리보기 — 실제 데이터 패널 사용', 
     expect(wrapper.textContent).toContain('dashboard.settings.preview.label');
   });
 
+  // 다중 소스로 넘어간 뒤 시리즈 선택은 `sources[i].store_source.series` 에 쓰인다.
+  // 게이트가 최상위 `store_source` 만 보던 동안은 고른 뒤에도 합성 미니 프리뷰가 남아
+  // "시리즈를 골랐는데 미리보기에 적용이 안 된다" 로 보였다.
+  it('선택이 소스 목록에만 있어도 실제 패널을 렌더한다', () => {
+    storeMock.panel = {
+      id: 'p1',
+      type: 'graph-chart',
+      title: '라인',
+      config: {
+        data_source: 'store',
+        store_source: { agent_id: 'store-uuid-1', agent_name: 'store-1', series: [] },
+        sources: [
+          {
+            kind: 'store',
+            store_source: {
+              agent_id: 'store-uuid-1',
+              agent_name: 'store-1',
+              series: [{ key: 'LAI', field: 'value' }],
+            },
+          },
+        ],
+      },
+    } as unknown as PanelConfig;
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+
+    const wrapper = screen.getByTestId('line-chart-preview-wrapper');
+    expect(wrapper.textContent).not.toContain('dashboard.settings.preview.label');
+  });
+
+  it('둘째 인스턴스만 시리즈를 가져도 실제 패널을 렌더한다', () => {
+    storeMock.panel = {
+      id: 'p1',
+      type: 'graph-chart',
+      title: '라인',
+      config: {
+        data_source: 'store',
+        sources: [
+          { kind: 'store', store_source: { agent_name: 'store-1', series: [] } },
+          {
+            kind: 'store',
+            store_source: { agent_name: 'store-2', series: [{ key: 'LAI', field: 'value' }] },
+          },
+        ],
+      },
+    } as unknown as PanelConfig;
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+
+    const wrapper = screen.getByTestId('line-chart-preview-wrapper');
+    expect(wrapper.textContent).not.toContain('dashboard.settings.preview.label');
+  });
+
   it('태그 자동 바인딩(시리즈 배열 비어있음)도 실제 패널을 쓴다', () => {
     storeMock.panel = {
       id: 'p1',
-      type: 'line-chart',
+      type: 'graph-chart',
       title: '라인',
       config: {
         data_source: 'store',
@@ -166,45 +217,107 @@ describe('미리보기 게이트 2곳의 독립 판정 특성화 (SPEC-TSDB-002 
   }
 
   it("CT-13: line-chart + previewRenderPanel.config.data_source === 'store' + 시리즈 N → `:714` 게이트 참", () => {
-    renderPanel('line-chart', { data_source: 'store', store_source: activeStore() });
+    renderPanel('graph-chart', { data_source: 'store', store_source: activeStore() });
     expect(lineGateActive()).toBe(true);
     // 다른 게이트는 패널 타입이 달라 거짓이다.
     expect(statGateActive()).toBe(false);
   });
 
-  it("CT-14: stat + previewChartConfig.data_source === 'store' + 시리즈 N + series_reduce → `:728` 게이트 참", () => {
+  it("CT-14: stat + previewChartConfig.data_source === 'store' + 시리즈 N → stat 게이트 참", () => {
     renderPanel('stat', {
       data_source: 'store',
       store_source: activeStore(),
       series_reduce: 'last',
     });
     expect(statGateActive()).toBe(true);
-    // 라인 래퍼는 `panel.type === 'line-chart'` 일 때만 렌더된다.
+    // 라인 래퍼는 `panel.type === 'graph-chart'` 일 때만 렌더된다.
     expect(screen.queryByTestId('line-chart-preview-wrapper')).toBeNull();
   });
 
-  it('CT-15: 동일한 data_source/store_source 라도 두 게이트는 독립적으로 판정된다', () => {
-    const store_source = activeStore();
+  it('CT-15: series_reduce 는 더 이상 stat 게이트의 축이 아니다', () => {
+    // 종전에는 `series_reduce` 부재가 stat 게이트를 거짓으로 만들었다. 그러면 대표값을
+    // 지정하지 않은 store 통계 패널이 **미리보기 영역 자체가 빈 화면**이 되는데, stat 에는
+    // 대신 보여줄 합성 미니 프리뷰가 없어 사용자에게는 "미리보기가 안 나온다" 로 보인다.
+    // 실제 StatPanel 은 대표값 없이도 시리즈 소스 데이터를 그리므로, 미리보기도 같은
+    // 조건으로 판정한다(미리보기와 실제 렌더가 갈리지 않게).
+    renderPanel('stat', { data_source: 'store', store_source: activeStore() });
+    expect(statGateActive()).toBe(true);
+  });
 
-    // (a) series_reduce 부재 + stat → `:728` 거짓.
-    renderPanel('stat', { data_source: 'store', store_source });
-    expect(statGateActive()).toBe(false);
+  // 종전 CT-15 는 "채널이면 거짓" 을 잠갔다. 채널이 패널 소스에서 빠지면서 그 축이
+  // 사라졌고, 폐지된 값도 store 로 접히므로 갖춰진 store_source 는 그대로 게이트를 연다.
+  it("CT-15: 폐지된 'channel' 값도 store 로 접혀 stat 게이트가 참이다", () => {
+    renderPanel('stat', { data_source: 'channel', store_source: activeStore() });
+    expect(statGateActive()).toBe(true);
   });
 
   it('CT-15: 같은 config 조각이 line-chart 에서는 `:714` 참을 낸다(부가 조건이 다르다)', () => {
     // 위 (a) 와 완전히 같은 data_source/store_source/series_reduce 조합이지만
     // 라인 게이트는 `series_reduce` 를 보지 않으므로 참이다.
-    renderPanel('line-chart', { data_source: 'store', store_source: activeStore() });
+    renderPanel('graph-chart', { data_source: 'store', store_source: activeStore() });
     expect(lineGateActive()).toBe(true);
   });
 
   it('CT-15: config 자체가 없으면 두 게이트 모두 거짓이며 예외를 던지지 않는다', () => {
     // `:714` 는 `config?.` 옵셔널 체이닝, `:728` 은 `config ?? {}` 로 서로 다른 방식으로
     // 방어한다. 결과는 같아야 한다.
-    expect(() => renderPanel('line-chart', undefined as never)).not.toThrow();
+    expect(() => renderPanel('graph-chart', undefined as never)).not.toThrow();
     expect(lineGateActive()).toBe(false);
     expect(statGateActive()).toBe(false);
   });
+});
+
+// ===== 바/파이 미리보기 =====
+
+describe('PanelSettingsDialog — 바/파이 라이브 미리보기', () => {
+  function activeStore() {
+    return {
+      agent_name: 'store-1',
+      series: [{ key: 'room:temp' }],
+      time_window_ms: 60_000,
+      interval_ms: 10_000,
+      aggregation: 'average',
+    };
+  }
+  function renderPanel(type: string, config: Record<string, unknown>) {
+    storeMock.panel = { id: 'p1', type, title: '패널', config } as unknown as PanelConfig;
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+  }
+
+  for (const [type, testid] of [
+    ['bar-chart', 'bar-chart-preview-wrapper'],
+    ['pie-chart', 'pie-chart-preview-wrapper'],
+  ] as const) {
+    it(`${type}: store 소스를 고르면 실패널을 렌더한다`, () => {
+      renderPanel(type, { data_source: 'store', store_source: activeStore() });
+      expect(screen.getByTestId(testid)).toBeInTheDocument();
+    });
+
+    it(`${type}: 시리즈 미선택(신규 패널 기본값)도 실패널의 빈 상태를 렌더한다`, () => {
+      // 이 두 패널에는 합성 미니 프리뷰가 없다 — 렌더하지 않으면 빈 화면이 된다.
+      renderPanel(type, {
+        data_source: 'store',
+        store_source: { ...activeStore(), series: [] },
+      });
+      expect(screen.getByTestId(testid)).toBeInTheDocument();
+    });
+
+    it(`${type}: tsdb 소스도 같은 자격이다`, () => {
+      renderPanel(type, {
+        data_source: 'tsdb',
+        tsdb_source: {
+          backend: 'influxdb',
+          agent_name: 'influx-1',
+          bucket: 'metrics',
+          series: [{ key: 'room1', field: 'temp' }],
+          time_window_ms: 60_000,
+          interval_ms: 10_000,
+          aggregation: 'average',
+        },
+      });
+      expect(screen.getByTestId(testid)).toBeInTheDocument();
+    });
+  }
 });
 
 // ===== 실제 데이터 적용 옵션 (SPEC-TSDB-004) =====
@@ -232,7 +345,7 @@ describe('PanelSettingsDialog — 실제 데이터 적용 옵션', () => {
   }
 
   it('토글이 **데이터 소스 설정** 안에 있다 (미리보기 영역이 아니다)', () => {
-    renderPanel('line-chart', { data_source: 'store', store_source: activeStore() });
+    renderPanel('graph-chart', { data_source: 'store', store_source: activeStore() });
     const toggle = screen.getByTestId('preview-real-data-toggle');
     const dataSource = screen.getByTestId('panel-settings-data-source');
     // 조회를 낼지 말지를 정하는 옵션이므로 소스 설정에 속한다.
@@ -243,7 +356,7 @@ describe('PanelSettingsDialog — 실제 데이터 적용 옵션', () => {
   });
 
   it('기본은 켜짐이며 끄면 실제 렌더 대신 합성 미리보기로 내려간다', () => {
-    renderPanel('line-chart', { data_source: 'store', store_source: activeStore() });
+    renderPanel('graph-chart', { data_source: 'store', store_source: activeStore() });
     const toggle = screen.getByTestId('preview-real-data-toggle')
       .querySelector('input') as HTMLInputElement;
     // 기본 켜짐 — Store 의 종전 동작을 그대로 둔다.
@@ -256,7 +369,7 @@ describe('PanelSettingsDialog — 실제 데이터 적용 옵션', () => {
 
   it('소스가 비활성이면 토글을 노출하지 않는다', () => {
     // 채널 모드에는 조회 옵션이 성립하지 않는다.
-    renderPanel('line-chart', { channel_name: 'ch1' });
+    renderPanel('graph-chart', { channel_name: 'ch1' });
     expect(screen.queryByTestId('preview-real-data-toggle')).toBeNull();
   });
 });

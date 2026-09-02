@@ -81,12 +81,26 @@ func (a *ModbusAgent) processSetConfig(req *processRequest) ([]byte, error) {
 // rejectInitOnlyFields 는 런타임 변경이 금지된 init 전용 필드가 params 에 포함되어 있으면
 // ErrInitOnlyField 를 반환한다(M9, AC-08 (b)). transport 전환과 RTU 시리얼 하드웨어 파라미터가 대상이다.
 func rejectInitOnlyFields(params map[string]any) error {
+	return rejectInitOnlyFieldsExcept(params, "")
+}
+
+// rejectInitOnlyFieldsExcept 는 init 전용 필드 검사에서 키 하나를 제외한다.
+//
+// 제외가 필요한 이유: "port" 는 두 의미를 겸한다 — TCP 디바이스에서는 접속 포트이고,
+// RTU 시리얼 설정에서는 serial_port 의 별칭이다(parseSerialConfig 참조). update_device 는
+// TCP 엔드포인트 변경을 지원하므로 여기서 "port" 를 일괄 거부하면 안 된다. RTU 디바이스에
+// 대한 host/port 변경은 applyEndpointChangeLocked 가 "TCP devices only" 로 거부하므로
+// 시리얼 하드웨어 파라미터 보호는 그대로 유지된다.
+func rejectInitOnlyFieldsExcept(params map[string]any, except string) error {
 	if _, ok := params["transport"]; ok {
 		return fmt.Errorf(
 			"modbus set_config: transport (tcp<->rtu switch) cannot change at runtime: %w",
 			ErrInitOnlyField)
 	}
 	for _, k := range initOnlySerialKeys {
+		if k == except {
+			continue
+		}
 		if _, ok := params[k]; ok {
 			return fmt.Errorf(
 				"modbus set_config: serial hardware parameter %q cannot change at runtime: %w",

@@ -11,7 +11,7 @@ import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
 import { getPropertyLabel, sortProperties, formatPropertyValue, expandMeasurementEntries, excludeDedicatedSectionKeys } from '@/lib/utils/deviceLabels';
 import { formatEpochMs, formatRelativeEpochMs } from '@/lib/utils/format';
-import { usePanelTitleVisible } from '../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 
 interface PropertiesGridPanelProps {
   panelId: string;
@@ -29,6 +29,7 @@ export default function PropertiesGridPanel({
   onTitleChange: _onTitleChange,
 }: PropertiesGridPanelProps) {
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
   const gridCols = (config.gridCols as number | undefined) ?? 3;
@@ -68,7 +69,7 @@ export default function PropertiesGridPanel({
         {showTitle && (
           <div className="mb-2 flex shrink-0 items-center gap-2">
             <div className="h-2 w-2 rounded-full bg-gray-300" />
-            <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
+            <span className="truncate text-sm font-medium text-(--color-text-primary)" style={titleStyle}>{title}</span>
           </div>
         )}
         <div className="flex flex-1 items-center justify-center">
@@ -96,7 +97,7 @@ export default function PropertiesGridPanel({
       <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
         {showTitle && (
         <div className="mb-3 flex shrink-0 items-center justify-between">
-          <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
+          <span className="truncate text-sm font-medium text-(--color-text-primary)" style={titleStyle}>{title}</span>
           <span className={cn(
             'inline-flex items-center gap-1 rounded-full px-2 py-1',
             device.online
@@ -151,7 +152,7 @@ export default function PropertiesGridPanel({
         <div className="flex items-center gap-2">
           <span
             className="truncate text-sm font-medium text-(--color-text-primary)"
-            style={acColor('labels') ? { color: acColor('labels')! } : undefined}
+            style={{ ...(acColor('labels') ? { color: acColor('labels')! } : undefined), ...titleStyle }}
           >
             {title}
           </span>

@@ -109,11 +109,7 @@ func (a *ModbusAgent) processAddDevice(req *processRequest) ([]byte, error) {
 	// 폴링 중(Running + started + cached)이면 poll_interval 지정 그룹의 전용 스케줄러를 시작한다.
 	// 기본 케이던스 그룹은 pollDevices 가 다음 틱에 devices 스냅샷을 순회하며 자동 편입한다(AC-07).
 	if a.CurrentState() == lifecycle.StateRunning && a.started && a.config.ReadMode == "cached" {
-		for i := range dc.RegisterGroups {
-			if dc.RegisterGroups[i].PollInterval > 0 {
-				a.startGroupLoop(dev, dc.RegisterGroups[i])
-			}
-		}
+		a.startDeviceBlockLoops(dev)
 	}
 
 	a.logger.Info("modbus: add_device 완료",
@@ -162,11 +158,7 @@ func (a *ModbusAgent) processRemoveDevice(req *processRequest) ([]byte, error) {
 
 	// 폴링 중이면 이 디바이스의 poll_interval 그룹 스케줄러를 개별 정지한다.
 	if a.CurrentState() == lifecycle.StateRunning && a.started && a.config.ReadMode == "cached" {
-		for _, rg := range removed.config.RegisterGroups {
-			if rg.PollInterval > 0 {
-				a.stopGroupLoop(removed.config.ID, rg.Name)
-			}
-		}
+		a.stopDeviceBlockLoops(removed.config.ID)
 	}
 
 	// copy-on-write 로 컬렉션에서 제거한다(원자적 적용 — 이 시점 이후의 폴러 RLock 스냅샷은

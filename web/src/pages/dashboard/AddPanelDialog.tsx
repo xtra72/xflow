@@ -35,7 +35,6 @@ import {
   Grid3x3,
   PlugZap,
   Gauge,
-  Database,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -49,31 +48,14 @@ import { useNodeTypeInstances } from '@/hooks/useNodeTypeInstances';
 import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
 import { getDeviceDisplayName, getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
-import {
-  listChartChannels,
-  type ChartChannelSummary,
-} from '@/services/api/charts';
+import { buildDefaultStoreSource } from '@/pages/dashboard/panels/charts/chartChannelTypes';
 
 // ---- 차트 패널 공통 ----
 
-/** SPEC-CHART-001 REQ-M1-02 / REQ-M5-04: channel_name 정규식 */
-const CHANNEL_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
-
-/** 채널 이름 검증 에러 메시지 키 (렌더 시 t() 로 변환) */
-const CHANNEL_NAME_ERROR_KEY = 'dashboard.chart.channelNameError';
-
-/** 차트 계열 패널 타입 집합 */
-const CHART_PANEL_TYPES: ReadonlySet<PanelType> = new Set<PanelType>([
-  'stat',
-  'line-chart',
-  'bar-chart',
-  'pie-chart',
-  'table',
-]);
-
-function isChartPanelType(type: PanelType): boolean {
-  return CHART_PANEL_TYPES.has(type);
-}
+// 채널 이름 입력 스텝은 없어졌다. 차트 계열(통계/게이지/라인/바/파이/테이블)은 모두 기본
+// config 가 `data_source: 'store'` 이므로(`uiStore.createDefaultPanel`) 생성 시 채널을 묻지
+// 않고 곧바로 추가되며, 채널/Store/TSDB 전환은 패널 설정의 데이터 소스 섹션에서 한다.
+// 렌더 경로는 세 소스를 모두 지원한다(`usePanelSeriesData`).
 
 // ---- 패널 유형 정의 ----
 
@@ -105,98 +87,146 @@ interface PanelOption {
 }
 
 /** 카테고리 정의 (안정적인 식별자, 표시 라벨은 t() 로 변환) */
-type Category = 'data' | 'chart' | 'content' | 'control';
+type Category = 'status' | 'chart' | 'data' | 'content' | 'etc';
 
-const CATEGORIES: Category[] = ['data', 'chart', 'content', 'control'];
+const CATEGORIES: Category[] = ['status', 'chart', 'data', 'content', 'etc'];
 
-/** 카테고리 표시 라벨 키 (기존 dashboard.panelCategories 재사용) */
+/** 카테고리 표시 라벨 키 */
 const CATEGORY_LABEL_KEY: Record<Category, string> = {
-  data: 'dashboard.panelCategories.data',
+  status: 'dashboard.panelCategories.status',
   chart: 'dashboard.panelCategories.chart',
+  data: 'dashboard.panelCategories.data',
   content: 'dashboard.panelCategories.content',
-  control: 'dashboard.panelCategories.control',
+  etc: 'dashboard.panelCategories.etc',
 };
+
+/**
+ * 카테고리 안의 하위 그룹.
+ *
+ * `labelKey` 가 없으면 제목 없이 옵션만 늘어놓는다(평면 카테고리). 콘텐트처럼 성격이
+ * 갈리는 카테고리만 제목 있는 그룹으로 나눈다 — 모든 카테고리에 제목을 강제하면 항목이
+ * 몇 개뿐인 카테고리에서 제목이 목록보다 커진다.
+ */
+interface PanelGroup {
+  labelKey?: string;
+  options: PanelOption[];
+}
 
 /** 카테고리별 패널 옵션 */
-const PANEL_OPTIONS_BY_CATEGORY: Record<Category, PanelOption[]> = {
-  data: [
-    { type: 'flows', icon: GitBranch, labelKey: 'dashboard.panelTypes.flows', descriptionKey: 'dashboard.addPanel.descriptions.flows' },
-    { type: 'agents', icon: Bot, labelKey: 'dashboard.panelTypes.agents', descriptionKey: 'dashboard.addPanel.descriptions.agents' },
-    // SPEC-DASHBOARD-002: 단일 에이전트(타입 무관) 상태·통계 패널. 전체 타입 에이전트 선택 스텝을 거친다.
-    { type: 'agent-status', icon: Bot, labelKey: 'dashboard.panelTypes.agentStatus', descriptionKey: 'dashboard.addPanel.descriptions.agentStatus', needsAgentStatus: true },
-    { type: 'resource', icon: Activity, labelKey: 'dashboard.panelTypes.resource', descriptionKey: 'dashboard.addPanel.descriptions.resource' },
-    { type: 'devices', icon: HardDrive, labelKey: 'dashboard.panelTypes.devices', descriptionKey: 'dashboard.addPanel.descriptions.devices' },
-    { type: 'device', icon: HardDrive, labelKey: 'dashboard.panelTypes.device', descriptionKey: 'dashboard.addPanel.descriptions.device', needsDevice: true },
-    { type: 'logs', icon: ScrollText, labelKey: 'dashboard.panelTypes.logs', descriptionKey: 'dashboard.addPanel.descriptions.logs' },
-    // SPEC-TRIGGER-PANEL-001 M2: trigger 노드 스케줄/페이로드 설정 패널.
-    { type: 'trigger-config', icon: AlarmClock, labelKey: 'dashboard.panelTypes.triggerConfig', descriptionKey: 'dashboard.addPanel.descriptions.triggerConfig', needsTriggerNode: true },
-    { type: 'table', icon: Table, labelKey: 'dashboard.panelTypes.table', descriptionKey: 'dashboard.addPanel.descriptions.table' },
-    { type: 'properties-grid', icon: LayoutGrid, labelKey: 'dashboard.addPanel.labels.propertiesGrid', descriptionKey: 'dashboard.addPanel.descriptions.propertiesGrid', needsDevice: true },
-    // SPEC-MODBUS-012 M1: MODBUS Gateway 패널 6종(모두 modbus-gateway 에이전트에 바인딩).
-    { type: 'modbus-real-devices', icon: PlugZap, labelKey: 'dashboard.panelTypes.modbusRealDevices', descriptionKey: 'dashboard.addPanel.descriptions.modbusRealDevices', needsAgent: true },
-    { type: 'modbus-virtual-devices', icon: Cpu, labelKey: 'dashboard.panelTypes.modbusVirtualDevices', descriptionKey: 'dashboard.addPanel.descriptions.modbusVirtualDevices', needsAgent: true },
-    { type: 'modbus-shared-registers', icon: Grid3x3, labelKey: 'dashboard.panelTypes.modbusSharedRegisters', descriptionKey: 'dashboard.addPanel.descriptions.modbusSharedRegisters', needsAgent: true },
-    { type: 'modbus-device-registers', icon: LayoutGrid, labelKey: 'dashboard.panelTypes.modbusDeviceRegisters', descriptionKey: 'dashboard.addPanel.descriptions.modbusDeviceRegisters', needsAgent: true },
-    { type: 'modbus-bus-stats', icon: Activity, labelKey: 'dashboard.panelTypes.modbusBusStats', descriptionKey: 'dashboard.addPanel.descriptions.modbusBusStats', needsAgent: true },
-    { type: 'modbus-summary-stats', icon: Gauge, labelKey: 'dashboard.panelTypes.modbusSummaryStats', descriptionKey: 'dashboard.addPanel.descriptions.modbusSummaryStats', needsAgent: true },
+const PANEL_GROUPS_BY_CATEGORY: Record<Category, PanelGroup[]> = {
+  // 상태: 무엇이 돌고 있고 어떤 상태인지 보여주는 패널.
+  status: [
+    {
+      options: [
+        { type: 'flows', icon: GitBranch, labelKey: 'dashboard.panelTypes.flows', descriptionKey: 'dashboard.addPanel.descriptions.flows' },
+        { type: 'agents', icon: Bot, labelKey: 'dashboard.panelTypes.agents', descriptionKey: 'dashboard.addPanel.descriptions.agents' },
+        // SPEC-DASHBOARD-002: 단일 에이전트(타입 무관) 상태·통계 패널. 전체 타입 에이전트 선택 스텝을 거친다.
+        { type: 'agent-status', icon: Bot, labelKey: 'dashboard.panelTypes.agentStatus', descriptionKey: 'dashboard.addPanel.descriptions.agentStatus', needsAgentStatus: true },
+        { type: 'devices', icon: HardDrive, labelKey: 'dashboard.panelTypes.devices', descriptionKey: 'dashboard.addPanel.descriptions.devices' },
+        // 속성 그리드 → '디바이스 상태'. 한 디바이스의 상태 속성을 그리드로 보는 패널이므로
+        // 상태 카테고리에 속한다(기타에 있으면 성격이 드러나지 않는다).
+        { type: 'properties-grid', icon: LayoutGrid, labelKey: 'dashboard.addPanel.labels.propertiesGrid', descriptionKey: 'dashboard.addPanel.descriptions.propertiesGrid', needsDevice: true },
+      ],
+    },
   ],
   chart: [
-    { type: 'stat', icon: Hash, labelKey: 'dashboard.panelTypes.stat', descriptionKey: 'dashboard.addPanel.descriptions.stat' },
-    { type: 'gauge', icon: CircleDot, labelKey: 'dashboard.panelTypes.gauge', descriptionKey: 'dashboard.addPanel.descriptions.gauge' },
-    { type: 'line-chart', icon: TrendingUp, labelKey: 'dashboard.panelTypes.lineChart', descriptionKey: 'dashboard.addPanel.descriptions.lineChart' },
     {
-      type: 'line-chart',
-      icon: TrendingUp,
-      labelKey: 'dashboard.addPanel.labels.multiChannel',
-      descriptionKey: 'dashboard.addPanel.descriptions.multiChannel',
-      presetConfig: { channels: [{ name: '' }, { name: '' }] },
-    },
-    // SPEC-WEB-005: store 기반 라인 차트 프리셋. data_source='store' 로 바로 추가되어
-    // 설정에서 에이전트 + 키/태그만 지정하면 된다(defaultStoreSource 기본형과 동일한 형태).
-    {
-      type: 'line-chart',
-      icon: Database,
-      labelKey: 'dashboard.addPanel.labels.storeLineChart',
-      descriptionKey: 'dashboard.addPanel.descriptions.storeLineChart',
-      presetConfig: {
-        data_source: 'store',
-        store_source: {
-          agent_name: '',
-          namespace: 'default',
-          series: [],
-          time_window_ms: 60 * 60 * 1000,
-          interval_ms: 60 * 1000,
-          aggregation: 'average',
-          refresh_interval_ms: 5000,
+      options: [
+        { type: 'stat', icon: Hash, labelKey: 'dashboard.panelTypes.stat', descriptionKey: 'dashboard.addPanel.descriptions.stat' },
+        { type: 'gauge', icon: CircleDot, labelKey: 'dashboard.panelTypes.gauge', descriptionKey: 'dashboard.addPanel.descriptions.gauge' },
+        // 라인 차트는 store 소스로 바로 추가된다 — 설정에서 에이전트 + 키/태그만 지정하면 된다.
+        // 형상은 공용 팩토리 하나에서 나오므로 통계/게이지/바/파이의 기본 config 와 항상 같다.
+        //
+        // 채널 기반 항목 2종(단일 채널 · 다채널 비교)은 목록에서 제거됐다. 채널 경로 자체는
+        // 남아 있으므로(설정의 데이터 소스 토글 · `channels` 배열) 기존 패널은 그대로 동작하고,
+        // 새로 만든 라인 차트도 설정에서 채널로 되돌릴 수 있다.
+        {
+          type: 'graph-chart',
+          icon: TrendingUp,
+          labelKey: 'dashboard.panelTypes.lineChart',
+          descriptionKey: 'dashboard.addPanel.descriptions.lineChart',
+          presetConfig: {
+            data_source: 'store',
+            store_source: buildDefaultStoreSource(),
+          },
         },
-      },
+        { type: 'bar-chart', icon: BarChart2, labelKey: 'dashboard.panelTypes.barChart', descriptionKey: 'dashboard.addPanel.descriptions.barChart' },
+        { type: 'pie-chart', icon: PieChart, labelKey: 'dashboard.panelTypes.pieChart', descriptionKey: 'dashboard.addPanel.descriptions.pieChart' },
+        // SPEC-HEATMAP-PANEL-001 (MVP): store 태그 바인딩 온도 히트맵. 채널 스텝 없이 기본 config 로 추가된다.
+        { type: 'heatmap', icon: Thermometer, labelKey: 'dashboard.addPanel.labels.heatmap', descriptionKey: 'dashboard.addPanel.descriptions.heatmap' },
+      ],
     },
-    { type: 'bar-chart', icon: BarChart2, labelKey: 'dashboard.panelTypes.barChart', descriptionKey: 'dashboard.addPanel.descriptions.barChart' },
-    { type: 'pie-chart', icon: PieChart, labelKey: 'dashboard.panelTypes.pieChart', descriptionKey: 'dashboard.addPanel.descriptions.pieChart' },
-    // SPEC-HEATMAP-PANEL-001 (MVP): store 태그 바인딩 온도 히트맵. 채널 스텝 없이 기본 config 로 추가된다.
-    { type: 'heatmap', icon: Thermometer, labelKey: 'dashboard.addPanel.labels.heatmap', descriptionKey: 'dashboard.addPanel.descriptions.heatmap' },
   ],
+  // 데이터: 시리즈를 표 형태로 훑어보는 패널.
+  data: [
+    {
+      options: [
+        // 테이블은 통계/게이지/바/파이와 같이 store 기본 소스로 즉시 추가된다
+        // (`uiStore.createDefaultPanel`). 채널/Store/TSDB 전환은 패널 설정의 데이터 소스
+        // 섹션에서 한다 — 렌더 경로는 이미 3종을 모두 지원한다(`usePanelSeriesData`).
+        { type: 'table', icon: Table, labelKey: 'dashboard.panelTypes.table', descriptionKey: 'dashboard.addPanel.descriptions.table' },
+      ],
+    },
+  ],
+  // 콘텐트: 도메인별 하위 그룹으로 나눈다(성격이 서로 멀어 한 줄로 늘어놓으면 찾기 어렵다).
   content: [
-    { type: 'text', icon: FileText, labelKey: 'dashboard.panelTypes.text', descriptionKey: 'dashboard.addPanel.descriptions.text' },
+    {
+      labelKey: 'dashboard.addPanel.groups.hvacr',
+      options: [
+        { type: 'ac-control', icon: Thermometer, labelKey: 'dashboard.panelTypes.acControl', descriptionKey: 'dashboard.addPanel.descriptions.acControl', needsDevice: true },
+        { type: 'hvac-control', icon: Wind, labelKey: 'dashboard.panelTypes.hvacControl', descriptionKey: 'dashboard.addPanel.descriptions.hvacControl', needsDevice: true },
+        { type: 'outdoor-control', icon: Cpu, labelKey: 'dashboard.addPanel.labels.outdoorControl', descriptionKey: 'dashboard.addPanel.descriptions.outdoorControl', needsDevice: true },
+      ],
+    },
+    {
+      // SPEC-FACILITY-DASHBOARD-001 M5 / SPEC-XSFM-GROUP-001 M7: 설비 패널.
+      // 역사(facility-station)는 그룹(facility-group)의 한 종류로 흡수되어 더 이상 별도 생성
+      // 타입이 아니다(그룹 선택기에서 역사 그룹을 고른다).
+      labelKey: 'dashboard.addPanel.groups.facility',
+      options: [
+        { type: 'facility-line', icon: Route, labelKey: 'dashboard.panelTypes.facilityLine', descriptionKey: 'dashboard.addPanel.descriptions.facilityLine', needsFacility: true },
+        { type: 'facility-group', icon: Layers, labelKey: 'dashboard.panelTypes.facilityGroup', descriptionKey: 'dashboard.addPanel.descriptions.facilityGroup', needsFacility: true },
+        { type: 'facility-device', icon: Fan, labelKey: 'dashboard.panelTypes.facilityDevice', descriptionKey: 'dashboard.addPanel.descriptions.facilityDevice', needsFacility: true },
+        // SPEC-TRIGGER-SCHED-001 M2: 설비 제어 예약 패널(규칙 테이블 + 모달). trigger-config 와 공존(RD-5).
+        { type: 'facility-schedule', icon: CalendarClock, labelKey: 'dashboard.panelTypes.facilitySchedule', descriptionKey: 'dashboard.addPanel.descriptions.facilitySchedule', needsFacilitySchedule: true },
+      ],
+    },
+    {
+      // SPEC-MODBUS-012 M1: MODBUS Gateway 패널(모두 modbus-gateway 에이전트에 바인딩).
+      labelKey: 'dashboard.addPanel.groups.modbus',
+      options: [
+        // 실제 디바이스 → '디바이스 상태'. 상류(upstream) 연결 디바이스의 상태를 보는 패널이라
+        // 다른 MODBUS Gateway 패널들과 같은 그룹에 둔다.
+        { type: 'modbus-real-devices', icon: PlugZap, labelKey: 'dashboard.panelTypes.modbusRealDevices', descriptionKey: 'dashboard.addPanel.descriptions.modbusRealDevices', needsAgent: true },
+        { type: 'modbus-virtual-devices', icon: Cpu, labelKey: 'dashboard.panelTypes.modbusVirtualDevices', descriptionKey: 'dashboard.addPanel.descriptions.modbusVirtualDevices', needsAgent: true },
+        { type: 'modbus-shared-registers', icon: Grid3x3, labelKey: 'dashboard.panelTypes.modbusSharedRegisters', descriptionKey: 'dashboard.addPanel.descriptions.modbusSharedRegisters', needsAgent: true },
+        { type: 'modbus-device-registers', icon: LayoutGrid, labelKey: 'dashboard.panelTypes.modbusDeviceRegisters', descriptionKey: 'dashboard.addPanel.descriptions.modbusDeviceRegisters', needsAgent: true },
+        { type: 'modbus-bus-stats', icon: Activity, labelKey: 'dashboard.panelTypes.modbusBusStats', descriptionKey: 'dashboard.addPanel.descriptions.modbusBusStats', needsAgent: true },
+        { type: 'modbus-summary-stats', icon: Gauge, labelKey: 'dashboard.panelTypes.modbusSummaryStats', descriptionKey: 'dashboard.addPanel.descriptions.modbusSummaryStats', needsAgent: true },
+      ],
+    },
   ],
-  control: [
-    { type: 'ac-control', icon: Thermometer, labelKey: 'dashboard.panelTypes.acControl', descriptionKey: 'dashboard.addPanel.descriptions.acControl', needsDevice: true },
-    { type: 'hvac-control', icon: Wind, labelKey: 'dashboard.panelTypes.hvacControl', descriptionKey: 'dashboard.addPanel.descriptions.hvacControl', needsDevice: true },
-    { type: 'outdoor-control', icon: Cpu, labelKey: 'dashboard.addPanel.labels.outdoorControl', descriptionKey: 'dashboard.addPanel.descriptions.outdoorControl', needsDevice: true },
-    { type: 'custom-control', icon: Settings, labelKey: 'dashboard.panelTypes.customControl', descriptionKey: 'dashboard.addPanel.descriptions.customControl', needsDevice: true },
-    // SPEC-FACILITY-DASHBOARD-001 M5 / SPEC-XSFM-GROUP-001 M7: 설비 패널.
-    // 역사(facility-station)는 그룹(facility-group)의 한 종류로 흡수되어 더 이상 별도 생성 타입이
-    // 아니다(그룹 선택기에서 역사 그룹을 고른다). 라인/기기 패널은 그대로 유지한다.
-    { type: 'facility-line', icon: Route, labelKey: 'dashboard.panelTypes.facilityLine', descriptionKey: 'dashboard.addPanel.descriptions.facilityLine', needsFacility: true },
-    { type: 'facility-group', icon: Layers, labelKey: 'dashboard.panelTypes.facilityGroup', descriptionKey: 'dashboard.addPanel.descriptions.facilityGroup', needsFacility: true },
-    { type: 'facility-device', icon: Fan, labelKey: 'dashboard.panelTypes.facilityDevice', descriptionKey: 'dashboard.addPanel.descriptions.facilityDevice', needsFacility: true },
-    // SPEC-TRIGGER-SCHED-001 M2: 설비 제어 예약 패널(규칙 테이블 + 모달). trigger-config 와 공존(RD-5).
-    { type: 'facility-schedule', icon: CalendarClock, labelKey: 'dashboard.panelTypes.facilitySchedule', descriptionKey: 'dashboard.addPanel.descriptions.facilitySchedule', needsFacilitySchedule: true },
+  // 기타: 위 분류에 배정되지 않은 나머지. 목록에서 빠지면 새로 만들 수 없으므로 여기에 모은다.
+  etc: [
+    {
+      options: [
+        { type: 'text', icon: FileText, labelKey: 'dashboard.panelTypes.text', descriptionKey: 'dashboard.addPanel.descriptions.text' },
+        { type: 'device', icon: HardDrive, labelKey: 'dashboard.panelTypes.device', descriptionKey: 'dashboard.addPanel.descriptions.device', needsDevice: true },
+        // SPEC-TRIGGER-PANEL-001 M2: trigger 노드 스케줄/페이로드 설정 패널.
+        { type: 'trigger-config', icon: AlarmClock, labelKey: 'dashboard.panelTypes.triggerConfig', descriptionKey: 'dashboard.addPanel.descriptions.triggerConfig', needsTriggerNode: true },
+        { type: 'custom-control', icon: Settings, labelKey: 'dashboard.panelTypes.customControl', descriptionKey: 'dashboard.addPanel.descriptions.customControl', needsDevice: true },
+        // 시스템 카테고리에서 옮겨 왔다. 나머지 모니터링 패널과 달리 xflowd 런타임 지표가
+        // 아니라 로그를 읽는 뷰어라, 호스트 지표만 남은 시스템 카테고리에 두면 성격이 어긋난다.
+        { type: 'monitor-logs', icon: ScrollText, labelKey: 'dashboard.panelTypes.monitorLogs', descriptionKey: 'dashboard.addPanel.descriptions.monitorLogs' },
+      ],
+    },
   ],
 };
 
-/** 전체 패널 옵션 (검색용) */
-const ALL_PANEL_OPTIONS: PanelOption[] = Object.values(PANEL_OPTIONS_BY_CATEGORY).flat();
+/** 전체 패널 옵션 (검색용) — 카테고리·하위 그룹을 모두 평탄화한다. */
+const ALL_PANEL_OPTIONS: PanelOption[] = Object.values(PANEL_GROUPS_BY_CATEGORY)
+  .flat()
+  .flatMap((g) => g.options);
 
 // ---- 컴포넌트 ----
 
@@ -210,7 +240,13 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
   const addPanel = useUIStore((s) => s.addPanel);
   const addPanelWithConfig = useUIStore((s) => s.addPanelWithConfig);
   const [step, setStep] = useState<
-    'type' | 'device' | 'chart-config' | 'facility' | 'trigger-node' | 'facility-schedule' | 'modbus-agent' | 'agent-status-agent'
+    | 'type'
+    | 'device'
+    | 'facility'
+    | 'trigger-node'
+    | 'facility-schedule'
+    | 'modbus-agent'
+    | 'agent-status-agent'
   >('type');
   const [selectedType, setSelectedType] = useState<PanelType | null>(null);
 
@@ -229,7 +265,6 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
       if (e.key === 'Escape') {
         if (
           step === 'device' ||
-          step === 'chart-config' ||
           step === 'facility' ||
           step === 'trigger-node' ||
           step === 'facility-schedule' ||
@@ -282,14 +317,9 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
       return;
     }
     if (option.presetConfig) {
-      // 프리셋이 채널 정보를 미리 주므로 chart-config 스텝 건너뜀
+      // 프리셋이 소스 설정을 미리 주므로 그대로 추가한다.
       addPanelWithConfig(option.type, option.presetConfig);
       onClose();
-      return;
-    }
-    if (isChartPanelType(option.type)) {
-      setSelectedType(option.type);
-      setStep('chart-config');
       return;
     }
     addPanel(option.type);
@@ -348,15 +378,9 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
     onClose();
   };
 
-  // 차트 설정 완료 처리
-  const handleChartConfirm = (channelName: string) => {
-    if (!selectedType) return;
-    // panelDefaultSize + createDefaultPanel 이 이미 channel_name: '' 을 주므로
-    // addPanelWithConfig 로 channel_name 을 덮어쓴다.
-    addPanelWithConfig(selectedType, { channel_name: channelName });
-    onClose();
-  };
-
+  // sysmetrics 패널 대상 선택 완료 처리 (SPEC-SYSMETRICS-PANEL-001 M5).
+  // 정본은 agent_id 이고 agent_name 은 표시용 스냅샷이다 — 이름만 저장하면
+  // 에이전트를 리네임했을 때 패널이 조용히 끊긴다.
   if (!open) return null;
 
   // 모달 → 페이지: 배경 오버레이 제거, AppLayout 콘텐츠 영역을 채우는 전체화면
@@ -371,17 +395,6 @@ export default function AddPanelDialog({ open, onClose }: AddPanelDialogProps) {
         {step === 'device' && (
           <DeviceStep
             onSelect={handleDeviceSelect}
-            onBack={() => {
-              setStep('type');
-              setSelectedType(null);
-            }}
-            onClose={onClose}
-          />
-        )}
-        {step === 'chart-config' && selectedType && (
-          <ChartConfigStep
-            panelType={selectedType}
-            onConfirm={handleChartConfirm}
             onBack={() => {
               setStep('type');
               setSelectedType(null);
@@ -456,24 +469,27 @@ function TypeStep({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const [activeCategory, setActiveCategory] = useState<Category>('data');
+  const [activeCategory, setActiveCategory] = useState<Category>('status');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // 검색 결과 (검색어가 있으면 전체 카테고리에서 필터링)
-  const filteredOptions = useMemo(() => {
+  // 화면에 그릴 그룹 목록. 검색 중에는 카테고리·하위 그룹을 무시하고 전체에서 필터링한
+  // 결과를 제목 없는 그룹 하나로 돌려준다 — 검색은 "어느 카테고리에 있는지 모를 때" 쓰는
+  // 것이므로 그룹 제목이 오히려 결과를 흩어 놓는다.
+  const groups = useMemo<PanelGroup[]>(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) {
-      return PANEL_OPTIONS_BY_CATEGORY[activeCategory];
+      return PANEL_GROUPS_BY_CATEGORY[activeCategory];
     }
-    // 검색 시 전체에서 필터링 (번역된 라벨/설명 기준)
-    return ALL_PANEL_OPTIONS.filter(
+    const hits = ALL_PANEL_OPTIONS.filter(
       (opt) =>
         t(opt.labelKey).toLowerCase().includes(query) ||
         t(opt.descriptionKey).toLowerCase().includes(query),
     );
+    return hits.length > 0 ? [{ options: hits }] : [];
   }, [activeCategory, searchQuery, t]);
 
   const isSearching = searchQuery.trim().length > 0;
+  const isEmpty = groups.every((g) => g.options.length === 0);
 
   return (
     <>
@@ -543,35 +559,53 @@ function TypeStep({
 
       {/* 패널 유형 카드 그리드 */}
       <div className="max-h-80 overflow-y-auto px-5 py-4">
-        {filteredOptions.length === 0 ? (
-          <p className="py-8 text-center text-sm text-(--color-text-muted)">
-            {t('dashboard.addPanel.noResults')}
+        {isEmpty ? (
+          <p
+            data-testid="add-panel-empty"
+            className="py-8 text-center text-sm text-(--color-text-muted)"
+          >
+            {/* 검색 결과 없음과 "이 카테고리에 항목이 없음" 은 원인이 달라 문구를 나눈다. */}
+            {t(isSearching ? 'dashboard.addPanel.noResults' : 'dashboard.addPanel.emptyCategory')}
           </p>
         ) : (
-          <div className="grid grid-cols-2 gap-3">
-            {filteredOptions.map((option) => {
-              const Icon = option.icon;
-              return (
-                <button
-                  key={`${option.type}:${option.labelKey}`}
-                  type="button"
-                  onClick={() => onSelect(option)}
-                  className="flex items-start gap-3 rounded-lg border border-(--color-border-default) p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50 dark:hover:border-blue-600 dark:hover:bg-blue-900/20"
-                >
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-(--color-bg-elevated)">
-                    <Icon className="h-4 w-4 text-(--color-text-secondary)" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-(--color-text-primary)">
-                      {t(option.labelKey)}
-                    </p>
-                    <p className="mt-0.5 text-xs leading-relaxed text-(--color-text-muted)">
-                      {t(option.descriptionKey)}
-                    </p>
-                  </div>
-                </button>
-              );
-            })}
+          <div className="space-y-4">
+            {groups.map((group, gi) => (
+              <div key={group.labelKey ?? `g${gi}`} data-testid="add-panel-group">
+                {group.labelKey && (
+                  <p
+                    data-testid="add-panel-group-label"
+                    className="mb-2 text-xs font-semibold text-(--color-text-muted)"
+                  >
+                    {t(group.labelKey)}
+                  </p>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  {group.options.map((option) => {
+                    const Icon = option.icon;
+                    return (
+                      <button
+                        key={`${option.type}:${option.labelKey}`}
+                        type="button"
+                        onClick={() => onSelect(option)}
+                        className="flex items-start gap-3 rounded-lg border border-(--color-border-default) p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50 dark:hover:border-blue-600 dark:hover:bg-blue-900/20"
+                      >
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-(--color-bg-elevated)">
+                          <Icon className="h-4 w-4 text-(--color-text-secondary)" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-(--color-text-primary)">
+                            {t(option.labelKey)}
+                          </p>
+                          <p className="mt-0.5 text-xs leading-relaxed text-(--color-text-muted)">
+                            {t(option.descriptionKey)}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -660,217 +694,6 @@ function DeviceStep({
             ))}
           </div>
         )}
-      </div>
-    </>
-  );
-}
-
-// ---- Step 3: 차트 채널 이름 설정 (SPEC-CHART-001 REQ-M5-01/02/04) ----
-
-/** "Custom..." 수동 입력 표시용 sentinel */
-const CUSTOM_CHANNEL_SENTINEL = '__custom__';
-
-/** 차트 패널 타입별 표시 라벨 키 (기존 dashboard.panelTypes 재사용) */
-const CHART_TYPE_LABEL_KEY: Partial<Record<PanelType, string>> = {
-  stat: 'dashboard.panelTypes.stat',
-  'line-chart': 'dashboard.panelTypes.lineChart',
-  'bar-chart': 'dashboard.panelTypes.barChart',
-  'pie-chart': 'dashboard.panelTypes.pieChart',
-  table: 'dashboard.panelTypes.table',
-};
-
-function ChartConfigStep({
-  panelType,
-  onConfirm,
-  onBack,
-  onClose,
-}: {
-  panelType: PanelType;
-  onConfirm: (channelName: string) => void;
-  onBack: () => void;
-  onClose: () => void;
-}) {
-  const { t } = useTranslation();
-  // 드롭다운 선택 상태: 채널 이름 OR '__custom__' OR '' (초기)
-  const [selectedOption, setSelectedOption] = useState<string>('');
-  // Custom 모드일 때 수동 입력 값
-  const [customName, setCustomName] = useState<string>('');
-  const [channels, setChannels] = useState<ChartChannelSummary[]>([]);
-  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('loading');
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  // 활성 채널 목록 조회 (마운트 시 1회)
-  useEffect(() => {
-    let cancelled = false;
-    setLoadState('loading');
-    setLoadError(null);
-    listChartChannels()
-      .then((result) => {
-        if (cancelled) return;
-        setChannels(result);
-        setLoadState('idle');
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        const msg = err instanceof Error ? err.message : String(err);
-        setLoadError(msg);
-        setLoadState('error');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // 실제로 사용할 채널 이름 계산
-  const effectiveName =
-    selectedOption === CUSTOM_CHANNEL_SENTINEL ? customName : selectedOption;
-
-  // 검증 (REQ-M5-04)
-  const trimmed = effectiveName.trim();
-  const isEmpty = trimmed.length === 0;
-  const isValidFormat = !isEmpty && CHANNEL_NAME_REGEX.test(trimmed);
-  const showError = !isEmpty && !isValidFormat;
-  const canSave = isValidFormat;
-
-  const handleConfirm = () => {
-    if (!canSave) return;
-    onConfirm(trimmed);
-  };
-
-  return (
-    <>
-      {/* 헤더 */}
-      <div className="flex items-center justify-between border-b border-(--color-border-default) px-5 py-4">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onBack}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
-            aria-label={t('dashboard.addPanel.backAria')}
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
-          <h2
-            id="add-panel-dialog-title"
-            className="text-lg font-semibold text-(--color-text-primary)"
-          >
-            {(CHART_TYPE_LABEL_KEY[panelType] ? t(CHART_TYPE_LABEL_KEY[panelType]!) : t('dashboard.addPanel.chartFallback'))} {t('dashboard.addPanel.channelSuffix')}
-          </h2>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
-          aria-label={t('dashboard.addPanel.closeAria')}
-        >
-          <X className="h-5 w-5" />
-        </button>
-      </div>
-
-      {/* 본문 */}
-      <div className="space-y-4 px-5 py-4">
-        {/* 드롭다운: 활성 채널 목록 + Custom */}
-        <div>
-          <label
-            htmlFor="chart-channel-select"
-            className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
-          >
-            {t('dashboard.addPanel.channelNameLabel')} <span className="text-red-500">*</span>
-          </label>
-          <select
-            id="chart-channel-select"
-            data-testid="chart-channel-select"
-            value={selectedOption}
-            onChange={(e) => {
-              setSelectedOption(e.target.value);
-              if (e.target.value !== CUSTOM_CHANNEL_SENTINEL) {
-                setCustomName('');
-              }
-            }}
-            disabled={loadState === 'loading'}
-            className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-60"
-          >
-            <option value="">
-              {loadState === 'loading'
-                ? t('dashboard.addPanel.loadingChannels')
-                : channels.length === 0
-                  ? t('dashboard.addPanel.noActiveChannelsCustom')
-                  : t('dashboard.addPanel.selectChannel')}
-            </option>
-            {channels.map((ch) => (
-              <option key={ch.name} value={ch.name}>
-                {t('dashboard.addPanel.channelOption')
-                  .replace('{name}', ch.name)
-                  .replace('{flow}', String(ch.flow_id))
-                  .replace('{count}', String(ch.subscriber_count))}
-              </option>
-            ))}
-            <option value={CUSTOM_CHANNEL_SENTINEL}>{t('dashboard.addPanel.customOption')}</option>
-          </select>
-          {loadState === 'error' && (
-            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-              {t('dashboard.addPanel.loadErrorCustom')}
-              {loadError ? ` (${loadError})` : ''}
-            </p>
-          )}
-        </div>
-
-        {/* Custom 모드: 수동 입력 필드 */}
-        {selectedOption === CUSTOM_CHANNEL_SENTINEL && (
-          <div>
-            <label
-              htmlFor="chart-channel-custom"
-              className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
-            >
-              {t('dashboard.addPanel.customLabel')}
-            </label>
-            <input
-              id="chart-channel-custom"
-              data-testid="chart-channel-custom-input"
-              type="text"
-              value={customName}
-              onChange={(e) => setCustomName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && canSave) handleConfirm();
-              }}
-              placeholder={t('dashboard.addPanel.customPlaceholder')}
-              autoFocus
-              className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
-        )}
-
-        {/* 인라인 에러 (REQ-M5-04) */}
-        {showError && (
-          <p data-testid="chart-channel-error" className="text-xs text-red-500">
-            {t(CHANNEL_NAME_ERROR_KEY)}
-          </p>
-        )}
-      </div>
-
-      {/* 푸터 */}
-      <div className="flex justify-end gap-2 border-t border-(--color-border-default) px-5 py-3">
-        <button
-          type="button"
-          onClick={onBack}
-          className="rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-4 py-1.5 text-sm font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-border-default)"
-        >
-          {t('dashboard.addPanel.previous')}
-        </button>
-        <button
-          type="button"
-          data-testid="chart-channel-save"
-          onClick={handleConfirm}
-          disabled={!canSave}
-          className={cn(
-            'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
-            canSave
-              ? 'bg-blue-600 text-white hover:bg-blue-700'
-              : 'cursor-not-allowed bg-gray-300 text-gray-500 dark:bg-gray-700 dark:text-gray-500',
-          )}
-        >
-          {t('dashboard.addPanel.save')}
-        </button>
       </div>
     </>
   );
@@ -1435,17 +1258,34 @@ function AgentStatusAgentStep({
   onConfirm,
   onBack,
   onClose,
+  agentType,
+  titleKey = 'dashboard.addPanel.selectAgentStatus',
+  testIdPrefix = 'agent-status',
 }: {
   onConfirm: (agentId: string, title?: string) => void;
   onBack: () => void;
   onClose: () => void;
+  /**
+   * 목록을 좁힐 에이전트 타입. 생략하면 전체를 제시한다.
+   *
+   * 유형마다 불리언 플래그(needsAgent / needsAgentStatus / ...)를 늘리는 대신
+   * 필터를 파라미터로 받는다 — 플래그 방식은 세 번째부터 무너진다.
+   */
+  agentType?: string;
+  /** 헤더 제목 i18n 키 */
+  titleKey?: string;
+  /** 테스트 훅 접두사 (select / save 버튼) */
+  testIdPrefix?: string;
 }) {
   const { t } = useTranslation();
   const [agentId, setAgentId] = useState('');
 
   const { data: agentsResult } = useAgents();
-  // 타입 필터 없음 — 전체 연결 에이전트를 제시한다(ModbusAgentStep 과의 핵심 차이).
-  const agents = useMemo(() => agentsResult?.data ?? [], [agentsResult]);
+  // agentType 이 없으면 전체 연결 에이전트를 제시한다(ModbusAgentStep 과의 핵심 차이).
+  const agents = useMemo(() => {
+    const all = agentsResult?.data ?? [];
+    return agentType ? all.filter((a) => a.type === agentType) : all;
+  }, [agentsResult, agentType]);
 
   const selectedAgentName = agents.find((a) => a.id === agentId)?.name;
   const canSave = agentId.length > 0;
@@ -1469,7 +1309,7 @@ function AgentStatusAgentStep({
             <ArrowLeft className="h-4 w-4" />
           </button>
           <h2 className="text-lg font-semibold text-(--color-text-primary)">
-            {t('dashboard.addPanel.selectAgentStatus')}
+            {t(titleKey)}
           </h2>
         </div>
         <button
@@ -1486,14 +1326,14 @@ function AgentStatusAgentStep({
       <div className="space-y-4 px-5 py-4">
         <div>
           <label
-            htmlFor="agent-status-select"
+            htmlFor={`${testIdPrefix}-select`}
             className="mb-1.5 block text-xs font-medium text-(--color-text-muted)"
           >
             {t('dashboard.settings.agent')} <span className="text-red-500">*</span>
           </label>
           <select
-            id="agent-status-select"
-            data-testid="agent-status-select"
+            id={`${testIdPrefix}-select`}
+            data-testid={`${testIdPrefix}-select`}
             value={agentId}
             onChange={(e) => setAgentId(e.target.value)}
             className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-2 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
@@ -1519,7 +1359,7 @@ function AgentStatusAgentStep({
         </button>
         <button
           type="button"
-          data-testid="agent-status-save"
+          data-testid={`${testIdPrefix}-save`}
           onClick={handleConfirm}
           disabled={!canSave}
           className={cn(

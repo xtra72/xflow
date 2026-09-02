@@ -56,6 +56,8 @@ import {
   type ModbusDevicesEditorProps,
   type SegmentRow,
   type TypeMapRow,
+  modelToAreas,
+  type DeviceModelOption,
 } from './modbusDevicesModel';
 
 
@@ -77,6 +79,13 @@ const addButton = cn(
   'inline-flex items-center gap-1 rounded-md border border-dashed border-(--color-border-default) px-3 py-1.5 text-xs font-medium',
   'text-(--color-text-muted) transition-colors hover:border-blue-400 hover:text-blue-600',
   'dark:hover:border-blue-500 dark:hover:text-blue-400',
+);
+
+/** 선택 행 대상 일괄 동작 버튼(삭제 제외 — 삭제는 위험 동작이라 빨간 스타일을 따로 쓴다). */
+const selectionActionButton = cn(
+  'inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium',
+  'text-(--color-text-muted) transition-colors',
+  'hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)',
 );
 
 const iconButton = cn(
@@ -150,6 +159,18 @@ function AreaSegmentEditor({ areas, onChange, readOnly }: AreaSegmentEditorProps
     );
   };
 
+  /**
+   * 영역의 그룹 사용 여부를 일괄 변경한다(SPEC-MODBUS-013 REQ-01).
+   * onlySelected 가 true 면 선택된 행만, false 면 영역 전체를 바꾼다.
+   */
+  const setEnabledForArea = (areaKey: AreaKey, enabled: boolean, onlySelected: boolean) =>
+    patchArea(
+      areaKey,
+      areas[areaKey].map((s) =>
+        !onlySelected || selected.has(s.key) ? { ...s, enabled } : s,
+      ),
+    );
+
   // --- type_map (고급) ---
 
   const patchTypeMap = (areaKey: AreaKey, segKey: string, typeMap: TypeMapRow[]) =>
@@ -178,7 +199,7 @@ function AreaSegmentEditor({ areas, onChange, readOnly }: AreaSegmentEditorProps
     );
 
   // 컬럼 정렬용 grid 템플릿: 선택 | 주소 | 개수 | 데이터타입 | 폴링간격 | 설명
-  const gridCols = 'grid-cols-[1.75rem_1fr_1fr_1fr_1fr_1.5fr]';
+  const gridCols = 'grid-cols-[1.75rem_1fr_1fr_1fr_1fr_1.5fr_2.5rem]';
 
   return (
     <div className="space-y-3">
@@ -186,6 +207,10 @@ function AreaSegmentEditor({ areas, onChange, readOnly }: AreaSegmentEditorProps
         const rows = areas[area.key];
         const selectedInArea = rows.filter((s) => selected.has(s.key)).length;
         const allSelected = rows.length > 0 && selectedInArea === rows.length;
+        // 사용 열 마스터 체크박스 상태. 일부만 사용이면 indeterminate 로 표시한다.
+        const enabledInArea = rows.filter((s) => s.enabled).length;
+        const allEnabled = rows.length > 0 && enabledInArea === rows.length;
+        const someEnabled = enabledInArea > 0 && !allEnabled;
         return (
           <div
             key={area.key}
@@ -197,14 +222,31 @@ function AreaSegmentEditor({ areas, onChange, readOnly }: AreaSegmentEditorProps
                 {t(area.labelKey)}
               </span>
               {!readOnly && selectedInArea > 0 && (
-                <button
-                  type="button"
-                  onClick={() => deleteSelected(area.key)}
-                  className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-red-500 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  {t('property.modbusDevices.deleteSelected')} ({selectedInArea})
-                </button>
+                <div className="flex items-center gap-1">
+                  {/* 선택 행 일괄 사용/해제 (SPEC-MODBUS-013 REQ-01) */}
+                  <button
+                    type="button"
+                    onClick={() => setEnabledForArea(area.key, true, true)}
+                    className={selectionActionButton}
+                  >
+                    {t('property.modbusDevices.enableSelected')} ({selectedInArea})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEnabledForArea(area.key, false, true)}
+                    className={selectionActionButton}
+                  >
+                    {t('property.modbusDevices.disableSelected')} ({selectedInArea})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteSelected(area.key)}
+                    className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-red-500 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {t('property.modbusDevices.deleteSelected')} ({selectedInArea})
+                  </button>
+                </div>
               )}
             </div>
 
@@ -234,6 +276,26 @@ function AreaSegmentEditor({ areas, onChange, readOnly }: AreaSegmentEditorProps
                   <span className={fieldLabel}>
                     {t('property.modbusDevices.descriptionColumn')}
                   </span>
+                  {/* 사용 열 마스터 체크박스 — 영역 전체 일괄 사용/해제 */}
+                  <div className="flex justify-center">
+                    {readOnly ? (
+                      <span className={cn(fieldLabel, 'text-center')}>
+                        {t('property.modbusDevices.enabledColumn')}
+                      </span>
+                    ) : (
+                      <input
+                        type="checkbox"
+                        checked={allEnabled}
+                        ref={(el) => {
+                          if (el) el.indeterminate = someEnabled;
+                        }}
+                        onChange={(e) => setEnabledForArea(area.key, e.target.checked, false)}
+                        aria-label={t('property.modbusDevices.enableAll')}
+                        title={t('property.modbusDevices.enableAll')}
+                        className="h-3.5 w-3.5"
+                      />
+                    )}
+                  </div>
                 </div>
 
                 {/* 세그먼트 (한 세그먼트 = 한 행 + 선택적 고급 type_map) */}
@@ -333,6 +395,21 @@ function AreaSegmentEditor({ areas, onChange, readOnly }: AreaSegmentEditorProps
                         aria-label={t('property.modbusDevices.descriptionColumn')}
                         className={cn(cellInput, readOnly && readOnlyInput)}
                       />
+
+                      {/* 사용 여부 (SPEC-MODBUS-013 REQ-01). 해제하면 백엔드가 폴링에서 제외한다. */}
+                      <div className="flex justify-center">
+                        <input
+                          type="checkbox"
+                          checked={seg.enabled}
+                          disabled={readOnly}
+                          onChange={(e) =>
+                            patchSegment(area.key, seg.key, { enabled: e.target.checked })
+                          }
+                          aria-label={t('property.modbusDevices.enabledColumn')}
+                          title={t('property.modbusDevices.enabledHint')}
+                          className="h-3.5 w-3.5"
+                        />
+                      </div>
                     </div>
 
                     {/* 고급: type_map (주소별 data_type/byte_order 오버라이드) */}
@@ -484,13 +561,20 @@ export interface DeviceEditDialogProps {
   initial: DeviceRow;
   transport: string;
   readOnly?: boolean;
-  // lockConnection: 연결/init 전용 필드(host/port/transport override/serial/share_session)를
-  // 잠근다(숨김 + id 읽기전용). update_device(SPEC-MODBUS-009 F2)는 register_groups/unit_id/
-  // 케이던스만 in-place 변경하고 연결·init 필드는 백엔드가 거부하므로, 수정 폼에서 이를 잠근다.
+  // lockConnection: init 전용 필드(transport override / serial / share_session)를 숨기고
+  // id 를 읽기전용으로 만든다. 이 필드들은 트랜스포트 오픈에 귀속되어 백엔드가 런타임 변경을
+  // 거부한다(rejectInitOnlyFields).
+  //
+  // host/port 는 여기서 제외된다 — update_device 가 엔드포인트 변경을 지원하므로
+  // (SPEC-MODBUS-013 M7) 수정 폼에서도 편집 가능하다.
   lockConnection?: boolean;
   // requireId: id 를 필수로 강제한다(빈 값이면 저장 불가 + 오류 표시). add_device(백엔드
   // parseDeviceConfig)는 device id 가 필수이므로 장치 탭의 추가 폼에서 사용한다.
   requireId?: boolean;
+  // models: 디바이스 모델 카탈로그(SPEC-MODBUS-013 REQ-05). 부모(장치 탭)가 list_models exec 로
+  // 조회해 주입한다. 비어 있거나 미지정이면 모델 선택기를 렌더하지 않는다(설정 탭 등 카탈로그
+  // 접근 경로가 없는 화면에서 그대로 동작).
+  models?: DeviceModelOption[];
   onSave: (device: DeviceRow) => void;
   onClose: () => void;
 }
@@ -501,6 +585,7 @@ export function DeviceEditDialog({
   readOnly,
   lockConnection,
   requireId,
+  models,
   onSave,
   onClose,
 }: DeviceEditDialogProps) {
@@ -509,6 +594,8 @@ export function DeviceEditDialog({
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkText, setBulkText] = useState('');
   const [bulkErrors, setBulkErrors] = useState<BulkParseError[]>([]);
+  // 모델 선택 → 덮어쓰기 확인 대기 중인 모델(SPEC-MODBUS-013 AC-21).
+  const [pendingModel, setPendingModel] = useState<DeviceModelOption | null>(null);
   // submitted: 저장 버튼을 누르기 전에는 빈 필드에 오류(빨간 테두리)를 표시하지 않는다.
   // 최초 열림 시에는 필수(*) 표식만 노출하고, 저장 시도 후부터 검증 오류를 드러낸다.
   const [submitted, setSubmitted] = useState(false);
@@ -522,6 +609,23 @@ export function DeviceEditDialog({
     setBulkOpen(false);
     setBulkText('');
     setBulkErrors([]);
+  };
+
+  // 모델 적용: 레지스터 그룹을 모델 정의로 **교체**한다(추가가 아니라 덮어쓰기).
+  // 기존 그룹이 있으면 먼저 확인을 받는다(AC-21). 저장은 자동으로 하지 않는다(AC-20).
+  const applyModel = (model: DeviceModelOption) => {
+    setDraft((d) => ({ ...d, areas: modelToAreas(model) }));
+    setPendingModel(null);
+  };
+
+  const onSelectModel = (id: string) => {
+    const model = models?.find((m) => m.id === id);
+    if (!model) return;
+    if (segmentCount(draft) > 0) {
+      setPendingModel(model); // 확인 후 적용
+      return;
+    }
+    applyModel(model);
   };
 
   // block-on-error: 오류가 하나라도 있으면 아무것도 추가하지 않고 오류만 표시한다.
@@ -551,6 +655,7 @@ export function DeviceEditDialog({
           dataType: g.dataType,
           pollInterval: g.pollInterval,
           name: g.name,
+          enabled: g.enabled,
           typeMap: [],
           advancedOpen: false,
         });
@@ -570,7 +675,7 @@ export function DeviceEditDialog({
 
   const unitIdValid = draft.unitId >= 1 && draft.unitId <= 247;
   // 연결 잠금(update_device) 시 host/port/serial 은 숨겨지므로 검증 대상에서 제외한다.
-  const hostMissing = !lockConnection && isTcp && draft.host.trim() === '';
+  const hostMissing = isTcp && draft.host.trim() === '';
   // per-device rtu 오버라이드는 시리얼 포트가 필수다(백엔드 parseDeviceConfig 검증과 정합, AC-04).
   const serialMissing = !lockConnection && draft.transport === 'rtu' && draft.serialPort.trim() === '';
   // add_device 는 device id 가 필수다(백엔드 parseDeviceConfig 의 ErrMissingDeviceID 와 정합).
@@ -677,7 +782,10 @@ export function DeviceEditDialog({
               />
             </label>
 
-            {isTcp && !lockConnection && (
+            {/* host/port 는 편집 모드에서도 노출한다 — update_device 가 엔드포인트 변경을
+                지원한다(SPEC-MODBUS-013 M7). 트랜스포트 전환·시리얼 파라미터는 여전히 init 전용이라
+                아래 오버라이드 블록에서 계속 잠근다. */}
+            {isTcp && (
               <>
                 <label className="space-y-0.5">
                   <span className={fieldLabel}>
@@ -789,16 +897,61 @@ export function DeviceEditDialog({
                 {t('property.modbusDevices.registerGroups')}
               </span>
               {!readOnly && (
-                <button
-                  type="button"
-                  onClick={() => (bulkOpen ? closeBulk() : setBulkOpen(true))}
-                  className={addButton}
-                >
-                  <ClipboardPaste className="h-3.5 w-3.5" />
-                  {t('property.modbusDevices.bulkRegister')}
-                </button>
+                <div className="flex items-center gap-2">
+                  {/* 모델 선택기 — 카탈로그가 주입된 화면에서만 렌더한다(SPEC-MODBUS-013 REQ-05). */}
+                  {models && models.length > 0 && (
+                    <select
+                      value=""
+                      onChange={(e) => onSelectModel(e.target.value)}
+                      aria-label={t('property.modbusDevices.modelSelect')}
+                      title={t('property.modbusDevices.modelHint')}
+                      className={cn(cellInput, 'max-w-[14rem]')}
+                    >
+                      <option value="">{t('property.modbusDevices.modelSelect')}</option>
+                      {models.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.vendor ? `${m.vendor} ${m.name}` : m.name} ({m.register_count})
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => (bulkOpen ? closeBulk() : setBulkOpen(true))}
+                    className={addButton}
+                  >
+                    <ClipboardPaste className="h-3.5 w-3.5" />
+                    {t('property.modbusDevices.bulkRegister')}
+                  </button>
+                </div>
               )}
             </div>
+
+            {/* 모델 덮어쓰기 확인 (AC-21) */}
+            {!readOnly && pendingModel && (
+              <div className="space-y-2 rounded border border-(--color-border-warning,--color-border-default) bg-(--color-bg-elevated) p-2">
+                <p className="text-[11px] text-(--color-text-muted)">
+                  {`${pendingModel.name}: ${t('property.modbusDevices.modelOverwriteConfirm')} `}
+                  {`(${segmentCount(draft)} → ${pendingModel.register_count})`}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => applyModel(pendingModel)}
+                    className={addButton}
+                  >
+                    {t('property.modbusDevices.modelOverwriteApply')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPendingModel(null)}
+                    className={addButton}
+                  >
+                    {t('property.modbusDevices.cancel')}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* 일괄등록 패널 (fc 로 영역 분배) */}
             {!readOnly && bulkOpen && (

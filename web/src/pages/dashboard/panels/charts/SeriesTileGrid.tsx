@@ -17,7 +17,8 @@ import {
   MIN_TILE_WIDTH_PX,
   TILE_GAP_PX,
   applyMultiOutputLimit,
-  autoColumnCount,
+  normalizeTileRows,
+  tileColumnCount,
 } from './multiOutputLimit';
 
 
@@ -59,12 +60,35 @@ export interface SeriesTileGridProps<T> {
   renderItem: (item: T, index: number) => React.ReactNode;
   /** 타일 key. 미지정이면 인덱스를 쓴다(표시 이름은 중복될 수 있으므로 기본값이 아니다). */
   itemKey?: (item: T, index: number) => string;
+  /**
+   * 행 높이를 그리드 높이에서 **균등 분배**할지(기본: 내용 높이).
+   *
+   * 기본값(false)에서 행은 내용 높이로 결정된다. 내용이 자기 높이를 스스로 아는 타일
+   * (stat 처럼 텍스트로 채워지는 경우)에는 그것이 맞다.
+   *
+   * 게이지처럼 **내용이 컨테이너 높이를 받아야 하는** 타일에는 맞지 않는다. 그런 타일은
+   * 높이를 알기 위해 행을 봐야 하는데 행은 높이를 알기 위해 타일을 봐야 하므로 순환이
+   * 생기고, CSS 는 그 순환에서 백분율 높이 제약(`max-height: 100%`)을 `none` 처럼 다룬다.
+   * 그러면 타일이 폭 기준으로 커져 그리드 밖으로 넘치고, 부모의 `overflow-hidden` 에
+   * 잘린다 — 폭은 맞는데 위아래가 잘리는 게이지가 그 결과다.
+   *
+   * `true` 면 `grid-auto-rows: minmax(0, 1fr)` 로 행 높이를 **먼저** 확정해 순환을 끊는다.
+   * 그러면 타일이 확정된 높이를 물려받아 두 축 모두에 맞출 수 있다.
+   */
+  fillRows?: boolean;
+  /**
+   * 타일 배열의 **목표 행 수**(`tile_rows`). 미지정이면 `DEFAULT_TILE_ROWS`(1) — 한 줄.
+   *
+   * 열 수는 `ceil(N / rows)` 로 파생된다. 상한이 아니라 목표인 이유는 `tileColumnCount`
+   * 주석 참고 — 폭이 좁으면 `auto-fit` 이 열을 줄이고 행이 목표보다 늘어난다.
+   */
+  rows?: number;
 }
 
 /**
  * 다중 출력 반응형 그리드.
  *
- * 열 수는 `ceil(sqrt(N))` 을 상한으로 하되, 각 트랙의 최소 폭을
+ * 열 수는 목표 행 수에서 파생한 `ceil(N / rows)` 를 상한으로 하되, 각 트랙의 최소 폭을
  * `max(MIN_TILE_WIDTH_PX, "N열일 때의 이상적 폭")` 으로 잡고 `auto-fit` 에 맡긴다.
  * 결과적으로 폭이 좁으면 열이 자동으로 줄어든다(§2.4 "타일 최소 폭이 확보되지 않으면
  * 열 수를 줄인다"). N=1 이면 1열 1행이며 기존 단일 출력과 시각적으로 같다.
@@ -74,11 +98,13 @@ export function SeriesTileGrid<T>({
   limit,
   renderItem,
   itemKey,
+  fillRows = false,
+  rows,
 }: SeriesTileGridProps<T>): React.ReactElement | null {
   const { visible, truncated } = applyMultiOutputLimit(items, limit);
   if (visible.length === 0) return null;
 
-  const columns = autoColumnCount(visible.length);
+  const columns = tileColumnCount(visible.length, rows);
   const idealWidth = `calc((100% - ${(columns - 1) * TILE_GAP_PX}px) / ${columns})`;
   const gridTemplateColumns = `repeat(auto-fit, minmax(max(${MIN_TILE_WIDTH_PX}px, ${idealWidth}), 1fr))`;
 
@@ -87,8 +113,16 @@ export function SeriesTileGrid<T>({
       <div
         data-testid="series-tile-grid"
         data-columns={String(columns)}
+        // 실제 행 수는 폭에 따라 CSS 가 정한다(레이아웃 없는 환경에서는 알 수 없다).
+        // 여기 싣는 것은 **목표** 행 수다.
+        data-rows={String(normalizeTileRows(rows))}
         className="grid min-h-0 flex-1 content-center"
-        style={{ gridTemplateColumns, gap: `${TILE_GAP_PX}px` }}
+        style={{
+          gridTemplateColumns,
+          gap: `${TILE_GAP_PX}px`,
+          // 기본 경로에서는 키 자체를 싣지 않는다 — 행 높이 결정 방식이 바뀌지 않아야 한다.
+          ...(fillRows ? { gridAutoRows: 'minmax(0, 1fr)' } : {}),
+        }}
       >
         {visible.map((item, i) => (
           <div

@@ -126,11 +126,7 @@ func (a *ModbusAgent) applyDeviceReconfigLocked(dev *ModbusDevice, rc deviceReco
 	if rc.hasGroups {
 		// 이전 그룹 기준으로 실행 중인 개별 그룹 스케줄러를 정지한다.
 		if polling {
-			for _, rg := range dev.config.RegisterGroups {
-				if rg.PollInterval > 0 {
-					a.stopGroupLoop(dev.config.ID, rg.Name)
-				}
-			}
+			a.stopDeviceBlockLoops(dev.config.ID)
 		}
 		// copy-on-write: 새 그룹 슬라이스를 통째로 교체한다(읽기 측은 RLock 스냅샷).
 		dev.config.RegisterGroups = rc.newGroups
@@ -138,11 +134,7 @@ func (a *ModbusAgent) applyDeviceReconfigLocked(dev *ModbusDevice, rc deviceReco
 		a.rebuildDeviceTypeOverlay(dev)
 		// 새 그룹 중 poll_interval 지정 그룹의 스케줄러를 시작한다(다음 폴 시점부터 반영).
 		if polling {
-			for i := range rc.newGroups {
-				if rc.newGroups[i].PollInterval > 0 {
-					a.startGroupLoop(dev, rc.newGroups[i])
-				}
-			}
+			a.startDeviceBlockLoops(dev)
 		}
 		a.logger.Info("modbus: 레지스터 그룹 재구성",
 			"device", dev.config.ID,
@@ -234,7 +226,9 @@ func (a *ModbusAgent) processUpdateDevice(req *processRequest) ([]byte, error) {
 	}
 
 	// (1) init 전용 필드 거부 — 어떤 변경보다 먼저 검사하여 부분 적용을 원천 차단한다(AC-04).
-	if err := rejectInitOnlyFields(req.Params); err != nil {
+	// "port" 만 제외한다: TCP 디바이스의 접속 포트 변경을 지원해야 하기 때문이다.
+	// RTU 디바이스의 host/port 변경은 applyEndpointChangeLocked 가 별도로 거부한다.
+	if err := rejectInitOnlyFieldsExcept(req.Params, "port"); err != nil {
 		return nil, err
 	}
 
@@ -243,13 +237,33 @@ func (a *ModbusAgent) processUpdateDevice(req *processRequest) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !rc.hasAny() {
+	// 엔드포인트(host/port)는 트랜스포트 재생성이 필요해 별도로 파싱한다. set_config 와 공유하지
+	// 않는 이유: set_config 는 에이전트 스코프 케이던스 변경 경로이기도 해서 연결 교체 의미가 없다.
+	ec, err := parseEndpointChange(req.Params)
+	if err != nil {
+		return nil, err
+	}
+	if !rc.hasAny() && !ec.wants() {
 		return nil, fmt.Errorf("modbus update_device: no runtime-mutable fields provided")
 	}
 
 	// (3) a.mu.Lock() 하에 대상 조회 + 원자적 적용(부분 적용 없음). findDeviceLocked 로 조회하여
 	// 미존재 ID 를 원자적으로 거부한다(이 시점 이전에는 상태를 변경하지 않았으므로 직전 상태 유지, AC-04).
+	// 블로킹 I/O(구 트랜스포트 close / 신 트랜스포트 connect)는 a.mu 밖에서 수행해야 한다.
+	// defer 는 LIFO 이므로, Unlock 보다 **먼저** 등록한 이 defer 가 Unlock 이후에 실행된다.
+	var closeOld func()
+	var connectTarget *ModbusDevice
+	var reqTimeout time.Duration
+
 	a.mu.Lock()
+	defer func() {
+		if closeOld != nil {
+			closeOld()
+		}
+		if connectTarget != nil {
+			a.connectReplacement(connectTarget, reqTimeout)
+		}
+	}()
 	defer a.mu.Unlock()
 
 	dev := a.findDeviceLocked(id)
@@ -260,18 +274,40 @@ func (a *ModbusAgent) processUpdateDevice(req *processRequest) ([]byte, error) {
 	// register_groups 변경 시 통계 정합을 위해 이전 그룹을 먼저 스냅샷한다(교체 전에 확보).
 	oldGroups := dev.config.RegisterGroups
 
+	// 엔드포인트 변경은 다른 필드보다 먼저 처리한다. 실패 시 아무것도 적용되지 않아야 하고
+	// (부분 적용 금지), 성공하면 이후 필드는 교체된 디바이스에 적용되어야 하기 때문이다.
+	replacement, closer, endpointChanged, err := a.applyEndpointChangeLocked(dev, ec)
+	if err != nil {
+		return nil, err
+	}
+	dev = replacement
+	closeOld = closer
+
 	// 적용 로직은 set_config 와 공유하는 단일 경로(applyDeviceReconfigLocked)를 사용한다.
 	a.applyDeviceReconfigLocked(dev, rc)
 
-	// 그룹 통계 정합(copy-on-write) — SPEC-008 패턴. 트랜스포트/캐시는 재생성하지 않는다(연결 유지).
+	// 그룹 통계 정합(copy-on-write) — SPEC-008 패턴. 캐시는 device id 로 키잉되므로 엔드포인트가
+	// 바뀌어도 그대로 유지된다(이력 보존).
 	if rc.hasGroups {
 		a.reconcileGroupStatsLocked(dev.config.ID, oldGroups, rc.newGroups)
 	}
 
+	// 엔드포인트 교체는 폴링 루프를 정지시킨다. 그룹 변경이 함께 있었다면
+	// applyDeviceReconfigLocked 가 이미 새 디바이스로 루프를 띄웠으므로 중복 기동하지 않는다.
+	polling := a.CurrentState() == lifecycle.StateRunning && a.started && a.config.ReadMode == "cached"
+	if endpointChanged && !rc.hasGroups && polling {
+		a.startDeviceBlockLoops(dev)
+	}
 	resp := map[string]any{
 		"status":    "device_updated",
 		"device_id": id,
 		"applied":   appliedSetConfigKeys(rc.hasGroups, rc.hasUnitID, rc.hasPoll, rc.hasReqTO, rc.hasReconn),
+	}
+	if endpointChanged {
+		resp["endpoint_changed"] = true
+		// 락 해제 후 실행할 I/O 를 예약한다(위 defer 가 수행).
+		connectTarget = dev
+		reqTimeout = a.config.RequestTimeout
 	}
 	return json.Marshal(resp)
 }

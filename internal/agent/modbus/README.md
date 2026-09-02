@@ -218,3 +218,30 @@ go test -v -race -cover ./internal/agent/modbus/...
 - SPEC ID: SPEC-MODBUS-003 (TypeOverlay 패턴 추가)
 - SPEC ID: SPEC-MODBUS-006 (RTU 지원 + 트랜스포트 선택 + 그룹별 폴링 + raw/4순열 바이트순서 + 노드 런타임 `set_config`)
 - 상태: 구현 완료
+
+## 디바이스 모델 카탈로그 (SPEC-MODBUS-013)
+
+기종별 레지스터 맵을 JSON 으로 두고 디바이스 편집 화면의 모델 선택기로 불러온다.
+
+- 위치: `~/.xflow/models/*.json` (환경변수 `XFLOW_MODELS_DIR` 로 override)
+- 조회: `POST /agents/{id}/query` `{"command":"list_models"}` (읽기 전용)
+- 동봉 샘플: `assets/models/gipam-115fi.json` — 설치 시 모델 디렉터리로 복사한다.
+
+```bash
+mkdir -p ~/.xflow/models && cp assets/models/*.json ~/.xflow/models/
+```
+
+로딩은 파일 단위 fail-open 이다. 깨진 파일 하나가 카탈로그 전체를 막지 않으며,
+무효 파일은 경고 로그를 남기고 건너뛴다. `id` 가 중복되면 파일명 사전순으로 먼저 온 파일이 이긴다.
+
+## 레지스터 사용 여부와 블록 병합 (SPEC-MODBUS-013)
+
+- `register_groups[].enabled` (선택, 기본 `true`): `false` 면 폴링·캐시 갱신·메시지 방출을
+  모두 생략한다. 그룹 정의는 보존되므로 재활성화에 재입력이 필요 없다.
+- `max_block_registers` (에이전트 레벨, 기본 32) / `devices[].max_block_registers` (오버라이드):
+  같은 디바이스·같은 폴링 주기·같은 function code·주소가 연속인 그룹들을 이 상한 이내에서
+  하나의 물리 읽기로 병합한다. 주소 간극이 있으면 병합하지 않는다 — 미정의 주소를 읽으면
+  슬레이브가 `ILLEGAL DATA ADDRESS(02)` 로 응답하기 때문이다.
+
+병합은 트랜스포트 계층에만 적용된다. 캐시 갱신·변경 감지·메시지 방출은 여전히 그룹 단위로
+수행되므로 노드·대시보드·플로우가 보는 메시지 형상은 병합 이전과 동일하다.

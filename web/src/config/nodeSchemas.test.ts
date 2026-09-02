@@ -21,6 +21,7 @@ import {
   type PortDef,
 } from './nodeSchemas';
 import type { ConfigField } from '@/types/node';
+import { isFieldRequired, isFieldVisible } from '@/types/node';
 
 /** nodeType 의 config 필드 중 name 으로 하나를 찾는다. */
 function findField(nodeType: string, name: string): ConfigField | undefined {
@@ -592,5 +593,40 @@ describe('NODE_SCHEMAS 완전성 — Go 레지스트리(builtins)와의 정렬',
       `agent_ref 가 required 로 표시되지 않은 노드 타입: ${notRequired.join(', ')}. ` +
         '백엔드 Configure() 가 빈 agent_ref 를 거부하므로 배포 시점에야 실패합니다.',
     ).toEqual([]);
+  });
+});
+
+describe('storage-write payload_mode auto', () => {
+  it('payload_mode 가 백엔드 enum(fields/split/auto/object)과 일치한다', () => {
+    const mode = findField('storage-write', 'payload_mode')!;
+    expect(mode.options).toEqual(['fields', 'split', 'auto', 'object']);
+    expect(mode.default).toBe('fields');
+  });
+
+  it('measurement 는 fields/object(및 신규 노드)에서 필수, auto 에서는 선택이다', () => {
+    const m = findField('storage-write', 'measurement')!;
+    expect(isFieldRequired(m, { payload_mode: 'fields' })).toBe(true);
+    expect(isFieldRequired(m, {})).toBe(true);
+    expect(isFieldRequired(m, { payload_mode: 'object' })).toBe(true);
+    expect(isFieldRequired(m, { payload_mode: 'auto' })).toBe(false);
+    expect(isFieldRequired(m, { payload_mode: 'split' })).toBe(false);
+  });
+
+  it('measurement 는 auto/object 에서도 표시되고(스테일 값 확인 가능) split 에서만 숨겨진다', () => {
+    const m = findField('storage-write', 'measurement')!;
+    expect(isFieldVisible(m, { payload_mode: 'fields' })).toBe(true);
+    expect(isFieldVisible(m, { payload_mode: 'auto' })).toBe(true);
+    expect(isFieldVisible(m, { payload_mode: 'object' })).toBe(true);
+    expect(isFieldVisible(m, { payload_mode: 'split' })).toBe(false);
+  });
+
+  it('object_key 는 object 모드에서만 표시된다', () => {
+    const k = findField('storage-write', 'object_key')!;
+    expect(k.default).toBe('object');
+    expect(isFieldVisible(k, { payload_mode: 'object' })).toBe(true);
+    expect(isFieldVisible(k, { payload_mode: 'fields' })).toBe(false);
+    expect(isFieldVisible(k, {})).toBe(false);
+    // 값 이름은 선택이며, 비우면 백엔드 기본값("object")이 적용된다.
+    expect(isFieldRequired(k, { payload_mode: 'object' })).toBe(false);
   });
 });

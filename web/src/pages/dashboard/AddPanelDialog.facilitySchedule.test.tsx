@@ -46,13 +46,13 @@ describe('AddPanelDialog — 설비 제어 예약 (SPEC-TRIGGER-SCHED-001)', () 
   function openStep() {
     render(<AddPanelDialog open={true} onClose={() => {}} />);
     // 제어 카테고리에 설비 제어 예약 옵션이 위치한다.
-    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.control' }));
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.content' }));
     fireEvent.click(screen.getByText('dashboard.panelTypes.facilitySchedule'));
   }
 
-  it('제어 카테고리에 설비 제어 예약 옵션이 노출된다(공존)', () => {
+  it('콘텐트 카테고리에 설비 제어 예약 옵션이 노출된다(공존)', () => {
     render(<AddPanelDialog open={true} onClose={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.control' }));
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.content' }));
     expect(screen.getByText('dashboard.panelTypes.facilitySchedule')).toBeInTheDocument();
   });
 
@@ -66,7 +66,7 @@ describe('AddPanelDialog — 설비 제어 예약 (SPEC-TRIGGER-SCHED-001)', () 
   it('에이전트 선택 + 노드 선택 시 { flowId, nodeId, agentId } config 로 추가한다', () => {
     const onClose = vi.fn();
     render(<AddPanelDialog open={true} onClose={onClose} />);
-    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.control' }));
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.content' }));
     fireEvent.click(screen.getByText('dashboard.panelTypes.facilitySchedule'));
 
     // xsfm 에이전트만 옵션에 노출(mqtt 제외).

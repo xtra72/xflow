@@ -14,6 +14,8 @@ import { useMemo } from 'react';
 
 import { resolveLevels, computeContours, segmentsToPath } from './marchingSquares';
 import type { ContourConfig } from './heatmapConfig';
+// 값 표기 자릿수는 차트 계열 공용 규칙을 따른다.
+import { formatDecimal } from '@/pages/dashboard/panels/charts/decimalPlaces';
 
 /** 미지정 시 선 색 기본값(히트맵 위에서 대비되는 진한 슬레이트). */
 export const DEFAULT_CONTOUR_LINE_COLOR = '#334155';
@@ -33,10 +35,24 @@ interface ContourLayerProps {
   bounds: { min: number; max: number };
   /** 등고선 설정(파싱 완료 — enabled/level_count/levels/line/labels). */
   contour: ContourConfig;
+  /**
+   * 라벨 자릿수. 사용자가 패널 설정에서 **직접 지정했을 때만** 전달된다.
+   * `undefined` 면 종전 표기(정수는 그대로, 소수는 1자리)를 유지한다.
+   */
+  decimals?: number;
 }
 
-/** 등치값 라벨 표시 문자열(정수는 그대로, 소수는 소수 1자리). */
-function formatLevel(level: number): string {
+/**
+ * 등치값 라벨 표시 문자열.
+ *
+ * 등고선 라벨은 값 읽기가 아니라 **등치선의 눈금**이므로 자릿수 기본값(2)을 따르지
+ * 않는다 — 레벨은 대개 반듯한 수(20 · 22 · 24)라 기본을 걸면 `20.00` 이 된다.
+ * 사용자가 직접 지정했을 때만 따라간다(범례 눈금과 같은 규칙).
+ *
+ * 미지정 시 종전 표기: 정수는 그대로, 소수는 소수 1자리.
+ */
+function formatLevel(level: number, decimals: number | undefined): string {
+  if (decimals !== undefined) return formatDecimal(level, decimals);
   return Number.isInteger(level) ? String(level) : level.toFixed(1);
 }
 
@@ -54,6 +70,7 @@ export default function ContourLayer({
   gridH,
   bounds,
   contour,
+  decimals,
 }: ContourLayerProps) {
   // field 참조 기준 memoize: 격자/레벨/범위 불변 시 marching squares 재계산 생략(AC-E4).
   const levelPaths = useMemo<LevelPath[]>(() => {
@@ -118,7 +135,7 @@ export default function ContourLayer({
             textAnchor="middle"
             dominantBaseline="middle"
           >
-            {formatLevel(lp.level)}
+            {formatLevel(lp.level, decimals)}
           </text>
         ))}
     </svg>

@@ -14,7 +14,7 @@ import { useTargetContext } from '@/lib/remote/TargetContext';
 import { remoteLogsStreamUrl } from '@/services/api/remoteService';
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import type { LogLevel } from '@/pages/monitoring/LogViewer';
-import { usePanelTitleVisible } from '../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 
 const LOG_COLOR_PRESETS = ['#3b82f6','#8b5cf6','#06b6d4','#10b981','#f59e0b','#ef4444','#ec4899','#6b7280'];
 
@@ -81,6 +81,7 @@ export default function LogPanel({
   onTitleChange,
 }: LogPanelProps) {
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const { t } = useTranslation();
   const maxLines = (config.maxLines as number) || 100;
   const panelColor = config.panelColor as string | undefined;
@@ -288,7 +289,7 @@ export default function LogPanel({
             <FileText className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
             <h3
               className="truncate text-lg font-semibold text-(--color-text-primary)"
-              style={acColor('header') ? { color: acColor('header')! } : undefined}
+              style={{ ...(acColor('header') ? { color: acColor('header')! } : undefined), ...titleStyle }}
             >
               {title}
             </h3>

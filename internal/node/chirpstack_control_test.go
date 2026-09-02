@@ -40,7 +40,7 @@ func (f *fakeChirpStackAgent) Health() agent.HealthStatus          { return agen
 func (f *fakeChirpStackAgent) Configure(_ agent.AgentConfig) error { return nil }
 func (f *fakeChirpStackAgent) ID() string                          { return "fake-cs-id" }
 func (f *fakeChirpStackAgent) Name() string                        { return "fake-cs" }
-func (f *fakeChirpStackAgent) Type() string                        { return "chirpstack" }
+func (f *fakeChirpStackAgent) Type() string                        { return "chirpstack-client" }
 func (f *fakeChirpStackAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
 func (f *fakeChirpStackAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
 func (f *fakeChirpStackAgent) Process(_ []byte) ([]byte, error)    { return nil, nil }

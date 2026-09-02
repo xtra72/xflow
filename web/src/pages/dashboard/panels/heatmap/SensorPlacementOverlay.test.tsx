@@ -128,4 +128,67 @@ describe('SensorPlacementOverlay', () => {
     expect(marker.style.left).toBe('25%');
     expect(marker.style.top).toBe('75%');
   });
+  // ---------------------------------------------------------------------------
+  // 포인터 우선순위 — 도면 이동 오버레이와 같은 자리를 덮는다.
+  // 루트가 늘 이벤트를 받으면 빈 자리를 눌러도 도면이 움직이지 않고, 반대로 마커가 아래에
+  // 깔리면 마커를 잡아도 도면이 끌려간다(보고된 "전체가 이동됨"). 아래 계약이 그 경계다.
+  // ---------------------------------------------------------------------------
+
+  it('유휴 시 루트는 포인터를 받지 않고, 마커·팔레트만 받는다(빈 자리 누름은 도면 이동으로)', () => {
+    render(
+      <SensorPlacementOverlay
+        placed={[{ key: 'a', pos: { x: 0.5, y: 0.5 } }]}
+        unplaced={['b']}
+        onPositionChange={vi.fn()}
+        onRemove={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('sensor-placement-overlay').className).toContain(
+      'pointer-events-none',
+    );
+    expect(screen.getByTestId('sensor-marker-a').className).toContain('pointer-events-auto');
+    expect(screen.getByTestId('sensor-unplaced-palette').className).toContain(
+      'pointer-events-auto',
+    );
+  });
+
+  it('드래그 중에는 루트가 포인터를 받는다(마커를 벗어나도 이동·드롭이 이어지도록)', () => {
+    render(
+      <SensorPlacementOverlay
+        placed={[{ key: 'a', pos: { x: 0.5, y: 0.5 } }]}
+        unplaced={[]}
+        onPositionChange={vi.fn()}
+        onRemove={vi.fn()}
+      />,
+    );
+    const overlay = screen.getByTestId('sensor-placement-overlay');
+    fireEvent.pointerDown(screen.getByTestId('sensor-marker-handle-a'), {
+      clientX: 120,
+      clientY: 90,
+    });
+    expect(overlay.className).toContain('pointer-events-auto');
+    fireEvent.pointerUp(overlay, { clientX: 200, clientY: 250 });
+    expect(overlay.className).toContain('pointer-events-none');
+  });
+
+  it('스테이지를 벗어나면 드롭으로 마감한다(pointerup 이 오지 않아 드래그가 붙잡히지 않도록)', () => {
+    const onPositionChange = vi.fn();
+    render(
+      <SensorPlacementOverlay
+        placed={[{ key: 'a', pos: { x: 0.5, y: 0.5 } }]}
+        unplaced={[]}
+        onPositionChange={onPositionChange}
+        onRemove={vi.fn()}
+      />,
+    );
+    const overlay = screen.getByTestId('sensor-placement-overlay');
+    fireEvent.pointerDown(screen.getByTestId('sensor-marker-handle-a'), {
+      clientX: 120,
+      clientY: 90,
+    });
+    // 왼쪽 밖으로 빠져나감 → x 는 0 으로 clamp 되어 경계에 놓인다.
+    fireEvent.pointerLeave(overlay, { clientX: 0, clientY: 250 });
+    expect(onPositionChange).toHaveBeenLastCalledWith('a', { x: 0, y: 0.5 });
+    expect(overlay.className).toContain('pointer-events-none');
+  });
 });

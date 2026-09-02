@@ -7,14 +7,17 @@
 // Recharts 렌더 없이 검증할 수 있도록 산출 로직만 분리한다.
 
 import { normalizeStoreSeriesAlias, storeSeriesLabel } from './chartChannelTypes';
+import { DEFAULT_GRAPH_STYLE, resolveSeriesStyle, type GraphStyle } from './graphStyle';
 import { groupComboSignature } from '@/services/api/tsdbSeriesEnum';
 import type {
   ChannelRefConfig,
   StoreSourceConfig,
   StrokeStyle,
+  SysmetricsSourceConfig,
   TsdbSourceConfig,
 } from './chartChannelTypes';
 import { resolvePanelSourceBinding } from './panelDataSource';
+import { resolveSysmetricsSeries } from './sysmetricsSource';
 
 /** 미리보기 한 줄의 렌더 파라미터. */
 export interface PreviewSeries {
@@ -24,6 +27,14 @@ export interface PreviewSeries {
   smooth: boolean;
   strokeWidth: number;
   strokeDasharray: string;
+  /**
+   * 이 줄을 그리는 모양(라인·영역·바·캔들).
+   *
+   * 종전에는 이 필드가 없어 미리보기가 **무엇을 고르든 선으로만** 그렸다 — 그래프
+   * 스타일을 바꿔도 샘플이 그대로였던 자리가 여기다. 실제 렌더와 같은 우선순위
+   * (시리즈 지정 → 패널 기본값)로 여기서 확정한다.
+   */
+  graphStyle: GraphStyle;
 }
 
 /** 미리보기 시리즈 산출 입력. */
@@ -32,9 +43,13 @@ export interface PreviewSeriesInput {
   storeSource: StoreSourceConfig | undefined;
   /** TSDB 소스 설정. 등록된 시리즈로 미리보기를 구성한다. @spec SPEC-TSDB-004 */
   tsdbSource?: TsdbSourceConfig | undefined;
+  /** sysmetrics 소스 설정. 값 × 대상으로 펼친 줄을 미리보기로 구성한다. */
+  sysmetricsSource?: SysmetricsSourceConfig | undefined;
   channels: readonly ChannelRefConfig[];
   channelName: string;
   globalSmooth: boolean;
+  /** 패널 기본 그래프 스타일. 시리즈가 지정하지 않은 줄이 이것을 따른다. */
+  panelGraphStyle?: GraphStyle;
   /** stroke_style → SVG dasharray 매핑(호출부의 상수를 그대로 받는다). */
   strokeDasharray: Record<StrokeStyle, string>;
   /** 인덱스별 폴백 색 팔레트. */
@@ -49,6 +64,7 @@ export interface PreviewSeriesInput {
  * 설정에서 미리보기 시리즈 목록을 만든다.
  *
  * 우선순위:
+ *   0. sysmetrics 모드 + 고른 값 있음 → 값 × 대상으로 펼친 줄.
  *   1. store 모드 + 선택된 시리즈 있음 → 선택 시리즈. 이름은 실제 렌더와 같은 규칙
  *      (직접 입력한 이름 → 패널의 시리즈 이름 형식 → 내장 서술 표기), 스타일은 per-series 값.
  *   2. 다중 채널 모드 → 채널 목록.
@@ -61,9 +77,11 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
     dataSource,
     storeSource,
     tsdbSource,
+    sysmetricsSource,
     channels,
     channelName,
     globalSmooth,
+    panelGraphStyle = DEFAULT_GRAPH_STYLE,
     strokeDasharray,
     palette,
     sampleName,
@@ -83,7 +101,27 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
     data_source: dataSource,
     store_source: storeSource,
     tsdb_source: tsdbSource,
+    sysmetrics_source: sysmetricsSource,
   });
+
+  // sysmetrics 도 같은 규칙으로 **등록된 값**을 미리보기로 만든다. 인스턴스 축이 있는
+  // 값은 대상 수만큼 펼쳐지므로, 미리보기도 그 수만큼 그린다 — 펼치지 않으면 "설정에서는
+  // 한 줄인데 대시보드에는 여러 줄" 이 되어 미리보기가 제 일을 못 한다.
+  if (kind === 'sysmetrics') {
+    const lines = resolveSysmetricsSeries(sysmetricsSource);
+    if (lines.length > 0) {
+      return lines.map((line, i) => ({
+        key: line.name,
+        // 시리즈 하나가 줄 하나이므로 항목 색이 곧 줄 색이다 — 실제 렌더와 같은 규칙이어야
+        // 미리보기가 대시보드와 갈리지 않는다.
+        color: line.ref.color ?? color(i),
+        smooth: line.ref.smooth ?? globalSmooth,
+        strokeWidth: line.ref.stroke_width ?? 2,
+        strokeDasharray: line.ref.stroke_style ? strokeDasharray[line.ref.stroke_style] : '',
+        graphStyle: resolveSeriesStyle(line.ref.graph_style, panelGraphStyle),
+      }));
+    }
+  }
   if (kind === 'store') {
     const series = normalizeStoreSeriesAlias(storeSource?.series ?? []);
     if (series.length > 0) {
@@ -93,6 +131,7 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
         smooth: ref.smooth ?? globalSmooth,
         strokeWidth: ref.stroke_width ?? 2,
         strokeDasharray: ref.stroke_style ? strokeDasharray[ref.stroke_style] : '',
+        graphStyle: resolveSeriesStyle(ref.graph_style, panelGraphStyle),
       }));
     }
   }
@@ -116,6 +155,8 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
           smooth: ref.smooth ?? globalSmooth,
           strokeWidth: ref.stroke_width ?? 2,
           strokeDasharray: ref.stroke_style ? strokeDasharray[ref.stroke_style] : '',
+          // TSDB 시리즈에는 per-series 모양이 없다(`TsdbSeriesRef`) — 패널 기본값을 따른다.
+          graphStyle: panelGraphStyle,
         });
         continue;
       }
@@ -146,6 +187,7 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
           smooth: ref.smooth ?? globalSmooth,
           strokeWidth: ref.stroke_width ?? 2,
           strokeDasharray: ref.stroke_style ? strokeDasharray[ref.stroke_style] : '',
+          graphStyle: panelGraphStyle,
         });
       }
     }
@@ -160,6 +202,8 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
       smooth: c.smooth ?? globalSmooth,
       strokeWidth: c.stroke_width ?? 2,
       strokeDasharray: c.stroke_style ? strokeDasharray[c.stroke_style] : '',
+      // 채널은 실제 렌더도 per-series 모양을 읽지 않는다(LineChartPanel) — 패널 기본값을 따른다.
+      graphStyle: panelGraphStyle,
     }));
   }
 
@@ -170,6 +214,7 @@ export function buildPreviewSeries(input: PreviewSeriesInput): PreviewSeries[] {
       smooth: globalSmooth,
       strokeWidth: 2,
       strokeDasharray: '',
+      graphStyle: panelGraphStyle,
     },
   ];
 }

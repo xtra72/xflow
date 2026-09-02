@@ -16,20 +16,6 @@ const mockResult = vi.hoisted(() => ({
   },
 }));
 
-const multiMockResult = vi.hoisted(() => ({
-  current: {
-    channels: new Map<
-      string,
-      {
-        entries: ChartEntry[];
-        status: 'idle' | 'connecting' | 'connected' | 'closed' | 'error';
-        closedReason?: string;
-        errorReason?: string;
-      }
-    >(),
-  },
-}));
-
 const csvMocks = vi.hoisted(() => ({
   downloadCsv: vi.fn(),
 }));
@@ -60,30 +46,46 @@ const storeMockResult = vi.hoisted(() => ({
 // SPEC-TSDB-002 M2 특성화용 호출 인자 기록기. 반환값은 종전과 동일하므로 기존
 // 테스트의 동작은 바뀌지 않고, "어느 훅이 활성으로 호출됐는가" 만 관측 가능해진다.
 const hookCalls = vi.hoisted(() => ({
-  channel: [] as unknown[],
-  channels: [] as unknown[],
   store: [] as Array<{ source: unknown; enabled: unknown }>,
 }));
 
-vi.mock('./useChartChannel', () => ({
-  useChartChannel: (channelName?: string) => {
-    hookCalls.channel.push(channelName);
-    return mockResult.current;
-  },
-}));
-
-vi.mock('./useChartChannels', () => ({
-  useChartChannels: (channels?: unknown) => {
-    hookCalls.channels.push(channels);
-    return multiMockResult.current;
-  },
-}));
-
-vi.mock('./useStoreChartData', () => ({
-  useStoreChartData: (source?: unknown, enabled?: unknown) => {
+// 채널이 패널 소스에서 빠진 뒤로 데이터 이음매는 **하나**다(`usePanelSeriesData`).
+//
+// 이 파일의 오래된 테스트들은 단일 타임라인(`mockResult.current.entries`)을 심어 왔다.
+// 그 형상을 시리즈 하나로 옮겨 주는 어댑터를 여기 둔다 — 테스트 30여 개의 본문을 고치는
+// 대신, "채널 시절의 한 줄" 을 "시리즈 소스의 한 줄" 로 읽는다. 여러 줄을 보는 테스트는
+// `storeMockResult` 를 직접 심으며, 그때는 그쪽이 이긴다.
+vi.mock('./usePanelSeriesData', () => ({
+  usePanelSeriesData: (source?: unknown, enabled?: unknown) => {
     hookCalls.store.push({ source, enabled });
-    return storeMockResult.current;
+    const store = storeMockResult.current;
+    if (store.seriesEntries.size > 0 || store.seriesNames.length > 0) return store;
+    const entries = mockResult.current.entries;
+    return {
+      ...store,
+      entries,
+      seriesEntries: entries.length > 0 ? new Map([['value', entries]]) : new Map(),
+      seriesNames: entries.length > 0 ? ['value'] : [],
+      status: mockResult.current.status,
+      closedReason: mockResult.current.closedReason,
+      errorReason: mockResult.current.errorReason,
+    };
   },
+  // 이 파일은 렌더·데이터 흐름을 본다. 소스 바인딩 판정은 panelDataSource 테스트가 본다.
+  isPanelSeriesSource: () => true,
+}));
+
+// 활성 판정도 같은 사유로 참으로 고정한다 — 이 파일의 config 들은 소스 블록을 갖추지 않고
+// 훅 결과를 직접 심으므로, 실제 판정을 태우면 패널이 "고른 시리즈 없음" 으로 비어 버린다.
+// 나머지 export 는 원본을 그대로 쓴다(축 창·종류 판정은 실제 규칙이 돌아야 한다).
+vi.mock('./panelDataSource', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./panelDataSource')>()),
+  isPanelSeriesActive: () => true,
+}));
+
+// 캔들은 조회 계층(react-query)을 쓴다 — QueryClient 없이 렌더하려고 비활성으로 흉내 낸다.
+vi.mock('./useCandleSeriesData', () => ({
+  useCandleSeriesData: () => new Map(),
 }));
 
 // i18n 은 키를 그대로 반환하도록 모킹한다(I18nProvider 없이 렌더 가능).
@@ -108,7 +110,6 @@ describe('LineChartPanel', () => {
       closedReason: undefined,
       errorReason: undefined,
     };
-    multiMockResult.current = { channels: new Map() };
     storeMockResult.current = {
       entries: [],
       seriesEntries: new Map(),
@@ -153,26 +154,6 @@ describe('LineChartPanel', () => {
     expect(lines[0]!.getAttribute('data-line-key')).toBe('value');
   });
 
-  it('multi_series_field 지정 시 시리즈 수만큼 Line 분리', () => {
-    mockResult.current.entries = [
-      { timestamp: 1000, value: 10, labels: { room: 'A' } },
-      { timestamp: 1000, value: 20, labels: { room: 'B' } },
-      { timestamp: 2000, value: 11, labels: { room: 'A' } },
-      { timestamp: 2000, value: 21, labels: { room: 'B' } },
-    ];
-    const { container } = render(
-      <LineChartPanel
-        panelId="p1"
-        config={{ channel_name: 'test', multi_series_field: 'labels.room' }}
-      />,
-    );
-    const lines = container.querySelectorAll('.recharts-line');
-    expect(lines.length).toBe(2);
-    const keys = Array.from(lines).map((l) => l.getAttribute('data-line-key'));
-    expect(keys).toContain('A');
-    expect(keys).toContain('B');
-  });
-
   it('closed 상태에서 overlay 표시', () => {
     mockResult.current.status = 'closed' as unknown as 'connected';
     mockResult.current.closedReason = 'flow_undeployed';
@@ -201,86 +182,6 @@ describe('LineChartPanel', () => {
   });
 
   // --- 값 타입 처리: 스트링 제외 / int·float 혼합 / boolean true-false ---
-  describe('데이터 소스 값 타입', () => {
-    const values = () =>
-      (
-        JSON.parse(
-          screen.getByTestId('rc-line-chart').getAttribute('data-rows')!,
-        ) as Array<{ value: unknown }>
-      ).map((r) => r.value);
-
-    it('int 와 float 를 혼합해서 그대로 표시한다', () => {
-      mockResult.current.entries = [
-        { timestamp: 1000, value: 10 },
-        { timestamp: 2000, value: 3.14 },
-      ];
-      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
-      expect(values()).toEqual([10, 3.14]);
-    });
-
-    it('string 값은 숫자 모양("3.14")이어도 제외한다(NaN→JSON null)', () => {
-      mockResult.current.entries = [
-        { timestamp: 1000, value: '3.14' },
-        { timestamp: 2000, value: 'cool' },
-      ];
-      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
-      // JSON.stringify(NaN) === 'null' → 라인에서 빠진다.
-      expect(values()).toEqual([null, null]);
-    });
-
-    it('boolean 은 true=1 / false=0 으로 그린다', () => {
-      mockResult.current.entries = [
-        { timestamp: 1000, value: true },
-        { timestamp: 2000, value: false },
-      ];
-      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
-      expect(values()).toEqual([1, 0]);
-    });
-
-    it('순수 boolean 시리즈는 Y축을 false/true(0~1) 범위로 고정한다', () => {
-      mockResult.current.entries = [
-        { timestamp: 1000, value: true },
-        { timestamp: 2000, value: false },
-      ];
-      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
-      expect(
-        JSON.parse(screen.getByTestId('rc-yaxis').getAttribute('data-domain')!),
-      ).toEqual([-0.1, 1.1]);
-    });
-
-    it('숫자 시리즈는 boolean 축을 쓰지 않는다(auto 유지)', () => {
-      mockResult.current.entries = [
-        { timestamp: 1000, value: 10 },
-        { timestamp: 2000, value: 20 },
-      ];
-      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
-      expect(
-        JSON.parse(screen.getByTestId('rc-yaxis').getAttribute('data-domain')!),
-      ).toEqual(['auto', 'auto']);
-    });
-
-    it('boolean 시리즈는 수동 Y축 범위를 무시하고 false/true 축을 쓴다', () => {
-      mockResult.current.entries = [
-        { timestamp: 1000, value: true },
-        { timestamp: 2000, value: false },
-      ];
-      render(
-        <LineChartPanel
-          panelId="p1"
-          config={{
-            channel_name: 'c',
-            y_axis_mode: 'manual',
-            y_min: -50,
-            y_max: 50,
-          }}
-        />,
-      );
-      expect(
-        JSON.parse(screen.getByTestId('rc-yaxis').getAttribute('data-domain')!),
-      ).toEqual([-0.1, 1.1]);
-    });
-  });
-
   // --- Y축 모드 ---
   describe('y_axis_mode', () => {
     it('기본(auto) 이면 YAxis domain = ["auto","auto"]', () => {
@@ -348,147 +249,6 @@ describe('LineChartPanel', () => {
   });
 
   // --- 시간 윈도우 모드 ---
-  describe('time_window_mode', () => {
-    it('기본(points) 이면 XAxis domain = ["dataMin","dataMax"], 필터 없음', () => {
-      mockResult.current.entries = [
-        { timestamp: 1000, value: 1 },
-        { timestamp: 2000, value: 2 },
-      ];
-      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
-      const x = screen.getByTestId('rc-xaxis');
-      expect(JSON.parse(x.getAttribute('data-domain')!)).toEqual(['dataMin', 'dataMax']);
-      const rows = JSON.parse(screen.getByTestId('rc-line-chart').getAttribute('data-rows')!);
-      expect(rows).toHaveLength(2);
-    });
-
-    it('fixed 모드: 범위 밖 entries 는 필터링, XAxis domain=[start,end]', () => {
-      mockResult.current.entries = [
-        { timestamp: 1000, value: 1 }, // 범위 밖
-        { timestamp: 1500, value: 2 },
-        { timestamp: 2500, value: 3 },
-        { timestamp: 3500, value: 4 }, // 범위 밖
-      ];
-      render(
-        <LineChartPanel
-          panelId="p1"
-          config={{
-            channel_name: 'c',
-            time_window_mode: 'fixed',
-            fixed_start_ms: 1500,
-            fixed_end_ms: 2500,
-          }}
-        />,
-      );
-      const x = screen.getByTestId('rc-xaxis');
-      expect(JSON.parse(x.getAttribute('data-domain')!)).toEqual([1500, 2500]);
-      const rows = JSON.parse(
-        screen.getByTestId('rc-line-chart').getAttribute('data-rows')!,
-      ) as Array<{ timestamp: number }>;
-      expect(rows.map((r) => r.timestamp)).toEqual([1500, 2500]);
-    });
-
-    it('recent 모드: 현재 시각 기준 [now-window, now] 범위 필터', () => {
-      vi.useFakeTimers();
-      try {
-        const now = 10_000;
-        vi.setSystemTime(now);
-        mockResult.current.entries = [
-          { timestamp: 3000, value: 1 }, // 범위 밖 (7초 전보다 오래됨)
-          { timestamp: 5000, value: 2 },
-          { timestamp: 8000, value: 3 },
-          { timestamp: 9500, value: 4 },
-        ];
-        render(
-          <LineChartPanel
-            panelId="p1"
-            config={{
-              channel_name: 'c',
-              time_window_mode: 'recent',
-              recent_window_sec: 5, // window = 5초 → start = 5000
-            }}
-          />,
-        );
-        const x = screen.getByTestId('rc-xaxis');
-        expect(JSON.parse(x.getAttribute('data-domain')!)).toEqual([5000, 10000]);
-        const rows = JSON.parse(
-          screen.getByTestId('rc-line-chart').getAttribute('data-rows')!,
-        ) as Array<{ timestamp: number }>;
-        // 첫 가시 entry 가 정확히 start 와 일치 (5000 == 5000) 하므로 앵커 미포함.
-        expect(rows.map((r) => r.timestamp)).toEqual([5000, 8000, 9500]);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('recent 모드: 윈도우 시작 이전의 마지막 데이터(앵커)를 포함하여 라인이 시작 경계로 이어진다', () => {
-      vi.useFakeTimers();
-      try {
-        const now = 10_000;
-        vi.setSystemTime(now);
-        // 윈도우 시작(5000) 직전의 3000 데이터가 앵커로 포함되어야 한다.
-        // 첫 가시 entry(7000) 가 윈도우 시작(5000)보다 늦으므로 앵커 prepend.
-        mockResult.current.entries = [
-          { timestamp: 1000, value: 0 }, // 더 오래된 entry 는 무시
-          { timestamp: 3000, value: 5 }, // 앵커 (start 직전 마지막)
-          { timestamp: 7000, value: 10 },
-          { timestamp: 9000, value: 20 },
-        ];
-        render(
-          <LineChartPanel
-            panelId="p1"
-            config={{
-              channel_name: 'c',
-              time_window_mode: 'recent',
-              recent_window_sec: 5,
-            }}
-          />,
-        );
-        // X축 도메인은 윈도우 그대로 [5000, 10000].
-        // 데이터에는 앵커(3000) 포함 → recharts 가 3000→7000 라인을 그릴 때
-        // 5000 경계를 가로질러 시작 부분이 자연스럽게 이어진다.
-        const x = screen.getByTestId('rc-xaxis');
-        expect(JSON.parse(x.getAttribute('data-domain')!)).toEqual([5000, 10000]);
-        const rows = JSON.parse(
-          screen.getByTestId('rc-line-chart').getAttribute('data-rows')!,
-        ) as Array<{ timestamp: number }>;
-        expect(rows.map((r) => r.timestamp)).toEqual([3000, 7000, 9000]);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('recent 모드: time_window_refresh_ms 주기로 현재 시각 갱신', () => {
-      vi.useFakeTimers();
-      try {
-        vi.setSystemTime(10_000);
-        mockResult.current.entries = [{ timestamp: 8000, value: 1 }];
-        render(
-          <LineChartPanel
-            panelId="p1"
-            config={{
-              channel_name: 'c',
-              time_window_mode: 'recent',
-              recent_window_sec: 5,
-              time_window_refresh_ms: 500,
-            }}
-          />,
-        );
-        // 초기 domain: [5000, 10000] (윈도우 전체 — 데이터 길이와 무관하게 고정 크기)
-        let x = screen.getByTestId('rc-xaxis');
-        expect(JSON.parse(x.getAttribute('data-domain')!)).toEqual([5000, 10000]);
-
-        // 500ms 경과 → advanceTimersByTime 이 mocked Date 도 전진시키므로 now=10500
-        act(() => {
-          vi.advanceTimersByTime(500);
-        });
-        x = screen.getByTestId('rc-xaxis');
-        expect(JSON.parse(x.getAttribute('data-domain')!)).toEqual([5500, 10500]);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-  });
-
   // --- 일시정지/재개 ---
   describe('pause/resume', () => {
     it('일시정지 버튼이 헤더에 렌더', () => {
@@ -667,7 +427,7 @@ describe('LineChartPanel', () => {
           }}
         />,
       );
-      const container = screen.getByTestId('line-chart-container').parentElement!;
+      const container = screen.getByTestId('line-chart-root');
       expect(container.className).toMatch(/animate-pulse/);
     });
 
@@ -682,7 +442,7 @@ describe('LineChartPanel', () => {
           }}
         />,
       );
-      const container = screen.getByTestId('line-chart-container').parentElement!;
+      const container = screen.getByTestId('line-chart-root');
       expect(container.className).not.toMatch(/animate-pulse/);
     });
 
@@ -697,7 +457,7 @@ describe('LineChartPanel', () => {
           }}
         />,
       );
-      const container = screen.getByTestId('line-chart-container').parentElement!;
+      const container = screen.getByTestId('line-chart-root');
       expect(container.className).not.toMatch(/animate-pulse/);
     });
 
@@ -716,297 +476,12 @@ describe('LineChartPanel', () => {
           }}
         />,
       );
-      const container = screen.getByTestId('line-chart-container').parentElement!;
+      const container = screen.getByTestId('line-chart-root');
       expect(container.className).toMatch(/animate-pulse/);
     });
   });
 
   // --- 다채널 비교 ---
-  describe('multi-channel mode', () => {
-    it('channels 미지정: 기존 단일 채널 동작 (회귀 방지)', () => {
-      mockResult.current.entries = [
-        { timestamp: 1000, value: 10 },
-        { timestamp: 2000, value: 20 },
-      ];
-      const { container } = render(
-        <LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />,
-      );
-      const lines = container.querySelectorAll('.recharts-line');
-      expect(lines.length).toBe(1);
-      expect(lines[0]!.getAttribute('data-line-key')).toBe('value');
-    });
-
-    it('channels 지정: 채널마다 1개 라인', () => {
-      multiMockResult.current.channels = new Map([
-        [
-          'temp_a',
-          {
-            entries: [
-              { timestamp: 1000, value: 10 },
-              { timestamp: 2000, value: 20 },
-            ],
-            status: 'connected',
-          },
-        ],
-        [
-          'temp_b',
-          {
-            entries: [
-              { timestamp: 1000, value: 100 },
-              { timestamp: 2000, value: 200 },
-            ],
-            status: 'connected',
-          },
-        ],
-      ]);
-      const { container } = render(
-        <LineChartPanel
-          panelId="p1"
-          config={{
-            channels: [{ name: 'temp_a' }, { name: 'temp_b' }],
-          }}
-        />,
-      );
-      const lines = container.querySelectorAll('.recharts-line');
-      expect(lines.length).toBe(2);
-      const keys = Array.from(lines).map((l) => l.getAttribute('data-line-key'));
-      expect(keys).toContain('temp_a');
-      expect(keys).toContain('temp_b');
-    });
-
-    it('channels alias 가 라인 키로 사용', () => {
-      multiMockResult.current.channels = new Map([
-        [
-          'temp_a',
-          {
-            entries: [{ timestamp: 1000, value: 10 }],
-            status: 'connected',
-          },
-        ],
-      ]);
-      const { container } = render(
-        <LineChartPanel
-          panelId="p1"
-          config={{
-            channels: [{ name: 'temp_a', alias: 'Living Room' }],
-          }}
-        />,
-      );
-      const lines = container.querySelectorAll('.recharts-line');
-      expect(lines[0]!.getAttribute('data-line-key')).toBe('Living Room');
-    });
-
-    it('채널마다 다른 display_field 적용', () => {
-      multiMockResult.current.channels = new Map([
-        [
-          'sensor_a',
-          {
-            entries: [{ timestamp: 1000, value: { temp: 10, humid: 50 } }],
-            status: 'connected',
-          },
-        ],
-        [
-          'sensor_b',
-          {
-            entries: [{ timestamp: 1000, value: { temp: 20, humid: 60 } }],
-            status: 'connected',
-          },
-        ],
-      ]);
-      render(
-        <LineChartPanel
-          panelId="p1"
-          config={{
-            channels: [
-              { name: 'sensor_a', display_field: 'value.temp' },
-              { name: 'sensor_b', display_field: 'value.humid' },
-            ],
-          }}
-        />,
-      );
-      const rows = JSON.parse(
-        screen.getByTestId('rc-line-chart').getAttribute('data-rows')!,
-      ) as Array<Record<string, unknown>>;
-      expect(rows[0]!.sensor_a).toBe(10);
-      expect(rows[0]!.sensor_b).toBe(60);
-    });
-
-    it('channels × multi_series_field 조합: alias::label 키', () => {
-      multiMockResult.current.channels = new Map([
-        [
-          'flow_a',
-          {
-            entries: [
-              { timestamp: 1000, value: 10, labels: { room: 'X' } },
-              { timestamp: 1000, value: 11, labels: { room: 'Y' } },
-            ],
-            status: 'connected',
-          },
-        ],
-        [
-          'flow_b',
-          {
-            entries: [
-              { timestamp: 1000, value: 20, labels: { room: 'X' } },
-            ],
-            status: 'connected',
-          },
-        ],
-      ]);
-      const { container } = render(
-        <LineChartPanel
-          panelId="p1"
-          config={{
-            channels: [
-              { name: 'flow_a', alias: 'A' },
-              { name: 'flow_b', alias: 'B' },
-            ],
-            multi_series_field: 'labels.room',
-          }}
-        />,
-      );
-      const lines = container.querySelectorAll('.recharts-line');
-      const keys = Array.from(lines)
-        .map((l) => l.getAttribute('data-line-key'))
-        .sort();
-      expect(keys).toEqual(['A::X', 'A::Y', 'B::X']);
-    });
-
-    it('channels 지정 시 channel_name 무시', () => {
-      // channel_name 으로는 데이터 있지만 channels 가 우선
-      mockResult.current.entries = [{ timestamp: 1000, value: 999 }];
-      multiMockResult.current.channels = new Map([
-        [
-          'a',
-          { entries: [{ timestamp: 1000, value: 10 }], status: 'connected' },
-        ],
-      ]);
-      const { container } = render(
-        <LineChartPanel
-          panelId="p1"
-          config={{
-            channel_name: 'IGNORED',
-            channels: [{ name: 'a' }],
-          }}
-        />,
-      );
-      const lines = container.querySelectorAll('.recharts-line');
-      const keys = Array.from(lines).map((l) => l.getAttribute('data-line-key'));
-      expect(keys).toEqual(['a']);
-      expect(keys).not.toContain('value');
-    });
-
-    it('빈 channels 배열: 단일 모드로 fallback', () => {
-      mockResult.current.entries = [{ timestamp: 1000, value: 5 }];
-      const { container } = render(
-        <LineChartPanel
-          panelId="p1"
-          config={{ channel_name: 'fallback', channels: [] }}
-        />,
-      );
-      const lines = container.querySelectorAll('.recharts-line');
-      expect(lines.length).toBe(1);
-      expect(lines[0]!.getAttribute('data-line-key')).toBe('value');
-    });
-
-    it('범례가 항상 렌더 — 채널 상태 dot 포함', () => {
-      multiMockResult.current.channels = new Map([
-        ['a', { entries: [{ timestamp: 1000, value: 10 }], status: 'connected' }],
-        ['b', { entries: [{ timestamp: 1000, value: 20 }], status: 'closed', closedReason: 'flow_undeployed' }],
-      ]);
-      render(
-        <LineChartPanel
-          panelId="p1"
-          config={{
-            channels: [
-              { name: 'a', alias: 'A' },
-              { name: 'b', alias: 'B' },
-            ],
-          }}
-        />,
-      );
-      expect(screen.getByTestId('line-chart-legend')).toBeInTheDocument();
-      expect(screen.getByTestId('line-chart-channel-status-a')).toBeInTheDocument();
-      expect(screen.getByTestId('line-chart-channel-status-b')).toBeInTheDocument();
-    });
-
-    it('단일 채널 모드에서도 범례 렌더', () => {
-      mockResult.current.entries = [{ timestamp: 1000, value: 5 }];
-      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
-      expect(screen.getByTestId('line-chart-legend')).toBeInTheDocument();
-    });
-
-    it('범례 마지막값: boolean 시리즈는 true/false 로 표시(0.0 아님)', () => {
-      mockResult.current.entries = [
-        { timestamp: 1000, value: true },
-        { timestamp: 2000, value: false },
-      ];
-      render(
-        <LineChartPanel
-          panelId="p1"
-          config={{ channel_name: 'c', legend: { show_last_value: true } }}
-        />,
-      );
-      const legend = screen.getByTestId('line-chart-legend');
-      expect(legend.textContent).toContain('false');
-      expect(legend.textContent).not.toContain('0.0');
-    });
-
-    it('범례 마지막값: 열거형 축은 라벨로 표시(원시 숫자 아님)', () => {
-      mockResult.current.entries = [
-        { timestamp: 1000, value: 0 },
-        { timestamp: 2000, value: 1 },
-      ];
-      render(
-        <LineChartPanel
-          panelId="p1"
-          config={{
-            channel_name: 'c',
-            legend: { show_last_value: true },
-            y_axis_type: 'enum',
-            y_enum_labels: [
-              { value: 0, label: 'off' },
-              { value: 1, label: 'on' },
-            ],
-          }}
-        />,
-      );
-      const legend = screen.getByTestId('line-chart-legend');
-      expect(legend.textContent).toContain('on');
-      expect(legend.textContent).not.toContain('1.0');
-    });
-
-    it('한 채널이라도 critical 임계 초과면 깜빡임', () => {
-      multiMockResult.current.channels = new Map([
-        [
-          'a',
-          {
-            entries: [{ timestamp: 1000, value: 10 }],
-            status: 'connected',
-          },
-        ],
-        [
-          'b',
-          {
-            entries: [{ timestamp: 1000, value: 150 }], // critical 초과
-            status: 'connected',
-          },
-        ],
-      ]);
-      render(
-        <LineChartPanel
-          panelId="p1"
-          config={{
-            channels: [{ name: 'a' }, { name: 'b' }],
-            y_thresholds: [{ value: 100, severity: 'critical' }],
-          }}
-        />,
-      );
-      const wrapper = screen.getByTestId('line-chart-container').parentElement!;
-      expect(wrapper.className).toMatch(/animate-pulse/);
-    });
-  });
-
   // --- CSV 내보내기 ---
   describe('csv export', () => {
     it('CSV 내보내기 버튼이 헤더에 렌더', () => {
@@ -1014,12 +489,13 @@ describe('LineChartPanel', () => {
       expect(screen.getByTestId('line-chart-csv-button')).toBeInTheDocument();
     });
 
-    it('CSV 버튼 클릭 시 downloadCsv 가 채널명+timestamp 파일명으로 호출', () => {
+    // 파일 이름의 출처가 바뀌었다 — 채널 이름이 사라졌으므로 패널 제목을 쓴다.
+    it('CSV 버튼 클릭 시 downloadCsv 가 패널 제목+timestamp 파일명으로 호출', () => {
       mockResult.current.entries = [
         { timestamp: 1000, value: 10 },
         { timestamp: 2000, value: 20 },
       ];
-      render(<LineChartPanel panelId="p1" config={{ channel_name: 'temp_a' }} />);
+      render(<LineChartPanel panelId="p1" title="temp_a" config={{}} />);
       act(() => {
         fireEvent.click(screen.getByTestId('line-chart-csv-button'));
       });
@@ -1031,34 +507,26 @@ describe('LineChartPanel', () => {
       expect(filename).toMatch(/^temp_a-.*\.csv$/);
     });
 
-    it('CSV 버튼: entries 비었을 때도 헤더만 포함된 CSV 다운로드', () => {
-      mockResult.current.entries = [];
-      render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+    it('제목이 없으면 기본 파일 이름으로 떨어진다', () => {
+      mockResult.current.entries = [{ timestamp: 1000, value: 10 }];
+      render(<LineChartPanel panelId="p1" config={{}} />);
       act(() => {
         fireEvent.click(screen.getByTestId('line-chart-csv-button'));
       });
-      const [csv] = csvMocks.downloadCsv.mock.calls[0]!;
-      expect(csv.trim()).toBe('timestamp,iso,value');
+      const [, filename] = csvMocks.downloadCsv.mock.calls[0]!;
+      expect(filename).toMatch(/^chart-.*\.csv$/);
     });
 
-    it('multi_series 적용 시 시리즈 컬럼 모두 포함', () => {
-      mockResult.current.entries = [
-        { timestamp: 1000, value: 10, labels: { room: 'A' } },
-        { timestamp: 1000, value: 20, labels: { room: 'B' } },
-      ];
-      render(
-        <LineChartPanel
-          panelId="p1"
-          config={{ channel_name: 'c', multi_series_field: 'labels.room' }}
-        />,
-      );
+    // 컬럼은 **그려진 시리즈**가 정한다. 채널 시절에는 줄이 없어도 `value` 한 칸이
+    // 고정으로 있었지만, 시리즈 소스는 이름을 결과에서 얻으므로 빈 결과면 칸도 없다.
+    it('CSV 버튼: 그릴 시리즈가 없으면 시간 컬럼만 나온다', () => {
+      mockResult.current.entries = [];
+      render(<LineChartPanel panelId="p1" config={{}} />);
       act(() => {
         fireEvent.click(screen.getByTestId('line-chart-csv-button'));
       });
       const [csv] = csvMocks.downloadCsv.mock.calls[0]!;
-      const header = csv.split('\n')[0]!;
-      expect(header).toContain('A');
-      expect(header).toContain('B');
+      expect(csv.trim()).toBe('timestamp,iso');
     });
   });
 
@@ -1180,91 +648,3 @@ describe('LineChartPanel', () => {
 //
 // @spec SPEC-TSDB-002 §2.3 (U3) · §2.4 (U4) — plan.md §3.1 CT-01 ~ CT-05 / AC-09
 // ---------------------------------------------------------------------------
-describe('LineChartPanel 소스 활성 판정 특성화 (SPEC-TSDB-002 M2, CT-01~CT-05)', () => {
-  /** store 훅이 마지막으로 받은 (소스, 활성) 쌍. */
-  function lastStoreCall(): { source: unknown; enabled: unknown } {
-    return hookCalls.store.at(-1)!;
-  }
-
-  beforeEach(() => {
-    hookCalls.channel = [];
-    hookCalls.channels = [];
-    hookCalls.store = [];
-    mockResult.current = {
-      entries: [{ timestamp: 1000, value: 11 }],
-      status: 'connected',
-      closedReason: undefined,
-      errorReason: undefined,
-    };
-    multiMockResult.current = { channels: new Map() };
-    storeMockResult.current = {
-      entries: [],
-      // store 경로가 실제로 선택됐을 때만 나타나는 표식 시리즈.
-      seriesEntries: new Map([['StoreOnly', [{ timestamp: 1000, value: 99 }]]]),
-      seriesStyles: new Map(),
-      seriesNames: ['StoreOnly'],
-      booleanSeries: new Set(),
-      status: 'connected',
-      closedReason: undefined,
-      errorReason: undefined,
-    };
-  });
-
-  /** store 표식 시리즈가 라인으로 그려졌는가 = store 경로를 탔는가. */
-  function storeLineRendered(): boolean {
-    return screen
-      .queryAllByTestId('rc-line')
-      .some((l) => l.getAttribute('data-line-key') === 'StoreOnly');
-  }
-
-  it('CT-01: config 가 비어 있으면 채널 경로다(store 훅은 idle)', () => {
-    render(<LineChartPanel panelId="p1" config={{}} />);
-    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
-    expect(storeLineRendered()).toBe(false);
-  });
-
-  it("CT-02: data_source:'channel' 이면 채널 경로다", () => {
-    render(<LineChartPanel panelId="p1" config={{ data_source: 'channel', channel_name: 'c1' }} />);
-    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
-    expect(hookCalls.channel).toContain('c1');
-    expect(storeLineRendered()).toBe(false);
-  });
-
-  it("CT-03: data_source:'store' 인데 store_source 가 없으면 채널 경로로 폴백한다", () => {
-    render(<LineChartPanel panelId="p1" config={{ data_source: 'store', channel_name: 'c1' }} />);
-    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
-    expect(hookCalls.channel).toContain('c1');
-    expect(storeLineRendered()).toBe(false);
-  });
-
-  it("CT-04: data_source:'store' + 시리즈 0개면 채널 경로로 폴백한다", () => {
-    render(
-      <LineChartPanel
-        panelId="p1"
-        config={{
-          data_source: 'store',
-          channel_name: 'c1',
-          store_source: { agent_name: 'store-1', series: [] },
-        }}
-      />,
-    );
-    expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
-    expect(hookCalls.channel).toContain('c1');
-    expect(storeLineRendered()).toBe(false);
-  });
-
-  it("CT-05: data_source:'store' + 시리즈 N개면 store 경로다", () => {
-    const store_source = { agent_name: 'store-1', series: [{ key: 'k1' }] };
-    render(
-      <LineChartPanel
-        panelId="p1"
-        config={{ data_source: 'store', channel_name: 'c1', store_source }}
-      />,
-    );
-    // store 훅에 **config.store_source 그 자체**가 전달된다(파생 소스가 아니다).
-    expect(lastStoreCall()).toEqual({ source: store_source, enabled: true });
-    // 채널 훅은 비활성(undefined)으로 호출된다 — 훅 규칙상 호출 자체는 유지된다.
-    expect(hookCalls.channel).toContain(undefined);
-    expect(storeLineRendered()).toBe(true);
-  });
-});

@@ -6,7 +6,7 @@
 
 import { useMemo, type ReactNode } from 'react';
 
-import { PanelChromeContext } from './panelChromeContext';
+import { PanelChromeContext, resolvePanelTitleStyle } from './panelChromeContext';
 
 /** 패널 하나를 감싸 크롬 옵션을 그 안쪽 전체에 전파한다. */
 export function PanelChromeProvider({
@@ -17,6 +17,10 @@ export function PanelChromeProvider({
   children: ReactNode;
 }) {
   const showTitle = config?.showTitle !== false;
-  const value = useMemo(() => ({ showTitle }), [showTitle]);
+  const titleFont = config?.title_font;
+  const value = useMemo(
+    () => ({ showTitle, titleStyle: resolvePanelTitleStyle(titleFont) }),
+    [showTitle, titleFont],
+  );
   return <PanelChromeContext.Provider value={value}>{children}</PanelChromeContext.Provider>;
 }

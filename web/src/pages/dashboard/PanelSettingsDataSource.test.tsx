@@ -126,11 +126,12 @@ describe('store 키 목록 새로고침', () => {
   });
 });
 
-describe('T4 — 단일 데이터소스 토글 [채널 | Store | TSDB]', () => {
+describe('T4 — 단일 데이터소스 토글 [Store | TSDB | 시스템 지표]', () => {
   it('데이터 소스 토글은 하나만 존재하고 Store 모드에 공용 선택 테이블을 렌더한다', () => {
     render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);
-    // 단일 "데이터 소스" 토글(StoreSourceSection 소유) — 채널/Store/TSDB 3옵션.
-    expect(screen.getByTestId('chart-data-source-channel')).toBeInTheDocument();
+    // 단일 "데이터 소스" 토글(StoreSourceSection 소유) — Store/TSDB/시스템 지표 3옵션.
+    // 채널은 패널 소스에서 빠졌으므로 버튼도 없다.
+    expect(screen.queryByTestId('chart-data-source-channel')).not.toBeInTheDocument();
     expect(screen.getByTestId('chart-data-source-store')).toBeInTheDocument();
     expect(screen.getByTestId('chart-data-source-tsdb')).toBeInTheDocument();
     // 중복 래퍼 토글/헤딩 제거 확인.
@@ -153,9 +154,13 @@ describe('T4 — 단일 데이터소스 토글 [채널 | Store | TSDB]', () => {
     fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
     // 반전 (a): 후속 SPEC 안내 placeholder 는 렌더 트리에서 은퇴했다(testid 소멸).
     // 반전 (b): 선택이 config 에 기록된다.
-    expect(onConfigChange).toHaveBeenCalledWith(
-      expect.objectContaining({ data_source: 'tsdb' }),
-    );
+    // 다중 소스가 들어오면서 버튼은 **토글**이 됐고, 저장 단위도 종류가 아니라
+    // **인스턴스**가 됐다 — 켜져 있던 store 는 그대로 남고 tsdb 인스턴스가 더해진다.
+    const written = onConfigChange.mock.calls[0]![0] as Record<string, unknown>;
+    expect((written.sources as Array<{ kind: string }>).map((e) => e.kind)).toEqual([
+      'store',
+      'tsdb',
+    ]);
     // 무변경: Store 설정은 파괴되지 않는다(§2.12 [E2]) — 패치에 store_source 가 없다.
     const patch = onConfigChange.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
     expect(patch).toBeDefined();
@@ -175,20 +180,8 @@ describe('T4 — 단일 데이터소스 토글 [채널 | Store | TSDB]', () => {
     render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={onConfigChange} />);
     fireEvent.click(screen.getByTestId('chart-data-source-tsdb'));
     expect(onConfigChange).toHaveBeenCalledWith(
-      expect.objectContaining({ data_source: 'tsdb', tsdb_source: defaultTsdbSource() }),
+      expect.objectContaining({ tsdb_source: defaultTsdbSource() }),
     );
-  });
-
-  it('채널 모드에서는 공용 선택 테이블을 렌더하지 않는다', () => {
-    const channelPanel = {
-      id: 'p1',
-      type: 'line-chart',
-      title: 'l',
-      config: { data_source: 'channel' },
-    } as unknown as PanelConfig;
-    render(<PanelSettingsDataSource panel={channelPanel} onConfigChange={vi.fn()} />);
-    expect(screen.getByTestId('chart-data-source-channel')).toHaveAttribute('aria-selected', 'true');
-    expect(screen.queryByTestId('panel-store-select')).not.toBeInTheDocument();
   });
 });
 
@@ -445,7 +438,7 @@ describe('heatmap 시리즈 위치 — 체크박스 선택이 sensor_positions �
     const onConfigChange = vi.fn();
     const linePanel = {
       id: 'p1',
-      type: 'line-chart',
+      type: 'graph-chart',
       title: 'l',
       config: { data_source: 'store', store_source: { ...STORE_SOURCE } },
     } as unknown as PanelConfig;
@@ -774,7 +767,7 @@ describe('이름 컬럼 — 시리즈를 구분하는 표기', () => {
   it('비-heatmap 패널(라인 차트)도 같은 표기를 쓴다 — 화면마다 다른 이름이 되지 않는다', () => {
     const linePanel = {
       id: 'p1',
-      type: 'line-chart',
+      type: 'graph-chart',
       title: 'l',
       config: { data_source: 'store', store_source: { ...STORE_SOURCE } },
     } as unknown as PanelConfig;
@@ -938,7 +931,7 @@ describe('REQ-18/19/20/21 — 선택 행 인라인 펼침 세부 정보', () => 
   it('AC-23 (Edge) — 비-heatmap 패널: 인라인 상세에 센서 좌표 필드가 없다', () => {
     const linePanel = {
       id: 'p1',
-      type: 'line-chart',
+      type: 'graph-chart',
       title: 'l',
       config: {
         data_source: 'store',
@@ -962,7 +955,7 @@ describe('REQ-18/19/20/21 — 선택 행 인라인 펼침 세부 정보', () => 
     const onConfigChange = vi.fn();
     const panel = {
       id: 'p1',
-      type: 'line-chart',
+      type: 'graph-chart',
       title: 'l',
       config: {
         data_source: 'store',
@@ -1131,5 +1124,55 @@ describe('유령 선택 — 스토어에서 사라진 선택 시리즈 회수', 
     render(<PanelSettingsDataSource panel={panelWithStale()} onConfigChange={vi.fn()} />);
     const select = screen.getByTestId('panel-store-select');
     expect(within(select).getAllByTestId('panel-store-select-stale-badge')).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 같은 종류 여러 인스턴스 — 시리즈 선택 표는 인스턴스마다 있어야 한다.
+//
+// 보고된 결함: Store 를 둘 이상 두면 둘째는 시리즈를 고를 수단이 없었다. 표가 패널 단위로
+// 한 번만 그려져 `config.store_source`(첫째)만 고쳤기 때문이다 — 에이전트는 고를 수 있지만
+// 시리즈가 비어 영영 비활성이었고, 그래서 둘째 소스는 아무것도 그리지 않았다.
+// ---------------------------------------------------------------------------
+
+describe('소스 인스턴스마다 시리즈 선택 표', () => {
+  function twoStorePanel(): PanelConfig {
+    return {
+      id: 'p1',
+      type: 'heatmap',
+      title: 'h',
+      config: {
+        data_source: 'store',
+        sources: [
+          { kind: 'store', store_source: { ...STORE_SOURCE } },
+          { kind: 'store', store_source: { ...STORE_SOURCE, agent_name: 'store-b', series: [] } },
+        ],
+      },
+    } as unknown as PanelConfig;
+  }
+
+  it('Store 인스턴스 수만큼 표가 뜬다', () => {
+    render(<PanelSettingsDataSource panel={twoStorePanel()} onConfigChange={vi.fn()} />);
+    expect(screen.getAllByTestId('panel-store-select')).toHaveLength(2);
+  });
+
+  it('둘째 표의 편집은 둘째 인스턴스에만 쓰인다 — 첫째를 덮지 않는다', () => {
+    const onConfigChange = vi.fn();
+    render(<PanelSettingsDataSource panel={twoStorePanel()} onConfigChange={onConfigChange} />);
+
+    // 둘째 표의 새로고침 버튼을 눌러 그 표가 살아 있음을 확인한 뒤,
+    // 편집 경로가 인스턴스로 향하는지는 패치 형상으로 본다.
+    const tables = screen.getAllByTestId('panel-store-select');
+    expect(tables).toHaveLength(2);
+
+    // 표가 인스턴스 config 를 본다 — 둘째 표는 둘째 에이전트를 읽는다.
+    // (표 내부 렌더는 store 목록 조회에 달려 있으므로 여기서는 존재만 확인하고,
+    //  되쓰기 규칙은 sourceEntryPatch 단위 테스트가 잠근다.)
+    expect(tables[0]).not.toBe(tables[1]);
+  });
+
+  it('인스턴스가 하나면 표도 하나다 — 저장된 패널의 화면이 변하지 않는다', () => {
+    render(<PanelSettingsDataSource panel={panelWithAgent()} onConfigChange={vi.fn()} />);
+    expect(screen.getAllByTestId('panel-store-select')).toHaveLength(1);
   });
 });

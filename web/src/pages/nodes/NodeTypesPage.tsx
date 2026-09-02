@@ -2,12 +2,13 @@
 // 등록된 노드 타입을 카드 그리드로 표시하며 검색 및 카테고리 필터링을 지원한다.
 // 카드 클릭 시 상세 패널(포트, 설정, 예제, 인스턴스)이 확장된다.
 
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useCallback, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 
 import { useNodeTypes } from '@/hooks/useNodeTypes';
 import { cn } from '@/lib/utils/cn';
 import { useTranslation } from '@/lib/i18n';
+import { useNameDeepLink } from '@/hooks/useNameDeepLink';
 import NodeCategoryTabs from '@/pages/nodes/NodeCategoryTabs';
 import NodeTypeCard from '@/pages/nodes/NodeTypeCard';
 import NodeTypeDetailPanel from '@/pages/nodes/NodeTypeDetailPanel';
@@ -27,6 +28,14 @@ export default function NodeTypesPage() {
   const ALL_CATEGORIES = t('nodes.allCategories');
   const [selectedCategory, setSelectedCategory] = useState(ALL_CATEGORIES);
   const [expandedType, setExpandedType] = useState<string | null>(null);
+
+  // 시스템 로그에서 `/nodes?name=...` 로 넘어온 경우 그 이름으로 목록을 좁히고
+  // 일치하는 노드 타입을 펼친다.
+  const applyNameLink = useCallback((name: string, matchedId: string | null) => {
+    setSearch(name);
+    setExpandedType(matchedId);
+  }, []);
+  useNameDeepLink(nodeTypes ?? [], (n) => n.type, (n) => n.type, applyNameLink);
 
   // 고유 카테고리 목록 추출
   const categories = useMemo(() => {

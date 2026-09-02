@@ -33,7 +33,7 @@ export type ConfigSection = 'transport' | 'protocol' | 'operation' | 'logging';
  */
 export interface ConfigField {
   name: string;
-  type: 'string' | 'multiline' | 'number' | 'boolean' | 'select' | 'object' | 'object_fields' | 'string_list' | 'agent_select' | 'flow_picker' | 'register_map' | 'modbus_devices' | 'modbus_server_devices' | 'modbus_write_ops' | 'modbus_read_ops' | 'modbus_control_ops' | 'modbus_remap' | 'transform_pipeline' | 'key_value_map' | 'typed_key_value_map' | 'trigger_schedules' | 'compare_fields' | 'routes_editor';
+  type: 'string' | 'multiline' | 'number' | 'boolean' | 'select' | 'object' | 'object_fields' | 'string_list' | 'sysresource_select' | 'agent_select' | 'flow_picker' | 'register_map' | 'modbus_devices' | 'modbus_server_devices' | 'modbus_write_ops' | 'modbus_read_ops' | 'modbus_control_ops' | 'modbus_remap' | 'transform_pipeline' | 'key_value_map' | 'typed_key_value_map' | 'trigger_schedules' | 'compare_fields' | 'routes_editor';
   label: string;
   required?: boolean;
   default?: unknown;
@@ -54,6 +54,11 @@ export interface ConfigField {
   /** 복수 조건 OR 표시(하나라도 만족 시 표시). visibleWhen 과 함께 쓰면 둘 다 만족(AND).
    *  단일 필드 visibleWhen 으로 표현할 수 없는 "A 이거나 B" 노출에 사용한다. */
   visibleWhenAny?: VisibleWhenCond[];
+  /** 다른 필드 값에 따라 조건부 필수.
+   *  설정 시 required 대신 이 조건이 필수 여부를 결정한다(조건 불만족이면 선택 필드).
+   *  같은 필드가 어떤 모드에서는 필수, 다른 모드에서는 기본값이 있는 선택 필드인 경우에 쓴다
+   *  (예: storage-write 의 measurement — fields 필수 / auto 선택). */
+  requiredWhen?: VisibleWhenCond;
   /** true 이면 고급 설정 섹션으로 분리되어 기본 접힘 상태로 표시된다. */
   advanced?: boolean;
   /** HVACR 4-quadrant 레이아웃에서 어느 분면에 속하는지를 지정한다.
@@ -67,6 +72,8 @@ export interface ConfigField {
   /** 일반 문자열(string) 입력의 placeholder 오버라이드.
    *  미지정 시 기존 동작(default 값을 placeholder 로 표시)을 그대로 유지한다. */
   placeholder?: string;
+  /** sysresource_select 전용: 어떤 축의 목록을 고를지(마운트/장치/인터페이스). */
+  resourceKind?: 'mountpoints' | 'devices' | 'interfaces';
   /** key_value_map 의 "키" 컬럼 헤더 오버라이드. 미지정 시 "키". */
   keyLabel?: string;
   /** key_value_map 의 "값" 컬럼 헤더 오버라이드. 미지정 시 "값". */
@@ -112,6 +119,19 @@ export function isFieldVisible(
     return false;
   }
   return true;
+}
+
+/**
+ * 필드의 필수 여부를 평가한다.
+ * - requiredWhen 설정 시: 그 조건이 만족될 때만 필수(required 플래그는 무시).
+ * - 미설정 시: required 플래그를 그대로 따른다.
+ */
+export function isFieldRequired(
+  field: { required?: boolean; requiredWhen?: VisibleWhenCond },
+  data: Record<string, unknown>,
+): boolean {
+  if (field.requiredWhen) return matchVisibleCond(field.requiredWhen, data);
+  return field.required === true;
 }
 
 /**

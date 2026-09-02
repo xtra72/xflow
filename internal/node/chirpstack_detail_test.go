@@ -115,7 +115,7 @@ func TestChirpStackDetail_DefaultKeepsFullGroups(t *testing.T) {
 	}
 
 	wantGroup(t, msg, "agent", map[string]string{
-		"type": "chirpstack", "id": "fake-cs-id", "name": "fake-cs",
+		"type": "chirpstack-client", "id": "fake-cs-id", "name": "fake-cs",
 	})
 	wantGroup(t, msg, "device", map[string]string{
 		"id": wantUID, "name": csDetailDevLabel, "type": csDetailDevType, "dev_eui": csDetailDevEui,
@@ -203,7 +203,7 @@ func TestChirpStackDetail_MetadataGolden(t *testing.T) {
   "agent": {
     "id": "fake-cs-id",
     "name": "fake-cs",
-    "type": "chirpstack"
+    "type": "chirpstack-client"
   },
   "device": {
     "dev_eui": "24e124141d180806",
@@ -537,7 +537,7 @@ func TestChirpStackDetail_ControlNodeDefault(t *testing.T) {
 		t.Fatalf("Process: %v", err)
 	}
 	wantGroup(t, out[0], "agent", map[string]string{
-		"type": "chirpstack", "id": "fake-cs-id", "name": "fake-cs",
+		"type": "chirpstack-client", "id": "fake-cs-id", "name": "fake-cs",
 	})
 }
 
@@ -624,7 +624,7 @@ func TestChirpStackDetail_SharedHelpersUnaffected(t *testing.T) {
 			emitAgentGroup(msg, csDetailAgent(), tc.opts)
 			// 공유 헬퍼는 축소하지 않는다 — chirpstack 노드가 아니면 전체 그룹.
 			wantGroup(t, msg, "agent", map[string]string{
-				"type": "chirpstack", "id": "fake-cs-id", "name": "fake-cs",
+				"type": "chirpstack-client", "id": "fake-cs-id", "name": "fake-cs",
 			})
 
 			mergeDeviceGroup(msg, tc.opts, "WS301", "dev-uuid", "라벨")
@@ -649,7 +649,7 @@ func TestChirpStackDetail_MQTTNodeMetadataUnchanged(t *testing.T) {
 	emitAgentGroup(msg, csDetailAgent(), cfg.EmitMetadata)
 
 	wantGroup(t, msg, "agent", map[string]string{
-		"type": "chirpstack", "id": "fake-cs-id", "name": "fake-cs",
+		"type": "chirpstack-client", "id": "fake-cs-id", "name": "fake-cs",
 	})
 	if v, _ := msg.Metadata().Get("node_id"); v != "mqtt-1" {
 		t.Errorf("metadata.node_id = %q, want mqtt-1", v)

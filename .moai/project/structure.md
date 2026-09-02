@@ -741,6 +741,19 @@ MVP IDW 보간 격자를 재사용해 marching squares 로 등치선(iso-line)�
 - `web/src/pages/dashboard/panels/heatmap/ContourLayer.tsx`: 격자 + contour config → `computeContours` → SVG `<path>` 오버레이(viewBox 0..1 + `preserveAspectRatio=none` 로 리사이즈 정합). field 참조 `useMemo`, 선 스타일(색/두께/dash) + 등치값 `<text>` 라벨. 커버리지 100%.
 - 확장: `heatmapConfig.ts`(`contour` 하위호환 additive 파싱, 미설정 `undefined`/기본 enabled=false), `HeatmapCanvas.tsx`(격자 계산 상위 상승 리팩터 — `field`/`gridW`/`gridH`/`hasData` props consume, 행위 보존·기존 테스트 통과), `HeatmapPanel.tsx`(`interpolateIDW` `useMemo` 상승 + `ContourLayer` z-15 마운트 — 히트맵 z10 위·마커 z20 아래), `PanelSettingsDialog.tsx`(등고선 섹션). i18n `lib/i18n/{ko,en}.json`(+8키). 신규 순수 코드 커버리지 95%+, LSP 0, 회귀 2836 tests 통과. 렌더 방식은 canvas stroke 아닌 SVG `<path>` 채택(오케스트레이터 확정). 후속: 라벨 충돌 회피(향후 SPEC).
 
+**히트맵 좌표계·배치 편집 결함 수정 + 범례 직접 조작** (SPEC 없음 — 사용자 보고 기반 연속 수정, 프론트엔드 전용, 신규 백엔드 0, 신규 의존성 0):
+
+003 까지 쌓인 히트맵 패널에서 "센서가 도면 위 제자리에 있지 않다" 는 계열 결함을 끝까지 추적해 고친 묶음. 표면 증상은 여럿이었지만 **좌표 공간이 어긋나는 한 축**과 **도면 종횡비를 못 구하는 한 축**으로 수렴한다.
+
+- **좌표 키 공간 일치**: 마커 화이트리스트를 `store_source.series` 파생 키로만 두면 조회 결과 키 공간(TSDB·sysmetrics 소스, 또는 컬럼↔series 수 불일치)과 어긋나, 배치한 좌표가 저장되자마자 마커에서 걸러져 사라졌다. 화이트리스트를 refs 파생 키 ∪ `resolved.ids` 합집합으로 바꿨다(`HeatmapPanel.tsx`).
+- **미배치 팔레트의 판독값 독립**: 미배치 목록을 `joinSensorPoints`(최신 유한값 필요)에서 가져와 값이 없으면 배치 자체가 불가능했다. "바인딩된 센서 중 좌표 없는 것" 으로 바꿔 마커(placed)와 같은 규칙을 쓴다.
+- **포인터 우선순위**: 마커 오버레이(z-24)를 도면 이동 오버레이(z-22) 위로 올리고, 마커 오버레이 루트는 유휴 시 `pointer-events-none`·드래그 중 `auto` 로 토글한다 — 빈 자리 누름은 도면 이동으로 내려보내면서 마커를 잡으면 마커가 움직인다(`SensorPlacementOverlay.tsx`).
+- **레거시 좌표 승격 1회 고정**: `sensor_space` 미지정 좌표는 "패널 본문의 몇 %" 라 도면 레터박스를 모른다. 렌더마다 재환산하면 패널 종횡비가 바뀔 때마다 마커가 미끄러지므로, 첫 실측에 고정하고 대시보드 경로에서만 `sensor_space:'stage'` 로 승격 기록한다(설정 미리보기는 실측 기준이 달라 권위 없음).
+- **도면 종횡비 확보 3단**: config 저장값 → `onLoad` → **마운트 시점 `complete` 확인**(캐시된 이미지는 load 이벤트가 오지 않는다). 한 번 읽으면 `floor_plans[0].natural_width/height` 로 영속해 다음 세션은 첫 페인트부터 맞는다. 종횡비 미상 동안에는 레거시 승격을 보류한다(그때의 환산은 항등이라 잘못된 좌표가 굳는다).
+- `web/src/pages/dashboard/panels/heatmap/svgAsset.ts` (**신규 순수 모듈**): SVG 도면 전용. SVG 는 문서 안의 `preserveAspectRatio` 가 CSS `object-fit` 을 이겨 "늘려서 채우기" 가 먹지 않고, 크기 미기재 SVG 는 `naturalWidth/Height` 가 대체 요소 기본값이라 종횡비도 틀어진다. 종횡비를 `viewBox`(폴백 width/height)에서 직접 읽고, stretch 시 루트 `<svg>` 의 `preserveAspectRatio` 를 `none` 으로 바꾼 data-URL 로 갈아 끼운다. **인라인이 아니라 data-URL 재작성** — 계속 `<img>` 로 그려 사용자 SVG 안의 스크립트 실행을 막는다.
+- **범례 직접 조작**(`HeatmapLegend.tsx` + `heatmapConfig.ts`): 4모서리·S/M/L 드롭박스를 걷어내고 자리는 본문 드래그, 크기는 모서리 손잡이 드래그로 정한다(`bar_length`/`bar_thickness`, 죔 24~600 / 4~80px). `position`/`size` 는 이미 저장된 패널의 파생 원본으로만 남는다. 눈금 라벨 상자에 실제 크기를 줘 배경이 라벨을 감싸게 하고, 양 끝 라벨은 가운데 정렬을 버려 막대 범위 안에 유지한다. 글자 크기·색(`font_size`/`font_color`)을 연다.
+- 회귀: 신규 테스트 파일 3종(`svgAsset.test.ts`, `HeatmapPanel.aspect.test.tsx`, `HeatmapPanel.resize.test.tsx`) + 기존 5종 확장. web 전체 378 files / 5923 tests 통과, `tsc --noEmit` 0, eslint 0 error.
+
 **신규 HTTP 엔드포인트** (SPEC-STORE-003):
 
 - `GET /api/v1/store/{name}/keys?tag=k:v`: 다중 AND 태그 필터 키 목록 (v0.1.0)

@@ -9,7 +9,7 @@ import { useTranslation } from '@/lib/i18n';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
-import { usePanelTitleVisible } from '../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 
 import { StatePropertiesSection } from '@/pages/devices/DeviceDetailPanel';
 
@@ -30,6 +30,7 @@ export default function SingleDevicePanel({
   onTitleChange: _onTitleChange,
 }: SingleDevicePanelProps) {
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
   const panelColor = config.panelColor as string | undefined;
@@ -59,7 +60,7 @@ export default function SingleDevicePanel({
       <div className="flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-4 shadow">
         {showTitle && (
           <div className="mb-2 flex shrink-0 items-center justify-between">
-            <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
+            <span className="truncate text-sm font-medium text-(--color-text-primary)" style={titleStyle}>{title}</span>
             <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-1 text-slate-400 dark:bg-slate-800 dark:text-slate-500">
               <Moon className="h-3.5 w-3.5" aria-label={t('dashboard.panel.loadingAria')} />
             </span>
@@ -102,7 +103,7 @@ export default function SingleDevicePanel({
         <div className="flex items-center gap-2">
           <span
             className="truncate text-sm font-medium text-(--color-text-primary)"
-            style={acColor('labels') ? { color: acColor('labels')! } : undefined}
+            style={{ ...(acColor('labels') ? { color: acColor('labels')! } : undefined), ...titleStyle }}
           >
             {title}
           </span>

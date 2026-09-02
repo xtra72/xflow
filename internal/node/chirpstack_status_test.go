@@ -46,7 +46,7 @@ func (f *fakeCommStateAgent) Health() agent.HealthStatus          { return agent
 func (f *fakeCommStateAgent) Configure(_ agent.AgentConfig) error { return nil }
 func (f *fakeCommStateAgent) ID() string                          { return "fake-cs-status-id" }
 func (f *fakeCommStateAgent) Name() string                        { return "fake-cs-status" }
-func (f *fakeCommStateAgent) Type() string                        { return "chirpstack" }
+func (f *fakeCommStateAgent) Type() string                        { return "chirpstack-client" }
 func (f *fakeCommStateAgent) Info() agent.AgentInfo               { return agent.AgentInfo{} }
 func (f *fakeCommStateAgent) Stats() agent.StatsSnapshot          { return agent.StatsSnapshot{} }
 func (f *fakeCommStateAgent) Process(_ []byte) ([]byte, error)    { return nil, nil }

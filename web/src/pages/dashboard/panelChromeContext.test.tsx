@@ -4,7 +4,12 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 import { PanelChromeProvider } from './PanelChromeProvider';
-import { readPanelChrome, usePanelTitleVisible } from './panelChromeContext';
+import {
+  readPanelChrome,
+  resolvePanelTitleStyle,
+  usePanelTitleStyle,
+  usePanelTitleVisible,
+} from './panelChromeContext';
 
 function Probe() {
   return <span data-testid="probe">{usePanelTitleVisible() ? 'shown' : 'hidden'}</span>;
@@ -50,5 +55,64 @@ describe('usePanelTitleVisible', () => {
       </PanelChromeProvider>,
     );
     expect(screen.getByTestId('probe').textContent).toBe('hidden');
+  });
+});
+
+describe('resolvePanelTitleStyle', () => {
+  // 미설정이 `undefined` 인 것이 핵심이다. 각 패널의 타이틀은 Tailwind 클래스로 크기·굵기·
+  // 색을 이미 정해 두었고 인라인 스타일이 그것을 이긴다 — 빈 객체나 undefined 값을 가진
+  // 키를 넘기면 저장된 대시보드의 타이틀이 조용히 바뀐다.
+  it('미설정이면 undefined — 저장된 패널의 타이틀이 변하지 않는다', () => {
+    expect(resolvePanelTitleStyle(undefined)).toBeUndefined();
+    expect(resolvePanelTitleStyle({})).toBeUndefined();
+  });
+
+  it('지정한 항목만 넣는다', () => {
+    expect(resolvePanelTitleStyle({ size: 20 })).toEqual({ fontSize: '20px' });
+    expect(resolvePanelTitleStyle({ color: '#ff0000' })).toEqual({ color: '#ff0000' });
+    expect(resolvePanelTitleStyle({ weight: 'bold' })).toEqual({ fontWeight: 'bold' });
+  });
+
+  it('글꼴 토큰을 스택으로 편다', () => {
+    const style = resolvePanelTitleStyle({ family: 'mono' });
+    expect(style?.fontFamily).toContain('ui-monospace');
+  });
+
+  it('인식 불가 값은 넣지 않는다 — 임의 색으로 떨어뜨리면 어두운 배경에서 글자가 사라진다', () => {
+    expect(resolvePanelTitleStyle({ color: 'red', size: 0, family: 'comic' })).toBeUndefined();
+  });
+
+  it('키가 없는 스타일 객체를 만들지 않는다 — 뒤에 펼쳐 앞의 색을 지우면 안 된다', () => {
+    const style = resolvePanelTitleStyle({ size: 14 });
+    expect(Object.keys(style ?? {})).toEqual(['fontSize']);
+  });
+});
+
+function StyleProbe() {
+  const style = usePanelTitleStyle();
+  return <span data-testid="style-probe" style={style} />;
+}
+
+describe('usePanelTitleStyle', () => {
+  it('Provider 밖에서는 스타일이 없다 — 패널 단독 렌더가 그대로 동작한다', () => {
+    render(<StyleProbe />);
+    expect(screen.getByTestId('style-probe').getAttribute('style')).toBeNull();
+  });
+
+  it('Provider 가 config 의 title_font 를 전파한다', () => {
+    render(
+      <PanelChromeProvider config={{ title_font: { size: 18, weight: 'bold' } }}>
+        <StyleProbe />
+      </PanelChromeProvider>,
+    );
+    const style = screen.getByTestId('style-probe').getAttribute('style') ?? '';
+    expect(style).toContain('font-size: 18px');
+    expect(style).toContain('font-weight: bold');
+  });
+
+  it('readPanelChrome 도 같은 값을 만든다 — 두 경로가 갈리지 않는다', () => {
+    expect(readPanelChrome({ title_font: { size: 18 } }).titleStyle).toEqual(
+      resolvePanelTitleStyle({ size: 18 }),
+    );
   });
 });

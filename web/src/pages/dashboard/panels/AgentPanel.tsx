@@ -29,7 +29,7 @@ import {
   type PanelConfig,
 } from '@/stores/uiStore';
 import { startAgent, stopAgent, restartAgent } from '@/services/api/agentService';
-import { usePanelTitleVisible } from '../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 
 /** 전체 AgentColumnKey 기본 목록 */
 const ALL_AGENT_COLUMNS: AgentColumnKey[] = ['name', 'type', 'status', 'uptime', 'messages', 'actions'];
@@ -43,6 +43,7 @@ interface AgentPanelProps {
 export default function AgentPanel({ panelConfig }: AgentPanelProps) {
   const { t } = useTranslation();
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const queryClient = useQueryClient();
   const refreshMs = useUIStore((s) => s.dashboardRefreshInterval) * 1000;
 
@@ -246,7 +247,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
             <Bot className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
             <h3
               className="truncate text-lg font-semibold text-(--color-text-primary)"
-              style={acColor('header') ? { color: acColor('header')! } : undefined}
+              style={{ ...(acColor('header') ? { color: acColor('header')! } : undefined), ...titleStyle }}
             >
               {title}
             </h3>

@@ -454,3 +454,286 @@ func TestStorageWrite_Init_RequiresAgentRef(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "agent_ref")
 }
+
+// --- auto 모드 ---
+
+// TestStorageWrite_Configure_AutoModeNeedsNoMeasurement 는 auto 모드에서
+// measurement 를 비워 둘 수 있고, 비우면 기본 템플릿이 적용되는지 확인한다.
+func TestStorageWrite_Configure_AutoModeNeedsNoMeasurement(t *testing.T) {
+	n, err := NewStorageWriteNode(flow.NodeDef{ID: "sw", Type: "storage-write"})
+	require.NoError(t, err)
+
+	require.NoError(t, n.Configure(map[string]any{"payload_mode": "auto"}))
+	assert.Equal(t, defaultAutoMeasurement, n.(*StorageWriteNode).cfg.measurement)
+}
+
+// TestStorageWrite_AutoMode_MeasurementPresent 는 메시지가 시리즈 이름을 실어 오면
+// (기본 템플릿 {$.metadata.measurement} 해석 성공) fields 배치 1개로 기록하는지 확인한다.
+func TestStorageWrite_AutoMode_MeasurementPresent(t *testing.T) {
+	var captured []influxdbWriteData
+	n := newStorageWriteNode(t, captureInflux(&captured), map[string]any{
+		"payload_mode": "auto",
+	})
+
+	msg := sensorMsg(map[string]any{"value": 23.5}, time.Now())
+	msg.Metadata().Set("measurement", "temperature")
+
+	_, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	require.Len(t, captured, 1, "이름이 있으면 fields 배치 1개")
+	assert.Equal(t, "temperature", captured[0].Measurement)
+	assert.Equal(t, map[string]any{"value": 23.5}, captured[0].Fields)
+	assert.Equal(t, "dev-1", captured[0].Tags["device.id"])
+}
+
+// TestStorageWrite_AutoMode_MeasurementAbsent 는 메시지가 시리즈 이름을 실어 오지
+// 않으면 split 으로 내려가 payload 키가 시리즈 이름이 되는지 확인한다 (에러 아님).
+func TestStorageWrite_AutoMode_MeasurementAbsent(t *testing.T) {
+	var captured []influxdbWriteData
+	n := newStorageWriteNode(t, captureInflux(&captured), map[string]any{
+		"payload_mode": "auto",
+	})
+
+	_, err := n.Process(context.Background(),
+		sensorMsg(map[string]any{"temperature": 23.5, "humidity": float64(60)}, time.Now()))
+	require.NoError(t, err, "이름이 없으면 에러가 아니라 split 폴백")
+
+	require.Len(t, captured, 2, "키마다 별도 시리즈")
+	assert.Equal(t, "humidity", captured[0].Measurement)
+	assert.Equal(t, map[string]any{"value": float64(60)}, captured[0].Fields)
+	assert.Equal(t, "temperature", captured[1].Measurement)
+	assert.Equal(t, map[string]any{"value": 23.5}, captured[1].Fields)
+}
+
+// TestStorageWrite_AutoMode_EmptyMeasurementFallsBack 는 이름이 빈 문자열로
+// 해석되는 경우도 "이름 없음"으로 보고 split 으로 내려가는지 확인한다.
+func TestStorageWrite_AutoMode_EmptyMeasurementFallsBack(t *testing.T) {
+	var captured []influxdbWriteData
+	n := newStorageWriteNode(t, captureInflux(&captured), map[string]any{
+		"payload_mode": "auto",
+	})
+
+	msg := sensorMsg(map[string]any{"temperature": 23.5}, time.Now())
+	msg.Metadata().Set("measurement", "")
+
+	_, err := n.Process(context.Background(), msg)
+	require.NoError(t, err)
+
+	require.Len(t, captured, 1)
+	assert.Equal(t, "temperature", captured[0].Measurement, "split 폴백")
+}
+
+// TestStorageWrite_AutoMode_CustomTemplate 는 auto 모드가 사용자 지정 템플릿도
+// 그대로 쓰는지(기본 템플릿에 고정되지 않는지) 확인한다.
+func TestStorageWrite_AutoMode_CustomTemplate(t *testing.T) {
+	var captured []influxdbWriteData
+	n := newStorageWriteNode(t, captureInflux(&captured), map[string]any{
+		"payload_mode": "auto",
+		"measurement":  "{$.payload.kind}",
+		"exclude_keys": []any{"kind"},
+	})
+
+	_, err := n.Process(context.Background(),
+		sensorMsg(map[string]any{"kind": "power", "value": 12.0}, time.Now()))
+	require.NoError(t, err)
+
+	require.Len(t, captured, 1)
+	assert.Equal(t, "power", captured[0].Measurement)
+	assert.Equal(t, map[string]any{"value": 12.0}, captured[0].Fields)
+}
+
+// TestStorageWrite_AutoMode_MixedStream 은 이름을 실어 오는 메시지와 그렇지 않은
+// 메시지가 한 노드로 함께 들어와도 각각 맞는 모드로 기록되는지 확인한다
+// (auto 모드의 존재 이유).
+func TestStorageWrite_AutoMode_MixedStream(t *testing.T) {
+	var captured []influxdbWriteData
+	n := newStorageWriteNode(t, captureInflux(&captured), map[string]any{
+		"payload_mode": "auto",
+	})
+
+	named := sensorMsg(map[string]any{"value": 23.5}, time.Now())
+	named.Metadata().Set("measurement", "temperature")
+	_, err := n.Process(context.Background(), named)
+	require.NoError(t, err)
+
+	_, err = n.Process(context.Background(),
+		sensorMsg(map[string]any{"online": true}, time.Now()))
+	require.NoError(t, err)
+
+	require.Len(t, captured, 2)
+	assert.Equal(t, "temperature", captured[0].Measurement)
+	assert.Equal(t, map[string]any{"value": 23.5}, captured[0].Fields)
+	assert.Equal(t, "online", captured[1].Measurement)
+	assert.Equal(t, map[string]any{"value": true}, captured[1].Fields)
+}
+
+// --- object 모드 ---
+
+// TestStorageWrite_ObjectMode 는 payload 를 쪼개지 않고 measurement 시리즈의
+// 단일 오브젝트 값으로 기록하는지 확인한다. store 백엔드는 오브젝트를 그대로
+// 보존하고(auto 추론 → json), influxdb 는 복합 값을 JSON 문자열로 눌러 담는다.
+func TestStorageWrite_ObjectMode(t *testing.T) {
+	ts := time.UnixMilli(1_700_000_000_000)
+	cfg := map[string]any{"payload_mode": "object", "measurement": "sysmetrics"}
+	payload := map[string]any{
+		"cpu":    map[string]any{"usage_percent": 37.7},
+		"memory": map[string]any{"used_bytes": float64(1024)},
+	}
+
+	// --- store 백엔드: 오브젝트 그대로 ---
+	store := newMockStore()
+	storeNode := newStorageWriteNode(t, &mockStoreAgent{store: store}, cfg)
+	out, err := storeNode.Process(context.Background(), sensorMsg(payload, ts))
+	require.NoError(t, err)
+	require.Len(t, out, 1, "pass-through 여야 한다")
+
+	writes := store.metaWrites("sysmetrics")
+	require.Len(t, writes, 1, "object 모드는 값 1개")
+	assert.Equal(t, defaultObjectKey, writes[0].opts.Field)
+	assert.Equal(t, payload, writes[0].value, "payload 구조가 그대로 보존된다")
+	assert.Equal(t, "dev-1", writes[0].opts.Tags["device.id"])
+
+	// --- influxdb 백엔드 (설정 동일): 복합 값이므로 JSON 문자열 ---
+	var captured []influxdbWriteData
+	influxNode := newStorageWriteNode(t, captureInflux(&captured), cfg)
+	_, err = influxNode.Process(context.Background(), sensorMsg(payload, ts))
+	require.NoError(t, err)
+
+	require.Len(t, captured, 1)
+	assert.Equal(t, "sysmetrics", captured[0].Measurement)
+	require.Contains(t, captured[0].Fields, defaultObjectKey)
+	assert.IsType(t, "", captured[0].Fields[defaultObjectKey])
+	require.NotNil(t, captured[0].Timestamp)
+	assert.Equal(t, ts.UnixMilli(), *captured[0].Timestamp)
+}
+
+// TestStorageWrite_ObjectMode_KeepsUnusableKeys 는 object 모드가 field 이름 규칙을
+// 적용하지 않아, 다른 모드에서는 버려지는 키(마운트 경로 등)도 보존하는지 확인한다.
+// 이 보존이 object 모드를 두는 이유다.
+func TestStorageWrite_ObjectMode_KeepsUnusableKeys(t *testing.T) {
+	store := newMockStore()
+	n := newStorageWriteNode(t, &mockStoreAgent{store: store}, map[string]any{
+		"payload_mode": "object",
+		"measurement":  "storage",
+	})
+
+	payload := map[string]any{
+		"/":                    map[string]any{"used_bytes": float64(1)},
+		"/System/Volumes/Data": map[string]any{"used_bytes": float64(2)},
+	}
+	_, err := n.Process(context.Background(), sensorMsg(payload, time.Now()))
+	require.NoError(t, err)
+
+	writes := store.metaWrites("storage")
+	require.Len(t, writes, 1)
+	assert.Equal(t, payload, writes[0].value)
+}
+
+// TestStorageWrite_ObjectMode_CustomKey 는 object_key 로 값 이름을 바꿀 수 있는지 확인한다.
+func TestStorageWrite_ObjectMode_CustomKey(t *testing.T) {
+	store := newMockStore()
+	n := newStorageWriteNode(t, &mockStoreAgent{store: store}, map[string]any{
+		"payload_mode": "object",
+		"measurement":  "snapshot",
+		"object_key":   "raw",
+	})
+
+	_, err := n.Process(context.Background(),
+		sensorMsg(map[string]any{"cpu": map[string]any{"usage_percent": 1.0}}, time.Now()))
+	require.NoError(t, err)
+
+	writes := store.metaWrites("snapshot")
+	require.Len(t, writes, 1)
+	assert.Equal(t, "raw", writes[0].opts.Field)
+}
+
+// TestStorageWrite_ObjectMode_ExcludeKeys 는 object 모드에서도 exclude_keys 가
+// 오브젝트의 top-level 키를 빼는지 확인한다.
+func TestStorageWrite_ObjectMode_ExcludeKeys(t *testing.T) {
+	store := newMockStore()
+	n := newStorageWriteNode(t, &mockStoreAgent{store: store}, map[string]any{
+		"payload_mode": "object",
+		"measurement":  "m",
+		"exclude_keys": []string{"device_id"},
+	})
+
+	_, err := n.Process(context.Background(),
+		sensorMsg(map[string]any{"device_id": "dev-1", "cpu": float64(1)}, time.Now()))
+	require.NoError(t, err)
+
+	writes := store.metaWrites("m")
+	require.Len(t, writes, 1)
+	assert.Equal(t, map[string]any{"cpu": float64(1)}, writes[0].value)
+}
+
+// TestStorageWrite_ObjectMode_MeasurementTemplate 는 object 모드에서도 measurement
+// 템플릿이 해석되는지 확인한다.
+func TestStorageWrite_ObjectMode_MeasurementTemplate(t *testing.T) {
+	var captured []influxdbWriteData
+	n := newStorageWriteNode(t, captureInflux(&captured), map[string]any{
+		"payload_mode": "object",
+		"measurement":  "{$.metadata.device.id}",
+	})
+
+	_, err := n.Process(context.Background(),
+		sensorMsg(map[string]any{"cpu": float64(1)}, time.Now()))
+	require.NoError(t, err)
+
+	require.Len(t, captured, 1)
+	assert.Equal(t, "dev-1", captured[0].Measurement)
+}
+
+// TestStorageWrite_ObjectMode_EmptyPayload_NoWrite 는 기록할 것이 없으면 배치를
+// 만들지 않고 pass-through 하는지 확인한다(다른 모드와 동일한 계약).
+func TestStorageWrite_ObjectMode_EmptyPayload_NoWrite(t *testing.T) {
+	var captured []influxdbWriteData
+	n := newStorageWriteNode(t, captureInflux(&captured), map[string]any{
+		"payload_mode": "object",
+		"measurement":  "m",
+	})
+
+	out, err := n.Process(context.Background(), sensorMsg(map[string]any{}, time.Now()))
+	require.NoError(t, err)
+	assert.Len(t, out, 1)
+	assert.Empty(t, captured)
+}
+
+// TestStorageWrite_Configure_ObjectMode 는 object 모드의 설정 검증을 확인한다:
+// measurement 필수, object_key 이름 규칙, 기본 object_key.
+func TestStorageWrite_Configure_ObjectMode(t *testing.T) {
+	newNode := func(t *testing.T) *StorageWriteNode {
+		t.Helper()
+		n, err := NewStorageWriteNode(flow.NodeDef{ID: "sw", Type: "storage-write"})
+		require.NoError(t, err)
+		return n.(*StorageWriteNode)
+	}
+
+	t.Run("measurement 누락은 에러", func(t *testing.T) {
+		err := newNode(t).Configure(map[string]any{"payload_mode": "object"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "object")
+	})
+
+	t.Run("object_key 기본값", func(t *testing.T) {
+		n := newNode(t)
+		require.NoError(t, n.Configure(map[string]any{
+			"payload_mode": "object", "measurement": "m",
+		}))
+		assert.Equal(t, defaultObjectKey, n.cfg.objectKey)
+	})
+
+	t.Run("이름 규칙 위반 object_key 는 에러", func(t *testing.T) {
+		err := newNode(t).Configure(map[string]any{
+			"payload_mode": "object", "measurement": "m", "object_key": "raw.data",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "object_key")
+	})
+
+	t.Run("잘못된 payload_mode 에러 메시지는 object 를 포함한다", func(t *testing.T) {
+		err := newNode(t).Configure(map[string]any{"payload_mode": "nope"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "object")
+	})
+}

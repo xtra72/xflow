@@ -354,7 +354,7 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
-  'chirpstack': {
+  'chirpstack-client': {
     description:
       'ChirpStack LoRaWAN Network Server 의 MQTT integration 이벤트를 패시브로 수신하는 에이전트(SPEC-CHIRPSTACK-001). ChirpStack 이 application/<id>/device/<devEui>/event/<type> 토픽으로 발행하는 업링크 이벤트를 구독하여, 업링크 payload 의 object(디코딩된 센서 값)를 측정치별로 fan-out 합니다. 디바이스는 devEui 기준으로 자동 생성되며, MQTT 트랜스포트 서브셋(broker/topics/qos/재연결)만 설정합니다. 선택적으로 comm-state(device_state 이벤트)를 발행해 업링크 staleness 기반 online/offline 을 판정합니다(emit_comm_state 게이트). transport.Write() 는 호출하지 않는 수신 전용 에이전트입니다.',
     configFields: [
@@ -447,6 +447,31 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
       length_includes_header: true,
       length_adjustment: -1,
       checksum: 'none',
+    },
+  },
+
+  sysmetrics: {
+    description:
+      '호스트 시스템 리소스 모니터링 에이전트. CPU 사용률, 메모리 사용률, 스토리지 사용량, 디스크 I/O, 네트워크 트래픽을 주기적으로 표본 수집해 메시지로 방출합니다. 플로우에서 storage-write 노드로 Store 나 TSDB 에 기록하면 대시보드 패널이 기존 데이터 소스로 그대로 조회합니다.',
+    configFields: [
+      { name: 'interval', type: 'string', required: false, description: '수집 주기 (1s ~ 1h)', default: '5s' },
+      { name: 'collect_cpu', type: 'boolean', required: false, description: 'CPU 사용률 수집', default: 'true' },
+      { name: 'collect_memory', type: 'boolean', required: false, description: '호스트 메모리 수집', default: 'true' },
+      { name: 'collect_storage', type: 'boolean', required: false, description: '마운트별 디스크 사용량 수집', default: 'true' },
+      { name: 'collect_disk_io', type: 'boolean', required: false, description: '장치별 디스크 I/O 수집', default: 'true' },
+      { name: 'collect_network', type: 'boolean', required: false, description: '인터페이스별 네트워크 수집', default: 'true' },
+      { name: 'mountpoints', type: 'string_list', required: false, description: '관측할 마운트를 호스트 목록에서 선택. 비우면 물리 파티션 전체' },
+      { name: 'devices', type: 'string_list', required: false, description: '관측할 디스크 장치를 호스트 목록에서 선택. 비우면 전체' },
+      { name: 'interfaces', type: 'string_list', required: false, description: '관측할 네트워크 인터페이스를 호스트 목록에서 선택. 비우면 전체' },
+    ],
+    configExample: {
+      interval: '5s',
+      collect_cpu: true,
+      collect_memory: true,
+      collect_storage: true,
+      collect_disk_io: true,
+      collect_network: true,
+      mountpoints: ['/'],
     },
   },
 

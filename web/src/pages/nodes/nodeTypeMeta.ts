@@ -1132,7 +1132,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         type: 'string',
         required: false,
         description:
-          'payload 키 처리 방식입니다. fields = 모든 키/값을 measurement 하나 아래 여러 측정값으로 기록. split = 키마다 별도 시리즈로 분리하고 값을 그 시리즈의 값("value")으로 기록.',
+          'payload 키 처리 방식입니다. fields = 모든 키/값을 measurement 하나 아래 여러 측정값으로 기록. split = 키마다 별도 시리즈로 분리하고 값을 그 시리즈의 값("value")으로 기록. auto = 메시지마다 둘 중 하나를 선택 — measurement 템플릿이 그 메시지에서 해석되면 fields, 해석되지 않으면 split. object = 쪼개지 않고 payload 전체를 measurement 시리즈의 단일 오브젝트 값(이름은 object_key)으로 기록.',
         default: 'fields',
       },
       {
@@ -1140,13 +1140,22 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         type: 'string',
         required: true,
         description:
-          'fields 모드의 시리즈 이름입니다. {…} 안의 경로를 메시지 값으로 치환합니다 (예: "{$.metadata.device.id}"). store 의 저장 키, influxdb 의 measurement 에 대응합니다. split 모드에서는 payload 키가 시리즈 이름이므로 쓰이지 않습니다.',
+          'fields / object 모드의 시리즈 이름입니다. {…} 안의 경로를 메시지 값으로 치환합니다 (예: "{$.metadata.device.id}"). store 의 저장 키, influxdb 의 measurement 에 대응합니다. split 모드에서는 payload 키가 시리즈 이름이므로 쓰이지 않습니다. auto 모드에서는 선택 항목이며, 비우면 "{$.metadata.measurement}" 가 적용됩니다.',
+      },
+      {
+        name: 'object_key',
+        type: 'string',
+        required: false,
+        description:
+          'object 모드에서 payload 오브젝트에 부여할 값 이름입니다. 이름 규칙은 field 와 같습니다 (영문자·숫자·_·-). 다른 모드에서는 무시됩니다.',
+        default: 'object',
       },
       {
         name: 'exclude_keys',
         type: 'array',
         required: false,
-        description: '측정값으로 쓰지 않을 payload 키 목록입니다 (예: ["device", "room"]).',
+        description:
+          '측정값으로 쓰지 않을 payload 키 목록입니다 (예: ["device", "room"]). object 모드에서는 오브젝트에서 해당 top-level 키를 뺍니다.',
       },
       {
         name: 'namespace',
@@ -1725,7 +1734,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
           measurement: 'temperature',
           tags: { application_name: 'site-a', device_profile_name: 'Milesight WS301' },
           device: { id: 'a1b2c3d4e5f60718', name: 'ws301-office-01' },
-          agent: { type: 'chirpstack', id: 'agent-cs-1' },
+          agent: { type: 'chirpstack-client', id: 'agent-cs-1' },
         },
       },
       'out (device_state)': {
@@ -1735,7 +1744,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
           last_seen_ms: 1765000000000,
           state: { online: true, rssi: -87, snr: 8.5, gateway_id: 'gw-0001', last_seen_ms: 1765000000000 },
         },
-        metadata: { device: { id: 'a1b2c3d4e5f60718' }, agent: { type: 'chirpstack', id: 'agent-cs-1' } },
+        metadata: { device: { id: 'a1b2c3d4e5f60718' }, agent: { type: 'chirpstack-client', id: 'agent-cs-1' } },
       },
     },
   },
@@ -1789,7 +1798,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         metadata: {
           chirpstack_command: 'set_report_interval',
           chirpstack_downlink_topic: 'application/12/device/a1b2c3d4e5f60718/command/down',
-          agent: { type: 'chirpstack', id: 'agent-cs-1' },
+          agent: { type: 'chirpstack-client', id: 'agent-cs-1' },
         },
       },
     },
@@ -1849,7 +1858,7 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
         },
         metadata: {
           device: { id: 'a1b2c3d4e5f60718', name: 'ws301-office-01' },
-          agent: { type: 'chirpstack', id: 'agent-cs-1' },
+          agent: { type: 'chirpstack-client', id: 'agent-cs-1' },
         },
       },
       'out (캐시 없음)': {

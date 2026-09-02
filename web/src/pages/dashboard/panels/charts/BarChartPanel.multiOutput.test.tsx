@@ -114,9 +114,9 @@ function panelConfig(extra: Record<string, unknown> = {}, store?: StoreSourceCon
   };
 }
 
-async function renderPanel(config: Record<string, unknown>) {
+async function renderPanel(config: Record<string, unknown>, title?: string) {
   await act(async () => {
-    render(<BarChartPanel panelId="p1" config={config} />);
+    render(<BarChartPanel panelId="p1" title={title} config={config} />);
   });
 }
 
@@ -135,6 +135,29 @@ function cellFills(): string[] {
     .queryAllByTestId('rc-cell')
     .map((el) => el.getAttribute('data-cell-fill') ?? '');
 }
+
+describe('BarChartPanel 헤더 표기', () => {
+  beforeEach(() => {
+    query.fn = vi.fn(async () => F1_MATRIX);
+  });
+
+  it('타이틀이 있으면 채널 이름 대신 타이틀을 표시한다', async () => {
+    await renderPanel(panelConfig({ series_reduce: 'max' }), '실외기 온도');
+    expect(screen.getByText('실외기 온도')).toBeInTheDocument();
+  });
+
+  it('시리즈 소스 패널의 부제에는 "채널 미지정" 을 붙이지 않는다', async () => {
+    // store/tsdb 패널은 채널을 쓰지 않는다 — 채널 이름 자리를 비워 두면 설정이 빠진 것처럼
+    // 읽히는 잘못된 안내가 된다.
+    await renderPanel(panelConfig({ series_reduce: 'max' }), '실외기 온도');
+    expect(screen.queryByText(/채널 미지정/)).toBeNull();
+  });
+
+  it('채널 모드에서는 부제에 채널 이름을 그대로 붙인다(종전 동작)', async () => {
+    await renderPanel({ channel_name: 'c1', data_source: 'channel', mode: 'category' }, '바');
+    expect(screen.getByText(/c1 ·/)).toBeInTheDocument();
+  });
+});
 
 describe('BarChartPanel 다중 출력 (SPEC-CHART-002 M3)', () => {
   beforeEach(() => {

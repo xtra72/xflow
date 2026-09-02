@@ -13,6 +13,10 @@
 //   3. **field 가 필수**다(§2.2). "첫 번째 숫자 필드" 폴백은 조용한 오답이므로 두지
 //      않으며, 그래서 measurement → field → tag 3단 드릴다운이 필요하다(§2.15 [O1]).
 //
+// 설정 순서는 Store · 시스템 지표와 **같다**(`ChartPanelSections.StoreSourceSection`
+// 머리말의 정본 순서). 이 소스가 세 축(bucket · 드릴다운 · 그룹 기준)을 더 가질 뿐이며,
+// 그 셋은 "소스 고유 축" 자리에 들어간다.
+//
 // 디스커버리 응답은 캐시하지 않는다(§2.10 · UB1-12). react-query 대신 `useEffect` +
 // `useState` 를 쓰는 이유도 같다 — 캐시가 없는 편이 계약에 맞고, Provider 없이도
 // 렌더되므로 설정 다이얼로그 테스트가 가벼워진다.
@@ -31,7 +35,15 @@ import {
 } from '@/services/api/tsdbSeriesEnum';
 import { SeriesSelectTable, type SeriesRow } from '@/pages/agents/SeriesSelectTable';
 import ColorSwatchButton from './colorSwatchPalette';
+import { FillPreviousLimitField } from './FillPreviousLimitField';
 import { SeriesNameFormatField } from './SeriesNameFormatField';
+import { SeriesRangeField } from './SeriesRangeField';
+import { readSeriesRange } from './panels/charts/seriesRange';
+import {
+  INTERVAL_PRESETS_MS,
+  formatIntervalMs,
+  isIntervalPreset,
+} from './panels/charts/intervalPresets';
 import {
   fetchInfluxBuckets,
   fetchInfluxFieldKeys,
@@ -63,14 +75,6 @@ type OnConfig = (config: Record<string, unknown>) => void;
 // `ChartPanelSections.tsx` 의 동명 헬퍼와 같은 시각 계약이지만 그쪽에서 import 하지
 // 않는다 — `ChartPanelSections` 가 이 파일을 import 하므로 순환이 된다. 두 줄짜리
 // 스타일 상수를 공유하려고 순환 의존을 만드는 것은 남는 장사가 아니다.
-
-/** 인터벌 ms 를 사람이 읽는 눈금으로 표기한다(10s · 5m · 1h · 1d). */
-function formatIntervalMs(ms: number): string {
-  if (ms % 86_400_000 === 0) return `${ms / 86_400_000}d`;
-  if (ms % 3_600_000 === 0) return `${ms / 3_600_000}h`;
-  if (ms % 60_000 === 0) return `${ms / 60_000}m`;
-  return `${Math.round(ms / 1000)}s`;
-}
 
 function inputClass(): string {
   return 'w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50';
@@ -202,17 +206,6 @@ function useDiscoveryList(
 
   return { items, error, loading };
 }
-
-/**
- * 인터벌(버킷) 간격 프리셋(ms). @spec SPEC-TSDB-004 §2.18
- *
- * 에이전트 TSDB 뷰어와 같은 눈금을 쓴다 — 같은 개념이 화면마다 다른 보기를
- * 가지면 값을 옮겨 적을 때 어긋난다. 목록에 없는 값도 저장될 수 있으므로
- * ("직접 입력") 선택을 잃지 않게 별도 경로를 둔다.
- */
-const TSDB_INTERVAL_PRESETS_MS = [
-  10_000, 30_000, 60_000, 300_000, 900_000, 1_800_000, 3_600_000, 21_600_000, 86_400_000,
-] as const;
 
 /**
  * 인터벌(버킷) 집계 옵션. @spec SPEC-TSDB-004 §2.18
@@ -1192,15 +1185,22 @@ export function TsdbSourceSection({
         </div>
       )}
 
-      {/* 시리즈 이름 형식 — 미지정이 정상 상태다. 비우면 내장 서술 표기(시리즈 키 +
+      {/* 시리즈 이름 형식 — 미지정이 정상 상태다. 비우면 내장 서술 표기(measurement +
           필드 + 태그)가 쓰이며 대부분 그것으로 충분하다. */}
+      {/* 가져올 데이터 범위 — 기간(상대·절대) 또는 갯수. Store 와 같은 편집기다. */}
+      <SeriesRangeField
+        range={readSeriesRange(tsdbSource.range, tsdbSource.time_window_ms)}
+        onChange={(range) => patch({ range })}
+        testIdPrefix="chart-tsdb"
+      />
+
       {/* 인터벌 간격 — 버킷 하나의 크기. 집계·빈 구간 처리와 **함께 읽어야**
           뜻이 서는 값이라 세 개를 한 자리에 모은다(§2.18). */}
       <FieldLabel label={t('dashboard.chart.tsdbInterval')}>
         <select
           data-testid="chart-tsdb-interval"
           value={
-            (TSDB_INTERVAL_PRESETS_MS as readonly number[]).includes(tsdbSource.interval_ms)
+            isIntervalPreset(tsdbSource.interval_ms)
               ? String(tsdbSource.interval_ms)
               : 'custom'
           }
@@ -1213,7 +1213,7 @@ export function TsdbSourceSection({
           }}
           className={inputClass()}
         >
-          {TSDB_INTERVAL_PRESETS_MS.map((ms) => (
+          {INTERVAL_PRESETS_MS.map((ms) => (
             <option key={ms} value={ms}>
               {formatIntervalMs(ms)}
             </option>
@@ -1221,7 +1221,7 @@ export function TsdbSourceSection({
           <option value="custom">{t('tsdb.intervalCustom')}</option>
         </select>
       </FieldLabel>
-      {!(TSDB_INTERVAL_PRESETS_MS as readonly number[]).includes(tsdbSource.interval_ms) && (
+      {!isIntervalPreset(tsdbSource.interval_ms) && (
         <label className="flex items-center gap-1 text-[11px] text-(--color-text-muted)">
           <input
             type="number"
@@ -1279,6 +1279,24 @@ export function TsdbSourceSection({
         }
         testId="chart-tsdb-fill"
       />
+      {/* 사용 기간 제한은 `직전값 사용` 에서만 뜻이 있다. */}
+      {tsdbSource.fill === 'previous' && (
+        <FillPreviousLimitField
+          value={{
+            maxMs: tsdbSource.fill_previous_max_ms,
+            overflow: tsdbSource.fill_previous_overflow,
+            overflowValue: tsdbSource.fill_previous_overflow_value,
+          }}
+          onChange={(next) =>
+            patch({
+              fill_previous_max_ms: next.maxMs,
+              fill_previous_overflow: next.overflow,
+              fill_previous_overflow_value: next.overflowValue,
+            })
+          }
+          testIdPrefix="chart-tsdb-fill-prev"
+        />
+      )}
 
       <SeriesNameFormatField
         value={tsdbSource.series_name_format}

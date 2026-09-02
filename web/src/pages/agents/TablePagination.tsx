@@ -43,7 +43,7 @@ export default function TablePagination({
   const startIndex = (safePage - 1) * pageSize;
 
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex flex-wrap items-center justify-between gap-2">
       {/* 페이지 크기 선택 + 범위 라벨 */}
       <div className="flex items-center gap-2 text-sm text-(--color-text-muted)">
         <span>{t('common.pagination.perPage')}</span>

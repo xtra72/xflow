@@ -24,7 +24,7 @@ export const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabelKey: s
   // 우측(운영) = topics / qos / buffer_size / measurement_emit_mode / timestamp_source /
   // comm-state 3종. 우측은 명시 목록이 아니라 left 여집합이므로, 운영 노브를 추가할 때
   // 여기를 고칠 필요가 없다(스키마에만 추가하면 자동으로 운영 컬럼에 실린다).
-  chirpstack: {
+  'chirpstack-client': {
     left: new Set([
       'broker', 'client_id', 'username', 'password',
       'keep_alive_sec', 'connect_timeout_sec', 'auto_reconnect', 'clean_session',

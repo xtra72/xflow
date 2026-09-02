@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/xtra/xflow/internal/agent"
 	"github.com/xtra/xflow/internal/agent/lg"
+	modbusclient "github.com/xtra/xflow/internal/agent/modbus"
 	"github.com/xtra/xflow/internal/agent/samsung"
 	"github.com/xtra/xflow/internal/agent/xsfm"
 	"github.com/xtra/xflow/internal/api/dto"
@@ -657,9 +658,11 @@ func (a *AgentServiceAdapter) ExecAgent(ctx context.Context, id string, data []b
 		return nil, fmt.Errorf("agent exec: %w", err)
 	}
 
-	// add_device/remove_device/set_device 커맨드 성공 후 디바이스 목록 영속 저장
-	// set_device 는 report_enabled 변경을 재시작 후에도 보존하기 위해 포함한다.
-	if (cmdName == "add_device" || cmdName == "remove_device" || cmdName == "set_device") && a.repo != nil {
+	// add_device/remove_device/set_device/update_device 커맨드 성공 후 디바이스 목록 영속 저장.
+	// set_device 는 report_enabled 변경을, update_device 는 modbus-client 의 unit_id/
+	// register_groups 변경을 재시작 후에도 보존하기 위해 포함한다.
+	if (cmdName == "add_device" || cmdName == "remove_device" || cmdName == "set_device" ||
+		cmdName == "update_device") && a.repo != nil {
 		if err := a.persistDeviceRosterAfterExec(ctx, ag); err != nil {
 			// 저장 실패는 경고로만 기록하고 응답은 반환 (in-memory 는 이미 성공)
 			a.logger.Warn("디바이스 목록 영속 저장 실패", "agentID", id, "command", cmdName, "error", err)
@@ -702,6 +705,14 @@ func (a *AgentServiceAdapter) persistDeviceRosterAfterExec(ctx context.Context, 
 		devices := apAg.GetPersistableDevices()
 		devicesList := a.buildDevicesList(devices)
 		cfg.Transport.Options["devices"] = devicesList
+		return a.repo.Save(ctx, cfg)
+	}
+
+	// MODBUS Client 에이전트 — 디바이스가 register_groups/type_map/시리얼 오버라이드까지
+	// 담는 중첩 구조라 DeviceEntry(주소 중심 평탄 구조)로는 표현되지 않는다.
+	// 에이전트가 parseDeviceConfig 입력과 동일한 맵 형상을 직접 만들어 준다(왕복 무손실).
+	if mcAg, ok := ag.(*modbusclient.ModbusAgent); ok {
+		cfg.Transport.Options["devices"] = mcAg.GetPersistableDeviceConfigs()
 		return a.repo.Save(ctx, cfg)
 	}
 

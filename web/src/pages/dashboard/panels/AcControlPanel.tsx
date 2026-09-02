@@ -30,7 +30,7 @@ import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
-import { usePanelTitleVisible } from '../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 import {
   readControlButtonColorConfig,
   readFanLevelColorConfig,
@@ -123,6 +123,7 @@ export default function AcControlPanel({
   onTitleChange: _onTitleChange,
 }: AcControlPanelProps) {
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
   // 레거시: 단일 currentValueColor 만 지정하던 시절의 호환 경로.
@@ -189,7 +190,7 @@ export default function AcControlPanel({
         {showTitle && (
           <div className="mb-2 flex shrink-0 items-center gap-2">
             <Snowflake className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-            <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
+            <span className="truncate text-sm font-semibold text-(--color-text-primary)" style={titleStyle}>{title}</span>
           </div>
         )}
         <div className="flex flex-1 items-center justify-center">
@@ -224,7 +225,7 @@ export default function AcControlPanel({
         {showTitle && (
           <div className="flex items-center gap-2.5">
             <Snowflake className="h-5 w-5 text-blue-500" />
-            <span className="truncate text-base font-bold text-(--color-text-primary)">{title}</span>
+            <span className="truncate text-base font-bold text-(--color-text-primary)" style={titleStyle}>{title}</span>
           </div>
         )}
         <div className="flex items-center gap-2">

@@ -18,7 +18,6 @@ import {
   HardDrive,
   Layers,
   LayoutDashboard,
-  Monitor,
   Network,
   Package,
   Settings,
@@ -121,14 +120,6 @@ const NAV_ENTRIES: NavEntry[] = [
     permission: 'device.read',
 
     navPermission: 'nav.device',
-  },
-  {
-    labelKey: 'nav.monitoring',
-    path: '/monitoring',
-    icon: Monitor,
-    permission: 'monitoring.read',
-
-    navPermission: 'nav.monitoring',
   },
   // SPEC-SCHEDULE-VIEW-001 M5: 스케줄 뷰.
   {

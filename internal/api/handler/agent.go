@@ -206,16 +206,24 @@ func NewAgentHandler(agents AgentManager, logger *slog.Logger, opts ...AgentHand
 // 커맨드가 에이전트 상태·외부 장비·저장소를 변경하지 않음을 확인하라. 상태를 바꾸는
 // 커맨드는 agent.execute 를 요구하는 POST /agents/{id}/exec 로 보내야 한다.
 var queryReadOnlyCommands = map[string]bool{
-	"list_devices":      true,
-	"list_clients":      true,
-	"list_stations":     true,
-	"list_lines":        true,
-	"list_groups":       true,
-	"list_gateways":     true,
-	"list_connections":  true,
+	"list_devices":     true,
+	"list_clients":     true,
+	"list_stations":    true,
+	"list_lines":       true,
+	"list_groups":      true,
+	"list_gateways":    true,
+	"list_connections": true,
+	// list_models 는 modbus-client 의 디바이스 모델 카탈로그 조회이다. 파일시스템의
+	// 모델 디렉터리만 읽으며 에이전트 상태·외부 장비·저장소를 변경하지 않는다
+	// (SPEC-MODBUS-013 REQ-04).
+	"list_models":       true,
 	"get_status":        true,
 	"get_map":           true,
 	"get_device_status": true,
+	// get_history 는 sysmetrics 에이전트의 표본 이력 조회이다. 메모리 버퍼를 읽기만
+	// 하며 에이전트 상태·외부 장비·저장소를 변경하지 않는다. 대시보드 차트 패널이
+	// 이 커맨드로 시계열을 가져온다.
+	"get_history": true,
 }
 
 // RegisterRoutes 는 에이전트 라우트를 등록한다.

@@ -1,6 +1,6 @@
 // Store 에이전트 시리즈 매트릭스를 주기적으로 폴링해 차트용 ChartEntry 로 변환하는 훅.
 //
-// chart-emitter 채널 경로(useChartChannel/useChartChannels)와 공존하는 대체 데이터
+// 시리즈 소스(store · TSDB · 시스템 지표)가 공유하는 조회 훅. 채널 경로가 패널에서 빠진 뒤로 유일한 데이터
 // 소스다. 패널은 config.data_source === 'store' 일 때 이 훅을 사용하고, 그 외에는
 // 기존 채널 훅을 사용한다. 반환 형상은 채널 훅과 최대한 일치시켜 패널 렌더 코드의
 // 변경을 최소화한다(entries / status / closedReason / errorReason).
@@ -18,6 +18,13 @@
 //
 // @spec SPEC-WEB-005
 
+import {
+  limitToRecent,
+  readSeriesRange,
+  resolveSeriesWindow,
+  seriesRangeKey,
+} from './seriesRange';
+
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
@@ -25,11 +32,13 @@ import type {
   SeriesMatrixQuery,
   SeriesSelectorFilter,
 } from '@/services/api/seriesDataSource';
+import { startVisiblePolling } from './visiblePolling';
 import { groupComboSignature } from '@/services/api/tsdbSeriesEnum';
 import { fetchStoreKeys, storeSeriesDataSource } from '@/services/api/store';
 import { useAgents } from '@/hooks/useAgent';
 import { resolveStoreAgentName } from './storeAgentResolve';
 import { pickSeriesColor, storeSeriesLabel } from './chartChannelTypes';
+import type { GraphStyle } from './graphStyle';
 import {
   METRIC_LABEL_KEY,
   parseSeriesLabels,
@@ -86,6 +95,8 @@ export interface StoreSeriesStyle {
   stroke_style?: 'solid' | 'dashed' | 'dotted';
   stroke_width?: number;
   smooth?: boolean;
+  /** 이 시리즈를 그리는 모양. 미지정이면 패널 기본값을 따른다. */
+  graph_style?: GraphStyle;
 }
 
 /** 훅 결과 — 채널 훅과 형상을 맞춘다. */
@@ -361,10 +372,18 @@ export function matrixToEntries(
   matrix.columns.forEach((_colName, j) => {
     const name = seriesNames[j]!;
     const ref = effectiveRefAt(j);
-    // 예약 라벨 `name` 은 시리즈 표시 이름이다. 태그에 `name` 키가 있어도 시리즈
-    // 이름이 우선하도록 tags 를 먼저 펼친 뒤 name 을 마지막에 둔다(Bar/Pie 카테고리
-    // 라벨이 태그 값으로 덮어써지는 문제 방지).
-    const baseLabels: Record<string, string> = { ...(ref?.tags ?? {}), name };
+    // 엔트리 라벨 = 사전 필터 태그 + **매트릭스가 실어 준 실제 컬럼 태그** + name.
+    //
+    // `ref.tags` 는 사용자가 건 사전 필터일 뿐이라, 필터에 쓰지 않은 태그(예: host)는
+    // 거기에 없다. 그 상태로 라벨을 만들면 테이블의 `$.tags.host` 컬럼이 빈칸이 된다
+    // — group by 로 펼쳐진 컬럼만 실제 태그를 받고 있었다(effectiveRefAt).
+    // 실제 태그가 사전 필터를 이긴다(같은 키면 값이 같고, 다르면 실제 쪽이 사실이다).
+    //
+    // **이름(name)에는 관여하지 않는다.** 이름은 종전대로 `ref` 에서 파생되므로
+    // 기존 패널의 시리즈 이름·범례는 그대로다 — 여기서 늘어난 태그를 이름에도 넣으면
+    // 모든 store/tsdb 패널의 범례가 한꺼번에 길어진다.
+    const columnTags = parseSeriesLabels(matrix.columnLabels?.[j]).tags;
+    const baseLabels: Record<string, string> = { ...(ref?.tags ?? {}), ...columnTags, name };
     // per-line 스타일을 시리즈 이름 기준으로 노출(LineChart 렌더용). 같은 이름이 둘
     // 이상이면 처음 등장한 시리즈의 스타일을 유지한다.
     // data_type='boolean' 시리즈는 true/false 표시 대상으로 표기(값은 store 변환에서 1/0).
@@ -377,6 +396,7 @@ export function matrixToEntries(
         stroke_style: ref.stroke_style,
         stroke_width: ref.stroke_width,
         smooth: ref.smooth,
+        graph_style: ref.graph_style,
       });
     }
     const perSeries: ChartEntry[] = [];
@@ -450,7 +470,11 @@ export function useStoreChartData(
   // series 의 순서/필터/시간 파라미터가 바뀌면 재구독한다.
   const pollKey = useMemo(() => {
     if (!enabled || !config) return '';
-    if (config.time_window_ms <= 0 || config.interval_ms <= 0) return '';
+    if (config.interval_ms <= 0) return '';
+    // 범위가 해석되지 않으면(빈 값·뒤집힌 절대 구간·0 이하 갯수) 조회하지 않는다.
+    // 해석 가능 여부만 보므로 `now` 는 판정에 영향이 없는 상수를 쓴다.
+    const rangeSpec = readSeriesRange(config.range, config.time_window_ms);
+    if (!resolveSeriesWindow(rangeSpec, config.interval_ms, 0)) return '';
     let selectionPart: string;
     if (config.selection_mode === 'tag') {
       const tagFilters = config.tag_filters ?? {};
@@ -485,9 +509,16 @@ export function useStoreChartData(
       // 해석된 현재 이름을 키에 포함해, 에이전트 이름 변경 시 재조회되게 한다.
       resolvedAgentName,
       config.namespace ?? 'default',
-      config.time_window_ms,
+      // 범위(상대 창 / 절대 구간 / 갯수)가 재구독 축이다. 상대·갯수는 해석된 시각이
+      // 아니라 설정값만 넣는다 — 해석 시각을 넣으면 폴링마다 키가 바뀐다.
+      seriesRangeKey(rangeSpec),
       config.interval_ms,
       config.aggregation,
+      // 채우기도 재구독 축이다 — 빼면 전략을 바꿔도 다음 폴링까지 화면이 그대로다.
+      config.fill ?? '',
+      config.fill_previous_max_ms ?? 0,
+      config.fill_previous_overflow ?? '',
+      config.fill_previous_overflow_value ?? 0,
       config.refresh_interval_ms ?? DEFAULT_REFRESH_MS,
       // 패널 단위 이름 형식도 재구독 축이다. 위 alias 주석이 기록한 "범례 이름
       // 안바뀜" 과 같은 결함이 패널 축에서 남아 있었다 — 이름은 시리즈별(alias)과
@@ -551,17 +582,42 @@ export function useStoreChartData(
           effectiveConfig = tagResolvedConfig(config, resolvedKeys);
         }
         const { keys, seriesFilters } = buildKeysAndFilters(effectiveConfig);
+        // 조회 구간은 범위 설정에서 해석한다(상대 기간 / 절대 구간 / 최근 N개).
+        // pollKey 가 이미 해석 가능 여부를 걸렀으므로 여기서는 성립한다.
+        const win = resolveSeriesWindow(
+          readSeriesRange(config.range, config.time_window_ms),
+          config.interval_ms,
+          now,
+        );
+        if (!win) return;
         const query: SeriesMatrixQuery = {
           keys,
           ...(seriesFilters ? { seriesFilters } : {}),
-          startMs: now - config.time_window_ms,
-          endMs: now,
+          startMs: win.startMs,
+          endMs: win.endMs,
           intervalMs: config.interval_ms,
           aggregation: config.aggregation,
+          // 채우기는 서버가 계산한다. 값이 없을 때만 싣지 않는 규칙은 어댑터가
+          // 소유하므로(`queryStoreMatrix`) 여기서는 설정을 그대로 넘긴다.
+          ...(config.fill ? { fill: config.fill } : {}),
+          ...(config.fill === 'previous' && config.fill_previous_max_ms
+            ? { fillPreviousMaxMs: config.fill_previous_max_ms }
+            : {}),
+          ...(config.fill === 'previous' && config.fill_previous_overflow
+            ? {
+                fillPreviousOverflow: config.fill_previous_overflow,
+                fillPreviousOverflowValue: config.fill_previous_overflow_value ?? 0,
+              }
+            : {}),
         };
         const matrix = await queryFn(agentName, query, signal);
         if (cancelled || signal.aborted) return;
-        const converted = matrixToEntries(matrix, effectiveConfig);
+        // 갯수 방식: 경계 정렬로 버킷이 더 딸려 올 수 있어 마지막 N개로 자른다.
+        const limited =
+          win.limitBuckets === undefined
+            ? matrix
+            : { ...matrix, rows: limitToRecent(matrix.rows, win.limitBuckets) };
+        const converted = matrixToEntries(limited, effectiveConfig);
         setResult({
           entries: converted.entries,
           seriesEntries: converted.seriesEntries,
@@ -583,16 +639,22 @@ export function useStoreChartData(
     };
 
     // 즉시 1회 + 인터벌 폴링.
+    //
+    // 탭이 숨으면 인터벌이 멈추고, 다시 보이면 즉시 1회 돈 뒤 재개한다 —
+    // 아무도 보지 않는 동안의 조회를 내지 않으면서, 돌아왔을 때 옛 값이 떠
+    // 있는 시간도 없앤다.
     setResult((prev) => ({ ...prev, status: 'connecting' }));
-    void run();
-    const intervalId = window.setInterval(() => {
-      void run();
-    }, refreshMs);
+    const stopPolling = startVisiblePolling({
+      intervalMs: refreshMs,
+      run: () => {
+        void run();
+      },
+    });
 
     return () => {
       cancelled = true;
       controller?.abort();
-      window.clearInterval(intervalId);
+      stopPolling();
     };
     // pollKey 가 변경될 때만 재구독한다(config 객체 참조 변화는 무시).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -616,11 +678,16 @@ export function useStoreChartData(
     result.seriesNames.forEach((name, j) => {
       const ref = config.series[j];
       if (ref && !styles.has(name)) {
+        // 조회 시점 매핑(`matrixToEntries`)과 **같은 필드 집합**이어야 한다. 하나라도
+        // 빠뜨리면 조회 때는 실렸던 값이 이 재매핑에서 조용히 사라진다 — 이 경로는
+        // 스타일 전용 변경뿐 아니라 매 렌더에서 결과를 대체하므로, 빠진 필드는
+        // "골랐는데 안 바뀜" 으로 영구히 남는다(시리즈별 그래프 모양이 그랬다).
         styles.set(name, {
           color: ref.color,
           stroke_style: ref.stroke_style,
           stroke_width: ref.stroke_width,
           smooth: ref.smooth,
+          graph_style: ref.graph_style,
         });
       }
     });

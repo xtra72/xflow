@@ -54,7 +54,7 @@ import AddPanelDialog from './AddPanelDialog';
 
 function openData() {
   render(<AddPanelDialog open={true} onClose={() => {}} />);
-  fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.data' }));
+  fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.status' }));
 }
 
 describe('AddPanelDialog — 에이전트 상태 패널 (SPEC-DASHBOARD-002)', () => {
@@ -63,7 +63,7 @@ describe('AddPanelDialog — 에이전트 상태 패널 (SPEC-DASHBOARD-002)', (
     storeState.addPanelWithConfigCalls = [];
   });
 
-  it('AC-01-2: data 카테고리에 agent-status 옵션이 노출된다', () => {
+  it('AC-01-2: 상태 카테고리에 agent-status 옵션이 노출된다', () => {
     openData();
     expect(screen.getByText('dashboard.panelTypes.agentStatus')).toBeInTheDocument();
   });
@@ -93,7 +93,7 @@ describe('AddPanelDialog — 에이전트 상태 패널 (SPEC-DASHBOARD-002)', (
   it('AC-01-3: 에이전트 선택 후 저장 시 { agentId } config + 이름 타이틀로 추가한다', () => {
     const onClose = vi.fn();
     render(<AddPanelDialog open={true} onClose={onClose} />);
-    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.data' }));
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.status' }));
     fireEvent.click(screen.getByText('dashboard.panelTypes.agentStatus'));
 
     const save = screen.getByTestId('agent-status-save') as HTMLButtonElement;

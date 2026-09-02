@@ -506,7 +506,7 @@ func TestReportEmitMode_InvalidValueRejected(t *testing.T) {
 	resetNameRegistryForTest()
 	disabled := false
 	_, err := NewChirpStackAgent(agent.AgentConfig{
-		ID: "id-report-bad", Name: "report-bad", Type: "chirpstack", Enabled: &disabled,
+		ID: "id-report-bad", Name: "report-bad", Type: "chirpstack-client", Enabled: &disabled,
 		Transport: agent.TransportConfig{Options: badOpts},
 	})
 	if !errors.Is(err, ErrInvalidReportEmitMode) {
@@ -522,7 +522,7 @@ func TestReportEmitMode_InvalidValueRejected(t *testing.T) {
 
 	a := newEmitModeAgent(t, "report-cfg", map[string]any{"report_emit_mode": reportEmitModeCombined})
 	err = a.Configure(agent.AgentConfig{
-		ID: "id-report-cfg", Name: "report-cfg", Type: "chirpstack", Enabled: &disabled,
+		ID: "id-report-cfg", Name: "report-cfg", Type: "chirpstack-client", Enabled: &disabled,
 		Transport: agent.TransportConfig{Options: badOpts},
 	})
 	if !errors.Is(err, ErrInvalidReportEmitMode) {

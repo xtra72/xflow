@@ -5,6 +5,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/xtra/xflow/internal/agent/system"
 	"github.com/xtra/xflow/internal/api"
 	"github.com/xtra/xflow/internal/api/dto"
+	"github.com/xtra/xflow/internal/fillpolicy"
 )
 
 // 서버측 집계 상한: 응답 폭주를 방지하기 위한 안전장치이다.
@@ -24,11 +26,27 @@ import (
 const maxAggregationBuckets = 100_000
 
 // 유효한 집계 연산자 집합.
+//
+// first/last 는 값의 크기가 아니라 **버킷 안에서의 순서**로 고르는 집계다. 종전에는
+// 서버가 받지 않아 프런트가 원시 엔트리를 받아 스스로 버킷을 나눴는데, 그 경로에는
+// 빈 버킷 채우기가 걸리지 않는다 — 같은 fill 설정이 집계 함수에 따라 되기도 하고
+// 안 되기도 하는 상태였다. 다섯 종을 모두 서버에서 처리해 그 갈림을 없앤다.
 const (
-	aggregationMin = "min"
-	aggregationMax = "max"
-	aggregationAvg = "avg"
+	aggregationMin   = "min"
+	aggregationMax   = "max"
+	aggregationAvg   = "avg"
+	aggregationFirst = "first"
+	aggregationLast  = "last"
 )
+
+// validAggregations 는 허용하는 집계 어휘다.
+var validAggregations = map[string]struct{}{
+	aggregationMin:   {},
+	aggregationMax:   {},
+	aggregationAvg:   {},
+	aggregationFirst: {},
+	aggregationLast:  {},
+}
 
 // AgentLookup 은 에이전트 이름으로 에이전트를 조회하기 위한 최소 인터페이스이다.
 // 실제 runtime 에서는 *agent.DefaultManager 가 이 인터페이스를 만족한다.
@@ -212,6 +230,14 @@ type storeQueryRequest struct {
 	IntervalMs  int64  `json:"interval_ms,omitempty"`
 	Aggregation string `json:"aggregation,omitempty"`
 
+	// 빈 버킷 채우기(선택). 어휘·의미는 InfluxDB 소스와 **같은 정본**을 쓴다
+	// (dto.SeriesFill*) — 소스를 갈아탄 사용자가 같은 설정에서 다른 그림을
+	// 보지 않게 하려는 것이다. 집계가 꺼진 요청에서는 읽지 않는다(채울 버킷이 없다).
+	Fill                      string  `json:"fill,omitempty"`
+	FillPreviousMaxMs         int64   `json:"fill_previous_max_ms,omitempty"`
+	FillPreviousOverflow      string  `json:"fill_previous_overflow,omitempty"`
+	FillPreviousOverflowValue float64 `json:"fill_previous_overflow_value,omitempty"`
+
 	// @spec SPEC-STORE-004: 시리즈 필터 (선택).
 	//   - Field 만 주면 그 field 의 모든 tags 시리즈 (S3).
 	//   - Field+Tags 주면 단일/부분집합 시리즈 (E5).
@@ -302,7 +328,13 @@ func (h *StoreQueryHandler) Query(ctx api.Context) error {
 		if aerr != nil {
 			return api.ErrBadRequest.WithMessage(aerr.Error())
 		}
+		fill, prev, ferr := parseStoreFill(&req)
+		if ferr != nil {
+			return api.ErrBadRequest.WithMessage(ferr.Error())
+		}
 		bucketed := bucketAggregate(entries, originMs, req.IntervalMs, req.Aggregation)
+		bucketed = fillBuckets(
+			bucketed, originMs, resolveAggregationEndMs(&req, q), req.IntervalMs, fill, prev)
 		resp := chartQueryResponse{
 			Entries:   bucketed,
 			Count:     len(bucketed),
@@ -346,15 +378,35 @@ func (h *StoreQueryHandler) querySeries(
 		}
 	}
 
+	// 집계 파라미터 해석은 시리즈 루프 밖에서 한 번만 한다 — 요청 하나에 대한 판정이
+	// 시리즈 수만큼 반복될 이유가 없고, 잘못된 값이면 시리즈를 하나도 처리하기 전에
+	// 거부해야 한다.
+	var (
+		originMs int64
+		endMs    int64
+		fill     string
+		prev     fillpolicy.Previous
+	)
+	if aggEnabled {
+		var aerr error
+		originMs, aerr = resolveAggregationOriginMs(req, q)
+		if aerr != nil {
+			return api.ErrBadRequest.WithMessage(aerr.Error())
+		}
+		var ferr error
+		fill, prev, ferr = parseStoreFill(req)
+		if ferr != nil {
+			return api.ErrBadRequest.WithMessage(ferr.Error())
+		}
+		endMs = resolveAggregationEndMs(req, q)
+	}
+
 	entries := make([]chartQueryEntry, 0)
 	for _, sr := range seriesList {
 		labels := seriesLabels(sr.Series)
 		if aggEnabled {
-			originMs, aerr := resolveAggregationOriginMs(req, q)
-			if aerr != nil {
-				return api.ErrBadRequest.WithMessage(aerr.Error())
-			}
 			bucketed := bucketAggregate(sr.Entries, originMs, req.IntervalMs, req.Aggregation)
+			bucketed = fillBuckets(bucketed, originMs, endMs, req.IntervalMs, fill, prev)
 			for i := range bucketed {
 				bucketed[i].Labels = labels
 			}
@@ -403,11 +455,10 @@ func seriesLabels(sid system.SeriesID) map[string]string {
 //   - 계산된 버킷 수가 상한(maxAggregationBuckets)을 넘으면 거부한다
 func validateAggregationParams(req *storeQueryRequest) (bool, error) {
 	// aggregation 값 자체가 잘못된 경우 (interval_ms 와 무관하게 거부).
-	if req.Aggregation != "" &&
-		req.Aggregation != aggregationMin &&
-		req.Aggregation != aggregationMax &&
-		req.Aggregation != aggregationAvg {
-		return false, errInvalidField("invalid aggregation: " + req.Aggregation)
+	if req.Aggregation != "" {
+		if _, ok := validAggregations[req.Aggregation]; !ok {
+			return false, errInvalidField("invalid aggregation: " + req.Aggregation)
+		}
 	}
 
 	// interval_ms 가 명시적으로 주어졌는데 (0이 아님) 양수가 아니면 거부.
@@ -552,12 +603,18 @@ func bucketAggregate(
 		return []chartQueryEntry{}
 	}
 
-	// 버킷별 집계 상태. avg 는 sum+count, min/max 는 단일 값.
+	// 버킷별 집계 상태. avg 는 sum+count, min/max 는 단일 값,
+	// first/last 는 값과 함께 **그 값의 시각**을 들고 있어야 한다 — 엔트리가 시간순으로
+	// 온다는 보장이 없으므로 도착 순서를 순서로 삼으면 조용히 틀린다.
 	type bucketState struct {
-		sum   float64
-		count int
-		min   float64
-		max   float64
+		sum     float64
+		count   int
+		min     float64
+		max     float64
+		first   float64
+		firstTs int64
+		last    float64
+		lastTs  int64
 	}
 	// map 키는 bucket 시작 시각 (epoch ms). 일반적으로 연속되지만 희소할 수도 있으므로 map 사용.
 	buckets := make(map[int64]*bucketState)
@@ -575,7 +632,10 @@ func bucketAggregate(
 		bucketStartMs := (tsMs / intervalMs) * intervalMs
 		st, exists := buckets[bucketStartMs]
 		if !exists {
-			st = &bucketState{sum: f, count: 1, min: f, max: f}
+			st = &bucketState{
+				sum: f, count: 1, min: f, max: f,
+				first: f, firstTs: tsMs, last: f, lastTs: tsMs,
+			}
 			buckets[bucketStartMs] = st
 			continue
 		}
@@ -586,6 +646,12 @@ func bucketAggregate(
 		}
 		if f > st.max {
 			st.max = f
+		}
+		if tsMs < st.firstTs {
+			st.first, st.firstTs = f, tsMs
+		}
+		if tsMs >= st.lastTs {
+			st.last, st.lastTs = f, tsMs
 		}
 	}
 
@@ -615,6 +681,10 @@ func bucketAggregate(
 			value = st.max
 		case aggregationAvg:
 			value = st.sum / float64(st.count)
+		case aggregationFirst:
+			value = st.first
+		case aggregationLast:
+			value = st.last
 		default:
 			// validateAggregationParams 에서 이미 거부되었어야 하므로 방어 코드.
 			continue
@@ -623,6 +693,129 @@ func bucketAggregate(
 			Timestamp: bucketStartMs,
 			Value:     value,
 		})
+	}
+	return out
+}
+
+// parseStoreFill 은 빈 버킷 채우기 파라미터를 읽고 검증한다.
+//
+// 어휘는 InfluxDB 소스와 같은 정본(`dto.SeriesFill*`)을 쓴다 — 두 소스가 각자
+// 문자열을 정의하면 한쪽만 늘어날 때 같은 설정이 소스에 따라 다르게 동작한다.
+// `avg` 는 어느 백엔드에도 대응물이 없어 여기서도 거부한다.
+func parseStoreFill(req *storeQueryRequest) (string, fillpolicy.Previous, error) {
+	var prev fillpolicy.Previous
+
+	switch req.Fill {
+	case dto.SeriesFillNone, dto.SeriesFillNull, dto.SeriesFillZero, dto.SeriesFillPrevious:
+	default:
+		return "", prev, errInvalidField(fmt.Sprintf(
+			"invalid fill: %q (expected one of: %q, %q, %q, %q)",
+			req.Fill,
+			dto.SeriesFillNone, dto.SeriesFillNull, dto.SeriesFillZero, dto.SeriesFillPrevious))
+	}
+
+	// 사용 기간 제한은 `previous` 에서만 뜻이 있다. 그 밖에서는 제로값(무제한)이다.
+	if req.Fill != dto.SeriesFillPrevious {
+		return req.Fill, prev, nil
+	}
+	if req.FillPreviousMaxMs < 0 {
+		return "", prev, errInvalidField(fmt.Sprintf(
+			"fill_previous_max_ms must be >= 0 (got %d; 0 means unlimited)",
+			req.FillPreviousMaxMs))
+	}
+	prev.MaxMs = req.FillPreviousMaxMs
+
+	switch req.FillPreviousOverflow {
+	case dto.SeriesFillPreviousOverflowEmpty:
+		prev.Overflow = fillpolicy.OverflowEmpty
+	case dto.SeriesFillPreviousOverflowValue:
+		prev.Overflow = fillpolicy.OverflowValue
+		prev.Value = req.FillPreviousOverflowValue
+	default:
+		return "", prev, errInvalidField(fmt.Sprintf(
+			"invalid fill_previous_overflow: %q (allowed: %q, %q)",
+			req.FillPreviousOverflow,
+			dto.SeriesFillPreviousOverflowEmpty, dto.SeriesFillPreviousOverflowValue))
+	}
+	return req.Fill, prev, nil
+}
+
+// resolveAggregationEndMs 는 채울 버킷 범위의 상한(미포함)을 정한다.
+//
+// `resolveAggregationOriginMs` 의 짝이다. 채우기는 "데이터가 있는 구간" 이 아니라
+// "사용자가 요청한 구간" 을 메우는 일이라, 하한만으로는 어디까지 채울지 알 수 없다.
+//   - time_range : req.EndMs
+//   - duration   : q.To 가 있으면 그것, 없으면 지금
+func resolveAggregationEndMs(req *storeQueryRequest, q system.HistoryQuery) int64 {
+	if system.QueryMode(req.Mode) == system.QueryModeTimeRange {
+		return req.EndMs
+	}
+	if !q.To.IsZero() {
+		return q.To.UnixMilli()
+	}
+	return time.Now().UnixMilli()
+}
+
+// fillBuckets 는 집계 결과의 빈 버킷을 채운다.
+//
+// 입력 `bucketed` 는 값이 있는 버킷만 시각 오름차순으로 담고 있다(bucketAggregate 규약).
+// 여기서는 요청 구간 전체의 버킷 격자를 만들고, 비어 있는 자리에 전략에 따라 값을 넣는다.
+//
+// 규칙:
+//   - fill 이 빈 문자열이면 입력을 그대로 돌려준다(종전 동작 — 빈 버킷 생략).
+//   - 버킷 격자는 집계와 **같은 epoch-zero 정렬**을 쓴다. 두 곳이 다른 경계를 쓰면
+//     채운 버킷이 실제 버킷 사이에 끼어 시각이 어긋난다.
+//   - `previous` 는 첫 값이 나오기 전 구간을 채우지 않는다 — 이어 쓸 직전값이 없다.
+//     "0 으로 시작" 은 그 자체로 다른 뜻이므로 zero 전략이 담당한다.
+//   - `previous` 의 사용 기간 제한 판단은 fillpolicy 가 소유한다(소스 공통 정본).
+func fillBuckets(
+	bucketed []chartQueryEntry,
+	startMs, endMs, intervalMs int64,
+	fill string,
+	prev fillpolicy.Previous,
+) []chartQueryEntry {
+	if fill == dto.SeriesFillNone || intervalMs <= 0 || endMs <= startMs {
+		return bucketed
+	}
+
+	byStart := make(map[int64]chartQueryEntry, len(bucketed))
+	for _, e := range bucketed {
+		byStart[e.Timestamp] = e
+	}
+
+	firstStart := (startMs / intervalMs) * intervalMs
+	lastStart := ((endMs - 1) / intervalMs) * intervalMs
+
+	out := make([]chartQueryEntry, 0, len(bucketed))
+	var prevValue float64
+	havePrev := false
+	var run int64 // 직전값을 연속으로 이어 쓴 횟수(1부터).
+
+	for start := firstStart; start <= lastStart; start += intervalMs {
+		if e, ok := byStart[start]; ok {
+			out = append(out, e)
+			if f, isNum := toFloat64(e.Value); isNum {
+				prevValue, havePrev, run = f, true, 0
+			}
+			continue
+		}
+		switch fill {
+		case dto.SeriesFillZero:
+			out = append(out, chartQueryEntry{Timestamp: start, Value: float64(0)})
+		case dto.SeriesFillPrevious:
+			if !havePrev {
+				// 이어 쓸 값이 아직 없다. 구간 앞머리는 비워 둔다.
+				continue
+			}
+			run++
+			if v, ok := prev.FillAt(prevValue, run, intervalMs); ok {
+				out = append(out, chartQueryEntry{Timestamp: start, Value: v})
+			} else {
+				out = append(out, chartQueryEntry{Timestamp: start, Value: nil})
+			}
+		default: // dto.SeriesFillNull
+			out = append(out, chartQueryEntry{Timestamp: start, Value: nil})
+		}
 	}
 	return out
 }

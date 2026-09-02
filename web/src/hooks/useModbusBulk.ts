@@ -8,7 +8,7 @@
 //   - 실행 훅은 파서의 유효 디바이스만 백엔드로 보내고, 파서 실패 + 백엔드 실패를 단일
 //     BulkFailure[] 로 합류한다(부분 성공 허용, 원자적 롤백 없음).
 //
-// 포맷(v0.2.0): 한 줄 = 레지스터 그룹/세그먼트 하나. 신원 컬럼(host/port/unit_id · unit_id/name)이
+// 포맷(v0.3.0): 한 줄 = 레지스터 그룹/세그먼트 하나. 신원 컬럼(id/host/port/unit_id · unit_id/name)이
 // 채워진 행은 새 디바이스를 시작하고, 신원 컬럼이 모두 빈 행은 직전 디바이스에 그룹/세그먼트를
 // 이어 붙인다. 셀 구분은 xsfm 선례(parseDelimitedRows)를 재사용한다: 콤마 또는 탭 자동 감지(탭 우선),
 // 셀 trim, 빈 줄 무시, 1-based 줄 번호 보존.
@@ -73,6 +73,8 @@ export interface ClientBulkGroup {
 
 /** client 디바이스 방출 형상(ModbusDevicesEditor EmittedDevice 계약, per-device 오버라이드 제외). */
 export interface ClientBulkDevice {
+  /** 디바이스 식별자. 백엔드 add_device 가 필수로 요구한다(runtime_device.go ErrMissingDeviceID). */
+  id: string;
   host?: string;
   port?: number;
   unit_id: number;
@@ -162,16 +164,17 @@ type GroupParse = { seg: ClientBulkGroup } | { fail: string } | { skip: true };
 type SegmentParse = { seg: { area: string; segment: GatewaySegment } } | { fail: string } | { skip: true };
 
 /**
- * client 그룹 셀 파싱. 컬럼: fc(3), address(4), count(5), data_type(6), polling_interval(7), comment(8).
+ * client 그룹 셀 파싱. 컬럼: fc(4), address(5), count(6), data_type(7), polling_interval(8), comment(9).
+ * id 열이 맨 앞(0)에 있으므로 그룹 컬럼은 모두 1칸씩 밀려 있다.
  * 신원 행에서 fc 가 비면 인라인 그룹 없음(skip). 이어붙임 행에서 fc 가 비면 필수 누락(fail).
  */
 function parseClientGroup(cells: string[], isIdentity: boolean): GroupParse {
-  const fcRaw = (cells[3] ?? '').trim();
-  const addrRaw = (cells[4] ?? '').trim();
-  const cntRaw = (cells[5] ?? '').trim();
-  const dtRaw = (cells[6] ?? '').trim();
-  const pollRaw = (cells[7] ?? '').trim();
-  const comment = (cells[8] ?? '').trim();
+  const fcRaw = (cells[4] ?? '').trim();
+  const addrRaw = (cells[5] ?? '').trim();
+  const cntRaw = (cells[6] ?? '').trim();
+  const dtRaw = (cells[7] ?? '').trim();
+  const pollRaw = (cells[8] ?? '').trim();
+  const comment = (cells[9] ?? '').trim();
 
   if (fcRaw === '') return isIdentity ? { skip: true } : { fail: EMPTY_REQUIRED };
   if (!isFc(fcRaw)) return { fail: INVALID_FC };
@@ -247,7 +250,7 @@ function isHeaderRow(unitCell: string): boolean {
 // ---- 행 파서(내부 — 그룹핑 + line 보존) ----
 
 /**
- * client 붙여넣기 → 리치 행 + 실패. 신원 컬럼(host/port/unit_id)이 채워진 행이 새 디바이스를 시작하고,
+ * client 붙여넣기 → 리치 행 + 실패. 신원 컬럼(id/host/port/unit_id)이 채워진 행이 새 디바이스를 시작하고,
  * 모두 빈 행은 직전 디바이스에 register_group 을 이어 붙인다. transport 상속이 rtu 면 host 를
  * 요구하지 않고 방출하지 않는다. 유효 그룹 0개인 디바이스는 방출하지 않는다(행별 실패로 집계).
  */
@@ -279,18 +282,24 @@ function parseClientRows(text: string, transport: string): { rows: ClientRow[]; 
 
   let first = true;
   for (const r of parsed) {
-    const host = (r.cells[0] ?? '').trim();
-    const portRaw = (r.cells[1] ?? '').trim();
-    const unitRaw = (r.cells[2] ?? '').trim();
+    const id = (r.cells[0] ?? '').trim();
+    const host = (r.cells[1] ?? '').trim();
+    const portRaw = (r.cells[2] ?? '').trim();
+    const unitRaw = (r.cells[3] ?? '').trim();
 
     if (first) {
       first = false;
       if (isHeaderRow(unitRaw)) continue; // 헤더 스킵
     }
 
-    const isIdentity = host !== '' || portRaw !== '' || unitRaw !== '';
+    const isIdentity = id !== '' || host !== '' || portRaw !== '' || unitRaw !== '';
     if (isIdentity) {
       finalize(); // 직전 디바이스 확정 후 새 디바이스 시작.
+      if (id === '') {
+        // 백엔드 add_device 가 device id 를 필수로 요구한다(runtime_device.go ErrMissingDeviceID).
+        failures.push({ line: r.line, input: r.raw, reason: EMPTY_REQUIRED });
+        continue;
+      }
       if (!isRtu && host === '') {
         failures.push({ line: r.line, input: r.raw, reason: EMPTY_REQUIRED });
         continue;
@@ -312,7 +321,7 @@ function parseClientRows(text: string, transport: string): { rows: ClientRow[]; 
         }
         port = Number(portRaw);
       }
-      const device: ClientBulkDevice = { unit_id: unitId, register_groups: [] };
+      const device: ClientBulkDevice = { id, unit_id: unitId, register_groups: [] };
       if (!isRtu && host !== '') device.host = host;
       if (port !== undefined) device.port = port; // 공란이면 생략(백엔드 502 기본).
       current = { line: r.line, input: r.raw, device };

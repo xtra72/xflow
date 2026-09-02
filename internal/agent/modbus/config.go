@@ -33,6 +33,10 @@ type ModbusConfig struct {
 	LogFrames         bool          // log_frames: TX/RX 프레임 요약 로그 (기본 false → no-op, F4)
 	LogRawFrames      bool          // log_raw_frames: 전체 ADU hex 포함 (log_frames 활성 시에만 의미, F4)
 	ShareSession      bool          // share_session: 동일 엔드포인트 디바이스의 트랜스포트/연결 공유 (기본 false → 현 토폴로지, F3)
+	// MaxBlockRegisters 는 블록 병합 읽기의 블록당 최대 레지스터 수이다
+	// (SPEC-MODBUS-013 REQ-03, 기본 DefaultMaxBlockRegisters=32, 범위 [1, MaxRegistersRead]).
+	// 디바이스 레벨 오버라이드가 없으면 이 값이 상속된다.
+	MaxBlockRegisters uint16
 	Devices           []DeviceConfig
 }
 
@@ -63,6 +67,10 @@ type DeviceConfig struct {
 	// ShareSession 은 per-device 세션 공유 오버라이드이다(F3, 선택). nil 이면 에이전트 레벨
 	// share_session 을 상속한다. 명시되면 해당 값(true/false)이 에이전트 기본을 오버라이드한다.
 	ShareSession *bool
+	// MaxBlockRegisters 는 per-device 블록 상한 오버라이드이다(SPEC-MODBUS-013 REQ-03, 선택).
+	// nil 이면 에이전트 레벨 max_block_registers 를 상속한다. 기종별 자체 상한이 규격 상한(125)보다
+	// 작은 장비(예: GIPAM-115FI 는 56)를 위해 필요하다.
+	MaxBlockRegisters *uint16
 }
 
 // RegisterGroupConfig 는 레지스터 그룹의 설정을 나타낸다.
@@ -74,6 +82,21 @@ type RegisterGroupConfig struct {
 	DataType     string                // 그룹 기본 데이터 타입 (기본: "uint16")
 	TypeMap      []modbus.TypeMapEntry // 주소별 타입 오버라이드 (선택)
 	PollInterval time.Duration         // 그룹별 폴링 주기 (선택, M5). 0 이면 에이전트 기본 주기로 폴백(A-7)
+	// Enabled 는 그룹 사용 여부이다(SPEC-MODBUS-013 REQ-01, 선택).
+	// nil(미지정)이면 사용으로 간주한다 — 기존 설정과 동일 동작(하위 호환).
+	// false 면 읽기 계획에서 제외되어 폴링·캐시 갱신·메시지 방출이 모두 일어나지 않으며,
+	// 그룹 정의 자체는 보존되어 재활성화 시 재입력이 불필요하다.
+	//
+	// 값 타입이 아닌 포인터인 이유: 값 타입이면 구조체 리터럴의 zero value(false)가
+	// "미사용"이 되어 기존 그룹을 무음 정지시키는 회귀가 발생한다.
+	// DeviceConfig.ShareSession *bool 과 동일한 선례를 따른다.
+	Enabled *bool
+}
+
+// IsEnabled 는 그룹의 유효 사용 여부를 반환한다(SPEC-MODBUS-013 REQ-01).
+// Enabled 가 nil(설정에서 생략)이면 사용(true)으로 간주한다.
+func (rg RegisterGroupConfig) IsEnabled() bool {
+	return rg.Enabled == nil || *rg.Enabled
 }
 
 // parseModbusConfig 는 Transport.Options 맵에서 ModbusConfig 를 파싱한다.
@@ -90,6 +113,13 @@ func parseModbusConfig(opts map[string]any) (ModbusConfig, error) {
 		MaxRetries:        3,
 		RequestTimeout:    3 * time.Second,
 		MsgChannelSize:    256,
+		MaxBlockRegisters: DefaultMaxBlockRegisters,
+	}
+
+	// max_block_registers (선택, SPEC-MODBUS-013 REQ-03). 미지정이면 기본 32.
+	// 범위를 벗어난 값은 오류가 아니라 [1, MaxRegistersRead] 로 클램프한다(AC-13).
+	if v, ok := opts["max_block_registers"]; ok {
+		cfg.MaxBlockRegisters = clampMaxBlock(toUint16(v))
 	}
 
 	// transport (선택, 기본 "tcp" — 생략 시 기존 TCP 동작 보존, AC-03)
@@ -390,6 +420,13 @@ func parseDeviceConfig(m map[string]any, idx int, transport string) (DeviceConfi
 		dc.UnitID = toByte(v)
 	}
 
+	// per-device max_block_registers 오버라이드 (선택, SPEC-MODBUS-013 REQ-03).
+	// 명시되면 클램프 후 저장하고, 부재면 nil 로 남겨 에이전트 값을 상속한다(AC-12).
+	if v, ok := m["max_block_registers"]; ok {
+		clamped := clampMaxBlock(toUint16(v))
+		dc.MaxBlockRegisters = &clamped
+	}
+
 	// register_groups
 	if v, ok := m["register_groups"]; ok {
 		switch rgList := v.(type) {
@@ -493,6 +530,18 @@ func parseRegisterGroupConfig(m map[string]any, devIdx, rgIdx int) (RegisterGrou
 			}
 			rg.TypeMap = typeMap
 		}
+	}
+
+	// enabled (선택, SPEC-MODBUS-013 REQ-01). 생략하면 nil → IsEnabled()==true(하위 호환).
+	// bool 이 아닌 값은 설정 오류로 거부한다(무음 오해석 방지).
+	if v, ok := m["enabled"]; ok {
+		b, isBool := v.(bool)
+		if !isBool {
+			return RegisterGroupConfig{}, fmt.Errorf(
+				"modbus: devices[%d].register_groups[%d].enabled must be a boolean",
+				devIdx, rgIdx)
+		}
+		rg.Enabled = &b
 	}
 
 	// type_map 검증

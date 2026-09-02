@@ -34,7 +34,6 @@ const PanelCreatePage = lazy(() => import('@/pages/dashboard/PanelCreatePage'));
 const PanelSettingsPage = lazy(() => import('@/pages/dashboard/PanelSettingsPage'));
 const FlowListPage = lazy(() => import('@/pages/flows/FlowListPage'));
 const EditorPage = lazy(() => import('@/pages/editor/EditorPage'));
-const MonitoringPage = lazy(() => import('@/pages/monitoring/MonitoringPage'));
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
 const AgentListPage = lazy(() => import('@/pages/agents/AgentListPage'));
 const NodeTypesPage = lazy(() => import('@/pages/nodes/NodeTypesPage'));
@@ -182,14 +181,6 @@ export const appRoutes: RouteObject[] = [
             element: (
               <SuspenseWrapper>
                 <AgentTypesPage />
-              </SuspenseWrapper>
-            ),
-          },
-          {
-            path: '/monitoring',
-            element: (
-              <SuspenseWrapper>
-                <MonitoringPage />
               </SuspenseWrapper>
             ),
           },

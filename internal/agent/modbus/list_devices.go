@@ -43,6 +43,9 @@ func (a *ModbusAgent) processListDevices() ([]byte, error) {
 				"function_code": rg.FunctionCode,
 				"start_address": rg.StartAddress,
 				"quantity":      rg.Quantity,
+				// enabled 는 항상 유효값(미지정 → true)으로 방출한다. 프론트 체크박스가
+				// 키 부재를 별도 분기하지 않도록 하기 위함이다(SPEC-MODBUS-013 REQ-01/REQ-05).
+				"enabled": rg.IsEnabled(),
 			}
 			if rg.DataType != "" {
 				g["data_type"] = rg.DataType

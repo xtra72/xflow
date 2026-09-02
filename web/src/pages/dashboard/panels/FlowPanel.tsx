@@ -22,7 +22,7 @@ import { useFlowActionsTarget } from '@/hooks/useResourceActions';
 import { useFlowsTarget } from '@/hooks/useResourceTargets';
 import { useTargetGating } from '@/hooks/useTargetGating';
 import { useTranslation } from '@/lib/i18n';
-import { usePanelTitleVisible } from '../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { formatDate } from '@/lib/utils/format';
@@ -77,6 +77,7 @@ interface FlowPanelProps {
 /** 플로우 상태 요약 + 플로우 리스트 테이블 패널 */
 export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelProps) {
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
@@ -285,7 +286,7 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
             <GitBranch className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
             <h3
               className="truncate text-lg font-semibold text-(--color-text-primary)"
-              style={acColor('header') ? { color: acColor('header')! } : undefined}
+              style={{ ...(acColor('header') ? { color: acColor('header')! } : undefined), ...titleStyle }}
             >
               {title}
             </h3>

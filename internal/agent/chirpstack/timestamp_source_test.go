@@ -69,7 +69,7 @@ func tsConfig(name string, opts map[string]any) agent.AgentConfig {
 	return agent.AgentConfig{
 		ID:        "id-" + name,
 		Name:      name,
-		Type:      "chirpstack",
+		Type:      "chirpstack-client",
 		Enabled:   &disabled,
 		Transport: agent.TransportConfig{Options: opts},
 	}
@@ -356,7 +356,7 @@ func TestTimestampSource_InvalidRejectedAtCreation(t *testing.T) {
 			_, err := NewChirpStackAgent(agent.AgentConfig{
 				ID:      "id-ts-invalid",
 				Name:    "ts-invalid",
-				Type:    "chirpstack",
+				Type:    "chirpstack-client",
 				Enabled: &disabled,
 				Transport: agent.TransportConfig{
 					Options: map[string]any{"timestamp_source": tc.val},

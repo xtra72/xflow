@@ -18,8 +18,16 @@ import { persist } from 'zustand/middleware';
 
 import type { Dashboard, DashboardContent, DashboardDetail } from '@/types/dashboard';
 import { generateUUID } from '@/lib/utils/uuid';
+// 신규 차트 패널의 기본 Store 소스 형상(설정 화면의 기본값과 같은 정본).
+import { buildDefaultStoreSource } from '@/pages/dashboard/panels/charts/chartChannelTypes';
 // SPEC-HEATMAP-PANEL-001: 히트맵 패널 기본 config 빌더(파서와 기본값 일치 보장).
 import { buildDefaultHeatmapConfig } from '@/pages/dashboard/panels/heatmap/heatmapConfig';
+// 모니터링 패널의 기본 표시 항목은 모니터링 페이지의 기본 레이아웃과 같은 값을 쓴다.
+import { DEFAULT_LAYOUT as MONITOR_DEFAULT_LAYOUT } from '@/pages/monitoring/monitoringLayout';
+import { STORAGE_ITEMS as SYSMETRICS_STORAGE_ITEMS } from '@/pages/dashboard/panels/sysmetrics/sysMetricsPanelConfig';
+// 시스템 패널의 항목은 값 단위다(cpu.usage_percent 등) — 그룹 키를 쓰면 설정·미리보기가
+// 값 카탈로그와 대조에 실패해 빈 목록이 된다.
+import { DEFAULT_SYSTEM_FIELDS } from '@/pages/dashboard/panels/sysmetrics/sysMetricsFields';
 
 export interface Notification {
   id: string;
@@ -144,8 +152,9 @@ export type FlowColumnKey = (typeof ALL_FLOW_COLUMNS)[number];
 export const ALL_AGENT_COLUMNS = ['name', 'type', 'status', 'uptime', 'messages', 'actions'] as const;
 export type AgentColumnKey = (typeof ALL_AGENT_COLUMNS)[number];
 
-export const ALL_DEVICE_COLUMNS = ['name', 'type', 'status', 'agent', 'last_seen'] as const;
-export type DeviceColumnKey = (typeof ALL_DEVICE_COLUMNS)[number];
+// 디바이스 목록 컬럼은 디바이스 탭과 대시보드 패널이 같은 집합을 써야 하므로
+// `@/hooks/useDeviceColumns` 의 ALL_DEVICE_COLUMNS / DeviceListColumnKey 를 SSOT 로 쓴다.
+// (과거 여기 있던 5컬럼 사본은 탭이 8컬럼으로 늘어난 뒤에도 따라가지 못했다.)
 
 // ---- 멀티-대시보드 타입 ----
 
@@ -159,7 +168,7 @@ export type PanelType =
   | 'logs'
   | 'stat'
   | 'gauge'
-  | 'line-chart'
+  | 'graph-chart'
   | 'bar-chart'
   | 'pie-chart'
   | 'text'
@@ -190,7 +199,49 @@ export type PanelType =
   | 'agent-status'
   // SPEC-HEATMAP-PANEL-001 (MVP): store 태그 바인딩 온도 센서를 IDW 로 보간해
   // Canvas 2D 에 렌더하는 히트맵 패널. config 는 불투명 JSON(store_source + sensor_positions).
-  | 'heatmap';
+  | 'heatmap'
+  // 모니터링 패널 4종. 모니터링 페이지와 같은 항목 어휘를 쓰며(`config.items`),
+  // 실시간 스트림은 프로세스 전역 단일 구독(`monitorStream`)을 공유한다.
+  // 기존 'resource'/'logs' 를 대체하며, 그 둘은 추가 메뉴에서만 내려가고 렌더는 유지된다.
+  | 'monitor-stats'
+  | 'monitor-metrics'
+  // 네트워크는 출처(REST 누적 카운터)·단위시간·인터페이스별 계열이 모두 달라
+  // 실시간 메트릭과 한 패널에 묶이지 않는다.
+  | 'monitor-network'
+  | 'monitor-logs'
+  | 'monitor-events'
+  // SPEC-SYSMETRICS-PANEL-001: sysmetrics 에이전트에 바인딩된 호스트 지표 패널 3종.
+  // 위 monitor-* 와 출처가 다르다 — 이쪽은 호스트 전체(CPU·메모리·디스크·네트워크)를
+  // 보고, monitor-* 는 xflowd 런타임을 본다. 대상(인터페이스·마운트) 선택이 비면
+  // 종합, 고르면 개별이므로 "종합/개별"을 별도 타입으로 두지 않는다.
+  | 'sysmetrics-system'
+  | 'sysmetrics-network'
+  | 'sysmetrics-storage';
+
+/**
+ * 옛 패널 타입 이름 → 현재 이름.
+ *
+ * 저장된 대시보드는 `line-chart` 를 담고 있다. 이름만 바뀌었을 뿐 같은 패널이므로,
+ * 읽는 자리에서 옮겨 준다 — 저장을 강제로 다시 쓰지 않는다. 사용자가 그 대시보드를
+ * 저장하는 순간 새 이름으로 자연히 넘어간다.
+ */
+const LEGACY_PANEL_TYPES: Record<string, PanelType> = {
+  'line-chart': 'graph-chart',
+};
+
+/** 저장된 패널 타입을 현재 어휘로 옮긴다. 모르는 값은 그대로 둔다. */
+export function normalizePanelType(type: string): PanelType {
+  return LEGACY_PANEL_TYPES[type] ?? (type as PanelType);
+}
+
+/** 패널 목록의 타입을 일괄 정규화한다. 바뀔 것이 없으면 원본을 그대로 돌려준다. */
+export function normalizePanels(panels: PanelConfig[]): PanelConfig[] {
+  if (!panels.some((p) => p.type in LEGACY_PANEL_TYPES)) return panels;
+  return panels.map((p) =>
+    p.type in LEGACY_PANEL_TYPES ? { ...p, type: normalizePanelType(p.type) } : p,
+  );
+}
+
 
 /** 개별 패널 설정 */
 export interface PanelConfig {
@@ -228,7 +279,7 @@ const DEFAULT_PANELS: PanelConfig[] = [
   {
     id: 'resource-default',
     type: 'resource',
-    title: '프로세스 리소스',
+    title: '프로세스 상태',
     config: { visibleMetrics: ['cpu', 'memory', 'throughput', 'errorRate'] },
   },
 ];
@@ -247,80 +298,153 @@ const DEFAULT_DASHBOARD_PAGE: DashboardPageConfig = {
   layout: DEFAULT_DASHBOARD_LAYOUT,
 };
 
-/** 패널 타입별 기본 그리드 크기.
+/** 그리드 배치 크기(생성 시점 기본값). */
+type PanelGridSize = Pick<DashboardLayoutItem, 'w' | 'h' | 'minW' | 'minH'>;
+
+/**
+ * 패널 타입별 **생성 시점** 기본 그리드 크기.
  *
- * 차트 계열 5종 (stat/line-chart/bar-chart/pie-chart/table) 크기는
- * SPEC-CHART-001 REQ-M5-05 에 정의되어 있다.
+ * 그리드 셀은 **정사각형**이다 — 행 높이를 열 폭에서 계산한다(`DashboardPage` 의
+ * `gridRowHeight`). 기본 10열이므로 폭 1400px 화면에서 한 칸은 약 140×140px 이고,
+ * 패널 헤더가 그중 위쪽 ~36px 을 먹는다. 아래 값들은 그 셈을 기준으로 잡았다.
+ *
+ * 기준은 하나다: **만들자마자 크기를 조절하지 않아도 내용이 읽혀야 한다.** 종전에는
+ * 여러 타입이 아래 표에 없어 일괄 폴백(5×4)으로 태어났고, 통계·게이지처럼 표에 있는
+ * 것도 헤더를 빼면 내용이 들어갈 자리가 남지 않는 값이었다.
+ *
+ * `Record<PanelType, …>` 로 두어 **컴파일러가 전수성을 강제**한다. 종전의 `switch` +
+ * `default` 는 새 타입이 조용히 일괄 폴백으로 떨어졌고, 그 폴백이 맞는지는 아무도
+ * 확인하지 않았다 — sysmetrics 패널 3종이 실제로 그 상태였다.
+ *
+ * `minW`/`minH` 는 **그대로 둔다.** 여기는 "태어날 때의 크기"이지 "허용되는 최소"가
+ * 아니다. 최소를 함께 올리면 사용자가 일부러 줄여 둔 패널을 다음 렌더에서 그리드가
+ * 도로 키운다.
+ *
+ * 차트 계열 5종의 종전 값은 SPEC-CHART-001 REQ-M5-05 에서 왔다. 그 값들이 헤더·축·범례를
+ * 셈에 넣지 않아 실사용에서 좁다는 피드백을 받아 이번에 키웠다.
  */
-function panelDefaultSize(type: PanelType): Pick<DashboardLayoutItem, 'w' | 'h' | 'minW' | 'minH'> {
-  switch (type) {
-    case 'stat':
-      // SPEC REQ-M5-05: stat {w:2, h:1}
-      return { w: 2, h: 1, minW: 2, minH: 1 };
-    case 'gauge':
-      return { w: 2, h: 3, minW: 2, minH: 2 };
-    case 'text':
-      return { w: 3, h: 2, minW: 2, minH: 2 };
-    case 'ac-control':
-      return { w: 3, h: 5, minW: 2, minH: 4 };
-    case 'hvac-control':
-      return { w: 5, h: 5, minW: 4, minH: 4 };
-    case 'custom-control':
-      return { w: 3, h: 5, minW: 2, minH: 3 };
-    case 'properties-grid':
-      return { w: 4, h: 4, minW: 2, minH: 2 };
-    // SPEC-FACILITY-DASHBOARD-001 M5: 설비 패널 3종
-    case 'facility-device':
-      // 단일 기기(에어컨 제어와 유사한 세로 카드).
-      return { w: 3, h: 5, minW: 2, minH: 4 };
-    case 'facility-station':
-      // 역사(통계 + 기기 목록 + 일괄 제어).
-      return { w: 5, h: 6, minW: 3, minH: 4 };
-    case 'facility-line':
-      // 호선(라인도 포함으로 더 넓게).
-      return { w: 8, h: 6, minW: 4, minH: 4 };
-    case 'facility-group':
-      // 그룹(그룹별 통계 + 일괄 제어 목록). SPEC-XSFM-GROUP-001 M7.
-      return { w: 5, h: 6, minW: 3, minH: 4 };
-    // SPEC-TRIGGER-PANEL-001 M2: 스케줄 리스트 + 카탈로그 편집을 담는 세로 카드.
-    case 'trigger-config':
-      return { w: 4, h: 7, minW: 3, minH: 4 };
-    // SPEC-TRIGGER-SCHED-001 M2: 예약 규칙 테이블(6컬럼). 가로로 넓은 카드.
-    case 'facility-schedule':
-      return { w: 8, h: 6, minW: 5, minH: 4 };
-    // SPEC-MODBUS-012 M1: MODBUS Gateway 패널 6종(목업 레이아웃 부합).
-    // 레지스터 맵 그리드는 넓게, 목록은 세로로, 미니차트/요약 바는 낮게.
-    case 'modbus-shared-registers':
-    case 'modbus-device-registers':
-      return { w: 6, h: 5, minW: 4, minH: 3 };
-    case 'modbus-real-devices':
-    case 'modbus-virtual-devices':
-      return { w: 4, h: 5, minW: 3, minH: 3 };
-    case 'modbus-bus-stats':
-      return { w: 6, h: 3, minW: 3, minH: 2 };
-    case 'modbus-summary-stats':
-      return { w: 8, h: 2, minW: 4, minH: 2 };
-    // SPEC-DASHBOARD-002: 단일 에이전트 상태·통계 패널(통계 타일 그리드 + 헤더).
-    case 'agent-status':
-      return { w: 4, h: 5, minW: 3, minH: 3 };
-    // SPEC-HEATMAP-PANEL-001: 히트맵 패널(권장 기본 크기 {w:5,h:4}).
-    case 'heatmap':
-      return { w: 5, h: 4, minW: 3, minH: 3 };
-    case 'line-chart':
-      // SPEC REQ-M5-05: line-chart {w:6, h:3}
-      return { w: 6, h: 3, minW: 3, minH: 2 };
-    case 'bar-chart':
-      // SPEC REQ-M5-05: bar-chart {w:4, h:3}
-      return { w: 4, h: 3, minW: 3, minH: 2 };
-    case 'pie-chart':
-      // SPEC REQ-M5-05: pie-chart {w:3, h:3}
-      return { w: 3, h: 3, minW: 3, minH: 3 };
-    case 'table':
-      // SPEC REQ-M5-05: table {w:6, h:4}
-      return { w: 6, h: 4, minW: 4, minH: 3 };
-    default:
-      return { w: 5, h: 4, minW: 3, minH: 3 };
-  }
+const PANEL_DEFAULT_SIZES: Record<PanelType, PanelGridSize> = {
+  // --- 차트 계열 ---
+  //
+  // 통계는 종전 2×1 이었다. 한 칸 높이에서 헤더를 빼면 ~100px 이라 값 한 줄이 겨우
+  // 들어가고, 다중 출력 타일 격자(SPEC-CHART-002)는 아예 보이지 않았다.
+  stat: { w: 3, h: 2, minW: 2, minH: 1 },
+  // 게이지는 원형이라 **정사각**이 맞다. 종전 2×3 은 폭이 원의 지름을 묶고 남는
+  // 세로가 빈 채로 남았다.
+  gauge: { w: 3, h: 3, minW: 2, minH: 2 },
+  // 라인/영역/막대/캔들 공용. 축 라벨과 범례가 붙으면 3행에서는 그림이 절반이다.
+  'graph-chart': { w: 6, h: 4, minW: 3, minH: 2 },
+  // 카테고리 라벨이 가로로 늘어선다.
+  'bar-chart': { w: 5, h: 4, minW: 3, minH: 2 },
+  // 조각 + 범례. 파이 자체가 정사각을 요구한다.
+  'pie-chart': { w: 4, h: 4, minW: 3, minH: 3 },
+  // 컬럼 여러 개 + 헤더 행. 가로가 모자라면 컬럼이 잘린다.
+  table: { w: 7, h: 5, minW: 4, minH: 3 },
+  text: { w: 4, h: 3, minW: 2, minH: 2 },
+  // 히트맵은 2차원 공간장을 그리므로 정사각이 자연스럽다.
+  heatmap: { w: 5, h: 5, minW: 3, minH: 3 },
+
+  // --- 목록/테이블 계열 ---
+  //
+  // 플로우·에이전트는 기본 대시보드가 쓰는 값과 같다(5×4 를 둘 나란히 = 10열).
+  flows: { w: 5, h: 4, minW: 3, minH: 3 },
+  agents: { w: 5, h: 4, minW: 3, minH: 3 },
+  devices: { w: 5, h: 4, minW: 3, minH: 3 },
+  // 로그는 컬럼이 많아 가로로 넓어야 읽힌다(monitor-logs 와 같은 근거).
+  logs: { w: 8, h: 5, minW: 5, minH: 3 },
+  // 지표 카드가 가로로 늘어서는 낮고 넓은 띠. 기본 대시보드는 전체 폭(10×3)을 준다.
+  resource: { w: 6, h: 3, minW: 4, minH: 2 },
+
+  // --- 단일 대상 카드 ---
+  device: { w: 4, h: 5, minW: 3, minH: 3 },
+  'properties-grid': { w: 4, h: 4, minW: 2, minH: 2 },
+  // SPEC-DASHBOARD-002: 단일 에이전트 상태·통계(통계 타일 그리드 + 헤더).
+  'agent-status': { w: 4, h: 5, minW: 3, minH: 3 },
+
+  // --- 제어 카드 (세로로 긴 조작 패널) ---
+  'ac-control': { w: 3, h: 5, minW: 2, minH: 4 },
+  'outdoor-control': { w: 3, h: 5, minW: 2, minH: 4 },
+  'hvac-control': { w: 5, h: 5, minW: 4, minH: 4 },
+  'custom-control': { w: 3, h: 5, minW: 2, minH: 3 },
+
+  // --- 설비 (SPEC-FACILITY-DASHBOARD-001 M5 / SPEC-XSFM-GROUP-001 M7) ---
+  // 단일 기기는 에어컨 제어와 유사한 세로 카드.
+  'facility-device': { w: 3, h: 5, minW: 2, minH: 4 },
+  // 역사(통계 + 기기 목록 + 일괄 제어).
+  'facility-station': { w: 5, h: 6, minW: 3, minH: 4 },
+  // 호선(라인도 포함으로 더 넓게).
+  'facility-line': { w: 8, h: 6, minW: 4, minH: 4 },
+  // 그룹(그룹별 통계 + 일괄 제어 목록).
+  'facility-group': { w: 5, h: 6, minW: 3, minH: 4 },
+  // SPEC-TRIGGER-SCHED-001 M2: 예약 규칙 테이블(6컬럼). 가로로 넓은 카드.
+  'facility-schedule': { w: 8, h: 6, minW: 5, minH: 4 },
+  // SPEC-TRIGGER-PANEL-001 M2: 스케줄 리스트 + 카탈로그 편집을 담는 세로 카드.
+  'trigger-config': { w: 4, h: 7, minW: 3, minH: 4 },
+
+  // --- MODBUS Gateway (SPEC-MODBUS-012 M1) ---
+  // 레지스터 맵 그리드는 넓게, 목록은 세로로, 미니차트/요약 바는 낮게.
+  'modbus-shared-registers': { w: 6, h: 5, minW: 4, minH: 3 },
+  'modbus-device-registers': { w: 6, h: 5, minW: 4, minH: 3 },
+  'modbus-real-devices': { w: 4, h: 5, minW: 3, minH: 3 },
+  'modbus-virtual-devices': { w: 4, h: 5, minW: 3, minH: 3 },
+  'modbus-bus-stats': { w: 6, h: 3, minW: 3, minH: 2 },
+  'modbus-summary-stats': { w: 8, h: 2, minW: 4, minH: 2 },
+
+  // --- 모니터링 (xflowd 런타임) ---
+  // 통계 카드 그리드 — 낮고 넓게.
+  'monitor-stats': { w: 4, h: 3, minW: 2, minH: 2 },
+  // 라인 차트 2열 배치 기준.
+  'monitor-metrics': { w: 6, h: 4, minW: 3, minH: 3 },
+  // 범례가 붙어 메트릭보다 넓어야 읽힌다.
+  'monitor-network': { w: 6, h: 5, minW: 4, minH: 3 },
+  // 로그 테이블은 컬럼이 6개라 가로로 넓어야 읽힌다.
+  'monitor-logs': { w: 8, h: 5, minW: 5, minH: 3 },
+  // 타임라인은 세로로 흐른다.
+  'monitor-events': { w: 4, h: 5, minW: 3, minH: 3 },
+
+  // --- sysmetrics (호스트 지표, SPEC-SYSMETRICS-PANEL-001) ---
+  //
+  // 세 타입 모두 종전에는 표에 없어 일괄 폴백(5×4)으로 태어났다. 각 패널이 선언한
+  // 최소 항목 폭에서 필요한 칸 수를 되짚어 넣는다.
+  //
+  // 시스템: 기본 항목 4개 × 최소 카드 폭 160px = 640px → 5칸(700px)이 하한, 6칸이 여유.
+  // 타일은 낮으므로 높이는 3칸이면 한 줄이 편하게 들어간다.
+  'sysmetrics-system': { w: 6, h: 3, minW: 3, minH: 2 },
+  // 네트워크: 기본 스타일이 라인이라 monitor-network 와 같은 근거로 넓고 높다.
+  'sysmetrics-network': { w: 6, h: 5, minW: 4, minH: 3 },
+  // 스토리지: 마운트마다 한 행(최소 행 폭 220px), 기본 스타일은 진행 막대.
+  'sysmetrics-storage': { w: 5, h: 4, minW: 3, minH: 3 },
+};
+
+/** 표에 없는 타입(구 config 의 미지 문자열)이 들어왔을 때의 폴백. */
+const FALLBACK_PANEL_SIZE: PanelGridSize = { w: 5, h: 4, minW: 3, minH: 3 };
+
+/**
+ * 패널 타입별 생성 시점 기본 크기.
+ *
+ * 표는 전수이지만 런타임에는 저장된 대시보드에서 미지의 타입 문자열이 올 수 있으므로
+ * 폴백을 남긴다(`normalizePanelType` 이 걸러 주지만 그 밖의 경로가 생길 수 있다).
+ */
+function panelDefaultSize(type: PanelType): PanelGridSize {
+  return PANEL_DEFAULT_SIZES[type] ?? FALLBACK_PANEL_SIZE;
+}
+
+/**
+ * 신규 차트 계열 패널의 기본 데이터 소스 — 채널이 아니라 **Store** 로 시작한다.
+ *
+ * 히트맵(`buildDefaultHeatmapConfig`)이 이미 쓰던 방식을 통계/게이지/바/파이로 넓힌 것이다.
+ * 이전에는 생성 위저드가 채널 이름을 **필수**로 물어봐서(`AddPanelDialog` 의 chart-config
+ * 스텝) 신규 패널이 항상 channel 모드로 태어났고, store/tsdb 로 가려면 만든 뒤 설정에서
+ * 소스를 다시 바꿔야 했다. 렌더 경로는 이미 세 소스를 모두 지원하고 있었으므로
+ * (`usePanelSeriesData`) 남은 격차는 이 기본값 하나였다.
+ *
+ * `channel_name: ''` 은 **지우지 않는다.** 기본 store 소스는 시리즈가 비어 있어 비활성이고
+ * (`isStoreSourceActive` false), 그 상태의 패널은 채널 경로로 폴백해 기존과 똑같은
+ * "채널 미설정" 빈 상태를 보여준다. 키를 지우면 설정에서 채널 모드로 되돌렸을 때 편집할
+ * 필드가 사라진다.
+ */
+function defaultChartSourceConfig(): Record<string, unknown> {
+  return { data_source: 'store', store_source: buildDefaultStoreSource() };
 }
 
 /** 패널 타입별 기본값 생성 */
@@ -331,24 +455,87 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
     case 'agents':
       return { type, title: '에이전트 현황', config: { visibleColumns: [...ALL_AGENT_COLUMNS] } };
     case 'resource':
-      return { type, title: '프로세스 리소스', config: { visibleMetrics: [...ALL_METRIC_KEYS] } };
+      return { type, title: '프로세스 상태', config: { visibleMetrics: [...ALL_METRIC_KEYS] } };
     case 'devices':
       return { type, title: '디바이스', config: {} };
     case 'device':
       return { type, title: '디바이스', config: {} };
     case 'logs':
       return { type, title: '로그', config: { maxLines: 100 } };
+    // 모니터링 패널 4종 — 기본 표시 항목은 모니터링 페이지의 기본 레이아웃과 같다.
+    case 'monitor-stats':
+      return { type, title: '시스템 통계', config: { items: [...MONITOR_DEFAULT_LAYOUT.stats] } };
+    case 'monitor-metrics':
+      return { type, title: '실시간 메트릭', config: { items: [...MONITOR_DEFAULT_LAYOUT.metrics] } };
+    case 'monitor-network':
+      return {
+        type,
+        title: '네트워크',
+        config: { items: [...MONITOR_DEFAULT_LAYOUT.network], interfaces: [], unitTime: 'sec' },
+      };
+    case 'monitor-logs':
+      return { type, title: '시스템 로그', config: { items: [...MONITOR_DEFAULT_LAYOUT.logs] } };
+    case 'monitor-events':
+      return { type, title: '시스템 이벤트', config: { items: [...MONITOR_DEFAULT_LAYOUT.events] } };
+    // sysmetrics 패널 3종 (SPEC-SYSMETRICS-PANEL-001).
+    //
+    // 대상 목록(interfaces / mountpoints)의 기본값은 **빈 배열 = 종합**이다. 기본을
+    // "전체 개별"로 두면 마운트가 10개인 호스트에서 첫 화면부터 읽을 수 없다.
+    //
+    // agent_id 는 추가 다이얼로그의 선택 스텝이 채운다. 여기서는 키만 비워 둔다 —
+    // 키가 없으면 설정 화면이 어떤 필드를 편집해야 할지 알 수 없다.
+    case 'sysmetrics-system':
+      return {
+        type,
+        title: '시스템 지표',
+        config: { agent_id: '', agent_name: '', items: [...DEFAULT_SYSTEM_FIELDS], unitTime: 'sec' },
+      };
+    case 'sysmetrics-network':
+      return {
+        type,
+        title: '네트워크 지표',
+        config: { agent_id: '', agent_name: '', interfaces: [], unitTime: 'sec' },
+      };
+    case 'sysmetrics-storage':
+      return {
+        type,
+        title: '스토리지 지표',
+        config: { agent_id: '', agent_name: '', mountpoints: [], items: [...SYSMETRICS_STORAGE_ITEMS] },
+      };
     case 'stat':
       // SPEC-CHART-001 §4.2.2 stat config
       return {
         type,
         title: '통계',
-        config: { channel_name: '', display_field: 'value', unit: '', decimal_places: 2 },
+        config: {
+          channel_name: '',
+          display_field: 'value',
+          unit: '',
+          decimal_places: 2,
+          ...defaultChartSourceConfig(),
+        },
       };
     case 'gauge':
-      return { type, title: '게이지', config: { value: 75, min: 0, max: 100, unit: '%', gaugeType: 'simple' } };
-    case 'line-chart':
-      // SPEC-CHART-001 §4.2.2 line-chart config
+      // `series_reduce` 가 함께 있어야 store/tsdb 경로가 실제로 이긴다 — 게이지는
+      // `data_source` + 소스 활성 + `series_reduce` 의 논리곱일 때만 레거시
+      // `dataSources[]` 를 밀어낸다(SPEC-CHART-002 §2.9, `gaugeLegacyBinding.ts` 진리표).
+      // 빠뜨리면 사용자가 시리즈를 골라도 게이지만 조용히 static `value` 를 계속 그린다.
+      // `value: 75` 는 바인딩 이전의 표시값이므로 그대로 둔다(기존 동작 보존).
+      return {
+        type,
+        title: '게이지',
+        config: {
+          value: 75,
+          min: 0,
+          max: 100,
+          unit: '%',
+          gaugeType: 'simple',
+          series_reduce: 'last',
+          ...defaultChartSourceConfig(),
+        },
+      };
+    case 'graph-chart':
+      // SPEC-CHART-001 §4.2.2 그래프 차트 config
       return {
         type,
         title: '라인 차트',
@@ -367,6 +554,7 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
           bin_sec: 60,
           agg_func: 'avg',
           max_points: 20,
+          ...defaultChartSourceConfig(),
         },
       };
     case 'pie-chart':
@@ -382,12 +570,15 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
           show_legend: true,
           show_percentage: true,
           max_points: 20,
+          ...defaultChartSourceConfig(),
         },
       };
     case 'text':
       return { type, title: '텍스트', config: { content: '', format: 'markdown' } };
     case 'table':
-      // SPEC-CHART-001 §4.2.2 table config
+      // SPEC-CHART-001 §4.2.2 table config.
+      // 통계/게이지/바/파이와 같이 store 기본 소스로 태어난다 — 생성 시 채널 이름을
+      // 묻지 않고, 채널/Store/TSDB 전환은 패널 설정의 데이터 소스 섹션에서 한다.
       return {
         type,
         title: '테이블',
@@ -399,6 +590,7 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
           ],
           rows_per_page: 20,
           max_points: 200,
+          ...defaultChartSourceConfig(),
         },
       };
     case 'ac-control':
@@ -410,7 +602,7 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
     case 'outdoor-control':
       return { type, title: '실외기 모니터링', config: { deviceId: '' } };
     case 'properties-grid':
-      return { type, title: '속성 그리드', config: { deviceId: '', gridCols: 3, visibleProperties: [] } };
+      return { type, title: '디바이스 상태', config: { deviceId: '', gridCols: 3, visibleProperties: [] } };
     // SPEC-FACILITY-DASHBOARD-001 M5: 설비 패널 3종. config 는 agentId + 대상(라인/역사/기기).
     // 표시 옵션(nodeSize 5단계 / offlineAsOff / showStats / stationsPerRow)은 config-only 영속(UB-003).
     case 'facility-device':
@@ -453,7 +645,7 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
     // SPEC-MODBUS-012 M1: MODBUS Gateway 패널 6종. 모두 modbus-gateway 에이전트에 바인딩된다.
     // 가상 디바이스 레지스터 맵만 대상 unit(unitId)을 추가로 저장한다(2차 선택 스텝).
     case 'modbus-real-devices':
-      return { type, title: '실제 디바이스', config: { agentId: '' } };
+      return { type, title: '디바이스 상태', config: { agentId: '' } };
     case 'modbus-virtual-devices':
       return { type, title: '가상 디바이스', config: { agentId: '' } };
     case 'modbus-shared-registers':
@@ -972,7 +1164,8 @@ export const useUIStore = create<UIState & UIActions>()(
             id: meta.uid,
             name: meta.name,
             isDefault: meta.is_default,
-            panels: payload?.panels ?? [],
+            // 서버가 옛 이름(line-chart)을 담고 있어도 여기서 현재 이름으로 읽는다.
+            panels: normalizePanels(payload?.panels ?? []),
             layout: payload?.layout ?? [],
           };
           const hasPage = state.dashboardPages.some((p) => p.id === meta.uid);
@@ -991,7 +1184,7 @@ export const useUIStore = create<UIState & UIActions>()(
     }),
     {
       name: 'xflow-ui',
-      version: 4,
+      version: 5,
       migrate: (persistedState: unknown, version: number) => {
         const state = persistedState as Record<string, unknown>;
 
@@ -1033,7 +1226,7 @@ export const useUIStore = create<UIState & UIActions>()(
                 {
                   id: 'resource-default',
                   type: 'resource' as PanelType,
-                  title: (state.resourcePanelTitle as string) || '프로세스 리소스',
+                  title: (state.resourcePanelTitle as string) || '프로세스 상태',
                   config: {
                     visibleMetrics:
                       (state.dashboardVisibleMetrics as string[]) ||
@@ -1082,6 +1275,21 @@ export const useUIStore = create<UIState & UIActions>()(
                   }
                   panel.config = cfg;
                 }
+              }
+            }
+          }
+        }
+
+        // v4 -> v5: 라인 차트 → 그래프 차트 (이름만 변경, 같은 패널).
+        // 스타일 축(라인·영역·바·캔들)이 생기면서 이름이 한 스타일에 묶여 있는 것이
+        // 어색해졌다. config 는 손대지 않는다 — 바뀐 것은 이름뿐이다.
+        if (version < 5) {
+          const pages = state.dashboardPages as DashboardPageConfig[] | undefined;
+          if (Array.isArray(pages)) {
+            for (const page of pages) {
+              if (!Array.isArray(page.panels)) continue;
+              for (const panel of page.panels) {
+                if ((panel.type as string) === 'line-chart') panel.type = 'graph-chart';
               }
             }
           }

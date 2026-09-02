@@ -412,6 +412,9 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	if err := system.RegisterTSDBTypes(agentMgr); err != nil {
 		return fmt.Errorf("TSDB agent type registration failed: %w", err)
 	}
+	if err := system.RegisterSysMetricsTypes(agentMgr); err != nil {
+		return fmt.Errorf("sysmetrics 에이전트 타입 등록 실패: %w", err)
+	}
 	if err := system.RegisterStoreTypes(agentMgr); err != nil {
 		return fmt.Errorf("Store agent type registration failed: %w", err)
 	}

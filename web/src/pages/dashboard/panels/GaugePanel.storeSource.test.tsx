@@ -11,7 +11,7 @@
 // @spec SPEC-CHART-002 AC-11 / AC-17 / AC-14 / AC-18
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, cleanup } from '@testing-library/react';
 
 import type { SeriesMatrix, SeriesMatrixQuery } from '@/services/api/seriesDataSource';
 
@@ -153,12 +153,46 @@ describe('GaugePanel Store 데이터 소스 (SPEC-CHART-002 M4)', () => {
 
     const tiles = gaugeTiles();
     expect(tiles).toHaveLength(3);
-    expect(tiles[0]).toMatchObject({ caption: 'temp.room1', value: '21' });
-    expect(tiles[1]).toMatchObject({ caption: 'temp.room2', value: '23' });
+    expect(tiles[0]).toMatchObject({ caption: 'temp.room1', value: '21.00' });
+    expect(tiles[1]).toMatchObject({ caption: 'temp.room2', value: '23.00' });
     // 정적 config.value(77)로 폴백하지 않는다 — 레거시 경로가 밀려났다는 증거.
-    expect(screen.queryByText('77')).toBeNull();
+    expect(screen.queryByText('77.00')).toBeNull();
     // 레거시 store 폴링은 시작되지 않는다.
     expect(mockPost.fn).not.toHaveBeenCalled();
+  });
+
+  it('tile_rows 로 게이지 배열의 행 수를 정한다(기본 1행)', async () => {
+    await renderPanel(panelConfig({ series_reduce: 'last' }));
+    const grid = screen.getByTestId('series-tile-grid');
+    expect(grid.getAttribute('data-rows')).toBe('1');
+    expect(grid.getAttribute('data-columns')).toBe('3');
+
+    cleanup();
+    await renderPanel(panelConfig({ series_reduce: 'last', tile_rows: 2 }));
+    const grid2 = screen.getByTestId('series-tile-grid');
+    expect(grid2.getAttribute('data-rows')).toBe('2');
+    expect(grid2.getAttribute('data-columns')).toBe('2');
+  });
+
+  it('게이지 상자는 폭이 아니라 행 높이를 받는다(낮은 패널 잘림 방지)', async () => {
+    // 종전에는 상자에 `aspect-ratio` 를 주고 폭 기준으로 정사각형을 만들었다. 낮고 넓은
+    // 패널에서 그 높이가 그리드를 넘쳐 `overflow-hidden` 에 위아래가 잘렸다.
+    // jsdom 은 레이아웃을 계산하지 않으므로 **잘림의 원인이던 스타일 계약**을 잠근다.
+    await renderPanel(panelConfig({ series_reduce: 'last' }));
+
+    // 1) 행 높이를 그리드가 먼저 확정한다 — "행 ↔ 내용" 순환을 끊는 지점.
+    expect(screen.getByTestId('series-tile-grid').style.gridAutoRows).toBe(
+      'minmax(0, 1fr)',
+    );
+    // 2) 상자는 종횡비로 높이를 만들지 않는다. 종횡비는 SVG viewBox + preserveAspectRatio
+    //    기본값(meet)이 맞추므로 넓든 좁든 두 축 안으로 축소된다.
+    for (const box of screen.getAllByTestId('gauge-tile-chart')) {
+      expect(box.style.aspectRatio).toBe('');
+      expect(box.className).toContain('flex-1');
+      expect(box.className).toContain('min-h-0');
+      // SVG 에 slice 가 붙어 있으면 meet 이 아니라 잘라내기가 된다.
+      expect(box.querySelector('svg')?.getAttribute('preserveAspectRatio')).toBeNull();
+    }
   });
 
   it('각 게이지는 패널 공통 min/max/unit/gaugeType 을 공유한다', async () => {
@@ -173,7 +207,7 @@ describe('GaugePanel Store 데이터 소스 (SPEC-CHART-002 M4)', () => {
     // 값이 있는 두 게이지는 공통 단위를 함께 표시한다.
     expect(screen.getAllByText('°C')).toHaveLength(2);
     // max 대표값 — room1=26, room2=23.
-    expect(gaugeTiles().map((t) => t.value)).toEqual(['26', '23', '--']);
+    expect(gaugeTiles().map((t) => t.value)).toEqual(['26.00', '23.00', '--']);
   });
 
   it('값 없는 시리즈 게이지는 -- 를 표시하고 슬롯을 유지한다', async () => {
@@ -278,7 +312,7 @@ describe('GaugePanel Store 데이터 소스 (SPEC-CHART-002 M4)', () => {
     const store = f1Store();
     const view = await renderPanel(panelConfig({ series_reduce: 'max' }, store));
     expect(query.fn).toHaveBeenCalledTimes(1);
-    expect(gaugeTiles()[0]!.value).toBe('26');
+    expect(gaugeTiles()[0]!.value).toBe('26.00');
 
     await act(async () => {
       view.rerender(
@@ -291,7 +325,7 @@ describe('GaugePanel Store 데이터 소스 (SPEC-CHART-002 M4)', () => {
     });
 
     // 값은 즉시 바뀌지만 재조회는 없다(E1 — pollKey 불변).
-    expect(gaugeTiles()[0]!.value).toBe('20');
+    expect(gaugeTiles()[0]!.value).toBe('20.00');
     expect(query.fn).toHaveBeenCalledTimes(1);
   });
 
@@ -308,7 +342,7 @@ describe('GaugePanel Store 데이터 소스 (SPEC-CHART-002 M4)', () => {
     );
 
     expect(query.keysFn).toHaveBeenCalled();
-    expect(gaugeTiles().map((t) => t.value)).toEqual(['11', '22']);
+    expect(gaugeTiles().map((t) => t.value)).toEqual(['11.00', '22.00']);
   });
 
   it('renderDashboardPanel 이 넘기는 onConfigChange/onTitleChange 계약을 바꾸지 않는다', async () => {
@@ -368,8 +402,8 @@ describe('GaugePanel 신규 경로 진입 조건 (SPEC-CHART-002 §2.9 [S1])', (
     expect(screen.queryByTestId('series-tile')).toBeNull();
     // 레거시 폴링이 살아 있고 그 값이 표시된다 — 정적 config.value(77)가 아니다.
     expect(mockPost.fn).toHaveBeenCalled();
-    expect(screen.getByText('42')).toBeInTheDocument();
-    expect(screen.queryByText('77')).toBeNull();
+    expect(screen.getByText('42.00')).toBeInTheDocument();
+    expect(screen.queryByText('77.00')).toBeNull();
     // 매트릭스 조회는 시작되지 않는다(store_source 가 비활성이므로).
     expect(query.fn).not.toHaveBeenCalled();
   });
@@ -381,18 +415,17 @@ describe('GaugePanel 신규 경로 진입 조건 (SPEC-CHART-002 §2.9 [S1])', (
     expect(screen.queryByTestId('gauge-tiles')).toBeNull();
     expect(screen.queryByTestId('series-tile')).toBeNull();
     // 바인딩이 없으므로 정적 config.value 가 그대로 표시된다(기존 동작).
-    expect(screen.getByText('77')).toBeInTheDocument();
+    expect(screen.getByText('77.00')).toBeInTheDocument();
     // Store 조회 자체가 시작되지 않는다.
     expect(query.fn).not.toHaveBeenCalled();
   });
 
-  it("data_source 가 'store' 가 아니면 series_reduce 가 있어도 레거시 경로다", async () => {
-    // §2.10 [S2] — 채널 모드에서는 series_reduce 를 읽지 않는다.
+  // 채널이 패널 소스에서 빠지면서 이 행이 뒤집혔다 — 폐지된 `'channel'` 값도 store 로
+  // 접히므로, 갖춰진 store_source 와 대표값이 있으면 신규 경로가 레거시를 밀어낸다.
+  it("폐지된 'channel' 값도 store 경로로 대표값을 읽는다", async () => {
     await renderPanel(panelConfig({ series_reduce: 'max', data_source: 'channel' }));
 
-    expect(screen.queryByTestId('series-tile')).toBeNull();
-    expect(screen.getByText('77')).toBeInTheDocument();
-    expect(query.fn).not.toHaveBeenCalled();
+    expect(query.fn).toHaveBeenCalled();
   });
 
   it('store_source 가 비활성(시리즈 0개)이면 레거시 경로로 폴백한다', async () => {
@@ -400,7 +433,7 @@ describe('GaugePanel 신규 경로 진입 조건 (SPEC-CHART-002 §2.9 [S1])', (
     await renderPanel(panelConfig({ series_reduce: 'max' }, f1Store({ series: [] })));
 
     expect(screen.queryByTestId('series-tile')).toBeNull();
-    expect(screen.getByText('77')).toBeInTheDocument();
+    expect(screen.getByText('77.00')).toBeInTheDocument();
     expect(query.fn).not.toHaveBeenCalled();
   });
 
@@ -416,6 +449,6 @@ describe('GaugePanel 신규 경로 진입 조건 (SPEC-CHART-002 §2.9 [S1])', (
 
     expect(screen.queryByTestId('series-tile')).toBeNull();
     expect(screen.getByText('--')).toBeInTheDocument();
-    expect(screen.queryByText('77')).toBeNull();
+    expect(screen.queryByText('77.00')).toBeNull();
   });
 });

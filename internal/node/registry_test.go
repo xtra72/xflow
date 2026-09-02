@@ -287,7 +287,7 @@ func TestRegistry_AllTypeMeta_정렬(t *testing.T) {
 	r := NewRegistry()
 
 	metas := r.AllTypeMeta()
-	assert.Len(t, metas, 72) // 58 canonical builtins (store-write + influxdb-write 를 storage-write 하나로 통합) + 14 deprecated `_` 별칭 (HVAC 12 + xsfm 2, 하위 호환)
+	assert.Len(t, metas, 73) // 59 canonical builtins (store-write + influxdb-write 를 storage-write 하나로 통합, sysmetrics-in 추가) + 14 deprecated `_` 별칭 (HVAC 12 + xsfm 2, 하위 호환)
 
 	// 타입명 기준 정렬 확인
 	for i := 1; i < len(metas); i++ {

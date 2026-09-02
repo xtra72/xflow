@@ -9,6 +9,16 @@
 // 자신의 getBoundingClientRect 로 얻는다. 드롭 시 clamp 되어 도면 밖 좌표는 저장되지 않는다(AC-E2).
 // 렌더/드래그는 좌표 오버레이 레이어에 국한되어 store 폴링/히트맵 렌더를 파괴하지 않는다(REQ-04, R3).
 //
+// 포인터 우선순위(도면 이동 오버레이와의 공존):
+//   같은 편집 중에 도면 이동 오버레이(FloorPlanTransformOverlay)도 스테이지 전체를 덮는다. 둘 다
+//   전면(全面) 레이어라 겹치는 순서가 곧 조작 우선순위다 — 마커가 아래에 깔리면 마커를 잡아도
+//   도면이 끌려간다(보고된 "센서를 옮기려는데 전체가 이동됨"). 마커는 도면 위에 놓인 물건이므로
+//   이 레이어가 위(z-24 > z-22)에 온다.
+//   그러면서 **빈 자리 누름은 도면 이동으로 내려보내야** 하므로, 루트는 평소 pointer-events-none
+//   이고 마커·팔레트만 이벤트를 받는다. 드래그가 시작되면 루트를 pointer-events-auto 로 되돌려
+//   포인터가 마커를 벗어나도 이동/드롭 이벤트를 계속 받는다 — 팔레트 칩은 좌표가 생기는 순간
+//   언마운트되므로(미배치 → 배치) 이벤트 수신자를 칩에 둘 수 없다.
+//
 // @spec SPEC-HEATMAP-PANEL-002
 
 import { useRef, useState } from 'react';
@@ -99,9 +109,19 @@ export default function SensorPlacementOverlay({
     <div
       ref={overlayRef}
       data-testid="sensor-placement-overlay"
-      className="absolute inset-0 z-20"
+      className={cn(
+        // z-24: 도면 이동 오버레이(z-22) 위. 마커는 도면 위에 놓인 물건이므로 조작도 먼저 받는다.
+        'absolute inset-0 z-[24]',
+        // 유휴 시에는 빈 자리 누름이 아래(도면 이동)로 내려가야 하므로 루트가 이벤트를 받지 않는다.
+        // 드래그 중에는 루트가 받아야 포인터가 마커를 벗어나도 이동/드롭이 이어진다.
+        dragKey === null ? 'pointer-events-none' : 'pointer-events-auto',
+      )}
       onPointerMove={handleMove}
       onPointerUp={handleUp}
+      // 스테이지를 벗어난 채 손을 떼면 pointerup 이 오지 않아 드래그가 붙잡힌 채 남는다.
+      // 벗어나는 순간을 드롭으로 처리한다 — 좌표는 어차피 [0,1] 로 clamp 되므로 경계에 놓인다.
+      onPointerLeave={handleUp}
+      onPointerCancel={handleUp}
     >
       {/* 배치된 센서 마커: 정규화 좌표를 % 로 환산해 배치(리사이즈 불변, AC-E4). */}
       {placed.map(({ key, pos }) => (
@@ -109,7 +129,7 @@ export default function SensorPlacementOverlay({
           key={key}
           data-testid={`sensor-marker-${key}`}
           data-sensor-key={key}
-          className="group absolute -translate-x-1/2 -translate-y-1/2 touch-none"
+          className="group pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 touch-none"
           style={{ left: `${pos.x * 100}%`, top: `${pos.y * 100}%` }}
         >
           {/* 드래그 핸들(마커 원). */}
@@ -150,7 +170,7 @@ export default function SensorPlacementOverlay({
       {unplaced.length > 0 && (
         <div
           data-testid="sensor-unplaced-palette"
-          className="absolute left-2 top-2 flex max-w-[60%] flex-wrap gap-1 rounded-md bg-black/50 p-1.5"
+          className="pointer-events-auto absolute left-2 top-2 flex max-w-[60%] flex-wrap gap-1 rounded-md bg-black/50 p-1.5"
         >
           <span className="w-full text-[10px] font-medium text-white/80">
             {t('dashboard.heatmap.editUnplacedHint')}

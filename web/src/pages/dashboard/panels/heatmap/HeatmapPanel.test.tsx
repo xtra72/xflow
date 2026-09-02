@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { useState } from 'react';
 
 import type { ChartEntry } from '../charts/chartChannelTypes';
 import type { UseStoreChartDataResult } from '../charts/useStoreChartData';
@@ -27,6 +28,22 @@ vi.mock('../charts/useStoreChartData', () => ({
     storeHookCalls.args.push({ source, enabled });
     return storeMock.current;
   },
+}));
+
+// TSDB 조회 훅도 주입 가능한 mock 으로 대체한다 — 히트맵이 store 가 아닌 소스에 붙었을 때의
+// 좌표 키 공간을 네트워크 없이 관측하기 위해서다(아래 "조회 키 공간" 회귀 테스트).
+const tsdbMock: { current: UseStoreChartDataResult } = {
+  current: {
+    entries: [],
+    seriesEntries: new Map(),
+    seriesStyles: new Map(),
+    seriesNames: [],
+    booleanSeries: new Set(),
+    status: 'idle',
+  },
+};
+vi.mock('../charts/useTsdbChartData', () => ({
+  useTsdbChartData: () => tsdbMock.current,
 }));
 
 // i18n 은 키를 그대로 반환하도록 모킹한다(I18nProvider 없이 렌더 가능).
@@ -94,6 +111,14 @@ function setStore(partial: Partial<UseStoreChartDataResult>) {
 
 beforeEach(() => {
   storeMock.current = {
+    entries: [],
+    seriesEntries: new Map(),
+    seriesStyles: new Map(),
+    seriesNames: [],
+    booleanSeries: new Set(),
+    status: 'idle',
+  };
+  tsdbMock.current = {
     entries: [],
     seriesEntries: new Map(),
     seriesStyles: new Map(),
@@ -1046,8 +1071,16 @@ describe('HeatmapPanel — 타이틀 바', () => {
 // @spec SPEC-TSDB-002 §2.3 (U3) — plan.md §3.2 CT-06 ~ CT-08 / AC-10
 // ---------------------------------------------------------------------------
 describe('HeatmapPanel 소스 활성 판정 특성화 (SPEC-TSDB-002 M2, CT-06~CT-08)', () => {
+  /**
+   * store 경로의 호출.
+   *
+   * 다중 소스가 들어오면서 `useStoreChartData` 는 한 렌더에 **두 번** 불린다
+   * (store 한 번, 시스템 지표 이력 한 번 — 훅 규칙상 쓰지 않는 쪽도 인자를 비워 부른다).
+   * 그래서 "마지막 호출" 로는 어느 쪽인지 알 수 없다. 소스가 실린 호출이 store 쪽이다.
+   */
   function lastStoreCall(): { source: unknown; enabled: unknown } {
-    return storeHookCalls.args.at(-1)!;
+    const withSource = storeHookCalls.args.filter((c) => c.source !== undefined);
+    return (withSource.at(-1) ?? storeHookCalls.args.at(-1))!;
   }
 
   beforeEach(() => {
@@ -1112,5 +1145,136 @@ describe('HeatmapPanel 소스 활성 판정 특성화 (SPEC-TSDB-002 M2, CT-06~C
 
     expect(lastStoreCall()).toEqual({ source: undefined, enabled: false });
     expect(screen.queryByTestId('heatmap-canvas')).toBeNull();
+  });
+  // -------------------------------------------------------------------------
+  // 조회 키 공간과 마커 화이트리스트의 일치 (결함: "포인트가 사라져 한 번 이동 후 이동 불가")
+  //
+  // 팔레트 칩 / 좌표 쓰기 키는 **조회 결과 키 공간**(resolveSensorSeries 의 ids)인데,
+  // 마커 화이트리스트를 `store_source.series` 파생 키로만 두면 두 공간이 어긋나는 경로에서
+  // 방금 배치한 좌표가 그 자리에서 사라진다 — 좌표가 생겨 칩은 없어지고 마커는 걸러진다.
+  // -------------------------------------------------------------------------
+
+  /** config 를 shallow merge 로 보관하는 부모(대시보드 `updatePanelConfig` 와 같은 규칙). */
+  function PlacementHost({ initial }: { initial: Record<string, unknown> }) {
+    const [config, setConfig] = useState(initial);
+    return (
+      <HeatmapPanel
+        panelId="p"
+        config={config}
+        onConfigChange={(c) => setConfig((prev) => ({ ...prev, ...c }))}
+        forcePlacement
+      />
+    );
+  }
+
+  /** 오버레이 위에서 칩/마커를 한 번 끌어 놓는다. */
+  function dropOnOverlay(handle: HTMLElement, clientX: number, clientY: number) {
+    const overlay = screen.getByTestId('sensor-placement-overlay');
+    fireEvent.pointerDown(handle);
+    fireEvent.pointerMove(overlay, { clientX, clientY });
+    fireEvent.pointerUp(overlay, { clientX, clientY });
+  }
+
+  it('TSDB 소스: 팔레트 칩을 끌어 놓으면 그 자리에 마커가 남는다', () => {
+    // TSDB 히트맵에는 `store_source` 가 없다 → refs 가 비어 화이트리스트도 비었었다.
+    tsdbMock.current = {
+      ...tsdbMock.current,
+      seriesNames: ['temp.A'],
+      seriesEntries: new Map([['temp.A', reading(21)]]),
+      status: 'connected',
+    };
+    render(
+      <PlacementHost
+        initial={{
+          data_source: 'tsdb',
+          tsdb_source: {
+            agent_name: 'influx',
+            series: [{ measurement: 'm', field: 'temperature' }],
+          },
+          sensor_positions: {},
+          idw: { power: 2, grid_resolution: 8 },
+        }}
+      />,
+    );
+
+    dropOnOverlay(screen.getByTestId('sensor-unplaced-temp.A'), 10, 10);
+
+    // 칩은 좌표를 얻어 사라지고, 그 자리를 마커가 이어받는다(둘 다 없으면 결함).
+    expect(screen.queryByTestId('sensor-unplaced-temp.A')).toBeNull();
+    expect(screen.getByTestId('sensor-marker-handle-temp.A')).toBeInTheDocument();
+  });
+
+  it('store 소스: 컬럼 수가 series 수와 어긋나도 배치한 마커가 남는다', () => {
+    // 한 key 가 여러 컬럼으로 펼쳐지면 동일성 키로 정렬할 수 없어(resolveSensorSeries
+    // aligned=false) 조회 이름이 그대로 키가 된다 — 그 키도 마커로 인정해야 한다.
+    setStore({
+      seriesNames: ['s1 (1)', 's1 (2)'],
+      seriesEntries: new Map([
+        ['s1 (1)', reading(22)],
+        ['s1 (2)', reading(23)],
+      ]),
+      status: 'connected',
+    });
+    render(<PlacementHost initial={makeConfig({}, {}, ['s1'])} />);
+
+    dropOnOverlay(screen.getByTestId('sensor-unplaced-s1 (1)'), 10, 10);
+
+    expect(screen.queryByTestId('sensor-unplaced-s1 (1)')).toBeNull();
+    expect(screen.getByTestId('sensor-marker-handle-s1 (1)')).toBeInTheDocument();
+  });
+
+  it('배치한 마커를 연속으로 두 번 이동할 수 있다', () => {
+    setStore({
+      seriesNames: [sid('s1')],
+      seriesEntries: new Map([[sid('s1'), reading(22)]]),
+      status: 'connected',
+    });
+    render(<PlacementHost initial={makeConfig({ [sid('s1')]: { x: 0.5, y: 0.5 } })} />);
+
+    const handleId = `sensor-marker-handle-${tid(sid('s1'))}`;
+    dropOnOverlay(screen.getByTestId(handleId), 10, 10);
+    expect(screen.getByTestId(handleId)).toBeInTheDocument();
+    dropOnOverlay(screen.getByTestId(handleId), 30, 30);
+    expect(screen.getByTestId(handleId)).toBeInTheDocument();
+  });
+  it('판독값이 아직 없어도 바인딩된 센서는 미배치 팔레트에 뜬다(자리 정하기는 값보다 먼저다)', () => {
+    // 조회는 붙었지만 컬럼/값이 하나도 없는 상태(설정 미리보기에서 실제 데이터를 끈 경우 포함).
+    // 종전에는 팔레트가 통째로 비어 배치 자체가 불가능했다.
+    setStore({ seriesNames: [], seriesEntries: new Map(), status: 'connected' });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig({}, {}, ['s1', 's2'])}
+        onConfigChange={vi.fn()}
+        forcePlacement
+      />,
+    );
+    expect(screen.getByTestId(`sensor-unplaced-${tid(sid('s1'))}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`sensor-unplaced-${tid(sid('s2'))}`)).toBeInTheDocument();
+  });
+
+  it('마커 오버레이가 도면 이동 오버레이보다 위에 온다(마커를 잡으면 도면이 아니라 마커가 움직이도록)', () => {
+    setStore({
+      seriesNames: [sid('s1')],
+      seriesEntries: new Map([[sid('s1'), reading(22)]]),
+      status: 'connected',
+    });
+    render(
+      <HeatmapPanel
+        panelId="p"
+        config={makeConfig({ [sid('s1')]: { x: 0.5, y: 0.5 } }, {
+          floor_plan: { image: 'data:image/png;base64,AAAA' },
+        })}
+        onConfigChange={vi.fn()}
+        forcePlacement
+      />,
+    );
+    const zOf = (el: HTMLElement): number => {
+      const m = /z-\[?(\d+)\]?/.exec(el.className);
+      return m ? Number(m[1]) : NaN;
+    };
+    const sensorZ = zOf(screen.getByTestId('sensor-placement-overlay'));
+    const transformZ = zOf(screen.getByTestId('floorplan-transform-overlay'));
+    expect(sensorZ).toBeGreaterThan(transformZ);
   });
 });

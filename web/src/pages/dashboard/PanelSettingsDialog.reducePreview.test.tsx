@@ -78,6 +78,22 @@ vi.mock('@/services/api/client', () => ({
   post: async () => ({ entries: [] as Array<{ value: unknown; timestamp: number }> }),
 }));
 
+// sysmetrics 소스는 에이전트 스냅샷을 폴링한다. 조회 컨텍스트 없이 렌더하려고 갈아 끼운다.
+vi.mock('./panels/sysmetrics/useSysMetricsSnapshot', () => ({
+  useSysMetricsSnapshot: () => ({
+    snapshot: {
+      status: 'running',
+      collectedAt: 1_000,
+      intervalSeconds: 5,
+      cpu: { usage_percent: 42 },
+      network: { en0: { bytes_recv: 10 }, en1: { bytes_recv: 20 } },
+      targets: { mountpoints: [], devices: [], interfaces: ['en0', 'en1'] },
+    },
+    previous: null,
+    state: 'ready' as const,
+  }),
+}));
+
 vi.mock('./panels/charts/useChartChannel', () => ({
   useChartChannel: () => ({
     entries: [],
@@ -156,34 +172,29 @@ describe('stat 라이브 미리보기 (M6.3)', () => {
     expect(query.fn).toHaveBeenCalled();
   });
 
-  it('대표값을 지정하지 않으면(레거시 경로) 미리보기를 렌더하지 않는다', async () => {
+  it('대표값을 지정하지 않아도(레거시 경로) 미리보기를 렌더한다', async () => {
+    // stat 에는 합성 미니 프리뷰가 없다 — 렌더하지 않으면 미리보기 영역이 빈 화면이 된다.
+    // StatPanel 은 대표값 없이도 시리즈 소스 데이터를 그리므로 미리보기도 같은 조건이다.
     await renderDialog('stat', {
       channel_name: 'c1',
       data_source: 'store',
       store_source: f1Store(),
     });
-    expect(screen.queryByTestId('stat-preview-wrapper')).toBeNull();
+    expect(screen.getByTestId('stat-preview-wrapper')).toBeInTheDocument();
   });
 
-  it('채널 모드에서는 대표값이 남아 있어도 미리보기를 렌더하지 않는다', async () => {
-    // series_reduce 는 채널 모드에서 읽히지 않는다(§2.10 [S2]) — 미리보기도 같아야 한다.
-    await renderDialog('stat', {
-      channel_name: 'c1',
-      data_source: 'channel',
-      store_source: f1Store(),
-      series_reduce: 'max',
-    });
-    expect(screen.queryByTestId('stat-preview-wrapper')).toBeNull();
-  });
-
-  it('시리즈를 하나도 고르지 않았으면 미리보기를 렌더하지 않는다', async () => {
+  it('시리즈 미선택이면 실패널의 빈 상태를 렌더한다(빈 화면이 아니다)', async () => {
+    // 신규 통계 패널은 store 기본 소스 + 시리즈 0개로 태어난다. 이때 미리보기를 끄면
+    // 사용자는 소스를 고르기도 전에 빈 화면을 본다. 소스가 비활성이면 조회는 idle 이므로
+    // (`usePanelSeriesData`) 빈 시리즈로 요청이 나가지도 않는다.
     await renderDialog('stat', {
       channel_name: 'c1',
       data_source: 'store',
       store_source: f1Store({ series: [] }),
       series_reduce: 'max',
     });
-    expect(screen.queryByTestId('stat-preview-wrapper')).toBeNull();
+    expect(screen.getByTestId('stat-preview-wrapper')).toBeInTheDocument();
+    expect(query.fn).not.toHaveBeenCalled();
   });
 });
 
@@ -213,10 +224,11 @@ describe('gauge 라이브 미리보기 (M6.3)', () => {
     expect(isMiniPreview()).toBe(false);
     const preview = within(screen.getByTestId('gauge-preview-wrapper'));
     // F1 의 last 는 21 / 23 / 값 없음. static config.value(7)는 쓰이지 않는다.
-    expect(preview.getByText('21')).toBeInTheDocument();
-    expect(preview.getByText('23')).toBeInTheDocument();
+    // 게이지 숫자는 값 표기 자릿수(기본 2)를 따른다.
+    expect(preview.getByText('21.00')).toBeInTheDocument();
+    expect(preview.getByText('23.00')).toBeInTheDocument();
     expect(preview.getByText('--')).toBeInTheDocument();
-    expect(preview.queryByText('7')).toBeNull();
+    expect(preview.queryByText('7.00')).toBeNull();
   });
 
   it('레거시 경로가 이기는 동안에는 기존 합성 샘플 미리보기가 유지된다', async () => {
@@ -257,5 +269,51 @@ describe('gauge 라이브 미리보기 (M6.3)', () => {
       series_reduce: 'last',
     });
     expect(isMiniPreview()).toBe(true);
+  });
+});
+
+
+describe('sysmetrics 소스 라이브 미리보기', () => {
+  /** 보고된 상태: 라인 차트 + sysmetrics 소스 + 인터페이스 둘. */
+  function sysmetricsSource(over: Record<string, unknown> = {}) {
+    return {
+      agent_id: 'a1',
+      agent_name: 'host-1',
+      series: [{ key: 'network.bytes_recv' }],
+      interfaces: ['en0', 'en1'],
+      ...over,
+    };
+  }
+
+  it('라인 차트가 합성 미니 프리뷰가 아니라 실제 패널을 그린다', async () => {
+    // 종전에는 게이트가 소스 종류를 `store | tsdb` 로 **열거**해 sysmetrics 가 빠졌고,
+    // 미리보기 영역이 합성 미니 프리뷰에 머물러 "출력 안됨" 으로 보였다.
+    await renderDialog('graph-chart', {
+      data_source: 'sysmetrics',
+      sysmetrics_source: sysmetricsSource(),
+    });
+
+    const wrapper = within(screen.getByTestId('line-chart-preview-wrapper'));
+    expect(wrapper.getByTestId('line-chart-container')).toBeInTheDocument();
+  });
+
+  it('소스가 비활성이면(값 미선택) 종전대로 합성 미니 프리뷰가 남는다', async () => {
+    await renderDialog('graph-chart', {
+      data_source: 'sysmetrics',
+      sysmetrics_source: sysmetricsSource({ series: [] }),
+    });
+
+    const wrapper = within(screen.getByTestId('line-chart-preview-wrapper'));
+    expect(wrapper.queryByTestId('line-chart-container')).toBeNull();
+  });
+
+  it('실제 데이터 적용 토글이 노출된다', async () => {
+    // 게이트가 종류를 열거하던 때는 sysmetrics 에서 이 토글도 함께 사라졌다.
+    await renderDialog('graph-chart', {
+      data_source: 'sysmetrics',
+      sysmetrics_source: sysmetricsSource(),
+    });
+
+    expect(screen.getByTestId('preview-real-data-toggle')).toBeInTheDocument();
   });
 });

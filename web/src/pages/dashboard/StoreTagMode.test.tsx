@@ -62,7 +62,7 @@ function makePanel(store_source: Partial<StoreSourceConfig> = {}): PanelConfig {
   };
   return {
     id: 'p1',
-    type: 'line-chart',
+    type: 'graph-chart',
     title: '테스트',
     config: { data_source: 'store', store_source: { ...base, ...store_source } },
   } as unknown as PanelConfig;

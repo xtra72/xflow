@@ -587,7 +587,17 @@ func (a *InfluxDBAgent) QuerySeriesBuckets(ctx context.Context, spec SeriesQuery
 	if err != nil {
 		return nil, fmt.Errorf("influxdb %s series query: %w", lang, err)
 	}
-	return normalizeSeriesBuckets(rows, spec)
+	buckets, err := normalizeSeriesBuckets(rows, spec)
+	if err != nil {
+		return nil, err
+	}
+	// 직전값 채우기는 응답을 받은 뒤 여기서 한다(사용 기간 제한을 걸기 위해).
+	// 그 밖의 전략은 DB 가 이미 처리했으므로 손대지 않는다.
+	if spec.Fill == SeriesFillPrevious {
+		buckets = applyPreviousFill(
+			buckets, sortedGroupKeys(spec.GroupBy), spec.IntervalMs, spec.FillPreviousLimit)
+	}
+	return buckets, nil
 }
 
 // buildSeriesQueryForVersion 는 에이전트의 InfluxDB 버전에 따라 방언을 고른다.

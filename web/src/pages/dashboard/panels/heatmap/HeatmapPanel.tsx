@@ -11,7 +11,7 @@
 //   - 폴링 실패 시 useStoreChartData 가 직전 시리즈(entries)를 보존한 채 status='error' 만
 //     세팅하므로, 마지막 렌더(온도장)를 파괴하지 않고 오류 배지만 덧띄운다(AC-E3).
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Move, Thermometer } from 'lucide-react';
 
 import { useTranslation } from '@/lib/i18n';
@@ -22,6 +22,12 @@ import { normalizeStoreSeriesAlias } from '../charts/chartChannelTypes';
 import type { StoreSeriesRef, StoreSourceConfig } from '../charts/chartChannelTypes';
 import { usePanelSeriesData } from '../charts/usePanelSeriesData';
 import { parseHeatmapConfig } from './heatmapConfig';
+// 히트맵에는 값 읽기(툴팁·타일)가 없고 범례 눈금과 등고선 라벨만 있다. 둘 다 눈금자이므로
+// 자릿수 기본값(2)은 걸지 않고, 사용자가 직접 지정했을 때만 따른다.
+import {
+  hasExplicitDecimalPlaces,
+  readDecimalPlaces,
+} from '@/pages/dashboard/panels/charts/decimalPlaces';
 import { joinSensorPoints, resolveSensorSeries } from './heatmapJoin';
 import { heatmapSensorId, sensorSeriesLabel } from './sensorIdentity';
 import { DEFAULT_COLOR_TABLE, interpolateIDW } from './idw';
@@ -40,7 +46,7 @@ import {
 } from './stage';
 import { useFloorPlanAspect } from './useFloorPlanAspect';
 import { useFloorPlanSources } from './useFloorPlanSources';
-import { usePanelTitleVisible } from '../../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../../panelChromeContext';
 
 /** 값을 [lo, hi] 로 clamp 한다(격자 해상도 성능 가드). */
 function clamp(value: number, lo: number, hi: number): number {
@@ -74,7 +80,11 @@ export default function HeatmapPanel({
 }: HeatmapPanelProps) {
   const { t } = useTranslation();
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const cfg = parseHeatmapConfig(config);
+  const explicitDecimals = hasExplicitDecimalPlaces(config)
+    ? readDecimalPlaces(config)
+    : undefined;
 
   // 배치 편집 모드(런타임 상태, 비영속 — REQ-03/T7). onConfigChange 가 있을 때만 진입 가능.
   const [editing, setEditing] = useState(false);
@@ -157,7 +167,15 @@ export default function HeatmapPanel({
   // 레이어 이미지 해석(자산 id → data-URL, 레거시 인라인 이미지는 그대로).
   const floorPlanSources = useFloorPlanSources(cfg.floor_plans);
   const baseLayer = cfg.floor_plans[0];
-  const baseAspect = useFloorPlanAspect(baseLayer, floorPlanSources[0]);
+  // 실제로 그려진 <img> 가 알려 준 종횡비(마지막 보루). config 저장값도 별도 실측도 실패할 수
+  // 있는데(자산 URL·인증·캐시), 그때 스테이지가 패널 전체로 퇴화하면 도면만 안에서 다시
+  // 레터박스되어 마커는 패널을, 도면은 자기 비율을 따르게 된다 — 보고된 어긋남의 정체다.
+  const [renderedSize, setRenderedSize] = useState<{ w: number; h: number } | undefined>(
+    undefined,
+  );
+  const baseAspect =
+    useFloorPlanAspect(baseLayer, floorPlanSources[0]) ??
+    (renderedSize ? renderedSize.w / renderedSize.h : undefined);
   // stage_fit: 여백(contain, 기본) / 잘림(cover) / 왜곡(stretch) 중 무엇을 감수할지의 선택.
   // fit 으로 기본 박스를 구한 뒤 사용자가 직접 옮기고 키운 변형을 얹는다. 마커는 스테이지
   // 정규화 좌표라 변형을 따로 반영할 필요 없이 도면 위 같은 지점에 그대로 붙어 따라온다.
@@ -174,19 +192,44 @@ export default function HeatmapPanel({
   // 레거시 좌표(컨테이너 기준) → 스테이지 기준 환산. 실측 rect 로 환산하므로 **보이던 위치가
   // 그대로 보존**된다(스테이지 도입으로 마커가 소리 없이 움직이지 않는다). 이미 'stage' 로
   // 승격된 config 는 그대로 쓴다. 측정 전(0×0)에는 환산할 수 없으므로 원본을 그대로 둔다.
-  const needsSpaceMigration =
-    cfg.sensor_space !== 'stage' && stage.width > 0 && stage.height > 0 &&
-    (stage.width !== bodySize.width || stage.height !== bodySize.height);
-  const sensorPositions = useMemo(
-    () =>
-      needsSpaceMigration
-        ? migratePositionsToStage(cfg.sensor_positions, bodySize, stage)
-        : cfg.sensor_positions,
-    [needsSpaceMigration, cfg.sensor_positions, bodySize, stage],
-  );
+  //
+  // 환산은 **한 번만** 한다. 렌더마다 그때의 실측으로 다시 풀면, 같은 레거시 좌표가 패널
+  // 종횡비에 따라 다른 스테이지 좌표가 된다 — 레거시 좌표는 "패널 본문의 몇 %" 라는 뜻이라
+  // 도면이 어디에 레터박스되는지를 모르기 때문이다. 그래서 패널 크기를 바꿀 때마다 마커가
+  // 도면 위에서 미끄러졌다(보고된 "이미지와 패널이 따로 논다"). 첫 실측 결과를 고정하고,
+  // 아래 승격 효과가 그 결과를 config 에 적어 다음 세션에도 같은 자리를 쓰게 한다.
+  //
+  // 캐시 키는 **파싱 전 원본 맵의 참조**다. `cfg.sensor_positions` 는 파서가 매 렌더 새로
+  // 만드는 객체라 키로 쓰면 고정이 풀린다. 원본 참조가 바뀌면(외부 편집) 다시 환산한다.
+  const rawPositions = config.sensor_positions;
+  const migrationRef = useRef<{
+    src: unknown;
+    positions: Record<string, NormalizedPos>;
+  } | null>(null);
+  const isLegacySpace = cfg.sensor_space !== 'stage';
+  // 종횡비를 아직 모르면 스테이지가 패널 전체다 — 그 상태의 환산은 항등이라 "환산했다" 는
+  // 표식만 남기고 좌표는 컨테이너 기준 그대로 굳는다. 나중에 종횡비가 도착해 스테이지가
+  // 레터박스되면 그 좌표가 스테이지 좌표로 재해석되어 마커가 도면에서 어긋난 채 고정된다.
+  // 도면이 아예 없으면 스테이지 = 컨테이너가 정상이므로 기다릴 이유가 없다.
+  const stageAnchored = cfg.floor_plans.length === 0 || baseAspect !== undefined;
+  const measured = stage.width > 0 && stage.height > 0 && stageAnchored;
+  if (isLegacySpace && measured && migrationRef.current?.src !== rawPositions) {
+    migrationRef.current = {
+      src: rawPositions,
+      positions:
+        stage.width !== bodySize.width || stage.height !== bodySize.height
+          ? migratePositionsToStage(cfg.sensor_positions, bodySize, stage)
+          : cfg.sensor_positions,
+    };
+  }
+  const frozen = migrationRef.current;
+  const migratedPositions =
+    isLegacySpace && frozen !== null && frozen.src === rawPositions ? frozen.positions : undefined;
+  const sensorPositions: Record<string, NormalizedPos> =
+    migratedPositions ?? cfg.sensor_positions;
 
   // 센서 최신값(시리즈별) 추출 + 좌표 결합(T6). 좌표 미지정 센서는 보간 입력에서 제외(AC-E2).
-  const { points, unplacedNames, autoBounds } = useMemo(
+  const { points, autoBounds } = useMemo(
     () => joinSensorPoints(resolved.ids, resolved.entriesById, sensorPositions),
     [resolved, sensorPositions],
   );
@@ -221,7 +264,20 @@ export default function HeatmapPanel({
   // 없어도 방금 선택한 센서 마커를 유지해 드래그 배치가 가능하다. tag 매칭(미체크) 시리즈는
   // 절대 마커로 그리지 않으며, 잔존 sensor_positions(선택에서 빠진 옛 키)로 인한 유령 마커도 막는다.
   // 기준은 동일성 키다 — alias 기준이면 이름을 바꾼 순간 마커가 사라진다.
-  const boundIds = useMemo(() => new Set(refs.map((ref) => heatmapSensorId(ref))), [refs]);
+  //
+  // 화이트리스트는 refs 파생 키와 **실제 조회 결과 키 공간**(resolved.ids)의 합집합이다.
+  // refs 만 쓰면 두 공간이 어긋나는 경로에서 방금 배치한 좌표가 그 자리에서 사라졌다:
+  //   (a) TSDB/sysmetrics 소스 — refs 는 `store_source` 에서 오므로 비어 있다.
+  //   (b) store 라도 컬럼 수와 refs 수가 어긋나면(resolveSensorSeries aligned=false)
+  //       조회 이름 공간이 그대로 id 가 된다.
+  // 두 경우 모두 팔레트 칩(=resolved.ids)을 끌어 놓으면 **그 키로** 좌표가 저장되는데 마커는
+  // refs 로 걸러져 렌더되지 않았다 → 좌표가 생겨 칩도 사라지고 마커도 없다. 즉 "포인트가
+  // 사라져 한 번 이동한 뒤로는 다시 잡을 수 없다". 합집합인 이유는 refs 쪽도 남겨야 조회
+  // 전(로딩/무값)에도 마커가 유지되던 동작이 깨지지 않기 때문이다.
+  const boundIds = useMemo(
+    () => new Set([...refs.map((ref) => heatmapSensorId(ref)), ...resolved.ids]),
+    [refs, resolved.ids],
+  );
   // 동일성 키 → 표시 라벨. 사용자가 붙인 이름이 있으면 그 이름, 없으면 시리즈를 구분하는
   // 서술 표기(`key · metric{k=v}`)다 — key 만 쓰면 한 key 를 공유하는 형제 센서들의 마커가
   // 같은 글자로 찍혀 서로 구분되지 않는다. 마커/칩 텍스트 전용이며 매칭에는 쓰지 않는다.
@@ -240,6 +296,16 @@ export default function HeatmapPanel({
         .map(([id, pos]) => ({ key: id, pos })),
     [sensorPositions, boundIds],
   );
+  // 미배치: 바인딩된 센서 중 좌표가 없는 것. **판독값을 요구하지 않는다.**
+  // `joinSensorPoints` 의 unplacedNames 는 최신 유한값이 있는 시리즈만 담으므로, 값이 아직
+  // 오지 않았거나 설정 미리보기에서 실제 데이터를 끄면 팔레트가 통째로 비어 **배치 자체가
+  // 불가능**했다(보고된 "설정 모드에서 센서 포인트가 보이지 않음"). 마커(placed)는 이미
+  // 판독값과 무관하게 유지되므로, 미배치 쪽만 값을 요구하던 것은 두 목록이 서로 다른 규칙을
+  // 쓰던 비대칭이다 — 자리를 정하는 일은 값이 흐르기 전에도 할 수 있어야 한다.
+  const unplacedIds = useMemo(
+    () => [...boundIds].filter((id) => sensorPositions[id] === undefined),
+    [boundIds, sensorPositions],
+  );
 
   // 좌표 쓰기는 항상 **환산된 맵 전체**를 내보내고 공간을 'stage' 로 승격한다. 레거시 맵에
   // 스테이지 좌표 한 건만 섞어 쓰면 두 공간이 한 맵에 공존해 나머지 마커가 틀어진다.
@@ -249,6 +315,47 @@ export default function HeatmapPanel({
     },
     [onConfigChange],
   );
+  // 레거시 공간 승격을 config 에 **한 번 적어 둔다**. 화면에서 고정하는 것만으로는 이번 세션
+  // 안에서만 자리가 유지되고, 다시 열면 그때의 패널 크기로 새로 풀려 또 다른 자리에 놓인다.
+  //
+  // 설정 미리보기(forcePlacement)에서는 적지 않는다 — 미리보기 상자는 대시보드 셀과 크기가
+  // 달라 같은 레거시 좌표를 다른 스테이지 좌표로 푼다. 둘 다 쓰면 나중에 연 쪽이 이기며,
+  // 그것이 곧 "설정을 열었다 닫았더니 마커가 옮겨졌다" 가 된다. 실제로 보이는 자리를 정하는
+  // 것은 대시보드 패널이므로 그쪽 실측만 권위로 삼는다.
+  useEffect(() => {
+    if (forcePlacement || !canEdit) return;
+    if (cfg.sensor_space === 'stage') return;
+    const promoted = migrationRef.current;
+    if (!promoted || promoted.src !== rawPositions) return;
+    onConfigChange?.({ sensor_positions: promoted.positions, sensor_space: 'stage' });
+    // 승격 후에는 cfg.sensor_space 가 'stage' 가 되어 이 효과가 다시 쓰지 않는다.
+  }, [forcePlacement, canEdit, cfg.sensor_space, rawPositions, sensorPositions, onConfigChange]);
+
+  // 읽어 낸 도면 원본 크기를 config 에 **한 번 적어 둔다**.
+  //
+  // 런타임 실측은 매번 이미지 로드에 기댄다 — 자산 조회, 캐시, 인증, 디코드 실패 중 어느 하나만
+  // 어긋나도 종횡비가 미상이 되고, 그러면 스테이지가 패널 전체로 퇴화한 채 남아 마커가 도면이
+  // 아니라 패널을 따라간다. 한 번이라도 실제 크기를 읽었으면 그것을 남겨, 다음부터는 **첫
+  // 페인트부터** 스테이지가 도면에 맞도록 한다(useFloorPlanAspect 의 저장값 경로).
+  //
+  // 승격을 쓰는 조건은 좌표 공간 승격과 같다 — 설정 미리보기는 쓰지 않는다(같은 config 를 두
+  // 곳에서 쓰면 나중에 연 쪽이 이긴다). 한 번만 쓰도록 래치를 둔다.
+  const sizePersistedRef = useRef(false);
+  useEffect(() => {
+    if (forcePlacement || !canEdit || sizePersistedRef.current) return;
+    if (!renderedSize) return;
+    const base = cfg.floor_plans[0];
+    if (!base || base.natural_width !== undefined) return;
+    sizePersistedRef.current = true;
+    onConfigChange?.({
+      floor_plans: cfg.floor_plans.map((layer, i) =>
+        i === 0
+          ? { ...layer, natural_width: renderedSize.w, natural_height: renderedSize.h }
+          : layer,
+      ),
+    });
+  }, [forcePlacement, canEdit, renderedSize, cfg.floor_plans, onConfigChange]);
+
   // 좌표 갱신(드래그 미리보기 + 드롭). 부분 config 병합으로 sensor_positions 만 쓴다(additive).
   const handlePositionChange = (key: string, pos: NormalizedPos) => {
     writePositions({ ...sensorPositions, [key]: pos });
@@ -274,6 +381,12 @@ export default function HeatmapPanel({
     // 새 좌표는 패널 공간이다 — 표식을 함께 남겨 다음 렌더에서 다시 환산되지 않게 한다.
     onConfigChange?.({ legend: { ...cfg.legend, offset, offset_space: 'panel' } });
   };
+  // 범례 크기 조절(모서리 손잡이) → 막대 치수만 부분 갱신한다. 크기는 설정 항목이 아니라
+  // 조작 결과이므로 저장 경로도 드래그 이동과 같다(legend 키 병합).
+  const handleLegendSizeChange = (size: { bar_length: number; bar_thickness: number }) => {
+    if (!cfg.legend) return;
+    onConfigChange?.({ legend: { ...cfg.legend, ...size } });
+  };
 
   // 배치 활성 = 런타임 편집 토글(대시보드) OR forcePlacement(설정 미리보기). 후자는
   // dashboardEditMode 에 의존하지 않는다(설정 다이얼로그에서 드래그 배치 허용).
@@ -293,7 +406,7 @@ export default function HeatmapPanel({
       {headerVisible && (
         <div className="mb-1 flex shrink-0 items-center gap-2" data-testid="heatmap-title">
           <Thermometer className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
-          <span className="truncate text-sm font-semibold text-(--color-text-primary)">{title}</span>
+          <span className="truncate text-sm font-semibold text-(--color-text-primary)" style={titleStyle}>{title}</span>
         </div>
       )}
       {/* 배치 편집 진입/종료 토글(REQ-03/T7). onConfigChange 가 있고(콜백 없는 MVP 불변) 대시보드
@@ -324,14 +437,16 @@ export default function HeatmapPanel({
           <span className="text-sm text-(--color-text-muted)">
             {t('dashboard.heatmap.emptyState')}
           </span>
-          {unplacedNames.length > 0 && (
+          {unplacedIds.length > 0 && (
             <span className="text-xs text-(--color-text-muted)">
-              {t('dashboard.heatmap.unplaced').replace('{count}', String(unplacedNames.length))}
+              {t('dashboard.heatmap.unplaced').replace('{count}', String(unplacedIds.length))}
             </span>
           )}
         </div>
       ) : (
-        // 레이어 스택: 도면 배경(z-0) → 히트맵 canvas(z-10, opacity 합성) → 마커 오버레이(z-20, 편집 시).
+        // 레이어 스택: 도면 배경(z-0) → 히트맵 canvas(z-10, opacity 합성) → 등고선(z-15) →
+        // 도면 이동(z-22, 편집 + 도면 있을 때) → 마커 오버레이(z-24, 편집 시) → 범례(z-25).
+        // 마커가 도면 이동보다 **위**인 것이 요점이다 — 아래에 깔리면 마커를 잡아도 도면이 끌려간다.
         // 세 레이어가 동일 컨테이너 rect 위에 겹쳐 정규화 좌표 공간을 공유한다. 편집은 오버레이 레이어에
         // 국한되어 store 폴링/히트맵 렌더를 파괴하지 않는다(REQ-04, R3, AC-03).
         // 본문(컨테이너)은 패널을 가득 채우고, 그 안의 스테이지가 기준 도면 종횡비로 레터박스된다.
@@ -352,6 +467,9 @@ export default function HeatmapPanel({
             layers={cfg.floor_plans}
             sources={floorPlanSources}
             stretch={cfg.stage_fit === 'stretch'}
+            onBaseSize={(w, h) =>
+              setRenderedSize((prev) => (prev?.w === w && prev.h === h ? prev : { w, h }))
+            }
           />
           <div className="absolute inset-0 z-10 flex" style={heatmapLayerStyle}>
             {/* 온도장은 배치 센서점이 있을 때만 렌더(편집 중 빈 좌표 공간 위 배치도 허용, AC-E1). */}
@@ -375,12 +493,13 @@ export default function HeatmapPanel({
               gridH={grid}
               bounds={bounds}
               contour={cfg.contour}
+              decimals={explicitDecimals}
             />
           )}
           {placementActive && (
             <SensorPlacementOverlay
               placed={placed}
-              unplaced={unplacedNames}
+              unplaced={unplacedIds}
               labels={sensorLabels}
               onPositionChange={handlePositionChange}
               onRemove={handleRemove}
@@ -394,12 +513,12 @@ export default function HeatmapPanel({
               이 결함의 진단을 어렵게 만든 원인이다. 배경 유무와 무관하게 카운트를 노출하되,
               그림을 가리지 않도록 작은 모서리 배지 + pointer-events-none 으로 둔다. 배치 편집
               중에는 미배치 팔레트가 같은 정보를 더 잘 보여주므로 생략한다. */}
-          {!placementActive && unplacedNames.length > 0 && (
+          {!placementActive && unplacedIds.length > 0 && (
             <span
               data-testid="heatmap-unplaced-hint"
               className="pointer-events-none absolute bottom-2 left-2 z-30 max-w-[70%] rounded-md bg-(--color-bg-elevated) px-2 py-1 text-[10px] leading-tight text-(--color-text-muted) shadow"
             >
-              {t('dashboard.heatmap.unplaced').replace('{count}', String(unplacedNames.length))}
+              {t('dashboard.heatmap.unplaced').replace('{count}', String(unplacedIds.length))}
             </span>
           )}
         </div>
@@ -427,6 +546,8 @@ export default function HeatmapPanel({
               // 센서 마커 배치와 동일한 게이팅이라 뷰어 동작은 그대로다.
               draggable={placementActive && canEdit}
               onOffsetChange={handleLegendOffsetChange}
+              onSizeChange={handleLegendSizeChange}
+              decimals={explicitDecimals}
             />
           )}
         </div>

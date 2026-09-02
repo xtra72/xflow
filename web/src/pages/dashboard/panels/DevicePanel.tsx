@@ -1,50 +1,59 @@
 // 디바이스 패널 컴포넌트.
-// 상단에 상태별 요약 뱃지(전체/온라인/오프라인), 하단에 디바이스 리스트 테이블을 표시한다.
+// 상단에 상태별 요약 뱃지(전체/온라인/오프라인), 검색·필터 바, 하단에 디바이스
+// 리스트 테이블을 표시한다.
+//
+// 표시 컬럼·셀 렌더·검색/필터 규칙은 디바이스 탭(DeviceListPage)과 동일한 모듈을
+// 공유한다 (useDeviceColumns / DeviceCell / DeviceSearchFilter). 패널이 자체 사본을
+// 갖고 있으면 탭에 컬럼이 늘어나도 패널은 따라가지 못한다.
 
 import { useEffect, useMemo, useState } from 'react';
-import {
-  ArrowRight,
-  HardDrive,
-  Wifi,
-  WifiOff,
-} from 'lucide-react';
-import { Link } from 'react-router';
+import { ChevronLeft, ChevronRight, HardDrive, Wifi, WifiOff } from 'lucide-react';
 
 import SortableHeader, { type SortState } from '@/components/common/SortableHeader';
+import {
+  ALL_DEVICE_COLUMNS,
+  DEVICE_COLUMN_LABELS,
+  type DeviceListColumnKey,
+} from '@/hooks/useDeviceColumns';
 import { useDevicesRealtime } from '@/hooks/useDevice';
 import { useDevicesTarget } from '@/hooks/useResourceTargets';
 import { useTranslation } from '@/lib/i18n';
-import { usePanelTitleVisible } from '../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
-import { getDeviceDisplayName, getDeviceTypeLabel } from '@/lib/utils/deviceLabels';
-import { type DeviceColumnKey, ALL_DEVICE_COLUMNS } from '@/stores/uiStore';
+import { DeviceCell } from '@/pages/devices/DeviceCell';
+import DeviceSearchFilter from '@/pages/devices/DeviceSearchFilter';
+import type { DeviceInfo } from '@/types/device';
 
-/** 상대 시간 포맷 (예: "3분 전") */
-function formatRelativeTime(dateStr: string): string {
-  if (!dateStr) return '-';
-  const date = new Date(dateStr);
-  const then = date.getTime();
-  if (isNaN(then)) return '-';
+/** 페이지 크기 옵션. 디바이스 탭과 동일하다. */
+const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
-  // Go zero time ("0001-01-01T00:00:00Z") 등 유효하지 않은 과거 날짜 처리
-  if (date.getUTCFullYear() < 2000) return '-';
+/** 등록('source') 컬럼은 디바이스 탭과 동일하게 정렬 비대상이다. */
+const UNSORTABLE_COLUMNS = new Set<DeviceListColumnKey>(['source']);
 
-  const now = Date.now();
-  const diffMs = now - then;
-  if (diffMs < 0) return '방금';
-
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) return `${seconds}초 전`;
-
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}분 전`;
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}시간 전`;
-
-  const days = Math.floor(hours / 24);
-  return `${days}일 전`;
+/**
+ * 정렬 비교 키를 뽑는다. 디바이스 탭(DeviceListPage)의 정렬 규칙과 동일하다
+ * — id 는 uid 우선, status 는 온라인이 먼저(asc), 나머지는 소문자 문자열 비교.
+ */
+function sortKey(device: DeviceInfo, field: string): string {
+  switch (field) {
+    case 'name':
+      return (device.name || device.id).toLowerCase();
+    case 'id':
+      return (device.uid || device.id).toLowerCase();
+    case 'type':
+      return device.type.toLowerCase();
+    case 'protocol':
+      return device.protocol.toLowerCase();
+    case 'status':
+      return device.online ? '0' : '1';
+    case 'agent':
+      return device.agent_name.toLowerCase();
+    case 'last_seen':
+      return device.last_seen ?? '';
+    default:
+      return (device.name || device.id).toLowerCase();
+  }
 }
 
 interface DevicePanelProps {
@@ -56,7 +65,7 @@ interface DevicePanelProps {
   onTitleChange?: (title: string) => void;
 }
 
-/** 디바이스 상태 요약 + 디바이스 리스트 테이블 패널 */
+/** 디바이스 상태 요약 + 검색/필터 + 디바이스 리스트 테이블 패널 */
 export default function DevicePanel({
   panelId: _panelId,
   title,
@@ -66,6 +75,7 @@ export default function DevicePanel({
   onTitleChange: _onTitleChange,
 }: DevicePanelProps) {
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const { t } = useTranslation();
   // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L04): 원격이면 노드 미러 목록을
   // 소스로 쓴다(useDevicesTarget). 로컬은 기존 useDevicesRealtime 그대로(회귀 없음).
@@ -81,9 +91,22 @@ export default function DevicePanel({
 
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
 
-  // 컬럼 가시성 상태 (스토어 config에서 읽기)
+  // 검색/필터 상태 — 디바이스 탭과 같은 축(검색어/상태/프로토콜/타입).
+  // 탭은 프로토콜·타입을 서버 쿼리 파라미터로 넘기지만, 패널은 실시간 갱신 쿼리를
+  // 재구독하지 않도록 클라이언트에서 거른다(백엔드 DeviceFilter 도 정확 일치라 결과 동일).
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [protocolFilter, setProtocolFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+
+  // 페이지네이션 상태. 패널 안에서 전체 목록을 넘겨볼 수 있어야 하므로
+  // 상한으로 잘라내고 디바이스 탭으로 넘기지 않는다.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]!);
+
+  // 컬럼 가시성 상태 (패널 config). 미설정이면 전체 컬럼.
   const visibleColumns = useMemo(
-    () => (_config.visibleColumns as DeviceColumnKey[]) ?? [...ALL_DEVICE_COLUMNS],
+    () => (_config.visibleColumns as DeviceListColumnKey[]) ?? [...ALL_DEVICE_COLUMNS],
     [_config.visibleColumns],
   );
 
@@ -105,67 +128,75 @@ export default function DevicePanel({
 
   // 숨겨진 컬럼으로 정렬 중이면 기본(name)으로 fallback
   useEffect(() => {
-    if (!visibleColumns.includes(sort.field as DeviceColumnKey)) {
+    if (!visibleColumns.includes(sort.field as DeviceListColumnKey)) {
       setSort({ field: 'name', direction: 'asc' });
     }
   }, [visibleColumns, sort.field]);
 
-  const show = (key: DeviceColumnKey) => visibleColumns.includes(key);
+  // 필터링 — 디바이스 탭(DeviceListPage)의 검색/상태 규칙 + 프로토콜/타입 정확 일치.
+  const filteredDevices = useMemo(() => {
+    let result: DeviceInfo[] = devices;
 
-  // 상태 요약 집계
+    // 이름/ID/UID/타입/에이전트 검색 (탭과 동일 필드 집합).
+    const q = search.trim().toLowerCase();
+    if (q) {
+      result = result.filter(
+        (d) =>
+          d.name.toLowerCase().includes(q) ||
+          d.id.toLowerCase().includes(q) ||
+          (d.uid?.toLowerCase().includes(q) ?? false) ||
+          d.type.toLowerCase().includes(q) ||
+          d.agent_name.toLowerCase().includes(q),
+      );
+    }
+    if (statusFilter === 'online') result = result.filter((d) => d.online);
+    else if (statusFilter === 'offline') result = result.filter((d) => !d.online);
+    if (protocolFilter) result = result.filter((d) => d.protocol === protocolFilter);
+    if (typeFilter) result = result.filter((d) => d.type === typeFilter);
+
+    return result;
+  }, [devices, search, statusFilter, protocolFilter, typeFilter]);
+
+  // 상태 요약 집계 — 필터 결과 기준(요약과 표가 서로 다른 모집단을 말하지 않도록).
   const summary = useMemo(() => {
-    const total = devices.length;
-    const online = devices.filter((d) => d.online).length;
-    const offline = total - online;
-    return { total, online, offline };
-  }, [devices]);
+    const total = filteredDevices.length;
+    const online = filteredDevices.filter((d) => d.online).length;
+    return { total, online, offline: total - online };
+  }, [filteredDevices]);
 
-  // 정렬된 디바이스 목록 (최대 10개)
+  // 정렬된 전체 목록 (페이지 슬라이스 전).
   const sortedDevices = useMemo(() => {
-    const sorted = [...devices].sort((a, b) => {
-      let valA: string;
-      let valB: string;
-
-      switch (sort.field) {
-        case 'name':
-          valA = (a.name || a.id).toLowerCase();
-          valB = (b.name || b.id).toLowerCase();
-          break;
-        case 'type':
-          valA = a.type.toLowerCase();
-          valB = b.type.toLowerCase();
-          break;
-        case 'status':
-          valA = a.online ? '1' : '0';
-          valB = b.online ? '1' : '0';
-          break;
-        case 'agent':
-          valA = a.agent_name.toLowerCase();
-          valB = b.agent_name.toLowerCase();
-          break;
-        case 'last_seen':
-          valA = a.last_seen ?? '';
-          valB = b.last_seen ?? '';
-          break;
-        default:
-          valA = (a.name || a.id).toLowerCase();
-          valB = (b.name || b.id).toLowerCase();
-      }
-
-      if (valA < valB) return sort.direction === 'asc' ? -1 : 1;
-      if (valA > valB) return sort.direction === 'asc' ? 1 : -1;
+    const mul = sort.direction === 'asc' ? 1 : -1;
+    return [...filteredDevices].sort((a, b) => {
+      const va = sortKey(a, sort.field);
+      const vb = sortKey(b, sort.field);
+      if (va < vb) return -1 * mul;
+      if (va > vb) return 1 * mul;
       return 0;
     });
+  }, [filteredDevices, sort]);
 
-    return sorted.slice(0, 10);
-  }, [devices, sort]);
+  // 페이지네이션 계산 (디바이스 탭과 동일). 필터로 총량이 줄어 현재 페이지가
+  // 범위를 벗어나도 safePage 가 마지막 페이지로 당겨 빈 화면을 막는다.
+  const totalItems = sortedDevices.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const pagedDevices = sortedDevices.slice(startIndex, startIndex + pageSize);
 
-  /** 정렬 변경 핸들러 */
+  /** 정렬 변경 핸들러. 정렬이 바뀌면 첫 페이지로 되돌린다(탭과 동일). */
   const handleSort = (field: string) => {
     setSort((prev) => ({
       field,
       direction: prev.field === field && prev.direction === 'asc' ? 'desc' : 'asc',
     }));
+    setPage(1);
+  };
+
+  /** 검색/필터 변경 핸들러 — 값 변경 시 첫 페이지로 되돌린다. */
+  const withPageReset = <T,>(set: (v: T) => void) => (v: T) => {
+    set(v);
+    setPage(1);
   };
 
   return (
@@ -177,7 +208,7 @@ export default function DevicePanel({
             <HardDrive className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
             <h3
               className="truncate text-lg font-semibold text-(--color-text-primary)"
-              style={acColor('header') ? { color: acColor('header')! } : undefined}
+              style={{ ...(acColor('header') ? { color: acColor('header')! } : undefined), ...titleStyle }}
             >
               {panelTitle}
             </h3>
@@ -195,7 +226,7 @@ export default function DevicePanel({
       ) : (
         <>
           {/* 상태별 요약 뱃지 */}
-          <div className="mb-6 flex shrink-0 gap-3">
+          <div className="mb-3 flex shrink-0 flex-wrap gap-3">
             <span
               className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
               style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
@@ -219,10 +250,27 @@ export default function DevicePanel({
             </span>
           </div>
 
+          {/* 검색 + 필터 바 (디바이스 탭과 동일 컴포넌트) */}
+          <div className="mb-4 shrink-0">
+            <DeviceSearchFilter
+              search={search}
+              onSearchChange={withPageReset(setSearch)}
+              statusFilter={statusFilter}
+              onStatusFilterChange={withPageReset(setStatusFilter)}
+              protocolFilter={protocolFilter}
+              onProtocolFilterChange={withPageReset(setProtocolFilter)}
+              typeFilter={typeFilter}
+              onTypeFilterChange={withPageReset(setTypeFilter)}
+            />
+          </div>
+
           {/* 디바이스 리스트 테이블 */}
-          {sortedDevices.length === 0 ? (
+          {totalItems === 0 ? (
             <p className="text-sm text-(--color-text-muted)">
-              {t('dashboard.devicePanel.empty')}
+              {/* 디바이스가 아예 없는 것과 필터에 걸러진 것을 구분한다. */}
+              {devices.length === 0
+                ? t('dashboard.devicePanel.empty')
+                : t('dashboard.devicePanel.noMatch')}
             </p>
           ) : (
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -230,115 +278,99 @@ export default function DevicePanel({
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-(--color-border-default)">
-                      {show('name') && (
-                        <SortableHeader
-                          label={t('dashboard.col.name')}
-                          field="name"
-                          currentSort={sort}
-                          onSort={handleSort}
-                          className="px-4 py-3"
-                          accentColor={acColor('table') ?? panelColor}
-                        />
-                      )}
-                      {show('type') && (
-                        <SortableHeader
-                          label={t('dashboard.col.type')}
-                          field="type"
-                          currentSort={sort}
-                          onSort={handleSort}
-                          className="px-4 py-3"
-                          accentColor={acColor('table') ?? panelColor}
-                        />
-                      )}
-                      {show('status') && (
-                        <th
-                          className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
-                          style={acColor('table') ? { color: acColor('table')! } : undefined}
-                        >
-                          {t('dashboard.col.status')}
-                        </th>
-                      )}
-                      {show('agent') && (
-                        <SortableHeader
-                          label={t('dashboard.col.agent')}
-                          field="agent"
-                          currentSort={sort}
-                          onSort={handleSort}
-                          className="px-4 py-3"
-                          accentColor={acColor('table') ?? panelColor}
-                        />
-                      )}
-                      {show('last_seen') && (
-                        <SortableHeader
-                          label={t('dashboard.col.lastSeen')}
-                          field="last_seen"
-                          currentSort={sort}
-                          onSort={handleSort}
-                          className="px-4 py-3"
-                          accentColor={acColor('table') ?? panelColor}
-                        />
+                      {visibleColumns.map((col) =>
+                        UNSORTABLE_COLUMNS.has(col) ? (
+                          <th
+                            key={col}
+                            className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
+                            style={acColor('table') ? { color: acColor('table')! } : undefined}
+                          >
+                            {t(DEVICE_COLUMN_LABELS[col])}
+                          </th>
+                        ) : (
+                          <SortableHeader
+                            key={col}
+                            label={t(DEVICE_COLUMN_LABELS[col])}
+                            field={col}
+                            currentSort={sort}
+                            onSort={handleSort}
+                            className="px-4 py-3"
+                            accentColor={acColor('table') ?? panelColor}
+                          />
+                        ),
                       )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-(--color-border-default)">
-                    {sortedDevices.map((device) => (
+                    {pagedDevices.map((device) => (
                       <tr
                         key={device.uid ?? device.id}
                         className="transition-colors hover:bg-(--color-bg-elevated)"
                       >
-                        {show('name') && (
-                          <td className="px-4 py-3">
-                            <span className="text-sm font-medium text-(--color-text-primary)">
-                              {getDeviceDisplayName(device)}
-                            </span>
-                          </td>
-                        )}
-                        {show('type') && (
-                          <td className="px-4 py-3 text-sm text-(--color-text-secondary)">
-                            {getDeviceTypeLabel(device.type)}
-                          </td>
-                        )}
-                        {show('status') && (
-                          <td className="px-4 py-3">
-                            {device.online ? (
-                              <span className="inline-flex items-center text-green-600 dark:text-green-400" title={t('dashboard.panel.online')}>
-                                <Wifi className="h-4 w-4" />
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center text-gray-400 dark:text-gray-500" title={t('dashboard.panel.offline')}>
-                                <WifiOff className="h-4 w-4" />
-                              </span>
-                            )}
-                          </td>
-                        )}
-                        {show('agent') && (
-                          <td className="px-4 py-3 text-sm text-(--color-text-secondary)">
-                            {device.agent_name}
-                          </td>
-                        )}
-                        {show('last_seen') && (
-                          <td className="px-4 py-3 text-sm text-(--color-text-muted)">
-                            {formatRelativeTime(device.last_seen)}
-                          </td>
-                        )}
+                        {visibleColumns.map((col) => (
+                          <DeviceCell key={col} column={col} device={device} t={t} />
+                        ))}
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
 
-              {/* 더 보기 링크 — 원격은 로컬 `/devices` 로 이탈하므로 숨긴다. */}
-              {!remote && devices.length > 10 && (
-                <div className="mt-4 text-right">
-                  <Link
-                    to="/devices"
-                    className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-                  >
-                    {t('dashboard.panel.more')}
-                    <ArrowRight className="h-4 w-4" />
-                  </Link>
-                </div>
-              )}
+          {/* 페이지네이션 — 패널 안에서 전체 목록을 넘겨본다(디바이스 탭 이탈 없음). */}
+          {totalItems > 0 && (
+            <div className="mt-3 flex shrink-0 flex-wrap items-center justify-between gap-2 text-xs text-(--color-text-muted)">
+              <div className="flex items-center gap-1.5">
+                <span>{t('common.pagination.perPage')}</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setPage(1);
+                  }}
+                  aria-label={t('common.pagination.perPage')}
+                  className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-1.5 py-0.5 text-xs text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  {PAGE_SIZE_OPTIONS.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+                <span>{t('common.pagination.unit')}</span>
+                <span className="ml-1.5 opacity-60">|</span>
+                <span className="ml-1.5">
+                  {t('common.pagination.range')
+                    .replace('{total}', String(totalItems))
+                    .replace('{start}', String(startIndex + 1))
+                    .replace('{end}', String(Math.min(startIndex + pageSize, totalItems)))}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={safePage <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  aria-label={t('common.pagination.prev')}
+                  className="rounded-md border border-(--color-border-strong) p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+                <span className="px-2">
+                  {safePage} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={safePage >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  aria-label={t('common.pagination.next')}
+                  className="rounded-md border border-(--color-border-strong) p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
           )}
         </>

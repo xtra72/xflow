@@ -23,7 +23,7 @@ import { remoteEditErrorMessage } from '@/lib/remote/editError';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { cn } from '@/lib/utils/cn';
-import { usePanelTitleVisible } from '../panelChromeContext';
+import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 
 interface HvacControlPanelProps {
   panelId: string;
@@ -115,6 +115,7 @@ export default function HvacControlPanel({
   onTitleChange: _onTitleChange,
 }: HvacControlPanelProps) {
   const showTitle = usePanelTitleVisible();
+  const titleStyle = usePanelTitleStyle();
   const { t } = useTranslation();
   const deviceId = config.deviceId as string | undefined;
 
@@ -162,7 +163,7 @@ export default function HvacControlPanel({
         {showTitle && (
           <div className="mb-2 flex shrink-0 items-center gap-2">
             <Wind className="h-4 w-4 text-(--color-text-muted)" />
-            <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
+            <span className="truncate text-sm font-medium text-(--color-text-primary)" style={titleStyle}>{title}</span>
           </div>
         )}
         <div className="flex flex-1 items-center justify-center">
@@ -192,7 +193,7 @@ export default function HvacControlPanel({
         {showTitle && (
           <div className="flex items-center gap-2">
             <Wind className="h-4 w-4 text-(--color-text-secondary)" />
-            <span className="truncate text-sm font-medium text-(--color-text-primary)">{title}</span>
+            <span className="truncate text-sm font-medium text-(--color-text-primary)" style={titleStyle}>{title}</span>
           </div>
         )}
         <div className="flex items-center gap-2">

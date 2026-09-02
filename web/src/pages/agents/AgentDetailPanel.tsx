@@ -51,6 +51,7 @@ import { FormField } from '@/components/property/FormField';
 import { ModbusServerDevicesEditor } from '@/components/property/ModbusServerDevicesEditor';
 import { modbusServerDevicesValid } from '@/components/property/modbusServerDevicesModel';
 import { DeviceEditDialog } from '@/components/property/ModbusDevicesEditor';
+import type { DeviceModelOption } from '@/components/property/modbusDevicesModel';
 import {
   newDeviceRow,
   toDeviceRow,
@@ -205,7 +206,7 @@ const HAS_GROUPS_TAB = new Set<string>(['xsfm']);
  * 게이트웨이(gateway) 탭을 표시하는 에이전트 타입 (SPEC-CHIRPSTACK-003 M4).
  * chirpstack 에이전트만 업링크에서 파생된 게이트웨이 로스터 탭을 노출한다.
  */
-const HAS_GATEWAYS_TAB = new Set<string>(['chirpstack']);
+const HAS_GATEWAYS_TAB = new Set<string>(['chirpstack-client']);
 
 export default function AgentDetailPanel({ agentId, agentType, agentName }: AgentDetailPanelProps) {
   const { t } = useTranslation();
@@ -1790,12 +1791,22 @@ function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
   const execAgent = useExecAgent();
   // 목록 조회(list_devices)는 읽기 전용이라 query 경로로 분리한다.
   const queryAgent = useQueryAgent();
+  // 모델 카탈로그 조회는 **별도 mutation 인스턴스**를 쓴다.
+  // useMutation 인스턴스 하나에 mutate 를 연속 호출하면 MutationObserver 가
+  // 이전 mutation 에서 스스로를 removeObserver 하고 #mutateOptions 를 덮어쓴다
+  // (@tanstack/query-core mutationObserver.ts mutate()). 그 결과 먼저 보낸
+  // list_devices 의 per-call onSuccess 가 영영 실행되지 않아 isLoading 이
+  // true 로 굳고 스켈레톤만 계속 돈다. 인스턴스를 나눠 서로를 밀어내지 않게 한다.
+  const queryModels = useQueryAgent();
   const addNotification = useUIStore((s) => s.addNotification);
 
   const [devices, setDevices] = useState<ModbusClientListDevice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [editTarget, setEditTarget] = useState<ModbusClientEditTarget | null>(null);
   const [removeTarget, setRemoveTarget] = useState<ModbusClientListDevice | null>(null);
+  // 디바이스 모델 카탈로그(SPEC-MODBUS-013 REQ-05). 조회 실패는 조용히 빈 목록으로 둔다 —
+  // 모델이 없어도 수동 등록·일괄등록 경로는 그대로 동작해야 하기 때문이다(fail-open).
+  const [models, setModels] = useState<DeviceModelOption[]>([]);
 
   // 에이전트 기본 트랜스포트(per-device 오버라이드 미지정 시 host/port 노출 판정 기준).
   const agentTransport =
@@ -1821,8 +1832,23 @@ function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
     );
   }, [agentId, queryAgent, addNotification, t]);
 
+  const fetchModels = useCallback(() => {
+    queryModels.mutate(
+      { id: agentId, req: { command: 'list_models' } },
+      {
+        onSuccess: (res) => {
+          const items = (res as { data?: DeviceModelOption[] })?.data;
+          setModels(Array.isArray(items) ? items : []);
+        },
+        // 카탈로그는 부가 기능이므로 실패해도 사용자에게 알리지 않는다(선택기만 숨겨진다).
+        onError: () => setModels([]),
+      },
+    );
+  }, [agentId, queryModels]);
+
   useEffect(() => {
     fetchDevices();
+    fetchModels();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);
 
@@ -1873,12 +1899,18 @@ function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
       const emitted = toEmitDevice(row, agentTransport) as {
         unit_id: number;
         register_groups: unknown[];
+        host?: string;
+        port?: number;
       };
       const params: Record<string, unknown> = {
         device_id: deviceId,
         unit_id: emitted.unit_id,
         register_groups: emitted.register_groups,
       };
+      // 엔드포인트(host/port)는 TCP 디바이스에서만 방출된다(toEmitDevice 가 rtu 면 생략).
+      // 백엔드는 값이 기존과 같으면 연결을 건드리지 않으므로 항상 실어 보내도 안전하다.
+      if (emitted.host !== undefined) params.host = emitted.host;
+      if (emitted.port !== undefined) params.port = emitted.port;
       execAgent.mutate(
         { id: agentId, req: { command: 'update_device', params } },
         {
@@ -2089,6 +2121,7 @@ function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
           transport={agentTransport}
           requireId={editTarget.mode === 'add'}
           lockConnection={editTarget.mode === 'edit'}
+          models={models}
           onSave={(row) =>
             editTarget.mode === 'add'
               ? handleAdd(row)

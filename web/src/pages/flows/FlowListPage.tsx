@@ -2,7 +2,7 @@
 // 등록된 플로우의 CRUD 및 lifecycle 관리 기능을 제공한다.
 // 검색, 상태 필터, 페이지네이션을 지원한다.
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -33,6 +33,7 @@ import { isRemoteTarget, type ResourceTarget } from '@/lib/remote/target';
 import { downloadJSON } from '@/lib/utils/download';
 import { exportAllFlows, updateFlow } from '@/services/api/flowService';
 import type { FlowInfo } from '@/types/flow';
+import { useNameDeepLink } from '@/hooks/useNameDeepLink';
 import CreateFlowModal from '@/pages/dashboard/CreateFlowModal';
 
 import FlowActionMenu from './FlowActionMenu';
@@ -161,6 +162,15 @@ export default function FlowListPage({
   const [pageSize, setPageSize] = useState(10);
 
   const allFlows: FlowInfo[] = useMemo(() => flowsData?.data ?? [], [flowsData?.data]);
+
+  // 시스템 로그에서 `/flows?name=...` 로 넘어온 경우 그 이름으로 목록을 좁히고
+  // 일치하는 플로우를 펼친다.
+  const applyNameLink = useCallback((name: string, matchedId: string | null) => {
+    setSearch(name);
+    setPage(1);
+    setExpandedId(matchedId);
+  }, []);
+  useNameDeepLink(allFlows, (f) => f.name, (f) => f.id, applyNameLink);
 
   // 클라이언트 측 필터링
   const filteredFlows = useMemo(() => {

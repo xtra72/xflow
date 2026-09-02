@@ -35,7 +35,7 @@ func newEmitModeAgent(t *testing.T, name string, opts map[string]any) *ChirpStac
 	raw, err := NewChirpStackAgent(agent.AgentConfig{
 		ID:        "id-" + name,
 		Name:      name,
-		Type:      "chirpstack",
+		Type:      "chirpstack-client",
 		Enabled:   &disabled,
 		Transport: agent.TransportConfig{Options: opts},
 	})
@@ -306,7 +306,7 @@ func TestMeasurementEmitMode_InvalidValueRejected(t *testing.T) {
 	_, err := NewChirpStackAgent(agent.AgentConfig{
 		ID:        "id-bad",
 		Name:      "emit-bad",
-		Type:      "chirpstack",
+		Type:      "chirpstack-client",
 		Enabled:   &disabled,
 		Transport: agent.TransportConfig{Options: badOpts},
 	})
@@ -351,7 +351,7 @@ func TestMeasurementEmitMode_ConfigureRuntimeSwitch(t *testing.T) {
 	if err := a.Configure(agent.AgentConfig{
 		ID:      "id-emit-switch",
 		Name:    "emit-switch",
-		Type:    "chirpstack",
+		Type:    "chirpstack-client",
 		Enabled: &disabled,
 		Transport: agent.TransportConfig{Options: map[string]any{
 			"measurement_emit_mode": measurementEmitModeCombined,
@@ -376,7 +376,7 @@ func TestMeasurementEmitMode_ConfigureRuntimeSwitch(t *testing.T) {
 	if err := a.Configure(agent.AgentConfig{
 		ID:      "id-emit-switch",
 		Name:    "emit-switch",
-		Type:    "chirpstack",
+		Type:    "chirpstack-client",
 		Enabled: &disabled,
 		Transport: agent.TransportConfig{Options: map[string]any{
 			"measurement_emit_mode": measurementEmitModePerMeasurement,
@@ -404,7 +404,7 @@ func TestMeasurementEmitMode_ConfigureInvalidKeepsPrevious(t *testing.T) {
 	err := a.Configure(agent.AgentConfig{
 		ID:      "id-emit-keep",
 		Name:    "emit-keep",
-		Type:    "chirpstack",
+		Type:    "chirpstack-client",
 		Enabled: &disabled,
 		Transport: agent.TransportConfig{Options: map[string]any{
 			"measurement_emit_mode": "nope",

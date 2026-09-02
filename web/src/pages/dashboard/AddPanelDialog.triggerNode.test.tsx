@@ -55,13 +55,13 @@ describe('AddPanelDialog — trigger 노드 피커 (SPEC-TRIGGER-PANEL-001)', ()
   function openTriggerStep() {
     render(<AddPanelDialog open={true} onClose={() => {}} />);
     // 데이터 카테고리에 trigger 옵션이 위치한다.
-    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.data' }));
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.etc' }));
     fireEvent.click(screen.getByText('dashboard.panelTypes.triggerConfig'));
   }
 
-  it('B-1: 데이터 카테고리에 trigger 설정 옵션이 노출된다', () => {
+  it('B-1: 기타 카테고리에 trigger 설정 옵션이 노출된다', () => {
     render(<AddPanelDialog open={true} onClose={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.data' }));
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.etc' }));
     expect(screen.getByText('dashboard.panelTypes.triggerConfig')).toBeInTheDocument();
   });
 
@@ -82,7 +82,7 @@ describe('AddPanelDialog — trigger 노드 피커 (SPEC-TRIGGER-PANEL-001)', ()
   it('B-2: 노드 선택 시 addPanelWithConfig({flowId,nodeId}) + 기본 타이틀(노드명) + onClose', () => {
     const onClose = vi.fn();
     render(<AddPanelDialog open={true} onClose={onClose} />);
-    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.data' }));
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard.panelCategories.etc' }));
     fireEvent.click(screen.getByText('dashboard.panelTypes.triggerConfig'));
 
     fireEvent.click(screen.getByTestId('trigger-node-option-flow-b-trig-2'));

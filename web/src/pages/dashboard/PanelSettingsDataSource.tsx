@@ -59,7 +59,9 @@ import {
 import type { SensorPosition } from './panels/heatmap/heatmapConfig';
 import { migrateSensorPositions } from './panels/heatmap/sensorIdentity';
 import { SeriesDetailEditor, StoreSourceSection } from './ChartPanelSections';
+import { readPanelSources, sourceEntryPatch } from './panels/charts/panelDataSource';
 import { resolvePanelSourceBinding } from './panels/charts/panelDataSource';
+import type { ChartDataSourceKind } from './panels/charts/chartChannelTypes';
 import {
   loadPanelStoreTablePrefs,
   savePanelStoreTablePrefs,
@@ -86,25 +88,44 @@ export function PanelSettingsDataSource({
   // 바인딩 모드의 단일 소스 오브 트루스는 `config.data_source` 다(@spec SPEC-TSDB-002 §2.11).
   // 초기값은 판정 계약에서 파생하고(인식 불가 값은 channel 로 접힌다), 이후 StoreSourceSection
   // 의 콜백으로 동기화한다.
-  const initialMode: 'channel' | 'store' | 'tsdb' = resolvePanelSourceBinding(
-    panel.config ?? {},
-  ).kind;
-  const [mode, setMode] = useState<'channel' | 'store' | 'tsdb'>(initialMode);
+  const initialMode: ChartDataSourceKind = resolvePanelSourceBinding(panel.config ?? {}).kind;
+  const [, setMode] = useState<ChartDataSourceKind>(initialMode);
+
+  const config = panel.config ?? {};
+
+  /**
+   * Store 인스턴스 하나의 시리즈 선택 표.
+   *
+   * 표를 **인스턴스 편집기 안에서** 그리도록 위임한다(`renderStoreTable`). 종전에는 여기서
+   * 패널 단위로 한 번만 그려 `config.store_source` 를 고쳤고, 그래서 Store 를 둘 이상 두면
+   * 둘째는 시리즈를 고를 수단이 없었다 — 에이전트만 고르고 시리즈가 비어 영영 비활성이었다.
+   *
+   * 인스턴스를 자기 config 로 보는 파생 패널을 넘기므로 표 내부는 손대지 않는다. 되쓰기는
+   * 편집기와 **같은 규칙**(`sourceEntryPatch`)을 쓴다.
+   */
+  const renderStoreTable = (index: number): React.ReactNode => {
+    const entry = readPanelSources(config)[index];
+    const scoped: PanelConfig = entry
+      ? { ...panel, config: { ...config, ...entry } }
+      : panel;
+    return (
+      <PanelStoreSelectTable
+        panel={scoped}
+        onConfigChange={(patch) => onConfigChange(sourceEntryPatch(config, index, patch))}
+      />
+    );
+  };
 
   return (
     <div className="space-y-3" data-testid="panel-datasource">
-      {/* 단일 데이터소스 토글 + 채널/Store 편집기 + TSDB placeholder(모두 StoreSourceSection 소유). */}
+      {/* 데이터소스 토글 + 소스 인스턴스별 편집기(모두 StoreSourceSection 소유).
+          Store 시리즈 표는 이 컴포넌트가 소유하되 그리는 자리는 각 인스턴스 안이다. */}
       <StoreSourceSection
         panel={panel}
         onConfigChange={onConfigChange}
         onModeChange={setMode}
+        renderStoreTable={renderStoreTable}
       />
-      {/* 공용 StoreEntryTable 선택 surface — Store 모드에서 항상 노출(목록이 사라지지 않도록).
-          목록 헤더에 전용 AND 태그 피커가 있어, 태그 필터가 있으면 매칭 행을 read-only
-          미리보기로(selection_mode:'tag'), 없으면 체크박스로 series 를 직접 고른다. */}
-      {mode === 'store' && (
-        <PanelStoreSelectTable panel={panel} onConfigChange={onConfigChange} />
-      )}
     </div>
   );
 }
@@ -496,7 +517,7 @@ function PanelStoreSelectTable({
   // 선택 상한 초과 안내(AC-15). 상한 도달 상태에서 추가 시도 시 표시한다.
   const [overLimitNotice, setOverLimitNotice] = useState(false);
 
-  const isLineChart = panel.type === 'line-chart';
+  const isLineChart = panel.type === 'graph-chart';
 
   // 인라인 상세 편집 → 해당 시리즈(store_source.series[idx])에 patch 를 draft 반영한다.
   // 이름(alias)/색상/선 스타일 → StoreSeriesRef. keys 모드는 명시 series[] 에 직접 영속되고,

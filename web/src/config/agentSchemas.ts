@@ -19,9 +19,10 @@ export const AGENT_TYPES = [
   { value: 'lg_hvacr02', label: 'LG HVACR-02 Capture' },
   { value: 'lg_hvacr01', label: 'LG HVACR-01 Capture' },
   { value: 'century_hvacr01', label: 'Century HVACR-01 (passive)' },
-  { value: 'chirpstack', label: 'ChirpStack LoRaWAN (passive)' },
+  { value: 'chirpstack-client', label: 'ChirpStack LoRaWAN (passive)' },
   { value: 'xsfm', label: 'Subway Facilities Manager' },
   { value: 'store', label: 'Store' },
+  { value: 'sysmetrics', label: 'System Monitor' },
   { value: 'serial', label: 'Serial' },
   { value: 'tcp-server', label: 'TCP Server' },
   { value: 'tcp-client', label: 'TCP Client' },
@@ -659,6 +660,33 @@ const UDP_CLIENT_FIELDS: ConfigField[] = [
  * @spec SPEC-WEB-005 v0.7.0 (M12)
  * @spec SPEC-STORE-003 v0.3.0
  */
+// 시스템 모니터링 에이전트 — 호스트 리소스를 주기적으로 표본 수집해 방출한다.
+// 값은 플로우를 거쳐 storage-write 로 Store/TSDB 에 들어가고, 대시보드는 기존
+// Store/TSDB 데이터 소스로 조회한다(전용 데이터 소스 종류를 만들지 않는 이유).
+const SYSMETRICS_FIELDS: ConfigField[] = [
+  { name: 'interval', type: 'string', label: '표본 주기', default: '5s', description: '수집 주기 (1s ~ 1h, 예: 5s, 1m)' },
+  // 대시보드 차트가 질의하는 이력 길이. 에이전트 메모리에만 있고 재시작하면 사라진다
+  // — 영속 이력은 storage-write 경로의 몫이다.
+  { name: 'history', type: 'string', label: '이력 보관 기간', default: '1h', description: '차트가 거슬러 볼 수 있는 기간 (1m ~ 24h, 예: 1h). 표본 수 상한에 걸리면 실제로는 더 짧습니다' },
+  { name: 'collect_cpu', type: 'boolean', label: 'CPU 사용률', default: true, description: '호스트 전체 CPU 사용률(%)' },
+  { name: 'collect_memory', type: 'boolean', label: '메모리 사용률', default: true, description: '호스트 전체 메모리 사용량·사용률' },
+  // 대상 선택기는 그 지표를 켰을 때만, 그 토글 **바로 아래**에 낸다.
+  //
+  // 손으로 적는 대신 호스트의 실제 목록에서 고른다(GET /monitor/sysresources).
+  // 비워 두면 "전체" — 백엔드 parseSysMetricsConfig 와 같은 규약이다.
+  //
+  // `value: [true, undefined]` 인 이유: 키가 아예 없는 config 도 있다(설정 파일이나
+  // API 로 만든 에이전트). 백엔드는 없는 키를 기본값 true 로 읽으므로
+  // (defaultSysMetricsConfig), 여기서 `value: true` 만 보면 수집은 도는데 대상
+  // 선택기만 숨는 상태가 된다.
+  { name: 'collect_storage', type: 'boolean', label: '스토리지 사용량', default: true, description: '마운트별 전체·사용·여유 용량' },
+  { name: 'mountpoints', type: 'sysresource_select', resourceKind: 'mountpoints', label: '마운트 선택', description: '관측할 마운트를 고릅니다. 아무것도 고르지 않으면 물리 파티션 전체', visibleWhen: { field: 'collect_storage', value: [true, undefined] } },
+  { name: 'collect_disk_io', type: 'boolean', label: '디스크 I/O', default: true, description: '장치별 읽기·쓰기 누적 카운터' },
+  { name: 'devices', type: 'sysresource_select', resourceKind: 'devices', label: '디스크 장치 선택', description: '관측할 디스크 장치를 고릅니다. 아무것도 고르지 않으면 전체', visibleWhen: { field: 'collect_disk_io', value: [true, undefined] } },
+  { name: 'collect_network', type: 'boolean', label: '네트워크', default: true, description: '인터페이스별 송·수신 누적 카운터' },
+  { name: 'interfaces', type: 'sysresource_select', resourceKind: 'interfaces', label: '네트워크 인터페이스 선택', description: '관측할 인터페이스를 고릅니다. 아무것도 고르지 않으면 전체', visibleWhen: { field: 'collect_network', value: [true, undefined] } },
+];
+
 const STORE_FIELDS: ConfigField[] = [
   // --- 운영 섹션 ---
   { name: 'max_key_length', type: 'number', label: '최대 키 길이 (바이트)', default: 512, description: '키 문자열 최대 바이트 수' },
@@ -735,7 +763,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'lg_hvacr02': LG_HVACR02_FIELDS,
   'lg_hvacr01': LG_HVACR01_FIELDS,
   'century_hvacr01': CENTURY_HVACR01_FIELDS,
-  'chirpstack': CHIRPSTACK_FIELDS,
+  'chirpstack-client': CHIRPSTACK_FIELDS,
   'xsfm': XSFM_FIELDS,
   'serial': SERIAL_FIELDS,
   'tcp-server': TCP_SERVER_FIELDS,
@@ -743,6 +771,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'udp-server': UDP_SERVER_FIELDS,
   'udp-client': UDP_CLIENT_FIELDS,
   'store': STORE_FIELDS,
+  'sysmetrics': SYSMETRICS_FIELDS,
 };
 
 /**

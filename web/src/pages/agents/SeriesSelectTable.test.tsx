@@ -220,3 +220,180 @@ describe('SeriesSelectTable', () => {
     expect(within(tr).getByText('auto')).toBeInTheDocument();
   });
 });
+
+// 필터 팝오버가 표 밖(body)에 그려지는지 — 두 결함의 뿌리였다.
+//
+// 팝오버를 표 안에 그리면 (1) `overflow-auto` 컨테이너에 잘려 아래 항목에 닿을 수
+// 없고, (2) `sticky` + `z-index` 인 thead 가 쌓임 맥락을 만들어 바깥 백드롭이
+// 팝오버를 덮는다 — 항목을 클릭하면 백드롭이 맞아 그대로 닫혔다.
+describe('필터 팝오버 배치 (회귀)', () => {
+  it('팝오버는 표 컨테이너 밖에 그려진다 — 잘리지 않게', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+
+    const popover = screen.getByTestId('series-filter-popover-field');
+    const table = screen.getByRole('table');
+    // 표 안에 있으면 스크롤 컨테이너에 잘린다.
+    expect(table.contains(popover)).toBe(false);
+    expect(document.body.contains(popover)).toBe(true);
+  });
+
+  it('팝오버 자신이 스크롤된다', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+
+    const popover = screen.getByTestId('series-filter-popover-field');
+    expect(popover.className).toContain('overflow-y-auto');
+    expect(popover.className).toContain('max-h-64');
+  });
+
+  it('항목을 클릭해도 닫히지 않는다 — 연속 선택이 된다', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+
+    // 첫 항목 선택 후에도 팝오버가 살아 있어야 두 번째를 고를 수 있다.
+    fireEvent.mouseDown(screen.getByTestId('series-filter-opt-field-temp'));
+    fireEvent.click(screen.getByTestId('series-filter-opt-field-temp'));
+    expect(screen.getByTestId('series-filter-popover-field')).toBeInTheDocument();
+
+    fireEvent.mouseDown(screen.getByTestId('series-filter-opt-field-humid'));
+    fireEvent.click(screen.getByTestId('series-filter-opt-field-humid'));
+    expect(screen.getByTestId('series-filter-popover-field')).toBeInTheDocument();
+  });
+
+  it('바깥을 누르면 닫힌다', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+    expect(screen.getByTestId('series-filter-popover-field')).toBeInTheDocument();
+
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByTestId('series-filter-popover-field')).toBeNull();
+  });
+
+  it('필터 버튼을 다시 누르면 닫힌다', () => {
+    render(<Harness />);
+    const btn = screen.getByTestId('series-filter-field');
+    fireEvent.click(btn);
+    expect(screen.getByTestId('series-filter-popover-field')).toBeInTheDocument();
+
+    fireEvent.mouseDown(btn);
+    fireEvent.click(btn);
+    expect(screen.queryByTestId('series-filter-popover-field')).toBeNull();
+  });
+
+  it('팝오버 안의 목록을 스크롤해도 닫히지 않는다', () => {
+    // 값이 많으면 팝오버 자신이 `overflow-y-auto` 로 스크롤된다. 그 스크롤까지
+    // 닫힘 신호로 읽으면 긴 목록에서 아래 항목을 **고를 수 없다**.
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+    const popover = screen.getByTestId('series-filter-popover-field');
+
+    fireEvent.scroll(popover, {});
+    expect(screen.getByTestId('series-filter-popover-field')).toBeInTheDocument();
+  });
+
+  it('버튼이 아직 보이면 스크롤을 따라 위치를 다시 잡는다', () => {
+    // 조금 스크롤했다고 매번 닫히면 값을 고르기 전에 팝오버가 사라진다.
+    // jsdom 은 레이아웃이 없어 rect 가 전부 0 이므로 버튼 rect 를 세워 준다.
+    render(<Harness />);
+    const btn = screen.getByTestId('series-filter-field');
+    function rectAt(top: number): DOMRect {
+      const box = { left: 10, top, bottom: top + 16, right: 26, width: 16, height: 16, x: 10, y: top };
+      return box as DOMRect;
+    }
+
+    btn.getBoundingClientRect = () => rectAt(100);
+    fireEvent.click(btn);
+    expect(screen.getByTestId('series-filter-popover-field')).toHaveStyle({ top: '120px' });
+
+    btn.getBoundingClientRect = () => rectAt(60);
+    fireEvent.scroll(window, {});
+
+    const popover = screen.getByTestId('series-filter-popover-field');
+    expect(popover).toBeInTheDocument();
+    expect(popover).toHaveStyle({ top: '80px' });
+  });
+
+  it('표가 스크롤되어 버튼이 화면 밖으로 나가면 닫는다', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+    expect(screen.getByTestId('series-filter-popover-field')).toBeInTheDocument();
+
+    // 버튼 rect 를 세우지 않으므로(jsdom 기본 0) 클립된 것으로 판정된다.
+    fireEvent.scroll(window, {});
+    expect(screen.queryByTestId('series-filter-popover-field')).toBeNull();
+  });
+
+  it('다른 컬럼 필터를 열면 이전 것은 닫힌다', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+    fireEvent.mouseDown(screen.getByTestId('series-filter-dataType'));
+    fireEvent.click(screen.getByTestId('series-filter-dataType'));
+
+    expect(screen.queryByTestId('series-filter-popover-field')).toBeNull();
+    expect(screen.getByTestId('series-filter-popover-dataType')).toBeInTheDocument();
+  });
+
+  it('백드롭은 더 이상 쓰지 않는다 — 쌓임 맥락 다툼의 원인이었다', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('series-filter-field'));
+    expect(screen.queryByTestId('series-filter-backdrop')).toBeNull();
+  });
+});
+
+describe('페이지네이션 — 표 안에 중첩 스크롤을 만들지 않는다', () => {
+  /** 페이지 하나를 넘기는 행 묶음. */
+  const MANY: SeriesRow[] = Array.from({ length: 30 }, (_, i) =>
+    row(`k${String(i).padStart(2, '0')}`, 'temp', 'float', 'manual', { room: String(i) }),
+  );
+
+  it('표 컨테이너가 세로 스크롤을 만들지 않는다', () => {
+    // 데이터 소스 패널이 이미 스크롤된다 — 표까지 스크롤되면 스크롤이 겹친다.
+    render(<Harness rows={MANY} />);
+    const scroller = screen.getByTestId('series-table-scroll');
+    expect(scroller.className).not.toMatch(/max-h-|overflow-y-auto|overflow-auto/);
+  });
+
+  it('한 페이지 분량만 그린다', () => {
+    render(<Harness rows={MANY} />);
+    expect(screen.getAllByTestId(/^series-tr-/)).toHaveLength(25);
+    expect(screen.getByTestId(`series-select-${safe(MANY[0]!.id)}`)).toBeInTheDocument();
+    expect(screen.queryByTestId(`series-select-${safe(MANY[25]!.id)}`)).toBeNull();
+  });
+
+  it('다음 페이지로 넘기면 나머지가 보인다', () => {
+    render(<Harness rows={MANY} />);
+    fireEvent.click(screen.getByLabelText('다음 페이지'));
+
+    expect(screen.getAllByTestId(/^series-tr-/)).toHaveLength(5);
+    expect(screen.getByTestId(`series-select-${safe(MANY[25]!.id)}`)).toBeInTheDocument();
+    expect(screen.queryByTestId(`series-select-${safe(MANY[0]!.id)}`)).toBeNull();
+  });
+
+  it('필터를 바꾸면 첫 페이지로 돌아간다', () => {
+    // 2페이지에서 결과가 3건으로 줄면 빈 페이지가 남는다.
+    render(<Harness rows={MANY} />);
+    fireEvent.click(screen.getByLabelText('다음 페이지'));
+
+    fireEvent.click(screen.getByTestId('series-filter-key'));
+    fireEvent.change(screen.getByTestId('series-filter-key-input'), { target: { value: 'k0' } });
+
+    expect(screen.getAllByTestId(/^series-tr-/)).toHaveLength(10);
+    expect(screen.getByTestId(`series-select-${safe(MANY[0]!.id)}`)).toBeInTheDocument();
+  });
+
+  it('전체 선택은 현재 페이지가 아니라 필터된 전체를 고른다', () => {
+    // 페이지네이션은 보기 단위일 뿐이다 — 선택 범위까지 좁히면 30개를 고르려고
+    // 페이지를 넘겨 가며 눌러야 한다.
+    render(<Harness rows={MANY} />);
+    fireEvent.click(screen.getByTestId('tsdb-select-all'));
+
+    fireEvent.click(screen.getByLabelText('다음 페이지'));
+    expect(screen.getByTestId(`series-select-${safe(MANY[29]!.id)}`)).toBeChecked();
+  });
+
+  it('한 페이지에 다 들어가면 페이저를 그리지 않는다', () => {
+    render(<Harness />);
+    expect(screen.queryByLabelText('다음 페이지')).toBeNull();
+  });
+});
