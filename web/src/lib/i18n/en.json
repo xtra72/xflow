@@ -745,6 +745,7 @@
       "heatmapLegendTickCount": "Tick count (2-10)",
       "thresholds": "Thresholds",
       "style": "Style",
+      "panelColorReset": "Reset",
       "previewExpandAria": "Expand preview",
       "splitterAria": "Adjust settings/preview width",
       "previewSplitterAria": "Adjust preview/data-source height",
@@ -1081,6 +1082,25 @@
       "unitPlaceholder": "e.g. °C, %, kWh",
       "valueScale": "Value size",
       "valueScaleReset": "Reset",
+      "subValueScale": "Sub-line size",
+      "deltaDisplay": "Show change",
+      "deltaDisplayHint": "Shows the change from the previous sample below the value.",
+      "deltaUpColor": "Increase color",
+      "deltaDownColor": "Decrease color",
+      "deltaFlatColor": "No-change color",
+      "windowStats": "Window stats",
+      "windowStatsHint": "Shows stats over the queried window in one line below the value.",
+      "windowStatsMaxPointsHint": "In channel mode the retained sample count (max_points) sets the window size. The default of 2 aggregates only 2 samples.",
+      "windowStat": {
+        "avg": "Avg",
+        "max": "Max",
+        "min": "Min"
+      },
+      "windowStatShort": {
+        "avg": "avg",
+        "max": "max",
+        "min": "min"
+      },
       "decimalPlaces": "Decimal places",
       "thresholdColorRules": "Threshold color rules",
       "add": "Add",

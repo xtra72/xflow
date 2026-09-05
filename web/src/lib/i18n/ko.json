@@ -745,6 +745,7 @@
       "heatmapLegendTickCount": "눈금 개수 (2~10)",
       "thresholds": "임계값",
       "style": "스타일",
+      "panelColorReset": "초기화",
       "previewExpandAria": "미리보기 펼치기",
       "splitterAria": "설정/미리보기 너비 조절",
       "previewSplitterAria": "미리보기/데이터소스 높이 조절",
@@ -1081,6 +1082,25 @@
       "unitPlaceholder": "예: °C, %, kWh",
       "valueScale": "현재값 크기",
       "valueScaleReset": "초기화",
+      "subValueScale": "보조 줄 크기",
+      "deltaDisplay": "변화량 표시",
+      "deltaDisplayHint": "직전 표본 대비 변화량을 본값 아래에 표시한다.",
+      "deltaUpColor": "증가 색",
+      "deltaDownColor": "감소 색",
+      "deltaFlatColor": "변화 없음 색",
+      "windowStats": "구간 통계",
+      "windowStatsHint": "조회 구간의 값을 본값 아래 한 줄로 표시한다.",
+      "windowStatsMaxPointsHint": "채널 모드에서는 보관 표본 수(max_points)가 구간의 크기를 정한다. 기본값 2 에서는 표본 2개만 집계된다.",
+      "windowStat": {
+        "avg": "평균",
+        "max": "최대",
+        "min": "최소"
+      },
+      "windowStatShort": {
+        "avg": "평",
+        "max": "고",
+        "min": "저"
+      },
       "decimalPlaces": "소수점 자릿수",
       "thresholdColorRules": "임계값 색상 규칙",
       "add": "추가",
