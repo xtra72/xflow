@@ -32,7 +32,21 @@ import { readValueScale } from './valueScale';
  */
 const STAT_VALUE_PX = { value: 36, unit: 20 } as const;
 const STAT_TILE_PX = { value: 24, unit: 14 } as const;
-import { reduceAllSeries, type ReducedSeries } from './seriesReduce';
+import { lastSampleDelta, reduceAllSeries, reduceSeries, type ReducedSeries } from './seriesReduce';
+import {
+  readDeltaColors,
+  readDeltaEnabled,
+  readSubValueScale,
+  readWindowStats,
+  type WindowStatKind,
+} from './statDisplayOptions';
+import {
+  StatDeltaLine,
+  StatWindowStatsLine,
+  type DeltaArrow,
+  type WindowStatItem,
+} from './StatSubLines';
+import type { DeltaColors } from './statDisplayOptions';
 import { SeriesTileGrid } from './SeriesTileGrid';
 import { type StoreSeriesStyle } from './useStoreChartData';
 import { isPanelSeriesActive } from './panelDataSource';
@@ -69,6 +83,12 @@ function parseConfig(config: Record<string, unknown>): StatPanelConfig {
   };
 }
 
+/** 화살표 + 부호가 붙은 변화량 표기. 표본이 모자라면 이 값 자체가 없다. */
+interface DeltaText {
+  arrow: DeltaArrow;
+  text: string;
+}
+
 /** 레거시(단일 값) 경로의 파생 결과. */
 interface LegacyDerived {
   mode: 'legacy';
@@ -76,12 +96,59 @@ interface LegacyDerived {
   deltaText: string;
   arrow: string;
   color: string | undefined;
+  /** 켠 구간 통계 항목의 표기. 꺼져 있으면 빈 배열이다(SPEC-CHART-003 §2.3). */
+  windowStats: WindowStatItem[];
+}
+
+/** 타일 1개 — 대표값에 시리즈별 보조 표기를 덧붙인 것. */
+interface StatTileData extends ReducedSeries {
+  /** 이 시리즈의 직전 표본 대비 변화량. 표본 2개 미만이면 undefined. */
+  delta: DeltaText | undefined;
+  windowStats: WindowStatItem[];
 }
 
 /** 다중 출력(대표값 타일) 경로의 파생 결과. */
 interface ReduceDerived {
   mode: 'reduce';
-  tiles: ReducedSeries[];
+  tiles: StatTileData[];
+}
+
+/**
+ * 변화량 수를 화살표 + 부호 있는 표기로 바꾼다.
+ *
+ * 변화량도 본값과 같은 단위 규칙을 따른다 — 본값은 `1.2GB` 인데 증감만 원시 바이트로
+ * 나오면 두 수가 같은 축인지 알 수 없다(§2.2 U2-8).
+ */
+function buildDelta(
+  delta: number | undefined,
+  decimals: number,
+  unit: string | undefined,
+): DeltaText | undefined {
+  if (delta === undefined || !Number.isFinite(delta)) return undefined;
+  const arrow: DeltaArrow = delta > 0 ? '↑' : delta < 0 ? '↓' : '→';
+  return {
+    arrow,
+    text: `${delta > 0 ? '+' : ''}${formatValueWithUnit(delta, decimals, unit)}`,
+  };
+}
+
+/**
+ * 켠 구간 통계 항목의 값을 계산하고 표기까지 마친다.
+ *
+ * 계산은 `reduceSeries` 가 소유한다 — 표본 정규화(null · 비유한 제외) 규칙을 여기서
+ * 다시 쓰면 두 곳이 갈린다(§2.3 U3-4). 표본이 없는 항목은 `null` 로 남겨 자리를
+ * 지킨다(U3-6).
+ */
+function buildWindowStats(
+  entries: readonly ChartEntry[] | undefined,
+  kinds: readonly WindowStatKind[],
+  decimals: number,
+  unit: string | undefined,
+): WindowStatItem[] {
+  return kinds.map((kind) => {
+    const v = reduceSeries(entries, kind);
+    return { kind, text: v === undefined ? null : formatValueWithUnit(v, decimals, unit) };
+  });
 }
 
 export default function StatPanel({ panelId: _panelId, title, config }: StatPanelProps) {
@@ -116,13 +183,38 @@ export default function StatPanel({ panelId: _panelId, title, config }: StatPane
   // 현재값 글자 크기 배율. 게이지와 **같은 config 키**를 쓴다 — 패널 유형을 바꿔도
   // "조금 크게" 라는 뜻이 유지된다.
   const valueScale = readValueScale(config.value_scale);
+  // 보조 줄(변화량 · 구간 통계)의 크기 배율. 본값과 **별개 축**이다 — 본값만 키우거나
+  // 보조 줄만 키울 수 있어야 한다(SPEC-CHART-003 §2.4).
+  const subScale = readSubValueScale(config);
+  // 방향별 변화량 색. 매 렌더 새 객체이므로 파생 의존성으로는 걸지 않는다(렌더에서만 쓴다).
+  const deltaColors = readDeltaColors(config);
+  // 표시 여부의 미지정 기본값은 **경로마다 다르다**(§5 D2) — 판정은 헬퍼가 소유한다.
+  const showLegacyDelta = readDeltaEnabled(config, 'legacy');
+  const showTileDelta = readDeltaEnabled(config, 'tile');
+  // 켠 구간 통계 항목. 배열은 매 렌더 새 객체라 의존성으로 직접 걸 수 없으므로,
+  // 같은 조합이면 같은 문자열이 되는 키를 축으로 삼아 참조를 고정한다.
+  const windowKindsKey = readWindowStats(config).join(',');
+  const windowKinds = useMemo<WindowStatKind[]>(
+    () => (windowKindsKey === '' ? [] : (windowKindsKey.split(',') as WindowStatKind[])),
+    [windowKindsKey],
+  );
 
   const derived = useMemo<LegacyDerived | ReduceDerived>(() => {
     if (isReduceMode && cfg.series_reduce !== undefined) {
-      // 다중 출력 경로: 시리즈 순서 그대로 대표값 1개씩. 보조 delta 줄은 없다(OQ5).
+      // 다중 출력 경로: 시리즈 순서 그대로 대표값 1개씩.
+      // SPEC-CHART-003 — 보조 줄(변화량 · 구간 통계)을 **시리즈별로** 덧붙인다.
+      // 시리즈를 가로질러 마지막 두 값을 비교하지 않는다(§2.2 U2-10).
+      const base = reduceAllSeries(seriesEntries, seriesNames, seriesStyles, cfg.series_reduce);
       return {
         mode: 'reduce',
-        tiles: reduceAllSeries(seriesEntries, seriesNames, seriesStyles, cfg.series_reduce),
+        tiles: base.map((tile) => {
+          const own = seriesEntries.get(tile.name);
+          return {
+            ...tile,
+            delta: buildDelta(lastSampleDelta(own), decimals, cfg.unit),
+            windowStats: buildWindowStats(own, windowKinds, decimals, cfg.unit),
+          };
+        }),
       };
     }
 
@@ -134,6 +226,7 @@ export default function StatPanel({ panelId: _panelId, title, config }: StatPane
         deltaText: '',
         arrow: '',
         color: undefined as string | undefined,
+        windowStats: [],
       };
     }
     const last = entries[entries.length - 1]!;
@@ -143,27 +236,38 @@ export default function StatPanel({ panelId: _panelId, title, config }: StatPane
       ? toNumber(getByPath(prev, cfg.display_field ?? 'value'))
       : NaN;
 
+    // 레거시 변화량은 **배열상 마지막 두 항목**을 `display_field` 로 읽어 뺀다.
+    // 타일 경로가 쓰는 `lastSampleDelta`(시각 기준 · 표본 정규화)로 갈아타지 않는 이유는,
+    // 이 경로가 `display_field` 로 중첩 경로를 읽을 수 있고 배열 위치 기준이라는 두 성질이
+    // 이미 특성화(CH-02)로 잠겨 있기 때문이다. 계산은 그대로 두고 표기·색·크기만 옮긴다.
     let delta = NaN;
     if (Number.isFinite(v) && Number.isFinite(pv)) {
       delta = v - pv;
     }
 
-    let a = '→';
-    if (Number.isFinite(delta)) {
-      if (delta > 0) a = '↑';
-      else if (delta < 0) a = '↓';
-    }
+    const d = buildDelta(Number.isFinite(delta) ? delta : undefined, decimals, cfg.unit);
 
-    const dec = decimals;
-    // 증감도 값과 같은 단위 규칙을 따른다 — 본값은 `1.2GB` 인데 증감만 원시 바이트로
-    // 나오면 두 수가 같은 축인지 알 수 없다. 자동 단위는 증감의 크기에 맞춰 접힌다.
-    const dText = Number.isFinite(delta)
-      ? `${delta > 0 ? '+' : ''}${formatValueWithUnit(delta, dec, cfg.unit)}`
-      : '';
+    // 구간 통계는 본값과 같은 자리(`display_field`)를 접어야 한다 — `reduceSeries` 는
+    // `value` 만 읽으므로 그 자리로 투영한 뒤 넘긴다.
+    const projected =
+      windowKinds.length === 0
+        ? []
+        : entries.map((e) => ({
+            timestamp: e.timestamp,
+            value: toNumber(getByPath(e, cfg.display_field ?? 'value')),
+          }));
 
     const c = Number.isFinite(v) ? pickThresholdColor(v, cfg.threshold_color_rules) : undefined;
-    return { mode: 'legacy', currentValue: v, deltaText: dText, arrow: a, color: c };
+    return {
+      mode: 'legacy',
+      currentValue: v,
+      deltaText: d?.text ?? '',
+      arrow: d?.arrow ?? '→',
+      color: c,
+      windowStats: buildWindowStats(projected, windowKinds, decimals, cfg.unit),
+    };
   }, [
+    windowKinds,
     isReduceMode,
     cfg.series_reduce,
     seriesEntries,
@@ -186,6 +290,7 @@ export default function StatPanel({ panelId: _panelId, title, config }: StatPane
   const deltaText = legacy?.deltaText ?? '';
   const arrow = legacy?.arrow ?? '';
   const color = legacy?.color;
+  const legacyWindowStats = legacy?.windowStats ?? [];
   const hasValue = currentValue !== undefined && Number.isFinite(currentValue);
   // 자동 데이터 량은 값의 크기가 접미사를 정한다 — 값과 단위를 함께 계산해야
   // `1.21` 옆에 저장값(`auto:bytes`)이 붙는 사고가 나지 않는다.
@@ -228,6 +333,9 @@ export default function StatPanel({ panelId: _panelId, title, config }: StatPane
                 decimals={decimals}
                 valueScale={valueScale}
                 single={tiles.length === 1}
+                showDelta={showTileDelta}
+                deltaColors={deltaColors}
+                subScale={subScale}
               />
             )}
           />
@@ -249,19 +357,21 @@ export default function StatPanel({ panelId: _panelId, title, config }: StatPane
               </span>
             ) : null}
           </div>
-          {deltaText && (
-            <div
-              className={clsx(
-                'mt-1 text-sm',
-                arrow === '↑' && 'text-emerald-500',
-                arrow === '↓' && 'text-rose-500',
-                arrow === '→' && 'text-gray-400',
-              )}
-              data-testid="stat-delta"
-            >
-              {arrow} {deltaText}
-            </div>
+          {showLegacyDelta && deltaText && (
+            <StatDeltaLine
+              arrow={arrow as DeltaArrow}
+              text={deltaText}
+              colors={deltaColors}
+              scale={subScale}
+              testId="stat-delta"
+            />
           )}
+          <StatWindowStatsLine
+            items={legacyWindowStats}
+            compact={false}
+            scale={subScale}
+            testId="stat-window-stats"
+          />
         </div>
       )}
 
@@ -293,14 +403,22 @@ function StatTile({
   decimals,
   valueScale,
   single,
+  showDelta,
+  deltaColors,
+  subScale,
 }: {
-  tile: ReducedSeries;
+  tile: StatTileData;
   cfg: StatPanelConfig;
   decimals: number;
   /** 현재값 글자 크기 배율(기본 1). */
   valueScale: number;
   /** 타일이 1개뿐이면 값 글자 크기를 기존 단일 출력과 맞춘다(§2.4 — N=1 외형 보존). */
   single: boolean;
+  /** 변화량 줄을 낼지. 미지정 config 에서는 거짓이다(SPEC-CHART-003 §5 D2). */
+  showDelta: boolean;
+  deltaColors: DeltaColors;
+  /** 보조 줄 크기 배율. 타일 개수와 무관하다 — 본값만 N=1 예외를 갖는다. */
+  subScale: number;
 }) {
   const hasValue = tile.value !== undefined && Number.isFinite(tile.value);
   // 타일마다 값이 달라 접히는 자리도 다르다 — 타일별로 단위를 정한다.
@@ -346,6 +464,23 @@ function StatTile({
           </span>
         ) : null}
       </span>
+      {showDelta && tile.delta && (
+        <StatDeltaLine
+          arrow={tile.delta.arrow}
+          text={tile.delta.text}
+          colors={deltaColors}
+          scale={subScale}
+          testId="stat-tile-delta"
+        />
+      )}
+      {/* 타일은 폭이 좁아 라벨을 축약한다. 개수가 아니라 **경로**가 정한다 —
+          타일 1개일 때만 전체 라벨을 쓰면 시리즈를 지웠을 때 라벨이 갑자기 길어진다. */}
+      <StatWindowStatsLine
+        items={tile.windowStats}
+        compact
+        scale={subScale}
+        testId="stat-tile-window-stats"
+      />
     </>
   );
 }

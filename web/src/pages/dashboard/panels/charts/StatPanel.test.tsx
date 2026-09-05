@@ -290,3 +290,223 @@ describe('StatPanel 특성화 (SPEC-CHART-002 M2)', () => {
     expect(screen.getByTestId('stat-value').style.color).toBe('');
   });
 });
+
+// ---------------------------------------------------------------------------
+// SPEC-CHART-003 — 보조 표기(변화량 · 구간 통계)의 설정화.
+//
+// M1 에서 하드코딩 동작을 특성화로 잠근 뒤, M4 배선으로 아래 서술이 그 자리를
+// 대신했다. 잠금이었던 네 축(표시 여부 · 색 · 크기 · 경로)이 모두 설정을 따른다.
+//
+// @spec SPEC-CHART-003 AC-07 / AC-08 / AC-11 / AC-12 / AC-14 / AC-17 / AC-19 / AC-24 / AC-26
+// ---------------------------------------------------------------------------
+describe('StatPanel 보조 표기 (SPEC-CHART-003)', () => {
+  beforeEach(() => {
+    mockResult.current = {
+      entries: [],
+      status: 'connected',
+      closedReason: undefined,
+      errorReason: undefined,
+    };
+  });
+
+  /** 20 22 26 24 21 — acceptance.md F1. 마지막 21 · 직전 24 · 평 22.6 · 최대 26 · 최소 20. */
+  const F1 = [
+    { timestamp: 1, value: 20 },
+    { timestamp: 2, value: 22 },
+    { timestamp: 3, value: 26 },
+    { timestamp: 4, value: 24 },
+    { timestamp: 5, value: 21 },
+  ];
+
+  it('AC-08: delta_display 미지정이면 레거시 경로는 변화량을 그린다(종전 동작 유지)', () => {
+    mockResult.current.entries = F1;
+    render(<StatPanel panelId="p1" config={{ channel_name: 'c', decimal_places: 0 }} />);
+    expect(screen.getByTestId('stat-delta')).toBeInTheDocument();
+  });
+
+  it('AC-07: delta_display.enabled=false 면 변화량 줄이 없다', () => {
+    mockResult.current.entries = F1;
+    render(
+      <StatPanel
+        panelId="p1"
+        config={{ channel_name: 'c', decimal_places: 0, delta_display: { enabled: false } }}
+      />,
+    );
+    expect(screen.queryByTestId('stat-delta')).toBeNull();
+    // 본값은 그대로 남는다 — 끈 것은 보조 줄뿐이다.
+    expect(screen.getByTestId('stat-value').textContent).toContain('21');
+  });
+
+  it('AC-14: 변화량 기준선은 직전 표본이다(구간 시작 대비가 아니다)', () => {
+    mockResult.current.entries = F1;
+    render(<StatPanel panelId="p1" config={{ channel_name: 'c', decimal_places: 0 }} />);
+    const delta = screen.getByTestId('stat-delta');
+    // 21 - 24 = -3. 구간 시작(20) 대비였다면 +1 이다.
+    expect(delta.textContent).toContain('↓');
+    expect(delta.textContent).toContain('-3');
+    expect(delta.textContent).not.toContain('+1');
+  });
+
+  it('AC-11: 증감별 색이 설정을 따른다', () => {
+    const colors = { up_color: '#123456', down_color: '#654321', flat_color: '#abcdef' };
+
+    mockResult.current.entries = [
+      { timestamp: 1, value: 10 },
+      { timestamp: 2, value: 14 },
+    ];
+    const up = render(
+      <StatPanel
+        panelId="p1"
+        config={{ channel_name: 'c', decimal_places: 0, delta_display: colors }}
+      />,
+    );
+    expect(screen.getByTestId('stat-delta').style.color).toBe('rgb(18, 52, 86)');
+    up.unmount();
+
+    mockResult.current.entries = [
+      { timestamp: 1, value: 14 },
+      { timestamp: 2, value: 10 },
+    ];
+    const down = render(
+      <StatPanel
+        panelId="p1"
+        config={{ channel_name: 'c', decimal_places: 0, delta_display: colors }}
+      />,
+    );
+    expect(screen.getByTestId('stat-delta').style.color).toBe('rgb(101, 67, 33)');
+    down.unmount();
+
+    mockResult.current.entries = [
+      { timestamp: 1, value: 7 },
+      { timestamp: 2, value: 7 },
+    ];
+    render(
+      <StatPanel
+        panelId="p1"
+        config={{ channel_name: 'c', decimal_places: 0, delta_display: colors }}
+      />,
+    );
+    expect(screen.getByTestId('stat-delta').style.color).toBe('rgb(171, 205, 239)');
+  });
+
+  it('AC-12: 색 미지정이면 종전 기본색(emerald)을 인라인으로 쓴다', () => {
+    mockResult.current.entries = [
+      { timestamp: 1, value: 10 },
+      { timestamp: 2, value: 14 },
+    ];
+    render(<StatPanel panelId="p1" config={{ channel_name: 'c', decimal_places: 0 }} />);
+    expect(screen.getByTestId('stat-delta').style.color).toBe('rgb(16, 185, 129)');
+  });
+
+  it('AC-17: window_stats 미지정이면 구간 통계 줄이 없다', () => {
+    mockResult.current.entries = F1;
+    render(<StatPanel panelId="p1" config={{ channel_name: 'c', decimal_places: 0 }} />);
+    expect(screen.queryByTestId('stat-window-stats')).toBeNull();
+  });
+
+  it('AC-19: 구간 통계가 평균 · 최대 · 최소를 한 줄에 고정 순서로 그린다', () => {
+    mockResult.current.entries = F1;
+    render(
+      <StatPanel
+        panelId="p1"
+        config={{
+          channel_name: 'c',
+          decimal_places: 1,
+          // 기재 순서를 뒤집어도 표시는 avg → max → min 이다.
+          window_stats: { min: true, max: true, avg: true },
+        }}
+      />,
+    );
+    const text = screen.getByTestId('stat-window-stats').textContent ?? '';
+    expect(text).toContain('22.6');
+    expect(text).toContain('26.0');
+    expect(text).toContain('20.0');
+    expect(text.indexOf('22.6')).toBeLessThan(text.indexOf('26.0'));
+    expect(text.indexOf('26.0')).toBeLessThan(text.indexOf('20.0'));
+  });
+
+  it('구간 통계는 켠 항목만 그린다', () => {
+    mockResult.current.entries = F1;
+    render(
+      <StatPanel
+        panelId="p1"
+        config={{ channel_name: 'c', decimal_places: 0, window_stats: { max: true } }}
+      />,
+    );
+    const line = screen.getByTestId('stat-window-stats');
+    expect(line.querySelectorAll('[data-stat-kind]')).toHaveLength(1);
+    expect(line.textContent).toContain('26');
+  });
+
+  it('구간 통계는 display_field 가 가리키는 자리를 접는다', () => {
+    mockResult.current.entries = [
+      { timestamp: 1, value: 0, labels: { t: '10' } },
+      { timestamp: 2, value: 0, labels: { t: '30' } },
+    ];
+    render(
+      <StatPanel
+        panelId="p1"
+        config={{
+          channel_name: 'c',
+          decimal_places: 0,
+          display_field: 'labels.t',
+          window_stats: { avg: true },
+        }}
+      />,
+    );
+    // value(0) 가 아니라 labels.t(10 · 30)의 평균 20 이어야 한다.
+    expect(screen.getByTestId('stat-window-stats').textContent).toContain('20');
+  });
+
+  it('표본이 없으면 구간 통계 항목이 자리를 지키고 — 를 그린다', () => {
+    mockResult.current.entries = [{ timestamp: 1, value: 'not-a-number' }];
+    render(
+      <StatPanel
+        panelId="p1"
+        config={{
+          channel_name: 'c',
+          decimal_places: 0,
+          window_stats: { avg: true, max: true, min: true },
+        }}
+      />,
+    );
+    const line = screen.getByTestId('stat-window-stats');
+    expect(line.querySelectorAll('[data-stat-kind]')).toHaveLength(3);
+    expect((line.textContent ?? '').match(/—/g)).toHaveLength(3);
+  });
+
+  it('AC-24: sub_value_scale 이 두 보조 줄에 함께 적용된다', () => {
+    mockResult.current.entries = F1;
+    render(
+      <StatPanel
+        panelId="p1"
+        config={{
+          channel_name: 'c',
+          decimal_places: 0,
+          sub_value_scale: 2,
+          window_stats: { avg: true },
+        }}
+      />,
+    );
+    expect(screen.getByTestId('stat-delta').style.fontSize).toBe('28px');
+    expect(screen.getByTestId('stat-window-stats').style.fontSize).toBe('28px');
+  });
+
+  it('AC-26: value_scale 은 본값만 키우고 보조 줄 크기를 바꾸지 않는다', () => {
+    mockResult.current.entries = F1;
+    render(
+      <StatPanel
+        panelId="p1"
+        config={{
+          channel_name: 'c',
+          decimal_places: 0,
+          value_scale: 2,
+          window_stats: { avg: true },
+        }}
+      />,
+    );
+    expect(screen.getByTestId('stat-value').style.fontSize).toBe('72px');
+    expect(screen.getByTestId('stat-delta').style.fontSize).toBe('14px');
+    expect(screen.getByTestId('stat-window-stats').style.fontSize).toBe('14px');
+  });
+});

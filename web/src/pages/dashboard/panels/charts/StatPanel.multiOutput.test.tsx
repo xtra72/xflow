@@ -161,6 +161,85 @@ describe('StatPanel 다중 출력 (SPEC-CHART-002 M3)', () => {
     expect(screen.queryByTestId('stat-delta')).toBeNull();
   });
 
+  // --- SPEC-CHART-003: 타일 경로의 보조 줄 ---
+  // OQ5("stat 타일 보조 지표 미표시")를 **기본값이 아니라 선택지로** 뒤집는다.
+  // 미지정일 때는 종전대로 아무것도 나오지 않아야 한다(spec.md §5 D2).
+
+  it('AC-08: delta_display 미지정이면 타일에 변화량이 없다(종전 동작 유지)', async () => {
+    await renderPanel(panelConfig({ series_reduce: 'last' }));
+
+    expect(tiles()).toHaveLength(3);
+    expect(screen.queryByTestId('stat-tile-delta')).toBeNull();
+  });
+
+  it('AC-17: window_stats 미지정이면 타일에 구간 통계가 없다', async () => {
+    await renderPanel(panelConfig({ series_reduce: 'last' }));
+
+    expect(screen.queryByTestId('stat-tile-window-stats')).toBeNull();
+  });
+
+  it('AC-09 / AC-10: enabled=true 면 타일마다 **그 시리즈의** 변화량을 그린다', async () => {
+    await renderPanel(
+      panelConfig({ series_reduce: 'last', delta_display: { enabled: true } }),
+    );
+
+    const deltas = screen
+      .getAllByTestId('series-tile')
+      .map((t) => t.querySelector('[data-testid="stat-tile-delta"]')?.textContent ?? null);
+
+    // room1: 표본 20 22 26 24 21 → 21 − 24 = -3
+    expect(deltas[0]).toContain('↓');
+    expect(deltas[0]).toContain('-3');
+    // room2: 표본 18 19 19 23 (null 은 표본이 아니다) → 23 − 19 = +4.
+    // 시리즈를 가로질러 비교했다면 room1 의 값이 섞여 이 수가 나오지 않는다.
+    expect(deltas[1]).toContain('↑');
+    expect(deltas[1]).toContain('+4');
+    // room3: 전 버킷 null → 표본 0개 → 변화량 줄 없음.
+    expect(deltas[2]).toBeNull();
+  });
+
+  it('AC-21: 타일 구간 통계는 시리즈별 값을 그리고, 표본 없는 시리즈는 — 로 자리를 지킨다', async () => {
+    await renderPanel(
+      panelConfig({ series_reduce: 'last', window_stats: { avg: true, max: true, min: true } }),
+    );
+
+    const lines = screen
+      .getAllByTestId('series-tile')
+      .map((t) => t.querySelector('[data-testid="stat-tile-window-stats"]'));
+
+    // room1 — 평 22.6(소수 0자리 반올림 23) · 최대 26 · 최소 20
+    expect(lines[0]?.textContent).toContain('26');
+    expect(lines[0]?.textContent).toContain('20');
+    // room2 — 최대 23 · 최소 18
+    expect(lines[1]?.textContent).toContain('23');
+    expect(lines[1]?.textContent).toContain('18');
+    // room3 — 표본 0개. 세 항목이 자리를 지키고 모두 —.
+    expect(lines[2]?.querySelectorAll('[data-stat-kind]')).toHaveLength(3);
+    expect((lines[2]?.textContent ?? '').match(/—/g)).toHaveLength(3);
+  });
+
+  it('AC-22: 타일 구간 통계 라벨은 타일이 1개여도 축약형이다', async () => {
+    // 축약 여부는 타일 **개수**가 아니라 경로가 정한다 — 시리즈를 하나로 줄여도
+    // 라벨이 갑자기 길어지면 안 된다.
+    query.fn = vi.fn(async () => ({
+      columns: ['k.room1'],
+      rows: F1_MATRIX.rows.map((r) => ({ bucketStartMs: r.bucketStartMs, values: [r.values[0]!] })),
+    }));
+    query.keysFn = vi.fn(async () => ['k.room1']);
+    await renderPanel(
+      panelConfig(
+        { series_reduce: 'last', window_stats: { avg: true } },
+        f1Config({ series: [{ key: 'k.room1', alias: 'temp.room1' }] }),
+      ),
+    );
+
+    expect(tiles()).toHaveLength(1);
+    const line = screen.getByTestId('stat-tile-window-stats');
+    // 축약 라벨은 aria-hidden, 완결 낱말은 sr-only 로 함께 존재한다.
+    expect(line.querySelector('[aria-hidden="true"]')).not.toBeNull();
+    expect(line.querySelectorAll('.sr-only')).toHaveLength(1);
+  });
+
   it('대표값이 undefined 인 시리즈도 슬롯을 유지하고 — 를 표시한다', async () => {
     await renderPanel(panelConfig({ series_reduce: 'avg' }));
 
