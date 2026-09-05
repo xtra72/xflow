@@ -946,6 +946,17 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   />
                   {t('dashboard.settings.showTitleBar')}
                 </label>
+                {/*
+                  패널 색상 — 타입과 무관한 패널 속성이라 공통 옵션에 둔다.
+                  종전에는 스타일 섹션의 악센트 그룹 `_base` 가 이 값을 편집했는데,
+                  (a) 그룹처럼 보이지만 실은 panelColor 를 직접 쓰는 예외였고
+                  (b) 스타일 섹션이 없는 5종(flows·agents·devices·properties-grid·
+                  agent-status)에서는 편집할 방법이 아예 없었다.
+                */}
+                <PanelColorRow
+                  panelColor={panelColor}
+                  onChange={(color) => handleConfigChange({ panelColor: color })}
+                />
                 {(panel.type === 'device' || panel.type === 'ac-control' || panel.type === 'hvac-control' || panel.type === 'properties-grid') && (
                   <DeviceSection
                     panel={panel}
@@ -1379,29 +1390,20 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 그룹을 골라 색을 정해도 화면이 바뀌지 않는 죽은 컨트롤이었다.
               - 디바이스 상태(속성 그리드)도 내지 않는다 — 카드 조각별 디자인이 색을
                 갖게 되면서 악센트 labels/borders 와 자리가 겹친다.
-              - 통계는 그룹 고르기를 내지 않고 **패널 색상 한 줄**로 축소한다
-                (SPEC-CHART-003 §5 D1). 그룹 4개 중 header/badges/table 은 StatPanel 이
-                읽지 않는 죽은 컨트롤이고, 살아 있는 것은 `_base`(= panelColor) 뿐이다.
-                항목이 하나뿐인 목록에 "고르기 → 편집" 2단계를 남기면 빈 껍데기가 된다.
+              - 통계도 내지 않는다 — 그룹 4개 중 header/badges/table 은 StatPanel 이
+                읽지 않는 죽은 컨트롤이었고, 살아 있던 `_base`(= panelColor)는 패널
+                옵션으로 올라갔다(SPEC-CHART-003 §5 D1). 남는 항목이 없다.
             */}
             {panel.type === 'flows' ||
             panel.type === 'agents' ||
             panel.type === 'devices' ||
             panel.type === 'properties-grid' ||
-            panel.type === 'agent-status' ? null : panel.type === 'stat' ? (
-              <CollapsibleSection title={t('dashboard.settings.style')} defaultOpen={true}>
-                <PanelColorRow
-                  panelColor={panelColor}
-                  onChange={(color) => handleConfigChange({ panelColor: color })}
-                />
-              </CollapsibleSection>
-            ) : panel.type === 'ac-control' ? (
+            panel.type === 'stat' ||
+            panel.type === 'agent-status' ? null : panel.type === 'ac-control' ? (
               <CollapsibleSection title={t('dashboard.settings.style')} defaultOpen={true}>
                 <AcControlStyleSection
-                  panelColor={panelColor}
                   accentElements={accentElements}
                   config={panel.config ?? {}}
-                  onPanelColorChange={(c) => handleConfigChange({ panelColor: c })}
                   onAccentChange={(elements) => handleConfigChange({ accentElements: elements })}
                   onConfigChange={(patch) => handleConfigChange(patch)}
                 />
@@ -1424,9 +1426,8 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                     selected={selectedGroup}
                     labelKeys={accentLabelKeys}
                     accentElements={accentElements}
-                    panelColor={panelColor}
+                    inheritedColor={panelColor}
                     onChange={(elements) => handleConfigChange({ accentElements: elements })}
-                    onPanelColorChange={(color) => handleConfigChange({ panelColor: color })}
                   />
                 )}
               </CollapsibleSection>
@@ -6387,7 +6388,6 @@ function LogsSection({
 
 /** 악센트 적용 요소 그룹 (디바이스 리모컨) — 값은 i18n 키 */
 const ACCENT_ELEMENT_LABEL_KEYS: Record<string, string> = {
-  _base: 'dashboard.settings.accent.base',
   temperature: 'dashboard.settings.accent.temperature',
   controls: 'dashboard.settings.accent.controls',
   labels: 'dashboard.settings.accent.labels',
@@ -6409,7 +6409,6 @@ function mergeFont(
 }
 
 const LIST_ACCENT_LABEL_KEYS: Record<string, string> = {
-  _base: 'dashboard.settings.accent.base',
   header: 'dashboard.settings.accent.header',
   badges: 'dashboard.settings.accent.badges',
   table: 'dashboard.settings.accent.table',
@@ -6417,7 +6416,6 @@ const LIST_ACCENT_LABEL_KEYS: Record<string, string> = {
 
 /** 리소스 패널 악센트 그룹 — 값은 i18n 키 */
 const RESOURCE_ACCENT_LABEL_KEYS: Record<string, string> = {
-  _base: 'dashboard.settings.accent.base',
   header: 'dashboard.settings.accent.header',
   cpu: 'dashboard.settings.accent.cpuCard',
   memory: 'dashboard.settings.accent.memoryCard',
@@ -6427,7 +6425,6 @@ const RESOURCE_ACCENT_LABEL_KEYS: Record<string, string> = {
 
 /** 시스템 통계 패널 악센트 그룹 — 값은 i18n 키 */
 const MONITOR_STATS_ACCENT_LABEL_KEYS: Record<string, string> = {
-  _base: 'dashboard.settings.accent.base',
   header: 'dashboard.settings.accent.header',
   label: 'dashboard.settings.accent.statLabel',
   value: 'dashboard.settings.accent.statValue',
@@ -6435,7 +6432,6 @@ const MONITOR_STATS_ACCENT_LABEL_KEYS: Record<string, string> = {
 
 /** 로그 패널 악센트 그룹 — 값은 i18n 키 */
 const LOG_ACCENT_LABEL_KEYS: Record<string, string> = {
-  _base: 'dashboard.settings.accent.base',
   header: 'dashboard.settings.accent.header',
   levels: 'dashboard.settings.accent.levels',
   timestamp: 'dashboard.settings.accent.timestamp',
@@ -6444,7 +6440,6 @@ const LOG_ACCENT_LABEL_KEYS: Record<string, string> = {
 
 /** 게이지 패널 악센트 그룹 — 값은 i18n 키 */
 const GAUGE_ACCENT_LABEL_KEYS: Record<string, string> = {
-  _base: 'dashboard.settings.accent.base',
   header: 'dashboard.settings.accent.header',
   arc: 'dashboard.settings.accent.arc',
   value: 'dashboard.settings.accent.value',
@@ -6668,24 +6663,26 @@ function AccentGroupControls({
   selected,
   labelKeys,
   accentElements,
-  panelColor,
+  inheritedColor,
   onChange,
-  onPanelColorChange,
 }: {
   selected: string;
   labelKeys: Record<string, string>;
   accentElements: Record<string, string | boolean>;
-  panelColor: string | undefined;
+  /**
+   * 색을 지정하지 않은 그룹이 물려받는 패널 색상 — **표시용**이다.
+   * 편집은 패널 옵션의 패널 색상이 소유한다(여기서 쓰면 두 자리가 한 값을 다툰다).
+   */
+  inheritedColor: string | undefined;
   onChange: (elements: Record<string, string | boolean>) => void;
-  onPanelColorChange?: (color: string | undefined) => void;
 }) {
   const { t } = useTranslation();
   // 선택된 그룹의 표시 라벨 (키 → 번역)
   const selectedLabel = labelKeys[selected] ? t(labelKeys[selected]!) : selected;
-  // _base 그룹은 panelColor를 직접 제어
-  const isBase = selected === '_base';
-  const isEnabled = isBase ? true : accentElements[selected] !== false;
-  const gc = isBase ? panelColor : (typeof accentElements[selected] === 'string' ? (accentElements[selected] as string) : undefined);
+  // 모든 그룹이 accentElements 를 쓴다 — panelColor 를 직접 쓰던 `_base` 예외는
+  // 패널 옵션의 패널 색상으로 이관되면서 사라졌다.
+  const isEnabled = accentElements[selected] !== false;
+  const gc = typeof accentElements[selected] === 'string' ? (accentElements[selected] as string) : undefined;
 
   // 서브 속성 접근
   const getSubProp = (group: string, prop: string): string | undefined => {
@@ -6703,15 +6700,10 @@ function AccentGroupControls({
     }
   };
   const toggle = () => {
-    if (isBase) return; // _base는 항상 활성
     onChange({ ...accentElements, [selected]: isEnabled ? false : true });
   };
   const setColor = (color: string | undefined) => {
-    if (isBase) {
-      onPanelColorChange?.(color);
-    } else {
-      onChange({ ...accentElements, [selected]: color ?? true });
-    }
+    onChange({ ...accentElements, [selected]: color ?? true });
   };
 
   const hasSubProps = selected === 'labels';
@@ -6719,7 +6711,7 @@ function AccentGroupControls({
   return (
     <div className="mt-3 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) p-3">
       <div className="mb-2 flex items-center gap-2">
-        {!isBase && <input type="checkbox" checked={isEnabled} onChange={toggle} className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500" />}
+        <input type="checkbox" checked={isEnabled} onChange={toggle} className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500" />
         <span className="text-sm font-medium text-(--color-text-primary)">{selectedLabel}</span>
         {isEnabled && hasSubProps ? (
           <div className="ml-auto flex gap-1">
@@ -6769,11 +6761,11 @@ function AccentGroupControls({
           <div className="flex items-center gap-1.5">
             <label className="relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md bg-(--color-bg-elevated) transition-colors hover:bg-(--color-border-default)">
               <Pipette className="h-3.5 w-3.5 text-(--color-text-muted)" />
-              <input type="color" value={gc ?? panelColor ?? '#3b82f6'} onChange={(e) => setColor(e.target.value)} className="absolute inset-0 cursor-pointer opacity-0" />
+              <input type="color" value={gc ?? inheritedColor ?? '#3b82f6'} onChange={(e) => setColor(e.target.value)} className="absolute inset-0 cursor-pointer opacity-0" />
             </label>
             <div className="flex h-6 items-center gap-px rounded-md bg-(--color-bg-elevated) px-1.5 text-[11px] font-mono text-(--color-text-secondary)">
               <span className="text-(--color-text-muted)">#</span>
-              <input type="text" value={(gc ?? panelColor ?? '#3b82f6').replace('#', '').toUpperCase()}
+              <input type="text" value={(gc ?? inheritedColor ?? '#3b82f6').replace('#', '').toUpperCase()}
                 onChange={(e) => { const v = e.target.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 6); if (v.length === 6) setColor(`#${v}`); }}
                 className="w-14 bg-transparent text-center outline-none" maxLength={6} />
               <span className="mx-1 h-3 w-px bg-(--color-border-default)" />

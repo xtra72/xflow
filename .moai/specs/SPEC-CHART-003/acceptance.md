@@ -39,48 +39,70 @@
 
 ---
 
-## A. 스타일 섹션 축소 (U1)
+## A. 패널 색상 이관과 스타일 섹션 정리 (U1)
 
-### AC-01 — stat 패널 설정에 악센트 그룹 고르기가 없다
+### AC-01 — stat 패널 설정에 스타일 섹션이 없다
 
 ```gherkin
 Given 패널 타입이 stat 인 패널 설정 다이얼로그가 열려 있을 때
 When 스타일 섹션을 검사하면
-Then accent-group-picker 요소가 존재하지 않는다
+Then accent-group-picker 요소가 존재하지 않고, 죽은 그룹 4종의 버튼도 없다
 ```
 
-vitest: `PanelSettingsDialog.statStyle.test.tsx` — "stat 패널은 악센트 그룹 고르기를 내지 않는다"
-단언: `expect(screen.queryByTestId('accent-group-picker')).toBeNull()`
+vitest: `PanelSettingsDialog.statStyle.test.tsx` — "accent-group-picker 가 존재하지 않는다" · "죽은 그룹(header · badges · table)의 편집 입구가 사라졌다"
 
-### AC-02 — 패널 색상은 한 줄로 남아 편집 가능하다
+### AC-02 — 패널 색상은 패널 옵션에서 모든 타입이 공유한다
 
 ```gherkin
-Given 패널 타입이 stat 인 패널 설정 다이얼로그가 열려 있을 때
-When 패널 색상 스와치 하나를 클릭하면
-Then onConfigChange 가 { panelColor: <그 색> } 로 호출된다
+Given 임의의 패널 타입으로 패널 설정 다이얼로그가 열려 있을 때
+When 패널 옵션 섹션을 검사하면
+Then panel-color-row 가 존재한다
+And 스와치를 클릭하면 config.panelColor 가 그 색으로 저장된다
+And 초기화를 누르면 config.panelColor 가 undefined 가 된다
 ```
 
-vitest: `PanelSettingsDialog.statStyle.test.tsx` — "stat 패널 색상 스와치가 panelColor 를 바꾼다"
+vitest: `PanelSettingsDialog.statStyle.test.tsx` — "스와치를 누르면 panelColor 가 그 색으로 저장된다" · "저장된 색이 있으면 초기화로 지울 수 있다" · "_base 그룹은 어느 패널 타입에서도 더 이상 나오지 않는다"
+
+### AC-02b — 편집 입구가 없던 5종이 이제 색을 지정할 수 있다
+
+```gherkin
+Given 패널 타입이 flows · agents · devices · agent-status 중 하나일 때
+When 패널 옵션 섹션을 검사하면
+Then panel-color-row 가 존재한다
+```
+
+vitest: `PanelSettingsDialog.statStyle.test.tsx` — "스타일 섹션이 없던 목록형 패널도 이제 패널 색상을 지정할 수 있다"
 
 ### AC-03 — 저장된 accentElements 를 건드리지 않는다
 
 ```gherkin
 Given config.accentElements 에 { header: '#ff0000' } 가 저장된 stat 패널이 있을 때
 When 패널 색상을 바꾸면
-Then onConfigChange 의 인자에 accentElements 키가 포함되지 않는다
+Then 저장된 accentElements 가 그대로 유지된다
 ```
 
-vitest: `PanelSettingsDialog.statStyle.test.tsx` — "accentElements 는 손대지 않는다"
+vitest: `PanelSettingsDialog.statStyle.test.tsx` — "패널 색상을 바꿔도 accentElements 값이 유지된다"
 
-### AC-04 — 다른 패널 타입은 그대로다
+### AC-04 — 다른 패널 타입의 악센트 그룹은 그대로다
 
 ```gherkin
-Given 패널 타입이 graph-chart 인 패널 설정 다이얼로그가 열려 있을 때
+Given 패널 타입이 graph-chart 또는 bar-chart 인 패널 설정 다이얼로그가 열려 있을 때
 When 스타일 섹션을 검사하면
-Then accent-group-picker 가 존재한다
+Then accent-group-picker 가 존재한다 (단, _base 그룹은 제외되어 있다)
 ```
 
-vitest: `PanelSettingsDialog.statStyle.test.tsx` — "stat 이 아닌 패널의 스타일 섹션은 유지된다"
+vitest: `PanelSettingsDialog.statStyle.test.tsx` — "graph-chart 패널은 악센트 그룹 고르기를 계속 받는다" · "bar-chart 패널도 그대로다"
+vitest: `PanelSettingsDialog.previewResize.test.tsx` — 그룹 선택 동작은 `header` 그룹으로 검증한다
+
+### AC-04b — `_base` 가 어디에도 남아 있지 않다
+
+```bash
+grep -n "_base: 'dashboard.settings.accent.base'" web/src/pages/dashboard/PanelSettingsDialog.tsx
+# 기대: 출력 없음 (exit 1)
+
+grep -n "overallColor" web/src/pages/dashboard/AcControlStyleSection.tsx
+# 기대: 출력 없음 (exit 1) — ac-control 의 중복 "전체 색상" 행 제거
+```
 
 ### AC-05 — 미사용 컴포넌트에 의존을 만들지 않는다
 

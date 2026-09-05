@@ -90,16 +90,20 @@
 
 ---
 
-### M5 — 스타일 섹션 축소 (Priority Medium, DDD-IMPROVE)
+### M5 — 패널 색상 이관 + 스타일 섹션 정리 (Priority Medium, DDD-IMPROVE)
 
 | # | 작업 | 산출물 |
 |---|------|--------|
-| 5.1 | `stat` 을 `AccentGroupPicker`/`AccentGroupControls` 미노출 목록으로 옮기고, 대신 패널 색상 한 줄 컨트롤을 렌더 | `PanelSettingsDialog.tsx` |
-| 5.2 | 패널 색상 한 줄 컨트롤 — 스와치 목록 + 초기화. `panelColor` 만 쓰고 `accentElements` 는 건드리지 않는다 | 동일 |
-| 5.3 | M1 1.4 특성화 테스트 갱신 — 이제 picker 가 없고 색상 스와치가 있다 | `PanelSettingsDialog` 테스트 |
-| 5.4 | 다른 패널 타입의 스타일 섹션이 그대로임을 검증하는 회귀 테스트 | 동일 |
+| 5.1 | 패널 색상 한 줄 컨트롤(`PanelColorRow`)을 **패널 옵션** 섹션에 렌더 — 패널 타입과 무관하게 항상 | `PanelSettingsDialog.tsx` |
+| 5.2 | `stat` 을 스타일 섹션 미노출 목록에 추가 — 남는 항목이 없다 | 동일 |
+| 5.3 | 라벨 세트 6종에서 `_base` 제거 + `AccentGroupControls` 의 `isBase` 예외 제거 | 동일 |
+| 5.4 | `AcControlStyleSection` 의 "전체 색상" 행과 `panelColor` prop 제거 | `AcControlStyleSection.tsx` |
+| 5.5 | 팔레트 상수를 공용 모듈로 분리 | `panelColorPresets.ts`(신규) |
+| 5.6 | M1 1.4 특성화 테스트 갱신 + `_base` 를 쓰던 기존 테스트를 `header` 로 이전 | `PanelSettingsDialog.statStyle` · `.previewResize` 테스트 |
 
-**설계 메모**: 색상 팔레트 상수는 [`PanelSettingsDropdown.tsx`](../../../web/src/components/common/PanelSettingsDropdown.tsx) 의 `PANEL_COLORS` 와 같은 목록이어야 한다. 다만 그 파일은 미사용 컴포넌트이므로 import 하지 않고, 상수를 공용 자리로 끌어올리거나 새로 정의한다 — 미사용 컴포넌트에 의존을 만들면 그 파일을 지울 수 없게 된다.
+**설계 메모**: 색상 팔레트는 [`PanelSettingsDropdown.tsx`](../../../web/src/components/common/PanelSettingsDropdown.tsx) 의 `PANEL_COLORS` 와 같은 목록이어야 한다. 그 파일은 미사용 컴포넌트이므로 **그쪽이 공용 모듈을 참조하는 방향**으로 뺀다 — 반대로 의존하면 그 파일을 지울 수 없게 된다.
+
+`AccentGroupControls` 는 `panelColor` 를 완전히 잃지 않는다. 색을 지정하지 않은 그룹은 렌더 시 `panelColor` 를 물려받으므로(`effectiveColor`), 색 입력의 **표시 기본값**으로는 계속 필요하다. 편집 권한만 떼어내고 이름을 `inheritedColor` 로 바꿔 뜻을 분명히 한다.
 
 **M5 를 뒤에 두는 이유**: M2~M4 와 파일이 겹치지 않고 되돌리기 쉽다. 앞의 마일스톤이 길어져도 이 조각만 단독 커밋할 수 있다.
 
