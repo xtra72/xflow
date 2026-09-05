@@ -7,23 +7,14 @@ import { createPortal } from 'react-dom';
 import { Settings } from 'lucide-react';
 
 import { useTranslation } from '@/lib/i18n';
+// 패널 컬러 프리셋 — 팔레트는 `panelColorPresets` 가 소유한다. 패널 설정 다이얼로그의
+// 패널 색상 컨트롤과 같은 목록이어야 하므로 사본을 두지 않는다.
+import { PANEL_COLORS } from '@/pages/dashboard/panelColorPresets';
 
 export interface ColumnOption<T extends string> {
   key: T;
   label: string;
 }
-
-/** 패널 컬러 프리셋 */
-const PANEL_COLORS = [
-  '#3b82f6', // blue
-  '#8b5cf6', // violet
-  '#06b6d4', // cyan
-  '#10b981', // emerald
-  '#f59e0b', // amber
-  '#ef4444', // red
-  '#ec4899', // pink
-  '#6b7280', // gray
-];
 
 interface PanelSettingsDropdownProps<T extends string> {
   title: string;
@@ -127,7 +118,7 @@ export default function PanelSettingsDropdown<T extends string>({
         ref={buttonRef}
         type="button"
         onClick={() => setOpen(!open)}
-        className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+        className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
         style={panelColor ? { color: panelColor } : undefined}
         aria-label={t('panel.settings.aria')}
       >
@@ -181,7 +172,7 @@ export default function PanelSettingsDropdown<T extends string>({
                           checked={checked}
                           disabled={isLast}
                           onChange={() => handleToggle(col.key)}
-                          className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          className="h-3.5 w-3.5 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
                         />
                         <span className="text-(--color-text-secondary)">{col.label}</span>
                       </label>
