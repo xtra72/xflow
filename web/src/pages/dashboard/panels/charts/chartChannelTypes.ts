@@ -719,10 +719,47 @@ export interface ChartPanelConfigBase {
 
 // --- 차트 타입별 config (SPEC-CHART-001 §4.2.2) ---
 
+/**
+ * 변화량 표기 설정 (SPEC-CHART-003 §3.1).
+ *
+ * `enabled` 미지정의 뜻은 **렌더 경로마다 다르다** — 레거시 경로는 켬, 다중 타일
+ * 경로는 끔이다. 두 경로의 종전 동작이 반대여서 미지정을 한쪽으로 통일하면 어느
+ * 쪽이든 저장된 대시보드의 외형이 바뀐다(spec.md §5 D2). 판정은
+ * `statDisplayOptions.readDeltaEnabled` 한 곳이 소유한다.
+ */
+export interface StatDeltaConfig {
+  /** 표시 여부. 미지정 = 경로별 종전 동작 유지. */
+  enabled?: boolean;
+  /** 증가(양수) 글자색. 미지정이면 emerald-500. */
+  up_color?: string;
+  /** 감소(음수) 글자색. 미지정이면 rose-500. */
+  down_color?: string;
+  /** 변화 없음(0) 글자색. 미지정이면 muted. */
+  flat_color?: string;
+}
+
+/**
+ * 구간 통계 보조 줄 설정 (SPEC-CHART-003 §3.1).
+ *
+ * 켠 항목만 그리며 표시 순서는 기재 순서와 무관하게 `avg → max → min` 고정이다.
+ * 값 계산은 `series_reduce` 와 같은 `reduceSeries` 를 쓰지만 **축이 다르다** —
+ * `series_reduce` 는 본값 자리를 정하고, 이쪽은 본값 아래 보조 줄을 정한다.
+ */
+export interface StatWindowStatsConfig {
+  avg?: boolean;
+  max?: boolean;
+  min?: boolean;
+}
+
 export interface StatPanelConfig extends ChartPanelConfigBase {
   unit?: string;
   decimal_places?: number;
   threshold_color_rules?: Array<{ min: number; color: string }>;
+  // --- SPEC-CHART-003 ---
+  delta_display?: StatDeltaConfig;
+  window_stats?: StatWindowStatsConfig;
+  /** 보조 줄(변화량 + 구간 통계) 공용 크기 배율. 본값의 `value_scale` 과 별개 축. */
+  sub_value_scale?: number;
 }
 
 /**
