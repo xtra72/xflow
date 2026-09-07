@@ -33,6 +33,8 @@ import {
 } from '@/stores/uiStore';
 import type { FlowInfo } from '@/types/flow';
 
+import { readListPanelStyle } from './listPanelStyle';
+
 /** 상태별 색상 및 아이콘 매핑 (label 은 i18n 키, 렌더 시 t(key) 로 변환) */
 const STATUS_CONFIG: Record<string, { labelKey: string; color: string; icon: React.ReactNode }> = {
   running: {
@@ -42,7 +44,7 @@ const STATUS_CONFIG: Record<string, { labelKey: string; color: string; icon: Rea
   },
   stopped: {
     labelKey: 'dashboard.stopped',
-    color: 'text-gray-600 bg-gray-100 dark:text-gray-400 dark:bg-gray-700/30',
+    color: 'text-(--color-text-secondary) bg-(--color-bg-sunken)',
     icon: <CircleStop className="h-4 w-4" />,
   },
   error: {
@@ -78,6 +80,8 @@ interface FlowPanelProps {
 export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelProps) {
   const showTitle = usePanelTitleVisible();
   const titleStyle = usePanelTitleStyle();
+  // 디자인 설정(테이블 헤더·요소·요약 배지)은 순수 모듈이 해석한다.
+  const design = useMemo(() => readListPanelStyle(panelConfig?.config), [panelConfig?.config]);
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [sort, setSort] = useState<SortState>({ field: 'name', direction: 'asc' });
@@ -99,16 +103,7 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
     () => (panelConfig?.config?.visibleColumns as FlowColumnKey[]) ?? [...ALL_FLOW_COLUMNS],
     [panelConfig?.config?.visibleColumns],
   );
-  const panelColor = panelConfig?.config?.panelColor as string | undefined;
-  const accentElements = (panelConfig?.config?.accentElements as Record<string, string | boolean>) ?? {};
-
-  /** accentElements 그룹별 유효 색상 */
-  const acColor = (group: string): string | undefined => {
-    if (accentElements[group] === false) return undefined;
-    const val = accentElements[group];
-    if (typeof val === 'string') return val;
-    return panelColor;
-  };
+  // 악센트 색 해석은 readListPanelStyle 이 맡는다 — 색과 글자 모양을 한 곳에서 정한다.
 
   // 숨겨진 컬럼으로 정렬 중이면 기본(name)으로 fallback
   useEffect(() => {
@@ -286,7 +281,9 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
             <GitBranch className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
             <h3
               className="truncate text-lg font-semibold text-(--color-text-primary)"
-              style={{ ...(acColor('header') ? { color: acColor('header')! } : undefined), ...titleStyle }}
+              // 타이틀 모양은 "타이틀 디자인" 한 곳이 정한다. 종전에는 악센트 header
+              // 색이 함께 걸려 어느 쪽이 이기는지 알 수 없었다.
+              style={titleStyle}
             >
               {title}
             </h3>
@@ -294,8 +291,9 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
         </div>
       )}
 
-      {/* 상태별 요약 */}
-      <div className="mb-6 flex shrink-0 flex-wrap gap-2">
+      {/* 상태별 요약 배지 — 끄면 표만 남는다. */}
+      {design.showSummaryBadges && (
+      <div className="mb-6 flex shrink-0 flex-wrap gap-2" data-testid="flow-summary-badges">
         {DISPLAY_STATUSES.map((status) => {
           const config = STATUS_CONFIG[status];
           const count = statusCounts[status] ?? 0;
@@ -305,7 +303,7 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
             <span
               key={status}
               className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium ${config.color}`}
-              style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
+              style={design.badgeStyle}
             >
               {config.icon}
               {t(config.labelKey)} {count}
@@ -313,6 +311,7 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
           );
         })}
       </div>
+      )}
 
       {/* 플로우 리스트 테이블 */}
       {sortedFlows.length === 0 ? (
@@ -332,13 +331,13 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
                       currentSort={sort}
                       onSort={handleSort}
                       className="px-4 py-3"
-                      accentColor={acColor('table') ?? panelColor}
+                      accentColor={design.headerAccent}
                     />
                   )}
                   {show('status') && (
                     <th
                       className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
-                      style={acColor('table') ? { color: acColor('table')! } : undefined}
+                      style={design.headerStyle}
                     >
                       {t('dashboard.col.status')}
                     </th>
@@ -346,7 +345,7 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
                   {show('node_count') && (
                     <th
                       className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
-                      style={acColor('table') ? { color: acColor('table')! } : undefined}
+                      style={design.headerStyle}
                     >
                       {t('dashboard.col.nodeCount')}
                     </th>
@@ -354,7 +353,7 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
                   {show('updated_at') && (
                     <th
                       className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
-                      style={acColor('table') ? { color: acColor('table')! } : undefined}
+                      style={design.headerStyle}
                     >
                       {t('dashboard.col.uptime')}
                     </th>
@@ -362,7 +361,7 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
                   {show('actions') && (
                     <th
                       className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
-                      style={acColor('table') ? { color: acColor('table')! } : undefined}
+                      style={design.headerStyle}
                     >
                       {t('dashboard.col.actions')}
                     </th>
@@ -377,19 +376,26 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
                     <tr
                       key={flow.id}
                       className="transition-colors hover:bg-(--color-bg-elevated)"
+                      // 글꼴·크기·굵기는 여기서 상속된다. 색은 안쪽 클래스가 이기므로
+                      // 글자를 직접 담은 자리에 따로 건다(아래).
+                      style={design.cellStyle}
                     >
                       {show('name') && (
                         <td className="px-4 py-3">
                           {remote ? (
                             // 원격: 에디터 딥링크는 노드 컨텍스트 밖이므로 단순 텍스트로
                             // 표시한다(편집은 노드 대시보드 플로우 서브탭 — REQ-L12).
-                            <span className="text-sm font-medium text-(--color-text-primary)">
+                            <span
+                              className="text-sm font-medium text-(--color-text-primary)"
+                              style={design.cellStyle}
+                            >
                               {flow.name}
                             </span>
                           ) : (
                             <Link
                               to={`/editor/${flow.id}`}
                               className="text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+                              style={design.cellStyle}
                             >
                               {flow.name}
                             </Link>
@@ -411,12 +417,18 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
                         </td>
                       )}
                       {show('node_count') && (
-                        <td className="px-4 py-3 text-sm text-(--color-text-secondary)">
+                        <td
+                          className="px-4 py-3 text-sm text-(--color-text-secondary)"
+                          style={design.cellStyle}
+                        >
                           {flow.node_count}
                         </td>
                       )}
                       {show('updated_at') && (
-                        <td className="px-4 py-3 text-sm text-(--color-text-muted)">
+                        <td
+                          className="px-4 py-3 text-sm text-(--color-text-muted)"
+                          style={design.cellStyle}
+                        >
                           {timeStr ? formatDate(timeStr, 'relative') : '-'}
                         </td>
                       )}

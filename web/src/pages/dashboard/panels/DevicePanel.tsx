@@ -22,6 +22,8 @@ import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext'
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { DeviceCell } from '@/pages/devices/DeviceCell';
+
+import { readListPanelStyle } from './listPanelStyle';
 import DeviceSearchFilter from '@/pages/devices/DeviceSearchFilter';
 import type { DeviceInfo } from '@/types/device';
 
@@ -76,6 +78,8 @@ export default function DevicePanel({
 }: DevicePanelProps) {
   const showTitle = usePanelTitleVisible();
   const titleStyle = usePanelTitleStyle();
+  // 자리별 디자인(테이블 헤더·요소·요약 배지) 해석은 순수 모듈이 맡는다.
+  const design = useMemo(() => readListPanelStyle(_config), [_config]);
   const { t } = useTranslation();
   // 원격 대시보드 target(SPEC-REMOTE-001 M10, REQ-L04): 원격이면 노드 미러 목록을
   // 소스로 쓴다(useDevicesTarget). 로컬은 기존 useDevicesRealtime 그대로(회귀 없음).
@@ -110,15 +114,8 @@ export default function DevicePanel({
     [_config.visibleColumns],
   );
 
-  // 타이틀 상태 (prop 기반)
-  const panelColor = _config.panelColor as string | undefined;
-  const accentElements = (_config.accentElements as Record<string, string | boolean>) ?? {};
-  const acColor = (group: string): string | undefined => {
-    if (accentElements[group] === false) return undefined;
-    const val = accentElements[group];
-    if (typeof val === 'string') return val;
-    return panelColor;
-  };
+  // 악센트 색 해석은 readListPanelStyle 이 맡는다 — 색과 글자 모양을 한 곳에서 정한다.
+
   const [panelTitle, setPanelTitle] = useState(title);
 
   // 외부 title prop 변경 시 동기화
@@ -208,7 +205,8 @@ export default function DevicePanel({
             <HardDrive className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
             <h3
               className="truncate text-lg font-semibold text-(--color-text-primary)"
-              style={{ ...(acColor('header') ? { color: acColor('header')! } : undefined), ...titleStyle }}
+              // 타이틀 모양은 "타이틀 디자인" 한 곳이 정한다(플로우 현황과 같은 규칙).
+              style={titleStyle}
             >
               {panelTitle}
             </h3>
@@ -220,35 +218,36 @@ export default function DevicePanel({
         <div className="flex items-center justify-center py-8">
           <div
             className="h-6 w-6 animate-spin rounded-full border-2 border-(--color-border-strong) border-t-blue-600"
-            style={acColor('header') ? { borderTopColor: acColor('header')! } : undefined}
           />
         </div>
       ) : (
         <>
-          {/* 상태별 요약 뱃지 */}
-          <div className="mb-3 flex shrink-0 flex-wrap gap-3">
+          {/* 상태별 요약 뱃지 — 끄면 표만 남는다. */}
+          {design.showSummaryBadges && (
+          <div className="mb-3 flex shrink-0 flex-wrap gap-3" data-testid="device-summary-badges">
             <span
               className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-              style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
+              style={design.badgeStyle}
             >
               <HardDrive className="h-4 w-4" />
               {t('dashboard.panel.total')} {summary.total}
             </span>
             <span
               className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-sm font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400"
-              style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
+              style={design.badgeStyle}
             >
               <Wifi className="h-4 w-4" />
               {t('dashboard.panel.online')} {summary.online}
             </span>
             <span
-              className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-600 dark:bg-gray-700/30 dark:text-gray-400"
-              style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
+              className="inline-flex items-center gap-1.5 rounded-full bg-(--color-bg-sunken) px-3 py-1 text-sm font-medium text-(--color-text-secondary)"
+              style={design.badgeStyle}
             >
               <WifiOff className="h-4 w-4" />
               {t('dashboard.panel.offline')} {summary.offline}
             </span>
           </div>
+          )}
 
           {/* 검색 + 필터 바 (디바이스 탭과 동일 컴포넌트) */}
           <div className="mb-4 shrink-0">
@@ -283,7 +282,7 @@ export default function DevicePanel({
                           <th
                             key={col}
                             className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
-                            style={acColor('table') ? { color: acColor('table')! } : undefined}
+                            style={design.headerStyle}
                           >
                             {t(DEVICE_COLUMN_LABELS[col])}
                           </th>
@@ -295,7 +294,7 @@ export default function DevicePanel({
                             currentSort={sort}
                             onSort={handleSort}
                             className="px-4 py-3"
-                            accentColor={acColor('table') ?? panelColor}
+                            accentColor={design.headerAccent}
                           />
                         ),
                       )}
@@ -306,9 +305,11 @@ export default function DevicePanel({
                       <tr
                         key={device.uid ?? device.id}
                         className="transition-colors hover:bg-(--color-bg-elevated)"
+                        style={design.cellStyle}
                       >
                         {visibleColumns.map((col) => (
-                          <DeviceCell key={col} column={col} device={device} t={t} />
+                          // 색은 셀 안쪽 클래스가 이기므로 td 까지 내려보낸다.
+                          <DeviceCell key={col} column={col} device={device} t={t} style={design.cellStyle} />
                         ))}
                       </tr>
                     ))}
