@@ -33,6 +33,7 @@ export function GaugeThresholdLegend({
   fontColor,
   offsetX,
   offsetY,
+  edit,
 }: {
   items: readonly ThresholdLegendItem[];
   position: ThresholdLegendPosition;
@@ -45,6 +46,15 @@ export function GaugeThresholdLegend({
   /** 끌어 옮긴 오프셋(담는 상자 대비 %). 기준 자리에서 얼마나 밀렸는지. */
   offsetX: number;
   offsetY: number;
+  /**
+   * 편집 표식 — 정렬이 상자를 찾고, 선택 윤곽을 입는다.
+   *
+   * 감싸는 상자를 만들지 않는다. 이 범례는 스스로 `absolute` 로 떠 있어서, 흐름 안의
+   * 상자로 감싸면 그 상자가 크기 0이 되고 윤곽이 엉뚱한 자리에 생긴다(파이 범례에서
+   * 실제로 그렇게 만들었다가 위쪽에 얇은 띠만 남았다).
+   */
+  /** 편집 표면 — 표식·윤곽선·손잡이는 범례 **자신**에 붙어야 한다. */
+  edit?: { props: Record<string, unknown>; outline: string; handle?: React.ReactNode };
 }): React.ReactElement | null {
   if (items.length === 0) return null;
   const vertical = orientation === 'vertical';
@@ -52,12 +62,14 @@ export function GaugeThresholdLegend({
     <div
       data-testid="gauge-threshold-legend"
       data-gauge-threshold-legend=""
+      {...(edit?.props ?? {})}
       data-position={position}
       data-orientation={orientation}
       className={cn(
         // 게이지 위에 뜬다. 겹치는 자리에서 글자를 읽으려면 게이지 색이 비쳐서는 안
         // 되므로 옅은 패널색 판을 깔아 준다(파이 범례와 같은 규칙).
         'absolute z-10 flex max-h-full max-w-full overflow-auto rounded-md bg-(--color-bg-surface)/80 px-2 py-1',
+        edit?.outline,
         vertical
           ? 'flex-col items-start gap-y-1'
           : 'flex-wrap items-center justify-center gap-x-3 gap-y-1',
@@ -71,6 +83,7 @@ export function GaugeThresholdLegend({
         color: fontColor,
       }}
     >
+      {edit?.handle}
       {items.map((item) => (
         <span
           key={`${item.color}:${item.label}`}

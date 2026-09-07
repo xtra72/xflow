@@ -3,7 +3,7 @@
 // 실제 SVG 경로 수식까지는 검증하지 않고 value 가 DOM 에 반영되는지만 확인한다.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 
 import type { ChartEntry } from './charts/chartChannelTypes';
 
@@ -403,5 +403,263 @@ describe('GaugePanel 레거시 바인딩 특성화 (SPEC-CHART-002 M2)', () => {
       );
       expect(screen.queryByTestId('gauge-edit-toggle')).toBeNull();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-CHART-005 M8 — 특성화 테스트 (DDD PRESERVE).
+//
+// M8 은 **편집 표면만** 공용화했다 — 그리드·중심 표식·정렬 툴바·선택 구분. 드래그
+// 계산은 `GaugeDragLayer` 가 계속 소유한다(viewBox 좌표와 변별 죄기 규칙이 거기 있다).
+// ---------------------------------------------------------------------------
+describe('GaugePanel 편집 표면 (SPEC-CHART-005 M8)', () => {
+  const edit = (extra: Record<string, unknown> = {}) => (
+    <GaugePanel
+      panelId="p1"
+      title=""
+      config={{ value: 50, ...extra }}
+      onConfigChange={vi.fn()}
+      onTitleChange={() => {}}
+      forceEdit
+    />
+  );
+
+  it('AC-17: 편집 중에는 그리드와 중심 표식이 보인다', () => {
+    render(edit());
+    expect(screen.getByTestId('panel-edit-grid')).toBeInTheDocument();
+    expect(screen.getByTestId('panel-edit-center')).toBeInTheDocument();
+  });
+
+  it('AC-17: 편집이 꺼져 있으면 그리드도 툴바도 없다', () => {
+    render(<GaugePanel panelId="p1" title="" config={{ value: 50 }} />);
+    expect(screen.queryByTestId('panel-edit-grid')).toBeNull();
+    expect(screen.queryByTestId('panel-align-toolbar')).toBeNull();
+  });
+
+  it('AC-18: 정렬 툴바에 스냅 토글이 켜진 채로 나온다', () => {
+    render(edit());
+    expect(screen.getByTestId('panel-align-toolbar')).toBeInTheDocument();
+    expect(screen.getByTestId('panel-align-reset')).toBeInTheDocument();
+    // 드래그 레이어가 격자 붙임을 하게 됐으므로 스위치가 죽은 컨트롤이 아니다.
+    // 값 글자만은 여전히 빠진다 — viewBox 좌표라 백분율 격자와 단위가 맞지 않는다.
+    expect(screen.getByTestId('panel-snap-toggle')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('AC-19: 게이지 상자·값 글자·임계값 범례가 정렬 대상 표식을 갖는다', () => {
+    const { container } = render(edit({ show_threshold_legend: true, thresholds: [{ value: 30, color: '#f00' }] }));
+    const kinds = [...container.querySelectorAll('[data-panel-drag]')].map((e) =>
+      e.getAttribute('data-panel-drag'),
+    );
+    expect(kinds).toContain('body');
+    // 값 글자는 한때 빠져 있었다 — 오프셋 단위가 viewBox 라 백분율을 쓰는 공용 정렬과
+    // 섞을 수 없었다. 도형 밖 오버레이가 되면서 같은 축을 쓰게 되어 대상에 들어온다.
+    expect(kinds).toContain('value');
+  });
+
+  it('AC-19: 게이지 상자를 누르면 선택 윤곽이 진해진다', () => {
+    render(edit());
+    const box = screen.getByTestId('gauge-box');
+    expect(box.className).toContain('outline-dashed');
+
+    fireEvent.pointerDown(box);
+    expect(screen.getByTestId('gauge-box').className).toContain('outline-2');
+  });
+
+  it('AC-20: 배치 초기화가 상자·범례 오프셋을 한 번에 지운다 — 값 글자는 건드리지 않는다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <GaugePanel
+        panelId="p1"
+        title=""
+        config={{ value: 50, gauge_offset_x: 10, value_offset_x: 7 }}
+        onConfigChange={onConfigChange}
+        onTitleChange={() => {}}
+        forceEdit
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('panel-align-reset'));
+    expect(onConfigChange).toHaveBeenCalledTimes(1);
+    const patch = onConfigChange.mock.calls[0]![0] as Record<string, unknown>;
+    expect(patch).toEqual({
+      gauge_offset_x: undefined,
+      gauge_offset_y: undefined,
+      threshold_legend_offset_x: undefined,
+      threshold_legend_offset_y: undefined,
+    });
+    expect(patch).not.toHaveProperty('value_offset_x');
+  });
+
+  it('기존 드래그 레이어는 편집 중에 켜져 있다(값 글자 이동 보존)', () => {
+    render(edit());
+    expect(screen.getByTestId('gauge-drag-layer').className).toContain('cursor-move');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 세로바 게이지의 폭·높이 — 사각형 도형만 축을 나눈다.
+// ---------------------------------------------------------------------------
+describe('세로바 게이지는 도형 치수로 폭·높이를 잡는다', () => {
+  const gauge = (extra: Record<string, unknown> = {}) => (
+    <GaugePanel
+      panelId="p1"
+      title=""
+      config={{ value: 50, ...extra }}
+      onConfigChange={vi.fn()}
+      onTitleChange={() => {}}
+    />
+  );
+
+  /** 바(트랙) 사각형 — 가장 큰 rect 가 트랙이다. */
+  const track = (c: HTMLElement) => {
+    const rects = [...c.querySelectorAll('svg rect')];
+    return rects.reduce((a, b) =>
+      Number(b.getAttribute('height')) > Number(a.getAttribute('height')) ? b : a,
+    );
+  };
+
+  it('폭을 줄이면 바가 좁아지되 글자는 눌리지 않는다 — CSS 배율이 아니라 도형 치수다', () => {
+    const { container } = render(gauge({ gaugeType: 'vertical-bar', gauge_bar_width: 50 }));
+    // 기본 폭 48 의 50% = 24. 가로 중심(84)은 그대로이므로 x 는 84-12 = 72.
+    expect(track(container).getAttribute('width')).toBe('24');
+    expect(track(container).getAttribute('x')).toBe('72');
+    // 상자에는 배율이 걸리지 않는다 — 걸리면 글자까지 함께 눌린다(보고된 결함).
+    expect(screen.getByTestId('gauge-box').style.transform).toBe('');
+  });
+
+  it('높이를 줄이면 아래 끝은 그대로고 위에서 줄어든다 — 읽는 기준선이 움직이지 않는다', () => {
+    const { container } = render(gauge({ gaugeType: 'vertical-bar', gauge_bar_height: 50 }));
+    // 기본 높이 180 의 50% = 90. 아래 끝(190)이 고정이므로 y 는 100.
+    expect(track(container).getAttribute('height')).toBe('90');
+    expect(track(container).getAttribute('y')).toBe('100');
+  });
+
+  it('치수를 주지 않으면 종전 도형 그대로다 — 저장된 대시보드의 모양이 바뀌지 않는다', () => {
+    const { container } = render(gauge({ gaugeType: 'vertical-bar' }));
+    const t = track(container);
+    expect([t.getAttribute('x'), t.getAttribute('y'), t.getAttribute('width'), t.getAttribute('height')])
+      .toEqual(['60', '10', '48', '180']);
+  });
+
+  it('범위 밖 저장값은 기본으로 되돌린다 — 0 이 바를 지우지 않는다', () => {
+    const { container } = render(gauge({ gaugeType: 'vertical-bar', gauge_bar_width: 0 }));
+    expect(track(container).getAttribute('width')).toBe('48');
+  });
+
+  it('게이지 상자 배율은 종전대로 균일하다 — 축을 나누지 않는다', () => {
+    render(gauge({ gaugeType: 'vertical-bar', gauge_size: 60 }));
+    expect(screen.getByTestId('gauge-box').style.transform).toContain('scale(0.6)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 값 글자의 **잡히는 영역**은 글자만 해야 한다.
+//
+// 값을 도형 밖으로 뺄 때 오버레이를 패널 전체(`inset-0`)로 두었는데, 편집 표식과
+// 포인터까지 그 상자에 걸어 두어 윤곽선이 패널만 해지고 도형 위 클릭까지 값이
+// 가로챘다("값의 영역이 너무 크다"). 상자는 자리 계산에만 쓰고, 잡히는 영역과
+// 윤곽선은 글자 자신이 갖는다.
+// ---------------------------------------------------------------------------
+describe('값 글자의 잡히는 영역은 글자만 하다', () => {
+  const edit = (extra: Record<string, unknown> = {}) => (
+    <GaugePanel
+      panelId="p1"
+      title=""
+      config={{ value: 50, ...extra }}
+      onConfigChange={vi.fn()}
+      onTitleChange={() => {}}
+      forceEdit
+    />
+  );
+
+  it('패널만 한 오버레이 상자는 포인터를 받지 않는다', () => {
+    render(edit());
+    const box = screen.getByTestId('gauge-value-overlay');
+    expect(box.className).toContain('pointer-events-none');
+  });
+
+  it('편집 표식과 윤곽선은 오버레이 상자가 아니라 글자에 붙는다', () => {
+    const { container } = render(edit());
+    const box = screen.getByTestId('gauge-value-overlay');
+    // 상자에 붙으면 패널 전체가 값으로 잡힌다.
+    expect(box.hasAttribute('data-gauge-value-text')).toBe(false);
+    expect(box.hasAttribute('data-panel-drag')).toBe(false);
+
+    const text = container.querySelector('text[data-gauge-value-text]');
+    expect(text).not.toBeNull();
+    expect(text!.getAttribute('data-panel-drag')).toBe('value');
+    expect(text!.getAttribute('class')).toContain('outline-dashed');
+  });
+
+  it('편집이 아니면 글자도 포인터를 받지 않는다 — 대시보드에서 클릭을 삼키지 않는다', () => {
+    const { container } = render(
+      <GaugePanel panelId="p1" title="" config={{ value: 50 }} onTitleChange={() => {}} />,
+    );
+    const text = container.querySelector('text[data-gauge-value-text]')!;
+    expect(text.getAttribute('class') ?? '').not.toContain('pointer-events-auto');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 현재값 크기도 끌어서 조절한다.
+//
+// 값에는 크기 손잡이가 없어 설정 슬라이더로만 배율을 바꿀 수 있었다("드래그로 조절되지
+// 않음"). 손잡이는 글자 **아래 가운데**에 붙는다 — 값은 가운데 정렬이라 폭이 자릿수에
+// 따라 달라져 오른쪽 모서리를 계산할 수 없기 때문이다.
+// ---------------------------------------------------------------------------
+describe('현재값 크기를 손잡이로 조절한다', () => {
+  const stubRect = (el: Element) =>
+    vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
+      width: 400, height: 400, top: 0, left: 0, right: 400, bottom: 400, x: 0, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+  const editPanel = (onConfigChange = vi.fn()) =>
+    render(
+      <GaugePanel
+        panelId="p1"
+        title=""
+        config={{ value: 50, gaugeType: 'simple' }}
+        onConfigChange={onConfigChange}
+        onTitleChange={() => {}}
+        forceEdit
+      />,
+    );
+
+  it('고르기 전에는 손잡이가 없다 — 값 아래 상시로 점이 붙지 않는다', () => {
+    const { container } = editPanel();
+    expect(container.querySelector('[data-panel-resize="value"]')).toBeNull();
+  });
+
+  it('값을 고르면 손잡이가 나온다', async () => {
+    const { container } = editPanel();
+    fireEvent.pointerDown(container.querySelector('text[data-gauge-value-text]')!);
+    expect(container.querySelector('[data-panel-resize="value"]')).not.toBeNull();
+  });
+
+  it('손잡이를 끌면 배율이 바뀐다 — 100px 이 배율 1 이다', async () => {
+    const onConfigChange = vi.fn();
+    const { container } = editPanel(onConfigChange);
+    fireEvent.pointerDown(container.querySelector('text[data-gauge-value-text]')!);
+    const box = container.querySelector('[data-gauge-value-box]')!;
+    stubRect(box);
+    stubRect(box.parentElement!);
+
+    const handle = container.querySelector('[data-panel-resize="value"]')!;
+    onConfigChange.mockClear();
+    fireEvent(
+      handle,
+      new MouseEvent('pointerdown', { clientX: 200, clientY: 200, bubbles: true }),
+    );
+    fireEvent(
+      document,
+      new MouseEvent('pointermove', { clientX: 300, clientY: 300, bubbles: true }),
+    );
+    await act(async () => {
+      await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    });
+
+    // 배율은 px 이 아니라 0.3~3 의 수다 — 1:1 로 세면 조금만 끌어도 상한에 닿는다.
+    expect(onConfigChange.mock.calls.flat()).toContainEqual({ value_scale: 2 });
   });
 });
