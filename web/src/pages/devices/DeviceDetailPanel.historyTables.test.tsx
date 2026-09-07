@@ -176,7 +176,7 @@ describe('DeviceDetailPanel 이력 - 전용 표 렌더', () => {
     renderWithI18n(<DeviceDetailPanel deviceId="uuid-1" />);
 
     expect(screen.getByText('온도')).toBeInTheDocument();
-    expect(screen.getByText('Battery')).toBeInTheDocument();
+    expect(screen.getByText('배터리')).toBeInTheDocument();
     // 값 포맷은 기존 formatPropertyValue 를 그대로 재사용한다(온도 → °C 접미).
     expect(screen.getByText('29.875°C')).toBeInTheDocument();
   });

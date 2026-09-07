@@ -15,7 +15,9 @@ import {
   resolveFontColor,
   resolveFontFamily,
   resolveFontSize,
+  resolveTextAlign,
   type ChartFontFamily,
+  type ChartTextAlign,
 } from './panels/charts/textStyle';
 
 /**
@@ -32,6 +34,8 @@ export interface PanelTitleFont {
   /** 글자색(hex). */
   color?: string;
   weight?: 'normal' | 'bold';
+  /** 가로 정렬. 미지정이면 지금까지의 정렬을 그대로 둔다. */
+  align?: ChartTextAlign;
 }
 
 export interface PanelChrome {
@@ -65,6 +69,8 @@ export function resolvePanelTitleStyle(v: unknown): CSSProperties | undefined {
   const color = resolveFontColor(font.color);
   if (color) style.color = color;
   if (font.weight === 'normal' || font.weight === 'bold') style.fontWeight = font.weight;
+  const align = resolveTextAlign(font.align);
+  if (align) style.textAlign = align;
   return Object.keys(style).length > 0 ? style : undefined;
 }
 

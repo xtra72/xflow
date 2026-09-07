@@ -116,3 +116,14 @@ describe('usePanelTitleStyle', () => {
     );
   });
 });
+
+describe('글자 정렬', () => {
+  it('고른 정렬을 스타일로 편다', () => {
+    expect(resolvePanelTitleStyle({ align: 'right' })).toEqual({ textAlign: 'right' });
+  });
+
+  it('알 수 없는 값은 붙이지 않는다 — 임의 값을 넘기면 정렬이 조용히 바뀐다', () => {
+    expect(resolvePanelTitleStyle({ align: 'justify' })).toBeUndefined();
+    expect(resolvePanelTitleStyle({ align: 42 })).toBeUndefined();
+  });
+})

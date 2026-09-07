@@ -108,9 +108,13 @@ describe('AgentStatusPanel (SPEC-DASHBOARD-002)', () => {
     renderPanel({ agentId: 'a-1' });
 
     expect(screen.getByText('agents.detail.stats.messageDetail')).toBeInTheDocument();
-    expect(screen.getByText('agents.detail.stats.external')).toBeInTheDocument();
-    expect(screen.getByText('agents.detail.stats.internal')).toBeInTheDocument();
-    expect(screen.getByText((22).toLocaleString())).toBeInTheDocument();
+    // 값 여섯이 각자 타일이다 — 묶음(외부/내부)은 타일 이름이 말한다.
+    expect(screen.getByTestId('agent-message-externalSent-value').textContent).toBe(
+      (22).toLocaleString(),
+    );
+    expect(screen.getByTestId('agent-message-internalReceived-value').textContent).toBe(
+      (33).toLocaleString(),
+    );
   });
 
   it('AC-02-2: messages 미존재 시 요약 그리드를 생략한다(오류 없음)', () => {
@@ -127,9 +131,10 @@ describe('AgentStatusPanel (SPEC-DASHBOARD-002)', () => {
 
     // 통계 타일은 유지된다.
     expect(screen.getByText((1234).toLocaleString())).toBeInTheDocument();
-    // name 대체(agentId), type 대체("-")
+    // name 대체(agentId). 종류는 배지로 옮겼고, 값이 없으면 그 배지를 내지 않는다
+    // — 빈 알약("-")은 무엇을 보는 자리인지 읽히지 않는다.
     expect(screen.getByText('a-1')).toBeInTheDocument();
-    expect(screen.getByText('-')).toBeInTheDocument();
+    expect(screen.queryByTestId('agent-status-badge-type')).not.toBeInTheDocument();
   });
 
   it('AC-06-3: viewMode 미설정 시 기본 tile 뷰(기존 통계 타일)로 렌더한다(하위호환)', () => {

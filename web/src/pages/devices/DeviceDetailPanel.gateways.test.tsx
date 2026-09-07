@@ -147,7 +147,7 @@ describe('StatePropertiesSection 게이트웨이 섹션', () => {
     expect(container.textContent).not.toContain('[object Object]');
     expect(container.textContent).not.toContain('"gateway_id"');
     // 그리드에는 gateways 카드가 없고 나머지 속성만 남는다.
-    expect(cardLabels(container)).toEqual(['Battery']);
+    expect(cardLabels(container)).toEqual(['배터리']);
   });
 
   it('gateways 키가 없으면 섹션 자체를 렌더하지 않는다', () => {
