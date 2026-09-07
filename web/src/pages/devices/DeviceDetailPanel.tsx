@@ -40,6 +40,8 @@ import { useOptimisticToggle } from '@/hooks/useOptimisticToggle';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { cn } from '@/lib/utils/cn';
+
+import { parseStaleAfter } from './deviceDisplay';
 import { getPropertyLabel, getCommandLabel, getParamLabel, getEnumLabel, sortProperties, sortCommands, formatPropertyValue, getDeviceDisplayName, expandMeasurementEntries, excludeDedicatedSectionKeys, extractGatewayLinks, type DeviceGatewayLink } from '@/lib/utils/deviceLabels';
 import { formatEpochMs, formatFrequencyHz, formatModulation, formatRelativeEpochMs, formatSnr } from '@/lib/utils/format';
 import { downloadCsv } from '@/pages/dashboard/panels/charts/csvExport';
@@ -86,7 +88,7 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-8">
-        <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+        <Loader2 className="h-5 w-5 animate-spin text-(--color-text-muted)" />
         <span className="ml-2 text-sm text-(--color-text-muted)">
           {t('devices.detail.loading')}
         </span>
@@ -157,6 +159,7 @@ export default function DeviceDetailPanel({ deviceId, hideState, initialEditMode
               group: device.metadata?.group ?? '',
               labels: device.metadata?.labels ?? {},
               pinned: device.metadata?.pinned,
+              stale_after_sec: device.metadata?.stale_after_sec,
             }}
             editing={editing && !remote}
             onEditChange={setEditing}
@@ -244,7 +247,7 @@ function DeviceHistorySection({
           {t('devices.detail.historyTitle')}
         </h4>
         <div className="flex items-center gap-2">
-          {isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />}
+          {isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-(--color-text-muted)" />}
           <label className="text-xs text-(--color-text-muted)">{t('devices.detail.count')}</label>
           <select
             value={limit}
@@ -272,7 +275,7 @@ function DeviceHistorySection({
         </p>
       ) : isLoading ? (
         <div className="flex items-center justify-center py-6">
-          <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+          <Loader2 className="h-4 w-4 animate-spin text-(--color-text-muted)" />
           <span className="ml-2 text-sm text-(--color-text-muted)">{t('devices.detail.loading')}</span>
         </div>
       ) : entries.length === 0 ? (
@@ -444,7 +447,7 @@ function GatewayHistoryTable({ rows, deviceId }: { rows: GatewayHistoryRow[]; de
               >
                 <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-secondary)">
                   <span className="inline-flex items-center gap-1">
-                    <Clock className="h-3 w-3 text-gray-400" />
+                    <Clock className="h-3 w-3 text-(--color-text-muted)" />
                     {formatEpochMs(timestamp)}
                   </span>
                 </td>
@@ -553,7 +556,7 @@ function MeasurementHistoryTableView({
               <tr key={`${row.timestamp}-${idx}`} className="hover:bg-(--color-bg-elevated)">
                 <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-secondary)">
                   <span className="inline-flex items-center gap-1">
-                    <Clock className="h-3 w-3 text-gray-400" />
+                    <Clock className="h-3 w-3 text-(--color-text-muted)" />
                     {formatEpochMs(row.timestamp)}
                   </span>
                 </td>
@@ -622,7 +625,7 @@ function HistoryRow({
     <tr className="hover:bg-(--color-bg-elevated)">
       <td className="whitespace-nowrap px-3 py-2 text-xs text-(--color-text-secondary)">
         <span className="inline-flex items-center gap-1">
-          <Clock className="h-3 w-3 text-gray-400" />
+          <Clock className="h-3 w-3 text-(--color-text-muted)" />
           {formatEpochMs(entry.timestamp)}
         </span>
       </td>
@@ -632,7 +635,7 @@ function HistoryRow({
             'rounded-full px-2 py-0.5 text-[10px] font-medium',
             entry.online
               ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-              : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
+              : 'bg-(--color-bg-sunken) text-(--color-text-muted)',
           )}
         >
           {entry.online ? t('devices.detail.online') : t('devices.detail.offline')}
@@ -758,7 +761,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
   const isPending = executeMutation.isPending || isPendingConfirmation;
 
   const isOff = power === false;
-  const inactiveBadge = 'border-gray-200 bg-gray-50 text-gray-400 dark:border-gray-600 dark:bg-gray-700/50 dark:text-gray-500';
+  const inactiveBadge = 'border-(--color-border-default) bg-(--color-bg-secondary) text-(--color-text-muted)';
 
   const execute = (command: string, params: Record<string, unknown>) => {
     if (!deviceId) return;
@@ -773,7 +776,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
         style={acColor('borders') ? { borderColor: `${acColor('borders')}40` } : undefined}
       >
         {/* 헤더: 전원 + 잠금 + 에러코드 */}
-        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
+        <div className="flex items-center justify-between border-b border-(--color-border-subtle) px-4 py-3" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
           <button
             type="button"
             onClick={interactive ? () => {
@@ -784,7 +787,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
             disabled={!interactive || isPending}
             className={cn(
               'flex items-center gap-2 text-sm font-semibold transition-colors',
-              power ? 'text-green-600 dark:text-green-400' : 'text-gray-400 dark:text-gray-500',
+              power ? 'text-green-600 dark:text-green-400' : 'text-(--color-text-muted)',
               interactive && 'hover:opacity-70',
               isPending && 'opacity-50',
             )}
@@ -809,7 +812,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
         </div>
 
         {/* 운전 모드 */}
-        <div className="border-b border-gray-100 px-4 py-3 dark:border-gray-700" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
+        <div className="border-b border-(--color-border-subtle) px-4 py-3" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
           <div className="flex flex-wrap gap-2">
             {Object.entries(MODE_CONFIG).map(([key, cfg]) => {
               const isActive = mode === key;
@@ -824,7 +827,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
                     'inline-flex items-center gap-1 border px-2.5 py-1 text-xs font-medium transition-colors',
                     labelRadius == null && 'rounded-full',
                     isOff ? inactiveBadge : isActive && !labelBg && !labelText ? cfg.active : isActive ? '' : inactiveBadge,
-                    interactive && !isActive && !isOff && 'hover:border-gray-300 hover:bg-gray-100 dark:hover:border-gray-500 dark:hover:bg-gray-600/50',
+                    interactive && !isActive && !isOff && 'hover:border-(--color-border-strong) hover:bg-(--color-bg-sunken)',
                   )}
                   style={{
                     ...(isActive && !isOff && labelBg ? { backgroundColor: labelBg, borderColor: 'transparent' } : {}),
@@ -841,31 +844,31 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
         </div>
 
         {/* 온도 표시 */}
-        <div className="border-b border-gray-100 px-4 py-5 text-center dark:border-gray-700" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
+        <div className="border-b border-(--color-border-subtle) px-4 py-5 text-center" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
           {currentTemp != null ? (
             <>
               <p
-                className={cn('text-5xl font-bold tabular-nums', isOff ? 'text-gray-300 dark:text-gray-600' : 'text-(--color-text-primary)')}
+                className={cn('text-5xl font-bold tabular-nums', isOff ? 'text-(--color-border-strong)' : 'text-(--color-text-primary)')}
                 style={!isOff && acColor('temperature') ? { color: acColor('temperature')! } : undefined}
               >
                 {currentTemp}
-                <span className="text-2xl font-normal text-gray-400">&deg;C</span>
+                <span className="text-2xl font-normal text-(--color-text-muted)">&deg;C</span>
               </p>
-              <p className="mt-1 text-xs text-gray-400" style={acColor('temperature') ? { color: `${acColor('temperature')}90` } : undefined}>{t('devices.detail.currentTemperature')}</p>
+              <p className="mt-1 text-xs text-(--color-text-muted)" style={acColor('temperature') ? { color: `${acColor('temperature')}90` } : undefined}>{t('devices.detail.currentTemperature')}</p>
             </>
           ) : (
-            <p className="text-2xl text-gray-300 dark:text-gray-600">--</p>
+            <p className="text-2xl text-(--color-border-strong)">--</p>
           )}
 
           {targetTemp != null && (
-            <div className="mt-3 flex items-center justify-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+            <div className="mt-3 flex items-center justify-center gap-2 text-sm text-(--color-text-secondary)">
               <Thermometer className="h-4 w-4 text-blue-500" style={acColor('temperature') ? { color: acColor('temperature')! } : undefined} />
               {interactive && (
                 <button
                   type="button"
                   onClick={() => execute('target_temperature', { target_temperature: Math.max(16, targetTemp - 1) })}
                   disabled={isPending || isOff}
-                  className="rounded-full p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+                  className="rounded-full p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-sunken) hover:text-(--color-text-secondary) disabled:opacity-50"
                   style={acColor('temperature') ? { color: acColor('temperature')! } : undefined}
                 >
                   <Minus className="h-3.5 w-3.5" />
@@ -877,7 +880,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
                   type="button"
                   onClick={() => execute('target_temperature', { target_temperature: Math.min(30, targetTemp + 1) })}
                   disabled={isPending || isOff}
-                  className="rounded-full p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+                  className="rounded-full p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-sunken) hover:text-(--color-text-secondary) disabled:opacity-50"
                   style={acColor('temperature') ? { color: acColor('temperature')! } : undefined}
                 >
                   <Plus className="h-3.5 w-3.5" />
@@ -888,9 +891,9 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
         </div>
 
         {/* 풍량 (LGAP: 6단계) */}
-        <div className="border-b border-gray-100 px-4 py-3 dark:border-gray-700" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
+        <div className="border-b border-(--color-border-subtle) px-4 py-3" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
           <div className="flex items-center gap-3">
-            <Wind className="h-4 w-4 shrink-0 text-gray-400" style={acColor('controls') ? { color: acColor('controls')! } : undefined} />
+            <Wind className="h-4 w-4 shrink-0 text-(--color-text-muted)" style={acColor('controls') ? { color: acColor('controls')! } : undefined} />
             <span className="min-w-fit text-xs text-(--color-text-muted)" style={acColor('controls') ? { color: acColor('controls')! } : undefined}>{t('devices.detail.fanSpeed')}</span>
             <div className="flex gap-1.5">
               {(['auto', 'low', 'medium', 'high', 'slow', 'turbo'] as const).map((speed) => (
@@ -902,11 +905,11 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
                   className={cn(
                     'rounded px-2 py-0.5 text-xs font-medium transition-colors',
                     isOff
-                      ? 'bg-gray-100 text-gray-300 dark:bg-gray-700 dark:text-gray-600'
+                      ? 'bg-(--color-bg-sunken) text-(--color-border-strong)'
                       : fanSpeed === speed
                         ? (acColor('controls') ? '' : 'bg-blue-600 text-white')
-                        : 'bg-gray-100 text-gray-400 dark:bg-gray-700 dark:text-gray-500',
-                    interactive && fanSpeed !== speed && !isOff && 'hover:bg-gray-200 hover:text-gray-600 dark:hover:bg-gray-600 dark:hover:text-gray-300',
+                        : 'bg-(--color-bg-sunken) text-(--color-text-muted)',
+                    interactive && fanSpeed !== speed && !isOff && 'hover:bg-(--color-bg-sunken) hover:text-(--color-text-secondary)',
                   )}
                   style={!isOff && fanSpeed === speed && acColor('controls') ? { backgroundColor: acColor('controls')!, color: '#fff' } : undefined}
                 >
@@ -922,7 +925,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
           <div
             className={cn(
               'flex items-center gap-1 text-xs',
-              swingAuto ? 'font-medium text-blue-600 dark:text-blue-400' : 'text-gray-400',
+              swingAuto ? 'font-medium text-blue-600 dark:text-blue-400' : 'text-(--color-text-muted)',
             )}
             style={swingAuto && acColor('indicators') ? { color: acColor('indicators')! } : undefined}
           >
@@ -932,7 +935,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
           <div
             className={cn(
               'flex items-center gap-1 text-xs',
-              plasma ? 'font-medium text-violet-600 dark:text-violet-400' : 'text-gray-400',
+              plasma ? 'font-medium text-violet-600 dark:text-violet-400' : 'text-(--color-text-muted)',
             )}
           >
             <Zap className="h-3.5 w-3.5" />
@@ -1092,7 +1095,7 @@ function DeviceGatewaysSection({ links }: { links: DeviceGatewayLink[] }) {
                   <span className="inline-flex items-center gap-1.5">
                     {link.gateway_id}
                     {link.stale && (
-                      <span className="rounded-full bg-gray-100 px-1.5 py-0.5 font-sans text-[10px] font-medium text-gray-500 dark:bg-gray-700 dark:text-gray-400">
+                      <span className="rounded-full bg-(--color-bg-sunken) px-1.5 py-0.5 font-sans text-[10px] font-medium text-(--color-text-muted)">
                         {t('agents.detail.gateways.stale')}
                       </span>
                     )}
@@ -1211,17 +1214,17 @@ function CommandsSection({
                 disabled={executeMutation.isPending}
                 className={cn(
                   'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed',
-                  isOn ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600',
+                  isOn ? 'bg-green-500' : 'bg-(--color-border-strong)',
                 )}
               >
                 {executeMutation.isPending ? (
                   <span className="pointer-events-none inline-flex h-5 w-5 items-center justify-center">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-(--color-text-muted)" />
                   </span>
                 ) : (
                   <span
                     className={cn(
-                      'pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200',
+                      'pointer-events-none inline-block h-5 w-5 rounded-full bg-(--color-bg-surface) shadow-sm ring-0 transition-transform duration-200',
                       isOn ? 'translate-x-5' : 'translate-x-0',
                     )}
                   />
@@ -1368,17 +1371,17 @@ function BoolCommandControl({
           disabled={isPending || disabled}
           className={cn(
             'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed',
-            value ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600',
+            value ? 'bg-blue-500' : 'bg-(--color-border-strong)',
           )}
         >
           <span
             className={cn(
-              'pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200',
+              'pointer-events-none inline-block h-5 w-5 rounded-full bg-(--color-bg-surface) shadow-sm ring-0 transition-transform duration-200',
               value ? 'translate-x-5' : 'translate-x-0',
             )}
           />
         </button>
-        {isPending && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+        {isPending && <Loader2 className="h-3 w-3 animate-spin text-(--color-text-muted)" />}
       </div>
     </CommandRow>
   );
@@ -1407,12 +1410,12 @@ function EnumButtonGroupControl({
             type="button"
             onClick={() => execute({ [param.name]: opt })}
             disabled={isPending || disabled}
-            className="rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+            className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2.5 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 disabled:opacity-50 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
           >
             {getEnumLabel(opt)}
           </button>
         ))}
-        {isPending && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+        {isPending && <Loader2 className="h-3 w-3 animate-spin text-(--color-text-muted)" />}
       </div>
     </CommandRow>
   );
@@ -1445,14 +1448,14 @@ function EnumSelectControl({
             }
           }}
           disabled={isPending || disabled}
-          className="rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300"
+          className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2.5 py-1.5 text-xs text-(--color-text-secondary)"
         >
           <option value="">{t('devices.detail.selectPlaceholder')}</option>
           {param.enum!.map((opt) => (
             <option key={opt} value={opt}>{getEnumLabel(opt)}</option>
           ))}
         </select>
-        {isPending && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+        {isPending && <Loader2 className="h-3 w-3 animate-spin text-(--color-text-muted)" />}
       </div>
     </CommandRow>
   );
@@ -1490,7 +1493,7 @@ function NumericCommandControl({
                 execute({ [param.name]: next });
               }}
               disabled={isPending || disabled}
-              className="rounded-md border border-gray-300 p-1 text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+              className="rounded-md border border-(--color-border-strong) p-1 text-(--color-text-secondary) hover:bg-(--color-bg-sunken) disabled:opacity-50"
             >
               <Minus className="h-3.5 w-3.5" />
             </button>
@@ -1517,7 +1520,7 @@ function NumericCommandControl({
                 execute({ [param.name]: next });
               }}
               disabled={isPending || disabled}
-              className="rounded-md border border-gray-300 p-1 text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+              className="rounded-md border border-(--color-border-strong) p-1 text-(--color-text-secondary) hover:bg-(--color-bg-sunken) disabled:opacity-50"
             >
               <Plus className="h-3.5 w-3.5" />
             </button>
@@ -1530,7 +1533,7 @@ function NumericCommandControl({
               step={step}
               onChange={(e) => setValue(Number(e.target.value))}
               disabled={disabled}
-              className="w-20 rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-white disabled:opacity-50"
+              className="w-20 rounded-md border border-(--color-border-strong) px-2 py-1 text-xs text-(--color-text-primary) bg-(--color-bg-sunken) disabled:opacity-50"
             />
             <button
               type="button"
@@ -1542,7 +1545,7 @@ function NumericCommandControl({
             </button>
           </>
         )}
-        {isPending && hasRange && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+        {isPending && hasRange && <Loader2 className="h-3 w-3 animate-spin text-(--color-text-muted)" />}
       </div>
     </CommandRow>
   );
@@ -1638,7 +1641,7 @@ function InlineParamInput({
 }) {
   const { t } = useTranslation();
   const inputBase =
-    'w-full rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-white';
+    'w-full rounded-md border border-(--color-border-strong) px-2 py-1 text-xs text-(--color-text-primary) bg-(--color-bg-sunken)';
 
   if (param.type === 'enum' && param.enum) {
     return (
@@ -1663,12 +1666,12 @@ function InlineParamInput({
           onClick={() => onChange(!(value as boolean))}
           className={cn(
             'relative inline-flex h-5 w-9 items-center rounded-full transition-colors',
-            value ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600',
+            value ? 'bg-blue-600' : 'bg-(--color-border-strong)',
           )}
         >
           <span
             className={cn(
-              'inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform',
+              'inline-block h-3.5 w-3.5 rounded-full bg-(--color-bg-surface) transition-transform',
               value ? 'translate-x-4.5' : 'translate-x-0.5',
             )}
           />
@@ -1726,6 +1729,7 @@ interface MetadataSectionProps {
     group: string;
     labels: Record<string, string>;
     pinned?: boolean;
+    stale_after_sec?: number;
   };
   /** 부모에서 제어하는 편집 상태. 원격 타깃에서는 부모가 항상 false 를 전달한다. */
   editing: boolean;
@@ -1748,6 +1752,8 @@ function MetadataSection({ deviceId, fullId, source, name, metadata, editing, on
     tagsStr: metadata.tags.join(', '),
     labels: { ...metadata.labels },
     pinned: effectivePinned,
+    // 빈 문자열 = 미설정. 0 과 구분해야 하므로 숫자가 아니라 문자열로 들고 있는다.
+    staleAfterStr: metadata.stale_after_sec != null ? String(metadata.stale_after_sec) : '',
   });
   const [newLabelKey, setNewLabelKey] = useState('');
   const [newLabelValue, setNewLabelValue] = useState('');
@@ -1765,6 +1771,7 @@ function MetadataSection({ deviceId, fullId, source, name, metadata, editing, on
         tagsStr: metadata.tags.join(', '),
         labels: { ...metadata.labels },
         pinned: metadata.pinned ?? (source === 'config' || source === 'pinned'),
+        staleAfterStr: metadata.stale_after_sec != null ? String(metadata.stale_after_sec) : '',
       });
     }
     prevEditingRef.current = editing;
@@ -1786,6 +1793,9 @@ function MetadataSection({ deviceId, fullId, source, name, metadata, editing, on
           tags,
           labels: form.labels,
           pinned: form.pinned,
+          // 비우면 미설정으로 되돌린다 — 0 을 보내면 "제한 0초"가 되어 모든 값이
+          // 곧바로 오래된 것이 된다.
+          stale_after_sec: parseStaleAfter(form.staleAfterStr),
         },
       });
       onEditChange(false);
@@ -1825,7 +1835,7 @@ function MetadataSection({ deviceId, fullId, source, name, metadata, editing, on
     <div>
       {/* 고정 설치 (읽기 모드에서는 비활성 배지, 편집 모드에서만 토글 가능) */}
       <div className="mb-4 flex items-center gap-3 rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-4 py-3">
-        <Pin className={cn('h-4 w-4 shrink-0', (editing ? form.pinned : effectivePinned) ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400')} />
+        <Pin className={cn('h-4 w-4 shrink-0', (editing ? form.pinned : effectivePinned) ? 'text-blue-600 dark:text-blue-400' : 'text-(--color-text-muted)')} />
         <div className="flex-1">
           <p className="text-sm font-medium text-(--color-text-primary)">{t('devices.detail.pinnedInstall')}</p>
           <p className="text-xs text-(--color-text-muted)">{t('devices.detail.pinnedInstallDesc')}</p>
@@ -1836,12 +1846,12 @@ function MetadataSection({ deviceId, fullId, source, name, metadata, editing, on
             onClick={() => setForm((prev) => ({ ...prev, pinned: !prev.pinned }))}
             className={cn(
               'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
-              form.pinned ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600',
+              form.pinned ? 'bg-blue-600' : 'bg-(--color-border-strong)',
             )}
           >
             <span
               className={cn(
-                'inline-block h-4 w-4 rounded-full bg-white transition-transform',
+                'inline-block h-4 w-4 rounded-full bg-(--color-bg-surface) transition-transform',
                 form.pinned ? 'translate-x-6' : 'translate-x-1',
               )}
             />
@@ -1851,9 +1861,40 @@ function MetadataSection({ deviceId, fullId, source, name, metadata, editing, on
             'rounded-full px-2 py-0.5 text-xs font-medium',
             effectivePinned
               ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-              : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
+              : 'bg-(--color-bg-sunken) text-(--color-text-muted)',
           )}>
             {effectivePinned ? t('devices.detail.pinned') : t('devices.detail.unpinned')}
+          </span>
+        )}
+      </div>
+
+      {/*
+        데이터 갱신 시간 제한 — 마지막 갱신 후 이 시간이 지나면 대시보드가 그 값을
+        오래된 것으로 표시한다. 에이전트의 offline 임계와 다른 축이다: 저쪽은
+        "디바이스가 살아 있는가", 이쪽은 "지금 보이는 값을 현재 값으로 믿어도 되는가".
+      */}
+      <div className="mb-4 flex items-center gap-3 rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-4 py-3">
+        <Clock className={cn('h-4 w-4 shrink-0', form.staleAfterStr ? 'text-blue-600 dark:text-blue-400' : 'text-(--color-text-muted)')} />
+        <div className="flex-1">
+          <p className="text-sm font-medium text-(--color-text-primary)">{t('devices.detail.staleAfter')}</p>
+          <p className="text-xs text-(--color-text-muted)">{t('devices.detail.staleAfterDesc')}</p>
+        </div>
+        {editing ? (
+          <input
+            type="number"
+            min={1}
+            value={form.staleAfterStr}
+            data-testid="device-stale-after"
+            aria-label={t('devices.detail.staleAfter')}
+            placeholder={t('devices.detail.staleAfterUnset')}
+            onChange={(e) => setForm((prev) => ({ ...prev, staleAfterStr: e.target.value }))}
+            className="w-28 shrink-0 rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 text-right text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none"
+          />
+        ) : (
+          <span className="text-sm text-(--color-text-secondary)">
+            {metadata.stale_after_sec != null
+              ? `${metadata.stale_after_sec}${t('devices.detail.secondsUnit')}`
+              : t('devices.detail.staleAfterUnset')}
           </span>
         )}
       </div>

@@ -58,3 +58,14 @@ export function formatRelativeTime(dateStr: string, t: TranslationFn): string {
   const days = Math.floor(hours / 24);
   return t('devices.relativeTime.daysAgo').replace('{n}', String(days));
 }
+
+/**
+ * 입력 문자열을 갱신 시간 제한(초)으로 읽는다.
+ *
+ * 비었거나 양수가 아니면 `undefined` — **미설정**이다. 0 이나 음수를 그대로 보내면
+ * "제한 0초"가 되어 방금 들어온 값까지 오래된 것으로 표시된다.
+ */
+export function parseStaleAfter(input: string): number | undefined {
+  const n = Number(input.trim());
+  return input.trim() !== '' && Number.isFinite(n) && n > 0 ? Math.round(n) : undefined;
+}
