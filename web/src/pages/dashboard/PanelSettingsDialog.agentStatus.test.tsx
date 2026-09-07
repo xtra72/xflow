@@ -37,10 +37,16 @@ vi.mock('@/hooks/useAgent', () => ({
       ],
     },
   }),
+  // 미리보기가 실제 AgentStatusPanel 을 그리면서 이 패널이 쓰는 훅까지 필요해졌다.
+  useAgent: () => ({ data: undefined, isLoading: false }),
+  useAgentStats: () => ({ data: undefined, isLoading: false }),
 }));
 
 vi.mock('@/lib/i18n', () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
 
+import { QueryClientProvider } from '@tanstack/react-query';
+
+import { inertQueryClient } from '@/hooks/inertQueryClient';
 import PanelSettingsDialog from './PanelSettingsDialog';
 
 beforeEach(() => {
@@ -51,7 +57,12 @@ beforeEach(() => {
 
 describe('PanelSettingsDialog 에이전트 상태 설정 (SPEC-DASHBOARD-002)', () => {
   it('AC-04-1: 전체 타입 에이전트 재선택기(필터 없음, 3종)를 노출한다', () => {
-    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    render(
+      // 미리보기가 실제 패널을 그리면서 조회 훅을 탄다 — 비활성 클라이언트로 감싼다.
+      <QueryClientProvider client={inertQueryClient()}>
+        <PanelSettingsDialog panelId="p1" onClose={() => {}} />
+      </QueryClientProvider>,
+    );
 
     const sel = screen.getByTestId('agent-status-settings-select') as HTMLSelectElement;
     expect(sel).toBeInTheDocument();
@@ -61,7 +72,12 @@ describe('PanelSettingsDialog 에이전트 상태 설정 (SPEC-DASHBOARD-002)', 
   });
 
   it('AC-04-2: 에이전트 변경 시 draft config.agentId 가 갱신되어 적용 시 저장된다', () => {
-    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    render(
+      // 미리보기가 실제 패널을 그리면서 조회 훅을 탄다 — 비활성 클라이언트로 감싼다.
+      <QueryClientProvider client={inertQueryClient()}>
+        <PanelSettingsDialog panelId="p1" onClose={() => {}} />
+      </QueryClientProvider>,
+    );
 
     const sel = screen.getByTestId('agent-status-settings-select') as HTMLSelectElement;
     fireEvent.change(sel, { target: { value: 'xs-1' } });

@@ -16,6 +16,24 @@
 export const PANEL_OFFSET_LIMIT = 40;
 
 /** 그림 크기(%) 허용 범위. 너무 작으면 안 보이고, 100 을 넘으면 영역 밖이다. */
+/**
+ * 막대 굵기(px)의 범위와 손잡이 시작값.
+ *
+ * `bar_size` 를 두지 않으면 recharts 가 칸 폭에 맞춰 자동으로 정하므로, 지금 화면에
+ * 그려진 굵기를 코드가 알 수 없다. 손잡이를 처음 끌 때는 이 기본값에서 시작하며 —
+ * 그 순간 굵기가 한 번 튄다. 자동값을 읽어 올 방법이 없어 받아들인 절충이다.
+ */
+export const BAR_SIZE_MIN = 2;
+export const BAR_SIZE_MAX = 200;
+export const BAR_SIZE_DEFAULT = 24;
+
+/** 막대 굵기를 읽는다. 범위 밖이거나 수가 아니면 `undefined`(= 자동). */
+export function readBarSize(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) && v >= BAR_SIZE_MIN && v <= BAR_SIZE_MAX
+    ? v
+    : undefined;
+}
+
 export const PANEL_SIZE_MIN = 20;
 export const PANEL_SIZE_MAX = 100;
 
@@ -61,8 +79,20 @@ export function panelBoxTransform(
   sizePercent: number,
   offsetXPercent: number,
   offsetYPercent: number,
+  /**
+   * 세로 배율. 생략하면 가로와 같다(종전 동작 — 저장된 설정이 그대로 동작한다).
+   *
+   * 축을 나누는 이유는 **사각형 도형** 때문이다. 세로바 게이지와 바 차트 그림 영역은
+   * 사각형이라 "가늘고 길게" 나 "굵고 짧게" 가 뜻을 갖는데, 배율이 하나뿐이면 그
+   * 모양을 만들 수단이 없다. 원형 게이지처럼 비율이 뜻을 갖는 도형은 이 값을 주지
+   * 않으면 되므로, 한 함수로 둘 다 표현된다.
+   */
+  sizeYPercent?: number,
 ): string | undefined {
   const scale = sizePercent / 100;
-  if (scale === 1 && !offsetXPercent && !offsetYPercent) return undefined;
-  return `translate(${offsetXPercent}%, ${offsetYPercent}%) scale(${scale})`;
+  const scaleY = sizeYPercent === undefined ? scale : sizeYPercent / 100;
+  if (scale === 1 && scaleY === 1 && !offsetXPercent && !offsetYPercent) return undefined;
+  // 두 축이 같으면 한 값으로 적는다 — 같은 뜻을 두 벌로 쓰면 diff 와 스냅샷이 흔들린다.
+  const s = scale === scaleY ? `${scale}` : `${scale}, ${scaleY}`;
+  return `translate(${offsetXPercent}%, ${offsetYPercent}%) scale(${s})`;
 }

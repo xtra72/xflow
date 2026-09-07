@@ -90,6 +90,8 @@ import {
   resolveGaugeValueSource,
 } from './panels/charts/gaugeLegacyBinding';
 import GaugePanel, { type GaugeType } from './panels/GaugePanel';
+import { isAxisSplitGauge } from './panels/gauge/gaugeAxis';
+import { readVBarSize, VBAR_SIZE_MAX, VBAR_SIZE_MIN } from './panels/gauge/gaugeShapes';
 // SPEC-MODBUS-012: MODBUS Gateway 패널 설정 섹션 + 프리뷰(설정 다이얼로그 내 실제 패널 렌더).
 import { useModbusListDevices, formatUnitLabel } from './panels/modbus/useModbusData';
 import ModbusRealDevicesPanel from './panels/modbus/ModbusRealDevicesPanel';
@@ -1652,7 +1654,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                       forceEdit
                     />
                   ) : (
-                    <GaugeMiniPreview panel={previewRenderPanel} />
+                    <GaugeMiniPreview
+                      panel={previewRenderPanel}
+                      onConfigChange={patchConfig}
+                    />
                   )}
                 </>
               </div>
@@ -1673,6 +1678,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   panelId={previewRenderPanel.id}
                   title={previewRenderPanel.title}
                   config={previewRenderPanel.config ?? {}}
+                  // 미리보기에서 요소를 직접 옮기고 크기·글자 스타일을 바꾼다
+                  // (SPEC-CHART-004). 게이지와 같은 형태다.
+                  onConfigChange={patchConfig}
+                  forceEdit
                 />
               </div>
             )}
@@ -1690,6 +1699,9 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   panelId={previewRenderPanel.id}
                   title={previewRenderPanel.title}
                   config={previewRenderPanel.config ?? {}}
+                  // 미리보기에서 그림·범례를 직접 옮긴다(SPEC-CHART-005).
+                  onConfigChange={patchConfig}
+                  forceEdit
                 />
               </div>
             )}
@@ -6885,6 +6897,13 @@ function GaugeSection({
   const valueScale = readValueScale(config.value_scale);
   // 슬라이더는 "미지정" 을 표현할 수 없으므로 기본값(가득)을 그대로 보여 준다.
   const gaugeSize = readPanelSize(config.gauge_size) ?? PANEL_SIZE_MAX;
+  // 세로바만 사각형이라 높이를 따로 잡을 수 있다. 원형·반원·바늘은 비율 자체가 값을
+  // 읽는 규약의 일부라(각도로 읽는다) 축을 나누면 값을 잘못 읽게 된다.
+  const axisSplitGauge = isAxisSplitGauge(config);
+  // 세로바의 폭·높이는 게이지 상자의 배율이 아니라 **도형의 치수**다(글자를 함께
+  // 누르지 않기 위해서다). 그래서 `gauge_size`(상자 배율)와 나란히 둘 수 있다.
+  const vbarWidth = readVBarSize(config.gauge_bar_width);
+  const vbarHeight = readVBarSize(config.gauge_bar_height);
   const min = (config.min as number) ?? 0;
   const max = (config.max as number) ?? 100;
   const unit = (config.unit as string) ?? '%';
@@ -7086,6 +7105,8 @@ function GaugeSection({
           {/* 크기·자리를 함께 되돌린다 — 둘은 같은 조작(끌기·슬라이더)으로 어긋나므로
               따로 되돌리면 한쪽이 남아 왜 제자리가 아닌지 알 수 없다. */}
           {(config.gauge_size !== undefined ||
+            config.gauge_bar_width !== undefined ||
+            config.gauge_bar_height !== undefined ||
             config.gauge_offset_x ||
             config.gauge_offset_y) ? (
             <button
@@ -7093,6 +7114,8 @@ function GaugeSection({
               onClick={() =>
                 onConfigChange({
                   gauge_size: undefined,
+                  gauge_bar_width: undefined,
+                  gauge_bar_height: undefined,
                   gauge_offset_x: undefined,
                   gauge_offset_y: undefined,
                 })
@@ -7104,6 +7127,54 @@ function GaugeSection({
             </button>
           ) : null}
         </div>
+        {/* 세로바에만 폭·높이 칸이 나온다 — 사각형이라야 두 축이 따로 뜻을 갖는다.
+            원형·반원·바늘은 각도로 값을 읽으므로 찌그러뜨리면 오독한다. */}
+        {axisSplitGauge ? (
+          <>
+            <div className="mt-2">
+              <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+                {t('dashboard.settings.gaugeSection.barWidth')}
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={VBAR_SIZE_MIN}
+                  max={VBAR_SIZE_MAX}
+                  step={1}
+                  value={vbarWidth}
+                  onChange={(e) => onConfigChange({ gauge_bar_width: Number(e.target.value) })}
+                  data-testid="gauge-bar-width"
+                  aria-label={t('dashboard.settings.gaugeSection.barWidth')}
+                  className="flex-1"
+                />
+                <span className="w-10 shrink-0 text-right text-xs tabular-nums text-(--color-text-muted)">
+                  {vbarWidth}%
+                </span>
+              </div>
+            </div>
+            <div className="mt-2">
+              <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+                {t('dashboard.settings.gaugeSection.barHeight')}
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={VBAR_SIZE_MIN}
+                  max={VBAR_SIZE_MAX}
+                  step={1}
+                  value={vbarHeight}
+                  onChange={(e) => onConfigChange({ gauge_bar_height: Number(e.target.value) })}
+                  data-testid="gauge-bar-height"
+                  aria-label={t('dashboard.settings.gaugeSection.barHeight')}
+                  className="flex-1"
+                />
+                <span className="w-10 shrink-0 text-right text-xs tabular-nums text-(--color-text-muted)">
+                  {vbarHeight}%
+                </span>
+              </div>
+            </div>
+          </>
+        ) : null}
         <p className="mt-1 text-[11px] leading-snug text-(--color-text-muted)">
           {t('dashboard.settings.gaugeSection.gaugeDragHint')}
         </p>
@@ -7133,7 +7204,15 @@ function GaugeSection({
           <button
             type="button"
             onClick={() =>
-              onConfigChange({ value_scale: undefined, value_offset_x: undefined, value_offset_y: undefined })
+              onConfigChange({
+                value_scale: undefined,
+                value_pos_x: undefined,
+                value_pos_y: undefined,
+                // 값이 도형 안에 있던 시절의 viewBox 단위 키. 남아 있으면 초기화가
+                // 반쪽이 되므로 함께 지운다.
+                value_offset_x: undefined,
+                value_offset_y: undefined,
+              })
             }
             data-testid="gauge-value-reset"
             className="shrink-0 rounded-md bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)/80"
@@ -7501,7 +7580,22 @@ function GaugeTypeIcon({ type, size = 18, active }: { type: GaugeType; size?: nu
 
 /** 게이지 미니 프리뷰 (우측 컬럼) */
 
-function GaugeMiniPreview({ panel }: { panel: PanelConfig }) {
+/**
+ * 합성 샘플값으로 그리는 게이지 미리보기 — 레거시 경로에는 실제 값이 없을 수 있다.
+ *
+ * **배치 편집은 여기서도 켠다.** 종전에는 `onConfigChange` 로 빈 함수를 넘기고
+ * `forceEdit` 도 주지 않아, 설정 화면에서 값 글자·게이지 상자를 끌 수 없었다(대시보드에
+ * 놓인 같은 패널에서는 됐다 — 실제로 그렇게 보고됐다). 값이 합성이라는 것과 **자리를
+ * 옮길 수 있다는 것은 다른 축**이다: 배치는 데이터와 무관한 시각 설정이다.
+ */
+function GaugeMiniPreview({
+  panel,
+  onConfigChange,
+}: {
+  panel: PanelConfig;
+  /** config 를 쓸 콜백. 없으면 종전처럼 보기 전용이다. */
+  onConfigChange?: (patch: Record<string, unknown>) => void;
+}) {
   const { t } = useTranslation();
   const config = panel.config ?? {};
   const min = (config.min as number) ?? 0;
@@ -7518,13 +7612,22 @@ function GaugeMiniPreview({ panel }: { panel: PanelConfig }) {
       <span className="mb-1 text-center text-[10px] font-medium text-(--color-text-muted)">
         {t('dashboard.settings.gaugeSection.previewSample').replace('{value}', String(sampleValue))}
       </span>
-      <div className="min-h-0 flex-1">
+      {/*
+        **flex 컨테이너여야 한다.** 평범한 블록이면 패널 뿌리의 `flex-1` 이 아무 뜻도
+        갖지 못해 높이가 내용으로 정해지고, 게이지 내용의 높이는 SVG 의 고유 비율이라
+        유형마다 달라진다 — 반원(240×140)에서는 패널이 미리보기 상자보다 짧아져
+        그리드가 일부만 덮이고, 도형의 이동 범위가 위로 치우치며, 아래쪽 띠에는
+        닿지 못했다. 다른 패널 미리보기들이 쓰는 것과 같은 상자다.
+      */}
+      <div className="flex min-h-0 flex-1 flex-col">
         <GaugePanel
           panelId="__preview__"
           title=""
           config={previewConfig}
-          onConfigChange={() => {}}
+          onConfigChange={onConfigChange ?? (() => {})}
           onTitleChange={() => {}}
+          // 미리보기는 항상 편집이다 — 토글은 감춘다(실 패널 경로와 같은 규칙).
+          forceEdit={onConfigChange !== undefined}
         />
       </div>
     </div>

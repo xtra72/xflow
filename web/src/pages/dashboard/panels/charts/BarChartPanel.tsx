@@ -21,11 +21,25 @@ import {
 } from 'recharts';
 
 import {
+  DEFAULT_PIE_LEGEND_FONT_SIZE,
   getByPath,
+  isPieLegendPosition,
   pickSeriesColor,
   type BarChartPanelConfig,
   type ChartEntry,
 } from './chartChannelTypes';
+import { PieLegend, type PieLegendItem } from './PieLegend';
+import { clampStoredLegendOffset } from './legendOverlay';
+import { resolveFontColor, resolveFontSize } from './textStyle';
+import {
+  PANEL_SIZE_MAX,
+  PANEL_SIZE_MIN,
+  clampPercentOffset,
+  panelBoxTransform,
+  readPanelOffset,
+  readBarSize,
+  readPanelSize,
+} from './panelGeometry';
 import { ConnectionStatusIcon } from './ConnectionStatusIcon';
 import {
   aggregateByTimeBin,
@@ -45,12 +59,32 @@ import {
 import { formatTickValue, formatValueWithUnit } from './unitOptions';
 import { usePanelSeriesData } from './usePanelSeriesData';
 import { usePanelTitleStyle, usePanelTitleVisible } from '../../panelChromeContext';
+import { useTranslation } from '@/lib/i18n';
+
+import { usePanelEditMode } from '../PanelEditToggle';
+import {
+  StatDragLayer as PanelDragLayer,
+  StatResizeHandle as PanelResizeHandle,
+  PANEL_EDIT_OUTLINE_CLASS,
+  PANEL_SELECTED_OUTLINE_CLASS,
+} from '../../PanelDragLayer';
+import { PanelEditGrid } from '../../PanelEditGrid';
+import { PanelAlignToolbar } from '../../PanelAlignToolbar';
+import { usePanelElementEdit } from '../../usePanelElementEdit';
 
 interface BarChartPanelProps {
   panelId: string;
   title?: string;
   config: Record<string, unknown>;
+  /** config 를 쓸 콜백. 없으면 배치 편집이 꺼진다. */
+  onConfigChange?: (patch: Record<string, unknown>) => void;
+  /** 설정 미리보기처럼 **항상** 편집인 자리인가. 그때는 토글을 감춘다. */
+  forceEdit?: boolean;
 }
+
+/** 끌 수 있는 요소. 바는 그림과 범례 둘이다. */
+type BarElementKind = 'plot' | 'legend';
+const BAR_ELEMENT_KINDS: readonly BarElementKind[] = ['plot', 'legend'];
 
 const DEFAULT_MAX_POINTS = 20;
 
@@ -71,6 +105,27 @@ function parseConfig(config: Record<string, unknown>): BarChartPanelConfig {
     // SPEC-CHART-002 — 유무가 곧 렌더 경로 스위치다. 기본값을 채우지 않는다.
     series_reduce: config.series_reduce as BarChartPanelConfig['series_reduce'],
     multi_output_limit: config.multi_output_limit as number | undefined,
+
+    // --- SPEC-CHART-005 ---
+    // 미지정은 **끔**이다(파이와 다른 기본값 — 바에는 원래 범례가 없었다).
+    show_legend: (config.show_legend as boolean | undefined) ?? false,
+    // 인식 불가 값은 기본 배치로 접는다 — 손으로 고친 값이 범례를 날려버리지 않게 한다.
+    legend_position: isPieLegendPosition(config.legend_position)
+      ? config.legend_position
+      : 'bottom',
+    legend_show_value: (config.legend_show_value as boolean | undefined) ?? true,
+    legend_font_size: resolveFontSize(config.legend_font_size) ?? DEFAULT_PIE_LEGEND_FONT_SIZE,
+    legend_font_family: config.legend_font_family as BarChartPanelConfig['legend_font_family'],
+    legend_font_color: resolveFontColor(config.legend_font_color),
+    // 저장값에는 성긴 안전 상한만 건다 — 정확한 죄기는 요소 크기를 알아야 하는데 그
+    // 값은 레이아웃 후에만 나오므로 드래그 시점에 한다(파이와 같은 규칙).
+    legend_offset_x: clampStoredLegendOffset(config.legend_offset_x),
+    legend_offset_y: clampStoredLegendOffset(config.legend_offset_y),
+    plot_size: readPanelSize(config.plot_size),
+    plot_size_y: readPanelSize(config.plot_size_y),
+    bar_size: readBarSize(config.bar_size),
+    plot_offset_x: clampPercentOffset(readPanelOffset(config.plot_offset_x)),
+    plot_offset_y: clampPercentOffset(readPanelOffset(config.plot_offset_y)),
   };
 }
 
@@ -98,7 +153,14 @@ function buildCategoryData(
   return Array.from(latest.entries()).map(([label, value]) => ({ label, value }));
 }
 
-export default function BarChartPanel({ panelId: _panelId, title, config }: BarChartPanelProps) {
+export default function BarChartPanel({
+  panelId: _panelId,
+  title,
+  config,
+  onConfigChange,
+  forceEdit = false,
+}: BarChartPanelProps) {
+  const { t } = useTranslation();
   const showTitle = usePanelTitleVisible();
   const titleStyle = usePanelTitleStyle();
   const cfg = parseConfig(config);
@@ -194,14 +256,84 @@ export default function BarChartPanel({ panelId: _panelId, title, config }: BarC
   ]);
 
   const chartData = derived.rows;
+  // 범례 항목 — 파이와 같은 표현을 쓰므로 같은 형태로 맞춘다(SPEC-CHART-005 §5 D3).
+  // `percent` 는 합계 대비 비중이다. 바에서는 뜻이 옅어 비중 표시를 내지 않으므로
+  // (`showPercentage=false`) 실제로 쓰이지 않지만, 형태를 맞춰 두면 두 패널이 같은
+  // 컴포넌트를 그대로 공유한다.
+  const legendItems = useMemo<PieLegendItem[]>(() => {
+    if (cfg.show_legend !== true) return [];
+    const total = chartData.reduce((acc, r) => acc + (Number.isFinite(r.value) ? r.value : 0), 0);
+    return chartData.map((row, i) => ({
+      name: row.label,
+      value: row.value,
+      percent: total > 0 ? row.value / total : 0,
+      color: row.fill ?? pickSeriesColor(i),
+    }));
+  }, [cfg.show_legend, chartData]);
   // 행에 색이 하나라도 있으면 행별 Cell 로 그린다. 색이 없는 행은 종전 색으로 남는다.
   const hasRowFill = chartData.some((r) => r.fill !== undefined);
+
+  // --- SPEC-CHART-005: 배치 편집 ---
+  const edit = usePanelEditMode({
+    canEdit: onConfigChange !== undefined,
+    forced: forceEdit,
+    testId: 'bar-chart-edit-toggle',
+    below: showTitle,
+  });
+  const plotOffset = { x: cfg.plot_offset_x ?? 0, y: cfg.plot_offset_y ?? 0 };
+  const legendOffset = { x: cfg.legend_offset_x ?? 0, y: cfg.legend_offset_y ?? 0 };
+  const {
+    selection,
+    setSelection,
+    snap,
+    setSnap,
+    boundsRef,
+    align,
+    reset,
+  } = usePanelElementEdit<BarElementKind>({
+    kinds: BAR_ELEMENT_KINDS,
+    enabled: edit.active,
+    offsets: { plot: plotOffset, legend: legendOffset },
+    writeOffsets: (patches) => {
+      const next: Record<string, unknown> = {};
+      for (const p of patches) {
+        if (p.kind === 'plot') {
+          next.plot_offset_x = p.x;
+          next.plot_offset_y = p.y;
+        } else {
+          next.legend_offset_x = p.x;
+          next.legend_offset_y = p.y;
+        }
+      }
+      onConfigChange?.(next);
+    },
+  });
+  /**
+   * 요소 상자에 붙는 편집 속성. 편집이 꺼져 있으면 DOM 이 종전과 같다.
+   *
+   * **위치 클래스를 붙이지 않는다** — 파이에서 `relative` 를 함께 실었다가 `absolute`
+   * 상자를 무너뜨렸다. 위치는 각 상자가 정한다.
+   */
+  const editProps = (kind: BarElementKind) =>
+    edit.active
+      ? { 'data-panel-drag': kind, tabIndex: 0 }
+      : {};
+  /** 선택 여부에 따른 윤곽 클래스. 편집이 꺼져 있으면 빈 문자열. */
+  const outlineOf = (kind: BarElementKind): string =>
+    edit.active
+      ? selection.has(kind)
+        ? PANEL_SELECTED_OUTLINE_CLASS
+        : PANEL_EDIT_OUTLINE_CLASS
+      : '';
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col rounded-2xl bg-(--color-bg-surface) p-4 ring-1 ring-(--color-border-default)">
       <div className="absolute right-3 top-3 z-10">
         <ConnectionStatusIcon status={status} />
       </div>
+
+      {/* 배치 편집 토글 — 대시보드 편집모드에서만, 미리보기에서는 감춘다. */}
+      {edit.toggle}
 
       {showTitle && (
         <div className="mb-1 flex shrink-0 items-center gap-2 pr-6">
@@ -221,7 +353,62 @@ export default function BarChartPanel({ panelId: _panelId, title, config }: BarC
         {derived.reduce ? cfg.series_reduce : cfg.mode}
       </div>
 
-      <div className="min-h-0 flex-1" data-testid="bar-chart-container">
+      {/*
+        그림 영역. 범례가 이 안에 **겹쳐** 뜨므로 기준 상자가 필요하다 — 흐름에 끼워
+        넣으면 범례가 자리를 나눠 가져 막대 폭이 범례 위치에 따라 달라진다(파이와 같은
+        이유). 플롯 상자는 옮긴 뒤 키운다(`panelBoxTransform`).
+      */}
+      <PanelDragLayer<BarElementKind>
+        enabled={edit.active}
+        snap={snap}
+        selection={selection}
+        onSelectionChange={setSelection}
+        targets={{
+          plot: {
+            offsetX: plotOffset.x,
+            offsetY: plotOffset.y,
+            // 바는 사각형이라 손잡이가 축을 나눈다 — 가로는 **그림 영역 폭**, 세로는
+            // 그림 영역 높이다(둘 다 패널 대비 %).
+            //
+            // 손잡이는 도형의 상자를 잡는 조작이므로 막대 굵기에 걸지 않는다. 굵기는
+            // 도형의 폭이 아니라 그 안의 막대 하나하나에 대한 값이라 뜻이 다르고,
+            // 설정의 슬라이더가 따로 맡는다.
+            fontSize: cfg.plot_size ?? PANEL_SIZE_MAX,
+            sizeRange: { min: PANEL_SIZE_MIN, max: PANEL_SIZE_MAX },
+            onMove: ({ x, y }) => onConfigChange?.({ plot_offset_x: x, plot_offset_y: y }),
+            onResize: (v) => onConfigChange?.({ plot_size: readPanelSize(v) ?? PANEL_SIZE_MAX }),
+            sizeY: cfg.plot_size_y ?? cfg.plot_size ?? PANEL_SIZE_MAX,
+            sizeYRange: { min: PANEL_SIZE_MIN, max: PANEL_SIZE_MAX },
+            onResizeY: (v) =>
+              onConfigChange?.({ plot_size_y: readPanelSize(v) ?? PANEL_SIZE_MAX }),
+          },
+          legend: {
+            offsetX: legendOffset.x,
+            offsetY: legendOffset.y,
+            fontSize: cfg.legend_font_size ?? DEFAULT_PIE_LEGEND_FONT_SIZE,
+            onMove: ({ x, y }) => onConfigChange?.({ legend_offset_x: x, legend_offset_y: y }),
+            onResize: (legend_font_size) => onConfigChange?.({ legend_font_size }),
+          },
+        }}
+      >
+      <div ref={boundsRef} className="relative min-h-0 flex-1" data-panel-bounds="">
+      {/* 배치 그리드와 중심 표식 — 요소 뒤에 깔리고 포인터를 받지 않는다. */}
+      <PanelEditGrid enabled={edit.active} />
+      <div
+        data-testid="bar-chart-container"
+        {...editProps('plot')}
+        // 손잡이가 모서리에 붙으려면 기준이 필요하다 — 이 상자는 흐름에 있으므로
+        // 여기서 `relative` 를 준다(파이 그림 상자는 이미 absolute 라 필요 없다).
+        className={`relative h-full w-full ${outlineOf('plot')}`}
+        style={{
+          transform: panelBoxTransform(
+            cfg.plot_size ?? PANEL_SIZE_MAX,
+            cfg.plot_offset_x ?? 0,
+            cfg.plot_offset_y ?? 0,
+            cfg.plot_size_y,
+          ),
+        }}
+      >
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -262,6 +449,8 @@ export default function BarChartPanel({ panelId: _panelId, title, config }: BarC
               dataKey="value"
               fill={hasRowFill ? undefined : '#3b82f6'}
               isAnimationActive={false}
+              // 미지정이면 recharts 가 칸 폭에 맞춰 자동으로 정한다(종전 동작).
+              barSize={cfg.bar_size}
             >
               {hasRowFill
                 ? chartData.map((row, i) => <Cell key={i} fill={row.fill ?? '#3b82f6'} />)
@@ -269,7 +458,54 @@ export default function BarChartPanel({ panelId: _panelId, title, config }: BarC
             </Bar>
           </BarChart>
         </ResponsiveContainer>
+        {edit.active && selection.has('plot') && (
+          <PanelResizeHandle kind="plot" enabled label={t('dashboard.chart.plotSize')} />
+        )}
       </div>
+      {cfg.show_legend === true && legendItems.length > 0 && (
+        <PieLegend
+          items={legendItems}
+          position={cfg.legend_position ?? 'bottom'}
+          // 비중은 내지 않는다 — 막대는 합계 대비 비중을 읽는 그림이 아니다.
+          showPercentage={false}
+          showValue={cfg.legend_show_value !== false}
+          fontSize={cfg.legend_font_size ?? DEFAULT_PIE_LEGEND_FONT_SIZE}
+          fontFamily={cfg.legend_font_family}
+          fontColor={cfg.legend_font_color}
+          decimals={decimals}
+          unit={unit}
+          offsetX={cfg.legend_offset_x ?? 0}
+          offsetY={cfg.legend_offset_y ?? 0}
+          // 표식은 범례 **자신**에 붙는다(파이와 같은 이유 — 감싸는 상자는 크기가 0이다).
+          edit={
+            edit.active
+              ? {
+                  kind: 'legend',
+                  selected: selection.has('legend'),
+                  outlineClass: outlineOf('legend'),
+                  overlay: selection.has('legend') ? (
+                    <PanelResizeHandle
+                      kind="legend"
+                      enabled
+                      label={t('dashboard.chart.legendElement')}
+                    />
+                  ) : null,
+                }
+              : undefined
+          }
+        />
+      )}
+      </div>
+      </PanelDragLayer>
+
+      {/* 정렬 툴바 — 편집 중에만. */}
+      <PanelAlignToolbar
+        enabled={edit.active}
+        snap={snap}
+        onSnapChange={setSnap}
+        onAlign={align}
+        onReset={reset}
+      />
 
       <MultiOutputTruncationNotice truncated={derived.truncated} />
 

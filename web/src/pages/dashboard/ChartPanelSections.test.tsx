@@ -1535,3 +1535,54 @@ describe('StatChartSection 보조 표기 설정 (SPEC-CHART-003)', () => {
     expect(screen.getByTestId('stat-sub-value-scale')).toHaveValue('1.5');
   });
 });
+
+// ---------------------------------------------------------------------------
+// SPEC-CHART-004 M7 — 배율 무시 안내.
+//
+// @spec SPEC-CHART-004 AC-29 / AC-30
+// ---------------------------------------------------------------------------
+describe('StatChartSection 배율 무시 안내 (SPEC-CHART-004)', () => {
+  const statPanel = (config: Record<string, unknown> = {}) =>
+    makePanel('stat', { channel_name: 'c', ...config });
+
+  it('AC-29: 배율 슬라이더가 유지된다', () => {
+    render(<StatChartSection panel={statPanel()} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('stat-value-scale')).toBeInTheDocument();
+    expect(screen.getByTestId('stat-sub-value-scale')).toBeInTheDocument();
+  });
+
+  it('AC-30: font_size 가 없으면 안내를 내지 않는다', () => {
+    render(<StatChartSection panel={statPanel()} onConfigChange={vi.fn()} />);
+    expect(screen.queryByTestId('stat-font-size-override-notice')).toBeNull();
+  });
+
+  it('AC-30: 본값에 font_size 가 지정되면 안내가 뜬다', () => {
+    render(
+      <StatChartSection
+        panel={statPanel({ value_layout: { font_size: 50 } })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByTestId('stat-font-size-override-notice')).toHaveLength(1);
+  });
+
+  it('AC-30: 보조 줄 중 하나만 지정돼도 보조 줄 배율 옆에 안내가 뜬다', () => {
+    render(
+      <StatChartSection
+        panel={statPanel({ stats_layout: { font_size: 20 } })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByTestId('stat-font-size-override-notice')).toHaveLength(1);
+  });
+
+  it('본값과 보조 줄이 모두 지정되면 안내가 두 곳에 뜬다', () => {
+    render(
+      <StatChartSection
+        panel={statPanel({ value_layout: { font_size: 50 }, delta_layout: { font_size: 20 } })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByTestId('stat-font-size-override-notice')).toHaveLength(2);
+  });
+});

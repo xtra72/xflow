@@ -15,19 +15,44 @@
 export const PREVIEW_LIVE_KEYS = [
   // 게이지 — 현재값 글자, 그림 상자, 임계값 범례.
   'value_scale',
-  'value_offset_x',
-  'value_offset_y',
+  // 값 글자 자리 — 도형 밖 오버레이가 되면서 패널 대비 백분율로 바뀌었다.
+  'value_pos_x',
+  'value_pos_y',
   'gauge_size',
+  // 세로바 게이지의 도형 치수 — 손잡이가 축을 나눠 바꾼다(상자 배율이 아니다).
+  'gauge_bar_width',
+  'gauge_bar_height',
   'gauge_offset_x',
   'gauge_offset_y',
   'threshold_legend_offset_x',
   'threshold_legend_offset_y',
+  // 임계값 범례 글자 크기 — 크기 손잡이가 이 값을 바꾼다(SPEC-CHART-005).
+  'threshold_legend_font_size',
   // 라인 차트 — 그림 상자.
   'plot_size',
+  // 바 차트 — 손잡이가 축을 나눈다(가로는 막대 굵기 px, 세로는 그림 영역 배율 %).
+  'plot_size_y',
+  'bar_size',
   'plot_offset_x',
   'plot_offset_y',
   // 라인 차트 범례 — 구성·위치·글자 모양이 한 오브젝트에 있고 전부 그리기 전용이다.
   'legend',
+  // 통계 — 세 요소(본값·변화량·구간 통계)의 배치·크기·글자 모양이 각각 한 오브젝트에
+  // 있고 전부 그리기 전용이다(SPEC-CHART-004).
+  'value_layout',
+  'delta_layout',
+  'stats_layout',
+  // 파이·바 — 그림 상자와 범례(SPEC-CHART-005). 범례 키는 두 패널이 같은 이름을 쓴다.
+  'pie_size',
+  'pie_offset_x',
+  'pie_offset_y',
+  'legend_offset_x',
+  'legend_offset_y',
+  'legend_font_size',
+  'legend_font_family',
+  'legend_font_color',
+  'legend_position',
+  'show_legend',
   // 타이틀 글자 모양(모든 패널 공통).
   'title_font',
 ] as const;

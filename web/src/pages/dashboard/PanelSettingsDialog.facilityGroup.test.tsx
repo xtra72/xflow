@@ -48,6 +48,9 @@ vi.mock('@/hooks/useGroups', () => ({
 
 vi.mock('@/lib/i18n', () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
 
+import { QueryClientProvider } from '@tanstack/react-query';
+
+import { inertQueryClient } from '@/hooks/inertQueryClient';
 import PanelSettingsDialog from './PanelSettingsDialog';
 
 beforeEach(() => {
@@ -63,7 +66,12 @@ beforeEach(() => {
 
 describe('PanelSettingsDialog facility-group 설정', () => {
   it('대상 그룹 선택기(역사·커스텀 나열)와 표시 옵션(통계/오프라인/라벨)을 노출한다', () => {
-    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    render(
+      // 미리보기가 실제 패널을 그리면서 조회 훅을 탄다 — 비활성 클라이언트로 감싼다.
+      <QueryClientProvider client={inertQueryClient()}>
+        <PanelSettingsDialog panelId="p1" onClose={() => {}} />
+      </QueryClientProvider>,
+    );
 
     // 대상 셀렉트: placeholder + station + custom = 3.
     const target = screen.getByTestId('facility-target-select') as HTMLSelectElement;
@@ -77,7 +85,12 @@ describe('PanelSettingsDialog facility-group 설정', () => {
   });
 
   it('그룹을 변경하면 draft config.groupId 가 갱신되고, 적용 시 updatePanelConfig 로 저장된다', () => {
-    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    render(
+      // 미리보기가 실제 패널을 그리면서 조회 훅을 탄다 — 비활성 클라이언트로 감싼다.
+      <QueryClientProvider client={inertQueryClient()}>
+        <PanelSettingsDialog panelId="p1" onClose={() => {}} />
+      </QueryClientProvider>,
+    );
 
     const target = screen.getByTestId('facility-target-select') as HTMLSelectElement;
     fireEvent.change(target, { target: { value: 'station:s1' } });
@@ -92,7 +105,12 @@ describe('PanelSettingsDialog facility-group 설정', () => {
   });
 
   it('표시 옵션(showStats) 토글이 draft 에 반영되어 적용 시 저장된다', () => {
-    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    render(
+      // 미리보기가 실제 패널을 그리면서 조회 훅을 탄다 — 비활성 클라이언트로 감싼다.
+      <QueryClientProvider client={inertQueryClient()}>
+        <PanelSettingsDialog panelId="p1" onClose={() => {}} />
+      </QueryClientProvider>,
+    );
     fireEvent.click(screen.getByTestId('facility-group-show-stats')); // true → false
     fireEvent.click(screen.getByRole('button', { name: 'dashboard.settings.apply' }));
     const savedConfig = storeMock.updatePanelConfig.mock.calls[0]![1] as Record<string, unknown>;

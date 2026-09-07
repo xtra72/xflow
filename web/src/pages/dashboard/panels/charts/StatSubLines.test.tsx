@@ -10,25 +10,30 @@ vi.mock('@/lib/i18n', () => ({
 }));
 
 import { DEFAULT_DELTA_COLORS } from './statDisplayOptions';
-import { SUB_LINE_PX, StatDeltaLine, StatWindowStatsLine } from './StatSubLines';
+import {
+  SUB_LINE_PX,
+  StatDeltaLine,
+  StatWindowStatsLine,
+  statOffsetStyle,
+} from './StatSubLines';
 
 describe('StatDeltaLine (AC-11 / AC-13 / AC-24)', () => {
   const colors = { up: '#123456', down: '#654321', flat: '#abcdef' };
 
   it('방향별로 지정된 색을 인라인으로 싣는다', () => {
     const up = render(
-      <StatDeltaLine arrow="↑" text="+1.5" colors={colors} scale={1} testId="stat-delta" />,
+      <StatDeltaLine arrow="↑" text="+1.5" colors={colors} fontSize={SUB_LINE_PX} testId="stat-delta" />,
     );
     expect(screen.getByTestId('stat-delta').style.color).toBe('rgb(18, 52, 86)');
     up.unmount();
 
     const down = render(
-      <StatDeltaLine arrow="↓" text="-1.5" colors={colors} scale={1} testId="stat-delta" />,
+      <StatDeltaLine arrow="↓" text="-1.5" colors={colors} fontSize={SUB_LINE_PX} testId="stat-delta" />,
     );
     expect(screen.getByTestId('stat-delta').style.color).toBe('rgb(101, 67, 33)');
     down.unmount();
 
-    render(<StatDeltaLine arrow="→" text="+0" colors={colors} scale={1} testId="stat-delta" />);
+    render(<StatDeltaLine arrow="→" text="+0" colors={colors} fontSize={SUB_LINE_PX} testId="stat-delta" />);
     expect(screen.getByTestId('stat-delta').style.color).toBe('rgb(171, 205, 239)');
   });
 
@@ -38,7 +43,7 @@ describe('StatDeltaLine (AC-11 / AC-13 / AC-24)', () => {
         arrow="↑"
         text="+1"
         colors={DEFAULT_DELTA_COLORS}
-        scale={1}
+        fontSize={SUB_LINE_PX}
         testId="stat-delta"
       />,
     );
@@ -49,25 +54,25 @@ describe('StatDeltaLine (AC-11 / AC-13 / AC-24)', () => {
   it('AC-13: 증가·감소에 같은 색을 줘도 방향은 화살표와 부호가 전달한다', () => {
     const same = { up: '#888888', down: '#888888', flat: '#888888' };
     const up = render(
-      <StatDeltaLine arrow="↑" text="+4" colors={same} scale={1} testId="stat-delta" />,
+      <StatDeltaLine arrow="↑" text="+4" colors={same} fontSize={SUB_LINE_PX} testId="stat-delta" />,
     );
     expect(screen.getByTestId('stat-delta').textContent).toContain('↑');
     expect(screen.getByTestId('stat-delta').textContent).toContain('+4');
     up.unmount();
 
-    render(<StatDeltaLine arrow="↓" text="-4" colors={same} scale={1} testId="stat-delta" />);
+    render(<StatDeltaLine arrow="↓" text="-4" colors={same} fontSize={SUB_LINE_PX} testId="stat-delta" />);
     expect(screen.getByTestId('stat-delta').textContent).toContain('↓');
     expect(screen.getByTestId('stat-delta').textContent).toContain('-4');
   });
 
   it('AC-24: 크기는 기본 px 에 배율을 곱한 값이다', () => {
-    render(<StatDeltaLine arrow="↑" text="+1" colors={colors} scale={2} testId="stat-delta" />);
+    render(<StatDeltaLine arrow="↑" text="+1" colors={colors} fontSize={SUB_LINE_PX * 2} testId="stat-delta" />);
     expect(screen.getByTestId('stat-delta').style.fontSize).toBe(`${SUB_LINE_PX * 2}px`);
   });
 
   it('배율 1 은 종전 text-sm 과 같은 14px 다', () => {
     expect(SUB_LINE_PX).toBe(14);
-    render(<StatDeltaLine arrow="↑" text="+1" colors={colors} scale={1} testId="stat-delta" />);
+    render(<StatDeltaLine arrow="↑" text="+1" colors={colors} fontSize={SUB_LINE_PX} testId="stat-delta" />);
     expect(screen.getByTestId('stat-delta').style.fontSize).toBe('14px');
   });
 });
@@ -81,7 +86,7 @@ describe('StatWindowStatsLine (AC-21 / AC-22 / AC-24)', () => {
 
   it('받은 순서 그대로 한 줄에 인라인 배치한다', () => {
     render(
-      <StatWindowStatsLine items={items} compact={false} scale={1} testId="stat-window-stats" />,
+      <StatWindowStatsLine items={items} compact={false} fontSize={SUB_LINE_PX} testId="stat-window-stats" />,
     );
     const text = screen.getByTestId('stat-window-stats').textContent ?? '';
     expect(text.indexOf('22.6')).toBeLessThan(text.indexOf('26'));
@@ -93,7 +98,7 @@ describe('StatWindowStatsLine (AC-21 / AC-22 / AC-24)', () => {
       <StatWindowStatsLine
         items={[{ kind: 'max', text: '26' }]}
         compact={false}
-        scale={1}
+        fontSize={SUB_LINE_PX}
         testId="stat-window-stats"
       />,
     );
@@ -103,7 +108,7 @@ describe('StatWindowStatsLine (AC-21 / AC-22 / AC-24)', () => {
   });
 
   it('항목이 없으면 줄 자체를 그리지 않는다', () => {
-    render(<StatWindowStatsLine items={[]} compact={false} scale={1} testId="stat-window-stats" />);
+    render(<StatWindowStatsLine items={[]} compact={false} fontSize={SUB_LINE_PX} testId="stat-window-stats" />);
     expect(screen.queryByTestId('stat-window-stats')).toBeNull();
   });
 
@@ -116,7 +121,7 @@ describe('StatWindowStatsLine (AC-21 / AC-22 / AC-24)', () => {
           { kind: 'min', text: null },
         ]}
         compact={false}
-        scale={1}
+        fontSize={SUB_LINE_PX}
         testId="stat-window-stats"
       />,
     );
@@ -128,7 +133,7 @@ describe('StatWindowStatsLine (AC-21 / AC-22 / AC-24)', () => {
 
   it('AC-22: compact 는 축약 라벨을 쓰되 스크린리더에는 완결 낱말을 준다', () => {
     render(
-      <StatWindowStatsLine items={items} compact scale={1} testId="stat-window-stats" />,
+      <StatWindowStatsLine items={items} compact fontSize={SUB_LINE_PX} testId="stat-window-stats" />,
     );
     const line = screen.getByTestId('stat-window-stats');
     // 화면용 축약 라벨은 aria-hidden, 낭독용 완결 라벨은 sr-only 로 함께 존재한다.
@@ -139,7 +144,7 @@ describe('StatWindowStatsLine (AC-21 / AC-22 / AC-24)', () => {
 
   it('compact 가 아니면 완결 라벨만 그린다', () => {
     render(
-      <StatWindowStatsLine items={items} compact={false} scale={1} testId="stat-window-stats" />,
+      <StatWindowStatsLine items={items} compact={false} fontSize={SUB_LINE_PX} testId="stat-window-stats" />,
     );
     const line = screen.getByTestId('stat-window-stats');
     expect(line.querySelectorAll('.sr-only').length).toBe(0);
@@ -147,7 +152,49 @@ describe('StatWindowStatsLine (AC-21 / AC-22 / AC-24)', () => {
   });
 
   it('AC-24: 크기는 변화량과 같은 기본 px × 배율이다', () => {
-    render(<StatWindowStatsLine items={items} compact={false} scale={2} testId="stat-window-stats" />);
+    render(<StatWindowStatsLine items={items} compact={false} fontSize={SUB_LINE_PX * 2} testId="stat-window-stats" />);
     expect(screen.getByTestId('stat-window-stats').style.fontSize).toBe(`${SUB_LINE_PX * 2}px`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-CHART-004 — 오프셋을 CSS 로 펴는 방식.
+//
+// `transform: translate(%)` 의 백분율은 **요소 자신의 크기** 기준이라, 패널 상자
+// 기준으로 저장한 값을 넣으면 요소가 작을수록 느리게 움직인다("마우스 이동의 절반
+// 속도" 로 보고됐다). 상대 위치의 left/top 은 담는 상자 기준이라 뜻이 맞는다.
+// ---------------------------------------------------------------------------
+describe('statOffsetStyle', () => {
+  it('오프셋이 0,0 이면 아무 속성도 붙이지 않는다', () => {
+    expect(statOffsetStyle(0, 0)).toBeUndefined();
+  });
+
+  it('담는 상자 기준으로 해석되는 left/top 을 낸다 — transform 이 아니다', () => {
+    expect(statOffsetStyle(10, -5)).toEqual({
+      position: 'relative',
+      left: '10%',
+      top: '-5%',
+    });
+  });
+
+  it('한 축만 있어도 붙는다', () => {
+    expect(statOffsetStyle(0, 15)).toEqual({ position: 'relative', left: '0%', top: '15%' });
+  });
+
+  it('보조 줄이 실제로 left/top 을 쓴다', () => {
+    render(
+      <StatDeltaLine
+        arrow="↑"
+        text="+1"
+        colors={DEFAULT_DELTA_COLORS}
+        fontSize={SUB_LINE_PX}
+        offsetX={-20}
+        offsetY={0}
+        testId="stat-delta"
+      />,
+    );
+    const el = screen.getByTestId('stat-delta');
+    expect(el.style.left).toBe('-20%');
+    expect(el.style.transform).toBe('');
   });
 });

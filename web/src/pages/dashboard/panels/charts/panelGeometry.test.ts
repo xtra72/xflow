@@ -75,4 +75,21 @@ describe('panelBoxTransform', () => {
   it('크기만 바뀌어도 transform 을 만든다', () => {
     expect(panelBoxTransform(60, 0, 0)).toBe('translate(0%, 0%) scale(0.6)');
   });
+
+  // 세로바 게이지·바 차트는 사각형이라 가로세로 비율을 따로 잡아야 뜻이 있다.
+  it('세로 배율을 따로 주면 축마다 다른 배율이 된다', () => {
+    expect(panelBoxTransform(60, 0, 0, 120)).toBe('translate(0%, 0%) scale(0.6, 1.2)');
+  });
+
+  it('세로 배율이 가로와 같으면 한 값으로 줄인다 — 같은 뜻을 두 벌로 쓰지 않는다', () => {
+    expect(panelBoxTransform(60, 0, 0, 60)).toBe('translate(0%, 0%) scale(0.6)');
+  });
+
+  it('세로 배율을 생략하면 종전대로 가로와 같다 — 저장된 설정이 그대로 동작한다', () => {
+    expect(panelBoxTransform(60, 0, 0)).toBe(panelBoxTransform(60, 0, 0, 60));
+  });
+
+  it('둘 다 100 이고 오프셋이 없으면 여전히 transform 을 남기지 않는다', () => {
+    expect(panelBoxTransform(100, 0, 0, 100)).toBeUndefined();
+  });
 });

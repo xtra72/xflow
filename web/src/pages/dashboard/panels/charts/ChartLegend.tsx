@@ -42,6 +42,7 @@ export function ChartLegend({
   legendCfg,
   chartData,
   formatValue,
+  edit,
 }: {
   seriesKeys: string[];
   seriesColors: string[];
@@ -49,6 +50,14 @@ export function ChartLegend({
   chartData: Array<Record<string, unknown>>;
   /** 시리즈 마지막값 표시 포맷터. enum/boolean 은 라벨로, 그 외는 숫자로 표기한다. */
   formatValue: (key: string, value: number) => string;
+  /**
+   * 편집 표식 — 정렬이 상자를 찾고, 선택 윤곽을 입는다.
+   *
+   * 표식은 **바깥 상자**에 붙는다. 변위를 얹는 자리가 바깥이므로(머리말 참조), 정렬이
+   * 재야 하는 상자도 그쪽이다. 감싸는 상자를 새로 만들지 않는다.
+   */
+  /** 편집 표면 — 표식·윤곽선은 범례 **자신**에 붙어야 한다(감싸면 상자가 어긋난다). */
+  edit?: { props: Record<string, unknown>; outline: string; handle?: React.ReactNode };
 }): React.ReactElement | null {
   const isVert = legendCfg.position === 'left' || legendCfg.position === 'right';
   const showName = legendCfg.show_name !== false;
@@ -86,17 +95,21 @@ export function ChartLegend({
   return (
     <div
       className={cn(
-        'flex shrink-0',
+        // 크기 손잡이가 범례 모서리에 붙으려면 기준이 필요하다. 흐름 배치의 flex
+        // 항목이라 `relative` 는 상자를 바꾸지 않는다.
+        'relative flex shrink-0',
         isVert ? 'min-w-fit flex-col justify-center py-2 pl-3 pr-2' : 'justify-center py-1.5 px-2',
         // 옮긴 범례에는 구분선을 그리지 않는다 — 항목 없는 선만 남으면 무엇을 가르는지 모른다.
         !moved &&
           (isVert
             ? 'border-l border-(--color-border-default)'
             : 'border-t border-(--color-border-default)'),
+        edit?.outline,
       )}
       data-testid="line-chart-legend"
       // 드래그 레이어가 무엇을 잡았는지 가리는 표식 — 붙인 변은 범례가 스스로 알고 있다.
       data-chart-legend=""
+      {...(edit?.props ?? {})}
       data-position={legendCfg.position ?? 'bottom'}
       style={{
         fontSize: `${fontSize}px`,
@@ -105,6 +118,7 @@ export function ChartLegend({
         ...inlineLegendOffsetStyle(offsetX, offsetY),
       }}
     >
+      {edit?.handle}
     <div
       className={cn(
         'flex',

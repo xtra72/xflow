@@ -218,6 +218,30 @@ describe('StatPanel 다중 출력 (SPEC-CHART-002 M3)', () => {
     expect((lines[2]?.textContent ?? '').match(/—/g)).toHaveLength(3);
   });
 
+  // SPEC-CHART-004 M1-1.4 — 특성화(DDD PRESERVE).
+  // 타일 경로에는 요소 직접 편집이 없다. M6 이후에도 이 서술은 유지되어야 한다
+  // (spec.md §5 D2 — 그리드가 자리를 정하므로 요소 오프셋과 싸운다).
+  it('M1-1.4: 타일 경로에는 편집 입구가 없고 저장된 layout 도 읽지 않는다', async () => {
+    const { container } = await renderPanel(
+      panelConfig({
+        series_reduce: 'last',
+        value_layout: { offset_x: 20, font_size: 90 },
+        delta_layout: { offset_y: -10 },
+        stats_layout: { font_size: 30 },
+      }),
+    );
+
+    expect(tiles()).toHaveLength(3);
+    expect(container.querySelectorAll('[data-panel-drag]')).toHaveLength(0);
+    expect(container.querySelectorAll('[data-panel-resize]')).toHaveLength(0);
+    expect(screen.queryByTestId('stat-edit-toggle')).toBeNull();
+
+    // 저장된 layout 은 무시된다 — 타일 값은 기본 크기(24)를 유지하고 transform 도 없다.
+    const value = container.querySelector('[data-testid="stat-tile-value"]') as HTMLElement;
+    expect(value.style.fontSize).toBe('24px');
+    expect(value.style.transform).toBe('');
+  });
+
   it('AC-22: 타일 구간 통계 라벨은 타일이 1개여도 축약형이다', async () => {
     // 축약 여부는 타일 **개수**가 아니라 경로가 정한다 — 시리즈를 하나로 줄여도
     // 라벨이 갑자기 길어지면 안 된다.

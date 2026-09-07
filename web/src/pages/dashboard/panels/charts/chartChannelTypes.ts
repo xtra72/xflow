@@ -751,6 +751,27 @@ export interface StatWindowStatsConfig {
   min?: boolean;
 }
 
+/**
+ * 요소 하나의 배치 + 글자 스타일 (SPEC-CHART-004 §3.1).
+ *
+ * 전부 옵셔널이며, 셋 다 없는 config 는 종전 렌더와 같은 화면을 낸다. 해석은
+ * `statLayout.readStatLayout` 한 곳이 소유한다 — 특히 크기는 `font_size` 가 배율
+ * (`value_scale` / `sub_value_scale`)을 **이기고 곱해지지 않는다**(§3.2).
+ */
+export interface StatElementLayout {
+  /** 가로 오프셋(백분율 포인트, ±40). 패널 상자 폭 대비 — 픽셀로 두면 미리보기와
+   *  실제 패널의 크기가 달라 같은 값이 다른 자리를 가리킨다. */
+  offset_x?: number;
+  /** 세로 오프셋(백분율 포인트, ±40). */
+  offset_y?: number;
+  /** 글자 크기(px, 6~160). 미지정이면 기본 px × 배율 폴백. */
+  font_size?: number;
+  font_family?: ChartFontFamily;
+  /** 글자색. 변화량(`delta_layout`)에는 없다 — 방향별 색이 `delta_display` 소유다. */
+  font_color?: string;
+  font_weight?: 'normal' | 'bold';
+}
+
 export interface StatPanelConfig extends ChartPanelConfigBase {
   unit?: string;
   decimal_places?: number;
@@ -758,8 +779,14 @@ export interface StatPanelConfig extends ChartPanelConfigBase {
   // --- SPEC-CHART-003 ---
   delta_display?: StatDeltaConfig;
   window_stats?: StatWindowStatsConfig;
-  /** 보조 줄(변화량 + 구간 통계) 공용 크기 배율. 본값의 `value_scale` 과 별개 축. */
+  /** 보조 줄(변화량 + 구간 통계) 공용 크기 배율. 본값의 `value_scale` 과 별개 축.
+   *  `*_layout.font_size` 가 지정되면 그쪽이 이긴다(SPEC-CHART-004 §3.2). */
   sub_value_scale?: number;
+  // --- SPEC-CHART-004 ---
+  value_layout?: StatElementLayout;
+  /** 변화량은 글자색 축이 없다 — 방향별 3색이 `delta_display` 에 있다(§5 D4). */
+  delta_layout?: Omit<StatElementLayout, 'font_color'>;
+  stats_layout?: StatElementLayout;
 }
 
 /**
@@ -1148,6 +1175,37 @@ export interface BarChartPanelConfig extends ChartPanelConfigBase {
   mode?: BarChartMode;
   bin_sec?: number;
   agg_func?: AggFunc;
+
+  // --- SPEC-CHART-005: 범례 ---
+  //
+  // 키 이름과 뜻을 **파이와 같게** 둔다. 두 패널의 데이터 모양이 같으므로(카테고리 ·
+  // 값 · 색), 설정이 다르면 같은 것을 두 번 배워야 한다. 표현도 `PieLegend` 를 공유한다.
+  /** 범례를 낼지. **미지정은 끔** — 바에는 원래 범례가 없었으므로 켜면 저장된 모든
+   *  대시보드에 갑자기 범례가 나타나 그림을 덮는다(파이는 원래 있었으므로 기본 켬). */
+  show_legend?: boolean;
+  legend_position?: PieLegendPosition;
+  legend_show_value?: boolean;
+  legend_font_size?: number;
+  legend_font_family?: ChartFontFamily;
+  legend_font_color?: string;
+  /** 끌어 옮긴 변위(담는 상자 대비 %). */
+  legend_offset_x?: number;
+  legend_offset_y?: number;
+
+  // --- SPEC-CHART-005: 플롯 배치. 라인 차트와 **같은 키**를 쓴다(§5 D5). ---
+  plot_size?: number;
+  plot_offset_x?: number;
+  plot_offset_y?: number;
+
+  // --- 사각형 도형의 폭·높이 ---
+  //
+  // 바 차트는 사각형이라 가로세로를 따로 잡아야 뜻이 있다. 다만 두 축이 가리키는
+  // 것이 다르다: 막대의 **높이는 값**이므로 설정할 수 없고, 대신 그림 영역 높이를
+  // 잡는다. 폭은 막대 굵기 그 자체다.
+  /** 막대 굵기(px). 미지정이면 recharts 가 칸 폭에 맞춰 자동으로 정한다. */
+  bar_size?: number;
+  /** 그림 영역 세로 배율(%). 미지정이면 `plot_size` 와 같다(= 종전의 균일 확대). */
+  plot_size_y?: number;
 }
 
 /**
@@ -1155,6 +1213,16 @@ export interface BarChartPanelConfig extends ChartPanelConfigBase {
  * 패널마다 다른 값을 갖지 않게 한다.
  */
 export type PieLegendPosition = 'bottom' | 'left' | 'right';
+
+/**
+ * 저장된 값이 아는 배치인지. 인식 불가·미지정은 호출부가 기본 배치로 접는다.
+ *
+ * 파이 패널 안에 있던 것을 타입이 사는 자리로 옮겼다 — 바 차트도 같은 어휘를 쓰면서
+ * 패널끼리 import 하게 되는 것을 막는다(SPEC-CHART-005 §5 D3).
+ */
+export function isPieLegendPosition(v: unknown): v is PieLegendPosition {
+  return v === 'bottom' || v === 'left' || v === 'right';
+}
 
 /** 조각 라벨을 조각 안쪽에 적을지 바깥에 적을지. */
 export type PieLabelPosition = 'inside' | 'outside';

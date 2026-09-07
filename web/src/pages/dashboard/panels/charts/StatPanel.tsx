@@ -6,7 +6,7 @@
 // 그리는 다중 출력 경로로 갈린다. 분기는 아래 `derived` useMemo 진입부 한 곳뿐이며,
 // `series_reduce` 부재는 "기본값 last" 가 아니라 **레거시 경로**를 뜻한다(§2.9 [S1]).
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { clsx } from 'clsx';
 import { Hash } from 'lucide-react';
 
@@ -32,6 +32,15 @@ import { readValueScale } from './valueScale';
  */
 const STAT_VALUE_PX = { value: 36, unit: 20 } as const;
 const STAT_TILE_PX = { value: 24, unit: 14 } as const;
+
+/**
+ * 단위 글자가 본값 대비 갖는 크기 비율.
+ *
+ * 본값 크기가 배율이 아니라 절대 px 이 되면서(SPEC-CHART-004 §5 D1) 단위도 그 px 을
+ * 기준으로 잡아야 한다. 비율을 상수로 두면 본값을 어떻게 키우든 두 글자의 균형이
+ * 유지된다 — 종전 `36 : 20` 과 같은 비율이다.
+ */
+const UNIT_SIZE_RATIO = STAT_VALUE_PX.unit / STAT_VALUE_PX.value;
 import { lastSampleDelta, reduceAllSeries, reduceSeries, type ReducedSeries } from './seriesReduce';
 import {
   readDeltaColors,
@@ -43,6 +52,8 @@ import {
 import {
   StatDeltaLine,
   StatWindowStatsLine,
+  statOffsetStyle,
+  SUB_LINE_PX,
   type DeltaArrow,
   type WindowStatItem,
 } from './StatSubLines';
@@ -53,12 +64,39 @@ import { isPanelSeriesActive } from './panelDataSource';
 // 값 표기 자릿수는 차트 계열 공용 규칙을 따른다(범위를 벗어난 config 도 여기서 걸린다).
 import { readDecimalPlaces } from './decimalPlaces';
 import { usePanelSeriesData } from './usePanelSeriesData';
+import { useTranslation } from '@/lib/i18n';
+
 import { usePanelTitleStyle, usePanelTitleVisible } from '../../panelChromeContext';
+import { usePanelEditMode } from '../PanelEditToggle';
+import {
+  StatDragLayer,
+  StatResizeHandle,
+  PANEL_EDIT_OUTLINE_CLASS,
+  PANEL_SELECTED_OUTLINE_CLASS,
+} from '../../PanelDragLayer';
+import { PanelEditGrid } from '../../PanelEditGrid';
+import { PanelAlignToolbar } from '../../PanelAlignToolbar';
+import { usePanelElementEdit } from '../../usePanelElementEdit';
+import { StatElementStylePopover } from '../../StatElementStylePopover';
+import {
+  readStatLayout,
+  writeStatLayout,
+  STAT_ELEMENT_KINDS,
+  type StatElementKind,
+} from './statLayout';
+import type { ChartFontFamily } from './textStyle';
 
 interface StatPanelProps {
   panelId: string;
   title?: string;
   config: Record<string, unknown>;
+  /**
+   * config 를 쓸 콜백. 없으면 요소 직접 편집이 꺼진다 — 끌어도 저장할 곳이 없다.
+   * (SPEC-CHART-004 §2.4 U4-1)
+   */
+  onConfigChange?: (patch: Record<string, unknown>) => void;
+  /** 설정 미리보기처럼 **항상** 편집인 자리인가. 그때는 토글을 감춘다(U4-2). */
+  forceEdit?: boolean;
 }
 
 /** 시리즈 축이 없는 경로(채널 모드)에서 쓰는 빈 기본값 — 매 렌더 새 객체를 만들지 않는다. */
@@ -151,7 +189,14 @@ function buildWindowStats(
   });
 }
 
-export default function StatPanel({ panelId: _panelId, title, config }: StatPanelProps) {
+export default function StatPanel({
+  panelId: _panelId,
+  title,
+  config,
+  onConfigChange,
+  forceEdit = false,
+}: StatPanelProps) {
+  const { t } = useTranslation();
   const showTitle = usePanelTitleVisible();
   const titleStyle = usePanelTitleStyle();
   const cfg = parseConfig(config);
@@ -296,6 +341,88 @@ export default function StatPanel({ panelId: _panelId, title, config }: StatPane
   // `1.21` 옆에 저장값(`auto:bytes`)이 붙는 사고가 나지 않는다.
   const shownUnit = hasValue ? scaleValueUnit(currentValue!, decimals, cfg.unit).suffix : '';
 
+  // --- SPEC-CHART-004: 요소 직접 편집 ---
+  // 타일 경로에서는 켜지 않는다(§5 D2) — 그리드가 자리를 정하므로 요소 오프셋과 싸운다.
+  const edit = usePanelEditMode({
+    canEdit: onConfigChange !== undefined && !showTiles,
+    forced: forceEdit,
+    testId: 'stat-edit-toggle',
+    below: showTitle,
+  });
+  // 세 요소의 배치·크기·글자 스타일. 해석은 `statLayout` 이 소유한다.
+  const valueLayout = readStatLayout(config, 'value');
+  const deltaLayout = readStatLayout(config, 'delta');
+  const statsLayout = readStatLayout(config, 'stats');
+  // 열린 스타일 팝오버. 앵커 요소를 함께 들고 있어야 자리를 잡을 수 있다.
+  const [styleTarget, setStyleTarget] = useState<{
+    kind: StatElementKind;
+    anchor: HTMLElement;
+  } | null>(null);
+  // 선택·격자·정렬·초기화는 세 패널 공용 훅이 소유한다(SPEC-CHART-005 §2.1).
+  // 여기서 넘기는 것은 "오프셋을 어디에 저장하는가" 하나뿐이다.
+  const {
+    selection,
+    setSelection,
+    snap: snapToGrid,
+    setSnap: setSnapToGrid,
+    boundsRef,
+    align: alignElements,
+    reset: resetLayout,
+  } = usePanelElementEdit<StatElementKind>({
+    kinds: STAT_ELEMENT_KINDS,
+    enabled: edit.active,
+    offsets: {
+      value: { x: valueLayout.offsetX, y: valueLayout.offsetY },
+      delta: { x: deltaLayout.offsetX, y: deltaLayout.offsetY },
+      stats: { x: statsLayout.offsetX, y: statsLayout.offsetY },
+    },
+    writeOffsets: (patches) => {
+      let next: Record<string, unknown> = {};
+      for (const p of patches) {
+        next = {
+          ...next,
+          ...writeStatLayout({ ...config, ...next }, p.kind, {
+            offset_x: p.x,
+            offset_y: p.y,
+          }),
+        };
+      }
+      onConfigChange?.(next);
+    },
+  });
+
+  // 편집이 꺼지면 팝오버도 닫는다(선택은 훅이 거둔다) — 대시보드 편집모드를 벗어났는데
+  // 상자만 남으면 그것을 닫는 방법이 화면에 없다.
+  useEffect(() => {
+    if (!edit.active) setStyleTarget(null);
+  }, [edit.active]);
+
+  const patchLayout = (kind: StatElementKind, patch: Parameters<typeof writeStatLayout>[2]) => {
+    onConfigChange?.(writeStatLayout(config, kind, patch));
+  };
+
+  /** 요소 상자에 붙는 편집 속성. 편집이 꺼져 있으면 `undefined` — DOM 이 종전과 같다. */
+  const editFor = (kind: StatElementKind, label: string) =>
+    edit.active
+      ? {
+          kind,
+          selected: selection.has(kind),
+          // 크기 손잡이는 **고른 요소에만** 낸다 — 셋에 늘 붙어 있으면 좁은 패널에서
+          // 손잡이가 글자를 덮고, 무엇을 고른 상태인지도 읽히지 않는다.
+          overlay: selection.has(kind) ? (
+            <StatResizeHandle kind={kind} enabled label={label} />
+          ) : null,
+          onDoubleClick: (e: React.MouseEvent<HTMLElement>) =>
+            setStyleTarget({ kind, anchor: e.currentTarget as HTMLElement }),
+          // 더블클릭만 두면 키보드로는 글자 스타일에 닿을 수 없다(§4.4).
+          onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            setStyleTarget({ kind, anchor: e.currentTarget as HTMLElement });
+          },
+        }
+      : undefined;
+
   return (
     <div
       className={clsx(
@@ -307,6 +434,9 @@ export default function StatPanel({ panelId: _panelId, title, config }: StatPane
       <div className="absolute right-3 top-3">
         <ConnectionStatusIcon status={status} />
       </div>
+
+      {/* 배치 편집 토글 — 대시보드 편집모드에서만 뜨고, 미리보기에서는 숨는다. */}
+      {edit.toggle}
 
       {/* 헤더: 아이콘 + 타이틀 */}
       {showTitle && (
@@ -341,38 +471,160 @@ export default function StatPanel({ panelId: _panelId, title, config }: StatPane
           />
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center">
+        <StatDragLayer<StatElementKind>
+          enabled={edit.active}
+          snap={snapToGrid}
+          selection={selection}
+          onSelectionChange={setSelection}
+          targets={{
+            value: {
+              offsetX: valueLayout.offsetX,
+              offsetY: valueLayout.offsetY,
+              fontSize: valueLayout.fontSize,
+              onMove: ({ x, y }) => patchLayout('value', { offset_x: x, offset_y: y }),
+              onResize: (font_size) => patchLayout('value', { font_size }),
+            },
+            delta: {
+              offsetX: deltaLayout.offsetX,
+              offsetY: deltaLayout.offsetY,
+              fontSize: deltaLayout.fontSize,
+              onMove: ({ x, y }) => patchLayout('delta', { offset_x: x, offset_y: y }),
+              onResize: (font_size) => patchLayout('delta', { font_size }),
+            },
+            stats: {
+              offsetX: statsLayout.offsetX,
+              offsetY: statsLayout.offsetY,
+              fontSize: statsLayout.fontSize,
+              onMove: ({ x, y }) => patchLayout('stats', { offset_x: x, offset_y: y }),
+              onResize: (font_size) => patchLayout('stats', { font_size }),
+            },
+          }}
+        >
+        {/* 기준 상자 — 오프셋 백분율의 분모다. 요소 자신을 기준으로 쓰면 작은 요소가
+            거의 움직이지 못하고 큰 요소는 한 번에 화면을 가로지른다. */}
+        <div
+          ref={boundsRef}
+          className="relative flex min-h-0 flex-1 flex-col items-center justify-center"
+          data-panel-bounds=""
+        >
+          {/* 배치 그리드와 중심 표식 — 요소 뒤에 깔리고 포인터를 받지 않는다. */}
+          <PanelEditGrid enabled={edit.active} />
           <div
-            className={clsx('font-bold tabular-nums', !color && 'text-(--color-text-primary)')}
-            style={{ ...(color ? { color } : {}), fontSize: STAT_VALUE_PX.value * valueScale }}
+            className={clsx(
+              'font-bold tabular-nums',
+              // 임계값 규칙이 기본 글자색을 이긴다(§5 D3) — 조건부가 기본을 덮는다.
+              !color && !valueLayout.fontColor && 'text-(--color-text-primary)',
+              edit.active && [
+                'relative',
+                selection.has('value') ? PANEL_SELECTED_OUTLINE_CLASS : PANEL_EDIT_OUTLINE_CLASS,
+              ],
+            )}
+            style={{
+              ...(color ?? valueLayout.fontColor ? { color: color ?? valueLayout.fontColor } : {}),
+              fontSize: valueLayout.fontSize,
+              fontFamily: valueLayout.fontFamily,
+              fontWeight: valueLayout.fontWeight,
+              ...statOffsetStyle(valueLayout.offsetX, valueLayout.offsetY),
+            }}
             data-testid="stat-value"
+            {...(edit.active
+              ? {
+                  'data-panel-drag': 'value',
+                  tabIndex: 0,
+                  onDoubleClick: (e: React.MouseEvent<HTMLDivElement>) =>
+                    setStyleTarget({ kind: 'value', anchor: e.currentTarget }),
+                  onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => {
+                    if (e.key !== 'Enter') return;
+                    e.preventDefault();
+                    setStyleTarget({ kind: 'value', anchor: e.currentTarget });
+                  },
+                }
+              : {})}
           >
             {hasValue ? scaleValueUnit(currentValue!, decimals, cfg.unit).text : '—'}
             {hasValue && shownUnit ? (
               <span
                 className="ml-1 font-medium"
-                style={{ fontSize: STAT_VALUE_PX.unit * valueScale }}
+                // 단위는 본값과 **함께** 커진다 — 종전 비율(20/36)을 그대로 유지한다.
+                style={{ fontSize: valueLayout.fontSize * UNIT_SIZE_RATIO }}
               >
                 {shownUnit}
               </span>
             ) : null}
+            {edit.active && selection.has('value') && (
+              <StatResizeHandle kind="value" enabled label={t('dashboard.chart.statElementValue')} />
+            )}
           </div>
           {showLegacyDelta && deltaText && (
             <StatDeltaLine
               arrow={arrow as DeltaArrow}
               text={deltaText}
               colors={deltaColors}
-              scale={subScale}
+              fontSize={deltaLayout.fontSize}
+              offsetX={deltaLayout.offsetX}
+              offsetY={deltaLayout.offsetY}
               testId="stat-delta"
+              edit={editFor('delta', t('dashboard.chart.statElementDelta'))}
             />
           )}
           <StatWindowStatsLine
             items={legacyWindowStats}
             compact={false}
-            scale={subScale}
+            fontSize={statsLayout.fontSize}
+            offsetX={statsLayout.offsetX}
+            offsetY={statsLayout.offsetY}
             testId="stat-window-stats"
+            edit={editFor('stats', t('dashboard.chart.statElementStats'))}
           />
         </div>
+        </StatDragLayer>
+      )}
+
+      {/* 정렬 툴바 — 편집 중에만. 아래 가장자리에 둬 값·토글·상태 아이콘을 가리지 않는다. */}
+      <PanelAlignToolbar
+        enabled={edit.active}
+        snap={snapToGrid}
+        onSnapChange={setSnapToGrid}
+        onAlign={alignElements}
+        onReset={resetLayout}
+      />
+
+      {/* 요소 글자 스타일 팝오버 — 더블클릭·Enter 로 열린다. body 로 포털된다. */}
+      {styleTarget && (
+        <StatElementStylePopover
+          kind={styleTarget.kind}
+          anchor={styleTarget.anchor}
+          value={{
+            fontFamily: (config[`${styleTarget.kind}_layout`] as Record<string, unknown> | undefined)
+              ?.font_family as ChartFontFamily | undefined,
+            fontSize: (config[`${styleTarget.kind}_layout`] as Record<string, unknown> | undefined)
+              ?.font_size as number | undefined,
+            fontColor:
+              styleTarget.kind === 'value'
+                ? valueLayout.fontColor
+                : styleTarget.kind === 'stats'
+                  ? statsLayout.fontColor
+                  : undefined,
+            fontWeight:
+              styleTarget.kind === 'value'
+                ? valueLayout.fontWeight
+                : styleTarget.kind === 'delta'
+                  ? deltaLayout.fontWeight
+                  : statsLayout.fontWeight,
+          }}
+          deltaColors={deltaColors}
+          onChange={(patch) => patchLayout(styleTarget.kind, patch)}
+          // 변화량의 색은 layout 이 아니라 `delta_display` 로 간다(§5 D4).
+          onDeltaColorChange={(patch) =>
+            onConfigChange?.({
+              delta_display: {
+                ...((config.delta_display as Record<string, unknown> | undefined) ?? {}),
+                ...patch,
+              },
+            })
+          }
+          onClose={() => setStyleTarget(null)}
+        />
       )}
 
       {/* closed / error 오버레이 */}
@@ -469,7 +721,8 @@ function StatTile({
           arrow={tile.delta.arrow}
           text={tile.delta.text}
           colors={deltaColors}
-          scale={subScale}
+          // 타일 경로는 요소 layout 을 읽지 않는다(§5 D2) — 배율만 쓴다.
+          fontSize={SUB_LINE_PX * subScale}
           testId="stat-tile-delta"
         />
       )}
@@ -478,7 +731,7 @@ function StatTile({
       <StatWindowStatsLine
         items={tile.windowStats}
         compact
-        scale={subScale}
+        fontSize={SUB_LINE_PX * subScale}
         testId="stat-tile-window-stats"
       />
     </>
