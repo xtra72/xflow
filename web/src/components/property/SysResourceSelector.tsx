@@ -113,7 +113,7 @@ export function SysResourceSelector({
                 checked={selected.includes(name)}
                 onChange={() => toggle(name)}
                 data-testid={`sysresource-${kind}-option-${name}`}
-                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
               />
               <span className="truncate text-sm text-(--color-text-primary)">{name}</span>
               {!present && (

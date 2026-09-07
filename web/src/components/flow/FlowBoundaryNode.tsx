@@ -46,7 +46,7 @@ export function FlowBoundaryNode({ data, isConnectable }: NodeProps) {
   return (
     <div
       className={cn(
-        'min-w-[120px] rounded-lg border-2 border-dashed bg-white/90 px-2 py-2 shadow-sm',
+        'min-w-[120px] rounded-lg border-2 border-dashed bg-(--color-bg-surface)/90 px-2 py-2 shadow-sm',
         'dark:bg-zinc-900/90',
         isInput
           ? 'border-blue-400 dark:border-blue-500/60'

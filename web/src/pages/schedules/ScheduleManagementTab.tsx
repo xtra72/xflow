@@ -428,7 +428,7 @@ export default function ScheduleManagementTab() {
           className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) py-16 text-center"
           data-testid="schedule-empty"
         >
-          <CalendarClock className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
+          <CalendarClock className="mx-auto h-12 w-12 text-(--color-border-strong)" />
           <p className="mt-4 text-sm text-(--color-text-muted)">등록된 예약 스케줄이 없습니다.</p>
         </div>
       ) : (
@@ -525,7 +525,7 @@ export default function ScheduleManagementTab() {
                               'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-50',
                               rule.enabled
                                 ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/40 dark:text-green-400'
-                                : 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400',
+                                : 'bg-(--color-bg-sunken) text-(--color-text-muted) hover:bg-(--color-bg-sunken)',
                             )}
                           >
                             {rule.enabled ? '활성' : '비활성'}
@@ -596,7 +596,7 @@ export default function ScheduleManagementTab() {
                               data-testid={`schedule-edit-${flowId}-${nodeId}-${rule.index}`}
                               onClick={() => openEdit(row)}
                               aria-label="편집"
-                              className="rounded p-1 text-gray-400 transition-colors hover:text-blue-600"
+                              className="rounded p-1 text-(--color-text-muted) transition-colors hover:text-blue-600"
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </button>
@@ -606,7 +606,7 @@ export default function ScheduleManagementTab() {
                               onClick={() => handleDelete(row)}
                               aria-label="삭제"
                               disabled={saving}
-                              className="rounded p-1 text-gray-400 transition-colors hover:text-red-500 disabled:opacity-50"
+                              className="rounded p-1 text-(--color-text-muted) transition-colors hover:text-red-500 disabled:opacity-50"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>

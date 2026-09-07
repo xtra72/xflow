@@ -1,5 +1,6 @@
 // 헤더 컴포넌트.
-// 페이지 제목, 사용자 정보, WebSocket 연결 상태, 테마 선택, 로그아웃을 표시한다.
+// 페이지 제목, 사용자 정보, WebSocket 연결 상태를 표시한다.
+// 테마 전환 UI 는 두지 않는다 — 설정 → 테마 탭이 유일한 진입점이다.
 // 대시보드 라우트('/')에서는 DashboardPage 가 자체 헤더를 렌더하므로 null 을 반환한다.
 // 디바이스 라우트('/devices')에서는 디바이스 추가 버튼을 표시한다.
 //
@@ -11,7 +12,6 @@
 //
 // @spec SPEC-WEB-006 v0.1.0 (M4)
 
-import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
 import { useAuth } from '@/hooks/useAuth';
@@ -21,8 +21,6 @@ import { useWebSocket } from '@/hooks/useWebSocket';
 import { cn } from '@/lib/utils/cn';
 import { resolveRemoteNodeLabel } from '@/lib/remote/nodeLabel';
 import { useSystemVersion } from '@/services/api/systemUpdate';
-import { ThemeSelector } from '@/components/theme/ThemeSelector';
-import { ThemeEditorModal } from '@/components/theme/ThemeEditorModal';
 import { UpdateAvailableBadge } from '@/components/system/UpdateAvailableBadge';
 import type { ConnectionState } from '@/services/ws/wsClient';
 
@@ -96,7 +94,6 @@ export default function Header() {
   // 관리자만 시스템 업데이트 페이지 접근 가능. authEnabled=false 일 때는
   // 인증 자체가 비활성이므로 항상 활성화한다 (단일-사용자 dev 모드).
   const updateBadgeDisabled = authEnabled ? user?.role !== 'admin' : false;
-  const [editorOpen, setEditorOpen] = useState(false);
 
   // 원격 노드 컨텍스트 제목 — 원격 노드 하위 경로(원격 플로우 편집기 포함)에서는
   // 사이드바 브랜드("XFlow")와 중복되는 폴백 대신 대상 노드 이름을 보여준다.
@@ -154,11 +151,7 @@ export default function Header() {
           }}
         />
 
-        {/* 테마 선택 */}
-        <ThemeSelector onOpenEditor={() => setEditorOpen(true)} />
-
-        {/* 커스텀 테마 에디터 */}
-        <ThemeEditorModal isOpen={editorOpen} onClose={() => setEditorOpen(false)} />
+        {/* 테마 전환 UI 는 두지 않는다 — 설정 → 테마 탭이 유일한 진입점이다. */}
 
         {/* 사용자 메뉴는 사이드바 하단으로 이동했다(SPEC-AUTH-006).
             Header 는 대시보드 라우트에서 null 을 반환하므로, 메뉴가 대시보드

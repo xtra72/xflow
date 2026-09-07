@@ -29,14 +29,14 @@ interface FlowDetailPanelProps {
 function NodeStateBadge({ state }: { state: string }) {
   const colors: Record<string, string> = {
     running: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-    stopped: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
+    stopped: 'bg-(--color-bg-sunken) text-(--color-text-secondary)',
     error: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
   };
   return (
     <span
       className={cn(
         'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-        colors[state] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
+        colors[state] ?? 'bg-(--color-bg-sunken) text-(--color-text-secondary)',
       )}
     >
       {state}
@@ -96,7 +96,7 @@ function NodeLogLevelSelect({ nodeName }: { nodeName: string }) {
       onChange={(e) => handleChange(e.target.value)}
       disabled={updating}
       className={cn(
-        'rounded-md border border-gray-300 px-2 py-1 text-xs',
+        'rounded-md border border-(--color-border-strong) px-2 py-1 text-xs',
         'focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500',
         'border-(--color-border-strong) bg-(--color-bg-surface) text-(--color-text-primary)',
         'disabled:cursor-not-allowed disabled:opacity-50',

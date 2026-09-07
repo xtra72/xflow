@@ -197,7 +197,7 @@ export default function FacilitySchedulePanel({
           ) : (
             <span
               data-testid="facility-badge-stopped"
-              className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+              className="inline-flex items-center gap-1 rounded-full bg-(--color-bg-sunken) px-2 py-1 text-xs font-medium text-(--color-text-muted)"
             >
               <CircleStop className="h-3.5 w-3.5" /> 중지됨
             </span>
@@ -343,7 +343,7 @@ export default function FacilitySchedulePanel({
                         'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-50',
                         rule.enabled
                           ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/40 dark:text-green-400'
-                          : 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400',
+                          : 'bg-(--color-bg-sunken) text-(--color-text-muted) hover:bg-(--color-bg-sunken)',
                       )}
                     >
                       {rule.enabled ? '활성' : '비활성'}
@@ -356,7 +356,7 @@ export default function FacilitySchedulePanel({
                       data-testid={`facility-edit-${rule.index}`}
                       onClick={() => openEdit(rule)}
                       aria-label="편집"
-                      className="rounded p-1 text-gray-400 transition-colors hover:text-blue-600"
+                      className="rounded p-1 text-(--color-text-muted) transition-colors hover:text-blue-600"
                     >
                       <Pencil className="h-3.5 w-3.5" />
                     </button>

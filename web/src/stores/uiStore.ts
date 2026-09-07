@@ -28,6 +28,8 @@ import { STORAGE_ITEMS as SYSMETRICS_STORAGE_ITEMS } from '@/pages/dashboard/pan
 // 시스템 패널의 항목은 값 단위다(cpu.usage_percent 등) — 그룹 키를 쓰면 설정·미리보기가
 // 값 카탈로그와 대조에 실패해 빈 목록이 된다.
 import { DEFAULT_SYSTEM_FIELDS } from '@/pages/dashboard/panels/sysmetrics/sysMetricsFields';
+// 테마 팔레트 오버라이드의 정규화(알 수 없는 키·잘못된 헥스 제거)는 tokens 가 소유한다.
+import { normalizeOverrides, type PresetId, type ThemeTokens } from '@/lib/theme/tokens';
 
 export interface Notification {
   id: string;
@@ -667,8 +669,20 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
 
 // ---- 테마 모드 타입 ----
 
-/** 테마 모드: system(OS 설정 따름) | day(라이트) | night(다크) | custom(사용자 정의) */
-export type ThemeMode = 'system' | 'day' | 'night' | 'custom';
+/**
+ * 테마 모드: system(OS 설정 따름) | day(라이트) | night(다크).
+ *
+ * v6 부터 'custom' 은 별도 모드가 아니다. 라이트·다크 팔레트 각각을
+ * `themeOverrides` 로 편집할 수 있으므로, 커스터마이즈는 모드가 아니라
+ * 모드의 속성이 되었다(설정 → 테마 탭의 컬러 테이블).
+ */
+export type ThemeMode = 'system' | 'day' | 'night';
+
+/** 프리셋별 사용자 팔레트 오버라이드. 값이 없는 토큰은 프리셋 기본값을 쓴다. */
+export type ThemeOverrides = Record<PresetId, ThemeTokens>;
+
+/** 오버라이드 없음(=기본 팔레트 그대로) 상태 */
+export const EMPTY_THEME_OVERRIDES: ThemeOverrides = { day: {}, night: {} };
 
 // ---- 원격 대시보드 렌더 모드 타입 (SPEC-REMOTE-001 M11.4) ----
 
@@ -707,8 +721,8 @@ export const DEFAULT_FLOW_DISPLAY_SETTINGS: FlowDisplaySettings = {
 interface UIState {
   sidebarCollapsed: boolean;
   theme: ThemeMode;
-  /** 커스텀 테마 CSS 변수 토큰 (변수명 -> 값) */
-  customThemeTokens: Record<string, string>;
+  /** 프리셋별 팔레트 오버라이드 (day/night 각각 CSS 변수명 -> 값) */
+  themeOverrides: ThemeOverrides;
   /** 대시보드 자동 갱신 주기 (초 단위). 기본값 10. */
   dashboardRefreshInterval: number;
   /**
@@ -770,8 +784,12 @@ interface UIActions {
   toggleSidebar: () => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   setTheme: (theme: ThemeMode) => void;
-  setCustomThemeTokens: (tokens: Record<string, string>) => void;
-  resetCustomThemeTokens: () => void;
+  /** 한 프리셋의 팔레트 전체를 교체한다(가져오기·에디터 저장). */
+  setThemeOverrides: (preset: PresetId, tokens: ThemeTokens) => void;
+  /** 팔레트의 토큰 하나를 바꾼다(컬러 피커 실시간 편집). */
+  setThemeToken: (preset: PresetId, cssVar: string, value: string) => void;
+  /** 한 프리셋을 기본 팔레트로 되돌린다. */
+  resetThemeOverrides: (preset: PresetId) => void;
 
   // 대시보드 전역 설정
   setDashboardRefreshInterval: (seconds: number) => void;
@@ -913,7 +931,7 @@ export const useUIStore = create<UIState & UIActions>()(
       // ---- State ----
       sidebarCollapsed: false,
       theme: 'system',
-      customThemeTokens: {},
+      themeOverrides: { day: {}, night: {} },
       dashboardRefreshInterval: 10,
       remoteDashboardRenderMode: 'responsive',
       dashboardPages: [{ ...DEFAULT_DASHBOARD_PAGE, panels: [...DEFAULT_PANELS] }],
@@ -947,11 +965,31 @@ export const useUIStore = create<UIState & UIActions>()(
       setTheme: (theme) =>
         set({ theme }),
 
-      setCustomThemeTokens: (tokens) =>
-        set({ customThemeTokens: tokens }),
+      // 저장 전에 정규화한다: 알 수 없는 CSS 변수와 헥스가 아닌 값은 버리고,
+      // 프리셋 기본값과 같은 값은 오버라이드로 남기지 않는다.
+      setThemeOverrides: (preset, tokens) =>
+        set((state) => ({
+          themeOverrides: {
+            ...state.themeOverrides,
+            [preset]: normalizeOverrides(preset, tokens),
+          },
+        })),
 
-      resetCustomThemeTokens: () =>
-        set({ customThemeTokens: {} }),
+      setThemeToken: (preset, cssVar, value) =>
+        set((state) => ({
+          themeOverrides: {
+            ...state.themeOverrides,
+            [preset]: normalizeOverrides(preset, {
+              ...state.themeOverrides[preset],
+              [cssVar]: value,
+            }),
+          },
+        })),
+
+      resetThemeOverrides: (preset) =>
+        set((state) => ({
+          themeOverrides: { ...state.themeOverrides, [preset]: {} },
+        })),
 
       // 대시보드 전역 설정
       setDashboardRefreshInterval: (seconds) =>
@@ -1184,7 +1222,7 @@ export const useUIStore = create<UIState & UIActions>()(
     }),
     {
       name: 'xflow-ui',
-      version: 5,
+      version: 6,
       migrate: (persistedState: unknown, version: number) => {
         const state = persistedState as Record<string, unknown>;
 
@@ -1295,6 +1333,27 @@ export const useUIStore = create<UIState & UIActions>()(
           }
         }
 
+        // v5 -> v6: 'custom' 테마 모드 제거 -> 프리셋별 팔레트 오버라이드로 이전.
+        //
+        // 구 모델의 `customThemeTokens` 는 Day 프리셋을 기반으로 한 단일 팔레트였고,
+        // theme === 'custom' 일 때만 화면에 적용되었다. 그래서 실제로 쓰이고 있던
+        // 경우(=custom 모드였던 사용자)에만 day 오버라이드로 옮기고, 그 외에는
+        // 버린다. 쓰이지도 않던 옛 팔레트를 되살리면 v0.7.0 에서 새로 낮춘 라이트
+        // 밝기가 옛 순백 값으로 되돌아가기 때문이다.
+        if (version < 6) {
+          const legacy = state.customThemeTokens;
+          const wasCustom = state.theme === 'custom';
+          if (wasCustom) state.theme = 'day';
+          state.themeOverrides = {
+            day:
+              wasCustom && legacy && typeof legacy === 'object'
+                ? normalizeOverrides('day', legacy as ThemeTokens)
+                : {},
+            night: {},
+          };
+          delete state.customThemeTokens;
+        }
+
         return state as unknown as UIState & UIActions;
       },
       // 대시보드 관련 키는 partialize 에서 제외한다.
@@ -1306,7 +1365,7 @@ export const useUIStore = create<UIState & UIActions>()(
       partialize: (state) => ({
         sidebarCollapsed: state.sidebarCollapsed,
         theme: state.theme,
-        customThemeTokens: state.customThemeTokens,
+        themeOverrides: state.themeOverrides,
         editorSnapToGrid: state.editorSnapToGrid,
         editorSnapGridSize: state.editorSnapGridSize,
         flowDisplaySettings: state.flowDisplaySettings,

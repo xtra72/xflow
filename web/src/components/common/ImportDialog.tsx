@@ -441,7 +441,7 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
             type="button"
             onClick={onClose}
             disabled={isImporting}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 disabled:opacity-50 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary) disabled:opacity-50"
             aria-label={t('common.close')}
           >
             <X className="h-5 w-5" />
@@ -460,7 +460,7 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
               'flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors',
               isDragOver
                 ? 'border-blue-400 bg-blue-50 dark:border-blue-500 dark:bg-blue-900/20'
-                : 'border-(--color-border-strong) bg-gray-50 hover:border-gray-400 dark:bg-gray-700/50 dark:hover:border-gray-500',
+                : 'border-(--color-border-strong) bg-(--color-bg-secondary) hover:border-(--color-text-muted)',
             )}
           >
             <Upload className="h-8 w-8 text-(--color-text-muted)" />
@@ -566,7 +566,7 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
                         'flex items-center gap-2.5 rounded-md border p-2.5',
                         agent.type
                           ? 'border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20'
-                          : 'border-(--color-border-default) bg-gray-50 dark:bg-gray-700/50',
+                          : 'border-(--color-border-default) bg-(--color-bg-secondary)',
                       )}
                     >
                       <div className="min-w-0 flex-1">
@@ -601,7 +601,7 @@ export default function ImportDialog({ open, onClose, type, onImportSuccess }: I
                                 handleResolutionChange(index, val);
                               }
                             }}
-                            className="mt-1.5 w-full rounded border border-amber-300 bg-white px-2 py-1 text-xs text-(--color-text-primary) focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 dark:border-amber-700 dark:bg-gray-800"
+                            className="mt-1.5 w-full rounded border border-amber-300 bg-(--color-bg-surface) px-2 py-1 text-xs text-(--color-text-primary) focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 dark:border-amber-700"
                           >
                             {options.map((opt) => (
                               <option key={opt.name} value={opt.name}>

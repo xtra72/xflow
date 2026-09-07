@@ -185,7 +185,9 @@ describe('FacilityGroupPanel (config-driven single group, AC 6.5)', () => {
     // offlineAsOff true → 꺼짐 + OFF 버튼 활성 강조.
     renderPanel({ agentId: 'a1', groupId: 'custom:floor2', offlineAsOff: true });
     expect(screen.getByTestId('facility-device-status-d1')).toHaveTextContent('dashboard.facility.device.off');
-    expect(screen.getByTestId('facility-device-power-off-d1').className).toContain('ring-slate-500');
+    expect(screen.getByTestId('facility-device-power-off-d1').className).toContain(
+      'ring-(--color-text-muted)',
+    );
   });
 
   it('fan-out 응답의 멤버별 ok/timeout/error 요약 + 실패 상세를 렌더한다(REQ-06-02)', () => {

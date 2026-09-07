@@ -39,7 +39,7 @@ interface RemoteLogFrame {
 
 /** 레벨별 뱃지 스타일 */
 const LEVEL_STYLES: Record<LogLevel, string> = {
-  DEBUG: 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
+  DEBUG: 'bg-(--color-bg-sunken) text-(--color-text-secondary)',
   INFO: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300',
   WARN: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300',
   ERROR: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
@@ -344,7 +344,7 @@ export default function LogPanel({
             ref={settingsButtonRef}
             type="button"
             onClick={() => setSettingsOpen(!settingsOpen)}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             style={acColor('header') ? { color: acColor('header')! } : undefined}
             aria-label={t('dashboard.logPanel.settingsAria')}
           >
@@ -479,7 +479,7 @@ export default function LogPanel({
                   className={`relative flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border-2 transition-transform hover:scale-110 ${
                     panelColor && !LOG_COLOR_PRESETS.includes(panelColor)
                       ? 'border-white ring-2 ring-blue-500'
-                      : 'border-dashed border-gray-300 dark:border-gray-600'
+                      : 'border-dashed border-(--color-border-strong)'
                   }`}
                   style={
                     panelColor && !LOG_COLOR_PRESETS.includes(panelColor)
@@ -489,7 +489,7 @@ export default function LogPanel({
                   title={t('dashboard.logPanel.pickCustom')}
                 >
                   {!(panelColor && !LOG_COLOR_PRESETS.includes(panelColor)) && (
-                    <Palette className="h-2.5 w-2.5 text-gray-400" />
+                    <Palette className="h-2.5 w-2.5 text-(--color-text-muted)" />
                   )}
                   <input
                     type="color"
@@ -503,7 +503,7 @@ export default function LogPanel({
                   <button
                     type="button"
                     onClick={() => handlePanelColorChange(undefined)}
-                    className="flex h-5 w-5 items-center justify-center rounded-full border-2 border-gray-300 text-gray-400 transition-transform hover:scale-110 dark:border-gray-600"
+                    className="flex h-5 w-5 items-center justify-center rounded-full border-2 border-(--color-border-strong) text-(--color-text-muted) transition-transform hover:scale-110"
                     title={t('dashboard.logPanel.reset')}
                   >
                     <X className="h-2.5 w-2.5" />

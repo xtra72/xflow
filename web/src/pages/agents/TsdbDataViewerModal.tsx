@@ -926,7 +926,7 @@ function SeriesDataViewerModalImpl({
             type="button"
             onClick={onClose}
             disabled={mutation.isPending}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 disabled:opacity-50 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary) disabled:opacity-50"
             aria-label={t('common.close')}
           >
             <X className="h-5 w-5" />
@@ -1189,7 +1189,7 @@ function SeriesDataViewerModalImpl({
                         value={opt.value}
                         checked={aggregation === opt.value}
                         onChange={() => setAggregation(opt.value)}
-                        className="h-3.5 w-3.5 border-gray-300 text-blue-600"
+                        className="h-3.5 w-3.5 border-(--color-border-strong) text-blue-600"
                       />
                       {t(opt.labelKey)}
                     </label>

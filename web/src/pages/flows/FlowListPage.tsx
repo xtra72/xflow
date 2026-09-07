@@ -52,7 +52,7 @@ const STATUS_CONFIG: Record<string, { labelKey: string; color: string; icon: Rea
   },
   stopped: {
     labelKey: 'status.stopped',
-    color: 'text-gray-600 dark:text-gray-400',
+    color: 'text-(--color-text-secondary)',
     icon: <CircleStop className="h-4 w-4" />,
   },
   error: {
@@ -391,7 +391,7 @@ export default function FlowListPage({
       {/* 테이블 또는 빈 상태 */}
       {filteredFlows.length === 0 ? (
         <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) py-16 text-center">
-          <Workflow className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
+          <Workflow className="mx-auto h-12 w-12 text-(--color-border-strong)" />
           <p className="mt-4 text-sm text-(--color-text-muted)">
             {allFlows.length === 0
               ? t('flows.emptyTitle')
@@ -434,7 +434,7 @@ export default function FlowListPage({
                 ))}
               </select>
               <span>{t('common.pagination.unit')}</span>
-              <span className="ml-2 text-gray-400">|</span>
+              <span className="ml-2 text-(--color-text-muted)">|</span>
               <span className="ml-2">
                 {t('common.pagination.range')
                   .replace('{total}', String(totalItems))
@@ -565,7 +565,7 @@ function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate, onAutoSta
         className="cursor-pointer transition-colors hover:bg-(--color-bg-elevated)"
       >
         {/* 확장 아이콘 */}
-        <td className="px-3 py-3 text-gray-400">
+        <td className="px-3 py-3 text-(--color-text-muted)">
           {isExpanded ? (
             <ChevronDown className="h-4 w-4" />
           ) : (
@@ -625,11 +625,11 @@ function FlowRow({ flow, isExpanded, onToggle, onNavigate, formatDate, onAutoSta
                 onAutoStartToggle(flow);
               }}
               className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                flow.auto_start ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
+                flow.auto_start ? 'bg-blue-600' : 'bg-(--color-border-strong)'
               }`}
             >
               <span
-                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-(--color-bg-surface) transition-transform ${
                   flow.auto_start ? 'translate-x-4.5' : 'translate-x-0.5'
                 }`}
               />

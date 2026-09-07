@@ -342,7 +342,7 @@ function CheckboxField({
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
       />
       <span className="flex items-center">
         {label}

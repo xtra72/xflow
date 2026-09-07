@@ -15,9 +15,9 @@ import { RegisterMapEditor } from './RegisterMapEditor';
 const inputClass = cn(
   'w-full rounded-md border px-2.5 py-1.5 text-sm',
   'border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-primary)',
-  'placeholder:text-gray-400',
+  'placeholder:text-(--color-text-muted)',
   'focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400',
-  'dark:placeholder:text-gray-500 dark:focus:border-blue-500',
+  ' dark:focus:border-blue-500',
 );
 
 // readOnly 스타일.

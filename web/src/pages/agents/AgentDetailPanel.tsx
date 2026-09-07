@@ -1321,9 +1321,9 @@ function RegisterMapTable({ registerMap }: { registerMap: ModbusDeviceDetail['re
               className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-medium text-(--color-text-secondary) hover:bg-(--color-bg-elevated)"
             >
               {isExpanded ? (
-                <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-gray-400" />
+                <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-(--color-text-muted)" />
               ) : (
-                <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-gray-400" />
+                <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-(--color-text-muted)" />
               )}
               <span>{label}</span>
               <span className="ml-auto rounded-full bg-(--color-bg-elevated) px-1.5 py-0.5 text-[10px] font-normal text-(--color-text-muted)">
@@ -2091,7 +2091,7 @@ function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
                         onClick={() => setEditTarget({ mode: 'edit', device })}
                         aria-label={t('agents.detail.devices.modbusEditTooltip')}
                         title={t('agents.detail.devices.modbusEditTooltip')}
-                        className="rounded p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
+                        className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
@@ -2100,7 +2100,7 @@ function ModbusClientDevicesSection({ agentId }: { agentId: string }) {
                         onClick={() => setRemoveTarget(device)}
                         aria-label={t('agents.detail.devices.modbusRemoveTooltip')}
                         title={t('agents.detail.devices.modbusRemoveTooltip')}
-                        className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                        className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -4241,7 +4241,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
       {/* 디바이스 목록 (테이블) */}
       {devices.length === 0 ? (
         <div className="p-6 text-center">
-          <HardDrive className="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600" />
+          <HardDrive className="mx-auto h-8 w-8 text-(--color-border-strong)" />
           <p className="mt-2 text-sm text-(--color-text-muted)">
             {t('agents.detail.devices.noDevices')}
           </p>
@@ -4319,7 +4319,7 @@ function DevicesTab({ agentId, agentType }: { agentId: string; agentType: string
                                 });
                               }}
                               disabled={deleteDevice.isPending}
-                              className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
+                              className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
                               title={t('agents.detail.devices.removeTooltip')}
                               aria-label={t('agents.detail.devices.removeTooltip')}
                             >

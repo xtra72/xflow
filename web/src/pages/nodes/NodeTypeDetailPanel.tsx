@@ -132,7 +132,7 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
                       {field.required ? (
                         <span className="text-red-600 dark:text-red-400 font-medium">Y</span>
                       ) : (
-                        <span className="text-gray-400">-</span>
+                        <span className="text-(--color-text-muted)">-</span>
                       )}
                     </td>
                     <td className="py-2 pr-4 font-mono text-(--color-text-muted)">
@@ -205,7 +205,7 @@ export default function NodeTypeDetailPanel({ nodeType }: NodeTypeDetailPanelPro
         </h4>
         {instancesLoading ? (
           <div className="flex items-center gap-2 py-2">
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" />
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-(--color-border-strong) border-t-blue-600" />
             <span className="text-sm text-(--color-text-muted)">{t('common.loading')}</span>
           </div>
         ) : instances.length === 0 ? (

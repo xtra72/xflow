@@ -74,11 +74,11 @@ const addButton = cn(
   'dark:hover:border-blue-500 dark:hover:text-blue-400',
 );
 const iconButton = cn(
-  'shrink-0 rounded p-1 text-gray-400 transition-colors',
+  'shrink-0 rounded p-1 text-(--color-text-muted) transition-colors',
   'hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)',
 );
 const removeButton = cn(
-  'shrink-0 rounded p-1 text-gray-400 transition-colors',
+  'shrink-0 rounded p-1 text-(--color-text-muted) transition-colors',
   'hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400',
 );
 const primaryButton =
@@ -185,7 +185,7 @@ function ModalShell({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             aria-label={closeLabel}
           >
             <X className="h-4 w-4" />

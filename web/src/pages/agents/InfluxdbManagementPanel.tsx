@@ -324,7 +324,7 @@ export default function InfluxdbManagementPanel({
           !bucketsQuery.isError && (
             <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) p-6 text-center">
               <Database
-                className="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600"
+                className="mx-auto h-8 w-8 text-(--color-border-strong)"
                 aria-hidden="true"
               />
               <p className="mt-2 text-sm text-(--color-text-muted)">

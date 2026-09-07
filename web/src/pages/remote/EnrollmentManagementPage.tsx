@@ -183,7 +183,7 @@ export default function EnrollmentManagementPage(): React.JSX.Element {
             data-testid="enrollment-nodes-empty"
             className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) py-12 text-center"
           >
-            <UserCheck className="mx-auto h-10 w-10 text-gray-300 dark:text-gray-600" aria-hidden="true" />
+            <UserCheck className="mx-auto h-10 w-10 text-(--color-border-strong)" aria-hidden="true" />
             <p className="mt-3 text-sm text-(--color-text-muted)">{t('remote.noNodes')}</p>
           </div>
         ) : (

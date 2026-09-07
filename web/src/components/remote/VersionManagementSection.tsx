@@ -199,7 +199,7 @@ export function VersionManagementSection({
               checked={restart}
               onChange={(e) => setRestart(e.target.checked)}
               data-testid="update-restart-checkbox"
-              className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+              className="h-3.5 w-3.5 rounded border-(--color-border-strong) text-blue-600"
             />
             {t('remote.version.restart')}
           </label>

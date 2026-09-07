@@ -46,118 +46,93 @@
 }
 
 /* ---------------------------------------------------------------------------
- * Day 프리셋 기본값.
- * :root에 Day 프리셋을 적용하여 data-theme 속성이 없어도 라이트 모드가 동작한다.
+ * 기본 팔레트 (Light / Day).
  *
- * v0.6.0: 페이지 배경(`bg-primary`)을 슬레이트 100(`#f1f5f9`)로 어둡게 조정.
- * 기존 `#f9fafb` 는 패널 배경(`#ffffff`)과의 대비가 너무 약해 라이트 모드에서
- * 패널이 배경에 묻혀 보이는 문제가 있었다.
+ * `:root` 에도 함께 적용해 data-theme 속성이 붙기 전(첫 페인트)에도 라이트
+ * 팔레트가 동작하게 한다. 값의 단일 원천은 `lib/theme/tokens.ts` 이며
+ * `tokens.cssParity.test.ts` 가 이 블록과 프리셋이 어긋나지 않았는지 검증한다.
  * --------------------------------------------------------------------------- */
-:root {
-  --color-bg-primary: #f1f5f9;
-  --color-bg-secondary: #ffffff;
-  --color-bg-surface: #ffffff;
-  --color-bg-elevated: #ffffff;
-  --color-bg-sunken: #e2e8f0;
-
-  --color-text-primary: #111827;
-  --color-text-secondary: #374151;
-  --color-text-muted: #6b7280;
-  --color-text-inverse: #ffffff;
-
-  --color-border-default: #e5e7eb;
-  --color-border-subtle: #f3f4f6;
-  --color-border-strong: #d1d5db;
-
-  --color-status-running: #22c55e;
-  --color-status-stopped: #6b7280;
-  --color-status-error: #ef4444;
-  --color-status-warning: #eab308;
-  --color-status-info: #3b82f6;
-
-  --color-interactive-primary: #3b82f6;
-  --color-interactive-hover: #2563eb;
-  --color-interactive-active: #1d4ed8;
-  --color-interactive-muted: #93c5fd;
-}
-
-/* ---------------------------------------------------------------------------
- * Day 테마 명시 셀렉터.
- * data-theme="day" 속성이 설정된 경우 Day 프리셋을 적용한다.
- * --------------------------------------------------------------------------- */
+:root,
 [data-theme="day"] {
-  --color-bg-primary: #f1f5f9;
-  --color-bg-secondary: #ffffff;
-  --color-bg-surface: #ffffff;
-  --color-bg-elevated: #ffffff;
-  --color-bg-sunken: #e2e8f0;
+  /* 배경 — 아래로 갈수록 밝다 */
+  --color-bg-sunken: #e2e6ec; /* 입력창 · 테이블 헤더 */
+  --color-bg-primary: #eceff4; /* 페이지 바탕 */
+  --color-bg-secondary: #f4f6f9; /* 사이드바 · 헤더 */
+  --color-bg-surface: #fbfcfe; /* 카드 · 패널 */
+  --color-bg-elevated: #ffffff; /* 모달 · 드롭다운 */
 
-  --color-text-primary: #111827;
-  --color-text-secondary: #374151;
-  --color-text-muted: #6b7280;
-  --color-text-inverse: #ffffff;
+  /* 텍스트 */
+  --color-text-primary: #111827; /* gray-900 */
+  --color-text-secondary: #374151; /* gray-700 */
+  --color-text-muted: #6b7280; /* gray-500 */
+  --color-text-inverse: #ffffff; /* white */
 
-  --color-border-default: #e5e7eb;
-  --color-border-subtle: #f3f4f6;
-  --color-border-strong: #d1d5db;
+  /* 테두리 */
+  --color-border-default: #dfe3e9;
+  --color-border-subtle: #eaedf2;
+  --color-border-strong: #c9cfd8;
 
-  --color-status-running: #22c55e;
-  --color-status-stopped: #6b7280;
-  --color-status-error: #ef4444;
-  --color-status-warning: #eab308;
-  --color-status-info: #3b82f6;
+  /* 상태 */
+  --color-status-running: #16a34a; /* green-600 */
+  --color-status-stopped: #6b7280; /* gray-500 */
+  --color-status-error: #dc2626; /* red-600 */
+  --color-status-warning: #ca8a04; /* yellow-600 */
+  --color-status-info: #2563eb; /* blue-600 */
 
-  --color-interactive-primary: #3b82f6;
-  --color-interactive-hover: #2563eb;
-  --color-interactive-active: #1d4ed8;
-  --color-interactive-muted: #93c5fd;
+  /* 인터랙티브 */
+  --color-interactive-primary: #2563eb; /* blue-600 */
+  --color-interactive-hover: #1d4ed8; /* blue-700 */
+  --color-interactive-active: #1e40af; /* blue-800 */
+  --color-interactive-muted: #dbeafe; /* blue-100 — 선택 행 배경 */
 }
 
 /* ---------------------------------------------------------------------------
- * Night 테마 셀렉터.
- * data-theme="night" 속성이 설정된 경우 Night 프리셋을 적용한다.
- * 기존 dark: Tailwind 클래스와의 하위호환을 위해 유지한다.
+ * Dark / Night 팔레트.
+ * `:root` 와 특정성이 같고 뒤에 오므로 data-theme="night" 일 때 덮어쓴다.
  * --------------------------------------------------------------------------- */
 [data-theme="night"] {
-  --color-bg-primary: #111827;
-  --color-bg-secondary: #1f2937;
-  --color-bg-surface: #1f2937;
-  --color-bg-elevated: #374151;
-  --color-bg-sunken: #030712;
+  /* 배경 — 아래로 갈수록 밝다 */
+  --color-bg-sunken: #030712; /* gray-950 */
+  --color-bg-primary: #111827; /* gray-900 */
+  --color-bg-secondary: #1a2333;
+  --color-bg-surface: #1f2937; /* gray-800 */
+  --color-bg-elevated: #374151; /* gray-700 */
 
-  --color-text-primary: #f3f4f6;
-  --color-text-secondary: #d1d5db;
-  --color-text-muted: #9ca3af;
-  --color-text-inverse: #111827;
+  /* 텍스트 */
+  --color-text-primary: #f3f4f6; /* gray-100 */
+  --color-text-secondary: #d1d5db; /* gray-300 */
+  --color-text-muted: #9ca3af; /* gray-400 */
+  --color-text-inverse: #111827; /* gray-900 */
 
-  --color-border-default: #374151;
-  --color-border-subtle: #1f2937;
-  --color-border-strong: #4b5563;
+  /* 테두리 */
+  --color-border-default: #374151; /* gray-700 */
+  --color-border-subtle: #1f2937; /* gray-800 */
+  --color-border-strong: #4b5563; /* gray-600 */
 
-  --color-status-running: #22c55e;
-  --color-status-stopped: #9ca3af;
-  --color-status-error: #f87171;
-  --color-status-warning: #facc15;
-  --color-status-info: #60a5fa;
+  /* 상태 */
+  --color-status-running: #22c55e; /* green-500 */
+  --color-status-stopped: #9ca3af; /* gray-400 */
+  --color-status-error: #f87171; /* red-400 */
+  --color-status-warning: #facc15; /* yellow-400 */
+  --color-status-info: #60a5fa; /* blue-400 */
 
-  --color-interactive-primary: #3b82f6;
-  --color-interactive-hover: #60a5fa;
-  --color-interactive-active: #93c5fd;
-  --color-interactive-muted: #1e40af;
+  /* 인터랙티브 */
+  --color-interactive-primary: #3b82f6; /* blue-500 */
+  --color-interactive-hover: #60a5fa; /* blue-400 */
+  --color-interactive-active: #93c5fd; /* blue-300 */
+  --color-interactive-muted: #1e3a8a; /* blue-900 — 선택 행 배경 */
 }
 
 /*
- * 다크 모드 기본 스타일.
- * Tailwind의 dark: 변형과 함께 사용된다.
- * useTheme 훅이 <html> 요소에 'dark' 클래스를 토글한다.
- * 마이그레이션 기간 동안 하위호환을 위해 유지한다.
+ * 앱 기본 스타일.
+ * 배경/글자색은 팔레트 토큰을 따르므로 day/night/사용자 오버라이드에 함께 반응한다.
  */
 @layer base {
   body {
     @apply bg-(--color-bg-primary) text-(--color-text-primary) antialiased;
   }
 
-  /* 스크롤바 기본 스타일 */
+  /* 스크롤바 기본 스타일 — 팔레트의 강조 테두리 색을 쓴다 */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -168,11 +143,8 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply rounded-full bg-gray-300;
-  }
-
-  [data-theme="night"] ::-webkit-scrollbar-thumb {
-    @apply bg-gray-600;
+    border-radius: 9999px;
+    background: var(--color-border-strong);
   }
 }
 

@@ -251,7 +251,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   // shared(미지정 기본)이면, 참조 플로우의 단일 실행 인스턴스에 라이브 연결되는
   // 로컬 브릿지다 — 원격 브릿지와 일관된 시각 언어(노드 타입 뒤 상태 점)로,
   // 단 색/아이콘으로 로컬(공유)임을 구분해 표시한다.
-  //   instance 모드(인라인 확장)·미선택 flow-node 는 인디케이터를 표시하지 않는다.
+  // instance 모드(인라인 확장)·미선택 flow-node 는 인디케이터를 표시하지 않는다.
   // 상태 매핑은 원격과 동일한 mapRuntimeStateToBridgeStatus(런타임 state 기반)를
   // 재사용한다(미실행 → 'unknown' → 오프라인 의미의 정적 인디케이터).
   const flowNodeMode = isFlowNode ? getFlowNodeMode(nodeData.mode) : 'shared';
@@ -420,7 +420,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
     <div
       data-tapped={isTapped ? 'true' : 'false'}
       className={cn(
-        'relative flex flex-col rounded-lg border bg-white px-3 py-2 shadow-sm',
+        'relative flex flex-col rounded-lg border bg-(--color-bg-surface) px-3 py-2 shadow-sm',
         'dark:bg-zinc-900 dark:border-zinc-700',
         // 2026-05-31: min-h 로 카드 크기를 고정하고 포트 row 들이 vertical center
         // 정렬되도록 한다. 1 port 와 2 port 노드의 첫 포트 위치가 시각적으로

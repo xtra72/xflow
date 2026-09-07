@@ -59,9 +59,9 @@ interface FormFieldProps {
 const inputClass = cn(
   'w-full rounded-md border px-2.5 py-1.5 text-sm',
   'border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-primary)',
-  'placeholder:text-gray-400',
+  'placeholder:text-(--color-text-muted)',
   'focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400',
-  'dark:placeholder:text-gray-500 dark:focus:border-blue-500',
+  ' dark:focus:border-blue-500',
 );
 
 /** 에러 상태 스타일 */
@@ -205,9 +205,9 @@ export function FormField({ field, value, onChange, error, agentName, flowName, 
             onChange={(e) => onChange(e.target.checked)}
             disabled={readOnly}
             className={cn(
-              'h-4 w-4 rounded border-gray-300 text-blue-500',
+              'h-4 w-4 rounded border-(--color-border-strong) text-blue-500',
               'focus:ring-2 focus:ring-blue-400',
-              'dark:border-gray-600 dark:bg-gray-800',
+              'bg-(--color-bg-elevated)',
               readOnly && 'opacity-60 cursor-not-allowed',
             )}
             {...ariaProps}
@@ -826,7 +826,7 @@ function FlowPickerInput({
               'flex shrink-0 items-center justify-center rounded-md border px-2 py-1.5',
               'border-(--color-border-default) bg-(--color-bg-surface)',
               'text-(--color-text-secondary) transition-colors',
-              'hover:bg-gray-50 dark:hover:bg-gray-700',
+              'hover:bg-(--color-bg-secondary)',
               value === '' && 'cursor-not-allowed opacity-50',
             )}
           >

@@ -22,7 +22,7 @@ interface FlowSearchFilterProps {
 /** 상태 필터 옵션 (아이콘 기반) — label 은 i18n 키로 저장하고 렌더 시 t() 변환 */
 const STATUS_OPTIONS = [
   { value: 'running', labelKey: 'flows.filter.statusRunning', icon: <Activity className="h-3.5 w-3.5" />, color: 'text-green-600 dark:text-green-400', activeColor: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' },
-  { value: 'stopped', labelKey: 'flows.filter.statusStopped', icon: <CircleStop className="h-3.5 w-3.5" />, color: 'text-gray-500 dark:text-gray-400', activeColor: 'bg-gray-100 text-gray-700 dark:bg-gray-700/30 dark:text-gray-300' },
+  { value: 'stopped', labelKey: 'flows.filter.statusStopped', icon: <CircleStop className="h-3.5 w-3.5" />, color: 'text-(--color-text-muted)', activeColor: 'bg-(--color-bg-sunken) text-(--color-text-secondary)' },
   { value: 'error', labelKey: 'flows.filter.statusError', icon: <AlertTriangle className="h-3.5 w-3.5" />, color: 'text-red-500 dark:text-red-400', activeColor: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
   { value: 'stored', labelKey: 'flows.filter.statusStored', icon: <FileText className="h-3.5 w-3.5" />, color: 'text-blue-500 dark:text-blue-400', activeColor: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
   { value: 'loaded', labelKey: 'flows.filter.statusLoaded', icon: <Rocket className="h-3.5 w-3.5" />, color: 'text-yellow-500 dark:text-yellow-400', activeColor: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' },
@@ -43,13 +43,13 @@ export default function FlowSearchFilter({
     <div className="flex items-center gap-3">
       {/* 검색 입력 */}
       <div className="relative flex-1">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-text-muted)" />
         <input
           type="text"
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder={t('flows.filter.searchPlaceholder')}
-          className="w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) py-2 pl-9 pr-3 text-sm text-(--color-text-primary) placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) py-2 pl-9 pr-3 text-sm text-(--color-text-primary) placeholder-(--color-text-muted) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
       </div>
 

@@ -60,7 +60,7 @@ function ResultBadge({ log }: { log: MergedScheduleLog }) {
   if (!log.hasResult) {
     return (
       <span
-        className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+        className="inline-flex items-center rounded-full bg-(--color-bg-sunken) px-2 py-0.5 text-[10px] font-medium text-(--color-text-muted)"
         data-testid={`log-result-pending-${log.correlationId}`}
       >
         결과 없음
@@ -328,7 +328,7 @@ export default function ScheduleLogTab() {
           className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) py-16 text-center"
           data-testid="schedule-log-empty"
         >
-          <ScrollText className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" aria-hidden="true" />
+          <ScrollText className="mx-auto h-12 w-12 text-(--color-border-strong)" aria-hidden="true" />
           <p className="mt-4 text-sm text-(--color-text-muted)">표시할 실행 로그가 없습니다.</p>
         </div>
       ) : (
