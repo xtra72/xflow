@@ -99,21 +99,19 @@ describe('usePanelTitleStyle', () => {
     expect(screen.getByTestId('style-probe').getAttribute('style')).toBeNull();
   });
 
-  it('Provider 가 config 의 title_font 를 전파한다', () => {
+  // 타이틀 글자 설정(`title_font`)은 걷어냈다. 저장된 대시보드에 값이 남아 있어도
+  // **읽지 않는다** — 읽으면 설정 화면에서 되돌릴 수 없는 모양이 화면에만 남는다.
+  it('저장된 title_font 가 있어도 전파하지 않는다 — 패널 기본 모양으로 돌아간다', () => {
     render(
       <PanelChromeProvider config={{ title_font: { size: 18, weight: 'bold' } }}>
         <StyleProbe />
       </PanelChromeProvider>,
     );
-    const style = screen.getByTestId('style-probe').getAttribute('style') ?? '';
-    expect(style).toContain('font-size: 18px');
-    expect(style).toContain('font-weight: bold');
+    expect(screen.getByTestId('style-probe').getAttribute('style')).toBeNull();
   });
 
   it('readPanelChrome 도 같은 값을 만든다 — 두 경로가 갈리지 않는다', () => {
-    expect(readPanelChrome({ title_font: { size: 18 } }).titleStyle).toEqual(
-      resolvePanelTitleStyle({ size: 18 }),
-    );
+    expect(readPanelChrome({ title_font: { size: 18 } }).titleStyle).toBeUndefined();
   });
 });
 

@@ -1052,14 +1052,10 @@
       "gaugeType": "Gauge shape",
       "min": "Min",
       "max": "Max",
-      "titleTextStyle": "Title text",
       "previewResetLayout": "Reset layout",
       "listPanel": {
-        "tableHeaderStyle": "Table header text",
-        "tableCellStyle": "Table cell text",
         "summaryBadges": "Summary badges",
         "showSummaryBadges": "Show summary badges",
-        "badgeStyle": "Badge text",
         "tileBackground": "Tile background"
       },
       "agentStatusOpt": {

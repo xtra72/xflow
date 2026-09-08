@@ -1052,14 +1052,10 @@
       "gaugeType": "게이지 모양",
       "min": "최소",
       "max": "최대",
-      "titleTextStyle": "타이틀 글자",
       "previewResetLayout": "배치 초기화",
       "listPanel": {
-        "tableHeaderStyle": "표 머리글 글자",
-        "tableCellStyle": "표 본문 글자",
         "summaryBadges": "요약 배지",
         "showSummaryBadges": "요약 배지 표시",
-        "badgeStyle": "배지 글자",
         "tileBackground": "타일 배경"
       },
       "agentStatusOpt": {

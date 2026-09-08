@@ -17,6 +17,7 @@
 
 import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react';
 
+import { FieldHelp } from '@/components/property/FieldHelp';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
@@ -267,16 +268,17 @@ export default function CanvasRuleTableEditor({
 
   return (
     <div className="space-y-2" data-testid="canvas-rule-table">
-      {/* 이 표에서 새로 배우는 개념은 이 한 줄뿐이다. */}
-      <p className={HINT_CLASS}>
-        {t('dashboard.canvas.rules.firstMatchWins')}
-      </p>
-
-      {/* 열 이름 — 명세의 `[조건] → [패치]` 표기를 그대로 화면에 옮긴다. */}
+      {/* 열 이름 — 명세의 `[조건] → [패치]` 표기를 그대로 화면에 옮긴다.
+          이 표에서 새로 배우는 개념(위에서부터 처음 일치하는 행 하나)은 그 열 이름 뒤
+          `?` 에 담는다 — 줄로 깔면 요소를 펼칠 때마다 표 위에 안내문이 한 줄씩 선다. */}
       <div className="flex items-center gap-1 px-1 text-xs font-medium text-(--color-text-muted)">
         <span>{t('dashboard.canvas.rules.headerCondition')}</span>
         <span aria-hidden="true">→</span>
         <span>{t('dashboard.canvas.rules.headerPatch')}</span>
+        <FieldHelp
+          text={t('dashboard.canvas.rules.firstMatchWins')}
+          testId="canvas-rule-order-help"
+        />
       </div>
 
       {disabled && (

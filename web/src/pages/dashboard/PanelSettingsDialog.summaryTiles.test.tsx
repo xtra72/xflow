@@ -581,6 +581,8 @@ describe('디바이스 상태와 같은 구성', () => {
   });
 })
 
+// 배지 글자 모양 설정(`badge_font`)은 걷어냈다(의도한 기능 삭제). 남은 것은 표시
+// 여부 토글뿐이며, 배지는 상태별 기본 색으로 그린다.
 describe('배지 글자 설정 자리', () => {
   beforeEach(() => {
     storeMock.panel = {
@@ -591,17 +593,14 @@ describe('배지 글자 설정 자리', () => {
     };
   });
 
-  it('배지 표시 바로 뒤에 있다 — 따로 놓인 "배지 글자" 줄은 없다', () => {
+  it('배지 표시 토글만 남는다 — 글자 모양 팝업이 없다', () => {
     renderDialog();
-    const toggle = screen.getByTestId('agent-status-show-badges');
-    const design = screen.getByTestId('badge-design-button');
-    expect(toggle.compareDocumentPosition(design) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // 공통 속성보다는 앞이다.
-    const common = screen.getByTestId('agent-status-common-button');
-    expect(design.compareDocumentPosition(common) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId('agent-status-show-badges')).toBeInTheDocument();
+    expect(screen.queryByTestId('badge-design-button')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('badge-font-size')).not.toBeInTheDocument();
   });
 
-  it('배지를 끄면 글자 설정도 감춘다 — 감춘 배지에는 걸 곳이 없다', () => {
+  it('배지를 꺼도 켜도 글자 모양 팝업은 나오지 않는다', () => {
     storeMock.panel = {
       id: 'p1',
       type: 'agent-status',
@@ -610,13 +609,6 @@ describe('배지 글자 설정 자리', () => {
     };
     renderDialog();
     expect(screen.queryByTestId('badge-design-button')).not.toBeInTheDocument();
-  });
-
-  it('배지 글자 설정은 그대로 저장된다', () => {
-    renderDialog();
-    fireEvent.click(screen.getByTestId('badge-design-button'));
-    fireEvent.change(screen.getByTestId('badge-font-size'), { target: { value: '14' } });
-    expect(savedConfig().badge_font).toMatchObject({ size: 14 });
   });
 })
 

@@ -350,12 +350,12 @@ describe('플로우 현황 — 디자인 설정은 한 곳씩', () => {
     );
   }
 
-  it('타이틀 색을 정할 곳은 타이틀 디자인뿐이다 — 스타일 섹션에 중복 항목이 없다', () => {
+  // 타이틀·테이블·요약 배지의 글자 모양 설정은 **걷어냈다**(의도한 기능 삭제).
+  // 남은 것은 표시 여부 토글뿐이며, 글자 모양은 각 패널의 기본값이 그대로 산다.
+  it('타이틀 글자 모양을 정하는 자리가 없다 — 스타일 섹션도 그대로 없다', () => {
     renderFlows();
 
-    // 종전에는 악센트 header 그룹이 타이틀 색을 함께 정해, 두 곳 중 어느 쪽이 이기는지
-    // 알 수 없었다.
-    expect(screen.getByTestId('panel-title-design-button')).toBeInTheDocument();
+    expect(screen.queryByTestId('panel-title-design-button')).not.toBeInTheDocument();
     expect(screen.queryByTestId('accent-group-header')).not.toBeInTheDocument();
   });
 
@@ -367,38 +367,22 @@ describe('플로우 현황 — 디자인 설정은 한 곳씩', () => {
     expect(screen.queryByTestId('accent-group-picker')).not.toBeInTheDocument();
   });
 
-  it('컬럼 디자인은 컬럼 설정 안의 디자인 팝업에 있다 — 헤더와 요소를 따로 정한다', () => {
+  it('컬럼·요약 배지의 글자 모양을 정하는 자리도 없다', () => {
     renderFlows();
 
-    // 접혀 있다가 디자인 배지를 눌러야 열린다(타이틀 디자인과 같은 조작).
-    expect(screen.queryByTestId('table-header-font-size')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId('flow-columns-design-button'));
-
-    expect(screen.getByTestId('table-header-font-size')).toBeInTheDocument();
-    expect(screen.getByTestId('table-cell-font-size')).toBeInTheDocument();
+    expect(screen.queryByTestId('flow-columns-design-button')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('badge-design-button')).not.toBeInTheDocument();
   });
 
-  it('요약 배지 디자인은 배지 설정 옆 팝업에 있다', () => {
-    renderFlows();
-
-    fireEvent.click(screen.getByTestId('badge-design-button'));
-
-    expect(screen.getByTestId('badge-font-size')).toBeInTheDocument();
-  });
-
-  it('요약 배지는 기본으로 켜져 있고 끄면 디자인 배지가 사라진다', () => {
+  it('요약 배지는 기본으로 켜져 있고 토글만 남는다', () => {
     renderFlows();
 
     const toggle = screen.getByTestId('show-summary-badges');
     expect(toggle).toBeChecked();
-    expect(screen.getByTestId('badge-design-button')).toBeInTheDocument();
 
     fireEvent.click(toggle);
 
     expect(screen.getByTestId('show-summary-badges')).not.toBeChecked();
-    // 감춘 배지에는 디자인을 걸 곳이 없다.
-    expect(screen.queryByTestId('badge-design-button')).not.toBeInTheDocument();
   });
 
   it('배지를 끄면 저장 시 config 에 남는다 — 기본(켬)은 남기지 않는다', () => {
@@ -415,8 +399,8 @@ describe('플로우 현황 — 디자인 설정은 한 곳씩', () => {
 });
 
 describe('에이전트 현황 — 플로우 현황과 같은 디자인 구조', () => {
-  // 목록형 패널 둘이 같은 config 키(table_header_font / table_cell_font / badge_font)와
-  // 같은 조작을 쓴다. 한쪽만 바뀌면 같은 화면에서 다른 규칙을 배워야 한다.
+  // 목록형 패널 둘이 같은 규칙을 쓴다. 한쪽만 바뀌면 같은 화면에서 다른 규칙을 배워야
+  // 한다 — 글자 모양 설정을 걷어낸 것도 두 패널에서 **함께** 걷어냈다.
 
   function renderAgents(config: Record<string, unknown> = {}) {
     storeMock.panel = { id: 'p1', type: 'agents', title: 't', config } as PanelConfig;
@@ -427,29 +411,19 @@ describe('에이전트 현황 — 플로우 현황과 같은 디자인 구조', 
     );
   }
 
-  it('스타일 섹션 대신 항목별 디자인 팝업을 쓴다', () => {
+  it('스타일 섹션도 글자 모양 팝업도 두지 않는다', () => {
     renderAgents();
 
     expect(screen.queryByTestId('accent-group-picker')).not.toBeInTheDocument();
-    expect(screen.getByTestId('panel-title-design-button')).toBeInTheDocument();
-    expect(screen.getByTestId('agent-columns-design-button')).toBeInTheDocument();
-    expect(screen.getByTestId('badge-design-button')).toBeInTheDocument();
+    expect(screen.queryByTestId('panel-title-design-button')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('agent-columns-design-button')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('badge-design-button')).not.toBeInTheDocument();
   });
 
-  it('컬럼 디자인은 헤더와 요소를 따로 정한다', () => {
-    renderAgents();
-
-    fireEvent.click(screen.getByTestId('agent-columns-design-button'));
-
-    expect(screen.getByTestId('table-header-font-size')).toBeInTheDocument();
-    expect(screen.getByTestId('table-cell-font-size')).toBeInTheDocument();
-  });
-
-  it('요약 배지를 끄면 디자인 배지가 사라지고 저장 시 남는다', () => {
+  it('요약 배지를 끄면 저장 시 남는다', () => {
     renderAgents();
 
     fireEvent.click(screen.getByTestId('show-summary-badges'));
-    expect(screen.queryByTestId('badge-design-button')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('panel-settings-apply'));
     expect(storeMock.updatePanelConfig).toHaveBeenCalledWith(
@@ -478,22 +452,13 @@ describe('디바이스 목록 — 목록형 패널과 같은 디자인 구조', 
     );
   }
 
-  it('스타일 섹션 대신 항목별 디자인 팝업을 쓴다', () => {
+  it('스타일 섹션도 글자 모양 팝업도 두지 않는다', () => {
     renderDevices();
 
     expect(screen.queryByTestId('accent-group-picker')).not.toBeInTheDocument();
-    expect(screen.getByTestId('panel-title-design-button')).toBeInTheDocument();
-    expect(screen.getByTestId('device-columns-design-button')).toBeInTheDocument();
-    expect(screen.getByTestId('badge-design-button')).toBeInTheDocument();
-  });
-
-  it('컬럼 디자인은 헤더와 요소를 따로 정한다', () => {
-    renderDevices();
-
-    fireEvent.click(screen.getByTestId('device-columns-design-button'));
-
-    expect(screen.getByTestId('table-header-font-size')).toBeInTheDocument();
-    expect(screen.getByTestId('table-cell-font-size')).toBeInTheDocument();
+    expect(screen.queryByTestId('panel-title-design-button')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('device-columns-design-button')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('badge-design-button')).not.toBeInTheDocument();
   });
 
   it('요약 배지를 끄면 저장 시 남는다', () => {
@@ -616,12 +581,10 @@ describe('에이전트 상태 — 죽은 스타일 대신 배지 디자인', () 
     expect(screen.queryByTestId('accent-group-picker')).not.toBeInTheDocument();
   });
 
-  it('상태 배지 디자인 팝업이 있다', () => {
+  it('상태 배지 글자 모양 팝업은 걷어냈다 — 배지는 기본 모양으로 그린다', () => {
     renderAgentStatus();
 
-    fireEvent.click(screen.getByTestId('badge-design-button'));
-
-    expect(screen.getByTestId('badge-font-size')).toBeInTheDocument();
+    expect(screen.queryByTestId('badge-design-button')).not.toBeInTheDocument();
   });
 
   it('배지를 감추는 토글은 두지 않는다 — 이 패널의 배지는 본문 자체다', () => {
