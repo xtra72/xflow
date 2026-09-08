@@ -264,7 +264,7 @@ plan.md M7.4 도, acceptance.md 의 품질 게이트도, `.moai/config/sections/
 | # | 항목 | 판정 | 근거 |
 |---|------|------|------|
 | 1 | plan.md M7.4 — 커버리지 `include` 미갱신 | **해소됨 (더는 막지 않는다)** | 허용목록을 실제 모듈로 갱신하고 `npx vitest run --coverage` 로 실측해, statement 기준 11종 전량 85% 이상(최저 96.82%)을 확인했다. 판정 지표를 statement 로 읽은 근거는 위 "M7.4 판정 지표" 절에 있다. **branch 4종 85% 미만은 후속 보강 대상으로 남는다** |
-| 2 | plan.md M2.5 — export 이름 미정리 (IN-1) | 막지 않는다 | §2 의 **어느 요구도 export 이름을 규정하지 않는다**. U1-1~U1-3 은 "패널 중립 모듈이 소유한다 / 중립 이름으로 옮긴다" 를 요구하고 파일·타입은 그것을 충족한다(`panelEditAlign.ts` · `panelEditSelection.ts` · `PanelEditGrid` · `PanelAlignToolbar` 는 파일과 심볼이 모두 중립이다). U1-4 는 대상 맵을 요구하고 그것도 충족한다. M2.5 의 산출물 열도 파일(`PanelDragLayer.tsx`)을 적었다. **이름 위생 부채이지 요구 미충족이 아니다** — 다만 §5 D1 이 복사를 거부한 논리와 같은 이유로 남겨 두면 다음 사람이 "이것은 통계용인가" 를 되묻게 되므로, 후속 정리 대상으로 남긴다 |
+| 2 | plan.md M2.5 — export 이름 미정리 (IN-1) | 막지 않았고, **2026-09-08 해소됨** | §2 의 **어느 요구도 export 이름을 규정하지 않는다**. U1-1~U1-3 은 "패널 중립 모듈이 소유한다 / 중립 이름으로 옮긴다" 를 요구하고 파일·타입은 그것을 충족한다(`panelEditAlign.ts` · `panelEditSelection.ts` · `PanelEditGrid` · `PanelAlignToolbar` 는 파일과 심볼이 모두 중립이다). U1-4 는 대상 맵을 요구하고 그것도 충족한다. M2.5 의 산출물 열도 파일(`PanelDragLayer.tsx`)을 적었다. **이름 위생 부채이지 요구 미충족이 아니다** — 다만 §5 D1 이 복사를 거부한 논리와 같은 이유로 남겨 두면 다음 사람이 "이것은 통계용인가" 를 되묻게 되므로, 후속 정리 대상으로 남긴다 |
 | 3 | 게이지 범위 이탈 (IN-4) | 막지 않는다 | §2 의 U1~U5 중 게이지를 요구하는 항목이 없고, §6 은 게이지를 범위 밖으로 적었다. 즉 게이지 작업은 **이 SPEC 의 인수 조건을 하나도 건드리지 않는다** — 그것을 이유로 본 SPEC 을 막아도 게이지 작업이 정리되지는 않는다. 다만 `previewLiveKeys.ts:29` 가 `threshold_legend_font_size` 를 "(SPEC-CHART-005)" 로 귀속시켜 **잘못된 소유권 표시**를 남겼고, `panels/gauge/` 의 어느 파일에도 `@spec` 이 없다. **어느 SPEC 도 요구하지 않은 작업**이므로 별도 SPEC 으로 분리해 귀속을 바로잡아야 한다 — 후속 필수 |
 | 4 | 게이지 값 좌표 이관 누락 (IN-5) | **본 SPEC 의 범위 밖 — 막지 않는다. 다만 사용자 영향이 있는 회귀다** | 항목 3 의 판정에 따라 게이지는 이 SPEC 의 범위가 아니므로 이 SPEC 의 완료 판정에는 들어가지 않는다. 그러나 결함 자체는 실재한다: 값 글자의 오프셋이 viewBox 단위 `value_offset_x/y` 에서 패널 대비 백분율 `value_pos_x/y` 로 바뀌었는데 **옛 키를 읽는 코드가 어디에도 없다**(`grep -rn "value_offset_x" web/src/` → `PanelSettingsDialog.tsx:7213`(초기화 시 지우는 경로)와 `GaugePanel.test.tsx`(초기화가 그 키를 건드리지 않음을 단언하는 AC-20) 둘뿐). 이관 코드도 없으므로 **저장된 대시보드에서 값 글자를 끌어 옮겨 두었다면 그 자리를 잃고 기본 위치로 돌아간다.** 항목 3 이 요구하는 게이지 SPEC 의 첫 항목으로 다뤄야 한다 |
 
@@ -272,7 +272,7 @@ plan.md M7.4 도, acceptance.md 의 품질 게이트도, `.moai/config/sections/
 
 1. **게이지 작업의 SPEC 귀속** (항목 3) — 별도 SPEC 분리 + `previewLiveKeys.ts:29` 의 "(SPEC-CHART-005)" 오귀속 정정 + `panels/gauge/` 에 `@spec` 부여. **필수.**
 2. **게이지 값 좌표 이관** (항목 4) — `value_offset_x/y` → `value_pos_x/y` 읽기 폴백 또는 이관 코드. 저장된 대시보드에서 값 글자 자리를 잃는 **실사용 회귀**이므로 위 1의 첫 항목으로 다룬다.
-3. **공용 모듈 export 이름 정리** (항목 2) — `StatDragLayer` · `StatResizeHandle` · `StatDragTarget` · `StatSelection` · `StatElementBox` → 중립 이름, 소비처 별칭 제거.
+3. ~~**공용 모듈 export 이름 정리** (항목 2)~~ — **완료(2026-09-08)**. 다섯 심볼 모두 중립 이름으로 바뀌고 소비처 별칭이 제거되었다. 상세는 아래 IN-1 의 "해소" 표.
 4. **branch 커버리지 보강** — `usePanelElementEdit.tsx` 63.63 · `PanelResizeOverlay.tsx` 68.75 · `previewGridSize.ts` 71.42 · `PanelGridBackdrop.tsx` 77.77.
 
 ### 요구사항 확인 (§2 U1~U5)
@@ -291,6 +291,18 @@ plan.md M7.4 도, acceptance.md 의 품질 게이트도, `.moai/config/sections/
 ### 분기 (Divergence, as-implemented)
 
 - **IN-1 — 파일 이름만 공용화되고 export 이름은 통계 이름 그대로다.** plan.md M2.5 는 "`StatDragLayer` → `PanelDragLayer`" 로 적었으나, 실제로는 파일만 `PanelDragLayer.tsx` 로 옮겨졌고 그 안의 export 는 여전히 `StatDragLayer` · `StatResizeHandle` · `StatDragTarget` 이다. `panelEditSelection.ts` 는 `StatSelection` 을, `panelEditAlign.ts` 는 `StatElementBox` 를 export 한다. 소비처는 `import { StatDragLayer as PanelDragLayer } from '../../PanelDragLayer'` 처럼 **가져오는 자리에서 별칭**을 붙여 쓰고 있다(`BarChartPanel.tsx:66` · `PieChartPanel.tsx:45`). 동작은 같지만, §5 D1 이 복사를 거부한 이유("사본이 셋이면 다음 실수는 세 곳에서 각각 발견된다")와 같은 논리로 이름이 갈리면 다음 사람이 "이것은 통계용인가" 를 매번 되묻게 된다. 이름 정리는 남은 일이다.
+
+  **해소(2026-09-08) — 위 IN-1 본문은 작성 시점의 기록으로 그대로 둔다.** 심볼 개명이 실행되어 부채가 닫혔다. 다섯 개명은 다음과 같다.
+
+  | 옛 이름 | 새 이름 | 소유 모듈 |
+  |---------|---------|-----------|
+  | `StatDragTarget` | `PanelDragTarget` | `PanelDragLayer.tsx` |
+  | `StatResizeHandle` | `PanelResizeHandle` | `PanelDragLayer.tsx` |
+  | `StatDragLayer` | `PanelDragLayer` | `PanelDragLayer.tsx` |
+  | `StatSelection` | `PanelSelection` | `panels/charts/panelEditSelection.ts` |
+  | `StatElementBox` | `PanelElementBox` | `panels/charts/panelEditAlign.ts` |
+
+  소비처 8곳의 `import { StatDragLayer as PanelDragLayer }` 식 별칭도 모두 사라졌고, `web/src` 어디에도 저 세 모듈에서 온 `Stat*` 심볼이 남아 있지 않다(`grep -rn "StatDragLayer\|StatResizeHandle\|StatDragTarget\|StatSelection\|StatElementBox" web/src/` 무출력). 검증: 416 파일 / 6831 테스트 통과 · eslint 오류 0 · `tsc -b` exit 0. 이로써 §5 D1 이 복사를 거부한 이유("이름이 갈리면 다음 사람이 '이것은 통계용인가' 를 매번 되묻게 된다")가 해소되었고, plan.md M2.5 가 적은 개명도 계획대로 완결되었다.
 - **IN-2 — plan.md §2 가 예고하지 않은 파일이 6개 생겼다.** `usePanelElementEdit.tsx`(본 SPEC 의 `@spec` 을 달고 있다) · `PanelResizeOverlay.tsx` · `PanelGridBackdrop.tsx` + 테스트 · `panelEditContext.ts` · `previewStage.ts` + 테스트 · `previewGridSize.ts` + 테스트. 이 중 `usePanelElementEdit.tsx` 를 뺀 다섯은 `@spec` 주석이 없어 소유 SPEC 을 코드만으로 판정할 수 없다. `usePanelElementEdit` 는 §2.1 U1 이 요구한 공용화의 자연스러운 귀결(선택·스냅·정렬·초기화 상태를 세 패널이 함께 쓴다)이므로 설계 위반은 아니고 계획 표의 누락이다.
 - **IN-3 — 바 차트 config 가 §3.1 이 적은 것보다 넓다.** §3.1 은 `plot_offset_x` · `plot_offset_y` · `plot_size` 셋만 신설한다고 적었으나, 구현은 `plot_size_y`(세로 배율)와 `bar_size`(막대 굵기 px)를 함께 들였다. 대응 테스트가 `BarChartPanel.test.tsx` 에 3건 있고 미지정 시 종전 동작을 보존하지만, 데이터 계약 문서가 이 두 축을 말하지 않는다.
 - **IN-4 — 게이지가 함께 손질되었으나 §6 은 게이지를 범위 밖으로 적었다.** `previewLiveKeys.ts:29` 는 `threshold_legend_font_size` 를 "(SPEC-CHART-005)" 로 귀속시키고, 임계값 범례에 크기 손잡이가 붙었으며(`GaugePanel.tsx:520-534,589-598`), 세로바 게이지에 `gauge_bar_width` · `gauge_bar_height` 축이 신설되었고, 현재값 글자가 도형 SVG 밖 오버레이로 나왔다(`gaugeValue.tsx` 신설, `valueDrag.ts` 삭제). §6 은 "게이지에 그리드·정렬 더하기" 만 범위 밖으로 적었으므로 이 작업들이 전부 그 문장에 걸리지는 않지만, 어느 SPEC 도 이들을 요구하지 않았다 — `panels/gauge/` 의 어느 파일에도 `@spec` 주석이 없다. 별도 SPEC 으로 분리하거나 본 SPEC 의 범위를 넓혀 적어야 한다.

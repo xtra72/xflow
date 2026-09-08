@@ -3,6 +3,17 @@
 관련 문서: [spec.md](./spec.md) · [plan.md](./plan.md)
 형식: Given-When-Then + 기계 검증 가능한 단언(vitest 파일·테스트명, 또는 grep/tsc 명령과 기대 출력)
 
+> **추기(2026-09-08) — 실행 지시문의 이름을 실제 이름으로 맞췄다. 판정 내용은 바뀌지 않았다.**
+>
+> 이 문서의 인수 조건은 "이 파일의 이 테스트를 보라", "이 표식의 부재를 단언하라" 처럼 **그대로 실행할 수 있는 지시문**을 담는다. 그런데 그 이름 일부가 실제로 존재한 적 없는 것을 가리키고 있었다.
+>
+> - `StatDragLayer.test.tsx`(5곳: AC-07 · AC-08 · AC-09 · AC-13 · AC-32 의 명령 인자) → **`PanelDragLayer.test.tsx`**. spec.md §8 IN-1 이 적었듯 통계 전용 이름으로 커밋된 적이 없어, 지목된 파일은 처음부터 존재하지 않았다. 같은 단언을 담은 실제 파일로 바꿨다.
+> - AC-32 기대 출력의 `StatDragLayer.tsx` → **`PanelDragLayer.tsx`**(측정 대상 모듈의 실제 이름).
+> - AC-01 단언의 `stat-resize-value` · `[data-stat-drag]` → **`[data-panel-drag]` · `[data-panel-resize]`**(IN-6). 후속 SPEC-CHART-005 의 공용화로 표식 이름이 바뀌었고, 옛 이름의 부재를 단언하면 **무엇을 검사하든 항상 통과하는 빈 단언**이 된다. 뜻대로 검사하도록 실제 표식으로 고쳤다. 같은 줄의 `stat-edit-toggle` 은 **바꾸지 않았다** — 통계 패널 자신의 토글이고 지금도 그 이름이다.
+> - 2026-09-08 에 실행된 심볼 개명(`StatDragTarget`→`PanelDragTarget` · `StatResizeHandle`→`PanelResizeHandle` · `StatDragLayer`→`PanelDragLayer` · `StatSelection`→`PanelSelection` · `StatElementBox`→`PanelElementBox`, SPEC-CHART-005 §8 IN-1 의 부채 해소)을 반영한 것이기도 하다.
+>
+> **바꾼 것은 이름뿐이다.** Given/When/Then 문장, 기대값, 검사 대상, 조건의 수와 번호는 하나도 손대지 않았다. 조건을 슬그머니 고쳐 쓴 것이 아니라, 가리키는 대상이 어긋나 있던 것을 맞춘 것이다. plan.md 와 spec.md 의 HISTORY·IN 항목은 **작성 시점의 기록이므로 고치지 않았다**.
+
 ## 공통 픽스처
 
 **F1 — 채널 모드 entries** (`display_field: 'value'`)
@@ -35,7 +46,7 @@ Then 크기 핸들·편집 토글·드래그 표식이 하나도 존재하지 �
 ```
 
 vitest: `StatPanel.test.tsx` — "onConfigChange 가 없으면 편집 입구가 없다"
-단언: `stat-edit-toggle` · `stat-resize-value` · `[data-stat-drag]` 모두 부재
+단언: `stat-edit-toggle` · `[data-panel-drag]` · `[data-panel-resize]` 모두 부재
 
 ### AC-02 — 미리보기는 항상 편집이고 토글을 내지 않는다
 
@@ -100,7 +111,7 @@ Then value_layout.offset_x 만 바뀌고 delta_layout · stats_layout 은 인자
 
 각 요소(본값 / 변화량 / 구간 통계)에 대해 같은 단언을 둔다.
 
-vitest: `StatDragLayer.test.tsx` — "본값을 끌면 value 대상만 갱신된다" 외 2건
+vitest: `PanelDragLayer.test.tsx` — "본값을 끌면 value 대상만 갱신된다" 외 2건
 
 ### AC-08 — 오프셋은 백분율이며 ±50 으로 죈다 (U1-3 / U1-4)
 
@@ -111,7 +122,7 @@ Then 10 (백분율 포인트) 이다
 And 계속 끌어 50 을 넘기려 하면 50 에서 멈춘다 — 게이지·파이의 40 이 아니다
 ```
 
-vitest: `StatDragLayer.test.tsx` — "픽셀 이동량을 기준 상자 대비 백분율로 환산한다" · "±50 으로 죈다"
+vitest: `PanelDragLayer.test.tsx` — "픽셀 이동량을 기준 상자 대비 백분율로 환산한다" · "±50 으로 죈다"
 vitest: `statLayout.test.ts` — "지정한 값을 읽고 ±50 으로 죈다"
 
 ### AC-08b — 오프셋은 left/top 으로 편다 (U1-3b / D7)
@@ -137,7 +148,7 @@ When 포인터를 움직이면
 Then onConfigChange 가 호출되지 않는다
 ```
 
-vitest: `StatDragLayer.test.tsx` — "표식 없는 자리를 잡으면 무시한다"
+vitest: `PanelDragLayer.test.tsx` — "표식 없는 자리를 잡으면 무시한다"
 
 ---
 
@@ -196,7 +207,7 @@ And 반대로 끌면 작아진다
 And 소수 px 이 반올림되지 않는다 — 정수로 죄면 크기가 계단으로 뛴다
 ```
 
-vitest: `StatDragLayer.test.tsx` — "크기 핸들을 오른쪽 아래로 끌면 커진다" · "반대로 끌면 작아진다" · "소수 px 을 그대로 넘긴다"
+vitest: `PanelDragLayer.test.tsx` — "크기 핸들을 오른쪽 아래로 끌면 커진다" · "반대로 끌면 작아진다" · "소수 px 을 그대로 넘긴다"
 
 ### AC-14 — font_size 는 6~160 으로 죈다 (U2-4)
 
@@ -405,9 +416,9 @@ cd web && npm run lint    # 기대: exit 0
 ```bash
 cd web && npx vitest run --coverage \
   src/pages/dashboard/panels/charts/statLayout.test.ts \
-  src/pages/dashboard/StatDragLayer.test.tsx \
+  src/pages/dashboard/PanelDragLayer.test.tsx \
   src/pages/dashboard/StatElementStylePopover.test.tsx
-# 기대: statLayout.ts · StatDragLayer.tsx · StatElementStylePopover.tsx 모두 85% 이상
+# 기대: statLayout.ts · PanelDragLayer.tsx · StatElementStylePopover.tsx 모두 85% 이상
 ```
 
 ---

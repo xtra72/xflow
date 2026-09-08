@@ -79,6 +79,11 @@ vitest: `panelEditAlign.test.ts`(14건) · `panelEditSelection.test.ts`(11건) �
 (`StatSelection` · `StatElementBox` · `StatDragLayer`). 그 분기는 spec.md §8 IN-1 에 적혀 있으며,
 §2 의 어느 요구도 export 이름을 규정하지 않으므로 이 조건의 판정에는 들어가지 않는다.
 
+> **추기(2026-09-08)**: 위 "주의" 는 작성 시점의 상태다. 그 뒤 심볼 개명이 실행되어 세 모듈의 export 는
+> `PanelDragTarget` · `PanelResizeHandle` · `PanelDragLayer` · `PanelSelection` · `PanelElementBox` 가 되었고,
+> 소비처 8곳의 import 별칭도 사라졌다(spec.md §8 "IN-1 해소" 참고). 이 조건의 **판정 범위는 그대로**다 —
+> 애초에 export 이름을 보지 않았으므로 개명이 판정을 바꾸지 않는다. 위 문장은 그때의 기록으로 남긴다.
+
 ### AC-02 — 드래그 레이어가 고정 3대상 대신 대상 맵을 받는다 (U1-4)
 
 ```gherkin

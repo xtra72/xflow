@@ -26,7 +26,8 @@ export const PREVIEW_LIVE_KEYS = [
   'gauge_offset_y',
   'threshold_legend_offset_x',
   'threshold_legend_offset_y',
-  // 임계값 범례 글자 크기 — 크기 손잡이가 이 값을 바꾼다(SPEC-CHART-005).
+  // 임계값 범례 글자 크기 — 크기 손잡이가 이 값을 바꾼다. 게이지 작업은 SPEC 에 묶여
+  // 있지 않다(SPEC-CHART-005 는 §6 에서 게이지를 범위 밖으로 적었다).
   'threshold_legend_font_size',
   // 라인 차트 — 그림 상자.
   'plot_size',
