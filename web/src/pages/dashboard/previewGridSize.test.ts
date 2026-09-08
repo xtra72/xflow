@@ -53,6 +53,26 @@ describe('clampGridSize', () => {
   it('minW 가 cols 보다 커도 모순된 결과를 내지 않는다', () => {
     expect(clampGridSize({ w: 5, h: 1 }, { cols: 2, minW: 4 })).toEqual({ w: 4, h: 1 });
   });
+
+  it('최소 크기를 0 으로 줘도 한 칸 아래로는 내려가지 않는다', () => {
+    // 0 칸짜리 패널은 화면에서 사라지고, 사라지면 다시 잡아 키울 손잡이도 없다.
+    expect(clampGridSize({ w: 1, h: 1 }, { cols: 12, minW: 0, minH: 0 })).toEqual({ w: 1, h: 1 });
+  });
+
+  it('칼럼 수를 아직 모르면(0) 최소 폭으로 떨어진다 — 폭 0 인 패널을 만들지 않는다', () => {
+    // 대시보드를 한 번도 열지 않아 칼럼 수가 0 인 상태. 상한을 0 으로 읽으면 폭도 0 이 된다.
+    expect(clampGridSize({ w: 5, h: 2 }, { cols: 0, minW: 3 })).toEqual({ w: 3, h: 2 });
+  });
+
+  it('높이 상한이 0 이면 최소 높이로 떨어진다', () => {
+    expect(clampGridSize({ w: 2, h: 9 }, { cols: 12, maxH: 0 })).toEqual({ w: 2, h: 1 });
+  });
+
+  it('크기가 수가 아니면 최소 크기로 본다 — NaN 이 그대로 새어 나가지 않는다', () => {
+    expect(clampGridSize({ w: Number.NaN, h: Number.NaN }, { cols: 12, minW: 2, minH: 3 })).toEqual(
+      { w: 2, h: 3 },
+    );
+  });
 });
 
 describe('resizeGridSize', () => {
