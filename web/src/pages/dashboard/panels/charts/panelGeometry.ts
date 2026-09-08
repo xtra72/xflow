@@ -59,9 +59,17 @@ export function readPanelSize(v: unknown): number | undefined {
     : undefined;
 }
 
-/** 오프셋(백분율)을 읽는다. 수가 아니면 0 — 구 config 에는 이 키가 없다. */
-export function readPanelOffset(v: unknown): number {
-  return clampPercentOffset(typeof v === 'number' && Number.isFinite(v) ? v : 0);
+/**
+ * 오프셋(백분율)을 읽는다. 수가 아니면 0 — 구 config 에는 이 키가 없다.
+ *
+ * 상한은 **읽는 요소의 성질**이 정하므로 호출부가 넘길 수 있다. 기본은 ±40 으로,
+ * 영역을 가득 채우는 그림(파이·바 그림 영역·게이지 상자)의 값이다. 가운데에서
+ * 시작하는 작은 글자 덩어리는 모서리에 닿으려면 ±50 이 필요하므로 그 값을 넘긴다 —
+ * **쓰는 쪽과 같은 상한이어야** 한다. 읽기가 더 좁으면 사용자가 끌어 놓은 자리가
+ * 다음에 열 때 되돌아간다.
+ */
+export function readPanelOffset(v: unknown, limit = PANEL_OFFSET_LIMIT): number {
+  return clampPercentOffset(typeof v === 'number' && Number.isFinite(v) ? v : 0, limit);
 }
 
 /**

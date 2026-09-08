@@ -17,6 +17,7 @@ import {
   VBAR_CENTER_X,
   type parseConfig,
 } from './gaugeShapes';
+import { clampViewBoxOffset, parseViewBox } from './valueOffsetMigration';
 
 /**
  * 값 글자가 놓이는 자리와 모양 — 유형마다 다르다.
@@ -85,6 +86,8 @@ export function GaugeValueOverlay({
   hasValue,
   offsetX,
   offsetY,
+  viewBoxOffsetX = 0,
+  viewBoxOffsetY = 0,
   edit,
 }: {
   parsed: ReturnType<typeof parseConfig>;
@@ -92,9 +95,22 @@ export function GaugeValueOverlay({
   /** 패널 상자 대비 변위(%). */
   offsetX: number;
   offsetY: number;
+  /**
+   * viewBox 단위 변위 — 값이 도형 안에 있던 시절에 저장된 자리(`value_offset_x/y`).
+   *
+   * 백분율로 미리 바꾸지 않고 **여기까지 옛 좌표 그대로** 들고 오는 이유: 바꾸려면
+   * 그려진 상자의 종횡비가 필요한데(레터박스), 그것은 config 에 없다. 대신 아래
+   * SVG 가 옛 코드와 같은 viewBox 를 쓰므로 브라우저가 옛 배율을 그대로 걸어 준다.
+   */
+  viewBoxOffsetX?: number;
+  viewBoxOffsetY?: number;
   edit?: { props: Record<string, unknown>; outline: string; showHandle?: boolean };
 }): ReactElement {
   const l = gaugeValueLayout(parsed);
+  // 옛 변위는 그리는 시점에 죈다 — 상한이 유형마다 다른 viewBox 크기에 달렸다.
+  const vb = parseViewBox(l.viewBox);
+  const vbDx = vb ? clampViewBoxOffset(viewBoxOffsetX, vb.w) : 0;
+  const vbDy = vb ? clampViewBoxOffset(viewBoxOffsetY, vb.h) : 0;
   return (
     // 상자는 패널 전체를 덮는다 — SVG 의 레터박스 계산이 기본 자리를 정하려면 도형과
     // 같은 크기여야 하기 때문이다. 다만 **포인터도 윤곽선도 이 상자에 걸지 않는다**:
@@ -110,8 +126,11 @@ export function GaugeValueOverlay({
     >
       <svg viewBox={l.viewBox} className="h-full w-full overflow-visible">
         {l.badge && (
+          // 배지는 값 뒤에 까는 판이므로 옛 변위도 함께 받는다. 값이 도형 안에 있던
+          // 시절에는 배지가 제자리에 남았지만(값만 움직였다), 지금은 "값과 함께
+          // 움직인다" 가 이 요소의 규약이다 — 옛 자리만 그 규약에서 뺄 이유가 없다.
           <rect
-            x={l.x + l.badge.dx} y={l.y + l.badge.dy}
+            x={l.x + l.badge.dx + vbDx} y={l.y + l.badge.dy + vbDy}
             width={l.badge.width} height={l.badge.height}
             rx={l.badge.rx} fill={l.badge.fill}
           />
@@ -120,6 +139,8 @@ export function GaugeValueOverlay({
           edit={edit}
           x={l.x}
           y={l.y}
+          offsetX={vbDx}
+          offsetY={vbDy}
           valueText={parsed.valueText}
           unit={parsed.unit}
           valueSize={l.valueSize}
@@ -164,7 +185,12 @@ function GaugeValueText({
   unitOpacity?: number;
   /** 글자 크기 배율(기본 1). */
   scale?: number;
-  /** 가로·세로 변위(viewBox 좌표, 기본 0). */
+  /**
+   * 가로·세로 변위(viewBox 좌표, 기본 0).
+   *
+   * 지금 끌어 옮기는 변위는 오버레이 상자에 걸리는 백분율이다. 이 자리는 값이 도형
+   * 안에 있던 시절에 저장된 옛 변위만 받는다 — 그 좌표계로 그려야 옛 화면과 같다.
+   */
   offsetX?: number;
   offsetY?: number;
   /** 편집 표면 — 잡히는 영역과 윤곽선은 **글자 자신**이 가져야 한다. */
