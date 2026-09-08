@@ -8,14 +8,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 
-import { StatDragLayer, StatResizeHandle, type StatDragTarget } from './PanelDragLayer';
+import { PanelDragLayer, PanelResizeHandle, type PanelDragTarget } from './PanelDragLayer';
 type StatElementKind = 'value' | 'delta' | 'stats';
-import type { StatSelection } from './panels/charts/panelEditSelection';
+import type { PanelSelection } from './panels/charts/panelEditSelection';
+import { PANEL_OFFSET_LIMIT } from './panels/charts/panelGeometry';
+import { STAT_OFFSET_LIMIT } from './panels/charts/statLayout';
 
-function target(over: Partial<StatDragTarget> = {}): StatDragTarget {
+// 이 파일의 기본 대상은 **통계 패널의 글자 덩어리**다 — 상한을 밝히지 않으면 레이어가
+// 그림 기준(±40)으로 보므로, 통계를 흉내 내는 자리에서는 ±50 을 명시한다.
+function target(over: Partial<PanelDragTarget> = {}): PanelDragTarget {
   return {
     offsetX: 0,
     offsetY: 0,
+    limit: STAT_OFFSET_LIMIT,
     fontSize: 36,
     onMove: vi.fn(),
     onResize: vi.fn(),
@@ -37,14 +42,14 @@ function Fixture({
 }: {
   enabled?: boolean;
   snap?: boolean;
-  selection?: StatSelection;
-  onSelectionChange?: (next: StatSelection) => void;
-  value: StatDragTarget;
-  delta: StatDragTarget;
-  stats: StatDragTarget;
+  selection?: PanelSelection;
+  onSelectionChange?: (next: PanelSelection) => void;
+  value: PanelDragTarget;
+  delta: PanelDragTarget;
+  stats: PanelDragTarget;
 }) {
   return (
-    <StatDragLayer
+    <PanelDragLayer
       enabled={enabled}
       snap={snap}
       selection={selection}
@@ -55,19 +60,19 @@ function Fixture({
       <div data-panel-bounds="" data-testid="bounds">
         <div data-panel-drag="value" data-testid="value">
           1,234
-          <StatResizeHandle kind="value" enabled={enabled} label="본값 크기" />
+          <PanelResizeHandle kind="value" enabled={enabled} label="본값 크기" />
         </div>
         <div data-panel-drag="delta" data-testid="delta">
           ↑ +12
-          <StatResizeHandle kind="delta" enabled={enabled} label="변화량 크기" />
+          <PanelResizeHandle kind="delta" enabled={enabled} label="변화량 크기" />
         </div>
         <div data-panel-drag="stats" data-testid="stats">
           평 980
-          <StatResizeHandle kind="stats" enabled={enabled} label="구간 통계 크기" />
+          <PanelResizeHandle kind="stats" enabled={enabled} label="구간 통계 크기" />
         </div>
         <div data-testid="empty">여백</div>
       </div>
-    </StatDragLayer>
+    </PanelDragLayer>
   );
 }
 
@@ -82,6 +87,21 @@ function stubBounds(width: number, height: number): void {
     bottom: height,
     x: 0,
     y: 0,
+    toJSON: () => ({}),
+  } as DOMRect);
+}
+
+/** 요소 상자를 화면에 심는다 — 스냅은 요소의 중심을 봐야 한다. */
+function stubEl(testId: string, left: number, top: number, w: number, h: number): void {
+  vi.spyOn(screen.getByTestId(testId), 'getBoundingClientRect').mockReturnValue({
+    left,
+    top,
+    width: w,
+    height: h,
+    right: left + w,
+    bottom: top + h,
+    x: left,
+    y: top,
     toJSON: () => ({}),
   } as DOMRect);
 }
@@ -345,21 +365,6 @@ describe('접근성', () => {
 });
 
 describe('격자 스냅 (AC-33)', () => {
-  /** 요소 상자를 화면에 심는다 — 스냅은 요소의 중심을 봐야 한다. */
-  function stubEl(testId: string, left: number, top: number, w: number, h: number): void {
-    vi.spyOn(screen.getByTestId(testId), 'getBoundingClientRect').mockReturnValue({
-      left,
-      top,
-      width: w,
-      height: h,
-      right: left + w,
-      bottom: top + h,
-      x: left,
-      y: top,
-      toJSON: () => ({}),
-    } as DOMRect);
-  }
-
   it('끄는 자리를 가까운 격자선으로 붙인다', async () => {
     const value = target();
     render(<Fixture snap value={value} delta={target()} stats={target()} />);
@@ -524,6 +529,24 @@ describe('선택과 무리 이동 (AC-37 / AC-38)', () => {
     expect(delta.onMove).toHaveBeenLastCalledWith({ x: 50, y: 0 });
   });
 
+  it('상한이 다른 요소를 함께 끌면 먼저 닿는 쪽에서 무리가 멈춘다', async () => {
+    // 바 패널은 그림(±40)과 범례(±50)를 함께 고를 수 있다. 그림이 35 에 있으므로
+    // 무리는 +5 에서 멈춘다 — 무리에 한 상한을 씌우면 이 자리를 알 수 없다.
+    const value = target({ offsetX: 35, limit: PANEL_OFFSET_LIMIT });
+    const delta = target({ offsetX: 0, limit: STAT_OFFSET_LIMIT });
+    render(
+      <Fixture selection={new Set(['value', 'delta'])} value={value} delta={delta} stats={target()} />,
+    );
+    stubBounds(200, 100);
+
+    fireEvent(screen.getByTestId('value'), pointer('pointerdown', 0, 0));
+    fireEvent(document, pointer('pointermove', 60, 0)); // 30%p 를 요청
+    await nextFrame();
+
+    expect(value.onMove).toHaveBeenLastCalledWith({ x: 40, y: 0 });
+    expect(delta.onMove).toHaveBeenLastCalledWith({ x: 5, y: 0 });
+  });
+
   it('크기 핸들은 무리와 무관하게 자기 요소만 바꾼다', async () => {
     const value = target({ fontSize: 36 });
     const delta = target({ fontSize: 14 });
@@ -539,5 +562,83 @@ describe('선택과 무리 이동 (AC-37 / AC-38)', () => {
     expect(value.onResize).toHaveBeenLastCalledWith(41);
     expect(delta.onResize).not.toHaveBeenCalled();
     expect(delta.onMove).not.toHaveBeenCalled();
+  });
+});
+
+describe('오프셋 상한은 요소마다 다르다', () => {
+  // 이 레이어는 성질이 다른 요소를 함께 나른다 — 통계 세 줄과 범례는 가운데에서 시작하는
+  // 작은 글자 덩어리라 모서리에 닿으려면 ±50 이 필요하고, 파이 그림과 바 그림 영역은
+  // 영역을 가득 채우므로 ±40 만 넘어도 절반이 잘린다. 상한이 하나뿐이면 한쪽이 반드시
+  // 읽는 쪽과 어긋나, 놓은 자리가 다음에 열 때 되돌아간다.
+
+  it('상한을 밝히지 않으면 ±40 으로 죈다 — 잊었을 때 안전한 쪽이 기본값이다', async () => {
+    const value = target({ limit: undefined });
+    render(<Fixture value={value} delta={target()} stats={target()} />);
+    stubBounds(100, 100);
+
+    fireEvent(screen.getByTestId('value'), pointer('pointerdown', 0, 0));
+    fireEvent(document, pointer('pointermove', 90, -90));
+    await nextFrame();
+
+    expect(value.onMove).toHaveBeenLastCalledWith({
+      x: PANEL_OFFSET_LIMIT,
+      y: -PANEL_OFFSET_LIMIT,
+    });
+  });
+
+  it('파이 그림은 40 을 넘겨 끌 수 없다', async () => {
+    const value = target({ limit: PANEL_OFFSET_LIMIT });
+    render(<Fixture value={value} delta={target()} stats={target()} />);
+    stubBounds(100, 100);
+
+    fireEvent(screen.getByTestId('value'), pointer('pointerdown', 0, 0));
+    fireEvent(document, pointer('pointermove', 90, 90));
+    await nextFrame();
+
+    expect(value.onMove).toHaveBeenLastCalledWith({ x: 40, y: 40 });
+  });
+
+  it('같은 레이어에서 글자 덩어리는 50 까지 간다', async () => {
+    const value = target({ limit: PANEL_OFFSET_LIMIT });
+    const delta = target({ limit: STAT_OFFSET_LIMIT });
+    render(<Fixture value={value} delta={delta} stats={target()} />);
+    stubBounds(100, 100);
+
+    fireEvent(screen.getByTestId('delta'), pointer('pointerdown', 0, 0));
+    fireEvent(document, pointer('pointermove', 90, 90));
+    await nextFrame();
+
+    expect(delta.onMove).toHaveBeenLastCalledWith({ x: 50, y: 50 });
+    expect(value.onMove).not.toHaveBeenCalled();
+  });
+
+  it('격자 스냅도 그 상한을 넘기지 않는다 — 스냅이 죄기를 되돌리지 못한다', async () => {
+    // 스냅은 중심을 격자로 끌어당기므로 죄기 뒤에 값을 반 칸까지 도로 밀어낸다.
+    // 아래 상자에서 38%p 를 끌면 중심이 86% 라 90% 로 붙어 오프셋이 42%p 가 되는데,
+    // 그림(±40)이면 40 에서 멈춰야 한다.
+    const value = target({ limit: PANEL_OFFSET_LIMIT });
+    render(<Fixture snap value={value} delta={target()} stats={target()} />);
+    stubBounds(200, 100);
+    stubEl('value', 71, 40, 50, 20);
+
+    fireEvent(screen.getByTestId('value'), pointer('pointerdown', 0, 0));
+    fireEvent(document, pointer('pointermove', 76, 0));
+    await nextFrame();
+
+    expect(value.onMove).toHaveBeenLastCalledWith({ x: PANEL_OFFSET_LIMIT, y: 0 });
+  });
+
+  it('같은 자리라도 글자 덩어리는 격자에 붙어 42 까지 간다', async () => {
+    // 위 테스트와 같은 상자·같은 이동량이다. 다른 것은 요소의 성질(상한)뿐이다.
+    const delta = target({ limit: STAT_OFFSET_LIMIT });
+    render(<Fixture snap value={target()} delta={delta} stats={target()} />);
+    stubBounds(200, 100);
+    stubEl('delta', 71, 40, 50, 20);
+
+    fireEvent(screen.getByTestId('delta'), pointer('pointerdown', 0, 0));
+    fireEvent(document, pointer('pointermove', 76, 0));
+    await nextFrame();
+
+    expect(delta.onMove).toHaveBeenLastCalledWith({ x: 42, y: 0 });
   });
 });

@@ -17,15 +17,23 @@
 
 import { useEffect, useRef } from 'react';
 
-import { clampPercentOffset, pixelsToPercent } from './panels/charts/panelGeometry';
-import { clampLegendOffsets, type LegendAnchor } from './panels/charts/legendOverlay';
+import {
+  PANEL_OFFSET_LIMIT,
+  clampPercentOffset,
+  pixelsToPercent,
+} from './panels/charts/panelGeometry';
+import {
+  LEGEND_OFFSET_SAFETY_LIMIT,
+  clampLegendOffsets,
+  type LegendAnchor,
+} from './panels/charts/legendOverlay';
 import { clampFontSize, STAT_OFFSET_LIMIT } from './panels/charts/statLayout';
 import { snapOffsetToGrid } from './panels/charts/panelEditAlign';
 import {
   clampGroupDelta,
   EMPTY_SELECTION,
   nextSelection,
-  type StatSelection,
+  type PanelSelection,
 } from './panels/charts/panelEditSelection';
 
 /** 끌 수 있는 대상 하나. */
@@ -60,6 +68,20 @@ export interface GaugeDragTarget {
 type Kind = 'value' | 'legend' | 'body';
 
 /**
+ * 대상별 오프셋 상한(백분율 포인트).
+ *
+ * 값 글자와 범례는 가운데(또는 흐름상 자리)에서 시작하는 작은 글자 덩어리라 모서리에
+ * 닿으려면 축마다 50 이 필요하고, 게이지 상자는 영역을 꽉 채우는 그림이라 40 만 넘어도
+ * 절반이 잘린다. 죄기·격자 스냅·무리 이동이 **모두 같은 값**을 봐야 한다 — 스냅은 죄기
+ * 뒤에 값을 반 칸까지 도로 밀어내므로, 한 곳만 느슨해도 상한이 그대로 풀린다.
+ */
+const OFFSET_LIMIT: Record<Kind, number> = {
+  value: STAT_OFFSET_LIMIT,
+  legend: LEGEND_OFFSET_SAFETY_LIMIT,
+  body: PANEL_OFFSET_LIMIT,
+};
+
+/**
  * 크기를 범위 안으로 죈다. 범위를 주지 않으면 글자 크기(6~160)로 본다 — 손잡이를 쓰는
  * 대상 중 범위를 밝히지 않는 것은 범례(글자 덩어리)뿐이다.
  */
@@ -90,8 +112,8 @@ export function GaugeDragLayer({
   /** 격자에 붙일지. 끄는 동안 Alt 를 누르면 이 값과 무관하게 잠시 꺼진다. */
   snap?: boolean;
   /** 고른 요소들. 끌면 이 전체가 함께 움직인다(값 글자는 빠진다). */
-  selection?: StatSelection<Kind>;
-  onSelectionChange?: (next: StatSelection<Kind>) => void;
+  selection?: PanelSelection<Kind>;
+  onSelectionChange?: (next: PanelSelection<Kind>) => void;
   value: GaugeDragTarget;
   legend: GaugeDragTarget;
   body: GaugeDragTarget;
@@ -115,7 +137,7 @@ export function GaugeDragLayer({
     /** 격자 스냅이 중심을 구하는 데 쓰는, 잡은 요소의 상자. */
     elRect: { left: number; top: number; width: number; height: number };
     /** 함께 움직이는 대상들의 시작 오프셋. 혼자일 때도 길이 1 인 무리다. */
-    group: Array<{ kind: Kind; offsetX: number; offsetY: number }>;
+    group: Array<{ kind: Kind; offsetX: number; offsetY: number; limit: number }>;
     /** 범례 경로에서만 쓴다 — 가장자리까지 끌 수 있는 범위를 구하려면 제 크기가 필요하다. */
     legendBox: { anchor: LegendAnchor; width: number; height: number } | null;
   } | null>(null);
@@ -198,7 +220,7 @@ export function GaugeDragLayer({
         // 값 글자는 ±50% 까지 — 제 중심이 패널 어느 모서리에든 닿아야 한다(도형 영역에
         // 갇히지 않는 것이 이 요소의 요구다). 게이지 상자는 종전 ±40% 그대로다:
         // 영역을 꽉 채우는 그림이라 더 밀면 되돌릴 손잡이가 화면 밖으로 나간다.
-        const limit = d.kind === 'value' ? STAT_OFFSET_LIMIT : undefined;
+        const limit = OFFSET_LIMIT[d.kind];
         next = {
           x: clampPercentOffset(d.baseX + pixelsToPercent(dx, d.rect.width), limit),
           y: clampPercentOffset(d.baseY + pixelsToPercent(dy, d.rect.height), limit),
@@ -206,17 +228,21 @@ export function GaugeDragLayer({
       }
 
       // 격자 스냅 — 백분율 대상에만 건다. Alt 로 잠시 끈다.
+      // 스냅에도 대상의 상한을 넘긴다: 중심을 격자로 끌어당기느라 값을 반 칸까지 도로
+      // 밀어낼 수 있어, 여기서 더 느슨하게 죄면 바로 위의 상한이 풀린다.
       if (snapRef.current && !e.altKey) {
         next = {
           x: snapOffsetToGrid(
             next.x,
             { offset: d.baseX, rectStart: d.elRect.left, rectLen: d.elRect.width },
             { start: d.rect.left, len: d.rect.width },
+            OFFSET_LIMIT[d.kind],
           ),
           y: snapOffsetToGrid(
             next.y,
             { offset: d.baseY, rectStart: d.elRect.top, rectLen: d.elRect.height },
             { start: d.rect.top, len: d.rect.height },
+            OFFSET_LIMIT[d.kind],
           ),
         };
       }
@@ -327,12 +353,14 @@ export function GaugeDragLayer({
       elRect: { left: elBox.left, top: elBox.top, width: elBox.width, height: elBox.height },
       // 크기 조절은 잡은 대상 하나만 바꾼다 — 여러 대상에 같은 양을 더하는 것은 뜻이
       // 모호하다(글자 크기와 게이지 백분율이 섞인다).
+      // 상한은 대상마다 다르므로 무리에 한 값을 씌우지 않고 각자의 것을 들려 보낸다.
       group: resizeEl
-        ? [{ kind, offsetX: base.offsetX, offsetY: base.offsetY }]
+        ? [{ kind, offsetX: base.offsetX, offsetY: base.offsetY, limit: OFFSET_LIMIT[kind] }]
         : [...picked].map((k) => ({
             kind: k,
             offsetX: stateRef.current[k].offsetX,
             offsetY: stateRef.current[k].offsetY,
+            limit: OFFSET_LIMIT[k],
           })),
       // 붙인 변은 범례가 스스로 알고 있다(`data-position`) — 설정을 다시 읽지 않는다.
       legendBox: legendRect

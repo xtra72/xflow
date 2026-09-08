@@ -69,8 +69,8 @@ import { useTranslation } from '@/lib/i18n';
 import { usePanelTitleStyle, usePanelTitleVisible } from '../../panelChromeContext';
 import { usePanelEditMode } from '../PanelEditToggle';
 import {
-  StatDragLayer,
-  StatResizeHandle,
+  PanelDragLayer,
+  PanelResizeHandle,
   PANEL_EDIT_OUTLINE_CLASS,
   PANEL_SELECTED_OUTLINE_CLASS,
 } from '../../PanelDragLayer';
@@ -82,6 +82,7 @@ import {
   readStatLayout,
   writeStatLayout,
   STAT_ELEMENT_KINDS,
+  STAT_OFFSET_LIMIT,
   type StatElementKind,
 } from './statLayout';
 import type { ChartFontFamily } from './textStyle';
@@ -371,10 +372,11 @@ export default function StatPanel({
   } = usePanelElementEdit<StatElementKind>({
     kinds: STAT_ELEMENT_KINDS,
     enabled: edit.active,
+    // 상한은 세 요소 모두 ±50 — `readStatLayout` 이 읽을 때 쓰는 값과 같아야 한다.
     offsets: {
-      value: { x: valueLayout.offsetX, y: valueLayout.offsetY },
-      delta: { x: deltaLayout.offsetX, y: deltaLayout.offsetY },
-      stats: { x: statsLayout.offsetX, y: statsLayout.offsetY },
+      value: { x: valueLayout.offsetX, y: valueLayout.offsetY, limit: STAT_OFFSET_LIMIT },
+      delta: { x: deltaLayout.offsetX, y: deltaLayout.offsetY, limit: STAT_OFFSET_LIMIT },
+      stats: { x: statsLayout.offsetX, y: statsLayout.offsetY, limit: STAT_OFFSET_LIMIT },
     },
     writeOffsets: (patches) => {
       let next: Record<string, unknown> = {};
@@ -410,7 +412,7 @@ export default function StatPanel({
           // 크기 손잡이는 **고른 요소에만** 낸다 — 셋에 늘 붙어 있으면 좁은 패널에서
           // 손잡이가 글자를 덮고, 무엇을 고른 상태인지도 읽히지 않는다.
           overlay: selection.has(kind) ? (
-            <StatResizeHandle kind={kind} enabled label={label} />
+            <PanelResizeHandle kind={kind} enabled label={label} />
           ) : null,
           onDoubleClick: (e: React.MouseEvent<HTMLElement>) =>
             setStyleTarget({ kind, anchor: e.currentTarget as HTMLElement }),
@@ -471,15 +473,18 @@ export default function StatPanel({
           />
         </div>
       ) : (
-        <StatDragLayer<StatElementKind>
+        <PanelDragLayer<StatElementKind>
           enabled={edit.active}
           snap={snapToGrid}
           selection={selection}
           onSelectionChange={setSelection}
+          // 세 요소 모두 작은 글자 덩어리라 상한이 ±50 이다 — 읽는 쪽(`readStatLayout`)과
+          // 같은 값이어야 끌어 놓은 자리가 다음 렌더에 되돌아가지 않는다.
           targets={{
             value: {
               offsetX: valueLayout.offsetX,
               offsetY: valueLayout.offsetY,
+              limit: STAT_OFFSET_LIMIT,
               fontSize: valueLayout.fontSize,
               onMove: ({ x, y }) => patchLayout('value', { offset_x: x, offset_y: y }),
               onResize: (font_size) => patchLayout('value', { font_size }),
@@ -487,6 +492,7 @@ export default function StatPanel({
             delta: {
               offsetX: deltaLayout.offsetX,
               offsetY: deltaLayout.offsetY,
+              limit: STAT_OFFSET_LIMIT,
               fontSize: deltaLayout.fontSize,
               onMove: ({ x, y }) => patchLayout('delta', { offset_x: x, offset_y: y }),
               onResize: (font_size) => patchLayout('delta', { font_size }),
@@ -494,6 +500,7 @@ export default function StatPanel({
             stats: {
               offsetX: statsLayout.offsetX,
               offsetY: statsLayout.offsetY,
+              limit: STAT_OFFSET_LIMIT,
               fontSize: statsLayout.fontSize,
               onMove: ({ x, y }) => patchLayout('stats', { offset_x: x, offset_y: y }),
               onResize: (font_size) => patchLayout('stats', { font_size }),
@@ -552,7 +559,7 @@ export default function StatPanel({
               </span>
             ) : null}
             {edit.active && selection.has('value') && (
-              <StatResizeHandle kind="value" enabled label={t('dashboard.chart.statElementValue')} />
+              <PanelResizeHandle kind="value" enabled label={t('dashboard.chart.statElementValue')} />
             )}
           </div>
           {showLegacyDelta && deltaText && (
@@ -577,7 +584,7 @@ export default function StatPanel({
             edit={editFor('stats', t('dashboard.chart.statElementStats'))}
           />
         </div>
-        </StatDragLayer>
+        </PanelDragLayer>
       )}
 
       {/* 정렬 툴바 — 편집 중에만. 아래 가장자리에 둬 값·토글·상태 아이콘을 가리지 않는다. */}

@@ -8,13 +8,13 @@
 //
 // @spec SPEC-CHART-004 §2.9 [U9] · SPEC-CHART-005 §2.1 [U1]
 
-import { STAT_OFFSET_LIMIT } from './statLayout';
+import { PANEL_OFFSET_LIMIT } from './panelGeometry';
 
 /** 고른 요소들. 순서는 뜻이 없다. */
-export type StatSelection<K extends string = string> = ReadonlySet<K>;
+export type PanelSelection<K extends string = string> = ReadonlySet<K>;
 
 /** 빈 선택 — 매 렌더 새 Set 을 만들지 않는다. */
-export const EMPTY_SELECTION: StatSelection<never> = new Set();
+export const EMPTY_SELECTION: PanelSelection<never> = new Set();
 
 /**
  * 요소를 눌렀을 때의 다음 선택.
@@ -24,10 +24,10 @@ export const EMPTY_SELECTION: StatSelection<never> = new Set();
  * 무르려는 것이 아니다).
  */
 export function nextSelection<K extends string>(
-  current: StatSelection<K>,
+  current: PanelSelection<K>,
   kind: K,
   additive: boolean,
-): StatSelection<K> {
+): PanelSelection<K> {
   if (!additive) return current.has(kind) ? current : new Set([kind]);
   const next = new Set(current);
   if (next.has(kind)) next.delete(kind);
@@ -39,6 +39,15 @@ export function nextSelection<K extends string>(
 export interface GroupMember {
   offsetX: number;
   offsetY: number;
+  /**
+   * 이 요소의 오프셋 상한. 미지정이면 아래 `limit` 인자를 쓴다.
+   *
+   * 요소마다 따로 받는 이유: 한 무리에 성질이 다른 요소가 섞인다(바 패널은 그림과 범례를
+   * 함께 고를 수 있고, 둘의 상한은 40 과 50 으로 다르다). 무리에 한 값을 씌우면 상한이
+   * 큰 요소가 이미 그 값을 넘어서 있을 때 허용치가 음수가 되어, 끌지도 않은 무리가
+   * 뒤로 밀린다.
+   */
+  limit?: number;
 }
 
 /**
@@ -54,7 +63,8 @@ export function clampGroupDelta(
   members: readonly GroupMember[],
   dx: number,
   dy: number,
-  limit = STAT_OFFSET_LIMIT,
+  /** 상한을 밝히지 않은 요소에 쓰는 값. 기본은 ±40 — 영역을 채우는 그림 기준이다. */
+  limit = PANEL_OFFSET_LIMIT,
 ): { dx: number; dy: number } {
   if (members.length === 0) return { dx, dy };
   let minDx = -Infinity;
@@ -62,10 +72,11 @@ export function clampGroupDelta(
   let minDy = -Infinity;
   let maxDy = Infinity;
   for (const m of members) {
-    minDx = Math.max(minDx, -limit - m.offsetX);
-    maxDx = Math.min(maxDx, limit - m.offsetX);
-    minDy = Math.max(minDy, -limit - m.offsetY);
-    maxDy = Math.min(maxDy, limit - m.offsetY);
+    const lim = m.limit ?? limit;
+    minDx = Math.max(minDx, -lim - m.offsetX);
+    maxDx = Math.min(maxDx, lim - m.offsetX);
+    minDy = Math.max(minDy, -lim - m.offsetY);
+    maxDy = Math.min(maxDy, lim - m.offsetY);
   }
   return {
     dx: Math.min(Math.max(dx, minDx), maxDx),

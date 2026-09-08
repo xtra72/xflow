@@ -26,8 +26,13 @@ import {
   sliceLabelTextColor,
 } from './pieLabel';
 import { resolveFontColor, resolveFontFamily, resolveFontSize } from './textStyle';
-import { PANEL_SIZE_MAX, clampPercentOffset, readPanelSize } from './panelGeometry';
-import { clampStoredLegendOffset } from './legendOverlay';
+import {
+  PANEL_OFFSET_LIMIT,
+  PANEL_SIZE_MAX,
+  clampPercentOffset,
+  readPanelSize,
+} from './panelGeometry';
+import { LEGEND_OFFSET_SAFETY_LIMIT, clampStoredLegendOffset } from './legendOverlay';
 import { ConnectionStatusIcon } from './ConnectionStatusIcon';
 import { aggregateByLabel } from './chartChannelUtils';
 import { reduceAllSeries } from './seriesReduce';
@@ -42,8 +47,8 @@ import { usePanelSeriesData } from './usePanelSeriesData';
 import { usePanelTitleStyle, usePanelTitleVisible } from '../../panelChromeContext';
 import { usePanelEditMode } from '../PanelEditToggle';
 import {
-  StatDragLayer as PanelDragLayer,
-  StatResizeHandle as PanelResizeHandle,
+  PanelDragLayer,
+  PanelResizeHandle,
   PANEL_EDIT_OUTLINE_CLASS,
   PANEL_SELECTED_OUTLINE_CLASS,
 } from '../../PanelDragLayer';
@@ -168,8 +173,21 @@ export default function PieChartPanel({
   const decimals = readDecimalPlaces(config);
 
   // --- SPEC-CHART-005: 그리드·정렬·선택 (드래그는 종전부터 있었다) ---
-  const chartOffset = { x: cfg.pie_offset_x ?? 0, y: cfg.pie_offset_y ?? 0 };
-  const legendOffset = { x: cfg.legend_offset_x ?? 0, y: cfg.legend_offset_y ?? 0 };
+  // 오프셋과 **그 상한**을 한 자리에 둔다 — 끌기(`PanelDragLayer`)와 정렬(`usePanelElementEdit`)이
+  // 같은 값을 봐야 하고, 그 값은 읽는 쪽이 이미 정해 두었다. 파이 그림은 패널을 가득
+  // 채우므로 위 `parseConfig` 의 `clampPercentOffset` 과 같은 ±40 이고, 범례는 작은 글자
+  // 덩어리라 `clampStoredLegendOffset` 과 같은 ±50 이다. 쓰기가 더 느슨하면 끄는 동안에는
+  // 따라오다가 다음에 읽을 때 되돌아간다.
+  const chartOffset = {
+    x: cfg.pie_offset_x ?? 0,
+    y: cfg.pie_offset_y ?? 0,
+    limit: PANEL_OFFSET_LIMIT,
+  };
+  const legendOffset = {
+    x: cfg.legend_offset_x ?? 0,
+    y: cfg.legend_offset_y ?? 0,
+    limit: LEGEND_OFFSET_SAFETY_LIMIT,
+  };
   const {
     selection,
     setSelection,
@@ -476,6 +494,7 @@ export default function PieChartPanel({
           chart: {
             offsetX: chartOffset.x,
             offsetY: chartOffset.y,
+            limit: chartOffset.limit,
             // 그림은 글자가 아니므로 크기 손잡이가 백분율(`pie_size`)을 바꾼다.
             fontSize: cfg.pie_size ?? PANEL_SIZE_MAX,
             onMove: ({ x, y }) => onConfigChange?.({ pie_offset_x: x, pie_offset_y: y }),
@@ -484,6 +503,7 @@ export default function PieChartPanel({
           legend: {
             offsetX: legendOffset.x,
             offsetY: legendOffset.y,
+            limit: legendOffset.limit,
             fontSize: cfg.legend_font_size ?? DEFAULT_PIE_LEGEND_FONT_SIZE,
             onMove: ({ x, y }) => onConfigChange?.({ legend_offset_x: x, legend_offset_y: y }),
             onResize: (legend_font_size) => onConfigChange?.({ legend_font_size }),

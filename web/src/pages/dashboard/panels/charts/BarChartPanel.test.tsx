@@ -403,6 +403,21 @@ describe('BarChartPanel 특성화 (SPEC-CHART-005 M1)', () => {
     expect(box.style.transform).toContain('scale(0.8)');
   });
 
+  it('저장된 오프셋은 ±40 으로 죈다 — 그림 영역은 패널을 가득 채운다', () => {
+    // 그리는 쪽이 이미 ±40 이므로, 40 을 넘겨 저장된 값은 예전부터 40 으로 보였다.
+    // 끄는 쪽 상한을 40 으로 맞춰도 저장된 대시보드의 그림은 그대로다.
+    mockResult.current.entries = rows;
+    render(
+      <BarChartPanel
+        panelId="p1"
+        config={{ channel_name: 'c', mode: 'category', plot_offset_x: 999, plot_offset_y: -999 }}
+      />,
+    );
+    expect(screen.getByTestId('bar-chart-container').style.transform).toContain(
+      'translate(40%, -40%)',
+    );
+  });
+
   it('AC-08: onConfigChange 가 없으면 편집 입구가 없다', () => {
     mockResult.current.entries = rows;
     const { container } = render(

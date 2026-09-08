@@ -8,13 +8,15 @@ import {
   GRID_STEP_PERCENT,
   computeAlignPatches,
   snapOffsetToGrid,
-  type StatElementBox,
+  type PanelElementBox,
 } from './panelEditAlign';
+import { PANEL_OFFSET_LIMIT } from './panelGeometry';
+import { STAT_OFFSET_LIMIT } from './statLayout';
 
 /** 기준 상자 200×100, 화면 원점에 놓인 상황. */
 const BOUNDS = { left: 0, top: 0, width: 200, height: 100 };
 
-function box(over: Partial<StatElementBox> = {}): StatElementBox {
+function box(over: Partial<PanelElementBox> = {}): PanelElementBox {
   return {
     kind: 'value',
     rect: { left: 0, top: 0, width: 50, height: 20 },
@@ -57,16 +59,31 @@ describe('snapOffsetToGrid — 중심을 격자에 맞춘다 (AC-33)', () => {
     expect(snapOffsetToGrid(12, centered, { start: 0, len: 0 })).toBe(12);
   });
 
-  it('상한(±50)을 넘기지 않는다', () => {
+  it('상한을 밝히지 않으면 ±40 을 넘기지 않는다', () => {
     expect(
       snapOffsetToGrid(48, { offset: 48, rectStart: 400, rectLen: 50 }, BOUNDS_X),
-    ).toBeLessThanOrEqual(50);
+    ).toBeLessThanOrEqual(PANEL_OFFSET_LIMIT);
+  });
+
+  it('넘겨받은 상한을 쓴다 — 글자 덩어리는 ±50 까지 간다', () => {
+    expect(
+      snapOffsetToGrid(48, { offset: 48, rectStart: 400, rectLen: 50 }, BOUNDS_X, STAT_OFFSET_LIMIT),
+    ).toBeLessThanOrEqual(STAT_OFFSET_LIMIT);
+  });
+
+  it('격자로 끌어당긴 값도 상한을 넘지 않는다 — 스냅이 죄기를 되돌리지 못한다', () => {
+    // 흐름상 시작 자리 71, 폭 50 인 요소를 38%p 만큼 끈 상황: 중심이 86% 라 90% 로 붙어
+    // 오프셋이 42%p 가 된다. 그림(±40)이면 40 에서 멈춰야 하고, 글자 덩어리(±50)면
+    // 42 를 그대로 쓴다. 여기서 상한을 흘리면 파이 그림이 40 을 넘겨 저장된다.
+    const base = { offset: 0, rectStart: 71, rectLen: 50 };
+    expect(snapOffsetToGrid(38, base, BOUNDS_X)).toBeCloseTo(PANEL_OFFSET_LIMIT, 6);
+    expect(snapOffsetToGrid(38, base, BOUNDS_X, STAT_OFFSET_LIMIT)).toBeCloseTo(42, 6);
   });
 });
 
 describe('computeAlignPatches — 요소끼리 맞춘다 (AC-34)', () => {
   /** 가로로 어긋난 세 요소. left 20 / 60 / 100, 폭 50 / 30 / 40. */
-  const three: StatElementBox[] = [
+  const three: PanelElementBox[] = [
     box({ kind: 'value', rect: { left: 20, top: 0, width: 50, height: 20 } }),
     box({ kind: 'delta', rect: { left: 60, top: 30, width: 30, height: 14 } }),
     box({ kind: 'stats', rect: { left: 100, top: 60, width: 40, height: 14 } }),
@@ -122,13 +139,46 @@ describe('computeAlignPatches — 요소끼리 맞춘다 (AC-34)', () => {
     ]);
   });
 
-  it('상한(±50)으로 죈다', () => {
+  it('요소가 밝힌 상한으로 죈다 — 글자 덩어리는 ±50', () => {
     const far = [
       box({ kind: 'value', rect: { left: 0, top: 0, width: 10, height: 10 } }),
-      box({ kind: 'delta', rect: { left: 190, top: 0, width: 10, height: 10 }, offsetX: 40 }),
+      box({
+        kind: 'delta',
+        rect: { left: 190, top: 0, width: 10, height: 10 },
+        offsetX: 40,
+        limit: STAT_OFFSET_LIMIT,
+      }),
     ];
     const patches = computeAlignPatches(far, BOUNDS, 'horizontal', 'start');
-    expect(patches[1]!.offsetX).toBe(-50);
+    expect(patches[1]!.offsetX).toBe(-STAT_OFFSET_LIMIT);
+  });
+
+  it('상한을 밝히지 않으면 ±40 으로 죈다 — 영역을 채우는 그림이 안전한 기본값이다', () => {
+    // 파이 그림·바 그림 영역·게이지 상자는 읽는 쪽(`readPanelOffset`)이 ±40 으로 읽는다.
+    // 정렬이 더 느슨하게 죄면 맞춘 자리가 다음에 읽힐 때 되돌아간다.
+    const far = [
+      box({ kind: 'chart', rect: { left: 0, top: 0, width: 10, height: 10 } }),
+      box({ kind: 'legend', rect: { left: 190, top: 0, width: 10, height: 10 }, offsetX: 40 }),
+    ];
+    const patches = computeAlignPatches(far, BOUNDS, 'horizontal', 'start');
+    expect(patches[1]!.offsetX).toBe(-PANEL_OFFSET_LIMIT);
+  });
+
+  it('상한이 다른 요소가 섞여도 각자의 상한을 쓴다', () => {
+    // 같은 정렬 한 번에 그림(±40)과 범례(±50)가 함께 걸린다.
+    const far = [
+      box({ kind: 'chart', rect: { left: 0, top: 0, width: 10, height: 10 } }),
+      box({ kind: 'chart2', rect: { left: 190, top: 0, width: 10, height: 10 }, offsetX: 40 }),
+      box({
+        kind: 'legend',
+        rect: { left: 190, top: 0, width: 10, height: 10 },
+        offsetX: 40,
+        limit: STAT_OFFSET_LIMIT,
+      }),
+    ];
+    const patches = computeAlignPatches(far, BOUNDS, 'horizontal', 'start');
+    expect(patches[1]!.offsetX).toBe(-PANEL_OFFSET_LIMIT);
+    expect(patches[2]!.offsetX).toBe(-STAT_OFFSET_LIMIT);
   });
 
   it('요소가 2개 미만이면 맞출 상대가 없다', () => {

@@ -46,14 +46,17 @@ import {
   withGaugeValue,
 } from './gauge/gaugeShapes';
 import { GaugeValueOverlay } from './gauge/gaugeValue';
+import { resolveValuePlacement } from './gauge/valueOffsetMigration';
 import { readValueScale, VALUE_SCALE_MAX, VALUE_SCALE_MIN } from './charts/valueScale';
 import {
   panelBoxTransform,
+  PANEL_OFFSET_LIMIT,
   PANEL_SIZE_MAX,
   PANEL_SIZE_MIN,
   readPanelOffset,
   readPanelSize,
 } from './charts/panelGeometry';
+import { STAT_OFFSET_LIMIT } from './charts/statLayout';
 import {
   resolveFontColor,
   resolveFontFamily,
@@ -70,7 +73,7 @@ import { PanelEditGrid } from '../PanelEditGrid';
 import { PanelAlignToolbar } from '../PanelAlignToolbar';
 import { usePanelElementEdit } from '../usePanelElementEdit';
 import {
-  StatResizeHandle as PanelResizeHandle,
+  PanelResizeHandle,
   PANEL_EDIT_OUTLINE_CLASS,
   PANEL_SELECTED_OUTLINE_CLASS,
 } from '../PanelDragLayer';
@@ -80,7 +83,7 @@ import {
   type ThresholdLegendPosition,
 } from './gauge/GaugeThresholdLegend';
 import { thresholdLegendItems } from './gauge/thresholdLegend';
-import { clampStoredLegendOffset } from './charts/legendOverlay';
+import { LEGEND_OFFSET_SAFETY_LIMIT, clampStoredLegendOffset } from './charts/legendOverlay';
 
 // ---- 타입 정의 ----
 
@@ -257,6 +260,7 @@ function GaugeTile({
 }): ReactElement {
   const hasValue = item.value !== undefined && Number.isFinite(item.value);
   const parsed = hasValue ? withGaugeValue(base, item.value!) : base;
+  const valuePlacement = resolveValuePlacement(config);
   return (
     <div
       className={cn(
@@ -287,8 +291,10 @@ function GaugeTile({
         <GaugeValueOverlay
           parsed={parsed}
           hasValue={hasValue}
-          offsetX={readPanelOffset(config.value_pos_x)}
-          offsetY={readPanelOffset(config.value_pos_y)}
+          offsetX={valuePlacement.percentX}
+          offsetY={valuePlacement.percentY}
+          viewBoxOffsetX={valuePlacement.viewBoxX}
+          viewBoxOffsetY={valuePlacement.viewBoxY}
         />
       </div>
       <span
@@ -437,16 +443,25 @@ export default function GaugePanel({
    * 규칙이라 공용 레이어가 대신할 수 없다). 여기서 공용화하는 것은 **편집 표면**
    * (그리드·중심 표식·정렬·선택 구분)뿐이다.
    */
-  const valueOffsets = {
-    x: readPanelOffset(config.value_pos_x),
-    y: readPanelOffset(config.value_pos_y),
-  };
+  // 값 글자의 자리 — 지금 좌표(백분율)와 옛 좌표(viewBox)를 함께 읽는다. 옛 좌표는
+  // 그리기에만 쓴다: 끌기·정렬은 화면에서 잰 자리를 기준으로 삼으므로 옛 몫이 이미
+  // 들어간 자리에서 출발하고, 저장은 백분율 쪽에만 쌓인다.
+  const valuePlacement = resolveValuePlacement(config);
+  const valueOffsets = { x: valuePlacement.percentX, y: valuePlacement.percentY };
+  // 상한은 요소마다 다르다 — 게이지 상자는 영역을 채우는 그림이라 `readPanelOffset` 과
+  // 같은 ±40, 값 글자와 범례는 작은 글자 덩어리라 ±50 이다(`GaugeDragLayer` 의 죄기와
+  // 같은 값이어야 끌기와 정렬이 서로 다른 자리에서 멈추지 않는다).
   const gaugeOffsets = {
-    body: { x: readPanelOffset(config.gauge_offset_x), y: readPanelOffset(config.gauge_offset_y) },
-    value: valueOffsets,
+    body: {
+      x: readPanelOffset(config.gauge_offset_x),
+      y: readPanelOffset(config.gauge_offset_y),
+      limit: PANEL_OFFSET_LIMIT,
+    },
+    value: { ...valueOffsets, limit: STAT_OFFSET_LIMIT },
     legend: {
       x: clampStoredLegendOffset(config.threshold_legend_offset_x),
       y: clampStoredLegendOffset(config.threshold_legend_offset_y),
+      limit: LEGEND_OFFSET_SAFETY_LIMIT,
     },
   };
   const {
@@ -470,6 +485,15 @@ export default function GaugePanel({
         } else if (p.kind === 'value') {
           next.value_pos_x = p.x;
           next.value_pos_y = p.y;
+          // 지우는 패치(정렬 툴바의 배치 초기화)면 옛 좌표도 함께 지운다. 신규 키만
+          // 지우면 옛 몫이 남아 상자·범례만 제자리로 가고 값은 그대로 — 초기화가
+          // 반쪽이 된다(설정의 값 초기화 단추가 이미 같은 이유로 둘 다 지운다).
+          // 옮기는 패치(정렬·무리 이동)에서는 지우지 않는다: 옛 몫은 화면에서 잰
+          // 출발 자리에 이미 들어가 있으므로, 여기서 빼면 그만큼 값이 튄다.
+          if (p.x === undefined && p.y === undefined) {
+            next.value_offset_x = undefined;
+            next.value_offset_y = undefined;
+          }
         } else {
           next.threshold_legend_offset_x = p.x;
           next.threshold_legend_offset_y = p.y;
@@ -675,6 +699,8 @@ export default function GaugePanel({
             hasValue={isStoreSourcePath ? false : hasValue}
             offsetX={valueOffsets.x}
             offsetY={valueOffsets.y}
+            viewBoxOffsetX={valuePlacement.viewBoxX}
+            viewBoxOffsetY={valuePlacement.viewBoxY}
             edit={
               edit.active
                 ? {

@@ -14,8 +14,7 @@
 //
 // @spec SPEC-CHART-004 §2.7 [U7] / §2.8 [U8] · SPEC-CHART-005 §2.1 [U1]
 
-import { clampPercentOffset, pixelsToPercent } from './panelGeometry';
-import { STAT_OFFSET_LIMIT } from './statLayout';
+import { PANEL_OFFSET_LIMIT, clampPercentOffset, pixelsToPercent } from './panelGeometry';
 
 /**
  * 격자 간격(패널 상자 대비 백분율).
@@ -34,13 +33,24 @@ export interface Box {
 }
 
 /** 정렬·스냅 계산에 필요한 요소 하나의 상태. */
-export interface StatElementBox<K extends string = string> {
+export interface PanelElementBox<K extends string = string> {
   kind: K;
   /** 화면에서 잰 현재 상자. */
   rect: Box;
   /** 지금 적용된 오프셋(백분율 포인트). */
   offsetX: number;
   offsetY: number;
+  /**
+   * 이 요소의 오프셋 상한(백분율 포인트). 미지정이면 ±40(`PANEL_OFFSET_LIMIT`).
+   *
+   * **상한은 요소의 성질이 정한다.** 영역을 가득 채우는 그림(파이·바 플롯·게이지 몸통)은
+   * 40 이면 이미 절반이 잘리지만, 가운데에서 시작하는 작은 글자 덩어리(통계 세 줄·범례)는
+   * 모서리에 닿으려면 50 이 필요하다. 한 값으로 묶으면 한쪽이 반드시 어긋난다.
+   *
+   * 정렬로 만든 값도 **읽는 쪽과 같은 상한**으로 죄어야 한다 — 더 느슨하게 죄면 저장은
+   * 되지만 다음에 읽을 때 되돌아가, 화면이 소리 없이 제자리로 튄다.
+   */
+  limit?: number;
 }
 
 /** 정렬 축. */
@@ -85,7 +95,11 @@ function snapPercent(v: number, step: number): number {
  * 다른 변이 기준이 되어 무엇에 붙었는지 읽히지 않는다.
  *
  * 격자를 벗어난 자리를 강제로 끌어오지 않는다 — 죄는 것은 오프셋이 아니라 중심의
- * 절대 자리이며, 그 결과를 오프셋으로 되돌린 뒤 상한(±50)만 다시 적용한다.
+ * 절대 자리이며, 그 결과를 오프셋으로 되돌린 뒤 상한만 다시 적용한다.
+ *
+ * **그 상한은 호출부가 정한다.** 스냅은 중심을 격자로 끌어당기므로 죄기 뒤에 값을 다시
+ * 최대 반 칸(±5%p) 밀어낼 수 있다 — 여기서 더 느슨한 상한을 쓰면 바로 위에서 죈 값이
+ * 도로 풀려, 요소 종류별 상한이 스냅 한 줄에 무너진다.
  */
 export function snapOffsetToGrid(
   /** 끄는 중에 계산된 **새** 오프셋. */
@@ -100,6 +114,8 @@ export function snapOffsetToGrid(
   base: { offset: number; rectStart: number; rectLen: number },
   /** 기준 상자의 시작 좌표와 길이. */
   bounds: { start: number; len: number },
+  /** 이 요소의 오프셋 상한. 미지정이면 ±40 — 영역을 채우는 그림이 안전한 기본값이다. */
+  limit = PANEL_OFFSET_LIMIT,
   step = GRID_STEP_PERCENT,
 ): number {
   if (!(bounds.len > 0)) return proposedOffset;
@@ -113,7 +129,7 @@ export function snapOffsetToGrid(
   // 붙인 값이 `10.000000000000007` 로 저장되면 눈금에 붙었는지 눈으로 알 수 없고,
   // 다음에 열었을 때 같은 자리에서 다시 붙지 않는다. 4자리면 화면 해상도보다 훨씬 곱다.
   const next = proposedOffset + (snapped - centerPercent);
-  return clampPercentOffset(Math.round(next * 1e4) / 1e4, STAT_OFFSET_LIMIT);
+  return clampPercentOffset(Math.round(next * 1e4) / 1e4, limit);
 }
 
 /**
@@ -129,7 +145,7 @@ export function snapOffsetToGrid(
  * 그것이므로 막지 않는다. 되돌릴 수단(배치 초기화)이 함께 있어야 한다.
  */
 export function computeAlignPatches<K extends string>(
-  elements: readonly StatElementBox<K>[],
+  elements: readonly PanelElementBox<K>[],
   bounds: Box,
   axis: AlignAxis,
   mode: AlignMode,
@@ -139,8 +155,8 @@ export function computeAlignPatches<K extends string>(
   const boundsLen = horizontal ? bounds.width : bounds.height;
   if (!(boundsLen > 0)) return [];
 
-  const startOf = (e: StatElementBox<K>) => (horizontal ? e.rect.left : e.rect.top);
-  const lenOf = (e: StatElementBox<K>) => (horizontal ? e.rect.width : e.rect.height);
+  const startOf = (e: PanelElementBox<K>) => (horizontal ? e.rect.left : e.rect.top);
+  const lenOf = (e: PanelElementBox<K>) => (horizontal ? e.rect.width : e.rect.height);
 
   const minStart = Math.min(...elements.map(startOf));
   const maxEnd = Math.max(...elements.map((e) => startOf(e) + lenOf(e)));
@@ -155,9 +171,10 @@ export function computeAlignPatches<K extends string>(
           ? maxEnd - len
           : (minStart + maxEnd) / 2 - len / 2;
     const current = horizontal ? e.offsetX : e.offsetY;
+    // 상한은 요소마다 다르다 — 읽는 쪽과 어긋나면 정렬한 자리가 다음 렌더에 되돌아간다.
     const next = clampPercentOffset(
       current + pixelsToPercent(desiredStart - startOf(e), boundsLen),
-      STAT_OFFSET_LIMIT,
+      e.limit ?? PANEL_OFFSET_LIMIT,
     );
     return horizontal ? { kind: e.kind, offsetX: next } : { kind: e.kind, offsetY: next };
   });

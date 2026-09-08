@@ -92,13 +92,14 @@ import { PanelEditGrid } from '../../PanelEditGrid';
 import { PanelAlignToolbar } from '../../PanelAlignToolbar';
 import { usePanelElementEdit } from '../../usePanelElementEdit';
 import {
-  StatResizeHandle as PanelResizeHandle,
+  PanelResizeHandle,
   PANEL_EDIT_OUTLINE_CLASS,
   PANEL_SELECTED_OUTLINE_CLASS,
 } from '../../PanelDragLayer';
-import { clampStoredLegendOffset } from './legendOverlay';
+import { LEGEND_OFFSET_SAFETY_LIMIT, clampStoredLegendOffset } from './legendOverlay';
 import {
   panelBoxTransform,
+  PANEL_OFFSET_LIMIT,
   PANEL_SIZE_MAX,
   PANEL_SIZE_MIN,
   readPanelOffset,
@@ -657,11 +658,15 @@ export default function LineChartPanel({
   } = usePanelElementEdit<LineElementKind>({
     kinds: LINE_ELEMENT_KINDS,
     enabled: edit.active,
+    // 상한은 읽는 쪽이 정한다 — 그림 상자는 `readPanelOffset` 의 ±40, 범례는
+    // `clampStoredLegendOffset` 의 ±50. 정렬이 더 느슨하게 죄면 맞춘 자리가
+    // 다음에 읽힐 때 되돌아간다.
     offsets: {
-      plot: { x: plotOffsetX, y: plotOffsetY },
+      plot: { x: plotOffsetX, y: plotOffsetY, limit: PANEL_OFFSET_LIMIT },
       legend: {
         x: clampStoredLegendOffset(legendCfg.offset_x),
         y: clampStoredLegendOffset(legendCfg.offset_y),
+        limit: LEGEND_OFFSET_SAFETY_LIMIT,
       },
     },
     writeOffsets: (patches) => {

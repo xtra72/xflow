@@ -17,15 +17,22 @@
 
 import { useEffect, useRef } from 'react';
 
-import { clampPercentOffset, pixelsToPercent } from './panels/charts/panelGeometry';
-import { clampInlineLegendOffset } from './panels/charts/legendOverlay';
+import {
+  PANEL_OFFSET_LIMIT,
+  clampPercentOffset,
+  pixelsToPercent,
+} from './panels/charts/panelGeometry';
+import {
+  LEGEND_OFFSET_SAFETY_LIMIT,
+  clampInlineLegendOffset,
+} from './panels/charts/legendOverlay';
 import { clampFontSize } from './panels/charts/statLayout';
 import { snapOffsetToGrid } from './panels/charts/panelEditAlign';
 import {
   clampGroupDelta,
   EMPTY_SELECTION,
   nextSelection,
-  type StatSelection,
+  type PanelSelection,
 } from './panels/charts/panelEditSelection';
 
 /** 끌 수 있는 대상 하나. */
@@ -45,6 +52,19 @@ export interface ChartDragTarget {
 
 type Kind = 'legend' | 'plot';
 
+/**
+ * 대상별 오프셋 상한(백분율 포인트) — **읽는 쪽과 같은 값이어야 한다.**
+ *
+ * 그림 상자는 `readPanelOffset` 이 ±40 으로 읽고, 범례는 `clampStoredLegendOffset` 이
+ * ±50 으로 읽는다. 쓰는 쪽이 더 느슨하면 끄는 동안에는 따라오다가 다음에 config 를 읽는
+ * 순간 되돌아간다 — 특히 격자 스냅은 죄기 뒤에 값을 반 칸까지 도로 밀어내므로, 스냅에도
+ * 같은 값을 넘겨야 한다.
+ */
+const OFFSET_LIMIT: Record<Kind, number> = {
+  plot: PANEL_OFFSET_LIMIT,
+  legend: LEGEND_OFFSET_SAFETY_LIMIT,
+};
+
 export function ChartDragLayer({
   enabled = true,
   snap = true,
@@ -59,8 +79,8 @@ export function ChartDragLayer({
   /** 격자에 붙일지. 끄는 동안 Alt 를 누르면 이 값과 무관하게 잠시 꺼진다. */
   snap?: boolean;
   /** 고른 요소들. 끌면 이 전체가 함께 움직인다. */
-  selection?: StatSelection<Kind>;
-  onSelectionChange?: (next: StatSelection<Kind>) => void;
+  selection?: PanelSelection<Kind>;
+  onSelectionChange?: (next: PanelSelection<Kind>) => void;
   legend: ChartDragTarget;
   plot: ChartDragTarget;
   children: React.ReactNode;
@@ -81,7 +101,7 @@ export function ChartDragLayer({
     /** 격자 스냅이 중심을 구하는 데 쓰는, 잡은 요소의 상자. */
     elRect: { left: number; top: number; width: number; height: number };
     /** 함께 움직이는 요소들의 시작 오프셋. 혼자일 때도 길이 1 인 무리다. */
-    group: Array<{ kind: Kind; offsetX: number; offsetY: number }>;
+    group: Array<{ kind: Kind; offsetX: number; offsetY: number; limit: number }>;
   } | null>(null);
 
   const stateRef = useRef({ legend, plot });
@@ -148,11 +168,13 @@ export function ChartDragLayer({
             next.x,
             { offset: d.base.x, rectStart: d.elRect.left, rectLen: d.elRect.width },
             { start: d.container.left, len: d.container.width },
+            OFFSET_LIMIT[d.kind],
           ),
           y: snapOffsetToGrid(
             next.y,
             { offset: d.base.y, rectStart: d.elRect.top, rectLen: d.elRect.height },
             { start: d.container.top, len: d.container.height },
+            OFFSET_LIMIT[d.kind],
           ),
         };
       }
@@ -248,12 +270,21 @@ export function ChartDragLayer({
       elRect: { left: elBox.left, top: elBox.top, width: elBox.width, height: elBox.height },
       // 크기 조절은 잡은 대상 하나만 바꾼다 — 여러 대상에 같은 양을 더하는 것은 뜻이
       // 모호하다(글자 크기와 그림 백분율이 섞인다).
+      // 상한은 대상마다 다르므로 무리에 한 값을 씌우지 않고 각자의 것을 들려 보낸다.
       group: resizeEl
-        ? [{ kind, offsetX: stateRef.current[kind].offsetX, offsetY: stateRef.current[kind].offsetY }]
+        ? [
+            {
+              kind,
+              offsetX: stateRef.current[kind].offsetX,
+              offsetY: stateRef.current[kind].offsetY,
+              limit: OFFSET_LIMIT[kind],
+            },
+          ]
         : [...picked].map((k) => ({
             kind: k,
             offsetX: stateRef.current[k].offsetX,
             offsetY: stateRef.current[k].offsetY,
+            limit: OFFSET_LIMIT[k],
           })),
       content: content
         ? {

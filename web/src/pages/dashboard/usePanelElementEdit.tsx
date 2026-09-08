@@ -15,17 +15,26 @@ import {
   computeAlignPatches,
   type AlignAxis,
   type AlignMode,
-  type StatElementBox,
+  type PanelElementBox,
 } from './panels/charts/panelEditAlign';
 import {
   EMPTY_SELECTION,
-  type StatSelection,
+  type PanelSelection,
 } from './panels/charts/panelEditSelection';
 
 /** 한 요소의 현재 오프셋(패널 상자 대비 %). */
 export interface ElementOffset {
   x: number;
   y: number;
+  /**
+   * 이 요소의 오프셋 상한(백분율 포인트). 미지정이면 ±40(`PANEL_OFFSET_LIMIT`).
+   *
+   * 오프셋 옆에 두는 이유: 상한은 저장 형태를 **읽는 함수**가 이미 정해 둔 값이라
+   * (그림은 `readPanelOffset` 의 40, 글자 덩어리는 `readStatLayout` 의 50, 범례는
+   * `clampStoredLegendOffset` 의 50), 오프셋과 떨어뜨려 두면 둘이 서로 다른 값을
+   * 가리키게 된다. 정렬이 더 느슨하게 죄면 저장은 되지만 다음에 읽을 때 되돌아간다.
+   */
+  limit?: number;
 }
 
 /** 정렬·초기화가 내놓는 한 요소의 새 오프셋. `undefined` 는 "지운다" 는 뜻이다. */
@@ -36,8 +45,8 @@ export interface OffsetPatch<K extends string> {
 }
 
 export interface PanelElementEdit<K extends string> {
-  selection: StatSelection<K>;
-  setSelection: (next: StatSelection<K>) => void;
+  selection: PanelSelection<K>;
+  setSelection: (next: PanelSelection<K>) => void;
   snap: boolean;
   setSnap: (next: boolean) => void;
   /** 기준 상자(`data-panel-bounds`)에 걸어야 하는 ref. 정렬이 여기서 상자를 잰다. */
@@ -67,7 +76,7 @@ export function usePanelElementEdit<K extends string>({
 }): PanelElementEdit<K> {
   // 둘 다 런타임 상태다 — config 에 저장하면 다음에 열 때도 무엇인가 골라져 있거나
   // 격자가 꺼져 있고, 그것을 되돌리는 방법이 화면에 없다.
-  const [selection, setSelection] = useState<StatSelection<K>>(EMPTY_SELECTION);
+  const [selection, setSelection] = useState<PanelSelection<K>>(EMPTY_SELECTION);
   const [snap, setSnap] = useState(true);
   const boundsRef = useRef<HTMLDivElement>(null);
 
@@ -87,7 +96,7 @@ export function usePanelElementEdit<K extends string>({
     // 2개 이상 골랐으면 **고른 것끼리** 맞춘다. 아니면 렌더된 전부를 맞춘다 —
     // 아무것도 고르지 않은 채 누른 것은 "다 맞춰라" 로 읽는 편이 자연스럽다.
     const targets = sel.size >= 2 ? ks.filter((k) => sel.has(k)) : ks;
-    const boxes: StatElementBox<K>[] = [];
+    const boxes: PanelElementBox<K>[] = [];
     for (const kind of targets) {
       const el = host.querySelector(`[data-panel-drag="${kind}"]`);
       if (!el) continue;
@@ -97,6 +106,7 @@ export function usePanelElementEdit<K extends string>({
         rect: { left: r.left, top: r.top, width: r.width, height: r.height },
         offsetX: offs[kind].x,
         offsetY: offs[kind].y,
+        limit: offs[kind].limit,
       });
     }
     const patches = computeAlignPatches(boxes, bounds, axis, mode);

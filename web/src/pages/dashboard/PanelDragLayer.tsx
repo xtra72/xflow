@@ -18,18 +18,18 @@
 
 import { useEffect, useRef } from 'react';
 
-import { clampFontSize, STAT_OFFSET_LIMIT } from './panels/charts/statLayout';
+import { clampFontSize } from './panels/charts/statLayout';
 import { snapOffsetToGrid } from './panels/charts/panelEditAlign';
 import {
   clampGroupDelta,
   EMPTY_SELECTION,
   nextSelection,
-  type StatSelection,
+  type PanelSelection,
 } from './panels/charts/panelEditSelection';
 import { clampPercentOffset, pixelsToPercent } from './panels/charts/panelGeometry';
 
 /** 끌 수 있는 요소 하나. */
-export interface StatDragTarget {
+export interface PanelDragTarget {
   /** 현재 가로 오프셋(백분율 포인트). */
   offsetX: number;
   /** 현재 세로 오프셋(백분율 포인트). */
@@ -39,6 +39,20 @@ export interface StatDragTarget {
   /** 끄는 동안 계속 호출된다 — 미리보기가 즉시 따라와야 어디에 놓일지 보인다. */
   onMove: (next: { x: number; y: number }) => void;
   onResize: (fontSize: number) => void;
+  /**
+   * 오프셋 상한(백분율 포인트). 미지정이면 ±40(`PANEL_OFFSET_LIMIT`).
+   *
+   * **상한은 레이어가 아니라 요소의 성질이 정한다.** 이 레이어는 성질이 다른 요소를
+   * 함께 나른다 — 통계 세 줄과 범례는 가운데에서 시작하는 작은 글자 덩어리라 모서리에
+   * 닿으려면 축마다 50 이 필요하고(`STAT_OFFSET_LIMIT`), 파이 그림과 바 그림 영역은
+   * 영역을 가득 채우므로 40 만 넘어도 절반이 잘린다(`PANEL_OFFSET_LIMIT`).
+   *
+   * 기본값을 느슨한 쪽(50)이 아니라 **40** 으로 두는 이유: 이 값은 읽는 쪽의 상한과
+   * 같아야 한다. 쓰기가 더 느슨하면 끄는 동안에는 50 까지 따라오다가 다음에 config 를
+   * 읽는 순간 40 으로 되돌아가, 방금 맞춘 자리가 소리 없이 튄다(실제로 그렇게 보고됐다).
+   * 상한을 밝히지 않은 새 대상이 붙었을 때 조용히 틀리는 쪽은 느슨한 기본값이다.
+   */
+  limit?: number;
   /** 크기의 하한·상한. 미지정이면 글자 크기 범위(6~160)로 죈다. */
   sizeRange?: { min: number; max: number };
   /**
@@ -98,7 +112,7 @@ export const PANEL_SELECTED_OUTLINE_CLASS =
  * 레이어가 아니라 **요소가** 그린다 — 핸들의 자리는 그 요소의 상자에 붙어야 하는데,
  * 레이어는 요소가 어디에 어떤 크기로 놓였는지 모른다.
  */
-export function StatResizeHandle<K extends string>({
+export function PanelResizeHandle<K extends string>({
   kind,
   enabled,
   label,
@@ -132,7 +146,7 @@ export function StatResizeHandle<K extends string>({
   );
 }
 
-export function StatDragLayer<K extends string>({
+export function PanelDragLayer<K extends string>({
   enabled = true,
   snap = true,
   selection,
@@ -148,15 +162,15 @@ export function StatDragLayer<K extends string>({
   /** 격자에 붙일지. 끄는 동안 Alt 를 누르면 이 값과 무관하게 잠시 꺼진다. */
   snap?: boolean;
   /** 지금 고른 요소들. 끌면 이 전체가 함께 움직인다. */
-  selection: StatSelection<K>;
-  onSelectionChange: (next: StatSelection<K>) => void;
+  selection: PanelSelection<K>;
+  onSelectionChange: (next: PanelSelection<K>) => void;
   /**
    * 끌 수 있는 대상들. 키가 곧 `data-panel-drag` / `data-panel-resize` 표식의 값이다.
    *
    * 고정 prop 이 아니라 맵인 이유: 패널마다 대상 수와 이름이 다르다. 맵이면 이 레이어가
    * 대상 목록을 알 필요가 없고, 패널이 늘어도 여기를 고치지 않는다.
    */
-  targets: Readonly<Record<K, StatDragTarget>>;
+  targets: Readonly<Record<K, PanelDragTarget>>;
   children: React.ReactNode;
 }): React.ReactElement {
   // 드래그 중에만 존재하는 상태. 시작 시점의 값과 포인터 위치를 잡아 두고, 이후에는
@@ -180,7 +194,7 @@ export function StatDragLayer<K extends string>({
      * 잡은 것 하나만 끌 때도 길이 1 인 무리다 — 갈래를 나누면 두 경로가 서로 다르게
      * 죄어져 "혼자일 때와 여럿일 때 상한이 다르다" 가 된다.
      */
-    group: Array<{ kind: K; offsetX: number; offsetY: number }>;
+    group: Array<{ kind: K; offsetX: number; offsetY: number; limit?: number }>;
   } | null>(null);
 
   // 최신 콜백·값을 ref 로 안정화한다. document 리스너를 매 렌더 다시 달지 않는다.
@@ -246,25 +260,33 @@ export function StatDragLayer<K extends string>({
         // 이동량은 **잡은 요소**가 정한다 — 무리는 그 값을 그대로 받아 상대 배치를
         // 유지한다. 요소마다 따로 계산하면 격자 스냅이 저마다 다른 자리에 붙어 대형이
         // 무너진다.
-        let x = clampPercentOffset(d.baseX + pixelsToPercent(dx, d.rect.width), STAT_OFFSET_LIMIT);
-        let y = clampPercentOffset(d.baseY + pixelsToPercent(dy, d.rect.height), STAT_OFFSET_LIMIT);
+        // 상한은 **잡은 요소**의 것을 쓴다(미지정이면 ±40). 한 값으로 묶으면 글자
+        // 덩어리와 영역을 채우는 그림 중 한쪽이 반드시 읽는 쪽과 어긋난다.
+        const limit = stateRef.current[d.kind].limit;
+        let x = clampPercentOffset(d.baseX + pixelsToPercent(dx, d.rect.width), limit);
+        let y = clampPercentOffset(d.baseY + pixelsToPercent(dy, d.rect.height), limit);
         // Alt 를 누르고 있으면 격자를 잠시 끈다 — 정밀 조정이 막히면 격자가 오히려
         // 방해가 된다. 스냅 기준은 요소의 중심이며 계산은 `statAlign` 이 소유한다.
         if (snapRef.current && !e.altKey) {
+          // 스냅에도 같은 상한을 넘긴다 — 스냅은 중심을 격자로 끌어당기므로 죄기 뒤에
+          // 값을 반 칸까지 도로 밀어낼 수 있고, 여기서 상한이 느슨하면 방금 죈 값이 풀린다.
           x = snapOffsetToGrid(
             x,
             { offset: d.baseX, rectStart: d.elRect.left, rectLen: d.elRect.width },
             { start: d.rect.left, len: d.rect.width },
+            limit,
           );
           y = snapOffsetToGrid(
             y,
             { offset: d.baseY, rectStart: d.elRect.top, rectLen: d.elRect.height },
             { start: d.rect.top, len: d.rect.height },
+            limit,
           );
         }
         // 무리 전체가 갈 수 있는 만큼으로 이동량을 죈다 — 한 요소가 상한에 닿으면
-        // 다 같이 멈춰야 상대 배치가 유지된다.
-        const capped = clampGroupDelta(d.group, x - d.baseX, y - d.baseY, STAT_OFFSET_LIMIT);
+        // 다 같이 멈춰야 상대 배치가 유지된다. 상한은 요소마다 다르므로 무리에 한 값을
+        // 씌우지 않고 각자의 것을 들려 보낸다(무리에는 그림과 범례가 섞일 수 있다).
+        const capped = clampGroupDelta(d.group, x - d.baseX, y - d.baseY);
         pendingRef.current = {
           mode: 'move',
           items: d.group.map((m) => ({
@@ -345,11 +367,12 @@ export function StatDragLayer<K extends string>({
       // 크기 조절은 잡은 요소 하나만 바꾼다 — 여러 요소에 같은 px 을 더하는 것은 뜻이
       // 모호하다(글자 크기가 제각각이면 어떤 것을 기준으로 삼는지 알 수 없다).
       group: resizeEl
-        ? [{ kind, offsetX: base.offsetX, offsetY: base.offsetY }]
+        ? [{ kind, offsetX: base.offsetX, offsetY: base.offsetY, limit: base.limit }]
         : [...picked].map((k) => ({
             kind: k,
             offsetX: stateRef.current[k].offsetX,
             offsetY: stateRef.current[k].offsetY,
+            limit: stateRef.current[k].limit,
           })),
     };
   };

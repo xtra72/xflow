@@ -465,7 +465,7 @@ describe('GaugePanel 편집 표면 (SPEC-CHART-005 M8)', () => {
     expect(screen.getByTestId('gauge-box').className).toContain('outline-2');
   });
 
-  it('AC-20: 배치 초기화가 상자·범례 오프셋을 한 번에 지운다 — 값 글자는 건드리지 않는다', () => {
+  it('AC-20: 배치 초기화가 상자·범례·값 오프셋을 한 번에 지운다 — 값의 옛 좌표까지', () => {
     const onConfigChange = vi.fn();
     render(
       <GaugePanel
@@ -486,8 +486,20 @@ describe('GaugePanel 편집 표면 (SPEC-CHART-005 M8)', () => {
       gauge_offset_y: undefined,
       threshold_legend_offset_x: undefined,
       threshold_legend_offset_y: undefined,
+      value_pos_x: undefined,
+      value_pos_y: undefined,
+      value_offset_x: undefined,
+      value_offset_y: undefined,
     });
-    expect(patch).not.toHaveProperty('value_offset_x');
+    // 옛 좌표(`value_offset_x/y`)도 함께 지운다.
+    //
+    // 이 단언은 한때 정반대였다("초기화가 그 키를 건드리지 않는다"). 그때는 옛 키를
+    // 읽는 코드가 아무 데도 없어 화면에 영향이 없었기 때문이다 — 그리고 그것이 바로
+    // 저장된 대시보드에서 값 자리가 사라진 회귀였다(SPEC-CHART-005 IN-5). 옛 키를
+    // 다시 읽게 된 지금 남겨 두면, 상자·범례만 제자리로 가고 값은 옛 자리에 그대로
+    // 남아 초기화가 반쪽이 된다. 설정의 값 초기화 단추가 이미 같은 이유로 둘 다 지운다.
+    expect(patch).toHaveProperty('value_offset_x', undefined);
+    expect(patch).toHaveProperty('value_offset_y', undefined);
   });
 
   it('기존 드래그 레이어는 편집 중에 켜져 있다(값 글자 이동 보존)', () => {
@@ -661,5 +673,53 @@ describe('현재값 크기를 손잡이로 조절한다', () => {
 
     // 배율은 px 이 아니라 0.3~3 의 수다 — 1:1 로 세면 조금만 끌어도 상한에 닿는다.
     expect(onConfigChange.mock.calls.flat()).toContainEqual({ value_scale: 2 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 값 글자 자리의 옛 좌표(SPEC-CHART-005 IN-5 회귀 복구).
+//
+// 값이 도형 밖으로 나가면서 변위가 viewBox 단위 `value_offset_x/y` 에서 패널 대비
+// 백분율 `value_pos_x/y` 로 바뀌었는데 옛 키를 읽는 코드가 남지 않았다. 저장된
+// 대시보드에서 값을 끌어 옮겨 두었다면 그 자리를 잃고 기본 위치로 돌아갔다.
+//
+// 환산 규칙과 죄기는 `valueOffsetMigration.test.tsx` 가 잠근다. 여기서 잠그는 것은
+// **패널이 config 의 두 키를 실제로 읽어 오버레이까지 잇는가** 하나다.
+// ---------------------------------------------------------------------------
+describe('저장된 값 글자 자리를 잃지 않는다', () => {
+  /** 값 글자의 x 좌표(viewBox)와 오버레이의 백분율 transform. */
+  const valuePlacement = (extra: Record<string, unknown>) => {
+    const { container, unmount } = render(
+      <GaugePanel panelId="p1" title="" config={{ value: 50, unit: '%', ...extra }} />,
+    );
+    const out = {
+      x: Number(container.querySelector('text[data-gauge-value-text]')!.getAttribute('x')),
+      transform: (container.querySelector('[data-testid="gauge-value-overlay"]') as HTMLElement)
+        .style.transform,
+    };
+    unmount();
+    return out;
+  };
+
+  const base = () => valuePlacement({});
+
+  it('옛 키만 있으면 옛 좌표 그대로 살아난다', () => {
+    expect(valuePlacement({ value_offset_x: 24 }).x).toBe(base().x + 24);
+  });
+
+  it('신규 키만 있으면 백분율로 옮긴다', () => {
+    const moved = valuePlacement({ value_pos_x: 12 });
+    expect(moved.x).toBe(base().x);
+    expect(moved.transform).toContain('translate(12%, 0%)');
+  });
+
+  it('둘 다 있으면 각자의 좌표계로 함께 실린다 — 옛 자리가 새 조작의 출발점이다', () => {
+    const moved = valuePlacement({ value_offset_x: 24, value_pos_x: 12 });
+    expect(moved.x).toBe(base().x + 24);
+    expect(moved.transform).toContain('translate(12%, 0%)');
+  });
+
+  it('아무 키도 없으면 기본 자리', () => {
+    expect(base().transform).toBe('translate(0%, 0%)');
   });
 });

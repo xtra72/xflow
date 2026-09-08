@@ -29,9 +29,10 @@ import {
   type ChartEntry,
 } from './chartChannelTypes';
 import { PieLegend, type PieLegendItem } from './PieLegend';
-import { clampStoredLegendOffset } from './legendOverlay';
+import { LEGEND_OFFSET_SAFETY_LIMIT, clampStoredLegendOffset } from './legendOverlay';
 import { resolveFontColor, resolveFontSize } from './textStyle';
 import {
+  PANEL_OFFSET_LIMIT,
   PANEL_SIZE_MAX,
   PANEL_SIZE_MIN,
   clampPercentOffset,
@@ -63,8 +64,8 @@ import { useTranslation } from '@/lib/i18n';
 
 import { usePanelEditMode } from '../PanelEditToggle';
 import {
-  StatDragLayer as PanelDragLayer,
-  StatResizeHandle as PanelResizeHandle,
+  PanelDragLayer,
+  PanelResizeHandle,
   PANEL_EDIT_OUTLINE_CLASS,
   PANEL_SELECTED_OUTLINE_CLASS,
 } from '../../PanelDragLayer';
@@ -280,8 +281,21 @@ export default function BarChartPanel({
     testId: 'bar-chart-edit-toggle',
     below: showTitle,
   });
-  const plotOffset = { x: cfg.plot_offset_x ?? 0, y: cfg.plot_offset_y ?? 0 };
-  const legendOffset = { x: cfg.legend_offset_x ?? 0, y: cfg.legend_offset_y ?? 0 };
+  // 오프셋과 **그 상한**을 한 자리에 둔다 — 끌기(`PanelDragLayer`)와 정렬(`usePanelElementEdit`)이
+  // 같은 값을 봐야 하고, 그 값은 읽는 쪽이 이미 정해 두었다. 그림 영역은 패널을 가득
+  // 채우므로 `readPanelOffset` 과 같은 ±40 이고, 범례는 작은 글자 덩어리라
+  // `clampStoredLegendOffset` 과 같은 ±50 이다. 쓰기가 더 느슨하면 끄는 동안에는
+  // 따라오다가 다음에 읽을 때 되돌아간다.
+  const plotOffset = {
+    x: cfg.plot_offset_x ?? 0,
+    y: cfg.plot_offset_y ?? 0,
+    limit: PANEL_OFFSET_LIMIT,
+  };
+  const legendOffset = {
+    x: cfg.legend_offset_x ?? 0,
+    y: cfg.legend_offset_y ?? 0,
+    limit: LEGEND_OFFSET_SAFETY_LIMIT,
+  };
   const {
     selection,
     setSelection,
@@ -367,6 +381,7 @@ export default function BarChartPanel({
           plot: {
             offsetX: plotOffset.x,
             offsetY: plotOffset.y,
+            limit: plotOffset.limit,
             // 바는 사각형이라 손잡이가 축을 나눈다 — 가로는 **그림 영역 폭**, 세로는
             // 그림 영역 높이다(둘 다 패널 대비 %).
             //
@@ -385,6 +400,7 @@ export default function BarChartPanel({
           legend: {
             offsetX: legendOffset.x,
             offsetY: legendOffset.y,
+            limit: legendOffset.limit,
             fontSize: cfg.legend_font_size ?? DEFAULT_PIE_LEGEND_FONT_SIZE,
             onMove: ({ x, y }) => onConfigChange?.({ legend_offset_x: x, legend_offset_y: y }),
             onResize: (legend_font_size) => onConfigChange?.({ legend_font_size }),
