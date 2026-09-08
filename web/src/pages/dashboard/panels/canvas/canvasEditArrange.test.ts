@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { BoxGeometry, CanvasElement } from './canvasConfig';
 import {
+  CANVAS_GRID_STEP_CHOICES,
   CANVAS_GRID_STEP_PERCENT,
   alignDeltas,
   bringToFront,
@@ -56,8 +57,21 @@ describe('원 함수를 부르는 자리는 이 모듈 하나뿐이다 (위험 R
     expect(offenders).toEqual([]);
   });
 
-  it('격자 간격은 panelEditAlign 의 값을 그대로 다시 내보낸다 (캔버스 전용 상수가 없다)', () => {
+  it('격자 간격의 기본값은 panelEditAlign 의 값을 그대로 다시 내보낸다 (캔버스 전용 기본값이 없다)', () => {
     expect(CANVAS_GRID_STEP_PERCENT).toBe(10);
+  });
+
+  it('고를 수 있는 간격 목록은 그 기본값을 품는다 — 목록이 기본값을 밀어내지 않는다', () => {
+    // 목록이 기본값을 품지 않으면 처음 켠 격자가 목록의 어느 칸과도 맞지 않아,
+    // 고르개가 빈 값을 보여 준다(그리고 사용자는 자기가 고르지 않은 간격을 보게 된다).
+    expect(CANVAS_GRID_STEP_CHOICES).toContain(CANVAS_GRID_STEP_PERCENT);
+  });
+
+  it('고를 수 있는 간격은 모두 100 을 나누어떨어지게 한다 (자투리 칸이 생기지 않는다)', () => {
+    // 7% 같은 값이 들어오면 마지막 칸이 잘리고, 잘린 칸에도 붙기 때문에 "왜 저기 붙지" 가 된다.
+    for (const step of CANVAS_GRID_STEP_CHOICES) {
+      expect(100 % step).toBe(0);
+    }
   });
 
   it('panels/canvas 안에서 죄기 도우미(panelGeometry)를 직접 들이는 파일은 없다', () => {
@@ -122,6 +136,47 @@ describe('격자 붙임은 요소의 **중심**을 격자에 맞춘다 (AC-E5)',
     expect(snapDelta({ dx: Number.NaN, dy: 0.0625 }, ANCHOR, STAGE).dx).toBeNaN();
     const broken = { x: Number.NaN, y: 10, w: 40, h: 20 };
     expect(snapDelta({ dx: 0.0625, dy: 0 }, broken, STAGE).dx).toBeCloseTo(0.0625, 9);
+  });
+});
+
+describe('붙는 눈금은 넘긴 간격을 따른다 (화면에 그린 간격과 같은 값이다)', () => {
+  // 중심 20% 에서 6.25% 를 끈 자리(26.25%)는 간격마다 다른 눈금으로 붙는다 —
+  // 5% → 25%, 10% → 30%, 20% → 20%. 셋이 서로 다르므로 간격이 실제로 쓰였는지 갈린다.
+  it('5% 간격이면 가장 가까운 5의 배수로 붙는다', () => {
+    expect(snapDelta({ dx: 0.0625, dy: 0 }, ANCHOR, STAGE, 5).dx).toBeCloseTo(0.05, 9);
+  });
+
+  it('20% 간격이면 되돌아오기도 한다 (가장 가까운 20의 배수는 뒤쪽이다)', () => {
+    expect(snapDelta({ dx: 0.0625, dy: 0 }, ANCHOR, STAGE, 20).dx).toBeCloseTo(0, 9);
+  });
+
+  it('간격을 생략하면 기본값으로 붙는다 — 명시한 기본값과 결과가 같다', () => {
+    const implicit = snapDelta({ dx: 0.0625, dy: 0.07 }, ANCHOR, STAGE);
+    const explicit = snapDelta({ dx: 0.0625, dy: 0.07 }, ANCHOR, STAGE, CANVAS_GRID_STEP_PERCENT);
+    expect(implicit).toEqual(explicit);
+  });
+
+  it('두 축이 같은 간격을 쓴다 (한 축만 바뀌면 격자가 직사각형이 된다)', () => {
+    // y 는 스테이지가 100px 이라 20% 가 20px 이다. 중심 20% + 7% = 27% → 20% 로 되돌아간다.
+    const snapped = snapDelta({ dx: 0.0625, dy: 0.07 }, ANCHOR, STAGE, 20);
+    expect(snapped.dx).toBeCloseTo(0, 9);
+    expect(snapped.dy).toBeCloseTo(0, 9);
+  });
+
+  it('**간격을 바꿔도 상한은 여전히 무한대다** — 위험 R6 은 간격마다 되살아날 수 있다', () => {
+    // 간격 인자를 넘기려면 상한 인자를 지나야 한다(둘은 같은 호출의 4·5번째 자리다).
+    // 그 자리에서 상한을 흘리면 5% 든 20% 든 0.4 에서 멈춘다.
+    for (const step of CANVAS_GRID_STEP_CHOICES) {
+      expect(snapDelta({ dx: 0.6, dy: 0 }, ANCHOR, STAGE, step).dx).toBeGreaterThan(0.4);
+      expect(snapDelta({ dx: -0.7, dy: 0 }, ANCHOR, STAGE, step).dx).toBeLessThan(-0.4);
+    }
+  });
+
+  it('간격이 0 이하면 붙이지 않는다 (0 으로 죄면 요소가 얼어붙는다)', () => {
+    expect(snapDelta({ dx: 0.0625, dy: 0.07 }, ANCHOR, STAGE, 0)).toEqual({
+      dx: 0.0625,
+      dy: 0.07,
+    });
   });
 });
 

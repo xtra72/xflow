@@ -1164,6 +1164,7 @@
         "handleP2": "Move line end point",
         "handleFont": "Resize font",
         "gridSnap": "Snap to grid",
+        "gridStep": "Grid spacing",
         "alignLeft": "Align left",
         "alignCenterX": "Align horizontal centers",
         "alignRight": "Align right",
@@ -1234,6 +1235,7 @@
         "tweenDurationPlaceholder": "ms",
         "tweenDurationAria": "Element {index} tween duration (ms)",
         "tweenEasingAria": "Element {index} tween easing",
+        "tweenHint": "When a matching rule changes, color, opacity, stroke width and size ease to the new values over this duration (ms). 0 switches instantly; blank uses the panel default above.",
         "easingLinear": "Linear",
         "easingIn": "Ease in",
         "easingOut": "Ease out",
@@ -1242,7 +1244,8 @@
         "panelBackgroundAria": "Canvas background color",
         "panelTween": "Default tween",
         "panelTweenDurationAria": "Panel default tween duration (ms)",
-        "panelTweenEasingAria": "Panel default tween easing"
+        "panelTweenEasingAria": "Panel default tween easing",
+        "panelTweenHint": "Used when an element does not set its own. When a matching rule changes, color, opacity, stroke width and size ease to the new values over this duration (ms). 0 or blank switches instantly."
       },
       "rules": {
         "firstMatchWins": "Only the first matching row from the top is applied. Reordering changes priority.",

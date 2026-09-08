@@ -75,7 +75,7 @@
 // 포인터 조작의 키보드 등가물을 셋으로 갚는다.
 //   1) **루트가 초점을 받는다.** `tabIndex={0}` 이라 탭만으로 캔버스 편집 표면에 닿고,
 //      닿은 뒤 방향키로 **고른 것을 미세 이동**(1 CSS px), Shift+방향키로 **한 격자 칸**
-//      (`CANVAS_GRID_STEP_PERCENT`)을 옮긴다. 눌러서 골랐을 때 루트에 초점을 옮기는 것은
+//      (화면에 그려진 그 칸 — 팔레트에서 고른 간격)을 옮긴다. 눌러서 골랐을 때 루트에 초점을 옮기는 것은
 //      필수다 — 히트가 있을 때 `preventDefault` 하므로 브라우저의 기본 초점 이동이 함께
 //      막히고, 그러면 방금 고른 것을 방향키로 옮길 수 없다.
 //   2) **핸들·팔레트가 진짜 `<button>` 이다.** 초점·`aria-label`·Enter/Space 활성화가
@@ -88,8 +88,9 @@
 // 방향키 이동은 **격자 붙임 토글을 보지 않는다.** `snapDelta` 는 "지금 자리에서 가장 가까운
 // 격자선" 으로 죄는 계산이라 1px 미세 이동을 0 으로 만들어 버린다 — 격자를 켜는 순간
 // 방향키가 죽는 것은 접근성 후퇴다. 격자 칸 단위 이동은 Shift 가 이미 제공하고, 그 칸의
-// 크기도 `canvasEditArrange` 가 다시 내보내는 같은 상수를 쓰므로 격자 어휘는 여전히 하나다
-// (원 함수 `snapOffsetToGrid` 는 이 파일에서 부르지 않는다 — 위험 R6).
+// 크기는 **화면에 그려진 격자와 같은 값**(`gridStep`)이므로 격자 어휘는 여전히 하나다
+// — 그리는 값 · 붙는 값 · Shift 한 칸이 전부 그 한 변수를 본다(원 함수 `snapOffsetToGrid`
+// 는 이 파일에서 부르지 않는다 — 위험 R6).
 //
 // @spec SPEC-CANVAS-002 REQ-01 / REQ-02 / REQ-03 / REQ-04 / REQ-05 / REQ-06
 
@@ -138,6 +139,7 @@ import {
   type NormalizedDelta,
 } from './canvasEditGeometry';
 import {
+  CANVAS_GRID_STEP_CHOICES,
   CANVAS_GRID_STEP_PERCENT,
   alignDeltas,
   bringToFront,
@@ -374,6 +376,15 @@ const HANDLE_CLASS =
  * 겉모습이 여전히 살아나 "누를 수 있다" 고 말한다.
  */
 const PALETTE_DISABLED_CLASS = 'disabled:pointer-events-none disabled:opacity-40';
+
+/**
+ * 격자 간격 고르개. 팔레트의 다른 칸들이 아이콘 버튼이라 높이를 그쪽에 맞춘다 —
+ * 띠 안에서 한 칸만 키가 다르면 그 칸이 남의 것처럼 보인다.
+ */
+const PALETTE_SELECT_CLASS =
+  'rounded bg-transparent px-0.5 py-1 text-[11px] leading-none text-(--color-text-secondary) ' +
+  'tabular-nums hover:text-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-300 ' +
+  'disabled:pointer-events-none disabled:opacity-40';
 
 /** 팔레트 안의 갈래 구분선. 도형·격자·정렬·순서는 성격이 다른 네 무리다. */
 const PALETTE_DIVIDER_CLASS = 'mx-0.5 h-4 w-px bg-(--color-border-default)';
@@ -663,6 +674,18 @@ export default function CanvasEditOverlay({
   const [snapToGrid, setSnapToGrid] = useState(false);
 
   /**
+   * 격자 간격(%). **이 값 하나가 그려지는 격자와 붙는 눈금을 함께 정한다** — 아래에서
+   * `PanelEditGrid` 의 `step` 과 `snapDelta` 의 `step` 에 같은 변수가 들어가고, 그것이
+   * 이 값을 두 곳에 나누어 두지 않는 유일한 이유다. 보이는 간격과 붙는 간격이 갈라지면
+   * 화면이 거짓말을 하며, 그 거짓말은 "붙긴 붙는데 선하고 안 맞는다" 로만 보고된다.
+   *
+   * 고를 수 있는 값은 `canvasEditArrange` 가 소유한다(격자 어휘의 주인은 여전히 그 모듈
+   * 하나다). 격자 토글과 같이 **저장하지 않는 표시 상태**다(가정 A4) — config 스키마를
+   * 넓히지 않으며, 이 값을 바꿔도 캔버스 props 는 그대로라 프레임을 예약하지 않는다(AC-E4).
+   */
+  const [gridStep, setGridStep] = useState<number>(CANVAS_GRID_STEP_PERCENT);
+
+  /**
    * 오버레이 루트. 핸들에서 시작한 드래그도 **루트의 상자**로 좌표를 옮기고 **루트에서**
    * 포인터를 잡는다 — 기준이 둘이 되면 몸통 드래그와 핸들 드래그가 서로 다른 원점을 믿게
    * 되고, 그 어긋남은 "핸들로 잡으면 조금 밀린다" 로만 보인다.
@@ -680,9 +703,9 @@ export default function CanvasEditOverlay({
    * `elements` 가 새로 오므로, 예약 시점의 클로저를 그대로 쓰면 한 프레임 뒤처진 배열에
    * 기하를 써 넣게 된다.
    */
-  const latestRef = useRef({ elements, stage, onElementsChange, snapToGrid });
+  const latestRef = useRef({ elements, stage, onElementsChange, snapToGrid, gridStep });
   useEffect(() => {
-    latestRef.current = { elements, stage, onElementsChange, snapToGrid };
+    latestRef.current = { elements, stage, onElementsChange, snapToGrid, gridStep };
   });
 
   /**
@@ -711,6 +734,7 @@ export default function CanvasEditOverlay({
       stage: size,
       onElementsChange: emit,
       snapToGrid: snap,
+      gridStep: step,
     } = latestRef.current;
     // 0 으로 나눈 이동량은 요소를 화면 밖으로 날린다.
     if (!(size.width > 0) || !(size.height > 0)) return;
@@ -724,7 +748,8 @@ export default function CanvasEditOverlay({
         const raw = { dx: px.dx / size.width, dy: px.dy / size.height };
         // 켜져 있을 때만 죈다. 상한은 래퍼(`canvasEditArrange.snapDelta`)가 무한대로
         // 넘기므로 스테이지의 40% 지점에 조용히 붙잡히지 않는다(위험 R6 · AC-E5).
-        const delta = snap ? snapDelta(raw, drag.anchor, size) : raw;
+        // 간격은 **화면에 그려진 그 값**이다 — 같은 `gridStep` 이 `PanelEditGrid` 로도 간다.
+        const delta = snap ? snapDelta(raw, drag.anchor, size, step) : raw;
         let next: CanvasElement[] = [...els];
         for (const base of drag.bases) {
           next = patchNodeGeometry(next, base.nodeId, moveGeometry(base.geometry, delta));
@@ -976,9 +1001,10 @@ export default function CanvasEditOverlay({
     let delta: NormalizedDelta;
     if (event.shiftKey) {
       // 격자 칸은 스테이지 축 길이에 대한 **분수**라 나눌 것이 없다 — 그래서 아직 크기를
-      // 재지 못한 순간에도 뜻이 성립한다. 간격은 `canvasEditArrange` 가 다시 내보내는
-      // 그 상수이며, 캔버스 전용 격자 상수를 만들지 않는다.
-      const cell = CANVAS_GRID_STEP_PERCENT / 100;
+      // 재지 못한 순간에도 뜻이 성립한다. 간격은 **지금 고른 그 간격**이다 — "한 격자 칸"
+      // 이 화면에 그려진 칸과 다르면 그 이름이 거짓이 되므로, 격자 표시·드래그 붙임과
+      // 같은 값 하나를 본다(기본값은 `canvasEditArrange` 가 다시 내보내는 그 상수다).
+      const cell = gridStep / 100;
       delta = { dx: step.x * cell, dy: step.y * cell };
     } else {
       // 미세 이동은 화면 양이므로 축 길이로 나눈다. 0 으로 나눈 이동량은 요소를 화면 밖으로
@@ -1107,8 +1133,15 @@ export default function CanvasEditOverlay({
           DOM 요소가 아니라 `repeating-linear-gradient` 로 그리고 `absolute inset-0` +
           `pointer-events-none` 이라 좌표 변환이 아예 필요 없다. 캔버스에서는 이 층이
           칠해진 픽셀 **위**에 얹히지만(도형은 캔버스 안에 있다) 반투명 참조선이라 가리지
-          않으며, 그 대가로 001 의 렌더 경로에 한 픽셀도 더하지 않는다. */}
-      <PanelEditGrid enabled={snapToGrid} />
+          않으며, 그 대가로 001 의 렌더 경로에 한 픽셀도 더하지 않는다.
+
+          다만 **위에 얹힌다는 사실이 색을 정한다.** 다른 패널에서 요소 뒤에 깔릴 때 쓰는
+          28% 짜리 선은 칠해진 도형 위에서는 사실상 보이지 않는다 — 그래서 같은 컴포넌트에
+          진하기 한 벌(`strong`)만 더 두고 여기서 그것을 고른다.
+
+          간격(`step`)은 **`snapDelta` 에 넘기는 그 값**이다. 그리는 값과 붙는 값을 각자
+          정하는 자리를 만들지 않는다. */}
+      <PanelEditGrid enabled={snapToGrid} step={gridStep} strength="strong" />
       {/* 도형 팔레트 — 스테이지 모서리에 떠 있는 작은 띠(spec.md §도형 팔레트).
           루트는 `pointer-events-none` 이 아니라 포인터를 받는 층이므로, 팔레트 위의 누름이
           아래 캔버스의 히트 테스트까지 흘러가지 않도록 **여기서 끊는다** — 끊지 않으면
@@ -1151,6 +1184,27 @@ export default function CanvasEditOverlay({
         >
           <Grid3x3 className="h-3.5 w-3.5" />
         </button>
+        {/* 격자 간격 — 고른 값 하나가 **그려지는 격자와 붙는 눈금을 함께** 정한다.
+            자유 입력이 아니라 목록인 이유: 임의의 수를 받으면 100 을 나누어떨어지지 않는
+            간격(예: 7%)이 들어와 마지막 칸이 잘리고, 그 잘린 칸에도 붙기 때문에 "왜 저기
+            붙지" 가 된다. 고를 수 있는 값은 `canvasEditArrange` 가 소유한다.
+
+            격자가 꺼져 있으면 끈다 — 눌러도 화면이 그대로인 컨트롤은 고장으로 보인다
+            (정렬 버튼이 같은 이유로 같은 일을 한다). */}
+        <select
+          data-testid="canvas-grid-step"
+          aria-label={t('dashboard.canvas.edit.gridStep')}
+          title={t('dashboard.canvas.edit.gridStep')}
+          disabled={!snapToGrid}
+          value={gridStep}
+          onChange={(event) => setGridStep(Number(event.target.value))}
+          className={PALETTE_SELECT_CLASS}
+        >
+          {CANVAS_GRID_STEP_CHOICES.map((choice) => (
+            // 눈금 이름은 숫자와 `%` 뿐이라 번역할 것이 없다.
+            <option key={choice} value={choice}>{`${choice}%`}</option>
+          ))}
+        </select>
         <span className={PALETTE_DIVIDER_CLASS} aria-hidden="true" />
         {ALIGN_CONTROLS.map((control) => {
           const Icon = control.icon;

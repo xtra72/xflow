@@ -34,8 +34,14 @@
 // 분수이고 백분율 오프셋이 같은 기준 상자(= 스테이지)에 대한 백분율이므로, 두 축이 같은
 // 것을 가리킨다 — 그래서 나누고 곱하는 것 말고 할 일이 없다.
 //
-// 격자 간격은 `GRID_STEP_PERCENT`(10%, 축당 10칸)를 그대로 쓴다. 캔버스 전용 격자 상수를
-// 만들지 않는다 — 격자 어휘가 둘이 되는 비용이 더 크다.
+// 격자 간격의 **기본값**은 `GRID_STEP_PERCENT`(10%, 축당 10칸)를 그대로 쓴다. 캔버스 전용
+// 기본 간격을 따로 만들지 않는다 — 격자 어휘가 둘이 되는 비용이 더 크다.
+//
+// 캔버스에서만 그 간격을 **고를 수 있다**(`CANVAS_GRID_STEP_CHOICES`). 다른 패널의 요소는
+// 몇 개뿐이라 10% 한 벌로 충분하지만, 캔버스는 사용자가 스스로 도형을 늘어놓는 자리라
+// 촘촘하게/성기게 붙일 이유가 실제로 있다. 그래도 **간격을 넘기는 자리는 여전히 하나**다:
+// `snapDelta` 의 `step` 인자 하나가 붙임을 정하고, 호출부는 **그 값을 격자 표시에도 그대로**
+// 넘긴다. 보이는 간격과 붙는 간격이 갈라지면 화면이 거짓말을 한다.
 //
 // ## z-order — 두 번째 규칙을 만들지 않는다
 //
@@ -92,8 +98,28 @@ export interface AlignDelta {
  */
 const NO_OFFSET_LIMIT = Number.POSITIVE_INFINITY;
 
-/** 격자 간격(%). `panelEditAlign` 이 소유하는 값을 그대로 다시 내보낸다. */
+/** 격자 간격(%)의 **기본값**. `panelEditAlign` 이 소유하는 값을 그대로 다시 내보낸다. */
 export const CANVAS_GRID_STEP_PERCENT = GRID_STEP_PERCENT;
+
+/**
+ * 화면에서 고를 수 있는 격자 간격(%) — **캔버스에만 있는 목록**이다.
+ *
+ * 기본값을 바꾸는 것이 아니라 **고를 수 있게** 하는 것이므로 격자 어휘는 여전히 하나다:
+ * 목록의 가운데 값이 곧 `CANVAS_GRID_STEP_PERCENT` 이고(이웃한 테스트가 그 형상을
+ * 지킨다), 다른 패널은 이 목록을 보지 않는다.
+ *
+ * 값 셋을 고른 근거:
+ *   - 셋 다 **100 을 나누어떨어지게** 한다. 그래야 마지막 선이 스테이지 모서리에 앉고,
+ *     반 칸짜리 자투리 칸이 생기지 않는다.
+ *   - 기본값 10 의 **절반과 두 배**다. 옆 칸이 "두 배 성기게 / 두 배 촘촘하게" 로 읽혀
+ *     설명이 필요 없다.
+ *   - 5 보다 촘촘하면 작은 패널에서 선이 뭉개져 참조선 구실을 못하고(`GRID_STEP_PERCENT`
+ *     주석이 10 을 고른 그 이유), 20 보다 성기면 축당 붙을 자리가 다섯 곳뿐이다.
+ *
+ * 이 목록은 **런타임 표시 상태**일 뿐 config 스키마가 아니다(가정 A4) — 격자 토글·행
+ * 펼침과 같은 부류이며, 저장되지 않는다.
+ */
+export const CANVAS_GRID_STEP_CHOICES: readonly number[] = [5, 10, 20];
 
 // --- 순수 도우미 ---------------------------------------------------------
 
@@ -110,7 +136,13 @@ function isFinite2(...values: number[]): boolean {
  * `base.offset` 이 0 인 것이 캔버스의 성질 그 자체다 — 저장된 값이 곧 절대 자리이므로
  * 되짚을 흐름상 시작 자리가 따로 없고, `rectStart` 가 곧 그 자리다.
  */
-function snapAxis(delta: number, rectStart: number, rectLen: number, stageLen: number): number {
+function snapAxis(
+  delta: number,
+  rectStart: number,
+  rectLen: number,
+  stageLen: number,
+  step: number,
+): number {
   // 잴 수 없는 축에서는 손대지 않는다 — 0 으로 죄면 격자를 켠 순간 요소가 얼어붙는다.
   if (!isFinite2(delta, rectStart, rectLen) || !(stageLen > 0)) return delta;
   const snapped = snapOffsetToGrid(
@@ -118,7 +150,9 @@ function snapAxis(delta: number, rectStart: number, rectLen: number, stageLen: n
     { offset: 0, rectStart, rectLen },
     { start: 0, len: stageLen },
     // 위험 R6 — 이 인자를 빠뜨리면 드래그가 스테이지의 40% 에서 조용히 멈춘다.
+    // 간격을 넘기려면 이 자리를 지나야 하므로, 간격을 고르는 순간에도 상한은 함께 간다.
     NO_OFFSET_LIMIT,
+    step,
   );
   return snapped / 100;
 }
@@ -132,15 +166,20 @@ function snapAxis(delta: number, rectStart: number, rectLen: number, stageLen: n
  *
  * **clamp 하지 않는다.** 상한을 무한대로 넘기므로 스테이지 밖으로 끌어도 붙잡히지
  * 않는다(위험 R6 · 가정 A5).
+ *
+ * `step` 은 **화면에 그려진 격자와 같은 값이어야 한다.** 보이는 간격과 붙는 간격이
+ * 갈라지면 화면이 거짓말을 한다 — 그래서 호출부는 격자에 넘기는 그 값을 여기에도
+ * 넘긴다(둘을 각자 정하는 자리를 만들지 않는다).
  */
 export function snapDelta(
   delta: NormalizedDelta,
   anchor: PxBox,
   stage: StageSize,
+  step: number = CANVAS_GRID_STEP_PERCENT,
 ): NormalizedDelta {
   return {
-    dx: snapAxis(delta.dx, anchor.x, anchor.w, stage.width),
-    dy: snapAxis(delta.dy, anchor.y, anchor.h, stage.height),
+    dx: snapAxis(delta.dx, anchor.x, anchor.w, stage.width, step),
+    dy: snapAxis(delta.dy, anchor.y, anchor.h, stage.height, step),
   };
 }
 

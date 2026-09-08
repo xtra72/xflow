@@ -740,7 +740,7 @@ import koMessages from '@/lib/i18n/ko.json';
 import enMessages from '@/lib/i18n/en.json';
 
 import type { LineGeometry, PointGeometry } from './canvasConfig';
-import { CANVAS_GRID_STEP_PERCENT } from './canvasEditArrange';
+import { CANVAS_GRID_STEP_CHOICES, CANVAS_GRID_STEP_PERCENT } from './canvasEditArrange';
 import {
   BOX_HANDLE_IDS,
   CANVAS_FONT_SIZE_MAX,
@@ -1659,6 +1659,162 @@ describe('격자 붙임 — 토글 하나가 표시와 붙임을 함께 켠다 (
     // 기준은 잡은 a 다. 둘 다 **같은 이동량**(0.25)을 받는다.
     expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBeCloseTo(0.3, 9);
     expect((emittedGeometry(emit, 'b') as BoxGeometry).x).toBeCloseTo(0.85, 9);
+  });
+});
+
+// --- 격자 간격 -------------------------------------------------------------
+//
+// 이 절이 지키는 성질은 **하나**다: 화면에 그려진 간격과 실제로 붙는 간격이 같다.
+// 둘이 갈라지면 화면이 거짓말을 하고, 그 거짓말은 "붙긴 붙는데 선하고 안 맞는다" 로만
+// 보고되어 원인을 찾기 어렵다. 그래서 간격을 바꿀 때마다 **그린 것과 붙은 좌표를 함께**
+// 본다 — CSS 만 보는 시험은 둘이 갈라지는 순간을 보지 못한다.
+//
+// (jsdom 은 Tailwind 를 돌리지 않으므로 클래스 이름을 픽셀로 바꿀 수 없다. 여기서 CSS 를
+// 보는 자리는 인라인 `style` 로 들어가는 `background-image` 뿐이며, 그것은 이 컴포넌트가
+// 실제로 쓴 값 그대로다.)
+
+/** 격자 간격 고르개. */
+function gridStepSelect(): HTMLSelectElement {
+  return screen.getByTestId('canvas-grid-step') as HTMLSelectElement;
+}
+
+/** 격자 간격을 고른다. */
+function pickGridStep(percent: number): void {
+  fireEvent.change(gridStepSelect(), { target: { value: String(percent) } });
+}
+
+/** 지금 그려진 격자의 `background-image`. */
+function gridImage(): string {
+  return screen.getByTestId('panel-edit-grid').style.backgroundImage;
+}
+
+/**
+ * 격자를 켜고 간격을 고른 뒤 20px(= 스테이지 폭의 10%) 를 끈다.
+ *
+ * 중심 15% + 10% = 25% 는 간격마다 다른 눈금으로 붙는다 — 5% → 25%, 10% → 30%, 20% → 20%.
+ * 셋이 서로 다르므로 "간격이 실제로 붙임까지 갔는가" 가 좌표 하나로 갈린다.
+ */
+async function dragTenPercent(step?: number): Promise<ReturnType<typeof vi.fn>> {
+  const emit = vi.fn();
+  render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={emit} />);
+  stubOverlayRect();
+  fireEvent.click(gridToggle());
+  if (step !== undefined) pickGridStep(step);
+
+  send('pointerdown', 20, 20);
+  send('pointermove', 40, 20);
+  await nextFrame();
+  return emit;
+}
+
+describe('격자 간격 — 고른 값 하나가 그림과 붙임을 함께 정한다', () => {
+  it('처음에는 공용 기본 간격이며, 그 간격으로 그려진다', () => {
+    render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={vi.fn()} />);
+    fireEvent.click(gridToggle());
+
+    expect(gridStepSelect().value).toBe(String(CANVAS_GRID_STEP_PERCENT));
+    expect(gridImage()).toContain(`transparent 1px ${CANVAS_GRID_STEP_PERCENT}%`);
+  });
+
+  it('고를 수 있는 값은 canvasEditArrange 가 소유한 목록 그대로다', () => {
+    render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={vi.fn()} />);
+
+    const values = [...gridStepSelect().options].map((o) => o.value);
+    expect(values).toEqual(CANVAS_GRID_STEP_CHOICES.map(String));
+  });
+
+  it('격자가 꺼져 있으면 고르개도 꺼진다 — 눌러도 화면이 그대로인 컨트롤은 고장으로 보인다', () => {
+    render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={vi.fn()} />);
+    expect(gridStepSelect().disabled).toBe(true);
+
+    fireEvent.click(gridToggle());
+    expect(gridStepSelect().disabled).toBe(false);
+  });
+
+  it('캔버스는 **진한** 격자를 쓴다 — 칠해진 도형 위에 얹히기 때문이다', () => {
+    render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={vi.fn()} />);
+    fireEvent.click(gridToggle());
+
+    // 다른 패널이 쓰는 기본 진하기(28%)가 그대로 나오면 도형 위에서 사실상 보이지 않는다.
+    expect(gridImage()).not.toContain('rgba(148, 163, 184, 0.28)');
+    expect(gridImage()).toContain('rgba(148, 163, 184, 0.6)');
+  });
+
+  it('간격을 바꾸면 **그린 격자**가 함께 바뀐다', () => {
+    render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={vi.fn()} />);
+    fireEvent.click(gridToggle());
+
+    pickGridStep(20);
+    expect(gridImage()).toContain('transparent 1px 20%');
+    expect(gridImage()).not.toContain('transparent 1px 10%');
+
+    pickGridStep(5);
+    expect(gridImage()).toContain('transparent 1px 5%');
+    expect(gridImage()).not.toContain('transparent 1px 20%');
+  });
+
+  it('간격을 바꾸면 **붙는 자리**도 함께 바뀐다 (CSS 만 바뀌고 붙임이 남으면 화면이 거짓말이다)', async () => {
+    // 중심 15% + 10% = 25%.
+    // 5% → 25% 에 붙는다 → 이동량 10% → x = 0.15.
+    const fine = await dragTenPercent(5);
+    expect((emittedGeometry(fine, 'a') as BoxGeometry).x).toBeCloseTo(0.15, 9);
+    cleanup();
+
+    // 10%(기본) → 30% 에 붙는다 → 이동량 15% → x = 0.20.
+    const base = await dragTenPercent();
+    expect((emittedGeometry(base, 'a') as BoxGeometry).x).toBeCloseTo(0.2, 9);
+    cleanup();
+
+    // 20% → 20% 로 되돌아간다 → 이동량 5% → x = 0.10.
+    const coarse = await dragTenPercent(20);
+    expect((emittedGeometry(coarse, 'a') as BoxGeometry).x).toBeCloseTo(0.1, 9);
+  });
+
+  it('붙은 중심이 **그려진 선 위**에 앉는다 (두 값이 같은 값인지 좌표로 확인한다)', async () => {
+    const emit = await dragTenPercent(20);
+
+    const moved = emittedGeometry(emit, 'a') as BoxGeometry;
+    const centerPercent = (moved.x + moved.w / 2) * 100;
+    // 20% 간격의 선은 0·20·40·… 에 있다. 그 위에 앉지 않으면 그림과 붙임이 갈라진 것이다.
+    expect(centerPercent % 20).toBeCloseTo(0, 6);
+    expect(gridImage()).toContain('transparent 1px 20%');
+  });
+
+  it('간격을 바꿔도 상한은 여전히 무한대다 (위험 R6 은 간격마다 되살아날 수 있다)', async () => {
+    const emit = vi.fn();
+    render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={emit} />);
+    stubOverlayRect();
+    fireEvent.click(gridToggle());
+    pickGridStep(20);
+
+    send('pointerdown', 20, 20);
+    // 180px = 스테이지 폭의 90% — 상한(40%)의 두 배가 넘는다.
+    send('pointermove', 200, 20);
+    await nextFrame();
+
+    expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBeGreaterThan(0.4);
+  });
+
+  it('Shift+방향키의 "한 칸" 도 고른 간격을 따른다 — 그리지 않은 칸으로 뛰지 않는다', () => {
+    const emit = renderPickedBox(SNAP_GEOMETRY, { x: 30, y: 20 });
+    fireEvent.click(gridToggle());
+    pickGridStep(20);
+    emit.mockClear();
+
+    sendKey('ArrowRight', { shiftKey: true });
+
+    expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBeCloseTo(0.05 + 0.2, 10);
+  });
+
+  it('간격을 바꿔도 프레임을 예약하지 않는다 — 표시 상태일 뿐이다 (AC-E4)', () => {
+    render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={vi.fn()} />);
+    fireEvent.click(gridToggle());
+    const raf = vi.spyOn(globalThis, 'requestAnimationFrame');
+
+    pickGridStep(20);
+    pickGridStep(5);
+
+    expect(raf).not.toHaveBeenCalled();
   });
 });
 
@@ -2673,5 +2829,81 @@ describe('축소된 미리보기 안에서도 포인터가 도형과 같은 공�
     send('pointerdown', 30, 15);
 
     expect(selectionText()).toBe('a');
+  });
+});
+
+// --- 한국어 어휘 가드 ------------------------------------------------------
+//
+// 화면 어휘는 코드 어휘가 아니다. 캔버스의 한국어 문자열에는 한때 구현 용어가 그대로
+// 새어 나와 있었다 — 텍스트 요소를 "문구" 라 불렀고, 상태 전이 보간을 "트윈"·"이징"
+// 이라 불렀다. 사용자는 그 셋을 알아보지 못했다.
+//
+// 되돌아오는 길은 **키를 새로 만들 때**다: 이웃한 문자열을 베껴 쓰면 그 어휘도 함께
+// 온다. 그래서 사람이 아니라 이 가드가 막는다. 막는 것은 **한국어 표시 문자열**뿐이며,
+// i18n 키 이름(영어)·`kind: 'text'` 같은 config 값·코드 식별자는 그대로 둔다.
+
+/** 캔버스 한국어 문자열을 (경로, 값) 쌍으로 모두 펼친다. */
+function flattenKoStrings(node: unknown, prefix: string): [string, string][] {
+  if (typeof node === 'string') return [[prefix, node]];
+  if (node === null || typeof node !== 'object') return [];
+  return Object.entries(node as Record<string, unknown>).flatMap(([k, v]) =>
+    flattenKoStrings(v, prefix === '' ? k : `${prefix}.${k}`),
+  );
+}
+
+describe('캔버스 한국어 어휘에 구현 용어가 남아 있지 않다', () => {
+  /** 사용자가 알아보지 못한 세 낱말. */
+  const BANNED = ['문구', '트윈', '이징'];
+
+  it('dashboard.canvas 아래 한국어 문자열에 문구·트윈·이징이 없다', () => {
+    const strings = flattenKoStrings(
+      (koMessages as Record<string, Record<string, unknown>>)['dashboard']?.['canvas'],
+      'dashboard.canvas',
+    );
+    // 펼치기 자체가 비면 가드가 아무것도 보지 않고 통과한다 — 그 침묵을 먼저 막는다.
+    expect(strings.length).toBeGreaterThan(50);
+
+    const offenders = strings.filter(([, value]) => BANNED.some((word) => value.includes(word)));
+    expect(offenders).toEqual([]);
+  });
+
+  it('패널 종류 설명(캔버스)에도 남아 있지 않다 — 같은 기능을 가리키는 다른 자리다', () => {
+    const strings = flattenKoStrings(koMessages, '').filter(
+      ([key]) => key.endsWith('.canvas') && key.includes('escription'),
+    );
+    expect(strings.length).toBeGreaterThan(0);
+
+    const offenders = strings.filter(([, value]) => BANNED.some((word) => value.includes(word)));
+    expect(offenders).toEqual([]);
+  });
+
+  it('바꿔 넣은 낱말이 실제로 화면 문자열에 있다 (지우기만 하고 끝내지 않았다)', () => {
+    const canvas = (koMessages as Record<string, Record<string, unknown>>)['dashboard']?.['canvas'];
+    const strings = flattenKoStrings(canvas, 'dashboard.canvas');
+    const has = (word: string) => strings.some(([, value]) => value.includes(word));
+
+    expect(has('텍스트')).toBe(true);
+    expect(has('전환')).toBe(true);
+  });
+
+  it('새 키도 ko·en 양쪽에 있다 (키 짝이 맞는다)', () => {
+    const keys = [
+      'dashboard.canvas.edit.gridStep',
+      'dashboard.canvas.elements.tweenHint',
+      'dashboard.canvas.elements.panelTweenHint',
+    ];
+    const resolve = (tree: unknown, key: string): unknown =>
+      key
+        .split('.')
+        .reduce<unknown>(
+          (node, seg) =>
+            node && typeof node === 'object' ? (node as Record<string, unknown>)[seg] : undefined,
+          tree,
+        );
+
+    for (const key of keys) {
+      expect(typeof resolve(koMessages, key)).toBe('string');
+      expect(typeof resolve(enMessages, key)).toBe('string');
+    }
   });
 });

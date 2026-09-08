@@ -779,6 +779,26 @@ describe('CanvasElementsEditor — 트윈', () => {
     expect(lastPatch(spy)).toEqual({ tween: undefined });
   });
 
+  // 이 칸이 무엇을 하는지는 값이 **바뀌는 순간에만** 드러나므로 겉모습으로 읽히지 않는다.
+  // 그래서 설명이 화면에 상주해야 한다(AC-E16) — `tokenHelp` 가 같은 이유로 같은 자리에 있다.
+  it('요소 칸 아래 한 줄이 무엇이 바뀌는지와 0 의 뜻을 말한다 (AC-E16)', () => {
+    setup(cfg([rect()]));
+    expect(testid('canvas-element-tween-hint-0').textContent).toBe(
+      'dashboard.canvas.elements.tweenHint',
+    );
+  });
+
+  it('패널 기본값 아래에도 그 설명이 있다 — 같은 빈칸이 두 자리에서 다른 뜻이다 (AC-E16)', () => {
+    setup(cfg([]));
+    // 요소 쪽 빈칸은 "패널 기본 사용", 패널 쪽 빈칸은 "즉시 전환" 이므로 문장을 돌려 쓰지 않는다.
+    expect(testid('canvas-panel-tween-hint').textContent).toBe(
+      'dashboard.canvas.elements.panelTweenHint',
+    );
+    expect(testid('canvas-panel-tween-hint').textContent).not.toBe(
+      'dashboard.canvas.elements.tweenHint',
+    );
+  });
+
   it('배경색 스와치를 낸다', () => {
     setup(cfg([], { background: '#101010' }));
     expect(testid('canvas-panel-background')).toBeTruthy();

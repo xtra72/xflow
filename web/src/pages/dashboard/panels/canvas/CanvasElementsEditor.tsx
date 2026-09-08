@@ -668,6 +668,13 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
         </select>
       </div>
 
+      {/* 이 칸이 무엇을 하는지는 겉모습만으로 읽히지 않는다 — 값이 바뀌는 **순간에만**
+          드러나는 효과이기 때문이다. 그래서 무엇이 옮겨 가는지와 0 의 뜻을 적는다
+          (`orderHint` 가 z-order 에 대해 하는 일과 같다). */}
+      <p className={HINT_CLASS} data-testid="canvas-panel-tween-hint">
+        {t('dashboard.canvas.elements.panelTweenHint')}
+      </p>
+
       {/* 001 의 z-order 는 배열 순서 하나뿐이다 — 그 사실을 화면에 적는다. */}
       <p className={HINT_CLASS}>
         {t('dashboard.canvas.elements.orderHint')}
@@ -1200,6 +1207,14 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                         </option>
                       ))}
                     </select>
+                    {/* 패널 쪽과 같은 이유로 적는다 — 다만 **비웠을 때의 뜻이 다르다**:
+                        여기서 비우면 꺼지는 것이 아니라 패널 기본값을 따른다. */}
+                    <p
+                      className={cn(HINT_CLASS, 'w-full')}
+                      data-testid={`canvas-element-tween-hint-${idx}`}
+                    >
+                      {t('dashboard.canvas.elements.tweenHint')}
+                    </p>
                   </div>
 
                   {/* 6행: 조건 규칙 표. 별도 컴포넌트다(§위험 R4) — 여기서는 붙이기만 한다. */}
