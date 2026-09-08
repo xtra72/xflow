@@ -141,6 +141,7 @@
         "modbusBusStats": "reads·writes/min, 지연 등 버스 통계 미니차트",
         "modbusSummaryStats": "커넥션·클라이언트·디바이스·오류 종합 통계",
         "heatmap": "공간 온도 센서를 IDW 로 보간한 히트맵(온도장)",
+        "canvas": "살아 있는 데이터에 바인딩한 도형을 조건 규칙에 따라 겉모습·문구를 바꿔 그립니다",
         "monitorLogs": "실시간 시스템 로그를 레벨·소스·컴포넌트 필터와 함께 봅니다."
       },
       "groups": {
@@ -151,7 +152,8 @@
       "labels": {
         "propertiesGrid": "디바이스 상태",
         "outdoorControl": "실외기 상태",
-        "heatmap": "히트맵"
+        "heatmap": "히트맵",
+        "canvas": "캔버스"
       }
     },
     "addDashboard": "새 대시보드 추가",

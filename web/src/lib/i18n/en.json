@@ -141,6 +141,7 @@
         "modbusBusStats": "Bus statistics mini-chart (reads·writes/min, latency)",
         "modbusSummaryStats": "Summary of connections, clients, devices and errors",
         "heatmap": "IDW-interpolated heatmap (temperature field) of spatial sensors",
+        "canvas": "Shapes bound to live data whose appearance and text change by condition rules",
         "monitorLogs": "Live system logs with level, source and component filters."
       },
       "groups": {
@@ -151,7 +152,8 @@
       "labels": {
         "propertiesGrid": "Device State",
         "outdoorControl": "Outdoor unit status",
-        "heatmap": "Heatmap"
+        "heatmap": "Heatmap",
+        "canvas": "Canvas"
       }
     },
     "addDashboard": "Add New Dashboard",

@@ -237,6 +237,7 @@ import {
 import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/HeatmapCanvas';
 // 히트맵 프리뷰(설정 다이얼로그 내 실제 패널 렌더 — MODBUS 프리뷰 선례와 동일 방식).
 import HeatmapPanel from './panels/heatmap/HeatmapPanel';
+import CanvasPanel from './panels/canvas/CanvasPanel';
 import BarChartPanel from './panels/charts/BarChartPanel';
 import LineChartPanel from './panels/charts/LineChartPanel';
 import PieChartPanel from './panels/charts/PieChartPanel';
@@ -895,8 +896,13 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // SPEC-CHART-002 §2.3 [U3] (M4.1): 게이지도 공용 Store 데이터 소스 surface 를 받는다.
   // heatmap 과 같은 이유로 CHART_PANEL_TYPES 에는 **넣지 않는다** — 그 집합은 데이터소스
   // 노출 외에 차트 전용 채널/타입 분기를 구동하며 게이지는 그 분기의 대상이 아니다(UB1-9).
+  //
+  // SPEC-CANVAS-001 REQ-03: 캔버스도 `usePanelSeriesData` 로 시리즈를 읽으므로 데이터 소스
+  // 섹션이 있어야 요소를 바인딩할 계열을 고를 수 있다. heatmap·gauge 와 **같은 이유로**
+  // CHART_PANEL_TYPES 에는 넣지 않는다 — 그 집합은 데이터소스 노출 외에 차트 전용
+  // 채널/타입 분기를 구동하고, 캔버스는 차트 종류·축·범례를 갖지 않아 그 분기의 대상이 아니다.
   const dataSourceBelowPreview =
-    isChartPanel || panel.type === 'heatmap' || panel.type === 'gauge';
+    isChartPanel || panel.type === 'heatmap' || panel.type === 'gauge' || panel.type === 'canvas';
 
   // @spec SPEC-PANEL-SETTINGS-001 (T1): 3분할 셸 슬롯 구성.
   // 기존 옵션/미리보기/데이터소스 편집 서브트리를 셸 영역으로 이관한다(편집 로직 보존).
@@ -1822,6 +1828,34 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   config={panel.config}
                   onConfigChange={(c) => handleConfigChange(c)}
                   forcePlacement
+                />
+              </div>
+            )}
+            {/*
+              SPEC-CANVAS-001 REQ-01 (6): 캔버스 라이브 미리보기. 실제 CanvasPanel 을 draft
+              config(panel)로 즉시 렌더한다 — 요소 기하·스타일·규칙은 시각 설정이라 store
+              재조회를 부르지 않으므로 debounce 없이 반영되어야 한다(히트맵과 같은 근거).
+              요소 0개·시리즈 결측·폴링 실패는 패널이 자체 빈 상태/오류 배지로 처리하므로
+              (REQ-05) 미리보기가 빈 영역이 되지 않는다.
+
+              요소·규칙 표 편집기는 여기가 아니라 별도 설정 섹션의 몫이다 — 이 블록은
+              **미리보기 마운트 지점**일 뿐이다.
+            */}
+            {panel.type === 'canvas' && (
+              <div
+                // 히트맵과 같은 이유로 flex 컨테이너다 — CanvasPanel 의 flex-1 루트가 부모
+                // 높이를 채우려면 부모가 flex 여야 하고, plain block 이면 요소가 없을 때
+                // 0-height 로 붕괴한다.
+                data-testid="canvas-preview-wrapper"
+                className="relative flex min-h-0 flex-col"
+                style={PREVIEW_CHILD_STYLE}
+                onWheel={handlePreviewWheel}
+              >
+                <CanvasPanel
+                  panelId={panel.id}
+                  title={panel.title}
+                  config={panel.config}
+                  onConfigChange={(c) => handleConfigChange(c)}
                 />
               </div>
             )}
