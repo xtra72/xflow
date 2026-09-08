@@ -14,7 +14,15 @@
 //
 // 그리기 순서는 배열 순서다(뒤가 위) — 001 의 유일한 z-order 수단이다(REQ-02).
 //
-// @spec SPEC-CANVAS-001
+// **SPEC-CANVAS-002 가 이 파일에 더한 것은 `drawElements` 의 반환 타입 하나뿐이다**(T2).
+// `void → Record<string, number>`(`kind:'text'` 요소 id → 실측 글자 폭)로 넓혔을 뿐,
+// 인자도 `DrawContext2D` 도 그리기 순서도 그려진 결과도 001 그대로다. 시각 편집기의 히트
+// 테스트는 텍스트 상자를 잡으려면 실측 폭이 필요한데 그 값은 이 층이 프레임마다 이미 재고
+// 있었다 — 새로 재는 대신 **이미 잰 값을 돌려주는 쪽**을 택한 이유는 스테이지·글자 폭의
+// 두 번째 측정원을 만들지 않는다는 002 REQ-05 금지 조항이다. 측정 횟수는 프레임당 1회로
+// 변함이 없고, 반환값을 무시하는 기존 호출부는 영향을 받지 않는다.
+//
+// @spec SPEC-CANVAS-001 · SPEC-CANVAS-002 (T2 — drawElements 반환 타입)
 
 import {
   DEFAULT_FONT_SIZE,
@@ -152,10 +160,15 @@ function paintStroke(ctx: DrawContext2D, style: ResolvedStyle): void {
 }
 
 /**
- * 문구 한 줄을 기준점에 그린다.
+ * 문구 한 줄을 기준점에 그린다. **잰 폭(CSS px)을 돌려준다.**
  *
  * `paint` 는 호출자가 정한다 — text 요소와 도형 라벨의 색 규칙이 다르기 때문이다
  * (`drawElement` 주석 참조). 색이 없으면 그리지 않는다.
+ *
+ * 폭을 돌려주는 것은 SPEC-CANVAS-002 의 요구다 — 히트 테스트가 텍스트 상자를 잡으려면
+ * 실측 폭이 필요한데, 그 값은 여기서 이미 재고 있다. 두 번째 측정원을 만들지 않기 위해
+ * **이미 잰 값을 흘려보낼 뿐** 새로 재지 않는다. 그리지 않은 경우(문구·색 없음)는
+ * 잰 적이 없으므로 `undefined` 이며, 그때 히트 테스트는 기준점 둘레 여유 상자로 폴백한다.
  */
 function paintText(
   ctx: DrawContext2D,
@@ -163,8 +176,8 @@ function paintText(
   anchor: PxPoint,
   style: ResolvedStyle,
   paint: string | undefined,
-): void {
-  if (text === undefined || text === '' || paint === undefined) return;
+): number | undefined {
+  if (text === undefined || text === '' || paint === undefined) return undefined;
   ctx.font = fontSpec(style);
   ctx.textAlign = FIXED_TEXT_ALIGN;
   ctx.textBaseline = TEXT_BASELINE;
@@ -173,6 +186,7 @@ function paintText(
   const origin = resolveTextOrigin(anchor, style.align ?? 'left', measured);
   ctx.fillStyle = paint;
   ctx.fillText(text, origin.x, origin.y);
+  return measured;
 }
 
 // --- 요소 그리기 ---------------------------------------------------------
@@ -199,7 +213,29 @@ export function drawElement(
   text: string | undefined,
   stage: StageSize,
 ): void {
-  if (style.visible === false) return;
+  // 시그니처는 001 그대로다(반환 없음). 잰 폭이 필요한 쪽은 `drawElements` 뿐이므로
+  // 폭을 흘려보내는 통로는 아래 내부 함수에 두고, 이 공개 함수는 001 의 형상을 지킨다.
+  drawMeasuredElement(ctx, el, style, text, stage);
+}
+
+/**
+ * `drawElement` 의 본체. 그린 글자의 **실측 폭**을 돌려준다는 점만 다르다.
+ *
+ * `kind: 'text'` 일 때만 값이 나온다. 도형 라벨의 폭은 재고도 버린다 — 라벨은 자기 기하가
+ * 없어 히트 영역도 핸들도 갖지 않으므로(`canvasHitTest` · `canvasEditGeometry` 가 둘 다
+ * `kind:'text'` 에만 폭을 쓴다), 도형 id 로 라벨 폭을 흘려보내면 받는 쪽이 "이 도형에도
+ * 잡을 수 있는 글자 상자가 있다" 고 잘못 읽는다. 값을 버리는 비용은 0 이고, 잘못 읽힐
+ * 여지를 남기는 비용은 0 이 아니다.
+ */
+function drawMeasuredElement(
+  ctx: DrawContext2D,
+  el: CanvasElement,
+  style: ResolvedStyle,
+  text: string | undefined,
+  stage: StageSize,
+): number | undefined {
+  if (style.visible === false) return undefined;
+  let measured: number | undefined;
   ctx.save();
   try {
     ctx.globalAlpha = resolveAlpha(style.opacity);
@@ -230,7 +266,13 @@ export function drawElement(
         break;
       }
       case 'text': {
-        paintText(ctx, text, projectPoint(el.geometry, stage), style, style.textColor ?? style.fill);
+        measured = paintText(
+          ctx,
+          text,
+          projectPoint(el.geometry, stage),
+          style,
+          style.textColor ?? style.fill,
+        );
         break;
       }
     }
@@ -239,17 +281,35 @@ export function drawElement(
       paintText(ctx, text, labelAnchor(el, stage), style, style.textColor);
     }
   } catch {
-    // 손상 요소 하나가 프레임 전체를 무너뜨리지 않는다(REQ-05).
+    // 손상 요소 하나가 프레임 전체를 무너뜨리지 않는다(REQ-05). 재다 만 폭은 버린다 —
+    // 그 프레임의 히트 상자는 폴백으로 떨어지고, 다음 프레임이 성공하면 되돌아온다.
   } finally {
     ctx.restore();
   }
+  return measured;
 }
 
 /**
- * 요소 목록을 **배열 순서대로** 그린다(뒤가 위, REQ-02).
+ * 요소 목록을 **배열 순서대로** 그린다(뒤가 위, REQ-02). 돌려주는 값은 이 프레임에서
+ * 실제로 잰 **글자 폭 장부**(`kind:'text'` 요소 id → CSS px)다.
  *
  * 스타일·문구 맵에 항목이 없으면 요소의 기본값으로 떨어진다 — 바인딩 시리즈가 없거나
  * 규칙이 하나도 일치하지 않는 경우가 정상 경로이기 때문이다(AC-E2/AC-E3).
+ *
+ * **반환 타입이 002 가 이 파일에 더한 변경의 전부다**(SPEC-CANVAS-002 T2). 인자도,
+ * `DrawContext2D` 도, 그리기 순서도, 그려진 결과도 001 그대로이며, 반환값을 무시하는 기존
+ * 호출부는 아무 영향을 받지 않는다(AC-E1).
+ *
+ * 장부에 담기는 것과 담기지 않는 것:
+ * - 담긴다 — `kind:'text'` 요소가 실제로 그려져 `measureText` 를 지난 경우. 폭이 0 으로
+ *   측정되어도 그대로 담는다. "재어 보니 0" 과 "잰 적 없음" 은 다른 사실이고, 이 장부는
+ *   사실만 나른다.
+ * - 담기지 않는다 — 도형에 붙은 **라벨**의 폭(라벨은 자기 기하가 없어 히트 영역도 핸들도
+ *   없다), `visible:false` 로 아예 그리지 않은 요소, 문구나 색이 없어 그리지 않은 요소.
+ *   담기지 않은 요소는 히트 테스트가 기준점 둘레 여유 상자로 폴백한다(AC-E7).
+ *
+ * 측정 횟수는 001 과 같은 **프레임당 1회**다. 이 함수는 새로 재지 않고 이미 잰 값을 모으기만
+ * 하므로 "스테이지의 두 번째 측정원을 만들지 않는다" 는 REQ-05 금지 조항이 지켜진다.
  */
 export function drawElements(
   ctx: DrawContext2D,
@@ -257,10 +317,19 @@ export function drawElements(
   styles: Record<string, ResolvedStyle>,
   texts: Record<string, string | undefined>,
   stage: StageSize,
-): void {
+): Record<string, number> {
+  const textWidths: Record<string, number> = {};
   for (const el of elements) {
-    drawElement(ctx, el, styles[el.id] ?? el.style, texts[el.id] ?? el.text, stage);
+    const measured = drawMeasuredElement(
+      ctx,
+      el,
+      styles[el.id] ?? el.style,
+      texts[el.id] ?? el.text,
+      stage,
+    );
+    if (measured !== undefined) textWidths[el.id] = measured;
   }
+  return textWidths;
 }
 
 /**

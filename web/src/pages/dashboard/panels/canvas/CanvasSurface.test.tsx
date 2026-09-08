@@ -10,11 +10,14 @@
 // 즉시 1프레임), AC-03(트윈 도중 목표 변경 시 값이 튀지 않음).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, cleanup, act } from '@testing-library/react';
+import { render, cleanup, act, fireEvent, screen } from '@testing-library/react';
 
 import type { VisibilitySource } from '../charts/visiblePolling';
 import type { RectElement } from './canvasConfig';
-import CanvasSurface, { type FrameScheduler } from './CanvasSurface';
+import CanvasSurface, {
+  type CanvasOverlayContext,
+  type FrameScheduler,
+} from './CanvasSurface';
 
 // --- ResizeObserver 오버라이드(HeatmapCanvas.test 선례) -------------------
 
@@ -678,5 +681,420 @@ describe('CanvasSurface — 수명주기와 기본 주입값', () => {
       />,
     );
     expect((container.firstElementChild as HTMLElement).className).toBe('h-40 w-40');
+  });
+});
+
+// --- 무동작 보장 (SPEC-CANVAS-002 T3 · AC-E1) ----------------------------
+//
+// **이 블록은 002 의 오버레이 슬롯보다 먼저 쓰였다.** 002 는 `CanvasSurface` 에 선택
+// prop(`overlay` 렌더 prop)을 더하지만, 그것을 넘기지 않았을 때의 동작은 001 과 **완전히
+// 같아야 한다**(acceptance.md AC-E1). 그 "같음" 을 나중에 눈으로 비교할 수는 없으므로,
+// prop 을 더하기 전에 001 의 현재 동작을 여기에 못박아 둔다. 아래 다섯 축은 그대로 002 의
+// 회귀 게이트다 — 하나라도 깨지면 prop 추가가 아니라 루프 배선이 잘못된 것이다.
+//
+// 위 describe 들과 일부 단언이 겹치는 것은 의도적이다. 저쪽은 001 의 기능을 검증하고,
+// 이쪽은 **"슬롯을 쓰지 않으면 아무 일도 없다"** 는 002 의 계약 하나를 검증한다.
+
+describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 001 과 동일 (AC-E1)', () => {
+  it('컨테이너에는 <canvas> 하나뿐이다(추가 DOM 노드가 생기지 않는다)', () => {
+    const clock = makeScheduler();
+    const { container } = render(
+      <CanvasSurface
+        elements={[rectEl('a')]}
+        targetStyles={{}}
+        texts={{}}
+        scheduler={clock.scheduler}
+        visibilitySource={makeVisibility().source}
+      />,
+    );
+    clock.flush(0);
+
+    const wrapper = container.firstElementChild as HTMLElement;
+    expect(wrapper.children).toHaveLength(1);
+    expect(wrapper.children[0]!.tagName).toBe('CANVAS');
+  });
+
+  it('한 프레임의 그리기 호출 순서와 인자가 001 과 같다', () => {
+    const clock = makeScheduler();
+    render(
+      <CanvasSurface
+        elements={[
+          rectEl('r', { geometry: { x: 0, y: 0, w: 0.5, h: 0.5 } }),
+          { id: 't', kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: {} },
+        ]}
+        targetStyles={{
+          r: { fill: '#ff0000', textColor: '#ffffff' },
+          t: { textColor: '#000000' },
+        }}
+        texts={{ r: 'ab', t: 'cd' }}
+        background="#101010"
+        scheduler={clock.scheduler}
+        visibilitySource={makeVisibility().source}
+      />,
+    );
+    clock.flush(0);
+
+    expect(ops()).toEqual([
+      // clearSurface — 항등 변환 → 지우기 → 배경 칠하기.
+      'setTransform',
+      'clearRect',
+      'fillStyle',
+      'fillRect',
+      // DPR 배율(이후 좌표는 CSS px).
+      'setTransform',
+      // rect 요소 + 그 라벨.
+      'save',
+      'beginPath',
+      'rect',
+      'fillStyle',
+      'fill',
+      'fillStyle',
+      'fillText',
+      'restore',
+      // text 요소(라벨 없음 — 글자가 곧 기하다).
+      'save',
+      'fillStyle',
+      'fillText',
+      'restore',
+    ]);
+    expect(ctxStub.calls.filter((c) => c[0] === 'fillText').map((c) => c.slice(1))).toEqual([
+      ['ab', 25, 20], // rect 중심 (25,20), align 미지정(left) → 원점 그대로.
+      ['cd', 50, 40], // 기준점 (50,40).
+    ]);
+  });
+
+  it('프레임 예약 계수가 001 과 같다: 마운트 1회, 유휴 진입 뒤 추가 예약 없음', () => {
+    const clock = makeScheduler();
+    render(
+      <CanvasSurface
+        elements={[rectEl('a')]}
+        targetStyles={{ a: { fill: '#ff0000' } }}
+        texts={{}}
+        panelTween={LINEAR_300}
+        scheduler={clock.scheduler}
+        visibilitySource={makeVisibility().source}
+      />,
+    );
+    expect(clock.requested).toBe(1);
+    clock.flush(0);
+    expect(clock.requested).toBe(1);
+    expect(clock.pending).toBe(0);
+  });
+
+  it('트윈이 도는 동안의 예약 계수와 유휴 정지 시점이 001 과 같다', () => {
+    const clock = makeScheduler();
+    const visibility = makeVisibility();
+    const view = render(
+      <CanvasSurface
+        elements={[rectEl('a')]}
+        targetStyles={{ a: { fill: '#000000' } }}
+        texts={{}}
+        panelTween={LINEAR_300}
+        scheduler={clock.scheduler}
+        visibilitySource={visibility.source}
+      />,
+    );
+    clock.flush(1000);
+    expect(clock.requested).toBe(1);
+
+    view.rerender(
+      <CanvasSurface
+        elements={[rectEl('a')]}
+        targetStyles={{ a: { fill: '#ffffff' } }}
+        texts={{}}
+        panelTween={LINEAR_300}
+        scheduler={clock.scheduler}
+        visibilitySource={visibility.source}
+      />,
+    );
+    expect(clock.requested).toBe(2);
+    clock.flush(1000);
+    expect(clock.requested).toBe(3);
+    clock.flush(1400); // 지속 시간 경과 → 완료 → 유휴.
+    expect(clock.requested).toBe(3);
+    expect(clock.pending).toBe(0);
+  });
+
+  it('가시성 게이팅이 001 과 같다: 비가시 무예약, 재가시 즉시 한 장', () => {
+    const clock = makeScheduler();
+    const visibility = makeVisibility();
+    const view = render(
+      <CanvasSurface
+        elements={[rectEl('a')]}
+        targetStyles={{ a: { fill: '#000000' } }}
+        texts={{}}
+        scheduler={clock.scheduler}
+        visibilitySource={visibility.source}
+      />,
+    );
+    clock.flush(0);
+    expect(clock.requested).toBe(1);
+
+    visibility.set(false);
+    view.rerender(
+      <CanvasSurface
+        elements={[rectEl('a')]}
+        targetStyles={{ a: { fill: '#ffffff' } }}
+        texts={{}}
+        scheduler={clock.scheduler}
+        visibilitySource={visibility.source}
+      />,
+    );
+    expect(clock.requested).toBe(1);
+    expect(clock.pending).toBe(0);
+
+    visibility.set(true);
+    expect(clock.requested).toBe(2);
+  });
+
+  it('언마운트 정리가 001 과 같다: 예약 취소 · 구독 해제 · 관찰자 해제', () => {
+    const clock = makeScheduler();
+    const visibility = makeVisibility();
+    const view = render(
+      <CanvasSurface
+        elements={[rectEl('a')]}
+        targetStyles={{ a: { fill: '#ff0000' } }}
+        texts={{}}
+        scheduler={clock.scheduler}
+        visibilitySource={visibility.source}
+      />,
+    );
+    expect(clock.pending).toBe(1);
+    expect(visibility.subscriberCount).toBe(1);
+
+    view.unmount();
+    expect(clock.pending).toBe(0);
+    expect(clock.cancelled).toHaveLength(1);
+    expect(visibility.subscriberCount).toBe(0);
+    expect(roDisconnects).toBe(1);
+  });
+
+  it('props 가 그대로면 프레임도 그리기도 없다(마지막 프레임 보존)', () => {
+    const clock = makeScheduler();
+    const elements = [rectEl('a')];
+    const targetStyles = { a: { fill: '#ff0000' } };
+    const texts = {};
+    const visibility = makeVisibility();
+    const view = render(
+      <CanvasSurface
+        elements={elements}
+        targetStyles={targetStyles}
+        texts={texts}
+        scheduler={clock.scheduler}
+        visibilitySource={visibility.source}
+      />,
+    );
+    clock.flush(0);
+    ctxStub.calls.length = 0;
+    const before = clock.requested;
+
+    view.rerender(
+      <CanvasSurface
+        elements={elements}
+        targetStyles={targetStyles}
+        texts={texts}
+        scheduler={clock.scheduler}
+        visibilitySource={visibility.source}
+      />,
+    );
+    expect(clock.requested).toBe(before);
+    clock.flush(16);
+    expect(ctxStub.calls).toHaveLength(0);
+  });
+});
+
+// --- 오버레이 슬롯 (SPEC-CANVAS-002 T3) ----------------------------------
+//
+// 위의 무동작 블록이 "쓰지 않으면 아무 일도 없다" 를 지켰다면, 이 블록은 "쓰면 정확히
+// 이만큼만 일어난다" 를 지킨다. 검증 축은 셋이다.
+//   1) 측정원이 하나다 — 오버레이가 받는 스테이지는 프레임이 투영에 쓰는 그 값이다(AC-E2).
+//   2) 폭 장부는 직전 프레임의 값이며 두 번째 측정원이 아니다(AC-E7).
+//   3) **새 prop 은 루프를 깨우지 않는다** — 프레임 예약 경로는 001 의 셋 그대로다(AC-E4).
+
+describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
+  /** 오버레이가 받은 컨텍스트를 순서대로 모은다(렌더마다 한 번 호출된다). */
+  function makeOverlaySpy() {
+    const seen: CanvasOverlayContext[] = [];
+    return {
+      seen,
+      get last() {
+        return seen.at(-1);
+      },
+      render: (ctx: CanvasOverlayContext) => {
+        seen.push(ctx);
+        return <div data-testid="canvas-overlay" />;
+      },
+    };
+  }
+
+  it('오버레이는 캔버스 뒤 형제로 컨테이너 안에 렌더된다', () => {
+    const clock = makeScheduler();
+    const spy = makeOverlaySpy();
+    const { container } = render(
+      <CanvasSurface
+        elements={[rectEl('a')]}
+        targetStyles={{}}
+        texts={{}}
+        scheduler={clock.scheduler}
+        visibilitySource={makeVisibility().source}
+        overlay={spy.render}
+      />,
+    );
+    clock.flush(0);
+
+    const wrapper = container.firstElementChild as HTMLElement;
+    expect(wrapper.children).toHaveLength(2);
+    expect(wrapper.children[0]!.tagName).toBe('CANVAS');
+    expect(wrapper.children[1]).toBe(screen.getByTestId('canvas-overlay'));
+  });
+
+  it('오버레이가 받는 스테이지는 프레임이 투영에 쓰는 그 값이다(측정원이 하나다)', () => {
+    const clock = makeScheduler();
+    const spy = makeOverlaySpy();
+    render(
+      <CanvasSurface
+        elements={[rectEl('a', { geometry: { x: 0, y: 0, w: 1, h: 1 } })]}
+        targetStyles={{ a: { fill: '#ff0000' } }}
+        texts={{}}
+        scheduler={clock.scheduler}
+        visibilitySource={makeVisibility().source}
+        overlay={spy.render}
+      />,
+    );
+    clock.flush(0);
+
+    // 정규화 (0,0,1,1) 은 스테이지 전체이므로 투영된 px 상자가 곧 스테이지 크기다.
+    const projected = ctxStub.calls.find((c) => c[0] === 'rect')!.slice(1);
+    expect(spy.last!.stage).toEqual({ width: projected[2], height: projected[3] });
+    expect(spy.last!.stage).toEqual({ width: 100, height: 80 });
+  });
+
+  it('패널 크기가 바뀌면 오버레이의 스테이지도 같은 새 값으로 따라온다(AC-E2)', () => {
+    const clock = makeScheduler();
+    const spy = makeOverlaySpy();
+    render(
+      <CanvasSurface
+        elements={[rectEl('a', { geometry: { x: 0, y: 0, w: 1, h: 1 } })]}
+        targetStyles={{ a: { fill: '#ff0000' } }}
+        texts={{}}
+        scheduler={clock.scheduler}
+        visibilitySource={makeVisibility().source}
+        overlay={spy.render}
+      />,
+    );
+    clock.flush(0);
+    expect(spy.last!.stage).toEqual({ width: 100, height: 80 });
+
+    ctxStub.calls.length = 0;
+    act(() => {
+      roInstances[0]!.cb([{ contentRect: { width: 50, height: 40 } }]);
+    });
+    clock.flush(16);
+
+    const projected = ctxStub.calls.find((c) => c[0] === 'rect')!.slice(1);
+    expect(spy.last!.stage).toEqual({ width: 50, height: 40 });
+    expect(spy.last!.stage).toEqual({ width: projected[2], height: projected[3] });
+  });
+
+  it('폭 장부는 첫 프레임 전에는 비어 있고, 그 뒤에는 직전 프레임이 잰 값이다(AC-E7)', () => {
+    const clock = makeScheduler();
+    const spy = makeOverlaySpy();
+    const elements = [{ id: 't', kind: 'text' as const, geometry: { x: 0.5, y: 0.5 }, style: {} }];
+    const view = render(
+      <CanvasSurface
+        elements={elements}
+        targetStyles={{ t: { textColor: '#000000' } }}
+        texts={{ t: 'ab' }}
+        scheduler={clock.scheduler}
+        visibilitySource={makeVisibility().source}
+        overlay={spy.render}
+      />,
+    );
+    // 아직 한 프레임도 그리지 않았다 — 받는 쪽이 폴백할 수 있게 빈 장부다.
+    expect(spy.seen[0]!.textWidths).toEqual({});
+
+    clock.flush(0);
+    // 그리기는 재렌더를 낳지 않는다(ref 다) — 다음 렌더가 직전 프레임의 장부를 본다.
+    view.rerender(
+      <CanvasSurface
+        elements={elements}
+        targetStyles={{ t: { textColor: '#111111' } }}
+        texts={{ t: 'ab' }}
+        scheduler={clock.scheduler}
+        visibilitySource={makeVisibility().source}
+        overlay={spy.render}
+      />,
+    );
+    // 스텁의 measureText 는 글자 수 × 10 이다.
+    expect(spy.last!.textWidths).toEqual({ t: 20 });
+  });
+
+  // 표면은 포인터 리스너를 **아예 달지 않는다**(002 가 T3 의 통과 슬롯 넷을 걷어냈다 —
+  // 부르는 곳이 하나도 없었고, 편집 포인터는 오버레이 루트가 받는다). 그래서 이 성질은
+  // "핸들러를 주지 않았을 때" 가 아니라 **언제나** 성립하는 무조건적 보장이 되었다.
+  it('캔버스 포인터 이벤트는 아무 일도 하지 않는다 (리스너가 없다)', () => {
+    const clock = makeScheduler();
+    render(
+      <CanvasSurface
+        elements={[rectEl('a')]}
+        targetStyles={{ a: { fill: '#ff0000' } }}
+        texts={{}}
+        scheduler={clock.scheduler}
+        visibilitySource={makeVisibility().source}
+      />,
+    );
+    clock.flush(0);
+    ctxStub.calls.length = 0;
+    const before = clock.requested;
+
+    const canvas = screen.getByTestId('canvas-surface');
+    expect(() => {
+      fireEvent.pointerDown(canvas, { pointerId: 1 });
+      fireEvent.pointerMove(canvas, { pointerId: 1 });
+      fireEvent.pointerUp(canvas, { pointerId: 1 });
+      fireEvent.pointerCancel(canvas, { pointerId: 1 });
+    }).not.toThrow();
+
+    expect(clock.requested).toBe(before);
+    expect(ctxStub.calls).toHaveLength(0);
+  });
+
+  it('오버레이만 새 신원으로 바뀌면 프레임을 추가로 예약하지 않는다(AC-E4)', () => {
+    const clock = makeScheduler();
+    const visibility = makeVisibility();
+    const elements = [rectEl('a')];
+    const targetStyles = { a: { fill: '#ff0000' } };
+    const texts = {};
+    const view = render(
+      <CanvasSurface
+        elements={elements}
+        targetStyles={targetStyles}
+        texts={texts}
+        scheduler={clock.scheduler}
+        visibilitySource={visibility.source}
+        overlay={() => <div data-testid="canvas-overlay" />}
+      />,
+    );
+    clock.flush(0);
+    const before = clock.requested;
+    ctxStub.calls.length = 0;
+
+    // 렌더마다 새 함수가 만들어지는 것이 실제 사용 형태다 — 그것이 루프를 깨우면 안 된다.
+    for (const _ of [0, 1, 2]) {
+      view.rerender(
+        <CanvasSurface
+          elements={elements}
+          targetStyles={targetStyles}
+          texts={texts}
+          scheduler={clock.scheduler}
+          visibilitySource={visibility.source}
+          overlay={() => <div data-testid="canvas-overlay" />}
+        />,
+      );
+    }
+
+    expect(clock.requested).toBe(before);
+    expect(clock.pending).toBe(0);
+    expect(ctxStub.calls).toHaveLength(0);
   });
 });

@@ -423,3 +423,125 @@ describe('clearSurface', () => {
     expect(argsOf(ctx, 'fillRect')).toEqual([0, 0, 200, 160]);
   });
 });
+
+// --- 실측 글자 폭 장부 (SPEC-CANVAS-002 T2) ------------------------------
+//
+// 002 가 이 파일에 더한 변경은 `drawElements` 의 반환 타입 하나뿐이다. 위의 001 테스트는
+// **한 건도 손대지 않았다** — 반환값을 무시하는 호출부가 영향받지 않는다는 것이 그 자체로
+// 계약(AC-E1)이므로, 기존 본문이 그대로 통과하는 것이 곧 증거다.
+//
+// 아래는 그 새 반환값만 검증한다. 축은 셋이다: 무엇이 담기는가(`kind:'text'`), 무엇이
+// 담기지 않는가(라벨·비표시·미그림), 그리고 폭 0 이 "잰 적 없음" 과 구분되는가(AC-E7).
+
+describe('drawElements — 실측 글자 폭 장부 (SPEC-CANVAS-002)', () => {
+  it('그린 text 요소의 잰 폭을 요소 id 로 키잉해 돌려준다', () => {
+    const ctx = makeRecorder();
+    const widths = drawElements(
+      ctx,
+      [textEl({ id: 'a' }), textEl({ id: 'b' })],
+      { a: { textColor: '#000000' }, b: { textColor: '#000000' } },
+      { a: 'ab', b: 'xyz' },
+      STAGE,
+    );
+    // 스텁의 measureText 는 글자 수 × CHAR_WIDTH 다.
+    expect(widths).toEqual({ a: 2 * CHAR_WIDTH, b: 3 * CHAR_WIDTH });
+  });
+
+  it('돌려준 폭은 그 프레임이 원점 계산에 쓴 값과 같다(두 번째 측정원이 없다)', () => {
+    const ctx = makeRecorder();
+    const widths = drawElements(
+      ctx,
+      [textEl({ id: 'a' })],
+      { a: { textColor: '#000000', align: 'center' } },
+      { a: 'ab' },
+      STAGE,
+    );
+    // 기준점 (100,50), 폭 20, center → 좌측 끝 x = 100 - 20/2 = 90.
+    expect(argsOf(ctx, 'fillText')).toEqual(['ab', 90, 50]);
+    expect(widths.a).toBe(20);
+    // 측정은 여전히 프레임당 1회다 — 장부를 만들려고 다시 재지 않는다.
+    expect(ctx.calls.filter((c) => c[0] === 'measureText')).toHaveLength(1);
+  });
+
+  it('폭이 0 으로 측정되어도 장부에 담는다("재어 보니 0" 과 "잰 적 없음" 은 다르다)', () => {
+    const ctx = makeRecorder();
+    ctx.measureText = (text: string) => {
+      ctx.calls.push(['measureText', text]);
+      return { width: 0 };
+    };
+    const widths = drawElements(ctx, [textEl({ id: 'a' })], { a: { textColor: '#000000' } }, { a: 'ab' }, STAGE);
+
+    expect(Object.prototype.hasOwnProperty.call(widths, 'a')).toBe(true);
+    expect(widths.a).toBe(0);
+  });
+
+  it('도형 라벨의 폭은 담지 않는다(라벨은 히트 영역도 핸들도 없다)', () => {
+    const ctx = makeRecorder();
+    const widths = drawElements(
+      ctx,
+      [rectEl({ id: 'r' }), ellipseEl({ id: 'e' }), lineEl({ id: 'l' })],
+      {
+        r: { textColor: '#ffffff' },
+        e: { textColor: '#ffffff' },
+        l: { stroke: '#000000', textColor: '#ffffff' },
+      },
+      { r: 'label', e: 'label', l: 'label' },
+      STAGE,
+    );
+    // 라벨은 실제로 그려졌지만(= 재어졌지만) 장부는 비어 있다.
+    expect(ctx.calls.filter((c) => c[0] === 'fillText')).toHaveLength(3);
+    expect(widths).toEqual({});
+  });
+
+  it('그리지 않은 text 요소는 담지 않는다(비표시 · 문구 없음 · 색 없음)', () => {
+    const ctx = makeRecorder();
+    const widths = drawElements(
+      ctx,
+      [
+        textEl({ id: 'hidden' }),
+        textEl({ id: 'noText' }),
+        textEl({ id: 'noPaint' }),
+        textEl({ id: 'empty' }),
+      ],
+      {
+        hidden: { textColor: '#000000', visible: false },
+        noText: { textColor: '#000000' },
+        noPaint: {},
+        empty: { textColor: '#000000' },
+      },
+      { hidden: 'ab', noText: undefined, noPaint: 'ab', empty: '' },
+      STAGE,
+    );
+    expect(widths).toEqual({});
+  });
+
+  it('요소가 0개면 빈 장부를 돌려준다', () => {
+    const ctx = makeRecorder();
+    expect(drawElements(ctx, [], {}, {}, STAGE)).toEqual({});
+  });
+
+  it('그리다 던진 요소의 폭은 담지 않고 나머지 요소는 계속 담는다', () => {
+    const ctx = makeRecorder();
+    const realFillText = ctx.fillText.bind(ctx);
+    ctx.fillText = (text: string, x: number, y: number) => {
+      if (text === 'boom') throw new Error('boom');
+      realFillText(text, x, y);
+    };
+    const widths = drawElements(
+      ctx,
+      [textEl({ id: 'bad' }), textEl({ id: 'good' })],
+      { bad: { textColor: '#000000' }, good: { textColor: '#000000' } },
+      { bad: 'boom', good: 'ab' },
+      STAGE,
+    );
+    expect(widths).toEqual({ good: 2 * CHAR_WIDTH });
+  });
+
+  it('장부는 호출마다 새로 만들어진다(프레임 간에 값이 새지 않는다)', () => {
+    const ctx = makeRecorder();
+    const first = drawElements(ctx, [textEl({ id: 'a' })], { a: { textColor: '#000000' } }, { a: 'ab' }, STAGE);
+    const second = drawElements(ctx, [textEl({ id: 'b' })], { b: { textColor: '#000000' } }, { b: 'c' }, STAGE);
+    expect(first).toEqual({ a: 2 * CHAR_WIDTH });
+    expect(second).toEqual({ b: 1 * CHAR_WIDTH });
+  });
+});

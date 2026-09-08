@@ -18,9 +18,31 @@
 // 반대로 **props 가 그대로면 아무것도 그리지 않는다** — 폴링이 실패해도 마지막 프레임이
 // 그대로 남아 있어야 하기 때문이다(AC-E4).
 //
-// @spec SPEC-CANVAS-001
+// **SPEC-CANVAS-002 가 이 컴포넌트에 더한 것은 선택 prop 하나뿐이다**(T3): 캔버스 위에
+// DOM 층을 얹는 `overlay` 렌더 prop. **넘기지 않으면 동작이 001 과 완전히 같다**(AC-E1) —
+// 추가 DOM 노드도, 추가 렌더도, 추가 프레임도 없다.
+//
+// **포인터 통과 슬롯은 두지 않는다.** T3 은 설계를 그대로 옮겨 `onCanvasPointer*` 넷을
+// `<canvas>` 에 달아 두었으나, T5 가 오버레이를 지으면서 포인터를 **오버레이 루트**에서
+// 받기로 결론이 났다 — 초점을 받는 핸들(T8)과 팔레트(T9)가 어차피 그 층 안의 진짜 DOM
+// 요소여서 좌표 기준이 하나로 유지되고, 칠해진 픽셀인 캔버스에는 잡을 노드가 없다. 그래서
+// 넷은 **호출부가 하나도 없는 API** 로 남았고, 부르는 곳이 없는 통과 슬롯은 다음 사람에게
+// "여기로도 포인터가 들어온다" 고 거짓말한다. SPEC-CANVAS-004 가 이 파일을 다시 고칠
+// 예정이므로(위험 R4) 그 거짓말을 물려주지 않는다. AC-E3("빈 지점 누름을 소비하지
+// 않는다")은 약해지지 않는다 — 그 인수 기준이 요구하는 것은 **어느 노드가 받는가**가
+// 아니라 **소비하지 않는다**이며, 그 책임은 오버레이가 진다.
+//
+// 002 가 편집기를 캔버스에 칠하지 않고 DOM 오버레이로 둔 결정적 이유가 위 3번(루프 규율)
+// 이다. 선택·호버·핸들을 rAF 루프 안에 칠하면 편집기 상태가 001 이 유휴로 만들려고 지은
+// 그 루프 안으로 들어와, "트윈이 없으면 프레임을 예약하지 않는다" 에 예외가 생긴다.
+// 그래서 이 파일에서 **프레임을 예약하는 경로는 001 과 똑같이 셋뿐이다**: (1) 데이터·크기·
+// 배경 props 변경, (2) 다시 보이게 됨, (3) 진행 중인 트윈의 다음 장. 새 prop 은 어느
+// 효과의 의존성에도 들어가지 않고, 실측 폭 장부도 state 가 아니라 ref 라 재렌더를 낳지
+// 않는다(REQ-05 · AC-E4).
+//
+// @spec SPEC-CANVAS-001 · SPEC-CANVAS-002 (T3 — 오버레이 슬롯)
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { documentVisibility, type VisibilitySource } from '../charts/visiblePolling';
 import type { CanvasElement, TweenSpec } from './canvasConfig';
@@ -47,6 +69,33 @@ const DEFAULT_SCHEDULER: FrameScheduler = {
   cancel: (handle) => cancelAnimationFrame(handle),
 };
 
+// --- 오버레이 슬롯 (SPEC-CANVAS-002 T3) ---------------------------------
+
+/**
+ * 오버레이 렌더 prop 이 받는 것. **표면이 이미 잰 값들뿐이며 오버레이가 다시 잴 것은 없다.**
+ *
+ * 이 형상이 SPEC-CANVAS-002 위험 R1("핸들이 도형에서 미끄러진다")의 대책 그 자체다.
+ * 스테이지 크기의 두 번째 측정원이 생기거나 투영이 두 벌이 되면 핸들과 도형이 어긋나고,
+ * 그 어긋남은 "가끔 어긋난다" 로만 보고되어 원인을 찾기 어렵다. 그래서 오버레이는 크기를
+ * **스스로 재지 않고** 이 값을 받아 쓰며, 좌표 투영도 `canvasGeometry` 의 같은 함수를 쓴다.
+ */
+export interface CanvasOverlayContext {
+  /**
+   * 표면의 `ResizeObserver` 가 잰 스테이지 CSS px 크기. 프레임이 투영에 쓰는 바로 그 값이다
+   * (측정원이 하나다 — AC-E2).
+   */
+  stage: StageSize;
+  /**
+   * **직전에 그린 프레임**이 잰 글자 폭(`kind:'text'` 요소 id → CSS px). `drawElements` 가
+   * 프레임마다 이미 재던 값을 그대로 흘려보낸 것이라 두 번째 측정원이 아니다.
+   *
+   * 최악의 지연은 한 프레임이며, 그 지연이 틀리게 할 수 있는 것은 **텍스트 상자의 폭
+   * 하나뿐**이다(도형은 투영만으로 정해진다). 아직 한 프레임도 그리지 않았으면 비어 있고,
+   * 받는 쪽은 기준점 둘레 여유 상자로 폴백한다(AC-E7).
+   */
+  textWidths: Record<string, number>;
+}
+
 export interface CanvasSurfaceProps {
   /** 배열 순서 = 그리기 순서(뒤가 위). */
   elements: CanvasElement[];
@@ -63,6 +112,13 @@ export interface CanvasSurfaceProps {
   /** 프레임 예약기. 기본은 requestAnimationFrame. */
   scheduler?: FrameScheduler;
   className?: string;
+  /**
+   * 캔버스 **위에** 얹을 DOM 층(SPEC-CANVAS-002 T3). 선택 외곽선·핸들·팔레트가 여기 산다.
+   *
+   * 미지정이면 아무것도 렌더하지 않는다 — 추가 DOM 노드조차 생기지 않는다(AC-E1).
+   * 캔버스에 칠하지 않으므로 이 층이 무엇을 그리든 rAF 루프를 깨우지 않는다(REQ-05).
+   */
+  overlay?: (ctx: CanvasOverlayContext) => ReactNode;
 }
 
 // --- 스타일 비교 ---------------------------------------------------------
@@ -103,6 +159,7 @@ export default function CanvasSurface({
   visibilitySource = documentVisibility,
   scheduler = DEFAULT_SCHEDULER,
   className,
+  overlay,
 }: CanvasSurfaceProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -133,6 +190,16 @@ export default function CanvasSurface({
   const visibleRef = useRef(true);
   /** 프레임 콜백의 최신 구현. 예약 함수와 서로를 부르는 순환을 여기서 끊는다. */
   const frameHandlerRef = useRef<(nowMs: number) => void>(() => {});
+  /**
+   * 직전 프레임이 잰 글자 폭 장부(SPEC-CANVAS-002 T3).
+   *
+   * **state 가 아니라 ref 인 것이 핵심이다.** state 로 두면 프레임마다 재렌더가 돌고, 그
+   * 재렌더가 다시 프레임을 예약해 001 이 금지 조항으로 못박은 유휴 정지가 무너진다
+   * (REQ-05 · AC-E4). ref 는 그리기의 부산물을 오버레이 쪽으로 흘려보내기만 하고 루프를
+   * 건드리지 않는다. 그 대가로 오버레이가 보는 폭은 **직전 프레임**의 값이지만, 그것이
+   * 명세가 허용한 정확한 지연이다(최악 한 프레임, 틀릴 수 있는 것은 텍스트 상자의 폭뿐).
+   */
+  const textWidthsRef = useRef<Record<string, number>>({});
 
   // props → ref 동기화. 이 훅이 가장 먼저 선언되어 있어야 아래 효과들이 최신값을 본다.
   useEffect(() => {
@@ -218,7 +285,9 @@ export default function CanvasSurface({
       clearSurface(ctx, backing, bg);
       // 이후 그리기는 CSS px 좌표계에서 이뤄진다(정규화 좌표 × 표시 크기).
       ctx.setTransform(backing.scale, 0, 0, backing.scale, 0, 0);
-      drawElements(ctx, els, styles, labels, size);
+      // 반환값은 이 프레임이 잰 글자 폭이다 — 재는 곳이 늘어난 것이 아니라, 원래 재던
+      // 값을 오버레이 쪽으로 흘려보낼 뿐이다(측정은 여전히 프레임당 1회).
+      textWidthsRef.current = drawElements(ctx, els, styles, labels, size);
       return allDone;
     },
     [advance],
@@ -287,7 +356,22 @@ export default function CanvasSurface({
       ref={containerRef}
       className={className === undefined ? 'relative min-h-0 w-full flex-1' : className}
     >
-      <canvas ref={canvasRef} data-testid="canvas-surface" className="block h-full w-full" />
+      <canvas
+        ref={canvasRef}
+        data-testid="canvas-surface"
+        // 포인터 리스너를 달지 않는다 — 표면은 포인터로 아무것도 하지 않으며, 편집
+        // 포인터는 위에 얹히는 오버레이 층의 루트가 받는다(머리말 §포인터 통과 슬롯).
+        className="block h-full w-full"
+      />
+      {/*
+        오버레이는 캔버스 **뒤(=위)** 에 형제로 놓인다. 컨테이너가 `relative` 이므로 층은
+        스스로 `absolute inset-0` 을 잡으면 된다. 미지정이면 옵셔널 호출이 인자 평가조차
+        건너뛰고 `undefined` 를 렌더하므로 DOM 에 아무것도 더해지지 않는다(AC-E1).
+
+        스테이지는 프레임이 투영에 쓰는 그 state 를 그대로 넘긴다 — 오버레이용 두 번째
+        측정을 만들지 않기 위해서다(AC-E2). 폭은 직전 프레임의 장부다.
+      */}
+      {overlay?.({ stage: display, textWidths: textWidthsRef.current })}
     </div>
   );
 }
