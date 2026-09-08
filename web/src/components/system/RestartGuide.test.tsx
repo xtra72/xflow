@@ -56,6 +56,9 @@ afterEach(() => {
 // Tests
 // ─────────────────────────────────────────────────────────────────────
 
+/** 컴포넌트의 배지 TTL. 값이 갈라서지 않게 한 곳만 보고 쓴다. */
+const COPIED_BADGE_TTL_MS = 3000;
+
 describe('RestartGuide', () => {
   it('재시작 안내 제목과 설명을 표시한다', () => {
     render(<RestartGuide />);
@@ -161,8 +164,15 @@ describe('RestartGuide', () => {
     const setTimeoutSpy = vi
       .spyOn(globalThis, 'setTimeout')
       .mockImplementation(((cb: () => void, delay?: number) => {
-        // 3000ms 의 reset 만 50ms 로 단축. 0ms 같은 microtask 단위는 그대로 둔다.
-        const useDelay = typeof delay === 'number' && delay > 100 ? 50 : delay;
+        // 컴포넌트의 배지 TTL(3000ms) **하나만** 단축한다.
+        //
+        // 종전에는 "100ms 초과면 전부" 였는데, 그 조건은 `waitFor` 가 자기 상한을 걸려고
+        // 부르는 setTimeout 까지 함께 접었다. 그래서 아래 waitFor 의 상한이 얼마로 적혀
+        // 있든 실제로는 50ms 였고, 이 시험은 **50ms 타이머 둘의 경주**가 되어 스위트가
+        // 무거워질수록 간헐적으로 졌다. 상한 숫자를 키우는 것으로는 고칠 수 없다 —
+        // 그 숫자마저 여기서 접히기 때문이다. 값을 정확히 집어 스파이가 남의 타이머를
+        // 건드리지 않게 한다.
+        const useDelay = delay === COPIED_BADGE_TTL_MS ? 50 : delay;
         return originalSetTimeout(cb, useDelay);
       }) as unknown as typeof setTimeout);
 
@@ -184,11 +194,7 @@ describe('RestartGuide', () => {
             screen.queryByTestId('restart-guide-copied-systemd'),
           ).not.toBeInTheDocument();
         },
-        // 이 시험은 이름대로 **실제 setTimeout** 이 도는 것을 본다(가짜 타이머로 바꾸면
-        // 검사하려던 것이 사라진다). 그래서 관측 상한은 스위트 전체의 부하에 걸린다 —
-        // 파일이 400개를 넘어 병렬로 도는 동안 이벤트 루프가 굶으면 50ms 타이머의 만료를
-        // 2초 안에 보지 못해 간헐적으로 실패했다. 여유를 크게 두어 부하와 무관하게 만든다.
-        { timeout: 15000 },
+        { timeout: 2000 },
       );
     } finally {
       setTimeoutSpy.mockRestore();
