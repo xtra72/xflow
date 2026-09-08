@@ -109,10 +109,11 @@ export default function AuthGuard({
     return <Outlet />;
   }
 
-  // 인증 활성화 + 미인증 — 로그인 페이지로 리다이렉트
+  // 인증 활성화 + 미인증 — 로그인 페이지로 리다이렉트.
+  // 원래 가려던 경로는 넘기지 않는다. 로그인 후 시작점은 항상 대시보드이므로
+  // returnUrl 을 실어 보내도 쓰이지 않고 주소창만 지저분해진다.
   if (!isAuthenticated) {
-    const returnUrl = encodeURIComponent(location.pathname + location.search);
-    return <Navigate to={`/login?returnUrl=${returnUrl}`} replace />;
+    return <Navigate to="/login" replace />;
   }
 
   // 인증됨 + 권한 부족 — 대시보드로 되돌려 보낸다.

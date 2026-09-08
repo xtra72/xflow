@@ -183,7 +183,7 @@ export default function SensorPlacementOverlay({
               aria-label={t('dashboard.heatmap.editPlaceAria').replace('{key}', labelOf(key))}
               title={labelOf(key)}
               onPointerDown={startDrag(key)}
-              className="max-w-[180px] cursor-grab touch-none truncate rounded border border-white/40 bg-white/10 px-1.5 py-0.5 text-[10px] text-white active:cursor-grabbing"
+              className="max-w-[180px] cursor-grab touch-none truncate rounded border border-white/40 bg-(--color-bg-surface)/10 px-1.5 py-0.5 text-[10px] text-white active:cursor-grabbing"
             >
               {labelOf(key)}
             </button>

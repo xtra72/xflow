@@ -173,3 +173,58 @@ export function reduceAllSeries(
   }
   return out;
 }
+
+/**
+ * 마지막 표본과 **직전 표본**의 차. @spec SPEC-CHART-003 §2.2 [U2-5]
+ *
+ * `reduceSeries('delta')` 와는 다른 축이다:
+ *
+ * | 함수 | 정의 | 뜻 |
+ * |------|------|-----|
+ * | `reduceSeries(_, 'delta')` | `last − first` | 구간 전체에서 얼마나 변했나 |
+ * | `lastSampleDelta` | `last − prev` | 방금 얼마나 변했나 |
+ *
+ * 표본 정의(`value` 가 유한한 `number`)는 `reduceSeries` 와 공유한다 — 규칙이
+ * 두 곳에 있으면 갈리므로 이 모듈이 함께 소유한다.
+ *
+ * 배열이 `timestamp` 정렬되어 있지 않아도 된다. 동률 시각은 배열상 뒤 항목이
+ * 마지막이 되도록 `reduceSeries` 의 `last` 규칙과 맞춘다.
+ *
+ * 표본이 2개 미만이면 변화량이 정의되지 않으므로 `undefined` 다(`0` 이 아니다).
+ */
+export function lastSampleDelta(
+  entries: readonly ChartEntry[] | undefined,
+): number | undefined {
+  let count = 0;
+  let lastAt = 0;
+  let lastValue = 0;
+  let prevAt = 0;
+  let prevValue = 0;
+  let hasPrev = false;
+
+  for (const entry of entries ?? []) {
+    const value = entry.value;
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+    const at = entry.timestamp;
+
+    if (count === 0) {
+      lastAt = at;
+      lastValue = value;
+    } else if (at >= lastAt) {
+      // 새 마지막이 들어오면 종전 마지막이 직전으로 밀린다.
+      prevAt = lastAt;
+      prevValue = lastValue;
+      hasPrev = true;
+      lastAt = at;
+      lastValue = value;
+    } else if (!hasPrev || at >= prevAt) {
+      // 마지막보다는 이르지만 지금까지의 직전보다는 늦다.
+      prevAt = at;
+      prevValue = value;
+      hasPrev = true;
+    }
+    count += 1;
+  }
+
+  return hasPrev ? lastValue - prevValue : undefined;
+}

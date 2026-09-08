@@ -23,12 +23,12 @@ const STATUS_STYLE: Record<RegistrationStatus, string> = {
   rejected:
     'border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200',
   revoked:
-    'border-gray-200 bg-gray-100 text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300',
+    'border-(--color-border-default) bg-(--color-bg-sunken) text-(--color-text-secondary)',
 };
 
 /** 중립(알 수 없는 상태) 스타일. */
 const NEUTRAL_STYLE =
-  'border-gray-200 bg-gray-100 text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300';
+  'border-(--color-border-default) bg-(--color-bg-sunken) text-(--color-text-secondary)';
 
 /** status 가 알려진 RegistrationStatus 인지 판별한다. */
 function isKnownStatus(status: string): status is RegistrationStatus {

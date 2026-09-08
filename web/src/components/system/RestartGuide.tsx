@@ -128,7 +128,7 @@ export function RestartGuide({ operationId }: RestartGuideProps) {
             <li
               key={cmd.id}
               className={cn(
-                'rounded border bg-white/60 p-2 text-xs',
+                'rounded border bg-(--color-bg-surface)/60 p-2 text-xs',
                 'border-yellow-200 dark:border-yellow-800 dark:bg-yellow-900/40',
               )}
             >
@@ -149,7 +149,7 @@ export function RestartGuide({ operationId }: RestartGuideProps) {
                   onClick={() => void handleCopy(cmd)}
                   className={cn(
                     'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded',
-                    'border border-yellow-300 bg-white text-yellow-700',
+                    'border border-yellow-300 bg-(--color-bg-surface) text-yellow-700',
                     'hover:bg-yellow-50',
                     'dark:border-yellow-700 dark:bg-yellow-900 dark:text-yellow-200',
                     'dark:hover:bg-yellow-800',

@@ -13,7 +13,6 @@ import {
   AlignLeft,
   Fan,
   Power,
-  Square,
   SquareDashed,
   Tag,
   Thermometer,
@@ -294,26 +293,25 @@ export const AC_STYLE_KEYS = {
 } as const;
 
 export interface AcControlStyleSectionProps {
-  panelColor: string | undefined;
   accentElements: Record<string, string | boolean>;
   config: Record<string, unknown>;
-  onPanelColorChange: (next: string | undefined) => void;
   onAccentChange: (next: Record<string, string | boolean>) => void;
   onConfigChange: (patch: Record<string, unknown>) => void;
 }
 
 /**
  * ac-control 패널 전용 스타일 섹션.
- * - 단순 7항목: 전체 색상, 타이틀, 상태 배지, 현재 값, 전원 버튼, 라벨, 보더
+ * - 단순 6항목: 타이틀, 상태 배지, 현재 값, 전원 버튼, 라벨, 보더
  * - 펼침 2항목: 제어 버튼, 풍량
+ *
+ * 전체 색상(panelColor)은 이 섹션에 있지 않다 — 타입과 무관한 패널 속성이라
+ * 패널 옵션의 패널 색상이 소유한다. 한 값을 두 자리에서 편집하지 않는다.
  *
  * 임계값은 별도 섹션 AcControlThresholdsSection 으로 분리되어 있다.
  */
 export default function AcControlStyleSection({
-  panelColor,
   accentElements,
   config,
-  onPanelColorChange,
   onAccentChange,
   onConfigChange,
 }: AcControlStyleSectionProps) {
@@ -337,13 +335,6 @@ export default function AcControlStyleSection({
 
   return (
     <div className="space-y-1.5">
-      {/* 단순: 전체 색상 (panelColor 직접 제어) */}
-      <SimpleStyleRow
-        icon={<Square className="h-3 w-3" />}
-        label={t('dashboard.acStyle.overallColor')}
-        color={panelColor}
-        onChange={onPanelColorChange}
-      />
       {/* 단순: 타이틀 */}
       <SimpleStyleRow
         icon={<Type className="h-3 w-3" />}

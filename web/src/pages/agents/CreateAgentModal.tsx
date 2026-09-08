@@ -106,7 +106,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
   if (!open) return null;
 
   const inputClass =
-    'w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-2 text-sm text-(--color-text-primary) placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
+    'w-full rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-3 py-2 text-sm text-(--color-text-primary) placeholder-(--color-text-muted) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
 
   return (
     <div
@@ -130,7 +130,7 @@ export default function CreateAgentModal({ open, onClose }: CreateAgentModalProp
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             aria-label={t('common.close')}
           >
             <X className="h-5 w-5" />

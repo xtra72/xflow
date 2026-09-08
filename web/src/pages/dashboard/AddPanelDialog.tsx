@@ -501,7 +501,7 @@ function TypeStep({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+              className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
               aria-label={t('dashboard.addPanel.backAria')}
             >
               <ArrowLeft className="h-4 w-4" />
@@ -516,7 +516,7 @@ function TypeStep({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             aria-label={t('dashboard.addPanel.closeAria')}
           >
             <X className="h-5 w-5" />
@@ -635,7 +635,7 @@ function DeviceStep({
           <button
             type="button"
             onClick={onBack}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             aria-label={t('dashboard.addPanel.backAria')}
           >
             <ArrowLeft className="h-4 w-4" />
@@ -647,7 +647,7 @@ function DeviceStep({
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+          className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
           aria-label={t('dashboard.addPanel.closeAria')}
         >
           <X className="h-5 w-5" />
@@ -674,7 +674,7 @@ function DeviceStep({
                 <span
                   className={cn(
                     'h-2.5 w-2.5 shrink-0 rounded-full',
-                    device.online ? 'bg-green-500' : 'bg-gray-400',
+                    device.online ? 'bg-green-500' : 'bg-(--color-status-stopped)',
                   )}
                 />
                 <div className="min-w-0 flex-1">
@@ -688,7 +688,7 @@ function DeviceStep({
                 {device.online ? (
                   <Wifi className="h-4 w-4 shrink-0 text-green-500" />
                 ) : (
-                  <WifiOff className="h-4 w-4 shrink-0 text-gray-400" />
+                  <WifiOff className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
                 )}
               </button>
             ))}
@@ -798,7 +798,7 @@ function FacilityStep({
           <button
             type="button"
             onClick={onBack}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             aria-label={t('dashboard.addPanel.backAria')}
           >
             <ArrowLeft className="h-4 w-4" />
@@ -810,7 +810,7 @@ function FacilityStep({
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+          className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
           aria-label={t('dashboard.addPanel.closeAria')}
         >
           <X className="h-5 w-5" />
@@ -890,7 +890,7 @@ function FacilityStep({
             'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
             canSave
               ? 'bg-blue-600 text-white hover:bg-blue-700'
-              : 'cursor-not-allowed bg-gray-300 text-gray-500 dark:bg-gray-700 dark:text-gray-500',
+              : 'cursor-not-allowed bg-(--color-border-strong) text-(--color-text-muted)',
           )}
         >
           {t('dashboard.addPanel.save')}
@@ -927,7 +927,7 @@ function TriggerNodeStep({
           <button
             type="button"
             onClick={onBack}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             aria-label={t('dashboard.addPanel.backAria')}
           >
             <ArrowLeft className="h-4 w-4" />
@@ -939,7 +939,7 @@ function TriggerNodeStep({
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+          className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
           aria-label={t('dashboard.addPanel.closeAria')}
         >
           <X className="h-5 w-5" />
@@ -1015,7 +1015,7 @@ function FacilityScheduleStep({
           <button
             type="button"
             onClick={onBack}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             aria-label={t('dashboard.addPanel.backAria')}
           >
             <ArrowLeft className="h-4 w-4" />
@@ -1027,7 +1027,7 @@ function FacilityScheduleStep({
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+          className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
           aria-label={t('dashboard.addPanel.closeAria')}
         >
           <X className="h-5 w-5" />
@@ -1143,7 +1143,7 @@ function ModbusAgentStep({
           <button
             type="button"
             onClick={onBack}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             aria-label={t('dashboard.addPanel.backAria')}
           >
             <ArrowLeft className="h-4 w-4" />
@@ -1155,7 +1155,7 @@ function ModbusAgentStep({
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+          className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
           aria-label={t('dashboard.addPanel.closeAria')}
         >
           <X className="h-5 w-5" />
@@ -1237,7 +1237,7 @@ function ModbusAgentStep({
             'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
             canSave
               ? 'bg-blue-600 text-white hover:bg-blue-700'
-              : 'cursor-not-allowed bg-gray-300 text-gray-500 dark:bg-gray-700 dark:text-gray-500',
+              : 'cursor-not-allowed bg-(--color-border-strong) text-(--color-text-muted)',
           )}
         >
           {t('dashboard.addPanel.save')}
@@ -1303,7 +1303,7 @@ function AgentStatusAgentStep({
           <button
             type="button"
             onClick={onBack}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             aria-label={t('dashboard.addPanel.backAria')}
           >
             <ArrowLeft className="h-4 w-4" />
@@ -1315,7 +1315,7 @@ function AgentStatusAgentStep({
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+          className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
           aria-label={t('dashboard.addPanel.closeAria')}
         >
           <X className="h-5 w-5" />
@@ -1366,7 +1366,7 @@ function AgentStatusAgentStep({
             'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
             canSave
               ? 'bg-blue-600 text-white hover:bg-blue-700'
-              : 'cursor-not-allowed bg-gray-300 text-gray-500 dark:bg-gray-700 dark:text-gray-500',
+              : 'cursor-not-allowed bg-(--color-border-strong) text-(--color-text-muted)',
           )}
         >
           {t('dashboard.addPanel.save')}

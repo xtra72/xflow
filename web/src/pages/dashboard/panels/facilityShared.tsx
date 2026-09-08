@@ -175,9 +175,9 @@ const CONTROL_BTN_BASE =
 
 /** OFF 버튼 색상(비활성 base / 현재 상태 활성). */
 const OFF_BASE =
-  'bg-slate-200 text-slate-600 ring-transparent hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-300';
+  'bg-(--color-bg-sunken) text-(--color-text-secondary) ring-transparent hover:bg-(--color-border-strong)';
 const OFF_ACTIVE =
-  'bg-slate-300 text-slate-800 ring-slate-500 dark:bg-slate-600 dark:text-slate-100 dark:ring-slate-400';
+  'bg-(--color-border-strong) text-(--color-text-primary) ring-(--color-text-muted)';
 
 /** 풍량 버튼 비활성 base 색상. */
 const FAN_BASE =

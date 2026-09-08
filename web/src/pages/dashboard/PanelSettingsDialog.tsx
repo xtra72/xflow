@@ -1,8 +1,14 @@
 // 패널 상세 설정 다이얼로그.
 // 편집 모드에서 패널별 설정(타이틀, 색상, 컬럼/필드 가시성, 타입별 설정)을 관리한다.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Fan, Gauge, Maximize2, Minimize2, Minus, Pipette, Plus, Power, RotateCcw, Snowflake, Thermometer, Trash2, X } from 'lucide-react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { QueryClientContext, useQuery } from '@tanstack/react-query';
+
+import { inertQueryClient } from '@/hooks/inertQueryClient';
+import { getMetrics } from '@/services/api/monitorService';
+import * as flowService from '@/services/api/flowService';
+import type { FlowInfo } from '@/types/flow';
+import { ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Gauge, Maximize2, Minimize2, Minus, Pipette, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import {
   Area,
   Bar,
@@ -23,6 +29,7 @@ import {
   type DeviceListColumnKey,
 } from '@/hooks/useDeviceColumns';
 import { cn } from '@/lib/utils/cn';
+import { PANEL_COLORS } from './panelColorPresets';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
 
 import { useAgents } from '@/hooks/useAgent';
@@ -68,7 +75,6 @@ import {
   optionFieldsFor,
   readPanelOptions,
   readStyle,
-  resolveItemOptions,
   stylesFor,
   stylesForPanel,
   withItemOverride,
@@ -84,6 +90,8 @@ import {
   resolveGaugeValueSource,
 } from './panels/charts/gaugeLegacyBinding';
 import GaugePanel, { type GaugeType } from './panels/GaugePanel';
+import { isAxisSplitGauge } from './panels/gauge/gaugeAxis';
+import { readVBarSize, VBAR_SIZE_MAX, VBAR_SIZE_MIN } from './panels/gauge/gaugeShapes';
 // SPEC-MODBUS-012: MODBUS Gateway 패널 설정 섹션 + 프리뷰(설정 다이얼로그 내 실제 패널 렌더).
 import { useModbusListDevices, formatUnitLabel } from './panels/modbus/useModbusData';
 import ModbusRealDevicesPanel from './panels/modbus/ModbusRealDevicesPanel';
@@ -98,7 +106,16 @@ import {
   resolveAreaColumns,
   type RegisterArea,
 } from './panels/modbus/registerCellState';
-import { getDeviceDisplayName, getDeviceTypeLabel, getPropertyLabel } from '@/lib/utils/deviceLabels';
+import {
+  getDeviceDisplayName,
+  getDeviceTypeLabel,
+  defaultUnitOf,
+  getPropertyLabel,
+  isDerivedPropertyKey,
+  listDisplayableProperties,
+  PROPERTY_GROUPS,
+  propertyGroupOf,
+} from '@/lib/utils/deviceLabels';
 import {
   buildEnumLabelMap,
   buildDefaultStoreSource,
@@ -123,6 +140,85 @@ import { clampStoredLegendOffset } from './panels/charts/legendOverlay';
 import { CandleShape } from './panels/charts/CandleShape';
 import { candleRows } from './panels/charts/candle';
 import { readGraphStyle } from './panels/charts/graphStyle';
+import { PanelEditContext } from './panelEditContext';
+import {
+  DEVICE_BADGES,
+  DEVICE_BADGE_DEFAULT,
+  DEVICE_BADGE_LABEL_KEYS,
+  type DeviceBadge,
+} from './panels/PropertiesGridPanel';
+import { renderDashboardPanel } from './renderDashboardPanel';
+import { computeFitScale, computePreviewStage, initialPreviewZoom } from './previewStage';
+import { PanelGridBackdrop } from './PanelGridBackdrop';
+import {
+  AGENT_BADGES,
+  AGENT_BADGE_LABEL_KEYS,
+  MESSAGE_GRID_DEFAULT,
+  MESSAGE_GROUPS,
+  MESSAGE_GROUP_LABEL_KEYS,
+  MESSAGE_TILES,
+  MESSAGE_TILE_SETTING_LABEL_KEYS,
+  MESSAGE_TILE_SIZE,
+  STAT_GRID_DEFAULT,
+  STAT_TILES,
+  STAT_TILE_LABEL_KEYS,
+  STAT_TILE_SIZE,
+  type AgentBadge,
+  type MessageGroup,
+  type MessageTile,
+  type StatTile,
+} from './panels/AgentStatusPanel';
+import {
+  readTileDesign,
+  readTileFont,
+  readTileItems,
+  type TileDesign,
+} from './panels/tileSelection';
+import {
+  MAX_TILE_GRID,
+  MIN_TILE_GRID,
+  moveTile,
+  placeTiles,
+  readTileGrid,
+  resizeTile,
+  type TileArea,
+  type TileGrid,
+} from './panels/tileLayout';
+import {
+  readSummaryItems,
+  SUMMARY_ITEMS,
+  type SummaryItem,
+} from './panels/listPanelStyle';
+import {
+  CARD_ELEMENTS,
+  MAX_CARD_DIV,
+  moveArea,
+  resizeArea,
+  VALUE_RULE_OPS,
+  MIN_CARD_DIV,
+  moveToPosition,
+  readPropertiesGridStyle,
+  moveWithinGroup,
+  PROPERTY_GROUP_AREA_KEY,
+  setGroupSelection,
+  PROPERTY_GROUP_GRID,
+  PROPERTY_GROUP_GRID_KEY,
+  PROPERTY_GROUP_LABEL_KEYS,
+  PROPERTY_TILE_SIZE,
+  readPropertyOverride,
+  resolveCardLayout,
+  resolveTileLabel,
+  type CardArea,
+  type CardAreas,
+  type CardElement,
+  type CardGrid,
+  type PropertiesGridStyle,
+  type PropertyOverride,
+  type ValueColorRule,
+  type ValueRuleOp,
+} from './panels/propertiesGridStyle';
+import { PanelResizeOverlay } from './PanelResizeOverlay';
+import { sameGridSize, type GridSize } from './previewGridSize';
 import { buildPreviewSeries } from './panels/charts/previewSeries';
 import { chartLayoutResetPatch, isChartLayoutDirty } from './panels/charts/chartLayout';
 import { mergeLivePreviewConfig } from './previewLiveKeys';
@@ -184,8 +280,7 @@ import { PanelSettingsDataSource } from './PanelSettingsDataSource';
 import { useDraftPanelConfig } from './useDraftPanelConfig';
 import { useDebouncedValue } from './useDebouncedValue';
 import { usePanelSettingsRatio } from './usePanelSettingsRatio';
-import { SECTION_CATALOG, findItemMeta } from '@/pages/monitoring/monitoringCatalog';
-import { interfaceColors } from '@/pages/monitoring/networkSeries';
+import { SECTION_CATALOG } from '@/pages/monitoring/monitoringCatalog';
 import { useNetworkStats } from '@/services/api/monitorService';
 import type { MonitorSectionKey } from '@/pages/monitoring/monitoringLayout';
 import {
@@ -329,9 +424,55 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // 확인할 수 없던 부분이다. 그리드 폭 미측정(대시보드 미방문) 시 gridGeometry 가 근사로 폴백한다.
   const gridCols = useUIStore((s) => s.dashboardGridCols);
   const gridWidth = useUIStore((s) => s.dashboardGridWidth);
+  const showGridLines = useUIStore((s) => s.dashboardShowGridLines);
+  const setDashboardLayout = useUIStore((s) => s.setDashboardLayout);
   const layoutItem = activePage?.layout.find((l) => l.i === panelId) ?? null;
   const gridCell = gridCellSize(gridWidth, gridCols);
-  const panelAspect = panelPixelAspect(layoutItem?.w ?? 0, layoutItem?.h ?? 0, gridCell);
+
+  // 패널 크기(그리드 단위)도 config 와 같은 draft 규율을 따른다 — 미리보기에서 끌면
+  // draft 에만 쌓이고, 저장 버튼이 대시보드 레이아웃으로 커밋하며, 취소하면 사라진다.
+  // 크기는 config 가 아니라 `activePage.layout` 에 있으므로 별도 상태로 둔다.
+  // useMemo 로 고정한다 — 매 렌더 새 객체를 만들면 handleApply 의 의존성이 계속 바뀐다.
+  const committedSize = useMemo<GridSize | null>(
+    () => (layoutItem !== null ? { w: layoutItem.w, h: layoutItem.h } : null),
+    [layoutItem],
+  );
+  const [draftSize, setDraftSize] = useState<GridSize | null>(null);
+  useEffect(() => {
+    // 다른 패널로 넘어가면 이전 패널의 draft 크기를 들고 가지 않는다.
+    setDraftSize(null);
+  }, [panelId]);
+  const effectiveSize = draftSize ?? committedSize;
+
+  const panelAspect = panelPixelAspect(
+    effectiveSize?.w ?? 0,
+    effectiveSize?.h ?? 0,
+    gridCell,
+  );
+
+  // 미리보기가 **실제 패널**을 그리므로 대시보드와 같은 데이터를 넘겨야 한다
+  // (flows 목록 · 리소스 메트릭 · 폴링 주기). Provider 가 없는 테스트에서도
+  // 렌더가 깨지지 않도록 비활성 클라이언트로 떨어진다(`inertQueryClient` 주석 참조).
+  const queryClient = useContext(QueryClientContext);
+  const previewRefreshMs = useUIStore((s) => s.dashboardRefreshInterval) * 1000;
+  const { data: previewFlowsData } = useQuery(
+    {
+      queryKey: ['flows', undefined],
+      queryFn: () => flowService.getFlows(),
+      enabled: queryClient !== undefined,
+    },
+    queryClient ?? inertQueryClient(),
+  );
+  const { data: previewMetrics } = useQuery(
+    {
+      queryKey: ['monitor', 'metrics'],
+      queryFn: getMetrics,
+      refetchInterval: previewRefreshMs,
+      enabled: queryClient !== undefined,
+    },
+    queryClient ?? inertQueryClient(),
+  );
+  const previewFlows: FlowInfo[] = previewFlowsData?.data ?? [];
 
   // draft(편집 중) / committed(저장) 분리 — T9(REQ-14). panelId 전환 시에만 draft 재초기화
   // (같은 패널에서 외부 committed 변경이 편집 중 draft 를 덮어쓰지 않음 — 기존 동작 보존).
@@ -351,7 +492,27 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     // 저장 = draft → committed 승격.
     updatePanelConfig(storePanel.id, draftConfig);
     updatePanelTitle(storePanel.id, draftTitle);
-  }, [storePanel, draftConfig, draftTitle, updatePanelConfig, updatePanelTitle]);
+
+    // 크기는 레이아웃에 있으므로 따로 커밋한다. 바뀐 게 없으면 손대지 않는다 —
+    // 레이아웃을 통째로 다시 쓰면 다른 패널의 위치까지 건드릴 수 있다.
+    if (draftSize && !sameGridSize(draftSize, committedSize) && activePage) {
+      setDashboardLayout(
+        activePage.layout.map((item) =>
+          item.i === storePanel.id ? { ...item, w: draftSize.w, h: draftSize.h } : item,
+        ),
+      );
+    }
+  }, [
+    storePanel,
+    draftConfig,
+    draftTitle,
+    updatePanelConfig,
+    updatePanelTitle,
+    draftSize,
+    committedSize,
+    activePage,
+    setDashboardLayout,
+  ]);
 
   const handleApplyAndClose = useCallback(() => {
     handleApply();
@@ -365,6 +526,85 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
         ? { ...storePanel, config: draftConfig, title: draftTitle }
         : null,
     [storePanel, draftConfig, draftTitle],
+  );
+
+  // 목록형 패널(플로우 현황 · 에이전트 현황)의 자리별 글자 모양.
+  const tableHeaderFont = (panel?.config?.table_header_font as PanelTitleFont | undefined) ?? {};
+  const tableCellFont = (panel?.config?.table_cell_font as PanelTitleFont | undefined) ?? {};
+  const badgeFont = (panel?.config?.badge_font as PanelTitleFont | undefined) ?? {};
+
+  // 속성 그리드 카드의 조각별 글자 모양(항목명 · 값 · 갱신 시각).
+
+  /** 컬럼 설정 옆에 접어 두는 디자인 팝오버 — 목록형 패널이 공유한다. */
+  const columnsDesignPopover = (testId: string) => (
+    <DesignPopover testId={testId}>
+      <TextStyleFields
+        label={t('dashboard.settings.listPanel.tableHeaderStyle')}
+        family={tableHeaderFont.family}
+        size={tableHeaderFont.size}
+        color={tableHeaderFont.color}
+        weight={tableHeaderFont.weight ?? 'inherit'}
+        sizePlaceholder={t('dashboard.chart.inherit')}
+        testIdPrefix="table-header-font"
+        onChange={(patch) =>
+          handleConfigChange({ table_header_font: mergeFont(tableHeaderFont, patch) })
+        }
+      />
+      <TextStyleFields
+        label={t('dashboard.settings.listPanel.tableCellStyle')}
+        family={tableCellFont.family}
+        size={tableCellFont.size}
+        color={tableCellFont.color}
+        weight={tableCellFont.weight ?? 'inherit'}
+        sizePlaceholder={t('dashboard.chart.inherit')}
+        testIdPrefix="table-cell-font"
+        onChange={(patch) =>
+          handleConfigChange({ table_cell_font: mergeFont(tableCellFont, patch) })
+        }
+      />
+    </DesignPopover>
+  );
+
+  /**
+   * 요약 배지 설정(표시 여부 + 디자인) — 목록형 패널이 공유한다.
+   *
+   * `extra` 는 패널마다 다른 항목(에이전트 현황의 타일 목록 등)을 같은 접이 섹션 안에
+   * 끼워 넣는 자리다. 따로 섹션을 만들면 같은 배지를 두 자리에서 고치게 된다.
+   */
+  const summaryBadgeSection = (extra?: React.ReactNode) => (
+    <CollapsibleSection title={t('dashboard.settings.listPanel.summaryBadges')}>
+      <div className="flex items-center gap-1.5">
+        <label className="flex items-center gap-2 text-xs text-(--color-text-secondary)">
+          <input
+            type="checkbox"
+            data-testid="show-summary-badges"
+            checked={panel?.config?.showSummaryBadges !== false}
+            onChange={(e) =>
+              // 기본은 표시다 — 끌 때만 config 에 남긴다.
+              handleConfigChange({ showSummaryBadges: e.target.checked ? undefined : false })
+            }
+            className="h-3.5 w-3.5 accent-blue-600"
+          />
+          {t('dashboard.settings.listPanel.showSummaryBadges')}
+        </label>
+        {/* 감춘 배지에는 걸 곳이 없으므로 표시할 때만 낸다(타이틀 디자인과 같은 규칙). */}
+        {panel?.config?.showSummaryBadges !== false && (
+          <DesignPopover testId="badge-design">
+            <TextStyleFields
+              label={t('dashboard.settings.listPanel.badgeStyle')}
+              family={badgeFont.family}
+              size={badgeFont.size}
+              color={badgeFont.color}
+              weight={badgeFont.weight ?? 'inherit'}
+              sizePlaceholder={t('dashboard.chart.inherit')}
+              testIdPrefix="badge-font"
+              onChange={(patch) => handleConfigChange({ badge_font: mergeFont(badgeFont, patch) })}
+            />
+          </DesignPopover>
+        )}
+      </div>
+      {panel?.config?.showSummaryBadges !== false && extra}
+    </CollapsibleSection>
   );
 
   // 타이틀 글자 모양 — 모든 패널 공통 크롬 옵션(`panelChromeContext`).
@@ -439,11 +679,6 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     if (typeof val === 'string') return val;
     return panelColor;
   };
-  const getSubProp = (group: string, prop: string): string | undefined => {
-    const val = accentElements[`${group}.${prop}`];
-    return typeof val === 'string' ? val : undefined;
-  };
-
   // 패널 변경 시 선택 그룹 초기화
   useEffect(() => {
     setSelectedGroup(null);
@@ -494,8 +729,22 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     fitRoRef.current = ro;
   }, []);
 
-  // 미리보기 줌 배율 (0.5 ~ 2.0). 버튼 / Ctrl+휠 / 더블클릭 리셋 으로 조절.
-  const PREVIEW_ZOOM_MIN = 0.5;
+  // 패널 전체가 영역에 들어가는 배율. 맞춤 모드의 100% 는 대시보드 1:1 이라
+  // 큰 패널은 넘치므로, 줌 하한을 이 값까지 열어 두어야 전체를 볼 수 있다.
+  const previewFitScale = computeFitScale({
+    w: effectiveSize?.w ?? 0,
+    h: effectiveSize?.h ?? 0,
+    cell: gridCell,
+    areaW: fitSize.w,
+    areaH: fitSize.h,
+  });
+
+  // 미리보기 줌 배율. 맞춤 모드의 100% 는 대시보드와 같은 크기다.
+  // 채움 모드는 100% 가 이미 영역에 꼭 맞으므로 기본 하한(0.5)이면 충분하다.
+  const PREVIEW_ZOOM_MIN =
+    previewFillMode === 'fit' && previewFitScale !== null
+      ? Math.min(0.5, previewFitScale)
+      : 0.5;
   const PREVIEW_ZOOM_MAX = 2.0;
   const PREVIEW_ZOOM_STEP = 0.1;
   const [previewZoom, setPreviewZoom] = useState<number>(1.0);
@@ -513,9 +762,32 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   );
   const zoomOut = useCallback(
     () => setPreviewZoom((z) => Math.max(PREVIEW_ZOOM_MIN, Math.round((z - PREVIEW_ZOOM_STEP) * 10) / 10)),
-    [],
+    [PREVIEW_ZOOM_MIN],
   );
+  // 리셋은 100% — 대시보드와 같은 크기다(큰 패널은 넘친다).
   const zoomReset = useCallback(() => setPreviewZoom(1.0), []);
+
+  /**
+   * 패널을 열거나 모드를 바꿀 때의 시작 배율.
+   *
+   * 맞춤 100% 는 대시보드 1:1 이라, 큰 패널을 그대로 열면 가운데 일부만 보인다 —
+   * 카드 테두리도 제목도 화면 밖이라 패널 모양을 알 수 없다. 그래서 **처음에는
+   * 전체가 보이는 배율**로 시작한다. 영역보다 작은 패널은 1:1 그대로 둔다(확대해
+   * 띄우지 않는다 — 100% 가 실제 크기라는 약속을 깨지 않기 위함).
+   *
+   * 채움 모드는 100% 가 이미 영역에 꼭 맞으므로 1 이다.
+   */
+  const autoZoomKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = `${panelId ?? ''}|${previewFillMode}`;
+    if (autoZoomKeyRef.current === key) return;
+    // 영역 실측 전에는 배율을 알 수 없다 — 실측되면 이 효과가 다시 돈다.
+    if (previewFitScale === null) return;
+    autoZoomKeyRef.current = key;
+    setPreviewZoom(initialPreviewZoom(previewFillMode, previewFitScale));
+    // previewFitScale 은 크기 조절 중에도 바뀐다. 위 key 가드가 (패널, 모드) 조합당
+    // 한 번만 적용되게 막아, 손잡이를 끄는 도중 배율이 튀지 않는다.
+  }, [panelId, previewFillMode, previewFitScale]);
   const handlePreviewWheel = useCallback(
     (e: React.WheelEvent<HTMLDivElement>) => {
       // Ctrl/Meta + 휠 만 줌으로 처리 (일반 스크롤 보존).
@@ -676,6 +948,17 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   />
                   {t('dashboard.settings.showTitleBar')}
                 </label>
+                {/*
+                  패널 색상 — 타입과 무관한 패널 속성이라 공통 옵션에 둔다.
+                  종전에는 스타일 섹션의 악센트 그룹 `_base` 가 이 값을 편집했는데,
+                  (a) 그룹처럼 보이지만 실은 panelColor 를 직접 쓰는 예외였고
+                  (b) 스타일 섹션이 없는 5종(flows·agents·devices·properties-grid·
+                  agent-status)에서는 편집할 방법이 아예 없었다.
+                */}
+                <PanelColorRow
+                  panelColor={panelColor}
+                  onChange={(color) => handleConfigChange({ panelColor: color })}
+                />
                 {(panel.type === 'device' || panel.type === 'ac-control' || panel.type === 'hvac-control' || panel.type === 'properties-grid') && (
                   <DeviceSection
                     panel={panel}
@@ -685,37 +968,60 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </div>
             </CollapsibleSection>
 
-            {/* 타입별 설정 */}
+            {/*
+              타입별 설정.
+
+              컬럼 표시 여부도 다른 옵션과 같이 **draft** 에 쌓아야 한다. 스토어에 직접
+              쓰면(updatePanelConfig) draft 는 옛 값을 그대로 들고 있어 미리보기가 바뀌지
+              않고, 저장 버튼이 그 옛 draft 를 커밋하면서 방금 한 변경이 되돌아간다.
+            */}
             {panel.type === 'flows' && (
               <CollapsibleSection title={t('dashboard.settings.columns')}>
                 <ColumnsSection<FlowColumnKey>
                   allColumns={[...ALL_FLOW_COLUMNS]}
                   labels={Object.fromEntries(ALL_FLOW_COLUMNS.map((k) => [k, t(FLOW_COLUMN_LABEL_KEYS[k])])) as Record<FlowColumnKey, string>}
                   visibleColumns={(panel.config?.visibleColumns as FlowColumnKey[]) ?? [...ALL_FLOW_COLUMNS]}
-                  onChange={(cols) => updatePanelConfig(panel.id, { visibleColumns: cols })}
+                  onChange={(cols) => handleConfigChange({ visibleColumns: cols })}
+                  design={columnsDesignPopover('flow-columns-design')}
                 />
               </CollapsibleSection>
             )}
+            {panel.type === 'flows' && summaryBadgeSection()}
             {panel.type === 'agents' && (
               <CollapsibleSection title={t('dashboard.settings.columns')}>
                 <ColumnsSection<AgentColumnKey>
                   allColumns={[...ALL_AGENT_COLUMNS]}
                   labels={Object.fromEntries(ALL_AGENT_COLUMNS.map((k) => [k, t(AGENT_COLUMN_LABEL_KEYS[k])])) as Record<AgentColumnKey, string>}
                   visibleColumns={(panel.config?.visibleColumns as AgentColumnKey[]) ?? [...ALL_AGENT_COLUMNS]}
-                  onChange={(cols) => updatePanelConfig(panel.id, { visibleColumns: cols })}
+                  onChange={(cols) => handleConfigChange({ visibleColumns: cols })}
+                  design={columnsDesignPopover('agent-columns-design')}
                 />
               </CollapsibleSection>
             )}
+            {panel.type === 'agents' &&
+              summaryBadgeSection(
+                <TileListEditor<SummaryItem>
+                  all={SUMMARY_ITEMS}
+                  labelKeys={SUMMARY_TILE_LABEL_KEYS}
+                  items={readSummaryItems(panel.config)}
+                  styles={panel.config?.summaryStyles as Record<string, unknown> | undefined}
+                  testIdPrefix="summary-tile"
+                  onItemsChange={(items) => handleConfigChange({ summaryItems: items })}
+                  onStylesChange={(styles) => handleConfigChange({ summaryStyles: styles })}
+                />,
+              )}
             {panel.type === 'devices' && (
               <CollapsibleSection title={t('dashboard.settings.columns')}>
                 <ColumnsSection<DeviceListColumnKey>
                   allColumns={[...ALL_DEVICE_COLUMNS]}
                   labels={Object.fromEntries(ALL_DEVICE_COLUMNS.map((k) => [k, t(DEVICE_COLUMN_LABELS[k])])) as Record<DeviceListColumnKey, string>}
                   visibleColumns={(panel.config?.visibleColumns as DeviceListColumnKey[]) ?? [...ALL_DEVICE_COLUMNS]}
-                  onChange={(cols) => updatePanelConfig(panel.id, { visibleColumns: cols })}
+                  onChange={(cols) => handleConfigChange({ visibleColumns: cols })}
+                  design={columnsDesignPopover('device-columns-design')}
                 />
               </CollapsibleSection>
             )}
+            {panel.type === 'devices' && summaryBadgeSection()}
             {panel.type === 'resource' && (
               <CollapsibleSection title={t('dashboard.settings.resource')}>
                 <ResourceSection
@@ -794,6 +1100,216 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   panel={panel}
                   onConfigChange={(c) => handleConfigChange(c)}
                 />
+                {/* 타일 목록 — 고를 것과 타일별 모양. 다이어그램 뷰에는 타일이 없다. */}
+                {panel.config?.viewMode !== 'diagram' && (
+                  <>
+                    {/*
+                      배지 — 무엇을 낼지 고르고 항목마다 모양을 정한다. 글자 설정은
+                      표시 체크 옆에 둔다: 감춘 배지에는 걸 곳이 없으므로 표시할 때만 낸다.
+                      색을 비워 두면 상태별 의미색(초록·빨강)이 그대로 산다.
+                    */}
+                    <div className="mt-3">
+                      <div className="flex items-center gap-1.5">
+                        <label className="flex items-center gap-2 text-xs text-(--color-text-secondary)">
+                          <input
+                            type="checkbox"
+                            data-testid="agent-status-show-badges"
+                            checked={panel.config?.showBadges !== false}
+                            onChange={(e) =>
+                              // 기본은 표시다 — 끌 때만 config 에 남긴다.
+                              handleConfigChange({ showBadges: e.target.checked ? undefined : false })
+                            }
+                            className="h-3.5 w-3.5 accent-blue-600"
+                          />
+                          {t('dashboard.settings.propertiesGridOpt.showBadges')}
+                        </label>
+                        {panel.config?.showBadges !== false && (
+                          <DesignPopover testId="badge-design">
+                            <TextStyleFields
+                              label={t('dashboard.settings.listPanel.badgeStyle')}
+                              family={badgeFont.family}
+                              size={badgeFont.size}
+                              color={badgeFont.color}
+                              weight={badgeFont.weight ?? 'inherit'}
+                              align={badgeFont.align ?? 'inherit'}
+                              sizePlaceholder={t('dashboard.chart.inherit')}
+                              testIdPrefix="badge-font"
+                              onChange={(patch) =>
+                                handleConfigChange({ badge_font: mergeFont(badgeFont, patch) })
+                              }
+                            />
+                          </DesignPopover>
+                        )}
+                      </div>
+                      {panel.config?.showBadges !== false && (
+                        <TileListEditor<AgentBadge>
+                          all={AGENT_BADGES}
+                          labelKeys={AGENT_BADGE_LABEL_KEYS}
+                          items={readTileItems(panel.config?.badgeItems, AGENT_BADGES)}
+                          styles={panel.config?.badgeStyles as Record<string, unknown> | undefined}
+                          testIdPrefix="agent-badge"
+                          onItemsChange={(items) => handleConfigChange({ badgeItems: items })}
+                          onDesignChange={(item, next) =>
+                            handleConfigChange({
+                              badgeStyles: {
+                                ...((panel.config?.badgeStyles as Record<string, unknown>) ?? {}),
+                                [item]: next,
+                              },
+                            })
+                          }
+                        />
+                      )}
+                    </div>
+
+                    {/* 공통 속성 — 모든 타일에 함께 걸린다. 타일별 설정이 이 위를 덮는다. */}
+                    <div className="mt-3 flex items-center gap-1.5">
+                      <span className="text-xs font-medium text-(--color-text-muted)">
+                        {t('dashboard.settings.propertiesGridOpt.card')}
+                      </span>
+                      <DesignPopover testId="agent-status-common">
+                        <TileDesignFields
+                          testIdPrefix="agent-status-common"
+                          design={{
+                            label_font: panel.config?.tileLabelFont,
+                            value_font: panel.config?.tileValueFont,
+                            bg: panel.config?.tileBg as string | undefined,
+                          }}
+                          onChange={(next) =>
+                            handleConfigChange({
+                              tileLabelFont: next.label_font,
+                              tileValueFont: next.value_font,
+                              tileBg: next.bg,
+                            })
+                          }
+                          onReset={() =>
+                            handleConfigChange({
+                              tileLabelFont: undefined,
+                              tileValueFont: undefined,
+                              tileBg: undefined,
+                            })
+                          }
+                        />
+                      </DesignPopover>
+                    </div>
+
+                    <div className="mt-3">
+                      {/*
+                        레이아웃(행·열 + 배치)은 팝업으로 연다 — 설정 컬럼에 격자를 늘
+                        펼쳐 두면 아래 목록이 한 화면에서 밀려난다.
+                      */}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-medium text-(--color-text-muted)">
+                          {t('dashboard.settings.agentStatusOpt.statTiles')}
+                        </span>
+                        <DesignPopover
+                          testId="stat-layout-popup"
+                          label={t('dashboard.settings.agentStatusOpt.layout')}
+                          width={384}
+                        >
+                          <TileGridEditor<StatTile>
+                            grid={readTileGrid(panel.config?.statGrid, STAT_GRID_DEFAULT)}
+                            items={readTileItems(panel.config?.statTiles, STAT_TILES)}
+                            areas={placeTiles(
+                              readTileItems(panel.config?.statTiles, STAT_TILES),
+                              panel.config?.statTileAreas as Record<string, Partial<TileArea>> | undefined,
+                              readTileGrid(panel.config?.statGrid, STAT_GRID_DEFAULT),
+                              STAT_TILE_SIZE,
+                            )}
+                            labelKeys={STAT_TILE_LABEL_KEYS}
+                            testIdPrefix="stat-layout"
+                            onGridChange={(g) => handleConfigChange({ statGrid: g })}
+                            onAreasChange={(areas) => handleConfigChange({ statTileAreas: areas })}
+                            onMove={(item, dir) => {
+                              const list = readTileItems(panel.config?.statTiles, STAT_TILES);
+                              handleConfigChange({
+                                statTiles: moveToPosition(list, item, list.indexOf(item) + 1 + dir),
+                              });
+                            }}
+                            onReset={() =>
+                              handleConfigChange({ statGrid: undefined, statTileAreas: undefined })
+                            }
+                          />
+                        </DesignPopover>
+                      </div>
+                      <TileListEditor<StatTile>
+                        all={STAT_TILES}
+                        labelKeys={STAT_TILE_LABEL_KEYS}
+                        items={readTileItems(panel.config?.statTiles, STAT_TILES)}
+                        testIdPrefix="stat-tile"
+                        styles={panel.config?.statTileStyles as Record<string, unknown> | undefined}
+                        onItemsChange={(items) => handleConfigChange({ statTiles: items })}
+                        onDesignChange={(item, next) =>
+                          handleConfigChange({
+                            statTileStyles: {
+                              ...((panel.config?.statTileStyles as Record<string, unknown>) ?? {}),
+                              [item]: next,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="mt-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-medium text-(--color-text-muted)">
+                          {t('dashboard.settings.agentStatusOpt.messageTiles')}
+                        </span>
+                        {/*
+                          격자에 놓는 단위는 **묶음 카드**(외부/내부)다 — 카드 한 장이 값
+                          셋을 담는다. 디자인도 카드 단위다: 타이틀은 묶음 이름, 값 글자와
+                          색 규칙은 그 카드 안 값들에 함께 걸린다.
+                        */}
+                        <DesignPopover
+                          testId="message-layout-popup"
+                          label={t('dashboard.settings.agentStatusOpt.layout')}
+                          width={384}
+                        >
+                          <TileGridEditor<MessageGroup>
+                            grid={readTileGrid(panel.config?.messageGrid, MESSAGE_GRID_DEFAULT)}
+                            items={readTileItems(panel.config?.messageGroups, MESSAGE_GROUPS)}
+                            areas={placeTiles(
+                              readTileItems(panel.config?.messageGroups, MESSAGE_GROUPS),
+                              panel.config?.messageTileAreas as Record<string, Partial<TileArea>> | undefined,
+                              readTileGrid(panel.config?.messageGrid, MESSAGE_GRID_DEFAULT),
+                              MESSAGE_TILE_SIZE,
+                            )}
+                            labelKeys={MESSAGE_GROUP_LABEL_KEYS}
+                            testIdPrefix="message-layout"
+                            onGridChange={(g) => handleConfigChange({ messageGrid: g })}
+                            onAreasChange={(areas) => handleConfigChange({ messageTileAreas: areas })}
+                            onMove={(item, dir) => {
+                              const list = readTileItems(panel.config?.messageGroups, MESSAGE_GROUPS);
+                              handleConfigChange({
+                                messageGroups: moveToPosition(list, item, list.indexOf(item) + 1 + dir),
+                              });
+                            }}
+                            onReset={() =>
+                              handleConfigChange({
+                                messageGrid: undefined,
+                                messageTileAreas: undefined,
+                              })
+                            }
+                          />
+                        </DesignPopover>
+                      </div>
+                      <TileListEditor<MessageTile>
+                        all={MESSAGE_TILES}
+                        labelKeys={MESSAGE_TILE_SETTING_LABEL_KEYS}
+                        items={readTileItems(panel.config?.messageTiles, MESSAGE_TILES)}
+                        testIdPrefix="message-tile"
+                        styles={panel.config?.messageTileStyles as Record<string, unknown> | undefined}
+                        onItemsChange={(items) => handleConfigChange({ messageTiles: items })}
+                        onDesignChange={(item, next) =>
+                          handleConfigChange({
+                            messageTileStyles: {
+                              ...((panel.config?.messageTileStyles as Record<string, unknown>) ?? {}),
+                              [item]: next,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                  </>
+                )}
               </CollapsibleSection>
             )}
 
@@ -867,31 +1383,57 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             {/*
               스타일 섹션:
               - ac-control 패널은 통합 스타일 섹션 (모든 항목을 항상 표시)을 사용한다.
-              - 그 외 패널은 미리보기에서 그룹 선택 시 표시되는 AccentGroupControls 를 사용한다.
+              - 그 외 패널은 그룹 목록에서 고른 뒤 AccentGroupControls 로 색을 정한다.
+              - 목록형 패널(플로우 현황·에이전트 현황·디바이스 목록)은 내지 않는다 —
+                타이틀·컬럼·요약 배지의 모양을 각자의 디자인 팝오버가 갖게 되면서
+                남은 항목이 없다. 하나뿐인 항목을 위해
+                고르기 → 편집 두 단계를 남겨 두면 빈 껍데기가 된다.
+              - 에이전트 상태도 내지 않는다 — 이 패널은 accentElements 를 **읽지 않아**
+                그룹을 골라 색을 정해도 화면이 바뀌지 않는 죽은 컨트롤이었다.
+              - 디바이스 상태(속성 그리드)도 내지 않는다 — 카드 조각별 디자인이 색을
+                갖게 되면서 악센트 labels/borders 와 자리가 겹친다.
+              - 통계도 내지 않는다 — 그룹 4개 중 header/badges/table 은 StatPanel 이
+                읽지 않는 죽은 컨트롤이었고, 살아 있던 `_base`(= panelColor)는 패널
+                옵션으로 올라갔다(SPEC-CHART-003 §5 D1). 남는 항목이 없다.
             */}
-            {panel.type === 'ac-control' ? (
+            {panel.type === 'flows' ||
+            panel.type === 'agents' ||
+            panel.type === 'devices' ||
+            panel.type === 'properties-grid' ||
+            panel.type === 'stat' ||
+            panel.type === 'agent-status' ? null : panel.type === 'ac-control' ? (
               <CollapsibleSection title={t('dashboard.settings.style')} defaultOpen={true}>
                 <AcControlStyleSection
-                  panelColor={panelColor}
                   accentElements={accentElements}
                   config={panel.config ?? {}}
-                  onPanelColorChange={(c) => handleConfigChange({ panelColor: c })}
                   onAccentChange={(elements) => handleConfigChange({ accentElements: elements })}
                   onConfigChange={(patch) => handleConfigChange(patch)}
                 />
               </CollapsibleSection>
-            ) : selectedGroup ? (
+            ) : (
               <CollapsibleSection title={t('dashboard.settings.style')} defaultOpen={true}>
-                <AccentGroupControls
-                  selected={selectedGroup}
+                {/*
+                  악센트 그룹 고르기. 종전에는 미리보기의 목업 영역을 클릭했는데,
+                  미리보기가 실제 패널로 바뀌면서 클릭 가능한 영역 지도가 사라졌다.
+                  그룹 이름표는 타입별로 이미 정의되어 있어(accentLabelKeys) 그대로 쓴다.
+                */}
+                <AccentGroupPicker
                   labelKeys={accentLabelKeys}
-                  accentElements={accentElements}
-                  panelColor={panelColor}
-                  onChange={(elements) => handleConfigChange({ accentElements: elements })}
-                  onPanelColorChange={(color) => handleConfigChange({ panelColor: color })}
+                  selected={selectedGroup}
+                  effectiveColor={effectiveColor}
+                  onSelect={setSelectedGroup}
                 />
+                {selectedGroup && (
+                  <AccentGroupControls
+                    selected={selectedGroup}
+                    labelKeys={accentLabelKeys}
+                    accentElements={accentElements}
+                    inheritedColor={panelColor}
+                    onChange={(elements) => handleConfigChange({ accentElements: elements })}
+                  />
+                )}
               </CollapsibleSection>
-            ) : null}
+            )}
 
     </>
   );
@@ -954,46 +1496,24 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     resolveGaugeValueSource(gaugeValueSourceFlags(previewChartConfig)) === 'store-source';
   // 종횡비 보존 미리보기(라운드 게이지, 작은 accent device/ac/hvac): 높이를 채우고 폭은
   // 종횡비로 파생한다. previewZoom(0.5~2.0)이 곱해진다(±/Ctrl+휠/더블클릭).
-  const previewFitStyle = (aspect: string): React.CSSProperties => ({
-    height: `${100 * previewZoom}%`,
-    maxWidth: '100%',
-    maxHeight: '100%',
-    aspectRatio: aspect,
+  /** 모든 미리보기는 스테이지 상자를 그대로 채운다 — 사이징 정본은 스테이지 한 곳이다. */
+  const PREVIEW_CHILD_STYLE: React.CSSProperties = { width: '100%', height: '100%' };
+
+  // 미리보기 스테이지 — 패널을 대시보드에서의 실제 픽셀 크기로 렌더한 뒤 통째로
+  // 축소한다. 미리보기 크기에 맞춰 다시 레이아웃하면 반응형 재배치가 일어나
+  // 대시보드와 다른 화면이 되기 때문이다(previewStage.ts 주석 참조).
+  const previewStage = computePreviewStage({
+    w: effectiveSize?.w ?? 0,
+    h: effectiveSize?.h ?? 0,
+    cell: gridCell,
+    areaW: fitSize.w,
+    areaH: fitSize.h,
+    mode: previewFillMode,
+    zoom: previewZoom,
   });
-  // FILL 미리보기(heatmap/차트/리스트/리소스/로그/modbus): 종횡비를 무시하고 fit 컨테이너를
-  // 가로·세로 모두 채운다. 영역 비율은 사용자가 경계 드래그(leftWidth/previewRatio)로 조절한다.
-  // zoom=1.0 → 100%×100%. previewZoom 이 곱해진다(±/Ctrl+휠/더블클릭).
-  const previewFillStyle = (): React.CSSProperties => ({
-    width: `${100 * previewZoom}%`,
-    height: `${100 * previewZoom}%`,
-  });
-  // FIT 미리보기(실측 contain): fit 컨테이너 실측(W×H)과 패널 종횡비 r 로 "가장 큰 종횡비
-  // 보존 박스"를 px 로 계산한다(CSS transferred-size 불확실성 제거). W/H>=r → 높이 바운드
-  // (높이 가득 + 좌우 여백), 아니면 폭 바운드(폭 가득 + 상하 여백). previewZoom 곱함.
-  // 측정 불가(0, jsdom/초기)면 CSS previewFitStyle 로 폴백(테스트 안정 + 초기 페인트).
-  const parseAspectRatio = (aspect: string): number => {
-    const parts = aspect.split('/').map((s) => parseFloat(s.trim()));
-    const a = parts[0] ?? NaN;
-    const b = parts[1] ?? NaN;
-    return Number.isFinite(a) && Number.isFinite(b) && b !== 0 ? a / b : 1;
-  };
-  const measuredFitStyle = (aspect: string): React.CSSProperties => {
-    const { w, h } = fitSize;
-    if (w <= 0 || h <= 0) return previewFitStyle(aspect); // 측정 불가 → CSS 폴백
-    const r = parseAspectRatio(aspect);
-    let boxW: number;
-    let boxH: number;
-    if (w / h >= r) {
-      // 영역이 더 넓다 → 높이 바운드: 높이 가득, 폭은 종횡비로 파생(좌우 여백).
-      boxH = h;
-      boxW = h * r;
-    } else {
-      // 영역이 더 좁다 → 폭 바운드: 폭 가득, 높이는 종횡비로 파생(상하 여백).
-      boxW = w;
-      boxH = w / r;
-    }
-    return { width: `${boxW * previewZoom}px`, height: `${boxH * previewZoom}px` };
-  };
+  const previewBox =
+    previewStage !== null ? { w: previewStage.screenW, h: previewStage.screenH } : null;
+
   const previewSlot = (
     // fit 컨테이너: 남은 미리보기 영역을 세로로 가득(min-h-0 flex-1) 차지하고 자식을 양축
     // 가운데 정렬한다. ref 로 실측하여 fit 모드가 종횡비 보존 contain 을 결정론적으로 계산한다.
@@ -1001,136 +1521,111 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     <PanelChromeProvider config={panel.config}>
     <div
       ref={setFitContainer}
-      className="flex min-h-0 flex-1 items-center justify-center overflow-hidden"
+      className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden"
     >
+      {/* 실제 패널처럼 크기를 조절한다. 그리드(칼럼 수·셀·마진)와 가이드 라인 표시는
+          현재 대시보드 설정을 그대로 쓴다. 레이아웃이 없는 패널(대시보드 미배치)은
+          기준 크기가 없으므로 손잡이를 내지 않는다. */}
+      {effectiveSize !== null && panelAspect !== undefined && (
+        <PanelResizeOverlay
+          size={effectiveSize}
+          box={previewBox}
+          aspect={panelAspect}
+          cols={gridCols}
+          cell={gridCell}
+          minW={layoutItem?.minW}
+          minH={layoutItem?.minH}
+          onChange={setDraftSize}
+        />
+      )}
+
+      {/*
+        그리드 가이드 — 대시보드와 같이 패널 **뒤**에 깔린다. 표시 여부는 대시보드
+        설정을 따른다. 위에 그리면 패널의 실제 모양(카드 배경·테두리)이 가려진다.
+      */}
+      {showGridLines && previewStage !== null && (
+        <PanelGridBackdrop
+          areaW={fitSize.w}
+          areaH={fitSize.h}
+          boxW={previewStage.screenW}
+          boxH={previewStage.screenH}
+          cellW={previewStage.cellW}
+          cellH={previewStage.cellH}
+          gapX={previewStage.gapX}
+          gapY={previewStage.gapY}
+        />
+      )}
+
+      {/*
+        스테이지 — 패널을 대시보드에서의 실제 픽셀 크기로 렌더한 뒤 통째로 축소한다.
+        타입마다 다른 상자 크기를 쓰면 프레임·그리드와 어긋나므로 사이징은 여기 한 곳이
+        정본이고, 각 미리보기는 이 상자를 100% 로 채운다.
+
+        실측 전(첫 페인트)에는 영역을 그대로 채운다 — 배율을 알 수 없기 때문이다.
+      */}
+      <div
+        data-testid="preview-stage"
+        className="relative flex min-h-0 shrink-0 flex-col overflow-hidden"
+        style={
+          previewStage !== null
+            ? {
+                width: `${previewStage.pxW}px`,
+                height: `${previewStage.pxH}px`,
+                transform: `scale(${previewStage.scaleX}, ${previewStage.scaleY})`,
+                transformOrigin: 'center',
+              }
+            : previewFillMode === 'fill'
+              ? // 실측 전이라도 채움은 영역을 채운다 — 모드의 뜻을 그대로 지킨다.
+                { width: '100%', height: '100%' }
+              : {
+                  // 맞춤은 배율을 몰라도 비율은 안다. 영역을 통째로 늘이면 첫 페인트가
+                  // 찌그러져 보이므로 패널 비율을 지킨다.
+                  height: '100%',
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  aspectRatio: `${panelAspect ?? 1.5} / 1`,
+                }
+        }
+        onWheel={handlePreviewWheel}
+      >
             {/*
-              FILL 유형(heatmap/차트/리스트/리소스/로그/modbus)은 previewFillStyle 로 fit 컨테이너를
-              가득 채우고(영역 비율은 드래그로 조절), 종횡비가 중요한 미니(게이지/accent)는
-              previewFitStyle 로 종횡비를 보존한다. previewZoom 이 곱해진다(±/Ctrl+휠/더블클릭).
-              wheel 핸들러는 개별 wrapper 에 부여한다 (Ctrl+휠 으로만 동작하므로 기본 스크롤 보존).
+              실제 패널 미리보기 — 대시보드와 **같은 렌더러**(renderDashboardPanel)를 쓴다.
+
+              종전에는 타입별로 손으로 그린 미니 목업을 그렸다. 목업은 컬럼도 값도 실제와
+              달라(가짜 행 sample-1/sample-2, 실제엔 없는 컬럼) 미리보기를 보고 판단할 수
+              없었다. 목업이 겸하던 "영역 클릭 → 악센트 그룹 선택"은 스타일 섹션의 그룹
+              목록으로 옮겼다 — 실제 패널은 이미 accentElements 를 읽어 색을 칠하므로
+              고른 색은 이 미리보기에 그대로 나타난다.
+
+              채움(fill)은 영역을 가득 채우고, 맞춤(fit)은 패널의 그리드 비율을 지킨다.
+              wheel 핸들러는 wrapper 에 부여한다(Ctrl+휠 로만 동작 — 기본 스크롤 보존).
             */}
-            {(panel.type === 'device' || panel.type === 'ac-control' || panel.type === 'hvac-control') && (
+            {REAL_PANEL_PREVIEW_TYPES.has(panel.type) && (
+              // 대시보드에서의 실제 픽셀 크기로 렌더한 뒤 transform 으로 축소한다.
+              // 작은 상자에 다시 레이아웃하면 반응형 재배치가 일어나 칼럼 수·줄바꿈이
+              // 대시보드와 달라진다 — 그러면 미리보기의 의미가 없다.
+              //
+              // 영역 실측 전(첫 페인트)에는 스테이지를 만들 수 없으므로 종횡비만 맞춰
+              // 그린다. 실측되는 즉시 위 경로로 넘어간다.
               <div
-                style={previewFitStyle('3 / 2')}
+                data-testid="real-panel-preview"
+                className="flex min-h-0 shrink-0 flex-col overflow-hidden"
+                style={PREVIEW_CHILD_STYLE}
                 onWheel={handlePreviewWheel}
               >
-                <NasaMiniPreview
-                  selectedGroup={selectedGroup}
-                  onSelectGroup={setSelectedGroup}
-                  effectiveColor={effectiveColor}
-                  getSubProp={getSubProp}
-                  panelColor={panelColor}
-                />
-              </div>
-            )}
-            {panel.type === 'properties-grid' && (
-              <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('3 / 2')}
-                onWheel={handlePreviewWheel}
-              >
-                <GridMiniPreview
-                  selectedGroup={selectedGroup}
-                  onSelectGroup={setSelectedGroup}
-                  effectiveColor={effectiveColor}
-                  panelColor={panelColor}
-                  gridCols={(panel.config?.gridCols as number | undefined) ?? 3}
-                />
-              </div>
-            )}
-            {(panel.type === 'flows' || panel.type === 'agents' || panel.type === 'devices') && (
-              <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('3 / 2')}
-                onWheel={handlePreviewWheel}
-              >
-                <ListMiniPreview
-                  selectedGroup={selectedGroup}
-                  onSelectGroup={setSelectedGroup}
-                  effectiveColor={effectiveColor}
-                  panelColor={panelColor}
-                  variant={panel.type as 'flows' | 'agents' | 'devices'}
-                />
-              </div>
-            )}
-            {panel.type === 'resource' && (
-              <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('4 / 3')}
-                onWheel={handlePreviewWheel}
-              >
-                <ResourceMiniPreview
-                  selectedGroup={selectedGroup}
-                  onSelectGroup={setSelectedGroup}
-                  effectiveColor={effectiveColor}
-                  panelColor={panelColor}
-                />
-              </div>
-            )}
-            {panel.type === 'monitor-network' && (
-              <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('4 / 3')}
-                onWheel={handlePreviewWheel}
-              >
-                <MonitorNetworkMiniPreview
-                  panel={panel}
-                  selectedGroup={selectedGroup}
-                  onSelectGroup={setSelectedGroup}
-                  effectiveColor={effectiveColor}
-                  panelColor={panelColor}
-                />
-              </div>
-            )}
-            {SYSMETRICS_PANEL_TYPES.has(panel.type) && (
-              <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('4 / 3')}
-                onWheel={handlePreviewWheel}
-              >
-                <SysMetricsMiniPreview
-                  panel={panel}
-                  selectedGroup={selectedGroup}
-                  onSelectGroup={setSelectedGroup}
-                  effectiveColor={effectiveColor}
-                  panelColor={panelColor}
-                />
-              </div>
-            )}
-            {panel.type === 'monitor-stats' && (
-              <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('4 / 3')}
-                onWheel={handlePreviewWheel}
-              >
-                <MonitorStatsMiniPreview
-                  panel={panel}
-                  selectedGroup={selectedGroup}
-                  onSelectGroup={setSelectedGroup}
-                  effectiveColor={effectiveColor}
-                  panelColor={panelColor}
-                />
-              </div>
-            )}
-            {panel.type === 'monitor-metrics' && (
-              <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('4 / 3')}
-                onWheel={handlePreviewWheel}
-              >
-                <MonitorMetricsMiniPreview
-                  panel={panel}
-                  selectedGroup={selectedGroup}
-                  onSelectGroup={setSelectedGroup}
-                  effectiveColor={effectiveColor}
-                  panelColor={panelColor}
-                />
-              </div>
-            )}
-            {panel.type === 'logs' && (
-              <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('3 / 2')}
-                onWheel={handlePreviewWheel}
-              >
-                <LogMiniPreview
-                  selectedGroup={selectedGroup}
-                  onSelectGroup={setSelectedGroup}
-                  effectiveColor={effectiveColor}
-                  panelColor={panelColor}
-                />
+                {/*
+                  미리보기 안에서만 직접 조작을 켠다 — 카드를 끌어 옮기는 동작은 대시보드에
+                  놓인 패널에서는 패널 자체를 끄는 동작과 부딪힌다.
+                */}
+                <PanelEditContext.Provider value={true}>
+                  {renderDashboardPanel(
+                    previewRenderPanel,
+                    previewFlows,
+                    previewMetrics as Record<string, unknown> | undefined,
+                    previewRefreshMs,
+                    () => ({ onConfigChange: patchConfig, onTitleChange: setTitle }),
+                  )}
+                </PanelEditContext.Provider>
               </div>
             )}
             {panel.type === 'gauge' && (
@@ -1140,11 +1635,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 // 자체 h-full 이라 두 경로 모두 안전하다.
                 className="flex min-h-0 flex-col"
                 data-testid="gauge-preview-wrapper"
-                style={
-                  isStoreGaugePreview && previewFillMode === 'fill'
-                    ? previewFillStyle()
-                    : previewFitStyle('1 / 1')
-                }
+                style={PREVIEW_CHILD_STYLE}
                 onWheel={handlePreviewWheel}
               >
                 {/* 값 글자를 끌어 자리를 잡는다. 두 미리보기 경로(실 패널 · 미니)가 같은
@@ -1163,7 +1654,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                       forceEdit
                     />
                   ) : (
-                    <GaugeMiniPreview panel={previewRenderPanel} />
+                    <GaugeMiniPreview
+                      panel={previewRenderPanel}
+                      onConfigChange={patchConfig}
+                    />
                   )}
                 </>
               </div>
@@ -1177,13 +1671,17 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               <div
                 className="flex min-h-0 flex-col"
                 data-testid="stat-preview-wrapper"
-                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('3 / 2')}
+                style={PREVIEW_CHILD_STYLE}
                 onWheel={handlePreviewWheel}
               >
                 <StatPanel
                   panelId={previewRenderPanel.id}
                   title={previewRenderPanel.title}
                   config={previewRenderPanel.config ?? {}}
+                  // 미리보기에서 요소를 직접 옮기고 크기·글자 스타일을 바꾼다
+                  // (SPEC-CHART-004). 게이지와 같은 형태다.
+                  onConfigChange={patchConfig}
+                  forceEdit
                 />
               </div>
             )}
@@ -1194,13 +1692,16 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 // 콘텐츠 높이로 축소되고 차트 영역이 0-height 로 붕괴한다).
                 className="flex min-h-0 flex-col"
                 data-testid="bar-chart-preview-wrapper"
-                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('16 / 9')}
+                style={PREVIEW_CHILD_STYLE}
                 onWheel={handlePreviewWheel}
               >
                 <BarChartPanel
                   panelId={previewRenderPanel.id}
                   title={previewRenderPanel.title}
                   config={previewRenderPanel.config ?? {}}
+                  // 미리보기에서 그림·범례를 직접 옮긴다(SPEC-CHART-005).
+                  onConfigChange={patchConfig}
+                  forceEdit
                 />
               </div>
             )}
@@ -1210,7 +1711,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 // 루트가 flex-1 이라 plain block 안에서는 높이가 콘텐츠로 붕괴한다.
                 className="flex min-h-0 flex-col"
                 data-testid="table-preview-wrapper"
-                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('3 / 2')}
+                style={PREVIEW_CHILD_STYLE}
                 onWheel={handlePreviewWheel}
               >
                 <TablePanel
@@ -1230,7 +1731,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 data-testid="pie-chart-preview-wrapper"
                 // 파이는 정사각에 가까운 편이 실제 배치를 가늠하기 좋다(게이지 1:1 과 차트
                 // 16:9 사이). 채움 모드에서는 종횡비를 무시하고 영역을 가득 채운다.
-                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('4 / 3')}
+                style={PREVIEW_CHILD_STYLE}
                 onWheel={handlePreviewWheel}
               >
                 {/* 드래그 배치는 패널 자신이 갖는다(대시보드와 같은 구현). 미리보기는
@@ -1254,7 +1755,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 // 두 경로 모두 안전하다.
                 className="flex min-h-0 flex-col"
                 data-testid="line-chart-preview-wrapper"
-                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('16 / 9')}
+                style={PREVIEW_CHILD_STYLE}
                 onWheel={handlePreviewWheel}
               >
                 {isStoreLinePreview ? (
@@ -1282,7 +1783,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             */}
             {MODBUS_PANEL_TYPES.has(panel.type) && (
               <div
-                style={previewFillMode === 'fill' ? previewFillStyle() : measuredFitStyle('3 / 2')}
+                style={PREVIEW_CHILD_STYLE}
                 onWheel={handlePreviewWheel}
               >
                 <ModbusPanelPreview panel={previewRenderPanel} />
@@ -1309,14 +1810,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 // measuredFitStyle)이 제공하고, flex-col 로 flex-1 이 그 높이를 채운다.
                 data-testid="heatmap-preview-wrapper"
                 className="relative flex min-h-0 flex-col"
-                // fit 모드는 **이 패널의 실제 대시보드 비율**로 그린다(레이아웃 미상이면 3:2 폴백).
-                // 히트맵은 도면 종횡비로 스테이지를 레터박스하므로(stage.ts), 미리보기 비율이
+                // 스테이지가 이 패널의 실제 대시보드 크기를 잡아 주므로 여기서는 채우기만 한다.
+                // 히트맵은 도면 종횡비로 스테이지를 레터박스하므로(stage.ts), 상자 비율이
                 // 실제와 다르면 여백이 얼마나 생길지 확인할 방법이 없다.
-                style={
-                  previewFillMode === 'fill'
-                    ? previewFillStyle()
-                    : measuredFitStyle(panelAspect !== undefined ? `${panelAspect} / 1` : '3 / 2')
-                }
+                style={PREVIEW_CHILD_STYLE}
                 onWheel={handlePreviewWheel}
               >
                 <HeatmapPanel
@@ -1326,14 +1823,9 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   onConfigChange={(c) => handleConfigChange(c)}
                   forcePlacement
                 />
-                {/* 실제 대시보드에서 이 패널이 차지할 영역을 점선으로 표시한다. 채움(fill)
-                    모드는 미리보기 영역을 가로·세로로 모두 채우므로 실제 비율과 다르고,
-                    그 상태에서는 도면이 대시보드에서 어디까지 보일지 알 수 없다. */}
-                {panelAspect !== undefined && previewFillMode === 'fill' && (
-                  <PanelAreaOutline aspect={panelAspect} />
-                )}
               </div>
             )}
+      </div>
     </div>
     </PanelChromeProvider>
   );
@@ -1383,7 +1875,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             <button
               type="button"
               onClick={onClose}
-              className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+              className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
               aria-label={t('dashboard.settings.closeAria')}
             >
               <ArrowLeft className="h-4.5 w-4.5" />
@@ -1398,7 +1890,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             aria-label={t('dashboard.settings.closeAria')}
           >
             <X className="h-4.5 w-4.5" />
@@ -1458,6 +1950,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
           <button
             type="button"
             onClick={handleApplyAndClose}
+            data-testid="panel-settings-apply"
             className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
           >
             {t('dashboard.settings.apply')}
@@ -1558,11 +2051,17 @@ function ColumnsSection<T extends string>({
   labels,
   visibleColumns,
   onChange,
+  design,
 }: {
   allColumns: T[];
   labels: Record<T, string>;
   visibleColumns: T[];
   onChange: (cols: T[]) => void;
+  /**
+   * 라벨 옆에 접어 두는 디자인 팝오버. 타이틀과 같은 자리·같은 조작이라
+   * "디자인은 설정 옆에 접혀 있다"를 한 번만 배우면 된다.
+   */
+  design?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const toggle = (key: T) => {
@@ -1577,9 +2076,12 @@ function ColumnsSection<T extends string>({
 
   return (
     <div>
-      <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-        {t('dashboard.settings.visibleColumns')}
-      </label>
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <label className="text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.visibleColumns')}
+        </label>
+        {design}
+      </div>
       <div className="space-y-1">
         {allColumns.map((key) => (
           <label
@@ -1588,9 +2090,10 @@ function ColumnsSection<T extends string>({
           >
             <input
               type="checkbox"
+              data-testid={`column-toggle-${key}`}
               checked={visibleColumns.includes(key)}
               onChange={() => toggle(key)}
-              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
             />
             <span className="text-sm text-(--color-text-primary)">{labels[key]}</span>
           </label>
@@ -1638,7 +2141,7 @@ function ResourceSection({
                 type="checkbox"
                 checked={visibleMetrics.includes(key)}
                 onChange={() => toggleMetric(key)}
-                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
               />
               <span className="text-sm text-(--color-text-primary)">{t(METRIC_LABEL_KEYS[key])}</span>
             </label>
@@ -3123,7 +3626,7 @@ function FacilityLineDisplayOptions({
           data-testid="facility-line-show-station-status"
           checked={showStationStatus}
           onChange={(e) => onConfigChange({ showStationStatus: e.target.checked })}
-          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
         />
         <span className="text-sm font-medium text-(--color-text-primary)">
           {t('dashboard.settings.showStationStatus')}
@@ -3136,7 +3639,7 @@ function FacilityLineDisplayOptions({
           data-testid="facility-line-show-line-stats"
           checked={showLineStats}
           onChange={(e) => onConfigChange({ showLineStats: e.target.checked })}
-          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
         />
         <span className="text-sm font-medium text-(--color-text-primary)">
           {t('dashboard.settings.showLineStats')}
@@ -3149,7 +3652,7 @@ function FacilityLineDisplayOptions({
           data-testid="facility-line-offline-as-off"
           checked={offlineAsOff}
           onChange={(e) => onConfigChange({ offlineAsOff: e.target.checked })}
-          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
         />
         <span className="text-sm font-medium text-(--color-text-primary)">
           {t('dashboard.settings.offlineAsOff')}
@@ -3223,7 +3726,7 @@ function FacilityStationDisplayOptions({
           data-testid={`${idp}-show-stats`}
           checked={showStats}
           onChange={(e) => onConfigChange({ showStats: e.target.checked })}
-          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
         />
         <span className="text-sm font-medium text-(--color-text-primary)">
           {t('dashboard.settings.showStats')}
@@ -3237,7 +3740,7 @@ function FacilityStationDisplayOptions({
           data-testid={`${idp}-offline-as-off`}
           checked={offlineAsOff}
           onChange={(e) => onConfigChange({ offlineAsOff: e.target.checked })}
-          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
         />
         <span className="text-sm font-medium text-(--color-text-primary)">
           {t('dashboard.settings.offlineAsOff')}
@@ -3262,7 +3765,1342 @@ function FacilityStationDisplayOptions({
   );
 }
 
-/** 속성 그리드 패널 전용 설정 (열 수 + 표시 항목) */
+/**
+ * 값에 따른 색 규칙 편집기.
+ *
+ * 항목 카드(디바이스 현황)와 타일(에이전트 상태)이 같은 규칙을 쓴다. 각자 두면 "위에서
+ * 먼저 맞는 것이 이긴다" 같은 규칙이 조용히 갈라진다.
+ */
+function ValueColorRules({
+  rules,
+  testIdPrefix,
+  onChange,
+}: {
+  rules: ValueColorRule[];
+  testIdPrefix: string;
+  onChange: (rules: ValueColorRule[]) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="mt-2 border-t border-(--color-border-subtle) pt-2">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span className="text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.propertiesGridOpt.valueColors')}
+        </span>
+        <button
+          type="button"
+          data-testid={`${testIdPrefix}-add`}
+          onClick={() => onChange([...rules, { op: 'gte', value: '', color: '#ef4444' }])}
+          className="rounded border border-(--color-border-default) px-1.5 py-0.5 text-[11px] text-(--color-text-secondary) hover:border-(--color-border-strong)"
+        >
+          {t('common.add')}
+        </button>
+      </div>
+      {/* 위에서부터 먼저 맞는 규칙이 이긴다 — 순서가 곧 우선순위다. */}
+      {rules.map((rule, index) => (
+        <div key={index} className="mb-1 flex items-center gap-1">
+          <select
+            value={rule.op}
+            data-testid={`${testIdPrefix}-op-${index}`}
+            aria-label={t('dashboard.settings.propertiesGridOpt.valueColors')}
+            onChange={(e) =>
+              onChange(rules.map((r, i) => (i === index ? { ...r, op: e.target.value as ValueRuleOp } : r)))
+            }
+            className="w-20 shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-0.5 text-xs text-(--color-text-primary)"
+          >
+            {VALUE_RULE_OPS.map((op) => (
+              <option key={op} value={op}>
+                {t(`dashboard.settings.propertiesGridOpt.op.${op}`)}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            value={rule.value}
+            data-testid={`${testIdPrefix}-value-${index}`}
+            onChange={(e) => onChange(rules.map((r, i) => (i === index ? { ...r, value: e.target.value } : r)))}
+            className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-sunken) px-1.5 py-0.5 text-xs text-(--color-text-primary)"
+          />
+          <input
+            type="color"
+            value={rule.color}
+            data-testid={`${testIdPrefix}-color-${index}`}
+            aria-label={t('dashboard.settings.propertiesGridOpt.valueColors')}
+            onChange={(e) => onChange(rules.map((r, i) => (i === index ? { ...r, color: e.target.value } : r)))}
+            className="h-6 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+          />
+          <button
+            type="button"
+            data-testid={`${testIdPrefix}-remove-${index}`}
+            aria-label={t('common.delete')}
+            onClick={() => onChange(rules.filter((_, i) => i !== index))}
+            className="h-6 w-6 shrink-0 rounded border border-(--color-border-default) text-xs text-(--color-text-muted) hover:bg-(--color-bg-elevated)"
+          >
+            x
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * 항목별 세부 설정 편집기 — 글자 덮어쓰기 + 값에 따른 색.
+ *
+ * 카드 전체 설정만으로는 "온도만 크게" 나 "임계값을 넘으면 빨갛게" 를 만들 수 없다.
+ * 지정하지 않은 항목은 카드 전체 설정을 그대로 따르므로, 비어 있는 동안은 이 설정이
+ * 없는 것과 같다.
+ */
+function PropertyOverrideFields({
+  propertyKey,
+  override,
+  base,
+  fallbackLabel,
+  withUnit,
+  onChange,
+}: {
+  propertyKey: string;
+  override: PropertyOverride;
+  /** 단위 칸을 낼지. 디바이스가 보고하는 값(상태 정보)에만 낸다. */
+  withUnit?: boolean;
+  /** 이름을 정하지 않았을 때 보이는 기본 이름. */
+  fallbackLabel: string;
+  /** 카드 전체 배치 — 따로 잡지 않은 항목이 따르는 값. */
+  base: Pick<PropertiesGridStyle, 'cardGrid' | 'areas'>;
+  onChange: (next: PropertyOverride) => void;
+}) {
+  const { t } = useTranslation();
+  const rules = override.valueColors ?? [];
+  // 따로 잡은 값이 하나라도 있으면 "이 항목만" 상태다 — 켬/끔 플래그를 따로 두면
+  // 플래그와 데이터가 어긋날 수 있다.
+  const ownLayout =
+    override.cardAreas !== undefined ||
+    override.cardRows !== undefined ||
+    override.cardCols !== undefined;
+  const layout = resolveCardLayout(base, override);
+
+  const setFont = (field: 'label_font' | 'value_font' | 'time_font') => (patch: Partial<PanelTitleFont>) => {
+    const current = (override[field] as PanelTitleFont | undefined) ?? {};
+    onChange({ ...override, [field]: mergeFont(current, patch) });
+  };
+
+  const setRules = (next: ValueColorRule[]) => onChange({ ...override, valueColors: next });
+
+  return (
+    <>
+      {/*
+        타일 이름. 기본 이름은 프로토콜과 종류에서 나오는데, 같은 값을 다르게 부르는
+        현장이 있다 — 그때 이름만 바꿀 수단이 없으면 항목을 다시 만들 수도 없다.
+      */}
+      <label className="mb-1.5 flex items-center gap-1.5">
+        <span className="shrink-0 text-xs text-(--color-text-muted)">
+          {t('dashboard.settings.propertiesGridOpt.tileName')}
+        </span>
+        <input
+          type="text"
+          value={(override.label as string | undefined) ?? ''}
+          data-testid={`property-name-${propertyKey}`}
+          placeholder={fallbackLabel}
+          onChange={(e) => onChange({ ...override, label: e.target.value || undefined })}
+          className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-0.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+        />
+      </label>
+      {/*
+        단위 — 수로 오는 값에 붙인다. 기본 정보(사람이 적어 둔 값)에는 붙일 단위가 없다.
+
+        단위를 정하면 키 이름으로 짐작한 단위(온도의 °C)나 원래 단위(RSSI 의 dBm)를
+        건너뛴다 — 그러지 않으면 "26.4°C K" 처럼 단위가 둘 붙는다. 빈칸의 흐린 글자가
+        지금 붙는 단위를 알려 준다.
+      */}
+      {withUnit && (
+        <label className="mb-1.5 flex items-center gap-1.5">
+          <span className="shrink-0 text-xs text-(--color-text-muted)">
+            {t('dashboard.settings.propertiesGridOpt.unit')}
+          </span>
+          <input
+            type="text"
+            value={(override.unit as string | undefined) ?? ''}
+            data-testid={`property-unit-${propertyKey}`}
+            placeholder={defaultUnitOf(propertyKey) ?? t('dashboard.settings.propertiesGridOpt.unitHint')}
+            onChange={(e) => onChange({ ...override, unit: e.target.value || undefined })}
+            className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-0.5 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+          />
+        </label>
+      )}
+      {(['label_font', 'value_font', 'time_font'] as const).map((field) => (
+        <TextStyleFields
+          key={field}
+          label={t(
+            field === 'label_font'
+              ? 'dashboard.settings.propertiesGridOpt.labelStyle'
+              : field === 'value_font'
+                ? 'dashboard.settings.propertiesGridOpt.valueStyle'
+                : 'dashboard.settings.propertiesGridOpt.timeStyle',
+          )}
+          family={(override[field] as PanelTitleFont | undefined)?.family}
+          size={(override[field] as PanelTitleFont | undefined)?.size}
+          color={(override[field] as PanelTitleFont | undefined)?.color}
+          weight={(override[field] as PanelTitleFont | undefined)?.weight ?? 'inherit'}
+          align={(override[field] as PanelTitleFont | undefined)?.align ?? 'inherit'}
+          sizePlaceholder={t('dashboard.chart.inherit')}
+          testIdPrefix={`property-override-${propertyKey}-${field}`}
+          onChange={setFont(field)}
+        />
+      ))}
+
+      {/*
+        이 항목만 쓰는 카드 배치. 끄면 카드 전체 배치를 그대로 따른다 — 항목 수만큼
+        배치를 관리하게 만들지 않으려고 기본은 꺼짐이다.
+      */}
+      <div className="mt-2 border-t border-(--color-border-subtle) pt-2">
+        <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-(--color-text-muted)">
+          <input
+            type="checkbox"
+            data-testid={`property-own-layout-${propertyKey}`}
+            checked={ownLayout}
+            onChange={(e) =>
+              onChange(
+                e.target.checked
+                  ? // 켜는 순간 전체 배치를 그대로 복사해 둔다 — 빈 상태에서 시작하면
+                    // 방금까지 보이던 배치가 사라진 것처럼 보인다.
+                    { ...override, cardRows: layout.grid.rows, cardCols: layout.grid.cols, cardAreas: layout.areas }
+                  : { ...override, cardRows: undefined, cardCols: undefined, cardAreas: undefined },
+              )
+            }
+            className="h-3.5 w-3.5 accent-blue-600"
+          />
+          {t('dashboard.settings.propertiesGridOpt.ownLayout')}
+        </label>
+        {ownLayout && (
+          <>
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <span className="text-[11px] text-(--color-text-secondary)">
+                {t('dashboard.settings.propertiesGridOpt.rows')}
+              </span>
+              <input
+                type="number"
+                min={MIN_CARD_DIV}
+                max={MAX_CARD_DIV}
+                value={layout.grid.rows}
+                data-testid={`property-card-rows-${propertyKey}`}
+                aria-label={t('dashboard.settings.propertiesGridOpt.rows')}
+                onChange={(e) => onChange({ ...override, cardRows: Number(e.target.value) })}
+                className={cardNumberInputClass}
+              />
+              <span className="text-[11px] text-(--color-text-secondary)">
+                {t('dashboard.settings.propertiesGridOpt.cols')}
+              </span>
+              <input
+                type="number"
+                min={MIN_CARD_DIV}
+                max={MAX_CARD_DIV}
+                value={layout.grid.cols}
+                data-testid={`property-card-cols-${propertyKey}`}
+                aria-label={t('dashboard.settings.propertiesGridOpt.cols')}
+                onChange={(e) => onChange({ ...override, cardCols: Number(e.target.value) })}
+                className={cardNumberInputClass}
+              />
+            </div>
+            <CardLayoutEditor
+              testId={`property-card-${propertyKey}`}
+              grid={layout.grid}
+              areas={layout.areas}
+              fontOf={(element) => (override[CARD_ELEMENT_FONT_KEYS[element]] as PanelTitleFont | undefined) ?? {}}
+              onAreasChange={(areas) => onChange({ ...override, cardAreas: areas })}
+              onFontChange={(element, font) =>
+                onChange({ ...override, [CARD_ELEMENT_FONT_KEYS[element]]: font })
+              }
+            />
+          </>
+        )}
+      </div>
+
+      <ValueColorRules
+        testIdPrefix={`property-rule-${propertyKey}`}
+        rules={rules}
+        onChange={setRules}
+      />
+
+      {/*
+        항목별 배경색. 정하지 않으면 공통 배경을 따른다 — 좁은 쪽이 이기는 것이 글자
+        설정과 같은 규칙이다.
+      */}
+      <div className="mt-2 flex items-center gap-1.5 border-t border-(--color-border-subtle) pt-2">
+        <span className="flex-1 text-xs text-(--color-text-muted)">
+          {t('dashboard.settings.propertiesGridOpt.tileBackground')}
+        </span>
+        <input
+          type="color"
+          value={(override.bg as string | undefined) ?? '#1f2937'}
+          data-testid={`property-bg-${propertyKey}`}
+          aria-label={t('dashboard.settings.propertiesGridOpt.tileBackground')}
+          onChange={(e) => onChange({ ...override, bg: e.target.value })}
+          className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+        />
+        <button
+          type="button"
+          data-testid={`property-bg-reset-${propertyKey}`}
+          aria-label={t('dashboard.chart.fontColorReset')}
+          title={t('dashboard.chart.fontColorReset')}
+          onClick={() => onChange({ ...override, bg: undefined })}
+          className="h-7 w-7 shrink-0 rounded border border-(--color-border-default) text-xs text-(--color-text-muted) hover:bg-(--color-bg-elevated)"
+        >
+          x
+        </button>
+      </div>
+    </>
+  );
+}
+
+/** 카드 배치 숫자 입력의 공통 모양. */
+const cardNumberInputClass =
+  'w-14 shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-0.5 text-center text-xs text-(--color-text-primary) outline-none focus:border-blue-500';
+
+/** 카드 조각 → 이름표 i18n 키. */
+const CARD_ELEMENT_LABEL_KEYS: Record<CardElement, string> = {
+  label: 'dashboard.settings.propertiesGridOpt.labelStyle',
+  value: 'dashboard.settings.propertiesGridOpt.valueStyle',
+  time: 'dashboard.settings.propertiesGridOpt.timeStyle',
+};
+
+/** 속성 그리드 패널 전용 설정 (열 수 · 배치 · 표시 항목) */
+/** 카드 디자인 팝업의 조각별 라벨 — 배치 편집기의 라벨과 달리 "…글자"로 읽힌다. */
+const CARD_ELEMENT_STYLE_LABEL_KEYS: Record<CardElement, string> = {
+  label: 'dashboard.settings.propertiesGridOpt.labelStyle',
+  value: 'dashboard.settings.propertiesGridOpt.valueStyle',
+  time: 'dashboard.settings.propertiesGridOpt.timeStyle',
+};
+
+/** 기존 테스트·문서가 참조하는 테스트 아이디를 그대로 유지한다. */
+const CARD_ELEMENT_TESTID_PREFIX: Record<CardElement, string> = {
+  label: 'property-label-font',
+  value: 'property-value-font',
+  time: 'property-time-font',
+};
+
+/** 카드 조각별 글자 설정이 config 에 쓰이는 키. */
+const CARD_ELEMENT_FONT_KEYS: Record<CardElement, 'label_font' | 'value_font' | 'time_font'> = {
+  label: 'label_font',
+  value: 'value_font',
+  time: 'time_font',
+};
+
+/**
+ * 카드 배치 편집기 — 끌어서 옮기고, 모서리를 끌어 칸 수를 바꾸고, 우클릭으로 그 조각의
+ * 글자 설정을 연다.
+ *
+ * 숫자 입력만 있던 종전에는 "값을 위쪽 두 칸에" 를 만들려면 네 칸을 머릿속으로 계산해
+ * 채워야 했다. 아래 숫자 입력은 그대로 둔다 — 눈으로 맞추는 길과 정확히 찍는 길은
+ * 서로를 대신하지 못한다.
+ */
+function CardLayoutEditor({
+  grid,
+  areas,
+  fontOf,
+  onAreasChange,
+  onFontChange,
+  testId = 'card-layout-editor',
+}: {
+  grid: CardGrid;
+  areas: CardAreas;
+  /** 조각의 현재 글자 설정. 전체 설정과 항목별 설정 어느 쪽에도 붙일 수 있게 주입받는다. */
+  fontOf: (element: CardElement) => PanelTitleFont;
+  onAreasChange: (areas: CardAreas) => void;
+  onFontChange: (element: CardElement, font: PanelTitleFont | undefined) => void;
+  testId?: string;
+}) {
+  const { t } = useTranslation();
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [menuFor, setMenuFor] = useState<CardElement | null>(null);
+  // 끌기 시작 시점의 상태. 매 프레임 원본 영역에 누적 변위를 더해야 조금씩 밀리는
+  // 오차가 쌓이지 않는다.
+  const dragRef = useRef<{
+    element: CardElement;
+    mode: 'move' | 'resize';
+    x: number;
+    y: number;
+    area: CardArea;
+  } | null>(null);
+  const [dragging, setDragging] = useState<CardElement | null>(null);
+
+  const beginDrag = (element: CardElement, mode: 'move' | 'resize') => (e: React.MouseEvent) => {
+    // 우클릭은 메뉴용이라 끌기를 시작하지 않는다.
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragRef.current = { element, mode, x: e.clientX, y: e.clientY, area: areas[element] };
+    setDragging(element);
+  };
+
+  useEffect(() => {
+    if (!dragging) return;
+    const move = (e: MouseEvent): void => {
+      const start = dragRef.current;
+      const box = gridRef.current?.getBoundingClientRect();
+      if (!start || !box || box.width <= 0 || box.height <= 0) return;
+      // 칸 하나의 크기로 나눠 칸 단위 변위를 얻는다. 반올림이라 칸의 절반을 넘겨야 옮겨진다.
+      const dCol = Math.round((e.clientX - start.x) / (box.width / grid.cols));
+      const dRow = Math.round((e.clientY - start.y) / (box.height / grid.rows));
+      const next =
+        start.mode === 'move'
+          ? moveArea(start.area, grid, dRow, dCol)
+          : resizeArea(start.area, grid, dRow, dCol);
+      const current = areas[start.element];
+      if (
+        next.row === current.row &&
+        next.col === current.col &&
+        next.rowSpan === current.rowSpan &&
+        next.colSpan === current.colSpan
+      ) {
+        return;
+      }
+      onAreasChange({ ...areas, [start.element]: next });
+    };
+    const end = (): void => {
+      dragRef.current = null;
+      setDragging(null);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', end);
+    return () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', end);
+    };
+  }, [dragging, areas, grid, onAreasChange]);
+
+  // 바깥을 누르거나 Esc 를 치면 우클릭 메뉴를 닫는다.
+  useEffect(() => {
+    if (!menuFor) return;
+    const close = (e: Event): void => {
+      if (e instanceof KeyboardEvent && e.key !== 'Escape') return;
+      if (e.type === 'mousedown' && gridRef.current?.contains(e.target as Node)) return;
+      setMenuFor(null);
+    };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', close);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', close);
+    };
+  }, [menuFor]);
+
+  return (
+    <div className="mb-2">
+      <div
+        ref={gridRef}
+        data-testid={testId}
+        className="grid aspect-[3/2] w-full gap-0.5 rounded-md border border-(--color-border-default) bg-(--color-bg-sunken) p-1"
+        style={{
+          gridTemplateRows: `repeat(${grid.rows}, minmax(0, 1fr))`,
+          gridTemplateColumns: `repeat(${grid.cols}, minmax(0, 1fr))`,
+        }}
+      >
+        {/* 빈 칸 바탕 — 어디에 놓을 수 있는지 보이게 한다. */}
+        {Array.from({ length: grid.rows * grid.cols }, (_, i) => (
+          <div
+            key={`cell-${i}`}
+            aria-hidden
+            className="rounded-sm border border-dashed border-(--color-border-subtle)"
+            style={{ gridRow: Math.floor(i / grid.cols) + 1, gridColumn: (i % grid.cols) + 1 }}
+          />
+        ))}
+        {CARD_ELEMENTS.map((element) => {
+          const area = areas[element];
+          return (
+            <div
+              key={element}
+              data-testid={`${testId === 'card-layout-editor' ? 'card-block' : testId}-${element}`}
+              role="button"
+              tabIndex={0}
+              title={t('dashboard.settings.propertiesGridOpt.dragHint')}
+              onMouseDown={beginDrag(element, 'move')}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setMenuFor(element);
+              }}
+              className={cn(
+                'relative flex select-none items-center justify-center rounded-sm border text-[11px] transition-colors',
+                dragging === element
+                  ? 'cursor-grabbing border-blue-500 bg-blue-500/25'
+                  : 'cursor-grab border-blue-500/60 bg-blue-500/15 hover:bg-blue-500/25',
+              )}
+              style={{
+                gridRow: `${area.row} / span ${area.rowSpan}`,
+                gridColumn: `${area.col} / span ${area.colSpan}`,
+              }}
+            >
+              <span className="truncate px-1 text-(--color-text-primary)">
+                {t(CARD_ELEMENT_LABEL_KEYS[element])}
+              </span>
+              {/* 오른쪽 아래 모서리 — 칸 수를 바꾸는 손잡이. */}
+              <span
+                data-testid={`${testId === 'card-layout-editor' ? 'card-block' : testId}-${element}-resize`}
+                onMouseDown={beginDrag(element, 'resize')}
+                className="absolute bottom-0 right-0 h-2.5 w-2.5 cursor-se-resize rounded-br-sm bg-blue-500/70"
+              />
+              {menuFor === element && (
+                <div
+                  data-testid={`${testId === 'card-layout-editor' ? 'card-block' : testId}-${element}-design`}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onContextMenu={(e) => e.preventDefault()}
+                  className="absolute left-0 top-full z-30 mt-1 w-64 space-y-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2.5 text-left shadow-lg"
+                >
+                  <TextStyleFields
+                    label={t(CARD_ELEMENT_LABEL_KEYS[element])}
+                    family={fontOf(element).family}
+                    size={fontOf(element).size}
+                    color={fontOf(element).color}
+                    weight={fontOf(element).weight ?? 'inherit'}
+                    align={fontOf(element).align ?? 'inherit'}
+                    sizePlaceholder={t('dashboard.chart.inherit')}
+                    testIdPrefix={`${testId === 'card-layout-editor' ? 'card-block' : testId}-${element}-font`}
+                    onChange={(patch) => onFontChange(element, mergeFont(fontOf(element), patch))}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-1 text-[10px] text-(--color-text-muted)">
+        {t('dashboard.settings.propertiesGridOpt.dragHint')}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * 타일 격자 배치 편집기 — 격자 크기와 타일마다의 자리·크기.
+ *
+ * 배치 방식은 그래픽과 표 중 하나를 고른다(디바이스 현황의 카드 배치와 같은 규칙). 눈으로
+ * 맞추는 길과 정확히 찍는 길은 서로를 대신하지 못하지만, 둘을 한꺼번에 펼치면 같은 값이
+ * 두 벌 보여 어느 쪽이 정본인지 흐려진다.
+ */
+function TileGridEditor<T extends string>({
+  grid,
+  areas,
+  items,
+  labelKeys,
+  styles,
+  testIdPrefix,
+  onGridChange,
+  onAreasChange,
+  onMove,
+  onReset,
+  onStylesChange,
+  rawLabels,
+  renderDesign,
+}: {
+  grid: TileGrid;
+  areas: Record<T, TileArea>;
+  items: readonly T[];
+  labelKeys: Record<T, string>;
+  /** 타일별 디자인. 넘기면 표에 디자인 팝업이 붙는다. */
+  styles?: Record<string, unknown> | undefined;
+  testIdPrefix: string;
+  onGridChange: (grid: TileGrid) => void;
+  onAreasChange: (areas: Record<string, TileArea>) => void;
+  /** 차례 바꾸기(위=-1, 아래=+1). 넘기지 않으면 ↑↓ 를 쓸 수 없다. */
+  onMove?: (item: T, direction: -1 | 1) => void;
+  /** 격자와 자리를 미설정으로 되돌린다. 넘기지 않으면 초기화를 내지 않는다. */
+  onReset?: () => void;
+  onStylesChange?: (styles: Record<string, unknown>) => void;
+  /** `labelKeys` 가 i18n 키가 아니라 이미 번역된 글자일 때. */
+  rawLabels?: boolean;
+  /** 표의 디자인 팝업 내용을 갈아끼운다. 넘기지 않으면 타일 기본 디자인을 쓴다. */
+  renderDesign?: (item: T) => React.ReactNode;
+}) {
+  const { t } = useTranslation();
+  const [mode, setMode] = useState<'graphic' | 'table'>('graphic');
+  const label = (item: T): string => (rawLabels ? labelKeys[item] : t(labelKeys[item]));
+  const gridRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ item: T; mode: 'move' | 'resize'; x: number; y: number; area: TileArea } | null>(null);
+  const [dragging, setDragging] = useState<T | null>(null);
+
+  const beginDrag = (item: T, kind: 'move' | 'resize') => (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const area = areas[item];
+    if (!area) return;
+    dragRef.current = { item, mode: kind, x: e.clientX, y: e.clientY, area };
+    setDragging(item);
+  };
+
+  useEffect(() => {
+    if (!dragging) return;
+    const move = (e: MouseEvent): void => {
+      const start = dragRef.current;
+      const box = gridRef.current?.getBoundingClientRect();
+      if (!start || !box || box.width <= 0 || box.height <= 0) return;
+      // 칸 하나의 크기로 나눠 칸 단위 변위를 얻는다. 반올림이라 칸의 절반을 넘겨야 움직인다.
+      const dx = Math.round((e.clientX - start.x) / (box.width / grid.cols));
+      const dy = Math.round((e.clientY - start.y) / (box.height / grid.rows));
+      const next =
+        start.mode === 'move'
+          ? moveTile(start.area, grid, dx, dy)
+          : resizeTile(start.area, grid, dx, dy);
+      const cur = areas[start.item];
+      if (cur && next.x === cur.x && next.y === cur.y && next.w === cur.w && next.h === cur.h) return;
+      onAreasChange({ ...areas, [start.item]: next });
+    };
+    const end = (): void => {
+      dragRef.current = null;
+      setDragging(null);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', end);
+    return () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', end);
+    };
+  }, [dragging, areas, grid, onAreasChange]);
+
+  const patch = (item: T, field: keyof TileArea, value: number) => {
+    const area = areas[item];
+    if (!area) return;
+    // 표에서도 격자 밖으로 나가지 않게 같은 규칙으로 가둔다.
+    const next =
+      field === 'x' || field === 'y'
+        ? moveTile(area, grid, field === 'x' ? value - area.x : 0, field === 'y' ? value - area.y : 0)
+        : resizeTile(area, grid, field === 'w' ? value - area.w : 0, field === 'h' ? value - area.h : 0);
+    onAreasChange({ ...areas, [item]: next });
+  };
+
+  return (
+    <div className="space-y-2">
+      {/* 격자 크기 */}
+      <div className="flex items-center gap-2">
+        <label className="text-xs text-(--color-text-secondary)">
+          {t('dashboard.settings.propertiesGridOpt.rows')}
+        </label>
+        <input
+          type="number"
+          min={MIN_TILE_GRID}
+          max={MAX_TILE_GRID}
+          value={grid.rows}
+          data-testid={`${testIdPrefix}-rows`}
+          aria-label={t('dashboard.settings.propertiesGridOpt.rows')}
+          onChange={(e) => onGridChange({ ...grid, rows: Number(e.target.value) })}
+          className={cardNumberInputClass}
+        />
+        <label className="text-xs text-(--color-text-secondary)">
+          {t('dashboard.settings.propertiesGridOpt.cols')}
+        </label>
+        <input
+          type="number"
+          min={MIN_TILE_GRID}
+          max={MAX_TILE_GRID}
+          value={grid.cols}
+          data-testid={`${testIdPrefix}-cols`}
+          aria-label={t('dashboard.settings.propertiesGridOpt.cols')}
+          onChange={(e) => onGridChange({ ...grid, cols: Number(e.target.value) })}
+          className={cardNumberInputClass}
+        />
+        <div className="ml-auto flex items-center gap-0.5 rounded border border-(--color-border-default) p-0.5">
+          {(['graphic', 'table'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              data-testid={`${testIdPrefix}-mode-${m}`}
+              aria-pressed={mode === m}
+              onClick={() => setMode(m)}
+              className={cn(
+                'rounded px-1.5 py-0.5 text-[11px] transition-colors',
+                mode === m
+                  ? 'bg-blue-600 text-white'
+                  : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)',
+              )}
+            >
+              {t(
+                m === 'graphic'
+                  ? 'dashboard.settings.propertiesGridOpt.layoutGraphic'
+                  : 'dashboard.settings.propertiesGridOpt.layoutTable',
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {mode === 'graphic' ? (
+        <div
+          ref={gridRef}
+          data-testid={`${testIdPrefix}-canvas`}
+          className="grid aspect-[2/1] w-full gap-0.5 rounded-md border border-(--color-border-default) bg-(--color-bg-sunken) p-1"
+          style={{
+            gridTemplateRows: `repeat(${grid.rows}, minmax(0, 1fr))`,
+            gridTemplateColumns: `repeat(${grid.cols}, minmax(0, 1fr))`,
+          }}
+        >
+          {/* 빈 칸 바탕 — 어디에 놓을 수 있는지 보이게 한다. */}
+          {Array.from({ length: grid.rows * grid.cols }, (_, i) => (
+            <div
+              key={`cell-${i}`}
+              aria-hidden
+              className="rounded-sm border border-dashed border-(--color-border-subtle)"
+              style={{ gridRow: Math.floor(i / grid.cols) + 1, gridColumn: (i % grid.cols) + 1 }}
+            />
+          ))}
+          {items.map((item) => {
+            const area = areas[item];
+            if (!area) return null;
+            return (
+              <div
+                key={item}
+                data-testid={`${testIdPrefix}-tile-${item}`}
+                role="button"
+                tabIndex={0}
+                title={t('dashboard.settings.propertiesGridOpt.dragHint')}
+                onMouseDown={beginDrag(item, 'move')}
+                className={cn(
+                  'relative flex select-none items-center justify-center overflow-hidden rounded-sm border text-[10px] transition-colors',
+                  dragging === item
+                    ? 'cursor-grabbing border-blue-500 bg-blue-500/25'
+                    : 'cursor-grab border-blue-500/60 bg-blue-500/15 hover:bg-blue-500/25',
+                )}
+                style={{
+                  gridColumn: `${area.x} / span ${area.w}`,
+                  gridRow: `${area.y} / span ${area.h}`,
+                }}
+              >
+                <span className="truncate px-1 text-(--color-text-primary)">{label(item)}</span>
+                <span
+                  data-testid={`${testIdPrefix}-tile-${item}-resize`}
+                  onMouseDown={beginDrag(item, 'resize')}
+                  className="absolute bottom-0 right-0 h-2.5 w-2.5 cursor-se-resize rounded-br-sm bg-blue-500/70"
+                />
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1 text-[10px] text-(--color-text-muted)">
+            <span className="w-12 shrink-0" />
+            <span className="w-16 shrink-0" />
+            {(['x', 'y', 'w', 'h'] as const).map((f) => (
+              <span key={f} className="w-10 text-center uppercase">
+                {f}
+              </span>
+            ))}
+          </div>
+          {items.map((item, index) => {
+            const area = areas[item];
+            if (!area) return null;
+            const design = readTileDesign(styles, item);
+            const font = (field: 'label_font' | 'value_font') =>
+              (design[field] as PanelTitleFont | undefined) ?? {};
+            const patchDesign = (next: TileDesign) =>
+              onStylesChange?.({ ...(styles ?? {}), [item]: next });
+            return (
+              <div key={item} className="flex items-center gap-1">
+                {/*
+                  차례 바꾸기. 순번을 숫자로 찍던 종전에는 "3번을 1번으로" 를 머릿속으로
+                  계산해야 했고, 자리를 눈으로 보며 고치는 이 표와도 어긋났다.
+                */}
+                <div className="flex w-12 shrink-0 gap-0.5">
+                  <button
+                    type="button"
+                    data-testid={`${testIdPrefix}-up-${item}`}
+                    aria-label={t('dashboard.settings.propertiesGridOpt.moveUp')}
+                    title={t('dashboard.settings.propertiesGridOpt.moveUp')}
+                    disabled={index === 0 || !onMove}
+                    onClick={() => onMove?.(item, -1)}
+                    className="h-5 w-5 rounded border border-(--color-border-default) text-[10px] text-(--color-text-muted) disabled:opacity-30 hover:bg-(--color-bg-elevated)"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`${testIdPrefix}-down-${item}`}
+                    aria-label={t('dashboard.settings.propertiesGridOpt.moveDown')}
+                    title={t('dashboard.settings.propertiesGridOpt.moveDown')}
+                    disabled={index === items.length - 1 || !onMove}
+                    onClick={() => onMove?.(item, 1)}
+                    className="h-5 w-5 rounded border border-(--color-border-default) text-[10px] text-(--color-text-muted) disabled:opacity-30 hover:bg-(--color-bg-elevated)"
+                  >
+                    ↓
+                  </button>
+                </div>
+                <span className="w-16 shrink-0 truncate text-xs text-(--color-text-secondary)">
+                  {label(item)}
+                </span>
+                {(['x', 'y', 'w', 'h'] as const).map((f) => (
+                  <input
+                    key={f}
+                    type="number"
+                    min={1}
+                    max={f === 'x' || f === 'w' ? grid.cols : grid.rows}
+                    value={area[f]}
+                    data-testid={`${testIdPrefix}-area-${item}-${f}`}
+                    aria-label={`${label(item)} ${f}`}
+                    onChange={(e) => patch(item, f, Number(e.target.value))}
+                    className="w-10 shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-0.5 text-center text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                  />
+                ))}
+                {(onStylesChange || renderDesign) && (
+                  <DesignPopover testId={`${testIdPrefix}-design-${item}`}>
+                    {renderDesign?.(item)}
+                    {/* 타이틀과 값을 따로 정한다 — 값만 크게 두는 것이 이 타일의 쓰임새다. */}
+                    {!renderDesign && (
+                    <>
+                    <TextStyleFields
+                      label={t('dashboard.settings.agentStatusOpt.tileLabel')}
+                      family={font('label_font').family}
+                      size={font('label_font').size}
+                      color={font('label_font').color}
+                      weight={font('label_font').weight ?? 'inherit'}
+                      align={font('label_font').align ?? 'inherit'}
+                      sizePlaceholder={t('dashboard.chart.inherit')}
+                      testIdPrefix={`${testIdPrefix}-label-font-${item}`}
+                      onChange={(p) =>
+                        patchDesign({ ...design, label_font: mergeFont(font('label_font'), p) })
+                      }
+                    />
+                    <TextStyleFields
+                      label={t('dashboard.settings.agentStatusOpt.tileValue')}
+                      family={font('value_font').family}
+                      size={font('value_font').size}
+                      color={font('value_font').color}
+                      weight={font('value_font').weight ?? 'inherit'}
+                      align={font('value_font').align ?? 'inherit'}
+                      sizePlaceholder={t('dashboard.chart.inherit')}
+                      testIdPrefix={`${testIdPrefix}-value-font-${item}`}
+                      onChange={(p) =>
+                        patchDesign({ ...design, value_font: mergeFont(font('value_font'), p) })
+                      }
+                    />
+                    <ValueColorRules
+                      testIdPrefix={`${testIdPrefix}-rule-${item}`}
+                      rules={design.valueColors ?? []}
+                      onChange={(rules) => patchDesign({ ...design, valueColors: rules })}
+                    />
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <span className="flex-1 text-xs text-(--color-text-muted)">
+                        {t('dashboard.settings.listPanel.tileBackground')}
+                      </span>
+                      <input
+                        type="color"
+                        value={design.bg ?? '#3b82f6'}
+                        data-testid={`${testIdPrefix}-bg-${item}`}
+                        aria-label={t('dashboard.settings.listPanel.tileBackground')}
+                        onChange={(e) => patchDesign({ ...design, bg: e.target.value })}
+                        className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+                      />
+                      <button
+                        type="button"
+                        data-testid={`${testIdPrefix}-bg-reset-${item}`}
+                        aria-label={t('dashboard.chart.fontColorReset')}
+                        title={t('dashboard.chart.fontColorReset')}
+                        onClick={() => patchDesign({ ...design, bg: undefined })}
+                        className="h-7 w-7 shrink-0 rounded border border-(--color-border-default) text-xs text-(--color-text-muted) hover:bg-(--color-bg-elevated)"
+                      >
+                        x
+                      </button>
+                    </div>
+                    </>
+                    )}
+                  </DesignPopover>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <p className="text-[10px] text-(--color-text-muted)">
+        {t('dashboard.settings.propertiesGridOpt.dragHint')}
+      </p>
+      {/*
+        초기화 — 격자와 자리를 한꺼번에 미설정으로 되돌린다. 타일을 여기저기 옮겨 놓은
+        뒤에는 처음 배치를 손으로 되짚을 수 없다.
+      */}
+      {onReset && (
+        <button
+          type="button"
+          data-testid={`${testIdPrefix}-reset`}
+          onClick={onReset}
+          className="w-full rounded border border-(--color-border-default) py-1 text-xs text-(--color-text-secondary) transition-colors hover:border-(--color-border-strong)"
+        >
+          {t('dashboard.settings.propertiesGridOpt.reset')}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 타일 선택 목록.
+ *
+ * `styles` 를 넘기면 한 줄에 순번과 디자인 팝업까지 낸다(요약 배지처럼 레이아웃 팝업이
+ * 없는 자리). `onDesignChange` 를 넘기면 줄마다 타일 디자인 팝업을 낸다 — 켜고 끄는
+ * 것과 같은 줄에 있어야 어느 타일의 설정인지 헷갈리지 않는다(디바이스 상태와 같은 규칙).
+ */
+function TileListEditor<T extends string>({
+  all,
+  labelKeys,
+  items,
+  styles,
+  testIdPrefix,
+  onItemsChange,
+  onStylesChange,
+  onDesignChange,
+}: {
+  all: readonly T[];
+  labelKeys: Record<T, string>;
+  /** 지금 고른 타일과 순서. */
+  items: T[];
+  /** 타일별 글자·배경 설정. */
+  styles?: Record<string, unknown> | undefined;
+  testIdPrefix: string;
+  onItemsChange: (items: T[]) => void;
+  /** 넘기면 한 줄에 순번 + 옛 형태 디자인 팝업을 낸다(요약 배지 전용). */
+  onStylesChange?: (styles: Record<string, unknown>) => void;
+  /** 넘기면 한 줄에 타일 디자인(타이틀·값·값 색·배경) 팝업을 낸다. */
+  onDesignChange?: (item: T, design: TileDesign) => void;
+}) {
+  const { t } = useTranslation();
+  const withOrder = onStylesChange !== undefined;
+
+  const toggle = (item: T) =>
+    onItemsChange(items.includes(item) ? items.filter((i) => i !== item) : [...items, item]);
+
+  const patchFont = (item: T, next: Record<string, unknown>) =>
+    onStylesChange?.({ ...(styles ?? {}), [item]: next });
+
+  return (
+    <div className="mt-2 space-y-1">
+      {/* 한꺼번에 켜고 끄는 버튼 — 항목이 많으면 하나씩 누르는 것이 현실적이지 않다. */}
+      <div className="mb-1.5 flex items-center gap-1">
+        <button
+          type="button"
+          data-testid={`${testIdPrefix}-select-all`}
+          onClick={() => onItemsChange([...all])}
+          className="rounded border border-(--color-border-default) px-1.5 py-0.5 text-[11px] text-(--color-text-secondary) transition-colors hover:border-(--color-border-strong)"
+        >
+          {t('dashboard.settings.selectAll')}
+        </button>
+        <button
+          type="button"
+          data-testid={`${testIdPrefix}-clear-all`}
+          onClick={() => onItemsChange([])}
+          className="rounded border border-(--color-border-default) px-1.5 py-0.5 text-[11px] text-(--color-text-secondary) transition-colors hover:border-(--color-border-strong)"
+        >
+          {t('dashboard.settings.propertiesGridOpt.clearAll')}
+        </button>
+      </div>
+      {all.map((item) => {
+        const order = items.indexOf(item);
+        const font = readTileFont(styles, item) as PanelTitleFont & { bg?: string };
+        const design = readTileDesign(styles, item);
+        return (
+          <div key={item} className="flex items-center gap-2">
+            <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                data-testid={`${testIdPrefix}-${item}`}
+                checked={order >= 0}
+                onChange={() => toggle(item)}
+                className="h-3.5 w-3.5 shrink-0 accent-blue-600"
+              />
+              <span className="truncate text-xs text-(--color-text-primary)">
+                {t(labelKeys[item])}
+              </span>
+            </label>
+            {/* 자리를 잡을 수 없는(꺼진) 타일에는 설정을 낼 이유가 없다. */}
+            {onDesignChange && (
+              <div className={order >= 0 ? undefined : 'invisible'}>
+                <DesignPopover testId={`${testIdPrefix}-design-${item}`}>
+                  <TileDesignFields
+                    testIdPrefix={`${testIdPrefix}-${item}`}
+                    design={design}
+                    onChange={(next) => onDesignChange(item, next)}
+                  />
+                </DesignPopover>
+              </div>
+            )}
+            {withOrder && (
+              <>
+                {/* 자리는 늘 잡는다 — 체크할 때마다 행 높이가 바뀌면 목록이 흔들린다. */}
+                <div className={order >= 0 ? undefined : 'invisible'}>
+                  <input
+                    type="number"
+                    min={1}
+                    max={Math.max(1, items.length)}
+                    value={order >= 0 ? order + 1 : 1}
+                    disabled={order < 0}
+                    data-testid={`${testIdPrefix}-order-${item}`}
+                    aria-label={t('dashboard.settings.propertiesGridOpt.order')}
+                    onChange={(e) => onItemsChange(moveToPosition(items, item, Number(e.target.value)))}
+                    className="w-14 shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-0.5 text-center text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
+                  />
+                </div>
+                <DesignPopover testId={`${testIdPrefix}-design-${item}`}>
+                  <TextStyleFields
+                    label={t(labelKeys[item])}
+                    family={font.family}
+                    size={font.size}
+                    color={font.color}
+                    weight={font.weight ?? 'inherit'}
+                    align={font.align ?? 'inherit'}
+                    sizePlaceholder={t('dashboard.chart.inherit')}
+                    testIdPrefix={`${testIdPrefix}-font-${item}`}
+                    onChange={(patch) => patchFont(item, { ...font, ...mergeFont(font, patch) })}
+                  />
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <span className="flex-1 text-xs text-(--color-text-muted)">
+                      {t('dashboard.settings.listPanel.tileBackground')}
+                    </span>
+                    <input
+                      type="color"
+                      value={font.bg ?? '#3b82f6'}
+                      data-testid={`${testIdPrefix}-bg-${item}`}
+                      aria-label={t('dashboard.settings.listPanel.tileBackground')}
+                      onChange={(e) => patchFont(item, { ...font, bg: e.target.value })}
+                      className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+                    />
+                    <button
+                      type="button"
+                      data-testid={`${testIdPrefix}-bg-reset-${item}`}
+                      aria-label={t('dashboard.chart.fontColorReset')}
+                      title={t('dashboard.chart.fontColorReset')}
+                      onClick={() => patchFont(item, { ...font, bg: undefined })}
+                      className="h-7 w-7 shrink-0 rounded border border-(--color-border-default) text-xs text-(--color-text-muted) hover:bg-(--color-bg-elevated)"
+                    >
+                      x
+                    </button>
+                  </div>
+                </DesignPopover>
+              </>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * 타일 디자인 입력 묶음 — 타이틀 글자 · 값 글자 · 값에 따른 색 · 배경색.
+ *
+ * 공통 설정과 타일별 설정이 같은 입력을 쓴다. 두 벌을 두면 "공통에서 되는 것이 타일별에서
+ * 안 되는" 자리가 조용히 생긴다.
+ */
+function TileDesignFields({
+  design,
+  testIdPrefix,
+  onChange,
+  onReset,
+}: {
+  design: TileDesign;
+  testIdPrefix: string;
+  onChange: (design: TileDesign) => void;
+  onReset?: () => void;
+}) {
+  const { t } = useTranslation();
+  const font = (field: 'label_font' | 'value_font') =>
+    (design[field] as PanelTitleFont | undefined) ?? {};
+
+  return (
+    <>
+      {(['label_font', 'value_font'] as const).map((field) => (
+        <TextStyleFields
+          key={field}
+          label={t(
+            field === 'label_font'
+              ? 'dashboard.settings.agentStatusOpt.tileLabel'
+              : 'dashboard.settings.agentStatusOpt.tileValue',
+          )}
+          family={font(field).family}
+          size={font(field).size}
+          color={font(field).color}
+          weight={font(field).weight ?? 'inherit'}
+          align={font(field).align ?? 'inherit'}
+          sizePlaceholder={t('dashboard.chart.inherit')}
+          testIdPrefix={`${testIdPrefix}-${field}`}
+          onChange={(patch) => onChange({ ...design, [field]: mergeFont(font(field), patch) })}
+        />
+      ))}
+      <ValueColorRules
+        testIdPrefix={`${testIdPrefix}-rule`}
+        rules={design.valueColors ?? []}
+        onChange={(rules) => onChange({ ...design, valueColors: rules })}
+      />
+      <div className="mt-1.5 flex items-center gap-1.5">
+        <span className="flex-1 text-xs text-(--color-text-muted)">
+          {t('dashboard.settings.propertiesGridOpt.tileBackground')}
+        </span>
+        <input
+          type="color"
+          value={design.bg ?? '#1f2937'}
+          data-testid={`${testIdPrefix}-bg`}
+          aria-label={t('dashboard.settings.propertiesGridOpt.tileBackground')}
+          onChange={(e) => onChange({ ...design, bg: e.target.value })}
+          className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+        />
+        <button
+          type="button"
+          data-testid={`${testIdPrefix}-bg-reset`}
+          aria-label={t('dashboard.chart.fontColorReset')}
+          title={t('dashboard.chart.fontColorReset')}
+          onClick={() => onChange({ ...design, bg: undefined })}
+          className="h-7 w-7 shrink-0 rounded border border-(--color-border-default) text-xs text-(--color-text-muted) hover:bg-(--color-bg-elevated)"
+        >
+          x
+        </button>
+      </div>
+      {onReset && (
+        <div className="mt-2 border-t border-(--color-border-subtle) pt-2">
+          <button
+            type="button"
+            data-testid={`${testIdPrefix}-reset`}
+            onClick={onReset}
+            className="w-full rounded border border-(--color-border-default) py-1 text-xs text-(--color-text-secondary) transition-colors hover:border-(--color-border-strong)"
+          >
+            {t('dashboard.settings.propertiesGridOpt.reset')}
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** 요약 타일 이름 — 패널이 그리는 라벨과 같은 키를 쓴다. */
+const SUMMARY_TILE_LABEL_KEYS: Record<SummaryItem, string> = {
+  total: 'dashboard.panel.total',
+  active: 'dashboard.panel.active',
+  inactive: 'dashboard.panel.inactive',
+};
+
+/**
+ * 카드 디자인 팝업 본문 — 분할 · 배치 · 조각별 글자.
+ *
+ * 배치는 그래픽 편집기와 표 중 하나를 고른다. 눈으로 맞추는 길과 정확히 찍는 길은 서로를
+ * 대신하지 못하지만, 둘을 한꺼번에 펼쳐 두면 같은 값을 두 벌 보여 주게 되어 어느 쪽이
+ * 정본인지 흐려진다. 고른 방식은 팝업이 열려 있는 동안만 기억한다 — 이것은 패널 데이터가
+ * 아니라 보는 방식이라 저장해서 다른 사람 화면까지 바꿀 이유가 없다.
+ */
+function CardDesignPopoverBody({
+  design,
+  config,
+  onConfigChange,
+}: {
+  design: PropertiesGridStyle;
+  config: Record<string, unknown> | undefined;
+  onConfigChange: (config: Record<string, unknown>) => void;
+}) {
+  const { t } = useTranslation();
+  const [mode, setMode] = useState<'graphic' | 'table'>('graphic');
+
+  const fontOf = (element: CardElement): PanelTitleFont =>
+    (config?.[CARD_ELEMENT_FONT_KEYS[element]] as PanelTitleFont | undefined) ?? {};
+
+  return (
+    <div className="space-y-2.5">
+      {/* 카드 분할 — 카드 한 장을 나누는 수. 대시보드 격자(열 수)와 다른 축이다. */}
+      <div>
+        <span className="mb-1 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.propertiesGridOpt.cardDivision')}
+        </span>
+        <div className="flex items-center gap-2">
+          <label htmlFor="card-rows" className="text-xs text-(--color-text-secondary)">
+            {t('dashboard.settings.propertiesGridOpt.rows')}
+          </label>
+          <input
+            id="card-rows"
+            type="number"
+            min={MIN_CARD_DIV}
+            max={MAX_CARD_DIV}
+            value={design.cardGrid.rows}
+            data-testid="card-rows"
+            onChange={(e) => onConfigChange({ cardRows: Number(e.target.value) })}
+            className={cardNumberInputClass}
+          />
+          <label htmlFor="card-cols" className="text-xs text-(--color-text-secondary)">
+            {t('dashboard.settings.propertiesGridOpt.cols')}
+          </label>
+          <input
+            id="card-cols"
+            type="number"
+            min={MIN_CARD_DIV}
+            max={MAX_CARD_DIV}
+            value={design.cardGrid.cols}
+            data-testid="card-cols"
+            onChange={(e) => onConfigChange({ cardCols: Number(e.target.value) })}
+            className={cardNumberInputClass}
+          />
+        </div>
+      </div>
+
+      {/*
+        배치 — 조각마다 시작 행·열과 쓸 칸 수를 정한다. 영역이 겹치면 먼저 오는 조각이
+        갖고 뒤 조각은 빈 칸으로 밀린다.
+      */}
+      <div className="border-t border-(--color-border-subtle) pt-2">
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <span className="text-xs font-medium text-(--color-text-muted)">
+            {t('dashboard.settings.propertiesGridOpt.layout')}
+          </span>
+          <div className="flex items-center gap-0.5 rounded border border-(--color-border-default) p-0.5">
+            {(['graphic', 'table'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                data-testid={`card-layout-mode-${m}`}
+                aria-pressed={mode === m}
+                onClick={() => setMode(m)}
+                className={cn(
+                  'rounded px-1.5 py-0.5 text-[11px] transition-colors',
+                  mode === m
+                    ? 'bg-blue-600 text-white'
+                    : 'text-(--color-text-secondary) hover:bg-(--color-bg-elevated)',
+                )}
+              >
+                {t(
+                  m === 'graphic'
+                    ? 'dashboard.settings.propertiesGridOpt.layoutGraphic'
+                    : 'dashboard.settings.propertiesGridOpt.layoutTable',
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+        {mode === 'graphic' ? (
+          <CardLayoutEditor
+            grid={design.cardGrid}
+            areas={design.areas}
+            fontOf={fontOf}
+            onAreasChange={(areas) => onConfigChange({ cardAreas: areas })}
+            onFontChange={(element, font) =>
+              onConfigChange({ [CARD_ELEMENT_FONT_KEYS[element]]: font })
+            }
+          />
+        ) : (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5 text-[10px] text-(--color-text-muted)">
+              <span className="w-16 shrink-0" />
+              <span className="w-14 text-center">{t('dashboard.settings.propertiesGridOpt.startRow')}</span>
+              <span className="w-14 text-center">{t('dashboard.settings.propertiesGridOpt.startCol')}</span>
+              <span className="w-14 text-center">{t('dashboard.settings.propertiesGridOpt.rowSpan')}</span>
+              <span className="w-14 text-center">{t('dashboard.settings.propertiesGridOpt.colSpan')}</span>
+            </div>
+            {CARD_ELEMENTS.map((element) => {
+              const area = design.areas[element];
+              const patch = (field: 'row' | 'col' | 'rowSpan' | 'colSpan', value: number) =>
+                onConfigChange({
+                  cardAreas: { ...design.areas, [element]: { ...area, [field]: value } },
+                });
+              return (
+                <div key={element} className="flex items-center gap-1.5">
+                  <span className="w-16 shrink-0 truncate text-xs text-(--color-text-secondary)">
+                    {t(CARD_ELEMENT_LABEL_KEYS[element])}
+                  </span>
+                  {(
+                    [
+                      ['row', area.row, design.cardGrid.rows],
+                      ['col', area.col, design.cardGrid.cols],
+                      ['rowSpan', area.rowSpan, design.cardGrid.rows],
+                      ['colSpan', area.colSpan, design.cardGrid.cols],
+                    ] as const
+                  ).map(([field, value, max]) => (
+                    <input
+                      key={field}
+                      type="number"
+                      min={1}
+                      max={max}
+                      value={value}
+                      data-testid={`card-area-${element}-${field}`}
+                      aria-label={`${t(CARD_ELEMENT_LABEL_KEYS[element])} ${field}`}
+                      onChange={(e) => patch(field, Number(e.target.value))}
+                      className={cardNumberInputClass}
+                    />
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 조각별 글자 — 타일 안 세 조각에 함께 걸린다(항목별 덮어쓰기는 표시 항목 쪽). */}
+      <div className="border-t border-(--color-border-subtle) pt-2">
+        <span className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.settings.propertiesGridOpt.cardDesign')}
+        </span>
+        {CARD_ELEMENTS.map((element) => (
+          <TextStyleFields
+            key={element}
+            label={t(CARD_ELEMENT_STYLE_LABEL_KEYS[element])}
+            family={fontOf(element).family}
+            size={fontOf(element).size}
+            color={fontOf(element).color}
+            weight={fontOf(element).weight ?? 'inherit'}
+            align={fontOf(element).align ?? 'inherit'}
+            sizePlaceholder={t('dashboard.chart.inherit')}
+            testIdPrefix={CARD_ELEMENT_TESTID_PREFIX[element]}
+            onChange={(patch) =>
+              onConfigChange({
+                [CARD_ELEMENT_FONT_KEYS[element]]: mergeFont(fontOf(element), patch),
+              })
+            }
+          />
+        ))}
+        {/*
+          타일 배경색. 정하지 않으면 패널 기본 배경이 그대로 산다 — 테마를 바꿔도 함께
+          따라가는 값이라, 굳이 고정할 이유가 없으면 두지 않는 편이 낫다.
+        */}
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <span className="flex-1 text-xs text-(--color-text-muted)">
+            {t('dashboard.settings.propertiesGridOpt.tileBackground')}
+          </span>
+          <input
+            type="color"
+            value={(config?.tileBg as string | undefined) ?? '#1f2937'}
+            data-testid="properties-grid-tile-bg"
+            aria-label={t('dashboard.settings.propertiesGridOpt.tileBackground')}
+            onChange={(e) => onConfigChange({ tileBg: e.target.value })}
+            className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+          />
+          <button
+            type="button"
+            data-testid="properties-grid-tile-bg-reset"
+            aria-label={t('dashboard.chart.fontColorReset')}
+            title={t('dashboard.chart.fontColorReset')}
+            onClick={() => onConfigChange({ tileBg: undefined })}
+            className="h-7 w-7 shrink-0 rounded border border-(--color-border-default) text-xs text-(--color-text-muted) hover:bg-(--color-bg-elevated)"
+          >
+            x
+          </button>
+        </div>
+      </div>
+
+      {/*
+        초기화 — 분할·배치·글자·배경을 한꺼번에 미설정으로 되돌린다. 하나씩 되돌리려면
+        어느 값이 기본이었는지 기억해야 하는데, 그것을 화면이 알려 주지 않는다.
+      */}
+      <div className="border-t border-(--color-border-subtle) pt-2">
+        <button
+          type="button"
+          data-testid="properties-grid-card-reset"
+          onClick={() =>
+            onConfigChange({
+              cardRows: undefined,
+              cardCols: undefined,
+              cardAreas: undefined,
+              label_font: undefined,
+              value_font: undefined,
+              time_font: undefined,
+              tileBg: undefined,
+            })
+          }
+          className="w-full rounded border border-(--color-border-default) py-1 text-xs text-(--color-text-secondary) transition-colors hover:border-(--color-border-strong)"
+        >
+          {t('dashboard.settings.propertiesGridOpt.reset')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PropertiesGridSection({
   panel,
   onConfigChange,
@@ -3271,88 +5109,266 @@ function PropertiesGridSection({
   onConfigChange: (config: Record<string, unknown>) => void;
 }) {
   const { t } = useTranslation();
-  const gridCols = (panel.config?.gridCols as number | undefined) ?? 3;
+  const design = readPropertiesGridStyle(panel.config);
   const visibleProperties = (panel.config?.visibleProperties as string[] | undefined) ?? [];
   const deviceId = panel.config?.deviceId as string | undefined;
   const { data: deviceData } = useDeviceRealtime(deviceId ?? '');
-  const allKeys = deviceData?.state?.properties ? Object.keys(deviceData.state.properties) : [];
   const protocol = deviceData?.protocol ?? '';
   const type = deviceData?.type ?? '';
 
-  const toggleProperty = (key: string) => {
-    if (visibleProperties.includes(key)) {
-      onConfigChange({ visibleProperties: visibleProperties.filter((k) => k !== key) });
-    } else {
-      onConfigChange({ visibleProperties: [...visibleProperties, key] });
-    }
-  };
+  // **디바이스 종류가 표현할 수 있는** 속성을 나열한다. 종전에는 지금까지 보고된 키만
+  // 골라, 아직 값이 오지 않은 속성은 켜 둘 방법이 없었고 값이 처음 도착하는 순간
+  // 갑자기 나타났다.
+  // 패널이 카드를 만드는 그 경로를 그대로 쓴다 — 여기서 고를 수 있는 항목과 화면에
+  // 뜨는 카드가 갈라질 수 없다. 종전에는 프로토콜 라벨표로 목록을 채워, 이 디바이스가
+  // 보고하지 않는 항목이나 전용 섹션이 그리는 키까지 고를 수 있었다.
+  const reportedKeys = listDisplayableProperties(
+    deviceData
+      ? {
+          properties: deviceData.state?.properties,
+          id: deviceData.id,
+          metadata: deviceData.metadata,
+        }
+      : undefined,
+  );
 
-  const isAllSelected = visibleProperties.length === 0;
+  // 고른 항목 중 디바이스가 아직 보고하지 않은 것도 목록에 낸다. 그러지 않으면 첫 통신
+  // 전에는 상태 정보 그룹이 통째로 사라져, 화면에는 카드가 보이는데 그것을 끌 자리가
+  // 없다. 파생 항목은 모두 열거되므로 목록에 없다면 존재하지 않는 키다(제외).
+  const allKeys = [
+    ...reportedKeys,
+    ...visibleProperties.filter((k) => !reportedKeys.includes(k) && !isDerivedPropertyKey(k)),
+  ];
+
+  // 표시 목록이 비어 있으면 "디바이스가 보고하는 속성 전부" 라는 뜻이다(파생 카드 제외).
+  // 그룹별로 켜고 끄려면 그 뜻을 실제 목록으로 펴 두어야 한다 — 비어 있는 채로 한 항목만
+  // 끄면 나머지가 함께 사라진다.
+  const shownKeys =
+    visibleProperties.length > 0 ? visibleProperties : allKeys.filter((k) => !isDerivedPropertyKey(k));
 
   return (
     <>
-      <div>
-        <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-          {t('dashboard.settings.columnCount')}
+      {/*
+        배지 — 무엇을 낼지 고르고 항목마다 모양을 정한다. 타이틀 옆에 글자로 붙어 있던
+        프로토콜이 여기로 왔다.
+      */}
+      <div className="mt-3">
+        <label className="flex items-center gap-2 text-xs text-(--color-text-secondary)">
+          <input
+            type="checkbox"
+            data-testid="properties-grid-show-badges"
+            checked={panel.config?.showBadges !== false}
+            onChange={(e) =>
+              // 기본은 표시다 — 끌 때만 config 에 남긴다.
+              onConfigChange({ showBadges: e.target.checked ? undefined : false })
+            }
+            className="h-3.5 w-3.5 accent-blue-600"
+          />
+          {t('dashboard.settings.propertiesGridOpt.showBadges')}
         </label>
-        <div className="flex gap-1">
-          {[1, 2, 3, 4, 5, 6].map((n) => (
-            <button
-              key={n}
-              type="button"
-              onClick={() => onConfigChange({ gridCols: n })}
-              className={`flex-1 rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-                gridCols === n
-                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
-                  : 'bg-(--color-bg-elevated) text-(--color-text-secondary) hover:bg-(--color-bg-elevated)/80'
-              }`}
-            >
-              {n}
-            </button>
-          ))}
-        </div>
+        {panel.config?.showBadges !== false && (
+          <TileListEditor<DeviceBadge>
+            all={DEVICE_BADGES}
+            labelKeys={DEVICE_BADGE_LABEL_KEYS}
+            items={readTileItems(panel.config?.badgeItems, DEVICE_BADGES, DEVICE_BADGE_DEFAULT)}
+            styles={panel.config?.badgeStyles as Record<string, unknown> | undefined}
+            testIdPrefix="device-badge"
+            onItemsChange={(items) => onConfigChange({ badgeItems: items })}
+            onDesignChange={(item, next) =>
+              onConfigChange({
+                badgeStyles: {
+                  ...((panel.config?.badgeStyles as Record<string, unknown>) ?? {}),
+                  [item]: next,
+                },
+              })
+            }
+          />
+        )}
       </div>
-      {allKeys.length > 0 && (
-        <div>
-          <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-            {t('dashboard.settings.visibleColumns')}
-          </label>
-          <div className="space-y-1">
-            <label
-              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-(--color-bg-elevated)"
-            >
-              <input
-                type="checkbox"
-                checked={isAllSelected}
-                onChange={() => onConfigChange({ visibleProperties: [] })}
-                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <span className="text-sm font-medium text-(--color-text-primary)">{t('dashboard.settings.selectAll')}</span>
-            </label>
-            {allKeys.map((key) => (
-              <label
-                key={key}
-                className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-(--color-bg-elevated)"
-              >
-                <input
-                  type="checkbox"
-                  checked={isAllSelected || visibleProperties.includes(key)}
-                  onChange={() => {
-                    if (isAllSelected) {
-                      // "전체" 해제 → 이 항목만 제외
-                      onConfigChange({ visibleProperties: allKeys.filter((k) => k !== key) });
-                    } else {
-                      toggleProperty(key);
-                    }
-                  }}
-                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                />
-                <span className="text-sm text-(--color-text-primary)">{getPropertyLabel(key, protocol, type)}</span>
-              </label>
-            ))}
-          </div>
+
+      {/*
+        타일 한 장에 관한 설정을 한 무리로 모은다. 종전에는 분할 · 배치 · 글자가 각각
+        따로 놓여, 같은 타일을 고치는데 세 자리를 오가야 했다.
+
+        격자 열 수는 여기 없다 — 그룹마다 제 격자를 가지므로 패널 전체의 열 수를 따로
+        정할 자리가 없어졌다.
+      */}
+      <div className="mt-3">
+        <div className="mb-1.5 flex items-center gap-1.5">
+          <span className="text-xs font-medium text-(--color-text-muted)">
+            {t('dashboard.settings.propertiesGridOpt.card')}
+          </span>
+          <DesignPopover testId="properties-grid-card" width={384}>
+            <CardDesignPopoverBody
+              design={design}
+              config={panel.config}
+              onConfigChange={onConfigChange}
+            />
+          </DesignPopover>
         </div>
-      )}
+        {/* 자주 켜고 끄는 것이라 팝업 밖에 둔다. */}
+        <label className="flex items-center gap-2 text-xs text-(--color-text-secondary)">
+          <input
+            type="checkbox"
+            data-testid="properties-grid-show-updated"
+            checked={design.showUpdatedAt}
+            onChange={(e) =>
+              // 기본은 표시다 — 끌 때만 config 에 남긴다.
+              onConfigChange({ showUpdatedAt: e.target.checked ? undefined : false })
+            }
+            className="h-3.5 w-3.5 accent-blue-600"
+          />
+          {t('dashboard.settings.propertiesGridOpt.showUpdatedAt')}
+        </label>
+      </div>
+
+      {/*
+        표시 항목을 그룹별로 나눈다. 한 목록에 스무 개를 넘게 늘어놓으면 어느 것이 어느
+        그룹인지 알 수 없고, 그룹마다 격자가 따로인데 목록만 한 줄이면 고른 것이 어디에
+        놓이는지도 읽히지 않는다.
+      */}
+      {PROPERTY_GROUPS.map((group) => {
+        const groupKeys = allKeys.filter((k) => propertyGroupOf(k) === group);
+        if (groupKeys.length === 0) return null;
+        const shown = groupKeys.filter((k) => shownKeys.includes(k));
+        const grid = readTileGrid(panel.config?.[PROPERTY_GROUP_GRID_KEY[group]], PROPERTY_GROUP_GRID[group]);
+        return (
+          <div key={group} className="mt-3">
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <span className="text-xs font-medium text-(--color-text-muted)">
+                {t(PROPERTY_GROUP_LABEL_KEYS[group])}
+              </span>
+              {/* 고른 것이 없으면 놓을 자리도 없다 — 그때는 레이아웃을 내지 않는다. */}
+              {shown.length > 0 && (
+                <DesignPopover
+                  testId={`properties-grid-${group}-layout`}
+                  label={t('dashboard.settings.propertiesGridOpt.layout')}
+                  width={384}
+                >
+                  <TileGridEditor<string>
+                    grid={grid}
+                    items={shown}
+                    areas={placeTiles(
+                      shown,
+                      panel.config?.[PROPERTY_GROUP_AREA_KEY[group]] as
+                        | Record<string, Partial<TileArea>>
+                        | undefined,
+                      grid,
+                      PROPERTY_TILE_SIZE,
+                    )}
+                    labelKeys={Object.fromEntries(
+                      shown.map((k) => [
+                        k,
+                        resolveTileLabel(
+                          readPropertyOverride(panel.config, k),
+                          getPropertyLabel(k, protocol, type),
+                        ),
+                      ]),
+                    )}
+                    rawLabels
+                    testIdPrefix={`properties-grid-${group}`}
+                    onGridChange={(g) => onConfigChange({ [PROPERTY_GROUP_GRID_KEY[group]]: g })}
+                    onAreasChange={(areas) => onConfigChange({ [PROPERTY_GROUP_AREA_KEY[group]]: areas })}
+                    onMove={(key, direction) =>
+                      onConfigChange({
+                        visibleProperties: moveWithinGroup(shownKeys, key, direction),
+                      })
+                    }
+                    onReset={() =>
+                      onConfigChange({
+                        [PROPERTY_GROUP_GRID_KEY[group]]: undefined,
+                        [PROPERTY_GROUP_AREA_KEY[group]]: undefined,
+                      })
+                    }
+                  />
+                </DesignPopover>
+              )}
+              <div className="ml-auto flex items-center gap-1">
+                <button
+                  type="button"
+                  data-testid={`properties-grid-${group}-select-all`}
+                  onClick={() =>
+                    onConfigChange({
+                      visibleProperties: setGroupSelection(shownKeys, groupKeys, true),
+                    })
+                  }
+                  className="rounded border border-(--color-border-default) px-1.5 py-0.5 text-[11px] text-(--color-text-secondary) transition-colors hover:border-(--color-border-strong)"
+                >
+                  {t('dashboard.settings.selectAll')}
+                </button>
+                <button
+                  type="button"
+                  data-testid={`properties-grid-${group}-clear-all`}
+                  onClick={() =>
+                    onConfigChange({
+                      visibleProperties: setGroupSelection(shownKeys, groupKeys, false),
+                    })
+                  }
+                  className="rounded border border-(--color-border-default) px-1.5 py-0.5 text-[11px] text-(--color-text-secondary) transition-colors hover:border-(--color-border-strong)"
+                >
+                  {t('dashboard.settings.propertiesGridOpt.clearAll')}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-1">
+              {groupKeys.map((key) => (
+                <div
+                  key={key}
+                  className="flex items-center gap-2 rounded-md px-2 py-1 transition-colors hover:bg-(--color-bg-elevated)"
+                >
+                  <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      data-testid={`property-toggle-${key}`}
+                      checked={shown.includes(key)}
+                      onChange={() =>
+                        onConfigChange({
+                          visibleProperties: shown.includes(key)
+                            ? shownKeys.filter((k) => k !== key)
+                            : [...shownKeys, key],
+                        })
+                      }
+                      className="h-4 w-4 shrink-0 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="truncate text-sm text-(--color-text-primary)">
+                      {resolveTileLabel(
+                        readPropertyOverride(panel.config, key),
+                        getPropertyLabel(key, protocol, type),
+                      )}
+                    </span>
+                  </label>
+                  {/*
+                    항목별 타일 디자인. 자리는 레이아웃 팝업이 갖지만 **모양은 여기서**
+                    정한다 — 켜고 끄는 것과 같은 줄에 있어야 어느 항목의 설정인지 헷갈리지
+                    않는다. 자리를 잡을 수 없는(꺼진) 항목에는 낼 이유가 없다.
+                  */}
+                  <div className={shown.includes(key) ? undefined : 'invisible'}>
+                    <DesignPopover testId={`property-override-${key}`}>
+                      <PropertyOverrideFields
+                        propertyKey={key}
+                        override={readPropertyOverride(panel.config, key)}
+                        base={design}
+                        fallbackLabel={getPropertyLabel(key, protocol, type)}
+                        // 기본 정보는 사람이 적어 둔 값이라 붙일 단위가 없다.
+                        withUnit={group !== 'basic'}
+                        onChange={(next) =>
+                          onConfigChange({
+                            propertyOverrides: {
+                              ...((panel.config?.propertyOverrides as Record<string, unknown>) ?? {}),
+                              [key]: next,
+                            },
+                          })
+                        }
+                      />
+                    </DesignPopover>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
     </>
   );
 }
@@ -3382,6 +5398,44 @@ const SYSMETRICS_TARGET_KIND: Record<string, SysResourceKind | undefined> = {
 
 /** sysmetrics 패널 타입 집합 (설정 섹션 표시 조건) */
 const SYSMETRICS_PANEL_TYPES = new Set(Object.keys(SYSMETRICS_TARGET_KIND));
+
+/**
+ * 미리보기를 **실제 패널**로 그리는 타입.
+ *
+ * 차트 계열(stat/bar/pie/table/graph-chart/gauge/heatmap)은 이미 각자의 분기에서
+ * 실패널을 그리며 미리보기 안 드래그 편집(범례 배치·값 자리)을 얹고 있으므로 여기
+ * 목록에 넣지 않는다. 이 집합은 종전에 손으로 그린 목업을 쓰던 타입들이다.
+ */
+const REAL_PANEL_PREVIEW_TYPES = new Set<string>([
+  'flows',
+  'agents',
+  'devices',
+  'resource',
+  'logs',
+  'monitor-network',
+  'monitor-stats',
+  'monitor-metrics',
+  'properties-grid',
+  'device',
+  'ac-control',
+  'hvac-control',
+  'outdoor-control',
+  // 종전에는 미리보기 분기가 아예 없어 설정을 열면 빈 영역만 보이던 타입들이다.
+  // renderDashboardPanel 이 모두 처리하므로 목록에 넣기만 하면 대시보드와 같은 화면이 된다.
+  'agent-status',
+  'monitor-logs',
+  'monitor-events',
+  'facility-device',
+  'facility-station',
+  'facility-line',
+  'facility-group',
+  'facility-schedule',
+  'trigger-config',
+  // text·custom-control 은 렌더러가 자리표시자를 그린다 — 대시보드에서 보이는 것과 같다.
+  'text',
+  'custom-control',
+  ...SYSMETRICS_PANEL_TYPES,
+]);
 
 /** 패널 타입별 표시 항목 카탈로그 (켜고 끄는 항목). */
 const SYSMETRICS_ITEM_CATALOG: Record<string, { key: string; labelKey: string }[]> = {
@@ -4120,7 +6174,7 @@ function MonitorItemsSection({
               data-testid={`monitor-item-toggle-${item.key}`}
               checked={selected.includes(item.key)}
               onChange={() => toggle(item.key)}
-              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
             />
             <span className="text-sm text-(--color-text-primary)">{t(item.labelKey)}</span>
           </label>
@@ -4283,7 +6337,7 @@ function MonitorItemsSection({
                         : [...chosenIfaces, name],
                     })
                   }
-                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-sm text-(--color-text-primary)">
                   {name === 'total' ? t('dashboard.settings.netInterfaceAll') : name}
@@ -4346,7 +6400,6 @@ function LogsSection({
 
 /** 악센트 적용 요소 그룹 (디바이스 리모컨) — 값은 i18n 키 */
 const ACCENT_ELEMENT_LABEL_KEYS: Record<string, string> = {
-  _base: 'dashboard.settings.accent.base',
   temperature: 'dashboard.settings.accent.temperature',
   controls: 'dashboard.settings.accent.controls',
   labels: 'dashboard.settings.accent.labels',
@@ -4355,8 +6408,19 @@ const ACCENT_ELEMENT_LABEL_KEYS: Record<string, string> = {
 };
 
 /** 리스트 패널 (flows/agents/devices) 악센트 그룹 — 값은 i18n 키 */
+/**
+ * 글자 모양 패치를 병합한다. 전부 비면 필드를 **지운다** — 빈 객체가 남으면
+ * "설정했다"로 읽혀, 되돌렸는데도 설정된 것처럼 보인다(타이틀 디자인과 같은 규칙).
+ */
+function mergeFont(
+  current: PanelTitleFont,
+  patch: Partial<PanelTitleFont>,
+): PanelTitleFont | undefined {
+  const next = { ...current, ...patch };
+  return Object.values(next).every((v) => v === undefined) ? undefined : next;
+}
+
 const LIST_ACCENT_LABEL_KEYS: Record<string, string> = {
-  _base: 'dashboard.settings.accent.base',
   header: 'dashboard.settings.accent.header',
   badges: 'dashboard.settings.accent.badges',
   table: 'dashboard.settings.accent.table',
@@ -4364,7 +6428,6 @@ const LIST_ACCENT_LABEL_KEYS: Record<string, string> = {
 
 /** 리소스 패널 악센트 그룹 — 값은 i18n 키 */
 const RESOURCE_ACCENT_LABEL_KEYS: Record<string, string> = {
-  _base: 'dashboard.settings.accent.base',
   header: 'dashboard.settings.accent.header',
   cpu: 'dashboard.settings.accent.cpuCard',
   memory: 'dashboard.settings.accent.memoryCard',
@@ -4374,7 +6437,6 @@ const RESOURCE_ACCENT_LABEL_KEYS: Record<string, string> = {
 
 /** 시스템 통계 패널 악센트 그룹 — 값은 i18n 키 */
 const MONITOR_STATS_ACCENT_LABEL_KEYS: Record<string, string> = {
-  _base: 'dashboard.settings.accent.base',
   header: 'dashboard.settings.accent.header',
   label: 'dashboard.settings.accent.statLabel',
   value: 'dashboard.settings.accent.statValue',
@@ -4382,7 +6444,6 @@ const MONITOR_STATS_ACCENT_LABEL_KEYS: Record<string, string> = {
 
 /** 로그 패널 악센트 그룹 — 값은 i18n 키 */
 const LOG_ACCENT_LABEL_KEYS: Record<string, string> = {
-  _base: 'dashboard.settings.accent.base',
   header: 'dashboard.settings.accent.header',
   levels: 'dashboard.settings.accent.levels',
   timestamp: 'dashboard.settings.accent.timestamp',
@@ -4391,7 +6452,6 @@ const LOG_ACCENT_LABEL_KEYS: Record<string, string> = {
 
 /** 게이지 패널 악센트 그룹 — 값은 i18n 키 */
 const GAUGE_ACCENT_LABEL_KEYS: Record<string, string> = {
-  _base: 'dashboard.settings.accent.base',
   header: 'dashboard.settings.accent.header',
   arc: 'dashboard.settings.accent.arc',
   value: 'dashboard.settings.accent.value',
@@ -4447,7 +6507,7 @@ function SubColorRow({
         <span className="text-[11px] text-(--color-text-muted)">{label}</span>
         {color && (
           <span
-            className="h-2.5 w-2.5 rounded-full border border-gray-200 dark:border-gray-600"
+            className="h-2.5 w-2.5 rounded-full border border-(--color-border-default)"
             style={{ backgroundColor: color }}
           />
         )}
@@ -4461,12 +6521,12 @@ function SubColorRow({
               onClick={() => onColorChange(c)}
               className={cn(
                 'relative h-5 w-5 rounded-full transition-transform hover:scale-110',
-                c === '#ffffff' && color !== c && 'ring-1 ring-gray-200 dark:ring-gray-600',
+                c === '#ffffff' && color !== c && 'ring-1 ring-(--color-border-strong)',
               )}
               style={{ backgroundColor: c }}
               aria-label={`${label} ${c}`}
             >
-              {color === c && <Check className={cn('absolute inset-0 m-auto h-3 w-3 drop-shadow', c === '#ffffff' ? 'text-gray-700' : 'text-white')} />}
+              {color === c && <Check className={cn('absolute inset-0 m-auto h-3 w-3 drop-shadow', c === '#ffffff' ? 'text-(--color-text-secondary)' : 'text-white')} />}
             </button>
           ))}
           <button
@@ -4508,28 +6568,133 @@ function SubColorRow({
 }
 
 /** 범용 악센트 그룹 컨트롤 패널 — 체크박스 + 색상 팔레트 */
+/**
+ * 악센트 그룹 선택기.
+ *
+ * 미리보기가 실제 패널이 되면서 "영역을 클릭해 고르기"가 불가능해졌다. 대신 그룹을
+ * 목록으로 늘어놓고 고르게 한다. 각 항목은 현재 적용된 색을 점으로 보여주므로,
+ * 어느 그룹에 색이 지정되어 있는지 목록만 보고 알 수 있다.
+ */
+/**
+ * 패널 색상 한 줄 — 스와치 목록 + 초기화. @spec SPEC-CHART-003 §2.1 [U1-2 / U1-3]
+ *
+ * `config.panelColor` 만 쓰고 `config.accentElements` 는 읽지도 쓰지도 않는다 —
+ * 편집 입구만 사라지고 저장된 값은 그대로 남아야 한다(U1-4). 다른 패널 타입으로
+ * 바꿨을 때 종전 악센트 설정이 되살아나야 하기 때문이다.
+ */
+function PanelColorRow({
+  panelColor,
+  onChange,
+}: {
+  panelColor: string | undefined;
+  onChange: (color: string | undefined) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div data-testid="panel-color-row">
+      <span className="mb-2 block text-xs font-medium text-(--color-text-muted)">
+        {t('dashboard.settings.accent.panelColor')}
+      </span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {PANEL_COLORS.map((color) => (
+          <button
+            key={color}
+            type="button"
+            data-testid={`panel-color-${color}`}
+            aria-label={color}
+            aria-pressed={panelColor === color}
+            onClick={() => onChange(color)}
+            className={cn(
+              'h-5 w-5 rounded-full border-2 transition-transform hover:scale-110',
+              panelColor === color ? 'border-white ring-2 ring-blue-500' : 'border-transparent',
+            )}
+            style={{ backgroundColor: color }}
+          />
+        ))}
+        {panelColor && (
+          <button
+            type="button"
+            data-testid="panel-color-reset"
+            onClick={() => onChange(undefined)}
+            className="ml-1 rounded px-2 py-0.5 text-xs text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated)"
+          >
+            {t('dashboard.settings.panelColorReset')}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AccentGroupPicker({
+  labelKeys,
+  selected,
+  effectiveColor,
+  onSelect,
+}: {
+  labelKeys: Record<string, string>;
+  selected: string | null;
+  effectiveColor: (group: string) => string | undefined;
+  onSelect: (group: string | null) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="mb-3 flex flex-wrap gap-1.5" data-testid="accent-group-picker">
+      {Object.entries(labelKeys).map(([group, labelKey]) => {
+        const isSelected = group === selected;
+        const color = effectiveColor(group);
+        return (
+          <button
+            key={group}
+            type="button"
+            data-testid={`accent-group-${group}`}
+            aria-pressed={isSelected}
+            // 이미 고른 항목을 다시 누르면 선택을 푼다 — 색 편집을 접는 수단이다.
+            onClick={() => onSelect(isSelected ? null : group)}
+            className={cn(
+              'flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors',
+              isSelected
+                ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300'
+                : 'border-(--color-border-default) text-(--color-text-secondary) hover:border-(--color-border-strong)',
+            )}
+          >
+            <span
+              aria-hidden="true"
+              className="h-2.5 w-2.5 shrink-0 rounded-full border border-(--color-border-strong)"
+              style={color ? { backgroundColor: color } : undefined}
+            />
+            {t(labelKey)}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function AccentGroupControls({
   selected,
   labelKeys,
   accentElements,
-  panelColor,
+  inheritedColor,
   onChange,
-  onPanelColorChange,
 }: {
   selected: string;
   labelKeys: Record<string, string>;
   accentElements: Record<string, string | boolean>;
-  panelColor: string | undefined;
+  /**
+   * 색을 지정하지 않은 그룹이 물려받는 패널 색상 — **표시용**이다.
+   * 편집은 패널 옵션의 패널 색상이 소유한다(여기서 쓰면 두 자리가 한 값을 다툰다).
+   */
+  inheritedColor: string | undefined;
   onChange: (elements: Record<string, string | boolean>) => void;
-  onPanelColorChange?: (color: string | undefined) => void;
 }) {
   const { t } = useTranslation();
   // 선택된 그룹의 표시 라벨 (키 → 번역)
   const selectedLabel = labelKeys[selected] ? t(labelKeys[selected]!) : selected;
-  // _base 그룹은 panelColor를 직접 제어
-  const isBase = selected === '_base';
-  const isEnabled = isBase ? true : accentElements[selected] !== false;
-  const gc = isBase ? panelColor : (typeof accentElements[selected] === 'string' ? (accentElements[selected] as string) : undefined);
+  // 모든 그룹이 accentElements 를 쓴다 — panelColor 를 직접 쓰던 `_base` 예외는
+  // 패널 옵션의 패널 색상으로 이관되면서 사라졌다.
+  const isEnabled = accentElements[selected] !== false;
+  const gc = typeof accentElements[selected] === 'string' ? (accentElements[selected] as string) : undefined;
 
   // 서브 속성 접근
   const getSubProp = (group: string, prop: string): string | undefined => {
@@ -4547,15 +6712,10 @@ function AccentGroupControls({
     }
   };
   const toggle = () => {
-    if (isBase) return; // _base는 항상 활성
     onChange({ ...accentElements, [selected]: isEnabled ? false : true });
   };
   const setColor = (color: string | undefined) => {
-    if (isBase) {
-      onPanelColorChange?.(color);
-    } else {
-      onChange({ ...accentElements, [selected]: color ?? true });
-    }
+    onChange({ ...accentElements, [selected]: color ?? true });
   };
 
   const hasSubProps = selected === 'labels';
@@ -4563,7 +6723,7 @@ function AccentGroupControls({
   return (
     <div className="mt-3 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) p-3">
       <div className="mb-2 flex items-center gap-2">
-        {!isBase && <input type="checkbox" checked={isEnabled} onChange={toggle} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />}
+        <input type="checkbox" checked={isEnabled} onChange={toggle} className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500" />
         <span className="text-sm font-medium text-(--color-text-primary)">{selectedLabel}</span>
         {isEnabled && hasSubProps ? (
           <div className="ml-auto flex gap-1">
@@ -4613,11 +6773,11 @@ function AccentGroupControls({
           <div className="flex items-center gap-1.5">
             <label className="relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md bg-(--color-bg-elevated) transition-colors hover:bg-(--color-border-default)">
               <Pipette className="h-3.5 w-3.5 text-(--color-text-muted)" />
-              <input type="color" value={gc ?? panelColor ?? '#3b82f6'} onChange={(e) => setColor(e.target.value)} className="absolute inset-0 cursor-pointer opacity-0" />
+              <input type="color" value={gc ?? inheritedColor ?? '#3b82f6'} onChange={(e) => setColor(e.target.value)} className="absolute inset-0 cursor-pointer opacity-0" />
             </label>
             <div className="flex h-6 items-center gap-px rounded-md bg-(--color-bg-elevated) px-1.5 text-[11px] font-mono text-(--color-text-secondary)">
               <span className="text-(--color-text-muted)">#</span>
-              <input type="text" value={(gc ?? panelColor ?? '#3b82f6').replace('#', '').toUpperCase()}
+              <input type="text" value={(gc ?? inheritedColor ?? '#3b82f6').replace('#', '').toUpperCase()}
                 onChange={(e) => { const v = e.target.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 6); if (v.length === 6) setColor(`#${v}`); }}
                 className="w-14 bg-transparent text-center outline-none" maxLength={6} />
               <span className="mx-1 h-3 w-px bg-(--color-border-default)" />
@@ -4737,6 +6897,13 @@ function GaugeSection({
   const valueScale = readValueScale(config.value_scale);
   // 슬라이더는 "미지정" 을 표현할 수 없으므로 기본값(가득)을 그대로 보여 준다.
   const gaugeSize = readPanelSize(config.gauge_size) ?? PANEL_SIZE_MAX;
+  // 세로바만 사각형이라 높이를 따로 잡을 수 있다. 원형·반원·바늘은 비율 자체가 값을
+  // 읽는 규약의 일부라(각도로 읽는다) 축을 나누면 값을 잘못 읽게 된다.
+  const axisSplitGauge = isAxisSplitGauge(config);
+  // 세로바의 폭·높이는 게이지 상자의 배율이 아니라 **도형의 치수**다(글자를 함께
+  // 누르지 않기 위해서다). 그래서 `gauge_size`(상자 배율)와 나란히 둘 수 있다.
+  const vbarWidth = readVBarSize(config.gauge_bar_width);
+  const vbarHeight = readVBarSize(config.gauge_bar_height);
   const min = (config.min as number) ?? 0;
   const max = (config.max as number) ?? 100;
   const unit = (config.unit as string) ?? '%';
@@ -4847,7 +7014,7 @@ function GaugeSection({
             checked={config.show_threshold_legend === true}
             onChange={(e) => onConfigChange({ show_threshold_legend: e.target.checked })}
             data-testid="gauge-threshold-legend-show"
-            className="h-3.5 w-3.5 rounded border-gray-300"
+            className="h-3.5 w-3.5 rounded border-(--color-border-strong)"
           />
           {t('dashboard.settings.gaugeSection.thresholdLegend')}
         </label>
@@ -4938,6 +7105,8 @@ function GaugeSection({
           {/* 크기·자리를 함께 되돌린다 — 둘은 같은 조작(끌기·슬라이더)으로 어긋나므로
               따로 되돌리면 한쪽이 남아 왜 제자리가 아닌지 알 수 없다. */}
           {(config.gauge_size !== undefined ||
+            config.gauge_bar_width !== undefined ||
+            config.gauge_bar_height !== undefined ||
             config.gauge_offset_x ||
             config.gauge_offset_y) ? (
             <button
@@ -4945,6 +7114,8 @@ function GaugeSection({
               onClick={() =>
                 onConfigChange({
                   gauge_size: undefined,
+                  gauge_bar_width: undefined,
+                  gauge_bar_height: undefined,
                   gauge_offset_x: undefined,
                   gauge_offset_y: undefined,
                 })
@@ -4956,6 +7127,54 @@ function GaugeSection({
             </button>
           ) : null}
         </div>
+        {/* 세로바에만 폭·높이 칸이 나온다 — 사각형이라야 두 축이 따로 뜻을 갖는다.
+            원형·반원·바늘은 각도로 값을 읽으므로 찌그러뜨리면 오독한다. */}
+        {axisSplitGauge ? (
+          <>
+            <div className="mt-2">
+              <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+                {t('dashboard.settings.gaugeSection.barWidth')}
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={VBAR_SIZE_MIN}
+                  max={VBAR_SIZE_MAX}
+                  step={1}
+                  value={vbarWidth}
+                  onChange={(e) => onConfigChange({ gauge_bar_width: Number(e.target.value) })}
+                  data-testid="gauge-bar-width"
+                  aria-label={t('dashboard.settings.gaugeSection.barWidth')}
+                  className="flex-1"
+                />
+                <span className="w-10 shrink-0 text-right text-xs tabular-nums text-(--color-text-muted)">
+                  {vbarWidth}%
+                </span>
+              </div>
+            </div>
+            <div className="mt-2">
+              <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
+                {t('dashboard.settings.gaugeSection.barHeight')}
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={VBAR_SIZE_MIN}
+                  max={VBAR_SIZE_MAX}
+                  step={1}
+                  value={vbarHeight}
+                  onChange={(e) => onConfigChange({ gauge_bar_height: Number(e.target.value) })}
+                  data-testid="gauge-bar-height"
+                  aria-label={t('dashboard.settings.gaugeSection.barHeight')}
+                  className="flex-1"
+                />
+                <span className="w-10 shrink-0 text-right text-xs tabular-nums text-(--color-text-muted)">
+                  {vbarHeight}%
+                </span>
+              </div>
+            </div>
+          </>
+        ) : null}
         <p className="mt-1 text-[11px] leading-snug text-(--color-text-muted)">
           {t('dashboard.settings.gaugeSection.gaugeDragHint')}
         </p>
@@ -4985,7 +7204,15 @@ function GaugeSection({
           <button
             type="button"
             onClick={() =>
-              onConfigChange({ value_scale: undefined, value_offset_x: undefined, value_offset_y: undefined })
+              onConfigChange({
+                value_scale: undefined,
+                value_pos_x: undefined,
+                value_pos_y: undefined,
+                // 값이 도형 안에 있던 시절의 viewBox 단위 키. 남아 있으면 초기화가
+                // 반쪽이 되므로 함께 지운다.
+                value_offset_x: undefined,
+                value_offset_y: undefined,
+              })
             }
             data-testid="gauge-value-reset"
             className="shrink-0 rounded-md bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)/80"
@@ -5017,7 +7244,7 @@ function GaugeSection({
           {needleColor !== '' && (
             <label className="relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover:opacity-80">
               <span
-                className="h-4 w-4 rounded-sm border border-gray-200 dark:border-gray-600"
+                className="h-4 w-4 rounded-sm border border-(--color-border-default)"
                 style={{ backgroundColor: needleColor }}
               />
               <input
@@ -5197,7 +7424,7 @@ function GaugeSection({
           {baseColor !== '' && (
             <label className="relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover:opacity-80">
               <span
-                className="h-4 w-4 rounded-sm border border-gray-200 dark:border-gray-600"
+                className="h-4 w-4 rounded-sm border border-(--color-border-default)"
                 style={{ backgroundColor: baseColor }}
               />
               <input
@@ -5217,7 +7444,7 @@ function GaugeSection({
               <div key={idx} className="flex w-full items-center gap-1.5">
                 <label className="relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover:opacity-80">
                   <span
-                    className="h-4 w-4 rounded-sm border border-gray-200 dark:border-gray-600"
+                    className="h-4 w-4 rounded-sm border border-(--color-border-default)"
                     style={{ backgroundColor: th.color }}
                   />
                   <input
@@ -5353,7 +7580,22 @@ function GaugeTypeIcon({ type, size = 18, active }: { type: GaugeType; size?: nu
 
 /** 게이지 미니 프리뷰 (우측 컬럼) */
 
-function GaugeMiniPreview({ panel }: { panel: PanelConfig }) {
+/**
+ * 합성 샘플값으로 그리는 게이지 미리보기 — 레거시 경로에는 실제 값이 없을 수 있다.
+ *
+ * **배치 편집은 여기서도 켠다.** 종전에는 `onConfigChange` 로 빈 함수를 넘기고
+ * `forceEdit` 도 주지 않아, 설정 화면에서 값 글자·게이지 상자를 끌 수 없었다(대시보드에
+ * 놓인 같은 패널에서는 됐다 — 실제로 그렇게 보고됐다). 값이 합성이라는 것과 **자리를
+ * 옮길 수 있다는 것은 다른 축**이다: 배치는 데이터와 무관한 시각 설정이다.
+ */
+function GaugeMiniPreview({
+  panel,
+  onConfigChange,
+}: {
+  panel: PanelConfig;
+  /** config 를 쓸 콜백. 없으면 종전처럼 보기 전용이다. */
+  onConfigChange?: (patch: Record<string, unknown>) => void;
+}) {
   const { t } = useTranslation();
   const config = panel.config ?? {};
   const min = (config.min as number) ?? 0;
@@ -5370,13 +7612,22 @@ function GaugeMiniPreview({ panel }: { panel: PanelConfig }) {
       <span className="mb-1 text-center text-[10px] font-medium text-(--color-text-muted)">
         {t('dashboard.settings.gaugeSection.previewSample').replace('{value}', String(sampleValue))}
       </span>
-      <div className="min-h-0 flex-1">
+      {/*
+        **flex 컨테이너여야 한다.** 평범한 블록이면 패널 뿌리의 `flex-1` 이 아무 뜻도
+        갖지 못해 높이가 내용으로 정해지고, 게이지 내용의 높이는 SVG 의 고유 비율이라
+        유형마다 달라진다 — 반원(240×140)에서는 패널이 미리보기 상자보다 짧아져
+        그리드가 일부만 덮이고, 도형의 이동 범위가 위로 치우치며, 아래쪽 띠에는
+        닿지 못했다. 다른 패널 미리보기들이 쓰는 것과 같은 상자다.
+      */}
+      <div className="flex min-h-0 flex-1 flex-col">
         <GaugePanel
           panelId="__preview__"
           title=""
           config={previewConfig}
-          onConfigChange={() => {}}
+          onConfigChange={onConfigChange ?? (() => {})}
           onTitleChange={() => {}}
+          // 미리보기는 항상 편집이다 — 토글은 감춘다(실 패널 경로와 같은 규칙).
+          forceEdit={onConfigChange !== undefined}
         />
       </div>
     </div>
@@ -5700,475 +7951,10 @@ function LineChartMiniPreview({
   );
 }
 
-/**
- * 미리보기 위에 "실제 대시보드에서 이 패널이 차지할 영역"을 점선 사각형으로 겹쳐 보여준다.
- *
- * 왜 필요한가: 채움(fill) 모드는 미리보기 영역을 가로·세로 모두 채우므로 대시보드에서의
- * 실제 종횡비와 다르다. 히트맵은 도면 종횡비로 스테이지를 레터박스하므로(stage.ts), 실제
- * 비율을 모르면 대시보드에서 도면이 어디까지 보이고 여백이 얼마나 생길지 확인할 방법이 없다.
- * 맞춤(fit) 모드는 미리보기 자체가 실제 비율이므로 이 오버레이를 그리지 않는다.
- *
- * 순수 표시용이다 — 포인터 이벤트를 받지 않아 마커 드래그 배치를 방해하지 않는다.
- */
-function PanelAreaOutline({ aspect }: { aspect: number }): React.ReactElement {
-  const { t } = useTranslation();
-  return (
-    <div
-      data-testid="panel-area-outline"
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-0 flex items-center justify-center"
-    >
-      <div
-        className="relative max-h-full max-w-full border border-dashed border-blue-400/70"
-        style={{ aspectRatio: `${aspect} / 1`, width: '100%', height: '100%' }}
-      >
-        <span className="absolute right-0 top-0 bg-blue-400/80 px-1 py-px text-[9px] leading-tight text-white">
-          {t('dashboard.settings.preview.panelArea')}
-        </span>
-      </div>
-    </div>
-  );
-}
 
-/** Samsung HVACR-01 리모컨 미니 프리뷰 - 클릭으로 악센트 그룹 선택 */
-function NasaMiniPreview({
-  selectedGroup,
-  onSelectGroup,
-  effectiveColor,
-  getSubProp,
-  panelColor,
-}: {
-  selectedGroup: string | null;
-  onSelectGroup: (group: string) => void;
-  effectiveColor: (group: string) => string | undefined;
-  getSubProp: (group: string, prop: string) => string | undefined;
-  panelColor: string | undefined;
-}) {
-  const { t } = useTranslation();
-  const zoneClass = (group: string, extra?: string) =>
-    cn(
-      'cursor-pointer transition-all relative',
-      selectedGroup === group
-        ? 'ring-2 ring-inset ring-blue-500/70 bg-blue-50/30 dark:bg-blue-900/15'
-        : 'hover:bg-blue-50/20 dark:hover:bg-blue-900/10',
-      extra,
-    );
 
-  const tag = (group: string, label: string) =>
-    selectedGroup === group ? (
-      <span className="pointer-events-none absolute right-1 top-0.5 rounded bg-blue-500 px-1 py-px text-[8px] font-medium leading-tight text-white">
-        {label}
-      </span>
-    ) : null;
-
-  const divider = (
-    <div
-      className={cn(
-        'mx-3 cursor-pointer border-t transition-all',
-        selectedGroup === 'borders' ? 'border-blue-500 border-t-2' : 'border-gray-100 dark:border-gray-700',
-      )}
-      style={selectedGroup !== 'borders' && effectiveColor('borders') ? { borderColor: `${effectiveColor('borders')}30` } : undefined}
-      onClick={() => onSelectGroup('borders')}
-    />
-  );
-
-  const labelBg = getSubProp('labels', 'bg');
-  const labelText = getSubProp('labels', 'text') ?? effectiveColor('labels');
-  const labelRadius = getSubProp('labels', 'radius');
-
-  return (
-    <div
-      className={cn(
-        'h-full w-full overflow-hidden rounded-2xl text-xs',
-        selectedGroup === 'borders' ? 'ring-2 ring-blue-500' : 'ring-1 ring-(--color-border-default)',
-      )}
-      style={selectedGroup !== 'borders' && effectiveColor('borders') ? { boxShadow: `inset 0 0 0 1px ${effectiveColor('borders')}40` } : undefined}
-    >
-      {/* 전체 색상 - _base */}
-      <div
-        className={zoneClass('_base', 'flex items-center gap-1.5 px-3 py-1')}
-        onClick={() => onSelectGroup('_base')}
-      >
-        {tag('_base', t('dashboard.settings.preview.tagBase'))}
-        <span
-          className="h-2.5 w-2.5 rounded-full border border-gray-300 dark:border-gray-600"
-          style={panelColor ? { backgroundColor: panelColor } : { background: 'conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444)' }}
-        />
-        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? t('dashboard.settings.accent.default')}</span>
-      </div>
-
-      {/* 헤더: 아이콘+타이틀 | 상태뱃지+전원 — indicators */}
-      <div className={zoneClass('indicators')} onClick={() => onSelectGroup('indicators')}>
-        {tag('indicators', t('dashboard.settings.preview.tagIndicators'))}
-        <div className="flex items-center justify-between px-3 py-1.5">
-          <div className="flex items-center gap-1.5">
-            <Snowflake
-              className="h-3.5 w-3.5 text-blue-500"
-              style={effectiveColor('indicators') ? { color: effectiveColor('indicators')! } : undefined}
-            />
-            <span className="text-[11px] font-bold text-(--color-text-primary)">{t('dashboard.settings.preview.livingRoom')}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span
-              className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-1.5 py-0.5 text-[9px] font-medium text-blue-500 dark:bg-blue-900/30 dark:text-blue-400"
-              style={effectiveColor('indicators') ? { color: effectiveColor('indicators')!, backgroundColor: `${effectiveColor('indicators')}15` } : undefined}
-            >
-              <span className="h-1 w-1 rounded-full bg-blue-500" style={effectiveColor('indicators') ? { backgroundColor: effectiveColor('indicators')! } : undefined} />
-              {t('dashboard.settings.preview.operating')}
-            </span>
-            <span
-              className="flex h-5 w-5 items-center justify-center rounded-md bg-blue-500 text-white"
-              style={effectiveColor('indicators') ? { backgroundColor: effectiveColor('indicators')! } : undefined}
-            >
-              <Power className="h-3 w-3" />
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* 현재 온도 — temperature */}
-      <div className={zoneClass('temperature')} onClick={() => onSelectGroup('temperature')}>
-        {tag('temperature', t('dashboard.settings.preview.tagTemperature'))}
-        <div className="flex flex-col items-center py-2">
-          <div className="flex items-end">
-            <span
-              className="text-3xl font-light text-blue-600"
-              style={effectiveColor('temperature') ? { color: effectiveColor('temperature')! } : undefined}
-            >23.7</span>
-            <span
-              className="text-sm text-blue-600"
-              style={effectiveColor('temperature') ? { color: effectiveColor('temperature')! } : undefined}
-            >°C</span>
-          </div>
-          <span
-            className="text-[9px] text-blue-300"
-            style={effectiveColor('temperature') ? { color: `${effectiveColor('temperature')}60` } : undefined}
-          >{t('dashboard.settings.preview.currentTemp')}</span>
-        </div>
-        {/* 설정 온도 */}
-        <div className="flex items-center justify-center gap-1.5 pb-2">
-          <Thermometer className="h-3 w-3 text-(--color-text-muted)" style={effectiveColor('temperature') ? { color: effectiveColor('temperature')! } : undefined} />
-          <span className="flex h-4.5 w-4.5 items-center justify-center rounded bg-(--color-bg-elevated)"><Minus className="h-2.5 w-2.5 text-(--color-text-muted)" /></span>
-          <span className="text-[10px] font-semibold text-(--color-text-primary)">{t('dashboard.settings.preview.setLabel')}</span>
-          <span className="flex h-4.5 w-4.5 items-center justify-center rounded bg-(--color-bg-elevated)"><Plus className="h-2.5 w-2.5 text-(--color-text-muted)" /></span>
-        </div>
-      </div>
-
-      {divider}
-
-      {/* 모드 선택 (5버튼) — labels */}
-      <div className={zoneClass('labels')} onClick={() => onSelectGroup('labels')}>
-        {tag('labels', t('dashboard.settings.preview.tagModeLabel'))}
-        <div className="flex gap-1 px-3 py-2">
-          {[
-            { label: t('dashboard.settings.preview.modeCooling'), icon: <Snowflake className="h-3 w-3" />, active: true },
-            { label: t('dashboard.settings.preview.modeHeating'), active: false },
-            { label: t('dashboard.settings.preview.modeAuto'), active: false },
-            { label: t('dashboard.settings.preview.modeDehumidify'), active: false },
-            { label: t('dashboard.settings.preview.modeFan'), active: false },
-          ].map(({ label, icon, active }) => (
-            <span
-              key={label}
-              className={cn(
-                'flex flex-1 flex-col items-center justify-center gap-0.5 py-1 text-[8px] font-medium',
-                labelRadius == null && 'rounded-lg',
-                active && !labelBg && !labelText
-                  ? 'bg-blue-600 text-white'
-                  : active ? 'text-white' : 'text-(--color-text-muted) ring-1 ring-(--color-border-default)',
-              )}
-              style={{
-                ...(active && labelBg ? { backgroundColor: labelBg } : {}),
-                ...(active && labelText ? { color: labelText } : {}),
-                ...(labelRadius != null ? { borderRadius: `${labelRadius}px` } : {}),
-              }}
-            >
-              {icon}
-              {label}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* 풍량 — controls */}
-      <div className={zoneClass('controls')} onClick={() => onSelectGroup('controls')}>
-        {tag('controls', t('dashboard.settings.preview.tagControls'))}
-        <div className="flex items-center gap-1.5 px-3 py-1.5">
-          <Fan
-            className="h-3 w-3 shrink-0 text-blue-600"
-            style={effectiveColor('controls') ? { color: effectiveColor('controls')! } : undefined}
-          />
-          <span
-            className="text-[10px] font-semibold text-blue-600"
-            style={effectiveColor('controls') ? { color: effectiveColor('controls')! } : undefined}
-          >{t('dashboard.settings.preview.airflow')}</span>
-          {[t('dashboard.settings.preview.fanAuto'), t('dashboard.settings.preview.fanLow'), t('dashboard.settings.preview.fanMid'), t('dashboard.settings.preview.fanHigh')].map((s, i) => (
-            <span
-              key={s}
-              className={cn(
-                'flex-1 rounded-md py-0.5 text-center text-[9px] font-medium',
-                i === 0
-                  ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-500 dark:bg-blue-900/30'
-                  : 'text-(--color-text-muted) ring-1 ring-(--color-border-default)',
-              )}
-              style={i === 0 && effectiveColor('controls') ? { color: effectiveColor('controls')!, borderColor: effectiveColor('controls')!, backgroundColor: `${effectiveColor('controls')}10` } : undefined}
-            >
-              {s}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {divider}
-
-      {/* 하단: 스윙 + 필터 — indicators */}
-      <div className={zoneClass('indicators', 'rounded-b-2xl')} onClick={() => onSelectGroup('indicators')}>
-        <div className="flex items-center gap-3 px-3 py-1.5">
-          <span
-            className="flex items-center gap-0.5 text-[10px] text-(--color-text-muted)"
-            style={effectiveColor('indicators') ? { color: effectiveColor('indicators')! } : undefined}
-          >
-            <ArrowUpDown className="h-3 w-3" />
-            {t('dashboard.settings.preview.swingOn')}
-          </span>
-          <span className="flex items-center gap-0.5 text-[10px] text-amber-500">
-            {t('dashboard.settings.preview.filterNormal')}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** 리스트 패널 미니 프리뷰 (flows / agents / devices) */
-function ListMiniPreview({
-  selectedGroup,
-  onSelectGroup,
-  effectiveColor,
-  panelColor,
-  variant,
-}: {
-  selectedGroup: string | null;
-  onSelectGroup: (g: string) => void;
-  effectiveColor: (g: string) => string | undefined;
-  panelColor: string | undefined;
-  variant: 'flows' | 'agents' | 'devices';
-}) {
-  const { t } = useTranslation();
-  const zone = (group: string, extra?: string) =>
-    cn('cursor-pointer transition-all relative',
-      selectedGroup === group ? 'ring-2 ring-inset ring-blue-500/70 bg-blue-50/30 dark:bg-blue-900/15' : 'hover:bg-blue-50/20 dark:hover:bg-blue-900/10', extra);
-  const tag = (group: string, label: string) =>
-    selectedGroup === group ? <span className="pointer-events-none absolute right-1 top-0.5 rounded bg-blue-500 px-1 py-px text-[8px] font-medium leading-tight text-white">{label}</span> : null;
-
-  const titles = {
-    flows: t('dashboard.settings.preview.flowsTitle'),
-    agents: t('dashboard.settings.preview.agentsTitle'),
-    devices: t('dashboard.settings.preview.devicesTitle'),
-  };
-  const badgeLabels = variant === 'flows'
-    ? [{ l: t('dashboard.settings.preview.flowsRunning'), c: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' }, { l: t('dashboard.settings.preview.flowsStopped'), c: 'bg-gray-100 text-gray-500 dark:bg-gray-700/30 dark:text-gray-400' }]
-    : variant === 'agents'
-    ? [{ l: t('dashboard.settings.preview.agentsTotal'), c: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' }, { l: t('dashboard.settings.preview.agentsActive'), c: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' }]
-    : [{ l: t('dashboard.settings.preview.devicesTotal'), c: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' }, { l: t('dashboard.settings.preview.devicesOnline'), c: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' }];
-
-  return (
-    <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
-      {/* 전체 색상 - _base */}
-      <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
-        {tag('_base', t('dashboard.settings.preview.tagBase'))}
-        <span className="h-2.5 w-2.5 rounded-full border border-gray-300 dark:border-gray-600"
-          style={panelColor ? { backgroundColor: panelColor } : { background: 'conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444)' }} />
-        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? t('dashboard.settings.accent.default')}</span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      {/* 타이틀 */}
-      <div className={zone('header', 'px-3 py-2')} onClick={() => onSelectGroup('header')}>
-        {tag('header', t('dashboard.settings.preview.tagHeader'))}
-        <span className="text-sm font-semibold text-(--color-text-primary)" style={effectiveColor('header') ? { color: effectiveColor('header')! } : undefined}>
-          {titles[variant]}
-        </span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      {/* 요약 배지 */}
-      <div className={zone('badges', 'flex gap-1.5 px-3 py-2')} onClick={() => onSelectGroup('badges')}>
-        {tag('badges', t('dashboard.settings.preview.tagBadges'))}
-        {badgeLabels.map((b) => (
-          <span key={b.l} className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-medium', b.c)}
-            style={effectiveColor('badges') ? { backgroundColor: `${effectiveColor('badges')}20`, color: effectiveColor('badges')! } : undefined}>
-            {b.l}
-          </span>
-        ))}
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      {/* 테이블 헤더 */}
-      <div className={zone('table', 'px-3 py-2')} onClick={() => onSelectGroup('table')}>
-        {tag('table', t('dashboard.settings.preview.tagTableHeader'))}
-        <div className="flex gap-4 text-[10px] font-medium uppercase tracking-wider text-(--color-text-muted)"
-          style={effectiveColor('table') ? { color: effectiveColor('table')! } : undefined}>
-          <span className="flex-1">{t('dashboard.settings.preview.colName')}</span><span>{t('dashboard.settings.preview.colStatus')}</span><span>{t('dashboard.settings.preview.colUpdated')}</span>
-        </div>
-      </div>
-      {/* 더미 행 */}
-      <div className="border-t border-gray-100 px-3 py-1.5 dark:border-gray-700">
-        <div className="flex gap-4 text-[10px] text-(--color-text-muted)">
-          <span className="flex-1 text-blue-500">sample-1</span><span>●</span><span>{t('dashboard.settings.preview.ago2min')}</span>
-        </div>
-      </div>
-      <div className="border-t border-gray-100 px-3 py-1.5 dark:border-gray-700">
-        <div className="flex gap-4 text-[10px] text-(--color-text-muted)">
-          <span className="flex-1 text-blue-500">sample-2</span><span>○</span><span>{t('dashboard.settings.preview.ago5min')}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /** 리소스 패널 미니 프리뷰 */
-/** 속성 그리드 미니 프리뷰 */
-function GridMiniPreview({
-  selectedGroup,
-  onSelectGroup,
-  effectiveColor,
-  panelColor,
-  gridCols,
-}: {
-  selectedGroup: string | null;
-  onSelectGroup: (g: string) => void;
-  effectiveColor: (g: string) => string | undefined;
-  panelColor: string | undefined;
-  gridCols: number;
-}) {
-  const { t } = useTranslation();
-  const zone = (group: string, extra?: string) =>
-    cn('cursor-pointer transition-all relative',
-      selectedGroup === group ? 'ring-2 ring-inset ring-blue-500/70 bg-blue-50/30 dark:bg-blue-900/15' : 'hover:bg-blue-50/20 dark:hover:bg-blue-900/10', extra);
-  const tag = (group: string, label: string) =>
-    selectedGroup === group ? <span className="pointer-events-none absolute right-1 top-0.5 rounded bg-blue-500 px-1 py-px text-[8px] font-medium leading-tight text-white">{label}</span> : null;
-
-  const items = [
-    { key: 'power', label: t('dashboard.settings.preview.propPower'), value: 'ON' },
-    { key: 'mode', label: t('dashboard.settings.preview.propMode'), value: 'cooling' },
-    { key: 'target_temperature', label: t('dashboard.settings.preview.propTargetTemp'), value: '24°C' },
-    { key: 'current_temperature', label: t('dashboard.settings.preview.propCurrentTemp'), value: '25.5°C' },
-    { key: 'fan_speed', label: t('dashboard.settings.preview.propFanSpeed'), value: 'auto' },
-    { key: 'valve_open', label: t('dashboard.settings.preview.propValve'), value: 'ON' },
-  ];
-
-  const cols = Math.min(gridCols, 3);
-  const colClass = cols === 1 ? 'grid-cols-1' : cols === 2 ? 'grid-cols-2' : 'grid-cols-3';
-
-  return (
-    <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
-      {/* 전체 색상 */}
-      <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
-        {tag('_base', t('dashboard.settings.preview.tagBase'))}
-        <span className="h-2.5 w-2.5 rounded-full border border-gray-300 dark:border-gray-600"
-          style={panelColor ? { backgroundColor: panelColor } : { background: 'conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444)' }} />
-        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? t('dashboard.settings.accent.default')}</span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      {/* 인디케이터 + 라벨 */}
-      <div className={zone('labels', 'flex items-center gap-2 px-3 py-2')} onClick={() => onSelectGroup('labels')}>
-        {tag('labels', t('dashboard.settings.preview.tagLabels'))}
-        <span className="h-2 w-2 rounded-full bg-green-500" style={effectiveColor('indicators') ? { backgroundColor: effectiveColor('indicators')! } : undefined} />
-        <span className="text-sm font-medium text-(--color-text-primary)" style={effectiveColor('labels') ? { color: effectiveColor('labels')! } : undefined}>
-          {t('dashboard.settings.preview.propertiesGrid')}
-        </span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      {/* 속성 카드 그리드 */}
-      <div className={cn('grid gap-2 p-3', colClass)}>
-        {items.slice(0, Math.min(items.length, cols * 2)).map((item) => (
-          <div
-            key={item.key}
-            className={zone('borders', 'rounded-lg border border-(--color-border-default) px-2 py-1.5')}
-            onClick={() => onSelectGroup('borders')}
-            style={effectiveColor('borders') ? { borderColor: `${effectiveColor('borders')}30` } : undefined}
-          >
-            {tag('borders', t('dashboard.settings.preview.tagBorders'))}
-            <p className="text-[10px] text-(--color-text-muted)" style={effectiveColor('labels') ? { color: effectiveColor('labels')! } : undefined}>
-              {item.label}
-            </p>
-            <p className="mt-0.5 text-xs font-medium text-(--color-text-primary)">{item.value}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ResourceMiniPreview({
-  selectedGroup,
-  onSelectGroup,
-  effectiveColor,
-  panelColor,
-}: {
-  selectedGroup: string | null;
-  onSelectGroup: (g: string) => void;
-  effectiveColor: (g: string) => string | undefined;
-  panelColor: string | undefined;
-}) {
-  const { t } = useTranslation();
-  const zone = (group: string, extra?: string) =>
-    cn('cursor-pointer transition-all relative',
-      selectedGroup === group ? 'ring-2 ring-inset ring-blue-500/70 bg-blue-50/30 dark:bg-blue-900/15' : 'hover:bg-blue-50/20 dark:hover:bg-blue-900/10', extra);
-  const tag = (group: string, label: string) =>
-    selectedGroup === group ? <span className="pointer-events-none absolute right-1 top-0.5 rounded bg-blue-500 px-1 py-px text-[8px] font-medium leading-tight text-white">{label}</span> : null;
-
-  const metrics = [
-    { key: 'cpu', label: 'CPU', value: '45.2%', defaultColor: '#3b82f6' },
-    { key: 'memory', label: 'MEM', value: '62.8%', defaultColor: '#8b5cf6' },
-    { key: 'throughput', label: 'MSG/S', value: '1,234', defaultColor: '#10b981' },
-    { key: 'errorRate', label: 'ERR', value: '0.3%', defaultColor: '#ef4444' },
-  ];
-
-  return (
-    <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
-      {/* 전체 색상 - _base */}
-      <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
-        {tag('_base', t('dashboard.settings.preview.tagBase'))}
-        <span className="h-2.5 w-2.5 rounded-full border border-gray-300 dark:border-gray-600"
-          style={panelColor ? { backgroundColor: panelColor } : { background: 'conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444)' }} />
-        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? t('dashboard.settings.accent.default')}</span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      {/* 타이틀 */}
-      <div className={zone('header', 'px-3 py-2')} onClick={() => onSelectGroup('header')}>
-        {tag('header', t('dashboard.settings.preview.tagHeader'))}
-        <span className="text-sm font-semibold text-(--color-text-primary)" style={effectiveColor('header') ? { color: effectiveColor('header')! } : undefined}>
-          {t('dashboard.settings.preview.processResource')}
-        </span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      {/* 필드 카드 - 각 카드가 독립 악센트 그룹 */}
-      <div className="grid grid-cols-2 gap-2 p-3">
-        {metrics.map((m) => {
-          const cardColor = effectiveColor(m.key) ?? m.defaultColor;
-          return (
-            <div
-              key={m.key}
-              className={zone(m.key, 'rounded-md border border-(--color-border-default) p-2 text-center')}
-              onClick={() => onSelectGroup(m.key)}
-            >
-              {tag(m.key, m.label)}
-              <div className="mb-1 inline-flex items-center gap-1">
-                <span className="text-[10px] text-(--color-text-muted)" style={effectiveColor(m.key) ? { color: cardColor } : undefined}>{m.label}</span>
-              </div>
-              <div className="text-base font-bold">
-                <span style={{ color: cardColor }}>{m.value}</span>
-              </div>
-              <div className="mt-1 flex items-end gap-px h-4">
-                {[3,5,4,6,8,7,5,6].map((h, i) => (
-                  <div key={i} className="flex-1 rounded-sm" style={{ height: `${h * 2}px`, backgroundColor: cardColor, opacity: 0.6 }} />
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 /**
  * 시스템 통계 패널 미니 프리뷰.
@@ -6177,466 +7963,10 @@ function ResourceMiniPreview({
  * 실제로 소비하는 그룹(_base / header / label / value)만 노출한다. 패널이 쓰지 않는
  * 그룹을 프리뷰에 두면 색을 골라도 아무 일이 없는 빈 약속이 된다.
  */
-/**
- * sysmetrics 패널 미니 프리뷰.
- *
- * 세 패널이 한 컴포넌트를 쓴다. 셋의 차이는 "무엇을 몇 칸으로 그리는가" 뿐이고,
- * 색 영역(_base / header / label / value)은 같기 때문이다. 패널마다 따로 만들면
- * 색 영역 규약이 조금씩 갈라진다.
- *
- * 실제 데이터를 부르지 않는다 — 설정 화면의 미리보기는 배치와 색을 보는 자리이고,
- * 여기서 폴링을 걸면 설정을 여는 것만으로 요청이 늘어난다.
- */
-function SysMetricsMiniPreview({
-  panel,
-  selectedGroup,
-  onSelectGroup,
-  effectiveColor,
-  panelColor,
-}: {
-  panel: PanelConfig;
-  selectedGroup: string | null;
-  onSelectGroup: (g: string) => void;
-  effectiveColor: (g: string) => string | undefined;
-  panelColor: string | undefined;
-}) {
-  const { t } = useTranslation();
-  const zone = (group: string, extra?: string) =>
-    cn('cursor-pointer transition-all relative',
-      selectedGroup === group ? 'ring-2 ring-inset ring-blue-500/70 bg-blue-50/30 dark:bg-blue-900/15' : 'hover:bg-blue-50/20 dark:hover:bg-blue-900/10', extra);
-  const tag = (group: string, label: string) =>
-    selectedGroup === group ? <span className="pointer-events-none absolute right-1 top-0.5 rounded bg-blue-500 px-1 py-px text-[8px] font-medium leading-tight text-white">{label}</span> : null;
 
-  const config = panel.config as Record<string, unknown> | undefined;
-  const panelOptions = readPanelOptions(config, panel.type);
 
-  // 그릴 칸 목록. 패널 유형마다 축이 다르다 — 시스템은 항목, 네트워크는 채널,
-  // 스토리지는 마운트(고르지 않았으면 합계 한 줄)다.
-  const cells: { key: string; label: string; kind: SysMetricValueKind }[] = (() => {
-    const targets = SYSMETRICS_STYLE_TARGETS[panel.type];
-    if (targets) {
-      // 시스템 패널은 옛 그룹 키를 값 키로 옮겨 대조한다. 옮기지 않으면 저장된
-      // 대시보드(그룹 키)와 값 카탈로그의 교집합이 비어 미리보기가 빈 채로 나온다.
-      const items =
-        panel.type === 'sysmetrics-system'
-          ? normalizeSystemItems(config?.items)
-          : Array.isArray(config?.items)
-            ? (config.items as string[])
-            : undefined;
-      const shown = items ? targets.filter((x) => items.includes(x.key)) : targets;
-      return shown.map((x) => ({ key: x.key, label: t(x.labelKey), kind: x.kind }));
-    }
-    const mounts = Array.isArray(config?.mountpoints) ? (config.mountpoints as string[]) : [];
-    if (mounts.length > 0) {
-      return mounts.map((m) => ({ key: m, label: m, kind: 'ratio' as SysMetricValueKind }));
-    }
-    return [{ key: 'total', label: t('sysmetrics.storage.total'), kind: 'ratio' as SysMetricValueKind }];
-  })();
 
-  const cols = readMaxCols(config, 2, cells.length);
 
-  return (
-    <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
-      <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
-        {tag('_base', t('dashboard.settings.preview.tagBase'))}
-        <span className="h-2.5 w-2.5 rounded-full border border-gray-300 dark:border-gray-600"
-          style={panelColor ? { backgroundColor: panelColor } : { background: 'conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444)' }} />
-        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? t('dashboard.settings.accent.default')}</span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      <div className={zone('header', 'px-3 py-2')} onClick={() => onSelectGroup('header')}>
-        {tag('header', t('dashboard.settings.preview.tagHeader'))}
-        <span className="text-sm font-semibold text-(--color-text-primary)" style={effectiveColor('header') ? { color: effectiveColor('header')! } : undefined}>
-          {panel.title || t(`dashboard.panelTypes.${panel.type === 'sysmetrics-system' ? 'sysmetricsSystem' : panel.type === 'sysmetrics-network' ? 'sysmetricsNetwork' : 'sysmetricsStorage'}`)}
-        </span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      {cells.length === 0 ? (
-        <p className="p-4 text-center text-[10px] text-(--color-text-muted)">{t('monitoring.emptyPanel')}</p>
-      ) : (
-        <div className="grid gap-2 p-3" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }} data-testid="sysmetrics-preview-grid" data-cols={cols}>
-          {cells.slice(0, 6).map((cell) => {
-            const style = resolveItemOptions(config, cell.key, cell.kind, panel.type).style;
-            return (
-              <div key={cell.key} data-testid={`sysmetrics-preview-${cell.key}`} data-style={style} className="rounded-md border border-(--color-border-default) p-2">
-                <span className={zone('label', 'block truncate text-[9px]')} onClick={(e) => { e.stopPropagation(); onSelectGroup('label'); }}
-                  style={effectiveColor('label') ? { color: effectiveColor('label')! } : undefined}>
-                  {cell.label}
-                </span>
-                <div className={zone('value', 'mt-1')} onClick={(e) => { e.stopPropagation(); onSelectGroup('value'); }}>
-                  {tag('value', t('dashboard.settings.preview.tagValue'))}
-                  <SysMetricsPreviewShape style={style} color={effectiveColor('value')} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {panelOptions.legend !== 'none' && (
-        <p className="px-3 pb-2 text-[8px] text-(--color-text-muted)">
-          {t('sysmetrics.settings.legend')}: {t(`sysmetrics.legend.${panelOptions.legend}`)}
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** 미리보기 칸의 모양 — 스타일마다 다른 형태를 작게 흉내 낸다. */
-function SysMetricsPreviewShape({ style, color }: { style: SysMetricsStyle; color?: string }) {
-  const stroke = color ?? '#0ea5e9';
-
-  if (style === 'tile') {
-    return <span className="block text-sm font-semibold text-(--color-text-primary)" style={color ? { color } : undefined}>42%</span>;
-  }
-  if (style === 'progress') {
-    return (
-      <div className="h-1.5 w-full overflow-hidden rounded bg-(--color-bg-sunken)">
-        <div className="h-full rounded" style={{ width: '62%', backgroundColor: stroke }} />
-      </div>
-    );
-  }
-  if (style === 'gauge') {
-    return (
-      <svg viewBox="0 0 40 40" className="h-8 w-full">
-        <circle cx={20} cy={20} r={14} fill="none" stroke="#e2e8f0" strokeWidth={6} />
-        <circle cx={20} cy={20} r={14} fill="none" stroke={stroke} strokeWidth={6}
-          strokeDasharray={`${2 * Math.PI * 14 * 0.62} ${2 * Math.PI * 14}`}
-          transform="rotate(-90 20 20)" />
-      </svg>
-    );
-  }
-  const points = [3, 7, 5, 9, 6, 8, 5, 7, 4, 8];
-  if (style === 'bar') {
-    return (
-      <svg viewBox="0 0 100 28" preserveAspectRatio="none" className="h-7 w-full">
-        {points.map((v, i) => (
-          <rect key={i} x={i * 10 + 1} y={28 - v * 2.6} width={8} height={v * 2.6} fill={stroke} />
-        ))}
-      </svg>
-    );
-  }
-  const line = points.map((v, i) => `${(i / 9) * 100},${28 - v * 2.6}`).join(' ');
-  return (
-    <svg viewBox="0 0 100 28" preserveAspectRatio="none" className="h-7 w-full">
-      {style === 'area' && <polygon points={`0,28 ${line} 100,28`} fill={stroke} opacity={0.25} />}
-      <polyline points={line} fill="none" stroke={stroke} strokeWidth={2} vectorEffect="non-scaling-stroke" />
-    </svg>
-  );
-}
-
-function MonitorStatsMiniPreview({
-  panel,
-  selectedGroup,
-  onSelectGroup,
-  effectiveColor,
-  panelColor,
-}: {
-  panel: PanelConfig;
-  selectedGroup: string | null;
-  onSelectGroup: (g: string) => void;
-  effectiveColor: (g: string) => string | undefined;
-  panelColor: string | undefined;
-}) {
-  const { t } = useTranslation();
-  const zone = (group: string, extra?: string) =>
-    cn('cursor-pointer transition-all relative',
-      selectedGroup === group ? 'ring-2 ring-inset ring-blue-500/70 bg-blue-50/30 dark:bg-blue-900/15' : 'hover:bg-blue-50/20 dark:hover:bg-blue-900/10', extra);
-  const tag = (group: string, label: string) =>
-    selectedGroup === group ? <span className="pointer-events-none absolute right-1 top-0.5 rounded bg-blue-500 px-1 py-px text-[8px] font-medium leading-tight text-white">{label}</span> : null;
-
-  // 프리뷰도 실제 패널과 같은 열 상한을 따른다(좁을 때 자동 축소는 실제 폭에서만 일어난다).
-  const allItems = readPanelItems('stats', panel.config);
-  const cols = readMaxCols(panel.config, 3, allItems.length);
-  const items = allItems.slice(0, 6);
-  const sample: Record<string, string> = {
-    cpuUsage: '0.0%', memoryUsage: '62.8%', goRoutines: '128', heapAlloc: '12.3 MB',
-    memSys: '64.0 MB', uptime: '1h 2m', totalFlows: '12', runningFlows: '5',
-    logsReceived: '1,204', eventsReceived: '37', wsState: 'CONNECTED',
-  };
-
-  return (
-    <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
-      <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
-        {tag('_base', t('dashboard.settings.preview.tagBase'))}
-        <span className="h-2.5 w-2.5 rounded-full border border-gray-300 dark:border-gray-600"
-          style={panelColor ? { backgroundColor: panelColor } : { background: 'conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444)' }} />
-        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? t('dashboard.settings.accent.default')}</span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      <div className={zone('header', 'px-3 py-2')} onClick={() => onSelectGroup('header')}>
-        {tag('header', t('dashboard.settings.preview.tagHeader'))}
-        <span className="text-sm font-semibold text-(--color-text-primary)" style={effectiveColor('header') ? { color: effectiveColor('header')! } : undefined}>
-          {panel.title || t('dashboard.panelTypes.monitorStats')}
-        </span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      {items.length === 0 ? (
-        <p className="p-4 text-center text-[10px] text-(--color-text-muted)">{t('monitoring.emptyPanel')}</p>
-      ) : (
-        <div className="grid gap-2 p-3" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
-          {items.map((key) => (
-            <div key={key} className="rounded-md border border-(--color-border-default) p-2">
-              <div className={zone('label', 'rounded px-1')} onClick={() => onSelectGroup('label')}>
-                {tag('label', t('dashboard.settings.accent.statLabel'))}
-                <span className="block truncate text-[9px] text-(--color-text-muted)" style={effectiveColor('label') ? { color: effectiveColor('label')! } : undefined}>
-                  {t(findItemMeta('stats', key)?.labelKey ?? key)}
-                </span>
-              </div>
-              <div className={zone('value', 'mt-0.5 rounded px-1')} onClick={() => onSelectGroup('value')}>
-                {tag('value', t('dashboard.settings.accent.statValue'))}
-                <span className="block truncate text-sm font-bold text-(--color-text-primary)" style={effectiveColor('value') ? { color: effectiveColor('value')! } : undefined}>
-                  {sample[key] ?? '-'}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * 실시간 메트릭 패널 미니 프리뷰.
- *
- * 채널별 색 영역은 리소스 패널과 같은 그룹 이름(cpu/memory/throughput/errorRate)을 쓴다 —
- * 실제 패널이 `accentColor(channel)` 로 선 색을 읽으므로 프리뷰에서 고른 색이 그대로 반영된다.
- */
-function MonitorMetricsMiniPreview({
-  panel,
-  selectedGroup,
-  onSelectGroup,
-  effectiveColor,
-  panelColor,
-}: {
-  panel: PanelConfig;
-  selectedGroup: string | null;
-  onSelectGroup: (g: string) => void;
-  effectiveColor: (g: string) => string | undefined;
-  panelColor: string | undefined;
-}) {
-  const { t } = useTranslation();
-  const zone = (group: string, extra?: string) =>
-    cn('cursor-pointer transition-all relative',
-      selectedGroup === group ? 'ring-2 ring-inset ring-blue-500/70 bg-blue-50/30 dark:bg-blue-900/15' : 'hover:bg-blue-50/20 dark:hover:bg-blue-900/10', extra);
-  const tag = (group: string, label: string) =>
-    selectedGroup === group ? <span className="pointer-events-none absolute right-1 top-0.5 rounded bg-blue-500 px-1 py-px text-[8px] font-medium leading-tight text-white">{label}</span> : null;
-
-  const items = readPanelItems('metrics', panel.config);
-  const cols = readMaxCols(panel.config, 2, items.length);
-  const DEFAULT_COLORS: Record<string, string> = {
-    cpu: '#3b82f6', memory: '#8b5cf6', throughput: '#10b981', errorRate: '#ef4444',
-  };
-  // 선 모양만 흉내 내는 고정 표본 — 실데이터를 끌어오면 설정 화면이 스트림에 묶인다.
-  const SPARK = [4, 7, 5, 9, 6, 8, 5, 7, 4, 8];
-
-  return (
-    <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
-      <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
-        {tag('_base', t('dashboard.settings.preview.tagBase'))}
-        <span className="h-2.5 w-2.5 rounded-full border border-gray-300 dark:border-gray-600"
-          style={panelColor ? { backgroundColor: panelColor } : { background: 'conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444)' }} />
-        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? t('dashboard.settings.accent.default')}</span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      <div className={zone('header', 'px-3 py-2')} onClick={() => onSelectGroup('header')}>
-        {tag('header', t('dashboard.settings.preview.tagHeader'))}
-        <span className="text-sm font-semibold text-(--color-text-primary)" style={effectiveColor('header') ? { color: effectiveColor('header')! } : undefined}>
-          {panel.title || t('dashboard.panelTypes.monitorMetrics')}
-        </span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      {items.length === 0 ? (
-        <p className="p-4 text-center text-[10px] text-(--color-text-muted)">{t('monitoring.emptyPanel')}</p>
-      ) : (
-        <div className="grid gap-2 p-3" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
-          {items.map((key) => {
-            const lineColor = effectiveColor(key) ?? DEFAULT_COLORS[key] ?? '#3b82f6';
-            return (
-              <div key={key} className={zone(key, 'rounded-md border border-(--color-border-default) p-2')} onClick={() => onSelectGroup(key)}>
-                {tag(key, key)}
-                <span className="block truncate text-[9px] text-(--color-text-muted)">
-                  {t(findItemMeta('metrics', key)?.labelKey ?? key)}
-                </span>
-                {/* 실제 패널은 라인 차트다. 프리뷰가 막대면 색만 맞고 모양이 달라
-                    "미리보기와 출력이 다르다"는 어긋남이 생긴다. */}
-                <svg viewBox="0 0 100 28" preserveAspectRatio="none" className="mt-1 h-7 w-full">
-                  <polyline
-                    points={SPARK.map((v, i) => `${(i / (SPARK.length - 1)) * 100},${28 - v * 2.6}`).join(' ')}
-                    fill="none"
-                    stroke={lineColor}
-                    strokeWidth={2}
-                    vectorEffect="non-scaling-stroke"
-                  />
-                </svg>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * 네트워크 패널 미니 프리뷰.
- *
- * 채널마다 차트 하나, 선택한 인터페이스마다 선 하나 — 실제 패널과 같은 구조로 그린다.
- */
-function MonitorNetworkMiniPreview({
-  panel,
-  selectedGroup,
-  onSelectGroup,
-  effectiveColor,
-  panelColor,
-}: {
-  panel: PanelConfig;
-  selectedGroup: string | null;
-  onSelectGroup: (g: string) => void;
-  effectiveColor: (g: string) => string | undefined;
-  panelColor: string | undefined;
-}) {
-  const { t } = useTranslation();
-  const zone = (group: string, extra?: string) =>
-    cn('cursor-pointer transition-all relative',
-      selectedGroup === group ? 'ring-2 ring-inset ring-blue-500/70 bg-blue-50/30 dark:bg-blue-900/15' : 'hover:bg-blue-50/20 dark:hover:bg-blue-900/10', extra);
-  const tag = (group: string, label: string) =>
-    selectedGroup === group ? <span className="pointer-events-none absolute right-1 top-0.5 rounded bg-blue-500 px-1 py-px text-[8px] font-medium leading-tight text-white">{label}</span> : null;
-
-  const items = readPanelItems('network', panel.config);
-  const cols = readMaxCols(panel.config, 2, items.length);
-  const chosen = readInterfaces(panel.config);
-  const lines = chosen.length > 0 ? chosen : ['total'];
-  const colors = interfaceColors(lines);
-  const SHAPES = [
-    [3, 7, 5, 9, 6, 8, 5, 7, 4, 8],
-    [6, 4, 8, 5, 9, 6, 7, 5, 8, 6],
-  ];
-
-  return (
-    <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
-      <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
-        {tag('_base', t('dashboard.settings.preview.tagBase'))}
-        <span className="h-2.5 w-2.5 rounded-full border border-gray-300 dark:border-gray-600"
-          style={panelColor ? { backgroundColor: panelColor } : { background: 'conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444)' }} />
-        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? t('dashboard.settings.accent.default')}</span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      <div className={zone('header', 'px-3 py-2')} onClick={() => onSelectGroup('header')}>
-        {tag('header', t('dashboard.settings.preview.tagHeader'))}
-        <span className="text-sm font-semibold text-(--color-text-primary)" style={effectiveColor('header') ? { color: effectiveColor('header')! } : undefined}>
-          {panel.title || t('dashboard.panelTypes.monitorNetwork')}
-        </span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      {items.length === 0 ? (
-        <p className="p-4 text-center text-[10px] text-(--color-text-muted)">{t('monitoring.emptyPanel')}</p>
-      ) : (
-        <div className="grid gap-2 p-3" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
-          {items.slice(0, 4).map((key) => (
-            <div key={key} className="rounded-md border border-(--color-border-default) p-2">
-              <span className="block truncate text-[9px] text-(--color-text-muted)">
-                {t(findItemMeta('network', key)?.labelKey ?? key)}
-              </span>
-              <svg viewBox="0 0 100 28" preserveAspectRatio="none" className="mt-1 h-7 w-full">
-                {lines.map((name, li) => (
-                  <polyline
-                    key={name}
-                    points={SHAPES[li % SHAPES.length]!.map((v, i) => `${(i / 9) * 100},${28 - v * 2.6}`).join(' ')}
-                    fill="none"
-                    stroke={colors[name]}
-                    strokeWidth={2}
-                    vectorEffect="non-scaling-stroke"
-                  />
-                ))}
-              </svg>
-              {lines.length > 1 && (
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {lines.map((name) => (
-                    <span key={name} className="flex items-center gap-0.5 text-[8px] text-(--color-text-muted)">
-                      <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: colors[name] }} />
-                      {name}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** 로그 패널 미니 프리뷰 */
-function LogMiniPreview({
-  selectedGroup,
-  onSelectGroup,
-  effectiveColor,
-  panelColor,
-}: {
-  selectedGroup: string | null;
-  onSelectGroup: (g: string) => void;
-  effectiveColor: (g: string) => string | undefined;
-  panelColor: string | undefined;
-}) {
-  const { t } = useTranslation();
-  const zone = (group: string, extra?: string) =>
-    cn('cursor-pointer transition-all relative',
-      selectedGroup === group ? 'ring-2 ring-inset ring-blue-500/70 bg-blue-50/30 dark:bg-blue-900/15' : 'hover:bg-blue-50/20 dark:hover:bg-blue-900/10', extra);
-  const tag = (group: string, label: string) =>
-    selectedGroup === group ? <span className="pointer-events-none absolute right-1 top-0.5 rounded bg-blue-500 px-1 py-px text-[8px] font-medium leading-tight text-white">{label}</span> : null;
-
-  const rows = [
-    { time: '14:23:01', level: 'INFO', lvCls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400', src: 'mqtt', msg: 'connected to broker' },
-    { time: '14:23:05', level: 'WARN', lvCls: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400', src: 'flow', msg: 'retry attempt 3' },
-    { time: '14:23:08', level: 'ERR', lvCls: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', src: 'samsung_hvacr01', msg: 'timeout on device A1' },
-  ];
-
-  return (
-    <div className="h-full w-full overflow-hidden rounded-xl border border-(--color-border-default) text-xs">
-      {/* 전체 색상 - _base */}
-      <div className={zone('_base', 'flex items-center gap-1.5 rounded-t-xl px-3 py-1.5')} onClick={() => onSelectGroup('_base')}>
-        {tag('_base', t('dashboard.settings.preview.tagBase'))}
-        <span className="h-2.5 w-2.5 rounded-full border border-gray-300 dark:border-gray-600"
-          style={panelColor ? { backgroundColor: panelColor } : { background: 'conic-gradient(from 0deg, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444)' }} />
-        <span className="text-[10px] text-(--color-text-muted)">{panelColor ?? t('dashboard.settings.accent.default')}</span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      {/* 타이틀 */}
-      <div className={zone('header', 'px-3 py-2')} onClick={() => onSelectGroup('header')}>
-        {tag('header', t('dashboard.settings.preview.tagHeader'))}
-        <span className="text-sm font-semibold text-(--color-text-primary)" style={effectiveColor('header') ? { color: effectiveColor('header')! } : undefined}>
-          {t('dashboard.settings.preview.systemLog')}
-        </span>
-      </div>
-      <div className="border-t border-gray-100 dark:border-gray-700" />
-      {/* 로그 행 */}
-      <div className="bg-(--color-bg-sunken) font-mono">
-        {rows.map((r, i) => (
-          <div key={i} className="flex items-center gap-1.5 border-b border-(--color-border-subtle) px-2 py-1">
-            <span className={zone('timestamp', 'shrink-0 text-[9px]')} onClick={(e) => { e.stopPropagation(); onSelectGroup('timestamp'); }}>
-              {i === 0 && tag('timestamp', t('dashboard.settings.preview.tagTimestamp'))}
-              <span style={effectiveColor('timestamp') ? { color: effectiveColor('timestamp')! } : undefined} className="text-(--color-text-muted)">{r.time}</span>
-            </span>
-            <span className={zone('levels', 'shrink-0')} onClick={(e) => { e.stopPropagation(); onSelectGroup('levels'); }}>
-              {i === 0 && tag('levels', t('dashboard.settings.preview.tagLevels'))}
-              <span className={cn('rounded px-1 py-px text-[8px] font-semibold', r.lvCls)}
-                style={effectiveColor('levels') ? { backgroundColor: `${effectiveColor('levels')}20`, color: effectiveColor('levels')! } : undefined}>
-                {r.level}
-              </span>
-            </span>
-            <span className={zone('source', 'shrink-0')} onClick={(e) => { e.stopPropagation(); onSelectGroup('source'); }}>
-              {i === 0 && tag('source', t('dashboard.settings.preview.tagSource'))}
-              <span className="text-[9px] text-purple-600 dark:text-purple-400" style={effectiveColor('source') ? { color: effectiveColor('source')! } : undefined}>{r.src}</span>
-            </span>
-            <span className="flex-1 truncate text-[9px] text-(--color-text-primary)">{r.msg}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // ---- 3분할 설정 셸 (T1/T2) ----
 // @spec SPEC-PANEL-SETTINGS-001 (REQ-01/REQ-02)

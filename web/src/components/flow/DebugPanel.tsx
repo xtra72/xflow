@@ -389,7 +389,7 @@ export function DebugPanel() {
   const tapCount = tapEntries.length;
 
   return (
-    <div className="border-t border-(--color-border-default) bg-white dark:bg-gray-950">
+    <div className="border-t border-(--color-border-default) bg-(--color-bg-surface)">
       {/* 헤더 바: 탭 전환 + 펼침/접힘 + 비우기 */}
       <div className="flex w-full items-center gap-1 px-2 py-1">
         <button
@@ -401,8 +401,8 @@ export function DebugPanel() {
           className={
             'flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium ' +
             (tab === 'debug'
-              ? 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100'
-              : 'text-gray-500 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-900/50')
+              ? 'bg-(--color-bg-sunken) text-(--color-text-primary)'
+              : 'text-(--color-text-muted) hover:bg-(--color-bg-secondary)')
           }
         >
           <Terminal className="h-3.5 w-3.5" />
@@ -423,8 +423,8 @@ export function DebugPanel() {
           className={
             'flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium ' +
             (tab === 'tap'
-              ? 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100'
-              : 'text-gray-500 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-900/50')
+              ? 'bg-(--color-bg-sunken) text-(--color-text-primary)'
+              : 'text-(--color-text-muted) hover:bg-(--color-bg-secondary)')
           }
         >
           <Eye className="h-3.5 w-3.5" />
@@ -442,23 +442,23 @@ export function DebugPanel() {
           <button
             type="button"
             onClick={clearActive}
-            className="rounded p-1 hover:bg-gray-200 dark:hover:bg-gray-700"
+            className="rounded p-1 hover:bg-(--color-bg-sunken)"
             title="Clear"
             aria-label={t('editor.debug.clearAria')}
           >
-            <Trash2 className="h-3.5 w-3.5 text-gray-500" />
+            <Trash2 className="h-3.5 w-3.5 text-(--color-text-muted)" />
           </button>
         )}
         <button
           type="button"
           onClick={() => setIsOpen((v) => !v)}
-          className="rounded p-1 hover:bg-gray-200 dark:hover:bg-gray-700"
+          className="rounded p-1 hover:bg-(--color-bg-sunken)"
           aria-label={isOpen ? t('editor.debug.collapse') : t('editor.debug.expand')}
         >
           {isOpen ? (
-            <ChevronDown className="h-3.5 w-3.5 text-gray-500" />
+            <ChevronDown className="h-3.5 w-3.5 text-(--color-text-muted)" />
           ) : (
-            <ChevronUp className="h-3.5 w-3.5 text-gray-500" />
+            <ChevronUp className="h-3.5 w-3.5 text-(--color-text-muted)" />
           )}
         </button>
       </div>
@@ -477,7 +477,7 @@ export function DebugPanel() {
             onPointerMove={onHandlePointerMove}
             onPointerUp={onHandlePointerUp}
             onDoubleClick={onHandleDoubleClick}
-            className="h-1.5 shrink-0 cursor-row-resize touch-none border-t border-(--color-border-default) bg-gray-100 hover:bg-sky-500/40 dark:bg-gray-800 dark:hover:bg-sky-500/40"
+            className="h-1.5 shrink-0 cursor-row-resize touch-none border-t border-(--color-border-default) bg-(--color-bg-sunken) hover:bg-sky-500/40"
           />
           <div
             ref={scrollRef}

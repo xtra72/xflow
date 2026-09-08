@@ -39,7 +39,7 @@ export function ConnectionStatusIcon({ status, className }: ConnectionStatusIcon
         <WifiOff
           data-testid="chart-status-icon"
           data-status="disconnected"
-          className={clsx(base, 'text-gray-400')}
+          className={clsx(base, 'text-(--color-text-muted)')}
           aria-label={t('dashboard.chart.statusDisconnected')}
         />
       );
@@ -48,7 +48,7 @@ export function ConnectionStatusIcon({ status, className }: ConnectionStatusIcon
         <PlugZap
           data-testid="chart-status-icon"
           data-status="closed"
-          className={clsx(base, 'text-gray-500')}
+          className={clsx(base, 'text-(--color-text-muted)')}
           aria-label={t('dashboard.chart.statusClosed')}
         />
       );

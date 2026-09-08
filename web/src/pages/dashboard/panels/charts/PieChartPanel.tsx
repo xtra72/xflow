@@ -13,7 +13,7 @@ import {
   DEFAULT_PIE_LEGEND_FONT_SIZE,
   pickSeriesColor,
   type ChartEntry,
-  type PieLegendPosition,
+  isPieLegendPosition,
   type PiePanelConfig,
 } from './chartChannelTypes';
 import { PieLegend, type PieLegendItem } from './PieLegend';
@@ -26,8 +26,13 @@ import {
   sliceLabelTextColor,
 } from './pieLabel';
 import { resolveFontColor, resolveFontFamily, resolveFontSize } from './textStyle';
-import { clampPercentOffset, readPanelSize } from './panelGeometry';
-import { clampStoredLegendOffset } from './legendOverlay';
+import {
+  PANEL_OFFSET_LIMIT,
+  PANEL_SIZE_MAX,
+  clampPercentOffset,
+  readPanelSize,
+} from './panelGeometry';
+import { LEGEND_OFFSET_SAFETY_LIMIT, clampStoredLegendOffset } from './legendOverlay';
 import { ConnectionStatusIcon } from './ConnectionStatusIcon';
 import { aggregateByLabel } from './chartChannelUtils';
 import { reduceAllSeries } from './seriesReduce';
@@ -41,7 +46,15 @@ import { formatValueWithUnit } from './unitOptions';
 import { usePanelSeriesData } from './usePanelSeriesData';
 import { usePanelTitleStyle, usePanelTitleVisible } from '../../panelChromeContext';
 import { usePanelEditMode } from '../PanelEditToggle';
-import { PieDragLayer } from '../../PieDragLayer';
+import {
+  PanelDragLayer,
+  PanelResizeHandle,
+  PANEL_EDIT_OUTLINE_CLASS,
+  PANEL_SELECTED_OUTLINE_CLASS,
+} from '../../PanelDragLayer';
+import { PanelEditGrid } from '../../PanelEditGrid';
+import { PanelAlignToolbar } from '../../PanelAlignToolbar';
+import { usePanelElementEdit } from '../../usePanelElementEdit';
 import { useTranslation } from '@/lib/i18n';
 
 interface PieChartPanelProps {
@@ -59,6 +72,10 @@ interface PieChartPanelProps {
 
 const DEFAULT_MAX_POINTS = 20;
 
+/** 끌 수 있는 요소. 파이는 그림과 범례 둘이다. */
+type PieElementKind = 'chart' | 'legend';
+const PIE_ELEMENT_KINDS: readonly PieElementKind[] = ['chart', 'legend'];
+
 const PIE_COLORS = [
   '#3b82f6',
   '#10b981',
@@ -72,16 +89,7 @@ const PIE_COLORS = [
   '#14b8a6',
 ];
 
-/** 고를 수 있는 범례 위치 — 인식 불가 값을 접기 위한 목록. */
-const LEGEND_POSITIONS: Record<PieLegendPosition, true> = {
-  bottom: true,
-  left: true,
-  right: true,
-};
 
-function isPieLegendPosition(v: unknown): v is PieLegendPosition {
-  return typeof v === 'string' && v in LEGEND_POSITIONS;
-}
 
 /** 드래그 오프셋. 수가 아니면 0 — 구 config 에는 이 키가 없다. */
 function readOffset(v: unknown): number {
@@ -163,6 +171,68 @@ export default function PieChartPanel({
   });
   const cfg = parseConfig(config);
   const decimals = readDecimalPlaces(config);
+
+  // --- SPEC-CHART-005: 그리드·정렬·선택 (드래그는 종전부터 있었다) ---
+  // 오프셋과 **그 상한**을 한 자리에 둔다 — 끌기(`PanelDragLayer`)와 정렬(`usePanelElementEdit`)이
+  // 같은 값을 봐야 하고, 그 값은 읽는 쪽이 이미 정해 두었다. 파이 그림은 패널을 가득
+  // 채우므로 위 `parseConfig` 의 `clampPercentOffset` 과 같은 ±40 이고, 범례는 작은 글자
+  // 덩어리라 `clampStoredLegendOffset` 과 같은 ±50 이다. 쓰기가 더 느슨하면 끄는 동안에는
+  // 따라오다가 다음에 읽을 때 되돌아간다.
+  const chartOffset = {
+    x: cfg.pie_offset_x ?? 0,
+    y: cfg.pie_offset_y ?? 0,
+    limit: PANEL_OFFSET_LIMIT,
+  };
+  const legendOffset = {
+    x: cfg.legend_offset_x ?? 0,
+    y: cfg.legend_offset_y ?? 0,
+    limit: LEGEND_OFFSET_SAFETY_LIMIT,
+  };
+  const {
+    selection,
+    setSelection,
+    snap,
+    setSnap,
+    boundsRef,
+    align,
+    reset,
+  } = usePanelElementEdit<PieElementKind>({
+    kinds: PIE_ELEMENT_KINDS,
+    enabled: edit.active,
+    offsets: { chart: chartOffset, legend: legendOffset },
+    writeOffsets: (patches) => {
+      const next: Record<string, unknown> = {};
+      for (const p of patches) {
+        if (p.kind === 'chart') {
+          next.pie_offset_x = p.x;
+          next.pie_offset_y = p.y;
+        } else {
+          next.legend_offset_x = p.x;
+          next.legend_offset_y = p.y;
+        }
+      }
+      onConfigChange?.(next);
+    },
+  });
+  /**
+   * 요소 상자에 붙는 편집 속성. 편집이 꺼져 있으면 DOM 이 종전과 같다.
+   *
+   * **위치 클래스를 붙이지 않는다.** 종전에는 손잡이 기준을 만들려고 `relative` 를
+   * 함께 실었는데, 파이 그림 상자는 `absolute inset-0` 이라 Tailwind 출력 순서에서
+   * `relative` 가 이겨 상자가 높이 0으로 무너졌다. 위치는 각 상자가 이미 정하고
+   * 있으므로(둘 다 positioned) 손잡이 기준도 이미 있다.
+   */
+  const editProps = (kind: PieElementKind) =>
+    edit.active
+      ? { 'data-panel-drag': kind, tabIndex: 0 }
+      : {};
+  /** 선택 여부에 따른 윤곽 클래스. 편집이 꺼져 있으면 빈 문자열. */
+  const outlineOf = (kind: PieElementKind): string =>
+    edit.active
+      ? selection.has(kind)
+        ? PANEL_SELECTED_OUTLINE_CLASS
+        : PANEL_EDIT_OUTLINE_CLASS
+      : '';
   // 조각 라벨은 전체 대비 비중(%)이라 단위와 축이 다르다 — 단위는 툴팁의 실제 값에만
   // 붙인다. 두 자리에 다 붙이면 `35%` 라는 비중 옆에 `12.3kW` 가 같은 뜻처럼 보인다.
   const unit = config.unit as string | undefined;
@@ -415,24 +485,39 @@ export default function PieChartPanel({
         움직였다 — 파이 자리를 옮기려고 범례를 건드리게 되는 결합이다. 겹치는 자리에서는
         범례가 위에 보인다.
       */}
-      <PieDragLayer
+      <PanelDragLayer<PieElementKind>
         enabled={edit.active}
-        legend={{
-          offsetX: cfg.legend_offset_x ?? 0,
-          offsetY: cfg.legend_offset_y ?? 0,
-          onChange: ({ x, y }) => onConfigChange?.({ legend_offset_x: x, legend_offset_y: y }),
-        }}
-        chart={{
-          offsetX: cfg.pie_offset_x ?? 0,
-          offsetY: cfg.pie_offset_y ?? 0,
-          onChange: ({ x, y }) => onConfigChange?.({ pie_offset_x: x, pie_offset_y: y }),
+        snap={snap}
+        selection={selection}
+        onSelectionChange={setSelection}
+        targets={{
+          chart: {
+            offsetX: chartOffset.x,
+            offsetY: chartOffset.y,
+            limit: chartOffset.limit,
+            // 그림은 글자가 아니므로 크기 손잡이가 백분율(`pie_size`)을 바꾼다.
+            fontSize: cfg.pie_size ?? PANEL_SIZE_MAX,
+            onMove: ({ x, y }) => onConfigChange?.({ pie_offset_x: x, pie_offset_y: y }),
+            onResize: (v) => onConfigChange?.({ pie_size: readPanelSize(v) ?? PANEL_SIZE_MAX }),
+          },
+          legend: {
+            offsetX: legendOffset.x,
+            offsetY: legendOffset.y,
+            limit: legendOffset.limit,
+            fontSize: cfg.legend_font_size ?? DEFAULT_PIE_LEGEND_FONT_SIZE,
+            onMove: ({ x, y }) => onConfigChange?.({ legend_offset_x: x, legend_offset_y: y }),
+            onResize: (legend_font_size) => onConfigChange?.({ legend_font_size }),
+          },
         }}
       >
-      <div className="relative min-h-0 min-w-0 flex-1">
+      <div ref={boundsRef} className="relative min-h-0 min-w-0 flex-1" data-panel-bounds="">
+      {/* 배치 그리드와 중심 표식 — 요소 뒤에 깔리고 포인터를 받지 않는다. */}
+      <PanelEditGrid enabled={edit.active} />
       <div
-        className="absolute inset-0"
         data-testid="pie-chart-container"
         data-pie-chart-area=""
+        {...editProps('chart')}
+        className={`absolute inset-0 ${outlineOf('chart')}`}
       >
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
@@ -472,6 +557,9 @@ export default function PieChartPanel({
             />
           </PieChart>
         </ResponsiveContainer>
+        {edit.active && selection.has('chart') && (
+          <PanelResizeHandle kind="chart" enabled label={t('dashboard.chart.pieSize')} />
+        )}
       </div>
 
       {cfg.show_legend && (
@@ -487,10 +575,37 @@ export default function PieChartPanel({
           unit={unit}
           offsetX={cfg.legend_offset_x ?? 0}
           offsetY={cfg.legend_offset_y ?? 0}
+          // 표식은 범례 **자신**에 붙는다 — 감싸는 상자는 크기가 0이라 윤곽이
+          // 엉뚱한 자리에 생긴다.
+          edit={
+            edit.active
+              ? {
+                  kind: 'legend',
+                  selected: selection.has('legend'),
+                  outlineClass: outlineOf('legend'),
+                  overlay: selection.has('legend') ? (
+                    <PanelResizeHandle
+                      kind="legend"
+                      enabled
+                      label={t('dashboard.chart.legendElement')}
+                    />
+                  ) : null,
+                }
+              : undefined
+          }
         />
       )}
       </div>
-      </PieDragLayer>
+      </PanelDragLayer>
+
+      {/* 정렬 툴바 — 편집 중에만. */}
+      <PanelAlignToolbar
+        enabled={edit.active}
+        snap={snap}
+        onSnapChange={setSnap}
+        onAlign={align}
+        onReset={reset}
+      />
 
       {/* 음수 대표값으로 생략된 조각의 사유 안내(§4.4 — 조각이 사라진 이유가 화면에 남는다). */}
       {derived.negativeOmitted > 0 && (

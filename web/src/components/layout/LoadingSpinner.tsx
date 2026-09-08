@@ -28,8 +28,8 @@ export default function LoadingSpinner({ className, size = 'md' }: LoadingSpinne
     <div className={cn('flex min-h-screen items-center justify-center', className)}>
       <div
         className={cn(
-          'animate-spin rounded-full border-2 border-gray-300 border-t-blue-600',
-          'dark:border-gray-600 dark:border-t-blue-400',
+          'animate-spin rounded-full border-2 border-(--color-border-strong) border-t-blue-600',
+          'border-(--color-border-strong) border-t-(--color-interactive-primary)',
           sizeClasses[size],
         )}
         role="status"

@@ -125,6 +125,39 @@ const LG_ICP01_LABELS: Record<string, string> = {
   avg_temperature: '운전 평균 온도',
 };
 
+/**
+ * 게이트웨이 수신 정보 · 메타데이터 카드의 라벨.
+ *
+ * 이 키들은 디바이스가 보고하는 속성이 아니라 **파생 항목**이라 접두사로 이름공간을
+ * 나눈다(`gw.` / `meta.`). 접두사가 없으면 디바이스가 `rssi` 라는 속성을 실제로
+ * 보고할 때 두 카드가 같은 키를 다투게 된다.
+ */
+const DERIVED_LABELS: Record<string, string> = {
+  'gw.gateway_id': '게이트웨이 ID',
+  'gw.rssi': 'RSSI',
+  'gw.snr': 'SNR',
+  'gw.channel': '채널',
+  'gw.frequency_hz': '주파수',
+  'gw.count': '수신 게이트웨이 수',
+  'meta.name': '이름',
+  'meta.id': '디바이스 ID',
+  'meta.location': '위치',
+  'meta.group': '그룹',
+};
+
+/**
+ * 널리 쓰는 사용자 라벨 키의 표시 이름.
+ *
+ * 라벨 키는 사용자가 정하는 것이라 원칙적으로 그대로 보여 주지만, `dev_eui` 처럼
+ * 표준에서 온 이름은 소문자·밑줄 그대로 두면 화면에서 읽히지 않는다.
+ */
+const KNOWN_LABEL_NAMES: Record<string, string> = {
+  dev_eui: 'Device EUI',
+  deveui: 'Device EUI',
+  app_eui: 'App EUI',
+  join_eui: 'Join EUI',
+};
+
 const COMMON_LABELS: Record<string, string> = {
   power: '전원',
   status: '상태',
@@ -134,6 +167,10 @@ const COMMON_LABELS: Record<string, string> = {
   humidity: '습도',
   current_temperature: '현재 온도',
   target_temperature: '설정 온도',
+  battery: '배터리',
+  co2: 'CO2',
+  pressure: '기압',
+  illumination: '조도',
 };
 
 /** 디바이스 타입을 한글 표시명으로 변환. v0.18.3: HVACR.IDU/HVACR.ODU 신규 + 'indoor'/'outdoor' 레거시 호환. */
@@ -242,7 +279,179 @@ export function getPropertyLabel(key: string, protocol?: string, type?: string):
     const label = LG_ICP01_LABELS[key];
     if (label) return label;
   }
-  return COMMON_LABELS[key] ?? humanizeKey(key);
+  if (DERIVED_LABELS[key]) return DERIVED_LABELS[key];
+  // meta.label.<키> — 널리 쓰는 키는 읽을 수 있는 이름으로 바꾸고, 나머지는 이름 그대로.
+  if (key.startsWith('meta.label.')) {
+    const raw = key.slice('meta.label.'.length);
+    return KNOWN_LABEL_NAMES[raw.toLowerCase()] ?? raw;
+  }
+  // 대소문자는 가리지 않는다 — 같은 값을 `battery` 로 보내는 디바이스와 `Battery` 로
+  // 보내는 디바이스가 한 화면에 섞이면 이름이 갈린다.
+  return COMMON_LABELS[key] ?? COMMON_LABELS[key.toLowerCase()] ?? humanizeKey(key);
+}
+
+/** 속성 그리드가 카드를 만들 원본. 속성 외에 파생 항목의 재료도 함께 받는다. */
+export interface DisplaySource {
+  /** 디바이스 상태 속성 */
+  properties?: Record<string, unknown>;
+  /** 표시용 디바이스 식별자(메타데이터 카드의 "디바이스 ID") */
+  id?: string;
+  /** 사용자 메타데이터 */
+  metadata?: {
+    name?: string;
+    tags?: string[];
+    location?: string;
+    group?: string;
+    labels?: Record<string, string>;
+  };
+}
+
+/** 값이 비었으면 '-' 로 채운다 — 빈 카드는 무엇을 보는 자리인지 알 수 없다. */
+function orDash(v: string | undefined): string {
+  return v && v !== '' ? v : '-';
+}
+
+/**
+ * 게이트웨이 수신 정보 카드.
+ *
+ * 게이트웨이가 여럿일 수 있으나 이 패널은 "값 하나 = 카드 하나" 격자라 표를 얹을 수
+ * 없다. 그래서 **첫 링크**(백엔드가 gateway_id 오름차순으로 결정적 정렬)의 값을 낸다.
+ * 신호가 가장 센 링크를 고르면 업링크마다 다른 게이트웨이로 값이 튀어, 같은 카드가
+ * 무엇을 가리키는지 알 수 없다. 링크가 여럿이면 `gw.count` 로 그 사실을 알린다.
+ *
+ * 각 카드의 갱신 시각은 그 링크의 마지막 수신 시각이다(측정치와 같은 규율).
+ */
+function buildGatewayEntries(properties: Record<string, unknown>): PropertyEntry[] {
+  const links = extractGatewayLinks(properties);
+  const link = links?.[0];
+  const timeMs = link && link.last_seen_ms > 0 ? link.last_seen_ms : undefined;
+
+  // 링크가 아직 없어도 항목은 낸다 — 첫 업링크 전에 수신 정보가 통째로 사라지면
+  // 고를 수도, 자리를 잡아 둘 수도 없다. 값은 '-' 로, 시각은 '수신 전' 으로 나온다.
+  const entries: PropertyEntry[] = [
+    { id: 'gw.gateway_id', key: 'gw.gateway_id', value: link?.gateway_id, timeMs },
+    { id: 'gw.rssi', key: 'gw.rssi', value: link?.rssi, timeMs },
+    { id: 'gw.snr', key: 'gw.snr', value: link?.snr, timeMs },
+    { id: 'gw.channel', key: 'gw.channel', value: link?.channel, timeMs },
+    {
+      id: 'gw.frequency_hz',
+      key: 'gw.frequency_hz',
+      // Hz 원값은 자릿수가 많아 카드에서 읽히지 않는다 — MHz 로 접어 보여 준다.
+      value: link ? `${(link.frequency_hz / 1_000_000).toFixed(1)} MHz` : undefined,
+      timeMs,
+    },
+  ];
+  if (!links || links.length === 0) return entries;
+  if (links.length > 1) {
+    entries.push({ id: 'gw.count', key: 'gw.count', value: links.length });
+  }
+  return entries;
+}
+
+/**
+ * 메타데이터 카드.
+ *
+ * 사용자가 지정한 고정 값이라 **갱신 시각을 붙이지 않는다** — 실시간으로 바뀌는 값이
+ * 아니므로 시각을 달면 의미 없는 "몇 분 전"이 따라다닌다.
+ */
+function buildMetadataEntries(source: DisplaySource): PropertyEntry[] {
+  const meta = source.metadata;
+  const entries: PropertyEntry[] = [
+    { id: 'meta.name', key: 'meta.name', value: orDash(meta?.name) },
+    { id: 'meta.id', key: 'meta.id', value: orDash(source.id) },
+    { id: 'meta.location', key: 'meta.location', value: orDash(meta?.location) },
+    { id: 'meta.group', key: 'meta.group', value: orDash(meta?.group) },
+  ];
+  for (const [key, value] of Object.entries(meta?.labels ?? {})) {
+    entries.push({ id: `meta.label.${key}`, key: `meta.label.${key}`, value: orDash(value) });
+  }
+  return entries;
+}
+
+/**
+ * 파생 카드(게이트웨이 수신 정보 · 메타데이터)인지.
+ *
+ * 이 항목들은 디바이스가 보고하는 속성이 아니라 부가 정보라, **고른 경우에만** 그린다.
+ * "전체" 기본값에 끼워 넣으면 이미 쓰고 있던 패널에 카드가 갑자기 늘어난다.
+ */
+/**
+ * 이 항목이 **통신으로 채워지는가**.
+ *
+ * 메타데이터(`meta.*`)는 사용자가 적어 둔 값이라 디바이스가 보고하지 않는다. 그런 항목에
+ * 갱신 시각을 붙이면 영영 오지 않을 무언가를 기다리는 것처럼 보인다 — 시각 자리는 비워
+ * 두되 자리 자체는 남겨 카드 높이가 어긋나지 않게 한다.
+ *
+ * 게이트웨이 수신 정보(`gw.*`)는 파생이지만 업링크가 있어야 생기므로 통신이 필요하다.
+ */
+/** 속성 카드가 속한 그룹. */
+export type PropertyGroup = 'basic' | 'status' | 'gateway';
+
+export const PROPERTY_GROUPS: PropertyGroup[] = ['basic', 'status', 'gateway'];
+
+/**
+ * 항목이 속한 그룹.
+ *
+ * 셋은 성격이 다르다: 기본 정보는 사람이 적어 둔 값(통신과 무관), 상태 정보는 디바이스가
+ * 보고하는 값, 수신 정보는 게이트웨이가 업링크를 받으며 남긴 값이다. 한데 섞어 두면
+ * "이 값이 언제 것인지" 를 항목마다 다르게 읽어야 한다.
+ */
+export function propertyGroupOf(key: string): PropertyGroup {
+  if (key.startsWith('meta.')) return 'basic';
+  if (key.startsWith('gw.')) return 'gateway';
+  return 'status';
+}
+
+export function needsReception(key: string): boolean {
+  return !key.startsWith('meta.');
+}
+
+export function isDerivedPropertyKey(key: string): boolean {
+  return key.startsWith('gw.') || key.startsWith('meta.');
+}
+
+/**
+ * 속성 그리드가 그릴 카드 항목을 만든다.
+ *
+ * 표시 순서 정렬 → 전용 섹션 키 제외 → measurements 전개에 더해, 게이트웨이 수신
+ * 정보와 메타데이터를 파생 카드로 붙인다.
+ *
+ * 패널과 설정 화면이 이 함수 하나를 공유하므로 "고를 수 있는 항목" 과 "그려지는
+ * 카드" 가 갈라질 수 없다 — 종전에는 양쪽이 각자의 규칙을 갖고 있었다.
+ */
+export function buildDisplayEntries(source: DisplaySource | undefined): PropertyEntry[] {
+  if (!source) return [];
+  const properties = source.properties ?? {};
+  return [
+    ...expandMeasurementEntries(
+      excludeDedicatedSectionKeys(sortProperties(Object.entries(properties))),
+    ),
+    ...buildGatewayEntries(properties),
+    ...buildMetadataEntries(source),
+  ];
+}
+
+/**
+ * 이 디바이스가 **속성 그리드에 실제로 그리는** 항목의 키 목록.
+ *
+ * 설정의 "표시 항목" 과 패널의 카드는 반드시 같아야 한다. 종전에는 둘이 서로 다른
+ * 규칙으로 목록을 만들어 어긋났다:
+ *   - 프로토콜 라벨표로 채워, 그 디바이스가 보고하지 않는 항목까지 고를 수 있었다.
+ *   - `measurements` 컨테이너와 그 하위(온도·습도)가 함께 떴다.
+ *   - 전용 섹션이 그리는 키(`gateways`)도 목록에 남아, 골라도 카드가 되지 않았다.
+ *
+ * 그래서 **패널이 카드를 만드는 그 경로**를 그대로 쓴다 — 정렬·전용 섹션 제외·
+ * measurements 전개까지 같은 함수를 거치므로 둘이 갈라질 수 없다.
+ */
+export function listDisplayableProperties(source: DisplaySource | undefined): string[] {
+  const entries = buildDisplayEntries(source);
+  const seen = new Set<string>();
+  const keys: string[] = [];
+  for (const { key } of entries) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    keys.push(key);
+  }
+  return keys;
 }
 
 /** 속성 표시 우선순위. 목록에 없는 키는 맨 뒤에 원래 순서대로 표시. */
@@ -327,14 +536,45 @@ const POWER_OFF_UNRELIABLE_KEYS = new Set<string>([
   'swing_vertical',
 ]);
 
+/**
+ * 값과 단위 사이의 간격.
+ *
+ * `°C` · `%` 처럼 기호로 시작하는 단위는 붙여 쓰고, `ppm` · `V` 처럼 글자로 시작하면
+ * 한 칸 띄운다 — 둘을 같게 두면 어느 한쪽이 늘 어색하다.
+ */
+function unitSeparator(unit: string): string {
+  return /^[^\p{L}\p{N}]/u.test(unit) ? '' : ' ';
+}
+
+/**
+ * 키가 원래 갖는 단위.
+ *
+ * 종전에는 이름에 붙여 두었다(`RSSI (dBm)`). 이름과 단위가 한 덩어리면 단위만 바꿀 수
+ * 없고, 이름을 바꾸면 단위가 함께 사라진다. 이름에서 떼어 값 쪽에 둔다 — 사용자가 정한
+ * 단위가 있으면 그것이 이긴다.
+ */
+const DEFAULT_UNITS: Record<string, string> = {
+  'gw.rssi': 'dBm',
+  'gw.snr': 'dB',
+};
+
+/** 키가 원래 갖는 단위. 없으면 `undefined`. */
+export function defaultUnitOf(key: string): string | undefined {
+  return DEFAULT_UNITS[key];
+}
+
 export function formatPropertyValue(
   key: string,
   value: unknown,
-  opts?: { powerOff?: boolean },
+  opts?: { powerOff?: boolean; unit?: string },
 ): string {
   // 전원 OFF 시 운전 계열 값은 정규화된 기본값이라 실제 값이 아니므로 '-' 로 표시.
   if (opts?.powerOff && POWER_OFF_UNRELIABLE_KEYS.has(key)) return '-';
   if (value === null || value === undefined) return '-';
+  // 사용자가 단위를 정했으면 그것만 붙인다 — 키 이름으로 짐작한 단위(온도의 °C)와
+  // 겹쳐 "26.4°C ppm" 같은 것이 되지 않게, 짐작을 건너뛴다.
+  const unit = opts?.unit?.trim() || DEFAULT_UNITS[key];
+  if (unit && typeof value === 'number') return `${value}${unitSeparator(unit)}${unit}`;
   if (typeof value === 'number') {
     // mode / fan_speed 는 hvac 통일 ID (int) — enum 키로 변환 후 라벨링.
     if (key === 'mode') {

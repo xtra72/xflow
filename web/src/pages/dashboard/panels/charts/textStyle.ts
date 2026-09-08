@@ -57,3 +57,24 @@ export function resolveFontColor(v: unknown): string | undefined {
     ? v.trim()
     : undefined;
 }
+
+/** 글자 가로 정렬. 미지정은 상속(칸 위치에서 저절로 정해지는 기존 정렬을 그대로 둔다). */
+export type ChartTextAlign = 'left' | 'center' | 'right';
+
+const TEXT_ALIGNS: ChartTextAlign[] = ['left', 'center', 'right'];
+
+export const TEXT_ALIGN_OPTIONS: ReadonlyArray<{ value: ChartTextAlign; labelKey: string }> = [
+  { value: 'left', labelKey: 'dashboard.chart.alignLeft' },
+  { value: 'center', labelKey: 'dashboard.chart.alignCenter' },
+  { value: 'right', labelKey: 'dashboard.chart.alignRight' },
+];
+
+/**
+ * 정렬 토큰을 CSS 값으로 편다. 인식 불가·미지정은 `undefined` — 속성을 붙이지 않아
+ * 지금까지의 정렬(칸 위치에서 정해지던 것)이 그대로 산다.
+ */
+export function resolveTextAlign(v: unknown): ChartTextAlign | undefined {
+  return typeof v === 'string' && (TEXT_ALIGNS as string[]).includes(v)
+    ? (v as ChartTextAlign)
+    : undefined;
+}

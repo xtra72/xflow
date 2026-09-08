@@ -59,29 +59,29 @@ export function NodePalette() {
     >
       {/* 검색 입력 */}
       <div className="relative border-b border-(--color-border-default) p-2">
-        <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+        <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-(--color-text-muted)" />
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="노드 검색..."
           className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-primary) py-1.5 pl-8 pr-2
-            text-sm text-(--color-text-primary) placeholder:text-gray-400
+            text-sm text-(--color-text-primary) placeholder:text-(--color-text-muted)
             focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400
-            dark:placeholder:text-gray-500 dark:focus:border-blue-500"
+            dark:focus:border-blue-500"
         />
       </div>
 
       {/* 노드 목록 */}
       <div className="flex-1 overflow-y-auto p-1">
         {isLoading && (
-          <div className="flex items-center justify-center py-8 text-gray-400">
+          <div className="flex items-center justify-center py-8 text-(--color-text-muted)">
             <Loader2 className="h-5 w-5 animate-spin" />
           </div>
         )}
 
         {!isLoading && categoryKeys.length === 0 && (
-          <p className="px-2 py-4 text-center text-xs text-gray-400">
+          <p className="px-2 py-4 text-center text-xs text-(--color-text-muted)">
             검색 결과가 없습니다
           </p>
         )}

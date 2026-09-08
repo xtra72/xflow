@@ -64,7 +64,7 @@ const PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
 
 /** 레벨별 뱃지 스타일 */
 const LEVEL_STYLES: Record<LogLevel, string> = {
-  DEBUG: 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
+  DEBUG: 'bg-(--color-bg-sunken) text-(--color-text-secondary)',
   INFO: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300',
   WARN: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300',
   ERROR: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
@@ -77,7 +77,7 @@ const SOURCE_STYLES: Record<SourceType, string> = {
   flow: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300',
   api: 'bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300',
   engine: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300',
-  system: 'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
+  system: 'bg-(--color-bg-sunken) text-(--color-text-secondary)',
 };
 
 /** 컬럼 폭 — 헤더와 본문이 같은 값을 써야 열이 어긋나지 않는다. */
@@ -562,7 +562,7 @@ function ColumnSelectFilter({
                   checked={selected.has(option)}
                   onChange={() => onToggle(option)}
                   data-testid={`log-filter-option-${testId}-${option}`}
-                  className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  className="h-3.5 w-3.5 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
                 />
                 <span className="truncate text-(--color-text-primary)">{option}</span>
               </label>

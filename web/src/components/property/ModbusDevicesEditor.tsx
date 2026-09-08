@@ -89,12 +89,12 @@ const selectionActionButton = cn(
 );
 
 const iconButton = cn(
-  'shrink-0 rounded p-1 text-gray-400 transition-colors',
+  'shrink-0 rounded p-1 text-(--color-text-muted) transition-colors',
   'hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)',
 );
 
 const removeButton = cn(
-  'shrink-0 rounded p-1 text-gray-400 transition-colors',
+  'shrink-0 rounded p-1 text-(--color-text-muted) transition-colors',
   'hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400',
 );
 
@@ -725,7 +725,7 @@ export function DeviceEditDialog({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             aria-label={t('property.modbusDevices.close')}
           >
             <X className="h-4 w-4" />

@@ -24,11 +24,11 @@ export default function AgentEnabledBadge({ enabled, className }: AgentEnabledBa
       title={t('agents.badge.disabledTooltip')}
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium',
-        'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
+        'bg-(--color-bg-sunken) text-(--color-text-secondary)',
         className,
       )}
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-gray-400 dark:bg-gray-500" />
+      <span className="h-1.5 w-1.5 rounded-full bg-(--color-status-stopped)" />
       {t('agents.badge.disabled')}
     </span>
   );

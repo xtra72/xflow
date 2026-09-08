@@ -648,3 +648,80 @@ describe('LineChartPanel', () => {
 //
 // @spec SPEC-TSDB-002 §2.3 (U3) · §2.4 (U4) — plan.md §3.1 CT-01 ~ CT-05 / AC-09
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// SPEC-CHART-005 M8 — 편집 표면 공용화.
+//
+// **편집 표면만** 공용이다 — 그리드·중심 표식·정렬 툴바·선택 구분. 드래그 계산은
+// `ChartDragLayer` 가 계속 소유한다: 범례는 흐름 안에 남아 "지금 그려진 자리에서
+// 상자 밖으로 나가지 않는 만큼" 으로 죄고, 재는 상자와 변위를 얹는 상자가 두 겹이라
+// 공용 레이어가 대신할 수 없다.
+//
+// @spec SPEC-CHART-005 AC-17 ~ AC-20
+// ---------------------------------------------------------------------------
+describe('LineChartPanel 편집 표면 (SPEC-CHART-005 M8)', () => {
+  const edit = (extra: Record<string, unknown> = {}) => (
+    <LineChartPanel
+      panelId="p1"
+      config={{ channel_name: 'c', ...extra }}
+      onConfigChange={vi.fn()}
+      forceEdit
+    />
+  );
+
+  it('AC-17: 편집 중에는 그리드와 중심 표식이 보인다', () => {
+    render(edit());
+    expect(screen.getByTestId('panel-edit-grid')).toBeInTheDocument();
+    expect(screen.getByTestId('panel-edit-center')).toBeInTheDocument();
+  });
+
+  it('AC-17: 편집이 꺼져 있으면 그리드도 툴바도 없다', () => {
+    render(<LineChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+    expect(screen.queryByTestId('panel-edit-grid')).toBeNull();
+    expect(screen.queryByTestId('panel-align-toolbar')).toBeNull();
+  });
+
+  it('AC-18: 정렬 툴바에 스냅 토글이 켜진 채로 나온다', () => {
+    render(edit());
+    expect(screen.getByTestId('panel-align-toolbar')).toBeInTheDocument();
+    expect(screen.getByTestId('panel-align-reset')).toBeInTheDocument();
+    // 드래그 레이어가 격자 붙임을 하게 됐으므로 스위치가 죽은 컨트롤이 아니다.
+    expect(screen.getByTestId('panel-snap-toggle')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('AC-19: 플롯 상자가 정렬 대상 표식과 윤곽을 갖는다', () => {
+    render(edit());
+    const plot = screen.getByTestId('line-chart-plot');
+    expect(plot).toHaveAttribute('data-panel-drag', 'plot');
+    expect(plot.className).toContain('outline-dashed');
+
+    fireEvent.pointerDown(plot);
+    expect(screen.getByTestId('line-chart-plot').className).toContain('outline-2');
+  });
+
+  it('AC-19: 표식은 범례 자신에 붙는다 — 감싸는 상자를 만들지 않는다', () => {
+    const { container } = render(edit());
+    const legend = container.querySelector('[data-testid="line-chart-legend"]');
+    if (!legend) return; // 시리즈가 없으면 범례가 그려지지 않는다.
+    expect(legend).toHaveAttribute('data-panel-drag', 'legend');
+    expect([...container.querySelectorAll('[data-panel-drag="legend"]')]).toEqual([legend]);
+  });
+
+  it('AC-20: 배치 초기화가 플롯·범례 오프셋을 한 번에 지운다', () => {
+    const onConfigChange = vi.fn();
+    render(
+      <LineChartPanel
+        panelId="p1"
+        config={{ channel_name: 'c', plot_offset_x: 10, legend: { offset_x: 8, position: 'bottom' } }}
+        onConfigChange={onConfigChange}
+        forceEdit
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('panel-align-reset'));
+    expect(onConfigChange).toHaveBeenCalledTimes(1);
+    const patch = onConfigChange.mock.calls[0]![0] as Record<string, unknown>;
+    expect(patch.plot_offset_x).toBeUndefined();
+    // 범례는 중첩 오브젝트라 다른 키(position 등)를 보존하며 오프셋만 지운다.
+    expect(patch.legend).toEqual({ position: 'bottom', offset_x: undefined, offset_y: undefined });
+  });
+});

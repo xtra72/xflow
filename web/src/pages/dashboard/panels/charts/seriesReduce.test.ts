@@ -10,7 +10,12 @@
 import { describe, it, expect } from 'vitest';
 
 import type { ChartEntry, SeriesReduceFunc } from './chartChannelTypes';
-import { reduceAllSeries, reduceSeries, SERIES_REDUCE_FUNCS } from './seriesReduce';
+import {
+  lastSampleDelta,
+  reduceAllSeries,
+  reduceSeries,
+  SERIES_REDUCE_FUNCS,
+} from './seriesReduce';
 import type { StoreSeriesStyle } from './useStoreChartData';
 
 /** 버킷 간격이 균일한 시리즈 타임라인을 만든다(공통 픽스처 F1 과 같은 형상). */
@@ -341,5 +346,42 @@ describe('reduceAllSeries', () => {
 
   it('시리즈 0개는 빈 배열이다 (오류가 아니다)', () => {
     expect(reduceAllSeries(seriesEntries, [], seriesStyles, 'max')).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-CHART-003 — 직전 표본 대비 변화량.
+// ---------------------------------------------------------------------------
+describe('lastSampleDelta (SPEC-CHART-003 AC-14)', () => {
+  const e = (timestamp: number, value: unknown) => ({ timestamp, value });
+
+  it('마지막 표본에서 직전 표본을 뺀다 — 구간 시작 대비가 아니다', () => {
+    // 20 22 26 24 21 → last(21) − prev(24) = -3. first 대비였다면 +1 이다.
+    const entries = [e(1, 20), e(2, 22), e(3, 26), e(4, 24), e(5, 21)];
+    expect(lastSampleDelta(entries)).toBe(-3);
+    expect(reduceSeries(entries, 'delta')).toBe(1);
+  });
+
+  it('비수치·null 은 표본이 아니므로 건너뛴다', () => {
+    // 18 null 19 19 23 → 표본은 18 19 19 23, 직전은 19 → +4.
+    expect(
+      lastSampleDelta([e(1, 18), e(2, null), e(3, 19), e(4, 19), e(5, 23)]),
+    ).toBe(4);
+  });
+
+  it('표본이 2개 미만이면 undefined 다(0 이 아니다)', () => {
+    expect(lastSampleDelta([])).toBeUndefined();
+    expect(lastSampleDelta([e(1, 5)])).toBeUndefined();
+    expect(lastSampleDelta([e(1, null), e(2, 'x')])).toBeUndefined();
+    expect(lastSampleDelta(undefined)).toBeUndefined();
+  });
+
+  it('변화가 없으면 0 이다', () => {
+    expect(lastSampleDelta([e(1, 7), e(2, 7)])).toBe(0);
+  });
+
+  it('timestamp 정렬이 깨져 있어도 시각으로 판정한다', () => {
+    // 배열 순서는 뒤섞였지만 마지막은 t=5(21), 직전은 t=4(24).
+    expect(lastSampleDelta([e(5, 21), e(1, 20), e(4, 24), e(2, 22)])).toBe(-3);
   });
 });

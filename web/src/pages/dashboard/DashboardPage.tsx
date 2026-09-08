@@ -14,13 +14,7 @@ import {
   Settings,
   Star,
   ChevronDown,
-  ChevronRight,
   Plus,
-  Sun,
-  Moon,
-  Monitor,
-  Paintbrush,
-  Palette as PaletteIcon,
   Save,
   Check,
   Grid3X3,
@@ -42,7 +36,6 @@ import {
   useUIStore,
   type DashboardLayoutItem,
   type PanelConfig,
-  type ThemeMode,
 } from '@/stores/uiStore';
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import type { FlowInfo } from '@/types/flow';
@@ -87,14 +80,6 @@ const REFRESH_INTERVALS = [
   { value: 30 },
   { value: 60 },
 ] as const;
-
-/** 테마 모드 옵션 (Pencil 디자인 매칭). labelKey/descKey 는 i18n 키. */
-const THEME_OPTIONS: { value: ThemeMode; labelKey: string; descKey: string; icon: React.ReactNode; iconColor: string }[] = [
-  { value: 'system', labelKey: 'dashboard.theme.system', descKey: 'dashboard.themeDesc.system', icon: <Monitor className="h-4 w-4" />, iconColor: 'text-blue-500' },
-  { value: 'day', labelKey: 'dashboard.theme.day', descKey: 'dashboard.themeDesc.day', icon: <Sun className="h-4 w-4" />, iconColor: 'text-amber-500' },
-  { value: 'night', labelKey: 'dashboard.theme.night', descKey: 'dashboard.themeDesc.night', icon: <Moon className="h-4 w-4" />, iconColor: 'text-indigo-500' },
-  { value: 'custom', labelKey: 'dashboard.theme.custom', descKey: 'dashboard.themeDesc.custom', icon: <Paintbrush className="h-4 w-4" />, iconColor: 'text-violet-500' },
-];
 
 /** 로컬 대시보드 뷰 — 기존 DashboardPage 본문(편집/sync 포함). 회귀 없이 동일하다. */
 function LocalDashboardView() {
@@ -151,8 +136,6 @@ function LocalDashboardView() {
   const removePanel = useUIStore((s) => s.removePanel);
   const updatePanelConfig = useUIStore((s) => s.updatePanelConfig);
   const updatePanelTitle = useUIStore((s) => s.updatePanelTitle);
-  const theme = useUIStore((s) => s.theme);
-  const setTheme = useUIStore((s) => s.setTheme);
   const gridCols = useUIStore((s) => s.dashboardGridCols);
   const setGridCols = useUIStore((s) => s.setDashboardGridCols);
   const showGridLines = useUIStore((s) => s.dashboardShowGridLines);
@@ -168,8 +151,6 @@ function LocalDashboardView() {
   const [editingName, setEditingName] = useState('');
 
   // 테마 드롭다운
-  const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
-  const themeDropdownRef = useRef<HTMLDivElement>(null);
   // 그리드 드롭다운
   const [gridDropdownOpen, setGridDropdownOpen] = useState(false);
   const gridDropdownRef = useRef<HTMLDivElement>(null);
@@ -226,13 +207,10 @@ function LocalDashboardView() {
 
   // 드롭다운 외부 클릭 닫기
   useEffect(() => {
-    if (!dashboardDropdownOpen && !themeDropdownOpen && !gridDropdownOpen && !refreshDropdownOpen) return;
+    if (!dashboardDropdownOpen && !gridDropdownOpen && !refreshDropdownOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (dashboardDropdownOpen && dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setDashboardDropdownOpen(false);
-      }
-      if (themeDropdownOpen && themeDropdownRef.current && !themeDropdownRef.current.contains(e.target as Node)) {
-        setThemeDropdownOpen(false);
       }
       if (gridDropdownOpen && gridDropdownRef.current && !gridDropdownRef.current.contains(e.target as Node)) {
         setGridDropdownOpen(false);
@@ -243,7 +221,7 @@ function LocalDashboardView() {
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [dashboardDropdownOpen, themeDropdownOpen, gridDropdownOpen, refreshDropdownOpen]);
+  }, [dashboardDropdownOpen, gridDropdownOpen, refreshDropdownOpen]);
 
   // 데이터 로드
   const {
@@ -524,62 +502,8 @@ function LocalDashboardView() {
             </span>
           )}
           {editMode ? (
-            /* ── 편집 모드 우측: 테마 + 패널추가 + 취소 + 저장 ── */
+            /* ── 편집 모드 우측: 패널추가 + 취소 + 저장 ── */
             <>
-              {/* 테마 셀렉터 버튼 (Pencil: SO2aH) */}
-              <div className="relative" ref={themeDropdownRef}>
-                <button
-                  type="button"
-                  onClick={() => setThemeDropdownOpen((prev) => !prev)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) px-3.5 py-2 text-[13px] font-medium text-(--color-text-muted) transition-colors hover:bg-(--color-border-default)"
-                >
-                  <PaletteIcon className="h-3.5 w-3.5" />
-                  {t('dashboard.header.theme')}
-                  <ChevronDown className="h-3 w-3 text-(--color-text-muted)" />
-                </button>
-
-                {/* 테마 드롭다운 (Pencil: vs5tn) */}
-                {themeDropdownOpen && (
-                  <div className="absolute right-0 top-full z-50 mt-1 w-[280px] overflow-hidden rounded-[10px] border border-(--color-border-default) bg-(--color-bg-surface) shadow-lg">
-                    <div className="px-4 py-2.5">
-                      <span className="text-[13px] font-semibold text-(--color-text-primary)">{t('dashboard.header.themeTitle')}</span>
-                    </div>
-                    <div className="h-px bg-(--color-border-default)" />
-                    <div className="flex flex-col gap-0.5 p-1.5">
-                      {THEME_OPTIONS.map((opt) => (
-                        <button
-                          key={opt.value}
-                          type="button"
-                          onClick={() => { setTheme(opt.value); setThemeDropdownOpen(false); }}
-                          className={`flex items-center justify-between rounded-md px-3 py-2.5 transition-colors ${
-                            theme === opt.value
-                              ? 'bg-blue-50 dark:bg-blue-900/20'
-                              : 'hover:bg-(--color-bg-elevated)'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2.5">
-                            <span className={opt.iconColor}>{opt.icon}</span>
-                            <div className="flex flex-col items-start gap-0.5">
-                              <span className={`text-[13px] font-medium ${theme === opt.value ? 'text-blue-600 dark:text-blue-400' : 'text-(--color-text-primary)'}`}>
-                                {t(opt.labelKey)}
-                              </span>
-                              <span className="text-[11px] text-(--color-text-muted)">{t(opt.descKey)}</span>
-                            </div>
-                          </div>
-                          {theme === opt.value ? (
-                            <Check className="h-3.5 w-3.5 text-blue-500" />
-                          ) : opt.value === 'custom' ? (
-                            <ChevronRight className="h-3.5 w-3.5 text-(--color-text-muted)" />
-                          ) : (
-                            <span className="h-3.5 w-3.5" />
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
               {/* 그리드 설정 드롭다운 */}
               <div className="relative" ref={gridDropdownRef}>
                 <button
@@ -646,7 +570,7 @@ function LocalDashboardView() {
                           className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${showGridLines ? 'bg-blue-500' : 'bg-(--color-border-default)'}`}
                           aria-label={t('dashboard.grid.showGridLinesAria')}
                         >
-                          <span className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${showGridLines ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                          <span className={`inline-block h-4 w-4 rounded-full bg-(--color-bg-surface) shadow-sm transition-transform ${showGridLines ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
                         </button>
                       </div>
                     </div>
@@ -698,7 +622,7 @@ function LocalDashboardView() {
               <div className="flex items-center gap-4">
                 {/* WebSocket 연결 상태 */}
                 <span className="inline-flex items-center gap-1.5">
-                  <span className={`h-2 w-2 rounded-full ${wsState === 'connected' ? 'bg-green-500' : 'bg-gray-400'}`} />
+                  <span className={`h-2 w-2 rounded-full ${wsState === 'connected' ? 'bg-green-500' : 'bg-(--color-status-stopped)'}`} />
                   <span className={`text-xs ${wsState === 'connected' ? 'text-green-500' : 'text-(--color-text-muted)'}`}>
                     {wsState === 'connected' ? t('dashboard.header.connected') : t('dashboard.offline')}
                   </span>
@@ -827,7 +751,7 @@ function LocalDashboardView() {
                 {Array.from({ length: gridCols * Math.ceil(((gridRef.current?.clientHeight ?? 800) - 48) / (gridRowHeight + GRID_MARGIN[1])) }).map((_, i) => (
                   <div
                     key={i}
-                    className="border border-dashed border-slate-200 dark:border-slate-700"
+                    className="border border-dashed border-(--color-border-default)"
                   />
                 ))}
               </div>

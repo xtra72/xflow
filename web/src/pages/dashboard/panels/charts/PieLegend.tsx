@@ -20,6 +20,22 @@ import { formatPiePercent, pieLegendValueText } from './pieLabel';
 import type { ChartFontFamily } from './textStyle';
 import type { PieLegendPosition } from './chartChannelTypes';
 
+/**
+ * 배치 편집이 켜졌을 때만 붙는 부가 속성 (SPEC-CHART-005).
+ *
+ * 범례를 **감싸는 상자**에 붙이지 않는다 — 이 범례는 스스로 `absolute` 로 떠 있어서,
+ * 흐름 안의 상자로 감싸면 그 상자가 크기 0이 되고 윤곽·드래그 대상이 엉뚱한 자리에
+ * 생긴다(실제로 그렇게 만들었다가 위쪽에 얇은 띠만 남았다).
+ */
+export interface PieLegendEdit {
+  kind: string;
+  selected: boolean;
+  /** 선택/비선택 윤곽 클래스. */
+  outlineClass: string;
+  /** 크기 손잡이 등 상자 안에 겹쳐 그릴 것. */
+  overlay?: React.ReactNode;
+}
+
 export interface PieLegendItem {
   name: string;
   value: number;
@@ -40,6 +56,7 @@ export function PieLegend({
   unit,
   offsetX,
   offsetY,
+  edit,
 }: {
   items: readonly PieLegendItem[];
   position: PieLegendPosition;
@@ -52,6 +69,8 @@ export function PieLegend({
   fontColor?: string;
   decimals: number;
   unit?: string;
+  /** 배치 편집 표식. 미지정이면 종전과 같은 DOM 이다. */
+  edit?: PieLegendEdit;
   /** 끌어 옮긴 오프셋(담는 상자 대비 %). 기준 자리에서 얼마나 밀렸는지. */
   offsetX: number;
   offsetY: number;
@@ -71,6 +90,7 @@ export function PieLegend({
     <div
       data-testid="pie-chart-legend"
       data-pie-legend=""
+      {...(edit ? { 'data-panel-drag': edit.kind, tabIndex: 0 } : null)}
       data-position={position}
       data-aligned={isVert ? 'true' : 'false'}
       className={cn(
@@ -84,6 +104,7 @@ export function PieLegend({
           // 행은 제 높이만 차지하고, 덩어리째 세로 가운데에 놓는다.
           ? 'grid content-center items-center gap-x-3 gap-y-1'
           : 'flex flex-wrap items-center justify-center gap-x-4 gap-y-1',
+        edit?.outlineClass,
       )}
       style={{
         ...place,
@@ -162,6 +183,7 @@ export function PieLegend({
           </span>
         );
       })}
+      {edit?.overlay}
     </div>
   );
 }

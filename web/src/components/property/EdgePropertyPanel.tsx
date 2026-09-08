@@ -120,8 +120,8 @@ export function EdgePropertyPanel({ width }: EdgePropertyPanelProps): React.Reac
         <button
           type="button"
           onClick={() => selectEdge(null)}
-          className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600
-            dark:hover:bg-gray-800 dark:hover:text-gray-300 transition-colors"
+          className="rounded p-1 text-(--color-text-muted) hover:bg-(--color-bg-sunken) hover:text-(--color-text-secondary)
+            transition-colors"
           aria-label={t('property.panel.closeAria')}
         >
           <X className="h-4 w-4" />

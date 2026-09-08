@@ -16,16 +16,21 @@ function Fixture({
   offsetX = 0,
   offsetY = 0,
   enabled = true,
+  snap = false,
 }: {
   onChange: (n: { x: number; y: number }) => void;
   onPlotChange?: (n: { x: number; y: number }) => void;
   offsetX?: number;
   offsetY?: number;
   enabled?: boolean;
+  snap?: boolean;
 }) {
   return (
     <ChartDragLayer
       enabled={enabled}
+      // 이동 계산을 재는 테스트에서는 격자를 끈다 — 켜 두면 스냅이 값을 한 번 더 만져서
+      // 무엇을 재고 있는지 흐려진다(격자는 전용 describe 가 검증한다).
+      snap={snap}
       legend={{ offsetX, offsetY, onChange }}
       plot={{ offsetX: 0, offsetY: 0, onChange: onPlotChange }}
     >
@@ -266,3 +271,177 @@ describe('잡는 상자와 재는 상자가 다르다', () => {
     expect(onChange).toHaveBeenLastCalledWith({ x: 0, y: -45 });
   });
 });
+
+// SPEC-CHART-005 — 라인에도 격자 붙임 / 무리 이동 / 크기 손잡이를 더한다.
+describe('격자 붙임 · 무리 이동 · 크기 손잡이', () => {
+  function Rig({
+    onLegendChange = () => {},
+    onPlotChange = () => {},
+    onPlotResize = () => {},
+    onSelectionChange = () => {},
+    selection = new Set<'legend' | 'plot'>(),
+    snap = true,
+    legendOffset = { x: 0, y: 0 },
+  }: {
+    onLegendChange?: (n: { x: number; y: number }) => void;
+    onPlotChange?: (n: { x: number; y: number }) => void;
+    onPlotResize?: (n: number) => void;
+    onSelectionChange?: (n: ReadonlySet<'legend' | 'plot'>) => void;
+    selection?: ReadonlySet<'legend' | 'plot'>;
+    snap?: boolean;
+    legendOffset?: { x: number; y: number };
+  }) {
+    return (
+      <ChartDragLayer
+        snap={snap}
+        selection={selection}
+        onSelectionChange={onSelectionChange}
+        legend={{ offsetX: legendOffset.x, offsetY: legendOffset.y, onChange: onLegendChange }}
+        plot={{
+          offsetX: 0,
+          offsetY: 0,
+          onChange: onPlotChange,
+          size: 100,
+          sizeRange: { min: 20, max: 100 },
+          onResize: onPlotResize,
+        }}
+      >
+        <div data-testid="body" data-chart-legend-bounds="">
+          <div data-chart-plot-area="" data-testid="plot">
+            <span data-panel-resize="plot" data-testid="plot-handle" />
+            plot
+          </div>
+          <div data-chart-legend="" data-testid="legend">
+            <div data-chart-legend-content="" data-testid="legend-content">
+              legend
+            </div>
+          </div>
+        </div>
+      </ChartDragLayer>
+    );
+  }
+
+  /** 그림 상자는 영역을 꽉 채운다 — 본문과 같은 상자다. */
+  function stubPlotLayout(): void {
+    stubRect('body', 0, 0, 400, 400);
+    stubRect('plot', 0, 0, 400, 400);
+    stubRect('legend', 0, 360, 400, 40);
+    stubRect('legend-content', 180, 360, 40, 40);
+  }
+
+  it('격자를 켜면 그림 오프셋이 10% 눈금에 붙는다', async () => {
+    const onPlotChange = vi.fn();
+    render(<Rig onPlotChange={onPlotChange} selection={new Set(['plot'])} />);
+    stubPlotLayout();
+
+    // 26px = 6.5% → 붙이면 10.
+    fireEvent(screen.getByTestId('plot'), pointer('pointerdown', 100, 100));
+    fireEvent(document, pointer('pointermove', 126, 100));
+    await nextFrame();
+
+    expect(onPlotChange).toHaveBeenLastCalledWith({ x: 10, y: 0 });
+  });
+
+  it('끄는 동안 Alt 를 누르면 격자를 잠시 무시한다', async () => {
+    const onPlotChange = vi.fn();
+    render(<Rig onPlotChange={onPlotChange} selection={new Set(['plot'])} />);
+    stubPlotLayout();
+
+    fireEvent(screen.getByTestId('plot'), pointer('pointerdown', 100, 100));
+    fireEvent(
+      document,
+      new MouseEvent('pointermove', {
+        clientX: 126,
+        clientY: 100,
+        altKey: true,
+        bubbles: true,
+      }) as unknown as PointerEvent,
+    );
+    await nextFrame();
+
+    expect(onPlotChange).toHaveBeenLastCalledWith({ x: 6.5, y: 0 });
+  });
+
+  it('둘을 함께 고르면 같은 이동량으로 함께 움직인다', async () => {
+    const onPlotChange = vi.fn();
+    const onLegendChange = vi.fn();
+    render(
+      <Rig
+        snap={false}
+        selection={new Set(['plot', 'legend'])}
+        onPlotChange={onPlotChange}
+        onLegendChange={onLegendChange}
+        legendOffset={{ x: 5, y: 0 }}
+      />,
+    );
+    stubPlotLayout();
+
+    fireEvent(screen.getByTestId('plot'), pointer('pointerdown', 100, 100));
+    fireEvent(document, pointer('pointermove', 140, 100));
+    await nextFrame();
+
+    // 상대 배치가 유지된다 — 범례는 원래 5 였으므로 15 가 된다.
+    expect(onPlotChange).toHaveBeenLastCalledWith({ x: 10, y: 0 });
+    expect(onLegendChange).toHaveBeenLastCalledWith({ x: 15, y: 0 });
+  });
+
+  it('Shift 로 잡으면 고르기만 하고 움직이지 않는다', async () => {
+    const onPlotChange = vi.fn();
+    const onSelectionChange = vi.fn();
+    render(
+      <Rig
+        onPlotChange={onPlotChange}
+        onSelectionChange={onSelectionChange}
+        selection={new Set(['legend'])}
+      />,
+    );
+    stubPlotLayout();
+
+    fireEvent(
+      screen.getByTestId('plot'),
+      new MouseEvent('pointerdown', {
+        clientX: 100,
+        clientY: 100,
+        shiftKey: true,
+        bubbles: true,
+      }) as unknown as PointerEvent,
+    );
+    fireEvent(document, pointer('pointermove', 200, 100));
+    await nextFrame();
+
+    expect([...onSelectionChange.mock.calls[0]![0]].sort()).toEqual(['legend', 'plot']);
+    expect(onPlotChange).not.toHaveBeenCalled();
+  });
+
+  it('손잡이를 끌면 자리가 아니라 크기가 바뀐다', async () => {
+    const onPlotResize = vi.fn();
+    const onPlotChange = vi.fn();
+    render(
+      <Rig onPlotResize={onPlotResize} onPlotChange={onPlotChange} selection={new Set(['plot'])} />,
+    );
+    stubPlotLayout();
+    stubRect('plot-handle', 396, 396, 12, 12);
+
+    // 대각선 투영 — (-40 + -40) / 2 = -40 → 100 - 40 = 60.
+    fireEvent(screen.getByTestId('plot-handle'), pointer('pointerdown', 100, 100));
+    fireEvent(document, pointer('pointermove', 60, 60));
+    await nextFrame();
+
+    expect(onPlotResize).toHaveBeenLastCalledWith(60);
+    expect(onPlotChange).not.toHaveBeenCalled();
+  });
+
+  it('크기는 지정된 범위 밖으로 나가지 않는다', async () => {
+    const onPlotResize = vi.fn();
+    render(<Rig onPlotResize={onPlotResize} selection={new Set(['plot'])} />);
+    stubPlotLayout();
+    stubRect('plot-handle', 396, 396, 12, 12);
+
+    fireEvent(screen.getByTestId('plot-handle'), pointer('pointerdown', 100, 100));
+    fireEvent(document, pointer('pointermove', -400, -400));
+    await nextFrame();
+
+    expect(onPlotResize).toHaveBeenLastCalledWith(20);
+  });
+});
+

@@ -318,7 +318,7 @@ function GatewayRow({
                             className={cn(
                               'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium',
                               d.stale
-                                ? 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
+                                ? 'bg-(--color-bg-sunken) text-(--color-text-muted)'
                                 : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
                             )}
                           >

@@ -57,7 +57,7 @@ export function NodeCategory({
         onClick={() => setIsOpen((prev) => !prev)}
         className="flex w-full items-center gap-1.5 px-2 py-1.5 text-xs font-semibold
           uppercase tracking-wider text-(--color-text-muted)
-          hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+          hover:bg-(--color-bg-secondary) transition-colors"
       >
         <ChevronRight
           className={cn(

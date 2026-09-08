@@ -25,7 +25,7 @@ export function gridCellSize(containerWidth: number, cols: number): number {
 }
 
 /** 그리드 단위 u 가 차지하는 픽셀 길이(마진 포함). */
-function unitsToPx(u: number, cell: number): number {
+export function unitsToPx(u: number, cell: number): number {
   return u * cell + GRID_MARGIN_PX * (u - 1);
 }
 

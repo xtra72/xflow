@@ -261,8 +261,9 @@ describe('미리보기 — 패널 실제 종횡비', () => {
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
 
     // 셀 100 + 마진 16 → 폭 6·100+16·5=680, 높이 4·100+16·3=448. 단위 비 1.5 가 아니다.
-    const wrapper = screen.getByTestId('heatmap-preview-wrapper');
-    expect(wrapper.style.aspectRatio).toBe(`${680 / 448} / 1`);
+    // 사이징 정본은 스테이지 하나다 — 타입별 상자가 아니라 여기에 비율이 실린다.
+    const stage = screen.getByTestId('preview-stage');
+    expect(stage.style.aspectRatio).toBe(`${680 / 448} / 1`);
   });
 
   it('레이아웃 항목이 없으면 기존 3:2 로 폴백한다', () => {
@@ -270,7 +271,7 @@ describe('미리보기 — 패널 실제 종횡비', () => {
     storeMock.layout = [];
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
 
-    expect(screen.getByTestId('heatmap-preview-wrapper').style.aspectRatio).toBe('3 / 2');
+    expect(screen.getByTestId('preview-stage').style.aspectRatio).toBe('1.5 / 1');
   });
 
   it('fill 모드는 종전대로 영역을 가득 채운다(비율 미적용)', () => {
@@ -428,27 +429,23 @@ describe('타이틀 바 표시 옵션', () => {
   });
 });
 
-describe('미리보기 패널 영역 표시', () => {
-  it('채움(fill) 모드에서는 실제 패널 비율을 점선으로 겹쳐 보여준다', () => {
+// 종전에는 채움 모드에서만 별도 점선(panel-area-outline)을 겹쳐 그렸다. 지금은
+// 스테이지가 패널 상자를 정확히 잡고 크기 조절 프레임이 그 경계를 표시하므로,
+// 두 모드 모두 같은 프레임 하나로 경계를 알 수 있다.
+describe('미리보기 패널 경계 표시', () => {
+  it.each([['fill'], ['fit']])('%s 모드에서 패널 경계를 프레임으로 보여준다', (mode) => {
     // 실제 패널 비율을 알아야 그릴 수 있으므로 레이아웃을 준다.
     storeMock.layout = [{ i: 'p1', x: 0, y: 0, w: 6, h: 4 }];
-    window.localStorage.setItem('panelSettings.previewFillMode', 'fill');
+    window.localStorage.setItem('panelSettings.previewFillMode', mode);
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
-    expect(screen.getByTestId('panel-area-outline')).toBeInTheDocument();
+    expect(screen.getByTestId('panel-resize-frame')).toBeInTheDocument();
   });
 
-  it('맞춤(fit) 모드는 미리보기 자체가 실제 비율이라 오버레이를 그리지 않는다', () => {
-    storeMock.layout = [{ i: 'p1', x: 0, y: 0, w: 6, h: 4 }];
-    window.localStorage.setItem('panelSettings.previewFillMode', 'fit');
-    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
-    expect(screen.queryByTestId('panel-area-outline')).not.toBeInTheDocument();
-  });
-
-  it('오버레이는 포인터 이벤트를 받지 않아 마커 배치를 막지 않는다', () => {
+  it('프레임은 포인터 이벤트를 받지 않아 마커 배치를 막지 않는다', () => {
     storeMock.layout = [{ i: 'p1', x: 0, y: 0, w: 6, h: 4 }];
     window.localStorage.setItem('panelSettings.previewFillMode', 'fill');
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
-    expect(screen.getByTestId('panel-area-outline').className).toContain('pointer-events-none');
+    expect(screen.getByTestId('panel-resize-overlay').className).toContain('pointer-events-none');
   });
 });
 
@@ -457,6 +454,6 @@ describe('미리보기 패널 영역 — 레이아웃 미상', () => {
     storeMock.layout = [];
     window.localStorage.setItem('panelSettings.previewFillMode', 'fill');
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
-    expect(screen.queryByTestId('panel-area-outline')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('panel-resize-frame')).not.toBeInTheDocument();
   });
 });

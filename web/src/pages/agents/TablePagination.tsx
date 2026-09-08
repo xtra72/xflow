@@ -60,7 +60,7 @@ export default function TablePagination({
           ))}
         </select>
         <span>{t('common.pagination.unit')}</span>
-        <span className="ml-2 text-gray-400">|</span>
+        <span className="ml-2 text-(--color-text-muted)">|</span>
         <span className="ml-2">
           {t('common.pagination.range')
             .replace('{total}', String(totalItems))

@@ -363,7 +363,7 @@ export default function AgentListPage({
       {/* 테이블 또는 빈 상태 */}
       {filteredAgents.length === 0 ? (
         <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) py-16 text-center">
-          <Bot className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
+          <Bot className="mx-auto h-12 w-12 text-(--color-border-strong)" />
           <p className="mt-4 text-sm text-(--color-text-muted)">
             {allAgents.length === 0
               ? t('agents.emptyTitle')
@@ -400,7 +400,7 @@ export default function AgentListPage({
                 ))}
               </select>
               <span>{t('common.pagination.unit')}</span>
-              <span className="ml-2 text-gray-400">|</span>
+              <span className="ml-2 text-(--color-text-muted)">|</span>
               <span className="ml-2">
                 {t('common.pagination.range')
                   .replace('{total}', String(totalItems))
@@ -556,7 +556,7 @@ function AgentRow({
         className="cursor-pointer transition-colors hover:bg-(--color-bg-elevated)"
       >
         {/* 확장 아이콘 */}
-        <td className="px-3 py-3 text-gray-400">
+        <td className="px-3 py-3 text-(--color-text-muted)">
           {isExpanded ? (
             <ChevronDown className="h-4 w-4" />
           ) : (
@@ -588,7 +588,7 @@ function AgentRow({
               </button>
               <button
                 onClick={handleCancelName}
-                className="rounded p-0.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"
+                className="rounded p-0.5 text-(--color-text-muted) hover:bg-(--color-bg-sunken)"
                 title={t('common.cancel')}
               >
                 <X className="h-3.5 w-3.5" />
@@ -635,7 +635,7 @@ function AgentRow({
                 <Activity className="h-4 w-4" />
               </span>
             ) : (
-              <span className="inline-flex items-center text-gray-400 dark:text-gray-500" title={t('agents.disconnected')}>
+              <span className="inline-flex items-center text-(--color-text-muted)" title={t('agents.disconnected')}>
                 <CircleStop className="h-4 w-4" />
               </span>
             );

@@ -108,7 +108,7 @@ export function GroupCreatePanel({
                   checked={selected.has(n.instance_id)}
                   onChange={() => toggle(n.instance_id)}
                   data-testid={`create-node-${n.instance_id}`}
-                  className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+                  className="h-3.5 w-3.5 rounded border-(--color-border-strong) text-blue-600"
                 />
                 <span className="flex-1 truncate text-(--color-text-primary)">
                   {n.hostname || n.instance_id}

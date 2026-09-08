@@ -120,7 +120,7 @@ export default function FlowActionMenu({ flow, onAction }: FlowActionMenuProps) 
   };
 
   const btnBase =
-    'rounded-md p-1.5 text-gray-400 transition-colors hover:text-(--color-text-secondary) disabled:opacity-40 disabled:cursor-not-allowed';
+    'rounded-md p-1.5 text-(--color-text-muted) transition-colors hover:text-(--color-text-secondary) disabled:opacity-40 disabled:cursor-not-allowed';
 
   const start = remoteState('start', t('flows.action.start'));
   const stop = remoteState('stop', t('flows.action.stop'));

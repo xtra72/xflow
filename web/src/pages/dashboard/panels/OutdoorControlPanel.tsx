@@ -31,7 +31,7 @@ const MODE_COLORS: Record<OpMode, string> = {
   heat: 'bg-orange-50 text-orange-600 ring-orange-200 dark:bg-orange-900/20 dark:text-orange-400 dark:ring-orange-700',
   auto: 'bg-green-50 text-green-600 ring-green-200 dark:bg-green-900/20 dark:text-green-400 dark:ring-green-700',
   dry: 'bg-purple-50 text-purple-600 ring-purple-200 dark:bg-purple-900/20 dark:text-purple-400 dark:ring-purple-700',
-  fan: 'bg-slate-50 text-slate-500 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-600',
+  fan: 'bg-(--color-bg-secondary) text-(--color-text-muted) ring-(--color-border-default)',
 };
 
 /** 모드 라벨 i18n 키 (렌더 시 t(key) 로 변환) */
@@ -152,7 +152,7 @@ export default function OutdoorControlPanel({
             'inline-flex items-center gap-1 rounded-full px-2 py-1',
             online
               ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400'
-              : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
+              : 'bg-(--color-bg-sunken) text-(--color-text-muted)',
           )}>
             {online
               ? <span title={t('dashboard.acPanel.operating')}><Activity className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.operating')} /></span>
@@ -203,7 +203,7 @@ export default function OutdoorControlPanel({
             >
               <span className={cn(
                 'h-2 w-2 shrink-0 rounded-full',
-                active ? activeColor : 'bg-gray-300 dark:bg-gray-600',
+                active ? activeColor : 'bg-(--color-border-strong)',
               )} />
               <span className={cn(
                 'text-xs font-medium',
@@ -286,7 +286,7 @@ function LgIcp01OutdoorLayout({
             'inline-flex items-center gap-1 rounded-full px-2 py-1',
             online
               ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400'
-              : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
+              : 'bg-(--color-bg-sunken) text-(--color-text-muted)',
           )}>
             {online
               ? <span title={t('dashboard.acPanel.operating')}><Activity className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.operating')} /></span>

@@ -37,6 +37,7 @@ import { useTranslation } from '@/lib/i18n';
 import {
   buildEnumLabelMap,
   formatEnumValue,
+  DEFAULT_CHART_LEGEND_FONT_SIZE,
   resolveAxisFont,
   SERIES_PALETTE,
   STROKE_DASHARRAY,
@@ -87,13 +88,24 @@ import { usePanelSeriesData } from './usePanelSeriesData';
 import { usePanelTitleStyle, usePanelTitleVisible } from '../../panelChromeContext';
 import { usePanelEditMode } from '../PanelEditToggle';
 import { ChartDragLayer } from '../../ChartDragLayer';
-import { clampStoredLegendOffset } from './legendOverlay';
+import { PanelEditGrid } from '../../PanelEditGrid';
+import { PanelAlignToolbar } from '../../PanelAlignToolbar';
+import { usePanelElementEdit } from '../../usePanelElementEdit';
+import {
+  PanelResizeHandle,
+  PANEL_EDIT_OUTLINE_CLASS,
+  PANEL_SELECTED_OUTLINE_CLASS,
+} from '../../PanelDragLayer';
+import { LEGEND_OFFSET_SAFETY_LIMIT, clampStoredLegendOffset } from './legendOverlay';
 import {
   panelBoxTransform,
+  PANEL_OFFSET_LIMIT,
   PANEL_SIZE_MAX,
+  PANEL_SIZE_MIN,
   readPanelOffset,
   readPanelSize,
 } from './panelGeometry';
+import { resolveFontSize } from './textStyle';
 
 interface LineChartPanelProps {
   panelId: string;
@@ -191,6 +203,10 @@ function clamp(n: number, lo: number, hi: number): number {
 
 
 
+
+/** 공용 편집 표면이 다루는 요소. 라인은 플롯 상자와 범례 둘이다. */
+type LineElementKind = 'plot' | 'legend';
+const LINE_ELEMENT_KINDS: readonly LineElementKind[] = ['plot', 'legend'];
 
 export default function LineChartPanel({
   panelId: _panelId,
@@ -623,6 +639,64 @@ export default function LineChartPanel({
   const plotSize = readPanelSize(config.plot_size) ?? PANEL_SIZE_MAX;
   const plotOffsetX = readPanelOffset(config.plot_offset_x);
   const plotOffsetY = readPanelOffset(config.plot_offset_y);
+
+  /**
+   * 공용 편집 표면이 다루는 요소 — 플롯 상자와 범례 둘이다.
+   *
+   * 드래그 계산은 `ChartDragLayer` 가 계속 소유한다. 범례는 흐름 안에 남아 "지금 그려진
+   * 자리에서 상자 밖으로 나가지 않는 만큼" 으로 죄고(`clampInlineLegendOffset`), 재는
+   * 상자와 변위를 얹는 상자가 두 겹이라 공용 레이어가 대신할 수 없다.
+   */
+  const {
+    selection,
+    setSelection,
+    snap,
+    setSnap,
+    boundsRef,
+    align,
+    reset,
+  } = usePanelElementEdit<LineElementKind>({
+    kinds: LINE_ELEMENT_KINDS,
+    enabled: edit.active,
+    // 상한은 읽는 쪽이 정한다 — 그림 상자는 `readPanelOffset` 의 ±40, 범례는
+    // `clampStoredLegendOffset` 의 ±50. 정렬이 더 느슨하게 죄면 맞춘 자리가
+    // 다음에 읽힐 때 되돌아간다.
+    offsets: {
+      plot: { x: plotOffsetX, y: plotOffsetY, limit: PANEL_OFFSET_LIMIT },
+      legend: {
+        x: clampStoredLegendOffset(legendCfg.offset_x),
+        y: clampStoredLegendOffset(legendCfg.offset_y),
+        limit: LEGEND_OFFSET_SAFETY_LIMIT,
+      },
+    },
+    writeOffsets: (patches) => {
+      const next: Record<string, unknown> = {};
+      for (const p of patches) {
+        if (p.kind === 'plot') {
+          next.plot_offset_x = p.x;
+          next.plot_offset_y = p.y;
+        } else {
+          next.legend = { ...legendCfg, offset_x: p.x, offset_y: p.y };
+        }
+      }
+      onConfigChange?.(next);
+    },
+  });
+  /** 요소 상자에 붙는 편집 표식 — 정렬이 상자를 찾고, 누르면 선택된다. */
+  const editProps = (kind: LineElementKind) =>
+    edit.active
+      ? {
+          'data-panel-drag': kind,
+          onPointerDown: () =>
+            setSelection(selection.has(kind) ? selection : new Set<LineElementKind>([kind])),
+        }
+      : {};
+  const outlineOf = (kind: LineElementKind): string =>
+    edit.active
+      ? selection.has(kind)
+        ? PANEL_SELECTED_OUTLINE_CLASS
+        : PANEL_EDIT_OUTLINE_CLASS
+      : '';
   const plotTransform = panelBoxTransform(plotSize, plotOffsetX, plotOffsetY);
 
   // 축 폰트(레이블/눈금) — 미지정 필드는 기본값(size 10, #9ca3af, normal)으로 폴백.
@@ -746,6 +820,9 @@ export default function LineChartPanel({
 
       <ChartDragLayer
         enabled={edit.active}
+        snap={snap}
+        selection={selection}
+        onSelectionChange={setSelection}
         legend={{
           offsetX: legendOffsetX,
           offsetY: legendOffsetY,
@@ -757,11 +834,21 @@ export default function LineChartPanel({
                 offset_y: y,
               },
             }),
+          // 범례는 글자 덩어리라 손잡이가 글자 크기(px)를 바꾼다.
+          size: resolveFontSize(legendCfg.font_size) ?? DEFAULT_CHART_LEGEND_FONT_SIZE,
+          onResize: (font_size) =>
+            onConfigChange?.({
+              legend: { ...((config.legend as Record<string, unknown>) ?? {}), font_size },
+            }),
         }}
         plot={{
           offsetX: plotOffsetX,
           offsetY: plotOffsetY,
           onChange: ({ x, y }) => onConfigChange?.({ plot_offset_x: x, plot_offset_y: y }),
+          // 그림은 글자가 아니므로 손잡이가 백분율(`plot_size`)을 바꾼다.
+          size: readPanelSize(config.plot_size) ?? PANEL_SIZE_MAX,
+          sizeRange: { min: PANEL_SIZE_MIN, max: PANEL_SIZE_MAX },
+          onResize: (plot_size) => onConfigChange?.({ plot_size }),
         }}
       >
       <div
@@ -774,14 +861,23 @@ export default function LineChartPanel({
         data-testid="line-chart-container"
         // 범례를 끌 수 있는 범위 — 차트와 범례가 함께 들어 있는 본문이다.
         data-chart-legend-bounds=""
+        // 공용 정렬이 상자를 재는 기준이기도 하다(같은 영역이므로 표식을 함께 단다).
+        data-panel-bounds=""
+        ref={boundsRef}
       >
+        {/* 배치 그리드와 중심 표식 — 요소 뒤에 깔리고 포인터를 받지 않는다. */}
+        <PanelEditGrid enabled={edit.active} />
         <div
-          className="min-h-0 min-w-0 flex-1"
+          className={`relative min-h-0 min-w-0 flex-1 ${outlineOf('plot')}`}
           data-testid="line-chart-plot"
           // 끌어 옮길 대상 표식 — 범례와 같은 레이어가 둘을 구분해 잡는다.
           data-chart-plot-area=""
+          {...editProps('plot')}
           style={{ transform: plotTransform }}
         >
+        {edit.active && selection.has('plot') && (
+          <PanelResizeHandle kind="plot" enabled label={t('dashboard.chart.plotSize')} />
+        )}
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={
@@ -1029,6 +1125,21 @@ export default function LineChartPanel({
           })}
           legendCfg={legendCfg}
           chartData={chartData}
+          edit={
+            edit.active
+              ? {
+                  props: editProps('legend'),
+                  outline: outlineOf('legend'),
+                  handle: selection.has('legend') ? (
+                    <PanelResizeHandle
+                      kind="legend"
+                      enabled
+                      label={t('dashboard.chart.legendFontSize')}
+                    />
+                  ) : undefined,
+                }
+              : undefined
+          }
           // 범례 마지막값도 툴팁과 동일하게 표시한다 — 같은 값이 범례와 툴팁에서
           // 다른 자릿수로 읽히면 어느 쪽이 맞는지 알 수 없다. 종전에는 1자리 고정이었다.
           // enum 축이면 라벨로, boolean 시리즈면 true/false, 그 외는 설정 자릿수.
@@ -1041,6 +1152,15 @@ export default function LineChartPanel({
         />
       </div>
       </ChartDragLayer>
+
+      {/* 정렬 툴바 — 편집 중에만. */}
+      <PanelAlignToolbar
+        enabled={edit.active}
+        snap={snap}
+        onSnapChange={setSnap}
+        onAlign={align}
+        onReset={reset}
+      />
 
       {/* 부분 실패 배지 — 성공 시리즈는 그대로 렌더하고 실패 개수만 알린다(§2.14 · §2.19).
           오버레이가 아니라 배지인 이유: 남은 시리즈는 정상이므로 화면을 덮으면 안 된다.
