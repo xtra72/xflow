@@ -1,10 +1,10 @@
 ---
 id: SPEC-CHART-003
 title: 통계 패널 표시 옵션 재구성 — 죽은 스타일 컨트롤 정리 + 변화량 표기 설정화 + 구간 통계 보조 줄
-version: 0.2.0
-status: draft
+version: 1.0.0
+status: completed
 created: 2026-09-05
-updated: 2026-09-05
+updated: 2026-09-08
 author: xtra
 priority: medium
 domain: dashboard
@@ -20,6 +20,7 @@ lifecycle_level: spec-first
 
 | 버전 | 날짜 | 작성자 | 변경 내용 |
 |------|------|--------|-----------|
+| 1.0.0 | 2026-09-08 | xtra | 구현 완료(커밋 `3063b51f`..`55a1674f`, 8개). AC-01~AC-30 전량 충족. 신규 파일 커버리지 `statDisplayOptions.ts` 100% · `StatSubLines.tsx` 87.05%, `npm run build` · `npm test` · `npm run lint` 모두 exit 0. plan.md 대비 분기 1건 — M5.5 의 팔레트 상수 분리는 `panelColorPresets.ts` 로 실제 생성되었으나 plan.md §2 "파일별 변경 요약" 표에 그 행이 빠져 있었다(설계는 일치, 표만 누락). 다만 커밋 `71989e88` 이 아직 커밋되지 않은 모듈 4종을 import 하고 있어 그 이후 이력이 단독으로 빌드되지 않는다 — 인수 조건 판정과는 별개의 커밋 분할 문제이며 §8 IN-2 에 적었다. 구현 노트는 §8 참고. |
 | 0.2.0 | 2026-09-05 | xtra | D1 정정 — 패널 색상을 stat 스타일 섹션에 한 줄로 남기는 대신 **패널 옵션(모든 패널 공통)으로 이관**한다. 구현 중 확인된 두 사실이 근거다. (1) 스타일 섹션의 `_base` 는 그룹처럼 보이지만 실제로는 `panelColor` 를 직접 편집하는 예외이며 라벨 세트 6종 전부에 들어 있어, stat 에만 별도 한 줄을 두면 같은 값을 편집하는 자리가 둘이 된다. (2) 스타일 섹션이 아예 없는 5종(`flows` · `agents` · `devices` · `properties-grid` · `agent-status`)은 지금까지 `panelColor` 를 **편집할 방법이 없었다**. 이관으로 §2.1 [U1-2/U1-3] 이 "패널 옵션에 한 번만 둔다" 로 바뀌고, stat 의 스타일 섹션은 남는 항목이 없어 통째로 사라진다. `_base` 는 라벨 세트 6종과 `AcControlStyleSection` 의 "전체 색상" 행에서 제거된다. |
 | 0.1.0 | 2026-09-05 | xtra | 최초 작성 — 통계(stat) 패널의 설정 표면을 세 갈래로 손본다. (1) 패널 설정 다이얼로그의 "스타일" 섹션에서 stat 이 읽지 않는 악센트 그룹 3종을 걷어내고 살아 있는 `panelColor` 만 한 줄로 남긴다. (2) 지금 레거시 경로에만 하드코딩되어 있는 변화량 표기를 **설정 가능한 축**(표시 여부 · 증감별 색 · 크기)으로 승격하고 다중 타일 경로에도 낸다 — SPEC-CHART-002 §7 OQ5 의 "타일 보조 지표 미표시" 결정을 뒤집는다. (3) 구간 평균·최대·최소를 본값 아래 한 줄 인라인 보조 줄로 신설한다. |
 
@@ -280,3 +281,36 @@ SPEC-CHART-002 v0.3.0 이 범위 밖으로 분리한 선행 결함 중 하나가
 | OQ1 | 구간 통계에 `sum` · `count` 도 노출할까 | 하지 않는다 — 요청은 평균·최대·최소 셋이다. 필요해지면 `window_stats` 에 필드를 더하면 되고 스키마는 그 확장을 이미 감당한다 |
 | OQ2 | 타일 경로에서 보조 줄 2개가 다 켜지면 타일 높이가 모자라지 않나 | 그리드는 이미 `tile_rows` 로 행 수를 사용자가 정한다. 좁으면 사용자가 행을 줄이거나 보조 줄을 끈다 — 자동 숨김은 넣지 않는다(어떤 화면 폭에서 무엇이 사라지는지 예측할 수 없게 된다) |
 | OQ3 | 변화량 색을 임계값 색상 규칙과 합칠까 | 합치지 않는다 — 임계값 규칙은 **값의 크기**로 본값 색을 정하고, 변화량 색은 **변화의 방향**으로 보조 줄 색을 정한다. 축이 다르다 |
+
+---
+
+## 8. 구현 노트 (Implementation Notes)
+
+구현 완료 (커밋 `3063b51f`..`55a1674f`, 2026-09-08 확인). plan.md 의 M1~M7 이 모두 수행되었고, 아래 1건의 표 누락 외에는 설계와 일치한다.
+
+### 인수 조건 충족 (AC-01~AC-30)
+
+| 묶음 | 충족 근거 |
+|------|-----------|
+| A. 패널 색상 이관 (AC-01~AC-05) | `PanelSettingsDialog.statStyle.test.tsx` 10건. `_base` 는 `PanelSettingsDialog.tsx` 와 `AcControlStyleSection.tsx` 양쪽에서 사라졌고(grep 무출력), 미사용 `PanelSettingsDropdown` 의존도 생기지 않았다. 스타일 섹션이 아예 없던 목록형 4종(`flows` · `agents` · `devices` · `agent-status`)이 이제 `panel-color-row` 를 받는다 |
+| B. 변화량 설정화 (AC-06~AC-16) | `statDisplayOptions.test.ts` · `StatSubLines.test.tsx` · `StatPanel.test.tsx` · `StatPanel.multiOutput.test.tsx`. 경로별 기본값 분기(D2)는 `readDeltaEnabled` 하나가 소유하고, 타일 변화량은 시리즈 경계를 넘지 않는다 |
+| C. 구간 통계 (AC-17~AC-23) | 값 계산은 `StatPanel.tsx:187` 의 `reduceSeries` 재사용이며 패널 안에서 재구현하지 않았다. 채널 모드 `max_points` 안내는 `ChartPanelSections.test.tsx:1479` 가 잠근다 |
+| D. 보조 줄 크기 (AC-24~AC-26) | `sub_value_scale` 이 두 보조 줄에 함께 적용되고 `value_scale` 과 독립임을 `statDisplayOptions.test.ts` 와 `StatPanel.test.tsx` 가 각각 단언한다 |
+| E. 하위 호환 (AC-27~AC-28) | SPEC-CHART-002 의 `CH-01`~`CH-04` 특성화가 손대지 않은 채 통과한다. 저장된 `panelColor` 의 좌/상단 테두리 렌더는 `DashboardPage.tsx:787` · `RemoteDashboardView.tsx:444` 에 그대로 있다 |
+| F. 통합 (AC-29~AC-30) | `npm run build` · `npm test` · `npm run lint` 모두 exit 0. `statDisplayOptions.ts` 100% · `StatSubLines.tsx` 87.05% 로 목표 85% 를 넘는다 |
+
+### 생성 파일
+
+- `charts/statDisplayOptions.ts` — `readDeltaEnabled` · `readDeltaColors` · `readWindowStats` · `readSubValueScale`. 경로 의존 기본값(§5 D2)과 클램프 규칙의 유일한 소유자다.
+- `charts/StatSubLines.tsx` — `StatDeltaLine` · `StatWindowStatsLine`. 방향은 색이 아니라 화살표와 부호가 전달하고(§4.3), 값 없는 항목은 자리를 지키며 `—` 를 그린다.
+- `panelColorPresets.ts` — 패널 색상 팔레트 상수(plan.md M5.5).
+- 대응 테스트 3종: `statDisplayOptions.test.ts` · `StatSubLines.test.tsx` · `PanelSettingsDialog.statStyle.test.tsx`.
+
+### 분기 (Divergence, as-implemented)
+
+- **IN-2 — 커밋 `71989e88` 이후의 이력이 단독으로 빌드되지 않는다 (조치 필요).** 그 커밋이 `PanelSettingsDialog.tsx` 에 `./panels/tileSelection` · `./panels/tileLayout` · `./panels/listPanelStyle` · `./panels/propertiesGridStyle` 네 모듈의 import 를 들였는데 **그 네 파일은 커밋되지 않았다**(작업 트리에만 있다). `git cat-file -e HEAD:...` 로 확인했으며, 그 결과 `71989e88` · `c2a3c25d` · `55a1674f` 세 커밋은 체크아웃해도 모듈 해석에 실패한다. plan.md §0 의 "각 마일스톤은 독립적으로 `npm run build && npm test` 를 통과해야 한다" 를 어긴 상태다. AC-29 는 작업 트리에서 `npm run build` exit 0 으로 충족하므로 인수 조건 판정은 바뀌지 않지만, **커밋을 나눌 때 네 모듈을 `71989e88` 보다 앞(또는 그 커밋 안)에 넣어야 한다.** 네 모듈은 본 SPEC 의 산출물이 아니라 목록형 패널 스타일 작업의 산출물이므로, 그 작업이 앞선 커밋으로 먼저 들어가야 이력이 성립한다. `origin/main` 은 영향받지 않는다 — 문제 커밋은 전부 로컬이다.
+- **IN-1 — plan.md §2 표에 `panelColorPresets.ts` 행이 없다**: M5.5 는 팔레트 상수를 공용 모듈로 분리하라고 적었고 구현도 그렇게 했으나, 같은 문서의 "파일별 변경 요약" 표에 그 신규 파일 행이 빠져 있었다. 설계와 구현은 일치하며 문서 표만 불완전하다.
+
+### 후속 SPEC 이 이 파일들을 이어 고쳤다 (범위 밖)
+
+`StatSubLines.tsx` 는 본 SPEC 이 만든 뒤 SPEC-CHART-004 가 요소 배치 편집을 위해 `statOffsetStyle` · `StatSubLineEdit` · `SUB_LINE_PX` 를 덧붙였다. 본 SPEC 의 인수 조건은 그 확장 이후에도 그대로 통과한다.
