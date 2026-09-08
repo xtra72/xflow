@@ -34,6 +34,9 @@
 //
 // @spec SPEC-CANVAS-001
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { useState } from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
@@ -49,6 +52,10 @@ import type { StageSize } from './canvasGeometry';
 import { renderTextTemplate } from './canvasText';
 import { drawElements, type DrawContext2D } from './drawElement';
 import CanvasElementsEditor from './CanvasElementsEditor';
+import {
+  CanvasEditSelectionContext,
+  useCanvasEditSelectionState,
+} from './canvasEditContext';
 
 afterEach(cleanup);
 
@@ -1129,5 +1136,270 @@ describe('CanvasElementsEditor — 요소 줄 접기', () => {
     expect(testid('canvas-element-toggle-0').textContent).toBe(
       'plain · dashboard.canvas.elements.summaryStatic',
     );
+  });
+});
+
+
+// --- 캔버스 선택 → 속성 편집 연동 (SPEC-CANVAS-002 T10 · AC-06) ------------
+
+/**
+ * 캔버스 선택을 손으로 조종할 수 있는 하네스.
+ *
+ * 실제로는 오버레이가 `setSelection` 을 부르지만, 여기서 재려는 것은 **목록 편집기가 그
+ * 선택에 어떻게 반응하는가** 하나다. 오버레이까지 끌고 오면 히트 테스트·스테이지 크기가
+ * 시험의 전제가 되어 무엇이 깨졌는지 알기 어려워진다(오버레이 쪽 계약은
+ * `CanvasEditOverlay.test.tsx` 가 이미 잰다).
+ */
+function SelectionHarness({ config }: { config: Record<string, unknown> }) {
+  const state = useCanvasEditSelectionState();
+  return (
+    <CanvasEditSelectionContext value={state}>
+      <button
+        type="button"
+        data-testid="pick-a"
+        onClick={() => state.setSelection(new Set(['a']))}
+      />
+      <button
+        type="button"
+        data-testid="pick-b"
+        onClick={() => state.setSelection(new Set(['b']))}
+      />
+      <button
+        type="button"
+        data-testid="pick-ab"
+        onClick={() => state.setSelection(new Set(['a', 'b']))}
+      />
+      <button type="button" data-testid="pick-none" onClick={() => state.setSelection(new Set())} />
+      <CanvasElementsEditor config={config} onConfigChange={() => {}} />
+    </CanvasEditSelectionContext>
+  );
+}
+
+/** 행이 펼쳐져 있는가 — 토글의 `aria-expanded` 가 곧 그 사실이다. */
+function isRowOpen(idx: number): boolean {
+  return testid(`canvas-element-toggle-${idx}`).getAttribute('aria-expanded') === 'true';
+}
+
+/** 세 요소(a · b · c)를 그린다. 선택 대상 둘과, 사용자가 손으로 펼칠 하나. */
+function renderThree(): void {
+  render(<SelectionHarness config={cfg([rect({ id: 'a' }), rect({ id: 'b' }), rect({ id: 'c' })])} />);
+}
+
+describe('CanvasElementsEditor — 캔버스 선택이 목록을 조종한다 (AC-06)', () => {
+  it('요소 하나가 선택되면 그 행만 펼쳐진다', () => {
+    renderThree();
+    expect([0, 1, 2].map(isRowOpen)).toEqual([false, false, false]);
+
+    fireEvent.click(testid('pick-a'));
+    expect([0, 1, 2].map(isRowOpen)).toEqual([true, false, false]);
+  });
+
+  it('그 행을 시야로 스크롤한다', () => {
+    // `scrollIntoView` 는 jsdom 에 없다 — 실제 브라우저와 같은 이름으로 심어 본다.
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView as unknown as Element['scrollIntoView'];
+    try {
+      renderThree();
+      fireEvent.click(testid('pick-b'));
+
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      // 스크롤된 것은 **그 요소의 행**이다.
+      expect(scrollIntoView.mock.instances[0]).toBe(testid('canvas-element-1'));
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  it('캔버스가 펼친 행은 **하나뿐**이다 — 다음 선택 때 이전 것이 도로 접힌다', () => {
+    renderThree();
+    fireEvent.click(testid('pick-a'));
+    fireEvent.click(testid('pick-b'));
+    expect([0, 1, 2].map(isRowOpen)).toEqual([false, true, false]);
+  });
+
+  it('사용자가 손으로 펼친 행은 캔버스가 접지 않는다', () => {
+    renderThree();
+    // c 를 손으로 펼쳐 둔다.
+    fireEvent.click(testid('canvas-element-toggle-2'));
+    expect(isRowOpen(2)).toBe(true);
+
+    fireEvent.click(testid('pick-a'));
+    fireEvent.click(testid('pick-b'));
+
+    // 캔버스가 펼친 것은 갈렸지만 손으로 펼친 c 는 그대로다.
+    expect([0, 1, 2].map(isRowOpen)).toEqual([false, true, true]);
+  });
+
+  it('둘 이상 선택되면 **아무 행도** 자동으로 펼쳐지지 않는다', () => {
+    // 이 규칙이 없으면 다중 선택 한 번에 화면이 다시 "설정이 모두 펼쳐진" 상태가 된다.
+    renderThree();
+    fireEvent.click(testid('pick-a'));
+    expect(isRowOpen(0)).toBe(true);
+
+    fireEvent.click(testid('pick-ab'));
+    expect([0, 1, 2].map(isRowOpen)).toEqual([false, false, false]);
+  });
+
+  it('선택이 비면 캔버스가 펼친 행도 접힌다', () => {
+    renderThree();
+    fireEvent.click(testid('pick-a'));
+    fireEvent.click(testid('pick-none'));
+    expect(isRowOpen(0)).toBe(false);
+  });
+
+  it('둘 이상 선택되면 표시만 남는다', () => {
+    renderThree();
+    fireEvent.click(testid('pick-ab'));
+    expect(testid('canvas-element-0').getAttribute('data-selected')).toBe('true');
+    expect(testid('canvas-element-1').getAttribute('data-selected')).toBe('true');
+    expect(testid('canvas-element-2').getAttribute('data-selected')).toBeNull();
+  });
+
+  it('캔버스가 펼친 행도 손으로 접을 수 있다', () => {
+    // 접을 수 없으면 사용자는 되돌릴 방법이 없는 상태를 손에 쥔다.
+    renderThree();
+    fireEvent.click(testid('pick-a'));
+    expect(isRowOpen(0)).toBe(true);
+
+    fireEvent.click(testid('canvas-element-toggle-0'));
+    expect(isRowOpen(0)).toBe(false);
+  });
+
+  it('캔버스가 펼친 행을 손으로 접어도 다른 행의 자동 펼침은 그대로 동작한다', () => {
+    renderThree();
+    fireEvent.click(testid('pick-a'));
+    fireEvent.click(testid('canvas-element-toggle-0'));
+    fireEvent.click(testid('pick-b'));
+    expect([0, 1, 2].map(isRowOpen)).toEqual([false, true, false]);
+  });
+
+  it('provider 가 없어도 동작한다 — 대시보드에 놓인 패널 곁에는 목록 편집기가 없다', () => {
+    // 컨텍스트 기본값이 `null` 이라 소비 훅이 로컬 선택으로 떨어지고, 자동 펼침은
+    // 언제나 없는 것이 된다. 접고 펴기는 종전대로다.
+    setup(cfg([rect({ id: 'a' })]), { expand: false });
+    expect(isRowOpen(0)).toBe(false);
+    expect(testid('canvas-element-0').getAttribute('data-selected')).toBeNull();
+
+    fireEvent.click(testid('canvas-element-toggle-0'));
+    expect(isRowOpen(0)).toBe(true);
+  });
+
+  it('목록 하단의 추가 버튼 4개는 그대로 남는다 — 팔레트가 대체하지 않는다', () => {
+    // 포인터를 쓰지 않는 경로이자 이미 테스트에 묶인 표면이다(REQ-01 · AC-05).
+    setup(cfg([]), { expand: false });
+    for (const kind of ['rect', 'ellipse', 'line', 'text']) {
+      expect(screen.getByTestId(`canvas-element-add-${kind}`)).toBeTruthy();
+    }
+  });
+});
+
+// --- 드래그가 유일한 수단이 아니다 (SPEC-CANVAS-002 T15 · REQ-01 · 위험 R10) ----
+//
+// 002 는 캔버스 위 드래그를 들여왔다. 그 자체는 이득이지만, **수치 입력을 밀어내면**
+// 포인터를 쓰지 못하는 사용자가 패널을 저술할 수 없게 되어 002 는 001 보다 나빠진다.
+// 그래서 REQ-01(항상)과 REQ-05(금지)가 같은 것을 양쪽에서 못박았고, 여기서는 그것을
+// **가정하지 않고 잰다** — 캔버스가 요소를 골라 둔 상태에서도 칸이 그대로 있고, 잠기지
+// 않았으며, 실제로 값을 쓸 수 있는지까지 본다.
+//
+// 스테이지 밖으로 전부 나간 요소의 회수 경로가 이 칸이기도 하다(AC-E5).
+
+/** 선택을 손으로 조종하면서 **패치도 받아 보는** 하네스. */
+function SelectionSpyHarness({
+  config,
+  onConfigChange,
+  pick,
+}: {
+  config: Record<string, unknown>;
+  onConfigChange: (patch: Record<string, unknown>) => void;
+  pick: string;
+}) {
+  const state = useCanvasEditSelectionState();
+  return (
+    <CanvasEditSelectionContext value={state}>
+      <button
+        type="button"
+        data-testid="pick"
+        onClick={() => state.setSelection(new Set([pick]))}
+      />
+      <CanvasElementsEditor config={config} onConfigChange={onConfigChange} />
+    </CanvasEditSelectionContext>
+  );
+}
+
+/** 요소 하나를 캔버스에서 골라 둔 상태로 편집기를 그린다(그 행은 자동으로 펼쳐진다). */
+function setupPicked(elements: CanvasElement[], pick: string) {
+  const onConfigChange = vi.fn();
+  render(
+    <SelectionSpyHarness config={cfg(elements)} onConfigChange={onConfigChange} pick={pick} />,
+  );
+  fireEvent.click(testid('pick'));
+  return onConfigChange;
+}
+
+describe('CanvasElementsEditor — 캔버스 선택이 수치 입력을 밀어내지 않는다 (REQ-01 · 위험 R10)', () => {
+  it('사각형을 캔버스에서 골라도 x·y·w·h 칸이 그대로 있고 잠기지 않는다', () => {
+    setupPicked([rect({ id: 'a' })], 'a');
+
+    for (const axis of ['x', 'y', 'w', 'h']) {
+      const input = testid(`canvas-element-geo-${axis}-0`) as HTMLInputElement;
+      expect(input.tagName).toBe('INPUT');
+      expect(input.disabled).toBe(false);
+      expect(input.readOnly).toBe(false);
+    }
+  });
+
+  it('선과 문구도 자기 축의 칸을 그대로 낸다', () => {
+    setupPicked(
+      [{ id: 'a', kind: 'line', geometry: { x1: 0, y1: 0, x2: 1, y2: 1 }, style: {} }],
+      'a',
+    );
+    for (const axis of ['x1', 'y1', 'x2', 'y2']) {
+      expect((testid(`canvas-element-geo-${axis}-0`) as HTMLInputElement).disabled).toBe(false);
+    }
+
+    cleanup();
+    setupPicked([{ id: 'a', kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: {} }], 'a');
+    for (const axis of ['x', 'y']) {
+      expect((testid(`canvas-element-geo-${axis}-0`) as HTMLInputElement).disabled).toBe(false);
+    }
+    // 문구의 포인터 수단은 글자 크기 핸들 하나뿐이므로 그 등가물이 특히 남아 있어야 한다.
+    expect((testid('canvas-element-font-size-0') as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it('골라 둔 채로 타이핑하면 그대로 저술된다 — 회수 경로가 살아 있다', () => {
+    const spy = setupPicked([rect({ id: 'a' })], 'a');
+    spy.mockClear();
+
+    // 스테이지 밖으로 전부 나간 요소를 되돌리는 그 조작이다(clamp 하지 않으므로 가능하다).
+    fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '-0.5' } });
+
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: -0.5, y: 0.2, w: 0.3, h: 0.4 });
+  });
+
+  it('추가·순서·삭제도 캔버스 선택과 무관하게 목록에 그대로 남는다', () => {
+    setupPicked([rect({ id: 'a' }), rect({ id: 'b' })], 'a');
+
+    for (const kind of ['rect', 'ellipse', 'line', 'text']) {
+      expect((testid(`canvas-element-add-${kind}`) as HTMLButtonElement).disabled).toBe(false);
+    }
+    // 첫 행의 아래로 이동과 삭제는 언제나 쓸 수 있다(위로 이동만 양 끝에서 잠긴다).
+    expect((testid('canvas-element-move-down-0') as HTMLButtonElement).disabled).toBe(false);
+    expect((testid('canvas-element-delete-0') as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+// --- 정렬 규칙 단일화 가드 (REQ-04) ----------------------------------------
+
+describe('순서 이동 규칙은 한 곳에만 있다 (REQ-04)', () => {
+  it('목록 편집기의 순서 이동도 이 모듈의 `moveElementTo` 를 지난다 (REQ-04)', () => {
+    // 001 의 z-order 수단은 배열 순서 하나뿐이므로 정렬 규칙도 하나여야 한다. 목록
+    // 편집기가 인라인 splice 를 한 벌 더 들고 있던 동안에는 그 규율이 주석일 뿐이었고,
+    // "목록에서 눌렀는가 캔버스에서 눌렀는가" 에 따라 결과가 갈릴 자리가 남아 있었다.
+    //
+    // 들여왔는지만 보면 인라인으로 되돌리고 import 를 남겨 두는 형태를 놓칠 것 같지만,
+    // 그때는 쓰이지 않는 import 가 되어 eslint(`no-unused-vars`, error)가 잡는다 —
+    // 둘이 짝을 이뤄야 이 가드가 실제로 문을 막는다.
+    const source = readFileSync(join(__dirname, 'CanvasElementsEditor.tsx'), 'utf-8');
+    expect(source).toMatch(/import \{ moveElementTo \} from '\.\/canvasEditArrange'/);
   });
 });

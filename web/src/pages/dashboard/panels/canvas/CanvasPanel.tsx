@@ -21,9 +21,14 @@
 //     표면은 props 가 그대로면 아무것도 그리지 않으므로, "지우지 않는다" 는 곧 "빈 맵으로
 //     갈아치우지 않는다" 이다.
 //
-// @spec SPEC-CANVAS-001
+// **SPEC-CANVAS-002 가 이 파일에 더한 것은 편집 배선 하나다**(T6): 기존 세 겹 게이팅
+// (`usePanelEditMode`)을 그대로 쓰고, 표면의 `overlay` 슬롯에 편집 층을 얹고, 001 이
+// 받아만 두었던 `onConfigChange` 를 **실제로 쓴다**. 등록 6지점은 건드리지 않는다 —
+// 001 이 그 콜백을 미리 흘려 둔 덕분에 그럴 필요가 없다(REQ-05 금지 조항).
+//
+// @spec SPEC-CANVAS-001 · SPEC-CANVAS-002 (T6 — 편집 배선)
 
-import { useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { Shapes } from 'lucide-react';
 
 import { useTranslation } from '@/lib/i18n';
@@ -33,11 +38,16 @@ import type { ChartEntry, StoreSeriesRef, StoreSourceConfig } from '../charts/ch
 import { storeSeriesId } from '../charts/chartChannelTypes';
 import { usePanelSeriesData } from '../charts/usePanelSeriesData';
 import type { VisibilitySource } from '../charts/visiblePolling';
+import { usePanelEditMode } from '../PanelEditToggle';
 import type { CanvasElement } from './canvasConfig';
 import { parseCanvasConfig } from './canvasConfig';
+import CanvasEditOverlay from './CanvasEditOverlay';
 import { evaluateRules, type ResolvedStyle } from './canvasRules';
 import { renderTextTemplate } from './canvasText';
-import CanvasSurface, { type FrameScheduler } from './CanvasSurface';
+import CanvasSurface, {
+  type CanvasOverlayContext,
+  type FrameScheduler,
+} from './CanvasSurface';
 
 // --- 타입 ---------------------------------------------------------------
 
@@ -50,12 +60,21 @@ export interface CanvasPanelProps {
    */
   config: Record<string, unknown>;
   /**
-   * config 부분 갱신. 001 은 렌더 전용이라 패널이 config 를 쓰지 않는다(가정 A7) — 등록
-   * 지점(`renderDashboardPanel.tsx`)이 다른 패널과 같은 형상으로 넘길 수 있도록 받아만 둔다.
+   * config 최상위 얕은 병합 패치(다이얼로그의 `handleConfigChange` 규약).
+   *
+   * 001 은 렌더 전용이라 이 자리를 **받아만 두었다**(가정 A7). **002 가 이것을 실제로
+   * 쓴다**(T6) — 캔버스 드래그가 요소 기하를 바꾸면 `{ elements }` 패치로 흘려보낸다.
+   * 콜백이 없으면 편집도 꺼진다(`canEdit`) — 끌어도 저장할 곳이 없기 때문이다.
    */
   onConfigChange?: (config: Record<string, unknown>) => void;
-  /** 제목 변경 콜백. `onConfigChange` 와 같은 이유로 받아만 둔다. */
+  /** 제목 변경 콜백. 001 과 같은 이유로 받아만 둔다. */
   onTitleChange?: (title: string) => void;
+  /**
+   * 설정 미리보기처럼 **항상** 편집인 자리인가. 그때는 토글을 감춘다(REQ-01 · AC-07).
+   * 통계·파이가 쓰는 `forceEdit` 와 같은 이름·같은 뜻이다. 다이얼로그가 이 값을 넘기는
+   * 것은 T11 의 몫이며, 미지정이면 종전과 같이 대시보드 편집모드 게이팅만 남는다.
+   */
+  forceEdit?: boolean;
   /** 가시성 판정 주입(테스트 결정성). 미지정이면 표면이 document 를 쓴다. */
   visibilitySource?: VisibilitySource;
   /** 프레임 예약기 주입(테스트 결정성). 미지정이면 표면이 rAF 를 쓴다. */
@@ -183,6 +202,8 @@ function buildCanvasFrame(
 export default function CanvasPanel({
   title,
   config,
+  onConfigChange,
+  forceEdit = false,
   visibilitySource,
   scheduler,
 }: CanvasPanelProps) {
@@ -227,6 +248,44 @@ export default function CanvasPanel({
   const isEmpty = cfg.elements.length === 0;
   const headerVisible = showTitle && !!title;
 
+  // --- SPEC-CANVAS-002 T6: 캔버스 내 시각 편집 배선 ---
+  //
+  // **새 게이팅 개념을 만들지 않는다**(REQ-01). 히트맵·게이지·통계·바·파이가 전부
+  // 따르는 세 겹 게이팅을 그대로 쓴다 — 캔버스만 다르게 두면 사용자가 패널마다 다른
+  // 규칙을 배워야 한다.
+  const edit = usePanelEditMode({
+    canEdit: onConfigChange !== undefined,
+    forced: forceEdit,
+    testId: 'canvas-edit-toggle',
+    below: headerVisible,
+  });
+
+  /** 드래그가 만든 새 요소 배열을 config 로 흘려보낸다 — 기하 쓰기의 유일한 출구다. */
+  const handleElementsChange = useCallback(
+    (next: CanvasElement[]) => onConfigChange?.({ elements: next }),
+    [onConfigChange],
+  );
+
+  /**
+   * 표면의 오버레이 슬롯. 스테이지 크기와 실측 글자 폭은 **표면이 잰 것을 그대로**
+   * 받아 넘긴다(측정원이 하나다 — AC-E2).
+   *
+   * 이 렌더 prop 은 표면의 어느 효과 의존성에도 들어가지 않으므로 프레임을 예약하지
+   * 않는다. 선택·호버가 루프를 깨우지 않는다는 보장이 여기서 성립한다(AC-E4).
+   */
+  const renderOverlay = useCallback(
+    ({ stage, textWidths }: CanvasOverlayContext) => (
+      <CanvasEditOverlay
+        enabled={edit.active}
+        elements={cfg.elements}
+        stage={stage}
+        textWidths={textWidths}
+        onElementsChange={handleElementsChange}
+      />
+    ),
+    [edit.active, cfg.elements, handleElementsChange],
+  );
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col rounded-lg bg-(--color-bg-surface) p-2 shadow">
       {headerVisible && (
@@ -262,8 +321,12 @@ export default function CanvasPanel({
           background={cfg.background}
           visibilitySource={visibilitySource}
           scheduler={scheduler}
+          overlay={renderOverlay}
         />
       )}
+
+      {/* 배치 편집 토글. `canEdit && dashboardEditMode && !forced` 일 때만 나온다. */}
+      {edit.toggle}
 
       {/* 오류 배지(AC-E4): 마지막 프레임을 유지한 채 상태만 덧띄우고 다음 주기에 재시도한다. */}
       {isError && (

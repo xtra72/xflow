@@ -15,7 +15,11 @@
 // 실제 rAF 는 돌지 않는다.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, cleanup, act } from '@testing-library/react';
+import { render, cleanup, act, fireEvent, screen } from '@testing-library/react';
+
+import { useState } from 'react';
+
+import { useUIStore } from '@/stores/uiStore';
 
 import type { UseStoreChartDataResult } from '../charts/useStoreChartData';
 import type { ChartEntry } from '../charts/chartChannelTypes';
@@ -134,9 +138,13 @@ function drawnTexts(): string[] {
 
 function makeScheduler() {
   let nextHandle = 1;
+  // 프레임 **요청 횟수**. 001 의 유휴 정지가 편집기 때문에 깨지지 않았는지 재는 눈이다
+  // (SPEC-CANVAS-002 AC-E4 — 선택·호버는 프레임을 0 건 요청해야 한다).
+  let requested = 0;
   const pending = new Map<number, (nowMs: number) => void>();
   const scheduler: FrameScheduler = {
     request(cb) {
+      requested += 1;
       const handle = nextHandle++;
       pending.set(handle, cb);
       return handle;
@@ -147,6 +155,9 @@ function makeScheduler() {
   };
   return {
     scheduler,
+    get requested() {
+      return requested;
+    },
     get pending() {
       return pending.size;
     },
@@ -665,5 +676,260 @@ describe('CanvasPanel — 정적 요소와 값 방어', () => {
     );
 
     expect(drawnTexts()).toContain('90');
+  });
+});
+
+// --- SPEC-CANVAS-002 T6: 캔버스 내 시각 편집 배선 -------------------------
+//
+// 001 은 `onConfigChange` 를 **받아만 두었다**. 여기서 그 자리가 살아난다.
+// 덮는 인수 기준: AC-03(드래그가 config 로 흘러간다), AC-07(세 겹 게이팅),
+// AC-E4(선택·호버는 프레임을 0 건 요청한다 — 001 의 유휴 정지 보존).
+
+/** 편집 배선을 켠 채 패널을 렌더한다. 프레임은 더 예약할 것이 없을 때까지 밀어 둔다. */
+function renderEditablePanel(
+  elements: unknown[],
+  opts: { onConfigChange?: (patch: Record<string, unknown>) => void; forceEdit?: boolean } = {},
+) {
+  const clock = makeScheduler();
+  const view = render(
+    <CanvasPanel
+      panelId="p1"
+      config={makeConfig(elements)}
+      onConfigChange={opts.onConfigChange}
+      forceEdit={opts.forceEdit}
+      scheduler={clock.scheduler}
+      visibilitySource={ALWAYS_VISIBLE}
+    />,
+  );
+  // 표면이 유휴에 들 때까지 민다 — 유휴가 아닌 상태에서 프레임을 세면 무엇을 세는지 흐려진다.
+  for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
+  return { ...view, clock };
+}
+
+/** 좌표를 실제로 실어 나르는 포인터 이벤트(jsdom 에는 PointerEvent 가 없다). */
+function panelPointer(type: string, x: number, y: number, init: MouseEventInit = {}): Event {
+  return new MouseEvent(type, {
+    clientX: x,
+    clientY: y,
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+}
+
+/** 오버레이 루트에 포인터 이벤트를 보낸다. */
+function sendToOverlay(type: string, x: number, y: number, init: MouseEventInit = {}): Event {
+  const evt = panelPointer(type, x, y, init);
+  fireEvent(screen.getByTestId('canvas-edit-overlay'), evt);
+  return evt;
+}
+
+/** 오버레이의 합류 프레임을 기다린다(표면의 가짜 예약기와는 다른 축이다). */
+async function nextBrowserFrame(): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  });
+}
+
+/** 스테이지 200×100 위의 사각형 하나. px 상자는 (20, 10, 40, 20) 이다. */
+const EDIT_RECT = {
+  id: 'a',
+  kind: 'rect',
+  geometry: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 },
+  style: { fill: '#888888' },
+};
+
+/** config 를 실제로 갱신하는 숙주 — 드래그의 깨우기 경로를 끝까지 잇는다. */
+function StatefulHost({ clock }: { clock: ReturnType<typeof makeScheduler> }) {
+  const [cfg, setCfg] = useState<Record<string, unknown>>(() => makeConfig([EDIT_RECT]));
+  return (
+    <CanvasPanel
+      panelId="p1"
+      config={cfg}
+      onConfigChange={(patch) => setCfg((prev) => ({ ...prev, ...patch }))}
+      forceEdit
+      scheduler={clock.scheduler}
+      visibilitySource={ALWAYS_VISIBLE}
+    />
+  );
+}
+
+describe('CanvasPanel — 편집 게이팅 세 겹 (AC-07)', () => {
+  afterEach(() => {
+    // 이 훅은 파일 최상단의 `cleanup()` **보다 먼저** 돈다(등록 역순). 아직 마운트된
+    // 패널이 스토어를 구독하고 있으므로 act 로 감싸지 않으면 React 가 경고한다.
+    act(() => {
+      useUIStore.setState({ dashboardEditMode: false });
+    });
+  });
+
+  it('config 를 쓸 콜백이 없으면 편집도 토글도 없다 (끌어도 저장할 곳이 없다)', () => {
+    useUIStore.setState({ dashboardEditMode: true });
+    renderEditablePanel([EDIT_RECT]);
+
+    expect(screen.queryByTestId('canvas-edit-overlay')).toBeNull();
+    expect(screen.queryByTestId('canvas-edit-toggle')).toBeNull();
+  });
+
+  it('대시보드 편집모드가 꺼져 있으면 표시 전용이다 (읽기 전용 뷰)', () => {
+    renderEditablePanel([EDIT_RECT], { onConfigChange: vi.fn() });
+
+    expect(screen.queryByTestId('canvas-edit-overlay')).toBeNull();
+    expect(screen.queryByTestId('canvas-edit-toggle')).toBeNull();
+  });
+
+  it('편집모드에서는 토글이 나오고, 켜야 오버레이가 생긴다', () => {
+    useUIStore.setState({ dashboardEditMode: true });
+    renderEditablePanel([EDIT_RECT], { onConfigChange: vi.fn() });
+
+    const toggle = screen.getByTestId('canvas-edit-toggle');
+    expect(screen.queryByTestId('canvas-edit-overlay')).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(screen.getByTestId('canvas-edit-overlay')).toBeTruthy();
+  });
+
+  it('forceEdit 자리(설정 미리보기)는 항상 편집이며 토글을 감춘다', () => {
+    renderEditablePanel([EDIT_RECT], { onConfigChange: vi.fn(), forceEdit: true });
+
+    expect(screen.getByTestId('canvas-edit-overlay')).toBeTruthy();
+    expect(screen.queryByTestId('canvas-edit-toggle')).toBeNull();
+  });
+});
+
+describe('CanvasPanel — 드래그가 onConfigChange 로 흘러간다 (AC-03)', () => {
+  it('요소를 끌면 elements 패치가 나간다 (001 이 받아만 두었던 자리다)', async () => {
+    const onConfigChange = vi.fn();
+    renderEditablePanel([EDIT_RECT], { onConfigChange, forceEdit: true });
+
+    sendToOverlay('pointerdown', 30, 15);
+    sendToOverlay('pointermove', 50, 25);
+    await nextBrowserFrame();
+
+    expect(onConfigChange).toHaveBeenCalledTimes(1);
+    const patch = onConfigChange.mock.calls[0]![0] as { elements: Array<{ id: string; geometry: unknown }> };
+    expect(Object.keys(patch)).toEqual(['elements']);
+    expect(patch.elements.find((el) => el.id === 'a')!.geometry).toEqual({
+      x: 0.2,
+      y: 0.2,
+      w: 0.2,
+      h: 0.2,
+    });
+  });
+
+  it('편집이 꺼져 있으면 같은 누름이 아무것도 바꾸지 않는다', async () => {
+    const onConfigChange = vi.fn();
+    renderEditablePanel([EDIT_RECT], { onConfigChange });
+
+    // 오버레이가 아예 없으므로 누름은 캔버스로 가고 아무 일도 일어나지 않는다.
+    expect(screen.queryByTestId('canvas-edit-overlay')).toBeNull();
+    fireEvent(screen.getByTestId('canvas-surface'), panelPointer('pointerdown', 30, 15));
+    fireEvent(screen.getByTestId('canvas-surface'), panelPointer('pointermove', 50, 25));
+    await nextBrowserFrame();
+
+    expect(onConfigChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('CanvasPanel — 편집기가 유휴 정지를 깨지 않는다 (AC-E4)', () => {
+  it('선택과 호버는 프레임을 단 한 건도 요청하지 않는다', () => {
+    const { clock } = renderEditablePanel(
+      [EDIT_RECT, { ...EDIT_RECT, id: 'b', geometry: { x: 0.5, y: 0.5, w: 0.2, h: 0.2 } }],
+      { onConfigChange: vi.fn(), forceEdit: true },
+    );
+    // 유휴에 들었다 — 여기서부터의 요청은 전부 편집기 탓이다.
+    expect(clock.pending).toBe(0);
+    const before = clock.requested;
+
+    // 고르고, 다른 요소로 옮기고, 핸들 자리를 지나간다(호버).
+    sendToOverlay('pointerdown', 30, 15);
+    sendToOverlay('pointerup', 30, 15);
+    sendToOverlay('pointerdown', 110, 55);
+    sendToOverlay('pointerup', 110, 55);
+    sendToOverlay('pointermove', 120, 60);
+    sendToOverlay('pointermove', 40, 20);
+
+    expect(screen.getByTestId('canvas-selection-b')).toBeTruthy();
+    expect(clock.requested).toBe(before);
+    expect(clock.pending).toBe(0);
+  });
+
+  it('끌어서 기하가 바뀌면 종전의 props 변경 경로로 프레임이 예약된다', async () => {
+    const clock = makeScheduler();
+    render(<StatefulHost clock={clock} />);
+    for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
+    const before = clock.requested;
+
+    sendToOverlay('pointerdown', 30, 15);
+    sendToOverlay('pointermove', 50, 25);
+    // 쓰기가 config 를 갈면 `elements` 참조가 바뀐다 — 001 과 **같은** 깨우기 경로다.
+    await nextBrowserFrame();
+
+    expect(clock.requested).toBeGreaterThan(before);
+  });
+});
+
+// --- SPEC-CANVAS-002 T16: 편집 표면 전량이 유휴 정지를 지킨다 --------------
+//
+// 위 블록이 "선택과 호버" 를 쟀다면 여기서는 **편집 표면의 나머지 조작 전부**를 같은 눈
+// (주입된 `FrameScheduler`)으로 잰다 — 격자 토글 · 팔레트 호버·초점 · 핸들 초점. 셋 다
+// DOM/CSS 뿐이라 캔버스 props 를 건드리지 않으므로 프레임이 0 건이어야 하고, 하나라도
+// 새면 그것은 오버레이가 001 의 루프 안으로 들어왔다는 신호다(REQ-05 · 위험 R3).
+//
+// 방향키 이동(T15)은 반대로 **예약되어야** 한다. 다만 그 이유는 "편집기라서" 가 아니라
+// **`elements` 가 실제로 바뀌었기 때문**이며, 그것은 설정 다이얼로그에서 수치를 고칠 때
+// 오늘도 일어나는 바로 그 경로다.
+
+describe('CanvasPanel — 편집 표면 조작 전량이 유휴 정지를 지킨다 (AC-E4 · T16)', () => {
+  it('격자 토글 · 팔레트 호버·초점 · 핸들 초점은 프레임 요청이 0 건이다', () => {
+    const { clock } = renderEditablePanel([EDIT_RECT], {
+      onConfigChange: vi.fn(),
+      forceEdit: true,
+    });
+    expect(clock.pending).toBe(0);
+
+    // 고르기까지가 전제다(핸들은 하나만 골랐을 때 뜬다).
+    sendToOverlay('pointerdown', 30, 15);
+    sendToOverlay('pointerup', 30, 15);
+    expect(screen.getByTestId('canvas-selection-a')).toBeTruthy();
+    const before = clock.requested;
+
+    fireEvent.click(screen.getByTestId('canvas-grid-toggle'));
+    fireEvent.pointerOver(screen.getByTestId('canvas-palette-add-rect'));
+    fireEvent.mouseOver(screen.getByTestId('canvas-palette-add-rect'));
+    screen.getByTestId('canvas-palette-add-rect').focus();
+    screen.getByTestId('canvas-handle-se').focus();
+    fireEvent.click(screen.getByTestId('canvas-grid-toggle'));
+    // 소비하지 않는 키(보조키가 붙은 방향키)도 마찬가지다.
+    fireEvent.keyDown(screen.getByTestId('canvas-edit-overlay'), {
+      key: 'ArrowRight',
+      ctrlKey: true,
+    });
+
+    expect(clock.requested).toBe(before);
+    expect(clock.pending).toBe(0);
+  });
+
+  it('방향키로 옮기면 종전의 props 변경 경로로 프레임이 예약된다 (새 깨우기 경로가 아니다)', () => {
+    const clock = makeScheduler();
+    render(<StatefulHost clock={clock} />);
+    for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
+
+    // 고르고 손을 뗀다 — 놓기 자체가 제자리 확정 쓰기를 한 번 내므로 그 프레임까지 민다.
+    sendToOverlay('pointerdown', 30, 15);
+    sendToOverlay('pointerup', 30, 15);
+    for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
+    const before = clock.requested;
+
+    fireEvent.keyDown(screen.getByTestId('canvas-edit-overlay'), {
+      key: 'ArrowRight',
+      shiftKey: true,
+    });
+
+    // 한 번 눌러 한 번 예약이다 — 합류 프레임을 따로 잡지 않는다.
+    expect(clock.requested).toBe(before + 1);
+    // 그 프레임을 그리고 나면 진행 중 트윈이 없으므로 루프는 다시 유휴로 돌아간다.
+    clock.flush(100);
+    expect(clock.pending).toBe(0);
   });
 });

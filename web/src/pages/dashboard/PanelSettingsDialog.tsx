@@ -239,6 +239,7 @@ import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/Heatm
 import HeatmapPanel from './panels/heatmap/HeatmapPanel';
 import CanvasPanel from './panels/canvas/CanvasPanel';
 import CanvasElementsEditor from './panels/canvas/CanvasElementsEditor';
+import { CanvasEditSelectionContext, useCanvasEditSelectionState } from './panels/canvas/canvasEditContext';
 import BarChartPanel from './panels/charts/BarChartPanel';
 import LineChartPanel from './panels/charts/LineChartPanel';
 import PieChartPanel from './panels/charts/PieChartPanel';
@@ -886,6 +887,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [panel, onClose]);
 
+  // SPEC-CANVAS-002 T11: 캔버스 미리보기와 요소 목록 편집기가 **한 선택**을 나눠 쓰게 한다.
+  // 본문은 전부 `panels/canvas/` 에 있고 여기에는 감싸기와 `forceEdit` 만 더한다(§위험 R5).
+  const canvasSelection = useCanvasEditSelectionState();
+
   if (!panel) return null;
 
   // SPEC-WEB-005: 차트 패널이면 데이터 소스 섹션을 좌측 프리뷰 아래에 넓게 배치한다.
@@ -1336,10 +1341,12 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 `panels/canvas/CanvasElementsEditor.tsx` 에 있다(§위험 R4). */}
             {panel.type === 'canvas' && (
               <CollapsibleSection title={t('dashboard.settings.canvas')} defaultOpen={true}>
-                <CanvasElementsEditor
-                  config={panel.config ?? {}}
-                  onConfigChange={(c) => handleConfigChange(c)}
-                />
+                <CanvasEditSelectionContext value={canvasSelection}>
+                  <CanvasElementsEditor
+                    config={panel.config ?? {}}
+                    onConfigChange={(c) => handleConfigChange(c)}
+                  />
+                </CanvasEditSelectionContext>
               </CollapsibleSection>
             )}
 
@@ -1864,12 +1871,15 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 style={PREVIEW_CHILD_STYLE}
                 onWheel={handlePreviewWheel}
               >
-                <CanvasPanel
-                  panelId={panel.id}
-                  title={panel.title}
-                  config={panel.config}
-                  onConfigChange={(c) => handleConfigChange(c)}
-                />
+                <CanvasEditSelectionContext value={canvasSelection}>
+                  <CanvasPanel
+                    panelId={panel.id}
+                    title={panel.title}
+                    config={panel.config}
+                    onConfigChange={(c) => handleConfigChange(c)}
+                    forceEdit
+                  />
+                </CanvasEditSelectionContext>
               </div>
             )}
       </div>

@@ -23,7 +23,7 @@
 //
 // @spec SPEC-CANVAS-001
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, ChevronUp, Plus, Trash2 } from 'lucide-react';
 
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
@@ -42,7 +42,6 @@ import { toStoreShapedConfig } from '../charts/useSysMetricsChartData';
 import {
   DEFAULT_BOX_GEOMETRY,
   DEFAULT_LINE_GEOMETRY,
-  DEFAULT_POINT_GEOMETRY,
   DEFAULT_TWEEN_EASING,
   parseCanvasConfig,
   type BoxGeometry,
@@ -58,6 +57,9 @@ import {
   type TweenEasing,
   type TweenSpec,
 } from './canvasConfig';
+import { moveElementTo } from './canvasEditArrange';
+import { useCanvasEditSelection } from './canvasEditContext';
+import { appendElement } from './canvasElementFactory';
 import CanvasRuleTableEditor from './CanvasRuleTableEditor';
 
 // --- 상수 ---------------------------------------------------------------
@@ -184,14 +186,6 @@ function bindingOptionsFor(options: readonly SeriesOption[], current: string | u
   return [...options, { id: current, label: current }];
 }
 
-/** 배열 안에서 쓰이지 않은 요소 id 를 만든다(결정적 — 테스트가 값을 예측할 수 있다). */
-function nextElementId(elements: readonly CanvasElement[]): string {
-  const used = new Set(elements.map((e) => e.id));
-  let n = 1;
-  while (used.has(`el-${n}`)) n++;
-  return `el-${n}`;
-}
-
 /** 기하가 rect/ellipse 형상인가. */
 function isBox(g: Geometry): g is BoxGeometry {
   return 'w' in g;
@@ -256,121 +250,10 @@ function withKind(el: CanvasElement, kind: CanvasElementKind): CanvasElement {
 }
 
 /**
- * 신규 요소가 입고 나오는 색.
- *
- * 렌더 층은 색이 없는 요소를 **아무것도 그리지 않는다**(`drawElement.paintFill` 주석 —
- * "기본 색을 지어내면 사용자가 색을 지정하지 않음을 표현할 수 없다"). 그 규율은 그대로
- * 두고, 대신 **만드는 쪽**에서 보이는 색을 심는다. 만들 때 심으면 값이 config 에 실려
- * 색 칸에도 뜨고 저장 왕복에도 남지만, 그릴 때 지어내면 화면에만 있고 어디에도 없다.
- * (스타일을 비워 두던 이전 판은 추가 버튼을 눌러도 캔버스가 비어 있었다.)
- *
- * 값은 팔레트 첫 칸과 같은 blue-500 이다(`colorPalette.ts`). 2D context 는 실제 색
- * 문자열을 요구하므로 CSS 변수를 쓸 수 없고, 그래서 히트맵 프리셋과 같은 hex 리터럴이다
- * (`heatmapColorPresets.ts`).
- *
- * 이 색은 밝은 패널 표면(#fbfcfe)에 3.60:1, 어두운 표면(#1f2937)에 3.99:1 로 닿는다.
- * 한 색으로 두 표면을 동시에 만족시킬 수 있는 상한 자체가 3.79:1 이므로(두 표면의 명도가
- * 양 끝이라 그 이상은 대수적으로 불가능하다) 이 값이 그 상한에 가장 가까운 축이며,
- * 두 표면 모두에서 비문자 대비 기준 3:1 을 넘는다. 어차피 사용자가 갈아입힐 씨앗 색이다.
+ * 씨앗 스타일·계단 오프셋·id 규칙은 **`canvasElementFactory.ts` 가 소유한다**
+ * (SPEC-CANVAS-002 T9). 캔버스 도형 팔레트가 같은 것을 만들어야 하므로 두 호출부가 한
+ * 구현을 부른다 — 규칙이 둘이 되면 "어디서 더했는가" 에 따라 결과가 달라진다(가정 A7).
  */
-const SEED_COLOR = '#3b82f6';
-
-/** 신규 선의 두께(px). 기본값 1 은 고DPI 표면에서 실오라기라 "그려졌다" 로 읽히지 않는다. */
-const SEED_STROKE_WIDTH = 2;
-
-/**
- * 신규 문구 템플릿. 토큰 3종을 한 줄에 모아 **문구 칸 자체가 사용법이 되게** 한다
- * (바로 아래 토큰 안내 문구와 같은 조합이다).
- *
- * 번역하지 않는다 — 이 문자열은 config 에 저장되어 대시보드를 함께 쓰는 다른 로케일의
- * 사용자에게도 그대로 그려진다. 로케일이 config 에 박히는 것은 바인딩을 표시 이름이
- * 아니라 동일성 키로 참조하는 것과 같은 이유로 피한다(규율 3).
- */
-const SEED_TEXT = '{name} {value}{unit}';
-
-/** 겹침 방지 계단의 한 칸(정규화 좌표). */
-const SEED_OFFSET_STEP = 0.05;
-
-/** 계단이 스테이지를 벗어나기 전에 처음으로 되감는 칸 수. */
-const SEED_OFFSET_WRAP = 8;
-
-/**
- * n 번째 신규 요소의 계단 변위. 되감으므로 **스테이지 밖으로 행진하지 않는다.**
- *
- * 이미 있는 요소 수만 보므로 결정적이다 — 같은 순서로 누르면 같은 자리가 나온다.
- * 기존 요소의 좌표는 건드리지 않는다(스테이지 밖 저술은 합법이다). 새 요소가 어디서
- * 시작하는지만 정한다.
- */
-function seedOffset(count: number): number {
-  return (count % SEED_OFFSET_WRAP) * SEED_OFFSET_STEP;
-}
-
-/** 계단을 더한 좌표. 0.1 + 0.15 가 0.25000000000000006 으로 새지 않게 자른다. */
-function shifted(base: number, off: number): number {
-  return Math.round((base + off) * 1000) / 1000;
-}
-
-/**
- * 신규 요소. **보이는 스타일을 심어** 내보낸다 — 위 `SEED_COLOR` 주석 참조.
- *
- * 계단은 종류마다 여유가 있는 축으로만 준다. 상자는 대각선(우하), 선은 가로로 이미
- * 스테이지를 가로지르므로 세로로만, 문구는 오른쪽으로 흘러가므로 세로로만 내린다.
- * 어느 쪽도 되감기 전에 1 을 넘지 않는다.
- */
-function newElement(id: string, kind: CanvasElementKind, count: number): CanvasElement {
-  const off = seedOffset(count);
-  switch (kind) {
-    case 'rect':
-      return {
-        id,
-        kind,
-        geometry: {
-          x: shifted(DEFAULT_BOX_GEOMETRY.x, off),
-          y: shifted(DEFAULT_BOX_GEOMETRY.y, off),
-          w: DEFAULT_BOX_GEOMETRY.w,
-          h: DEFAULT_BOX_GEOMETRY.h,
-        },
-        style: { fill: SEED_COLOR },
-      };
-    case 'ellipse':
-      return {
-        id,
-        kind,
-        geometry: {
-          x: shifted(DEFAULT_BOX_GEOMETRY.x, off),
-          y: shifted(DEFAULT_BOX_GEOMETRY.y, off),
-          w: DEFAULT_BOX_GEOMETRY.w,
-          h: DEFAULT_BOX_GEOMETRY.h,
-        },
-        style: { fill: SEED_COLOR },
-      };
-    case 'line':
-      return {
-        id,
-        kind,
-        geometry: {
-          x1: DEFAULT_LINE_GEOMETRY.x1,
-          y1: shifted(DEFAULT_LINE_GEOMETRY.y1, off),
-          x2: DEFAULT_LINE_GEOMETRY.x2,
-          y2: shifted(DEFAULT_LINE_GEOMETRY.y2, off),
-        },
-        // 선은 채우지 않으므로(열린 경로) 색만으로는 그려지지 않는다 — 두께를 함께 심는다.
-        style: { stroke: SEED_COLOR, strokeWidth: SEED_STROKE_WIDTH },
-      };
-    default:
-      return {
-        id,
-        kind,
-        geometry: {
-          x: DEFAULT_POINT_GEOMETRY.x,
-          y: shifted(DEFAULT_POINT_GEOMETRY.y, off),
-        },
-        style: { textColor: SEED_COLOR },
-        // 색만 심으면 여전히 보이지 않는다 — 그릴 글자가 없기 때문이다.
-        text: SEED_TEXT,
-      };
-  }
-}
 
 /**
  * 기하 좌표 입력 파싱. 빈 칸·비수치는 0 으로 본다(규칙 표 임계값과 같은 규율).
@@ -518,15 +401,57 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
   const elements = cfg.elements;
   const seriesOptions = useMemo(() => buildSeriesOptions(config), [config]);
 
-  /** 펼쳐 둔 요소의 id 집합. 기본은 전부 접힘이다. */
+  /** **사용자가 손으로** 펼쳐 둔 요소의 id 집합. 기본은 전부 접힘이다. */
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
 
-  const toggleExpanded = (id: string): void =>
+  // --- SPEC-CANVAS-002 T10: 캔버스 선택 → 속성 편집 연동 ---
+  //
+  // **provider 가 없어도 동작한다.** 대시보드에 놓인 패널 곁에는 이 편집기가 없고, 이
+  // 편집기만 단독으로 뜨는 자리(테스트·다이얼로그 밖)에서는 캔버스 선택이 없다. 그때
+  // `useCanvasEditSelection` 은 로컬 선택으로 떨어지고 `autoExpandedId` 는 언제나 `null`
+  // 이라, 아래 배선 전체가 조용히 무동작이 된다(canvasEditContext.tsx 의 계약).
+  const { selection, autoExpandedId } = useCanvasEditSelection();
+
+  /**
+   * **캔버스가 펼친 행** 하나. `expandedIds` 와 **따로** 든다 — 그래야 캔버스는 자기가
+   * 펼친 것만 회수하고 사용자가 손으로 펼친 행은 건드리지 않는다(AC-06).
+   *
+   * 한 개뿐인 것에 뜻이 있다: 다음 선택이 오면 이 값이 통째로 갈리므로 이전 것이 저절로
+   * 접힌다. 둘 이상 선택되면 `autoExpandedId` 가 `null` 이라 아무 행도 펼쳐지지 않는다 —
+   * 펼침이 쌓이면 이미 고친 "설정이 모두 펼쳐져 복잡하다" 로 되돌아간다.
+   */
+  const [canvasExpandedId, setCanvasExpandedId] = useState<string | null>(null);
+
+  /** 행 요소. 시야로 스크롤할 대상을 id 로 든다(순번으로 들면 순서 이동이 남을 가리킨다). */
+  const rowRefs = useRef(new Map<string, HTMLDivElement>());
+
+  /**
+   * 캔버스 선택이 바뀔 때마다 펼침을 그 하나로 옮기고 시야로 스크롤한다.
+   *
+   * `scrollIntoView` 는 **jsdom 에 없다** — 그래서 옵셔널 호출이다. 없다고 배선이 죽으면
+   * 안 되는 자리이고(펼침은 스크롤과 무관하게 일어나야 한다), 실제 브라우저에서는 늘 있다.
+   */
+  useEffect(() => {
+    setCanvasExpandedId(autoExpandedId);
+    if (autoExpandedId === null) return;
+    rowRefs.current.get(autoExpandedId)?.scrollIntoView?.({ block: 'nearest' });
+  }, [autoExpandedId]);
+
+  /** 행이 펼쳐져 있는가 — 손으로 펼쳤거나(집합) 캔버스가 펼쳤거나(한 개) 둘 중 하나다. */
+  const isExpanded = (id: string): boolean => expandedIds.has(id) || id === canvasExpandedId;
+
+  const toggleExpanded = (id: string): void => {
+    const open = isExpanded(id);
     setExpandedIds((prev) => {
       const next = new Set(prev);
-      if (!next.delete(id)) next.add(id);
+      if (open) next.delete(id);
+      else next.add(id);
       return next;
     });
+    // 캔버스가 펼친 행을 손으로 접을 때는 그 자동 펼침도 함께 회수한다 — 회수하지 않으면
+    // 파생 조건이 그대로 남아 도로 펼쳐지고, 사용자는 접을 방법이 없는 행을 갖게 된다.
+    if (open && id === canvasExpandedId) setCanvasExpandedId(null);
+  };
 
   const emit = (next: CanvasElement[]): void => onConfigChange({ elements: next });
 
@@ -540,21 +465,35 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
    * 대신 방금 만든 것이 화면에서 스스로를 소개한다.
    */
   const addElement = (kind: CanvasElementKind): void => {
-    const created = newElement(nextElementId(elements), kind, elements.length);
+    // 캔버스 팔레트가 부르는 것과 **같은 함수**다(T9 · 가정 A7) — 씨앗 기하·계단 오프셋·
+    // id 규칙이 어디서 더하든 같다.
+    const { next, created } = appendElement(elements, kind);
     setExpandedIds((prev) => new Set(prev).add(created.id));
-    emit([...elements, created]);
+    emit(next);
   };
 
   const removeAt = (idx: number): void => emit(elements.filter((_, i) => i !== idx));
 
-  /** 순서 이동 = z-order 조작. 001 의 유일한 z-order 수단이라 일급 동작이다. */
+  /**
+   * 순서 이동 = z-order 조작. 001 의 유일한 z-order 수단이라 일급 동작이다.
+   *
+   * **규칙은 `canvasEditArrange.moveElementTo` 한 곳에 있다.** 캔버스 팔레트의 앞/뒤
+   * 보내기(T14)도 같은 함수를 지나므로, "목록에서 눌렀는가 캔버스에서 눌렀는가" 에 따라
+   * 결과가 달라질 수 없다(REQ-04 — 두 번째 정렬 규칙을 만들지 않는다). 여기서 인라인
+   * splice 를 한 벌 더 들고 있던 동안에는 그 규율이 주석일 뿐이었다.
+   *
+   * 끝을 넘어서는 이동은 그 함수가 목표 위치를 배열 안으로 죄어 **제자리**로 만들고,
+   * 제자리면 받은 배열을 그대로(같은 참조) 돌려준다 — 그 참조 비교가 곧 "쓸 일이 없다"
+   * 이며, 이 함수가 예전에 `target < 0 || target >= length` 로 직접 세던 판정과 같다.
+   *
+   * 식별은 배열 위치가 아니라 `nodeId` 다(REQ-06).
+   */
   const moveAt = (idx: number, delta: -1 | 1): void => {
-    const target = idx + delta;
-    if (target < 0 || target >= elements.length) return;
-    const next = elements.slice();
-    const [moved] = next.splice(idx, 1);
-    if (moved !== undefined) next.splice(target, 0, moved);
-    emit(next);
+    const el = elements[idx];
+    if (el === undefined) return;
+    const next = moveElementTo(elements, el.id, idx + delta);
+    if (next === elements) return;
+    emit([...next]);
   };
 
   /**
@@ -636,14 +575,26 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
           {elements.map((el, idx) => {
             const bindingOptions = bindingOptionsFor(seriesOptions, el.binding?.series);
             const unbound = el.binding === undefined;
-            const open = expandedIds.has(el.id);
+            const open = isExpanded(el.id);
+            // 다중 선택에서는 자동 펼침이 없으므로 **표시만** 남는다(AC-06).
+            const picked = selection.has(el.id);
 
             return (
               <div
                 key={el.id}
+                ref={(node) => {
+                  // 캔버스가 고른 행을 시야로 끌어올 때 쓴다. 언마운트된 행을 붙들고 있으면
+                  // 지워진 요소가 지도에 남으므로 정리한다.
+                  if (node === null) rowRefs.current.delete(el.id);
+                  else rowRefs.current.set(el.id, node);
+                }}
                 data-testid={`canvas-element-${idx}`}
                 data-element-id={el.id}
-                className="space-y-1.5 rounded-md border border-(--color-border-default) p-1.5"
+                data-selected={picked ? 'true' : undefined}
+                className={cn(
+                  'space-y-1.5 rounded-md border p-1.5',
+                  picked ? 'border-blue-500' : 'border-(--color-border-default)',
+                )}
               >
                 {/* 1행: 순번 · 종류 · 순서 이동 · 삭제 */}
                 <div className="flex w-full items-center gap-1.5">
