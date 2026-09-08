@@ -469,7 +469,7 @@ function ArchSlot({
         onSuccess: () => {
           addNotification({
             type: 'success',
-            message: t('remote.releaseStore.uploaded.success').replace('{slot}', slot),
+            message: t('remote.releaseStore.assetUploaded').replace('{slot}', slot),
           });
           setBinary(null);
           setSignature(null);

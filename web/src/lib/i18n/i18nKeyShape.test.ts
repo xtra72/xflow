@@ -64,6 +64,24 @@ describe('i18n 키 형상', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('키 이름에 점이 들어 있지 않다', () => {
+    // `t()` 는 조회 경로를 점으로 쪼개 트리를 내려간다. 그래서 이름 자체에 점이 든 키는
+    // **어떤 경로로도 닿지 않는다** — 형제에 같은 앞자리 노드가 있으면 그쪽으로 내려가
+    // 가려지고, 없으면 그 자리에서 조회가 끊긴다. 어느 쪽이든 화면에 원문 키가 뜬다.
+    //
+    // 실제로 `remote.releaseStore` 에 `uploaded`(문자열)와 `uploaded.success` 가 나란히
+    // 있었다. 조회는 `uploaded` 에서 문자열을 만나 멈췄고, 업로드 성공 알림에 키가
+    // 그대로 노출됐다. ko/en 키 집합이 일치했으므로 아래 가드도 이를 잡지 못했다.
+    const dotted = (tree: Record<string, unknown>, prefix = ''): string[] =>
+      Object.entries(tree).flatMap(([k, v]) => [
+        ...(k.includes('.') ? [`${prefix}${k}`] : []),
+        ...(v && typeof v === 'object' ? dotted(v as Record<string, unknown>, `${prefix}${k}.`) : []),
+      ]);
+
+    expect(dotted(ko as Record<string, unknown>)).toEqual([]);
+    expect(dotted(en as Record<string, unknown>)).toEqual([]);
+  });
+
   it('ko 와 en 의 키 집합이 일치한다', () => {
     const flatten = (tree: Record<string, unknown>, prefix = ''): string[] =>
       Object.entries(tree).flatMap(([k, v]) =>

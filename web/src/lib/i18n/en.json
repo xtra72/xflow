@@ -3693,7 +3693,7 @@
       "upload": "Upload",
       "uploadHint": "Select both the binary and the .sig signature file.",
       "uploadIncomplete": "Select both the binary and the signature file",
-      "uploaded.success": "Uploaded {slot} asset",
+      "assetUploaded": "Uploaded {slot} asset",
       "uploadFailed": "Failed to upload asset",
       "deleteAsset": "Delete asset",
       "deleteAssetTitle": "Delete asset",
