@@ -34,7 +34,7 @@ export function FlowPortPanel({ onClose }: FlowPortPanelProps) {
   return (
     <div
       className={cn(
-        'flex w-64 flex-col rounded-lg border border-zinc-200 bg-white shadow-lg',
+        'flex w-64 flex-col rounded-lg border border-zinc-200 bg-(--color-bg-surface) shadow-lg',
         'dark:border-zinc-700 dark:bg-zinc-900',
       )}
       role="dialog"
@@ -205,7 +205,7 @@ function PortRow({ port, onRename, onRemove }: PortRowProps) {
           }}
           aria-label={t('editor.port.nameAria')}
           className={cn(
-            'w-full rounded border border-blue-400 bg-white px-1.5 py-0.5 text-xs',
+            'w-full rounded border border-blue-400 bg-(--color-bg-surface) px-1.5 py-0.5 text-xs',
             'text-zinc-900 outline-none focus:ring-1 focus:ring-blue-400',
             'dark:bg-zinc-800 dark:text-zinc-100',
           )}

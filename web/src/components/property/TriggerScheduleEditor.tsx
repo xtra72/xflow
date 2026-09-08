@@ -511,7 +511,7 @@ function ScheduleRow({ schedule, readOnly, onTypeChange, onPatch, onRemove }: Sc
           <button
             type="button"
             onClick={onRemove}
-            className="shrink-0 rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+            className="shrink-0 rounded p-1 text-(--color-text-muted) transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
             aria-label={t('property.schedule.deleteAria')}
           >
             <Trash2 className="h-3.5 w-3.5" />
@@ -1162,7 +1162,7 @@ function AddScheduleMenu({ onAdd }: { onAdd: (type: ScheduleType) => void }) {
       <button
         type="button"
         onClick={() => setOpen(false)}
-        className="ml-auto rounded p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+        className="ml-auto rounded p-0.5 text-(--color-text-muted) hover:text-(--color-text-secondary)"
         aria-label={t('property.schedule.cancelAria')}
       >
         <X className="h-3 w-3" />

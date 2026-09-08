@@ -675,3 +675,136 @@ describe('PieChartPanel 특성화 (SPEC-CHART-002 M2)', () => {
 //
 // @spec SPEC-TSDB-002 §2.3 (U3) · §2.4 (U4) — plan.md §3.1 CT-01 ~ CT-05 / AC-09
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// SPEC-CHART-005 M1 — 특성화 테스트 (DDD PRESERVE).
+//
+// M1 에서 "그리드·정렬·선택이 없다" 를 잠근 뒤, M5 가 공용 레이어로 갈아타며 그것을
+// 더했다. 기존 드래그 동작(범례·파이 그림)은 그대로다.
+// ---------------------------------------------------------------------------
+describe('PieChartPanel 편집 표면 (SPEC-CHART-005)', () => {
+  beforeEach(() => {
+    mockResult.current = {
+      entries: [],
+      status: 'connected',
+      closedReason: undefined,
+      errorReason: undefined,
+    };
+  });
+
+  const rows: ChartEntry[] = [
+    { timestamp: 1, value: 10, labels: { category: 'A' } },
+    { timestamp: 2, value: 30, labels: { category: 'B' } },
+  ];
+
+  const edit = (extra: Record<string, unknown> = {}) => (
+    <PieChartPanel
+      panelId="p1"
+      config={{ channel_name: 'c', ...extra }}
+      onConfigChange={vi.fn()}
+      forceEdit
+    />
+  );
+
+  it('AC-11: 편집 중에는 그리드와 중심 표식이 보인다', () => {
+    mockResult.current.entries = rows;
+    render(edit());
+    expect(screen.getByTestId('panel-edit-grid')).toBeInTheDocument();
+    expect(screen.getByTestId('panel-edit-center')).toBeInTheDocument();
+  });
+
+  it('AC-11: 편집이 꺼져 있으면 그리드도 툴바도 없다', () => {
+    mockResult.current.entries = rows;
+    render(<PieChartPanel panelId="p1" config={{ channel_name: 'c' }} />);
+    expect(screen.queryByTestId('panel-edit-grid')).toBeNull();
+    expect(screen.queryByTestId('panel-align-toolbar')).toBeNull();
+  });
+
+  it('AC-12: 정렬 툴바가 나온다', () => {
+    mockResult.current.entries = rows;
+    render(edit());
+    expect(screen.getByTestId('panel-align-toolbar')).toBeInTheDocument();
+    expect(screen.getByTestId('panel-snap-toggle')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('panel-align-reset')).toBeInTheDocument();
+  });
+
+  it('AC-13: 끌 수 있는 덩어리는 그림과 범례 둘이다', () => {
+    mockResult.current.entries = rows;
+    const { container } = render(edit({ show_legend: true }));
+    expect(container.querySelectorAll('[data-panel-drag]')).toHaveLength(2);
+  });
+
+  it('AC-13: 범례가 꺼져 있으면 그림 하나다', () => {
+    mockResult.current.entries = rows;
+    const { container } = render(edit({ show_legend: false }));
+    expect(container.querySelectorAll('[data-panel-drag]')).toHaveLength(1);
+  });
+
+  it('AC-14: 고르면 진한 실선이 되고 크기 핸들이 붙는다', () => {
+    mockResult.current.entries = rows;
+    const { container } = render(edit({ show_legend: true }));
+
+    const chart = screen.getByTestId('pie-chart-container');
+    expect(chart.className).toContain('outline-dashed');
+
+    fireEvent.pointerDown(chart);
+    expect(screen.getByTestId('pie-chart-container').className).toContain('outline-2');
+    expect(container.querySelectorAll('[data-panel-resize]')).toHaveLength(1);
+  });
+
+  it('AC-15: 배치 초기화가 두 요소의 오프셋을 한 번에 지운다', () => {
+    mockResult.current.entries = rows;
+    const onConfigChange = vi.fn();
+    render(
+      <PieChartPanel
+        panelId="p1"
+        config={{ channel_name: 'c', pie_offset_x: 12, legend_offset_y: 8 }}
+        onConfigChange={onConfigChange}
+        forceEdit
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('panel-align-reset'));
+    expect(onConfigChange).toHaveBeenCalledTimes(1);
+    expect(onConfigChange.mock.calls[0]![0]).toEqual({
+      pie_offset_x: undefined,
+      pie_offset_y: undefined,
+      legend_offset_x: undefined,
+      legend_offset_y: undefined,
+    });
+  });
+
+  it('AC-16: 편집을 켜도 그림 상자의 위치 클래스가 살아 있다', () => {
+    // 편집 표식에 `relative` 를 함께 실었다가 `absolute inset-0` 을 이겨서 상자가
+    // 높이 0으로 무너졌다 — 화면에는 격자와 툴바만 남고 파이가 사라졌다.
+    mockResult.current.entries = rows;
+    render(edit());
+    const box = screen.getByTestId('pie-chart-container');
+    expect(box.className).toContain('absolute');
+    expect(box.className).toContain('inset-0');
+    expect(box.className).not.toContain('relative');
+  });
+
+  it('AC-16: 편집 표식은 범례 자신에 붙는다 — 감싸는 상자를 만들지 않는다', () => {
+    // 범례는 스스로 absolute 로 뜨므로, 흐름 안의 상자로 감싸면 그 상자가 크기 0이 되어
+    // 윤곽이 패널 위쪽에 얇은 띠로 생긴다.
+    mockResult.current.entries = rows;
+    const { container } = render(edit({ show_legend: true }));
+    const legend = screen.getByTestId('pie-chart-legend');
+    expect(legend).toHaveAttribute('data-panel-drag', 'legend');
+    expect(legend.className).toContain('absolute');
+    // 범례를 감싼 별도의 드래그 상자가 없어야 한다.
+    const dragBoxes = [...container.querySelectorAll('[data-panel-drag="legend"]')];
+    expect(dragBoxes).toEqual([legend]);
+  });
+
+  it('M1-1.3: 저장된 범례 오프셋이 그대로 반영된다(기존 동작 보존)', () => {
+    mockResult.current.entries = rows;
+    render(
+      <PieChartPanel
+        panelId="p1"
+        config={{ channel_name: 'c', legend_offset_x: 8, legend_position: 'bottom' }}
+      />,
+    );
+    expect(screen.getByTestId('pie-chart-legend').getAttribute('style')).toContain('8%');
+  });
+});

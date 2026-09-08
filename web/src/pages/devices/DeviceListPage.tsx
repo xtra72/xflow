@@ -435,7 +435,7 @@ export default function DeviceListPage({
       {/* 테이블 또는 빈 상태 */}
       {filteredDevices.length === 0 ? (
         <div className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) py-16 text-center">
-          <HardDrive className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
+          <HardDrive className="mx-auto h-12 w-12 text-(--color-border-strong)" />
           <p className="mt-4 text-sm text-(--color-text-muted)">
             {devices.length === 0
               ? t('devices.emptyTitle')
@@ -471,7 +471,7 @@ export default function DeviceListPage({
                 ))}
               </select>
               <span>{t('common.pagination.unit')}</span>
-              <span className="ml-2 text-gray-400">|</span>
+              <span className="ml-2 text-(--color-text-muted)">|</span>
               <span className="ml-2">
                 {t('common.pagination.range')
                   .replace('{total}', String(totalItems))
@@ -666,7 +666,7 @@ function ColumnsSettingButton({
                   checked={checked}
                   disabled={lastOne}
                   onChange={() => toggle(key)}
-                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-sm text-(--color-text-primary)">
                   {t(DEVICE_COLUMN_LABELS[key])}
@@ -719,7 +719,7 @@ function DeviceRow({
         className="cursor-pointer transition-colors hover:bg-(--color-bg-elevated)"
       >
         {/* 확장 아이콘 */}
-        <td className="px-3 py-3 text-gray-400">
+        <td className="px-3 py-3 text-(--color-text-muted)">
           {isExpanded ? (
             <ChevronDown className="h-4 w-4" />
           ) : (
@@ -749,7 +749,7 @@ function DeviceRow({
                   e.stopPropagation();
                   onDelete();
                 }}
-                className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
+                className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
                 title={t('devices.list.deleteTooltip')}
                 aria-label={t('devices.list.deleteTooltip')}
               >

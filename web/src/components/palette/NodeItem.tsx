@@ -25,7 +25,7 @@ export function NodeItem({ nodeType }: NodeItemProps) {
       draggable
       onDragStart={handleDragStart}
       className="flex items-center gap-2 rounded px-2 py-1.5 cursor-grab
-        hover:bg-gray-100 dark:hover:bg-gray-800
+        hover:bg-(--color-bg-sunken)
         active:cursor-grabbing transition-colors"
     >
       <Icon className="h-3.5 w-3.5 shrink-0 text-(--color-text-muted)" />

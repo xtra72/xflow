@@ -30,12 +30,6 @@ vi.mock('@/hooks/useRemote', () => ({
 }));
 
 // 제목과 무관한 무거운 자식들은 가벼운 stub 으로 대체한다.
-vi.mock('@/components/theme/ThemeSelector', () => ({
-  ThemeSelector: () => null,
-}));
-vi.mock('@/components/theme/ThemeEditorModal', () => ({
-  ThemeEditorModal: () => null,
-}));
 vi.mock('@/components/system/UpdateAvailableBadge', () => ({
   UpdateAvailableBadge: () => null,
 }));

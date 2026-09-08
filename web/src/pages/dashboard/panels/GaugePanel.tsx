@@ -22,6 +22,7 @@ import { post } from '@/services/api/client';
 import { useAgents } from '@/hooks/useAgent';
 
 import {
+  DEFAULT_CHART_LEGEND_FONT_SIZE,
   type SeriesReduceFunc,
 } from './charts/chartChannelTypes';
 import { ConnectionStatusIcon } from './charts/ConnectionStatusIcon';
@@ -36,29 +37,53 @@ import { usePanelSeriesData } from './charts/usePanelSeriesData';
 import { resolveStoreAgentName } from './charts/storeAgentResolve';
 import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
 // 게이지 모양 8종은 sysmetrics 패널과 공유한다 (panels/gauge/gaugeShapes).
-import { parseConfig, renderGaugeByType, withGaugeValue } from './gauge/gaugeShapes';
+import {
+  parseConfig,
+  readVBarSize,
+  renderGaugeByType,
+  VBAR_SIZE_MAX,
+  VBAR_SIZE_MIN,
+  withGaugeValue,
+} from './gauge/gaugeShapes';
+import { GaugeValueOverlay } from './gauge/gaugeValue';
+import { resolveValuePlacement } from './gauge/valueOffsetMigration';
+import { readValueScale, VALUE_SCALE_MAX, VALUE_SCALE_MIN } from './charts/valueScale';
 import {
   panelBoxTransform,
+  PANEL_OFFSET_LIMIT,
   PANEL_SIZE_MAX,
+  PANEL_SIZE_MIN,
   readPanelOffset,
   readPanelSize,
 } from './charts/panelGeometry';
+import { STAT_OFFSET_LIMIT } from './charts/statLayout';
 import {
   resolveFontColor,
   resolveFontFamily,
   resolveFontSize,
   type ChartFontFamily,
 } from './charts/textStyle';
-import { readValueOffset } from './charts/valueScale';
 import { usePanelEditMode } from './PanelEditToggle';
 import { GaugeDragLayer } from '../GaugeDragLayer';
+import { useTranslation } from '@/lib/i18n';
+
+import { isAxisSplitGauge } from './gauge/gaugeAxis';
+
+import { PanelEditGrid } from '../PanelEditGrid';
+import { PanelAlignToolbar } from '../PanelAlignToolbar';
+import { usePanelElementEdit } from '../usePanelElementEdit';
+import {
+  PanelResizeHandle,
+  PANEL_EDIT_OUTLINE_CLASS,
+  PANEL_SELECTED_OUTLINE_CLASS,
+} from '../PanelDragLayer';
 import {
   GaugeThresholdLegend,
   type ThresholdLegendOrientation,
   type ThresholdLegendPosition,
 } from './gauge/GaugeThresholdLegend';
 import { thresholdLegendItems } from './gauge/thresholdLegend';
-import { clampStoredLegendOffset } from './charts/legendOverlay';
+import { LEGEND_OFFSET_SAFETY_LIMIT, clampStoredLegendOffset } from './charts/legendOverlay';
 
 // ---- 타입 정의 ----
 
@@ -176,9 +201,12 @@ function useStoreLatestValue(
 function GaugeBox({
   config,
   children,
+  edit,
 }: {
   config: Record<string, unknown>;
   children: React.ReactNode;
+  /** 편집 표식(정렬이 상자를 찾고, 선택 윤곽을 입는다). 미지정이면 종전 DOM 이다. */
+  edit?: { props: Record<string, unknown>; outline: string; handle?: React.ReactNode };
 }): ReactElement {
   const transform = panelBoxTransform(
     readPanelSize(config.gauge_size) ?? PANEL_SIZE_MAX,
@@ -187,11 +215,15 @@ function GaugeBox({
   );
   return (
     <div
-      className="h-full w-full"
+      // 크기 손잡이가 모서리에 붙으려면 기준이 필요하다. 이미 영역을 꽉 채우는
+      // 상자라 `relative` 는 배치를 바꾸지 않는다.
+      className={`relative h-full w-full ${edit?.outline ?? ''}`}
       data-testid="gauge-box"
       data-gauge-body=""
       style={{ transform }}
+      {...(edit?.props ?? {})}
     >
+      {edit?.handle}
       {children}
     </div>
   );
@@ -228,6 +260,7 @@ function GaugeTile({
 }): ReactElement {
   const hasValue = item.value !== undefined && Number.isFinite(item.value);
   const parsed = hasValue ? withGaugeValue(base, item.value!) : base;
+  const valuePlacement = resolveValuePlacement(config);
   return (
     <div
       className={cn(
@@ -254,6 +287,15 @@ function GaugeTile({
         className="min-h-0 w-full min-w-0 flex-1"
       >
         <GaugeBox config={config}>{renderGaugeByType(parsed, hasValue)}</GaugeBox>
+        {/* 값은 도형과 **형제**다 — 도형에 걸린 크기·위치 변형을 따라가지 않는다. */}
+        <GaugeValueOverlay
+          parsed={parsed}
+          hasValue={hasValue}
+          offsetX={valuePlacement.percentX}
+          offsetY={valuePlacement.percentY}
+          viewBoxOffsetX={valuePlacement.viewBoxX}
+          viewBoxOffsetY={valuePlacement.viewBoxY}
+        />
       </div>
       <span
         data-testid="gauge-tile-caption"
@@ -291,6 +333,16 @@ const IDLE_SERIES_CONFIG: Record<string, unknown> = Object.freeze({});
 // ---- 메인 컴포넌트 ----
 
 /** 게이지 차트 패널 */
+/**
+ * 공용 편집 표면이 다루는 요소 — 게이지 상자 · 값 글자 · 임계값 범례.
+ *
+ * 값 글자는 한때 빠져 있었다. 그 오프셋이 SVG `viewBox` 좌표여서 백분율을 쓰는 공용
+ * 정렬과 단위가 맞지 않았기 때문이다. 지금은 값이 도형 밖 오버레이가 되면서 **패널
+ * 상자 대비 백분율**을 쓰므로 그 이유가 사라졌다 — 셋이 같은 축을 쓴다.
+ */
+type GaugeElementKind = 'body' | 'value' | 'legend';
+const GAUGE_ELEMENT_KINDS: readonly GaugeElementKind[] = ['body', 'value', 'legend'];
+
 export default function GaugePanel({
   panelId: _panelId,
   title,
@@ -374,6 +426,9 @@ export default function GaugePanel({
   const showGauges = reduced !== null && reduced.length > 0;
 
   const caption = readCaptionStyle(config);
+  // 손잡이의 스크린리더 이름에만 쓴다. 정렬 툴바가 이미 같은 훅을 쓰므로 이 패널의
+  // 렌더 트리에 새로운 Provider 요구가 생기지 않는다.
+  const { t } = useTranslation();
 
   // 대시보드 패널에서도 값·범례·게이지를 끌어 배치한다(히트맵과 같은 규칙).
   const edit = usePanelEditMode({
@@ -382,6 +437,88 @@ export default function GaugePanel({
     testId: 'gauge-edit-toggle',
     below: showTitle,
   });
+
+  /**
+   * 끌 수 있는 요소 — 드래그 계산은 `GaugeDragLayer` 가 계속 소유한다(범례는 변별 죄기
+   * 규칙이라 공용 레이어가 대신할 수 없다). 여기서 공용화하는 것은 **편집 표면**
+   * (그리드·중심 표식·정렬·선택 구분)뿐이다.
+   */
+  // 값 글자의 자리 — 지금 좌표(백분율)와 옛 좌표(viewBox)를 함께 읽는다. 옛 좌표는
+  // 그리기에만 쓴다: 끌기·정렬은 화면에서 잰 자리를 기준으로 삼으므로 옛 몫이 이미
+  // 들어간 자리에서 출발하고, 저장은 백분율 쪽에만 쌓인다.
+  const valuePlacement = resolveValuePlacement(config);
+  const valueOffsets = { x: valuePlacement.percentX, y: valuePlacement.percentY };
+  // 상한은 요소마다 다르다 — 게이지 상자는 영역을 채우는 그림이라 `readPanelOffset` 과
+  // 같은 ±40, 값 글자와 범례는 작은 글자 덩어리라 ±50 이다(`GaugeDragLayer` 의 죄기와
+  // 같은 값이어야 끌기와 정렬이 서로 다른 자리에서 멈추지 않는다).
+  const gaugeOffsets = {
+    body: {
+      x: readPanelOffset(config.gauge_offset_x),
+      y: readPanelOffset(config.gauge_offset_y),
+      limit: PANEL_OFFSET_LIMIT,
+    },
+    value: { ...valueOffsets, limit: STAT_OFFSET_LIMIT },
+    legend: {
+      x: clampStoredLegendOffset(config.threshold_legend_offset_x),
+      y: clampStoredLegendOffset(config.threshold_legend_offset_y),
+      limit: LEGEND_OFFSET_SAFETY_LIMIT,
+    },
+  };
+  const {
+    selection,
+    setSelection,
+    snap,
+    setSnap,
+    boundsRef,
+    align,
+    reset,
+  } = usePanelElementEdit<GaugeElementKind>({
+    kinds: GAUGE_ELEMENT_KINDS,
+    enabled: edit.active,
+    offsets: gaugeOffsets,
+    writeOffsets: (patches) => {
+      const next: Record<string, unknown> = {};
+      for (const p of patches) {
+        if (p.kind === 'body') {
+          next.gauge_offset_x = p.x;
+          next.gauge_offset_y = p.y;
+        } else if (p.kind === 'value') {
+          next.value_pos_x = p.x;
+          next.value_pos_y = p.y;
+          // 지우는 패치(정렬 툴바의 배치 초기화)면 옛 좌표도 함께 지운다. 신규 키만
+          // 지우면 옛 몫이 남아 상자·범례만 제자리로 가고 값은 그대로 — 초기화가
+          // 반쪽이 된다(설정의 값 초기화 단추가 이미 같은 이유로 둘 다 지운다).
+          // 옮기는 패치(정렬·무리 이동)에서는 지우지 않는다: 옛 몫은 화면에서 잰
+          // 출발 자리에 이미 들어가 있으므로, 여기서 빼면 그만큼 값이 튄다.
+          if (p.x === undefined && p.y === undefined) {
+            next.value_offset_x = undefined;
+            next.value_offset_y = undefined;
+          }
+        } else {
+          next.threshold_legend_offset_x = p.x;
+          next.threshold_legend_offset_y = p.y;
+        }
+      }
+      onConfigChange?.(next);
+    },
+  });
+  /** 요소 상자에 붙는 편집 표식 — 정렬이 상자를 찾고, 누르면 선택된다. */
+  const editProps = (kind: GaugeElementKind) =>
+    edit.active
+      ? {
+          'data-panel-drag': kind,
+          onPointerDown: () =>
+            setSelection(
+              selection.has(kind) ? selection : new Set<GaugeElementKind>([kind]),
+            ),
+        }
+      : {};
+  const outlineOf = (kind: GaugeElementKind): string =>
+    edit.active
+      ? selection.has(kind)
+        ? PANEL_SELECTED_OUTLINE_CLASS
+        : PANEL_EDIT_OUTLINE_CLASS
+      : '';
 
   // 임계값 범례 — 패널에 하나만. 임계값은 패널 설정이라 타일마다 붙이면 같은 문구가
   // 시리즈 수만큼 반복되면서 게이지 자리를 잡아먹는다.
@@ -404,6 +541,23 @@ export default function GaugePanel({
         (config.threshold_legend_orientation === 'vertical'
           ? 'vertical'
           : 'horizontal') as ThresholdLegendOrientation
+      }
+      edit={
+        edit.active
+          ? {
+              props: editProps('legend'),
+              outline: outlineOf('legend'),
+              handle: selection.has('legend') ? (
+                <PanelResizeHandle
+                  kind="legend"
+                  enabled
+                  label={t('dashboard.chart.legendFontSize')}
+                  // 범례는 넘침을 자르므로(`overflow-auto`) 손잡이를 안쪽 모서리에 둔다.
+                  className="sticky bottom-0 left-full h-3 w-3 shrink-0 cursor-nwse-resize rounded-sm border border-white bg-blue-500 shadow"
+                />
+              ) : undefined,
+            }
+          : undefined
       }
       fontFamily={config.threshold_legend_font_family as ChartFontFamily | undefined}
       fontSize={resolveFontSize(config.threshold_legend_font_size)}
@@ -443,24 +597,61 @@ export default function GaugePanel({
       {edit.toggle}
       <GaugeDragLayer
         enabled={edit.active}
+        snap={snap}
+        selection={selection}
+        onSelectionChange={setSelection}
         value={{
-          offsetX: readValueOffset(config.value_offset_x),
-          offsetY: readValueOffset(config.value_offset_y),
-          onChange: ({ x, y }) => onConfigChange?.({ value_offset_x: x, value_offset_y: y }),
+          offsetX: valueOffsets.x,
+          offsetY: valueOffsets.y,
+          onChange: ({ x, y }) => onConfigChange?.({ value_pos_x: x, value_pos_y: y }),
+          // 값의 크기는 px 이 아니라 **배율**(0.3~3)이다. 1px 을 1 로 세면 조금만
+          // 끌어도 상한에 닿으므로 100px 에 배율 1 이 되도록 잘게 센다.
+          size: readValueScale(config.value_scale),
+          sizeRange: { min: VALUE_SCALE_MIN, max: VALUE_SCALE_MAX },
+          sizeStep: 0.01,
+          onResize: (value_scale) => onConfigChange?.({ value_scale }),
         }}
         legend={{
           offsetX: clampStoredLegendOffset(config.threshold_legend_offset_x),
           offsetY: clampStoredLegendOffset(config.threshold_legend_offset_y),
           onChange: ({ x, y }) =>
             onConfigChange?.({ threshold_legend_offset_x: x, threshold_legend_offset_y: y }),
+          // 범례는 글자 덩어리라 손잡이가 글자 크기(px)를 바꾼다.
+          size: resolveFontSize(config.threshold_legend_font_size) ?? DEFAULT_CHART_LEGEND_FONT_SIZE,
+          onResize: (threshold_legend_font_size) =>
+            onConfigChange?.({ threshold_legend_font_size }),
         }}
         body={{
           offsetX: readPanelOffset(config.gauge_offset_x),
           offsetY: readPanelOffset(config.gauge_offset_y),
           onChange: ({ x, y }) => onConfigChange?.({ gauge_offset_x: x, gauge_offset_y: y }),
+          // 게이지는 글자가 아니므로 손잡이가 백분율(`gauge_size`)을 바꾼다.
+          size: readPanelSize(config.gauge_size) ?? PANEL_SIZE_MAX,
+          sizeRange: { min: PANEL_SIZE_MIN, max: PANEL_SIZE_MAX },
+          onResize: (gauge_size) => onConfigChange?.({ gauge_size }),
+          // 세로바만 축을 나눈다 — 가로로 끌면 바의 폭, 세로로 끌면 바의 높이.
+          //
+          // 이때 손잡이가 잡는 것은 게이지 상자의 CSS 배율이 아니라 **도형의 치수**다.
+          // 배율로 잡으면 눈금 글자와 값 글자까지 함께 눌린다(보고된 결함).
+          ...(isAxisSplitGauge(config)
+            ? {
+                size: readVBarSize(config.gauge_bar_width),
+                sizeRange: { min: VBAR_SIZE_MIN, max: VBAR_SIZE_MAX },
+                onResize: (gauge_bar_width: number) => onConfigChange?.({ gauge_bar_width }),
+                sizeY: readVBarSize(config.gauge_bar_height),
+                sizeYRange: { min: VBAR_SIZE_MIN, max: VBAR_SIZE_MAX },
+                onResizeY: (gauge_bar_height: number) => onConfigChange?.({ gauge_bar_height }),
+              }
+            : {}),
         }}
       >
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <div
+        ref={boundsRef}
+        className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+        data-panel-bounds=""
+      >
+      {/* 배치 그리드와 중심 표식 — 요소 뒤에 깔리고 포인터를 받지 않는다. */}
+      <PanelEditGrid enabled={edit.active} />
       {showGauges ? (
         <div
           data-testid="gauge-tiles"
@@ -483,14 +674,59 @@ export default function GaugePanel({
         <div className="flex min-h-0 flex-1 items-center justify-center">
           {/* Store 경로인데 시리즈가 0개면 신규 경로의 빈 상태(`--`)를 보여준다(§2.4).
               레거시 값으로 몰래 되돌아가지 않는다. */}
-          <GaugeBox config={config}>
+          <GaugeBox
+            config={config}
+            edit={
+              edit.active
+                ? {
+                    props: editProps('body'),
+                    outline: outlineOf('body'),
+                    handle: selection.has('body') ? (
+                      <PanelResizeHandle
+                        kind="body"
+                        enabled
+                        label={t('dashboard.settings.gaugeSection.gaugeSize')}
+                      />
+                    ) : undefined,
+                  }
+                : undefined
+            }
+          >
             {renderGaugeByType(parsed, isStoreSourcePath ? false : hasValue)}
           </GaugeBox>
+          <GaugeValueOverlay
+            parsed={parsed}
+            hasValue={isStoreSourcePath ? false : hasValue}
+            offsetX={valueOffsets.x}
+            offsetY={valueOffsets.y}
+            viewBoxOffsetX={valuePlacement.viewBoxX}
+            viewBoxOffsetY={valuePlacement.viewBoxY}
+            edit={
+              edit.active
+                ? {
+                    props: editProps('value'),
+                    outline: outlineOf('value'),
+                    // 손잡이는 고른 요소에만 — 늘 띄우면 값 아래에 상시로 점이 붙는다.
+                    showHandle: selection.has('value'),
+                  }
+                : undefined
+            }
+          />
         </div>
       )}
       {thresholdLegendNode}
       </div>
       </GaugeDragLayer>
+
+      {/* 정렬 툴바 — 편집 중에만. 격자 붙임은 이 패널의 드래그 레이어가 아직 하지 않으므로
+          토글을 내지 않는다(없는 기능의 스위치를 두면 죽은 컨트롤이 된다). */}
+      <PanelAlignToolbar
+        enabled={edit.active}
+        snap={snap}
+        onSnapChange={setSnap}
+        onAlign={align}
+        onReset={reset}
+      />
     </div>
   );
 }

@@ -65,8 +65,12 @@ describe('MetadataChips', () => {
     rerender(<MetadataChips dataType="json" />);
     expect(screen.getByTestId('metadata-data-type').className).toMatch(/bg-red-100/);
 
+    // string 은 유일한 중립 칩이라 하드코딩 회색 대신 시맨틱 토큰을 쓴다
+    // (나머지 데이터 타입은 의미를 갖는 강조색이라 그대로 둔다).
     rerender(<MetadataChips dataType="string" />);
-    expect(screen.getByTestId('metadata-data-type').className).toMatch(/bg-gray-100/);
+    expect(screen.getByTestId('metadata-data-type').className).toMatch(
+      /bg-\(--color-bg-sunken\)/,
+    );
   });
 
   it('fieldName 이 지정되면 필드 칩이 노출된다', () => {

@@ -119,7 +119,7 @@ function SeriesListPanelImpl({ dataSource }: SeriesListPanelProps) {
       {/* 빈 상태 */}
       {isEmpty && (
         <div className="rounded-md border border-(--color-border-default) bg-(--color-bg-surface) py-10 text-center">
-          <Database className="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600" />
+          <Database className="mx-auto h-8 w-8 text-(--color-border-strong)" />
           <p className="mt-2 text-sm text-(--color-text-muted)">{t('series.noStoredSeries')}</p>
         </div>
       )}

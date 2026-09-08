@@ -5,6 +5,7 @@
 // 하나만 공유한다. 각자 셀 렌더를 갖고 있으면 한쪽만 컬럼이 추가되거나 배지 색이
 // 달라져 두 화면의 표시가 조용히 갈라진다.
 
+import type { CSSProperties } from 'react';
 import { Lock } from 'lucide-react';
 
 import type { TranslationFn } from '@/lib/i18n';
@@ -21,15 +22,22 @@ export function DeviceCell({
   column,
   device,
   t,
+  style,
 }: {
   column: DeviceListColumnKey;
   device: DeviceInfo;
   t: TranslationFn;
+  /**
+   * 셀 글자 모양. 대시보드 패널의 "테이블 요소" 디자인이 색까지 걸 수 있도록 받는다 —
+   * 색은 안쪽 클래스가 이기므로 td 에 인라인으로 걸어야 한다. 디바이스 탭은 넘기지
+   * 않으므로 종전 모양 그대로다.
+   */
+  style?: CSSProperties;
 }) {
   switch (column) {
     case 'name':
       return (
-        <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-(--color-text-primary)">
+        <td style={style} className="whitespace-nowrap px-4 py-3 text-sm font-medium text-(--color-text-primary)">
           {getDeviceDisplayName(device)}
         </td>
       );
@@ -37,7 +45,7 @@ export function DeviceCell({
       // uid 우선. 공간이 남으면 전체 표시 — 잘라내지 않고 한 줄로 노출(전체값 툴팁 유지).
       const idValue = device.uid || device.id;
       return (
-        <td className="px-4 py-3">
+        <td style={style} className="px-4 py-3">
           <span
             title={idValue}
             className="block whitespace-nowrap font-mono text-xs text-(--color-text-muted)"
@@ -49,7 +57,7 @@ export function DeviceCell({
     }
     case 'type':
       return (
-        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
+        <td style={style} className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
           {getDeviceTypeLabel(device.type)}
         </td>
       );
@@ -57,7 +65,7 @@ export function DeviceCell({
       const protocolColor =
         PROTOCOL_COLORS[device.protocol] ?? 'bg-(--color-bg-elevated) text-(--color-text-muted)';
       return (
-        <td className="whitespace-nowrap px-4 py-3">
+        <td style={style} className="whitespace-nowrap px-4 py-3">
           <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', protocolColor)}>
             {device.protocol.toUpperCase()}
           </span>
@@ -66,20 +74,20 @@ export function DeviceCell({
     }
     case 'status':
       return (
-        <td className="whitespace-nowrap px-4 py-3">
+        <td style={style} className="whitespace-nowrap px-4 py-3">
           <DeviceStatusBadge online={device.online} />
         </td>
       );
     case 'agent':
       return (
-        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
+        <td style={style} className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
           {device.agent_name}
         </td>
       );
     case 'source': {
       const variant = sourceVariant(device.source);
       return (
-        <td className="whitespace-nowrap px-4 py-3">
+        <td style={style} className="whitespace-nowrap px-4 py-3">
           {!variant ? (
             <span className="text-xs text-(--color-text-muted)">-</span>
           ) : (
@@ -101,7 +109,7 @@ export function DeviceCell({
     }
     case 'last_seen':
       return (
-        <td className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
+        <td style={style} className="whitespace-nowrap px-4 py-3 text-sm text-(--color-text-muted)">
           {formatRelativeTime(device.last_seen, t)}
         </td>
       );

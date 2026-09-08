@@ -16,11 +16,11 @@ export default function DeviceStatusBadge({ online }: DeviceStatusBadgeProps) {
         'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium',
         online
           ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-          : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
+          : 'bg-(--color-bg-sunken) text-(--color-text-secondary)',
       )}
     >
       <span
-        className={cn('h-1.5 w-1.5 rounded-full', online ? 'bg-green-500' : 'bg-gray-400')}
+        className={cn('h-1.5 w-1.5 rounded-full', online ? 'bg-green-500' : 'bg-(--color-status-stopped)')}
         aria-hidden="true"
       />
       {online ? t('devices.status.online') : t('devices.status.offline')}

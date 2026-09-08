@@ -41,7 +41,7 @@ export function NodeOnlineIndicator({
           'h-2 w-2 shrink-0 rounded-full',
           online
             ? 'bg-green-500 dark:bg-green-400'
-            : 'bg-gray-400 dark:bg-gray-500',
+            : 'bg-(--color-status-stopped)',
         )}
       />
       {showLabel && (

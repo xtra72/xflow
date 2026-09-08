@@ -208,6 +208,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	// deviceMetaRepo 포인터 (훅 클로저에서 참조 - 저장소 초기화 후 설정됨)
 	var deviceMetaRepoRef *storage.DeviceMetadataFileRepository
 
+	// deviceIDRepo 포인터 (훅 클로저에서 참조 - 저장소 초기화 후 설정됨).
+	// UUID → (에이전트, 로컬 ID) 역인덱스의 출처로, 고정 설치 복원이 "이미 발견된
+	// 디바이스만 복원"하는 순환에 갇히지 않게 한다.
+	var deviceIDRepoRef *storage.DeviceIDFileRepository
+
 	// engineRef 포인터 (OnRestart 훅에서 참조 - 엔진 생성 후 설정됨)
 	var engineRef *engine.Engine
 
@@ -276,9 +281,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			// DeviceProvider 의 Devices() 로 enumerate 하여, 해당 UUID 가 pinned
 			// 메타데이터에 있으면 RegisterPinnedDevices 로 보고한다.
 			//
-			// 단, 본 경로는 이미 device provider 에 등록된 디바이스 (auto-discover
-			// 결과) 만 처리할 수 있다. 첫 부팅 시 pinned 메타데이터만 있고 디바이스가
-			// 아직 발견되지 않은 경우는 별도 yaml 설정 또는 후속 발견에 의존한다.
+			// 로컬 ID 는 세 곳에서 찾는다(확실한 것부터): 메타데이터의 소유 정보 →
+			// device_ids 역인덱스 → 지금 살아 있는 디바이스. 두 번째가 없으면 옛 기록은
+			// "이미 발견된 디바이스만 복원"하는 순환에 갇혀, 업링크가 와야 발견되는
+			// 디바이스는 첫 데이터 전까지 사라진 채로 남는다. 자세한 것은
+			// collectPinnedDevices 주석.
 			type pinnedDeviceAgent interface {
 				RegisterPinnedDevices(entries []agent.DeviceEntry)
 			}
@@ -287,44 +294,46 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 					allMeta, err := repo.List(context.Background())
 					if err != nil {
 						logger.Error("고정 설치 디바이스 조회 실패", "agent", a.Name(), "error", err)
-					} else if dpa2, ok := a.(deviceProviderAgent); ok {
-						// agent 가 소유한 디바이스의 UUID -> localID 매핑 구축.
-						type localIDProvider interface {
-							LocalID() string
-						}
-						uidToLocalID := make(map[string]string)
-						for _, dev := range dpa2.DeviceProvider().Devices() {
-							uid := dev.ID()
-							if uid == "" {
-								continue
+					} else {
+						// 지금 살아 있는 디바이스의 UUID → 로컬 ID (마지막 수단).
+						liveLocalIDs := make(map[string]string)
+						if dpa2, ok := a.(deviceProviderAgent); ok {
+							for _, dev := range dpa2.DeviceProvider().Devices() {
+								if uid := dev.ID(); uid != "" {
+									liveLocalIDs[uid] = deviceLocalIDOf(dev)
+								}
 							}
-							// localID 는 device.Name() (사람이 읽는 라벨) 이 아닌
-							// 어댑터 내부 식별자. 우선 LocalID() 확장 인터페이스를
-							// 시도하고, 없으면 device.Name() 으로 fallback (대부분
-							// 어댑터에서 label 이 동일하게 사용됨).
-							if lp, ok := dev.(localIDProvider); ok {
-								uidToLocalID[uid] = lp.LocalID()
+						}
+						// 한 번이라도 발견된 적 있는 디바이스의 UUID → 로컬 ID.
+						var deviceIDs map[string]string
+						if idRepo := deviceIDRepoRef; idRepo != nil {
+							if pairs, listErr := idRepo.List(context.Background()); listErr == nil {
+								deviceIDs = pairs
 							} else {
-								uidToLocalID[uid] = dev.Name()
+								logger.Warn("device_id 목록 조회 실패", "agent", a.Name(), "error", listErr)
 							}
 						}
-						var entries []agent.DeviceEntry
-						for id, meta := range allMeta {
-							if meta.Pinned == nil || !*meta.Pinned {
-								continue
+
+						// 표시 이름과 정본 ID 둘 다로 찾는다 — device_ids 키는 ID 로
+						// 정규화되지만, 리졸버가 없던 시점 기록에는 이름이 들어 있다.
+						agentRefs := []string{a.Name()}
+						if resolve := agent.GetAgentIDResolver(); resolve != nil {
+							if id, ok := resolve(a.Name()); ok && id != "" && id != a.Name() {
+								agentRefs = append(agentRefs, id)
 							}
-							addr, owned := uidToLocalID[id]
-							if !owned || addr == "" {
-								continue
-							}
-							entries = append(entries, agent.DeviceEntry{
-								Address: addr,
-								Name:    "", // 에이전트 내부 기본 라벨 사용
-							})
 						}
-						if len(entries) > 0 {
-							pda.RegisterPinnedDevices(entries)
-							logger.Info("고정 설치 디바이스 등록 완료", "agent", a.Name(), "count", len(entries))
+						restore := collectPinnedDevices(agentRefs, allMeta, deviceIDs, liveLocalIDs)
+						if len(restore.Entries) > 0 {
+							pda.RegisterPinnedDevices(restore.Entries)
+							logger.Info("고정 설치 디바이스 등록 완료", "agent", a.Name(), "count", len(restore.Entries))
+						}
+						// 소유 정보가 비어 있던 기록을 채워 둔다 — 다음 부팅은 참조만으로 끝난다.
+						for uid, meta := range restore.Backfill {
+							if saveErr := repo.Save(context.Background(), uid, meta); saveErr != nil {
+								logger.Warn("고정 설치 소유 정보 저장 실패", "device_id", uid, "error", saveErr)
+								continue
+							}
+							_ = deviceRegistry.SetMetadata(uid, meta)
 						}
 					}
 				}
@@ -639,6 +648,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 	}
 	defer deviceIDRepo.Close()
 	agent.SetDeviceIDRepository(deviceIDRepo)
+	deviceIDRepoRef = deviceIDRepo
 
 	// 설비 역사/위치/기기 레지스트리 기본 영속 경로 배선(SPEC-XSFM-001).
 	// registry_path/station_registry_path 설정이 비어 있어도 영속화가 기본 ON 이 되도록

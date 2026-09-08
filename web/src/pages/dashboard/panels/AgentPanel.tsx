@@ -30,6 +30,28 @@ import {
 } from '@/stores/uiStore';
 import { startAgent, stopAgent, restartAgent } from '@/services/api/agentService';
 import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
+import {
+  readListPanelStyle,
+  readSummaryItems,
+  readSummaryTileFont,
+  resolveSummaryTileStyle,
+  type SummaryItem,
+} from './listPanelStyle';
+
+/** 타일별 기본 색 — 배경을 직접 정하지 않았을 때만 쓰인다. */
+const SUMMARY_TILE_CLASS: Record<SummaryItem, string> = {
+  total: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  active: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  inactive: 'bg-(--color-bg-sunken) text-(--color-text-secondary)',
+};
+
+const SUMMARY_TILE_LABEL_KEY: Record<SummaryItem, string> = {
+  total: 'dashboard.panel.total',
+  active: 'dashboard.panel.active',
+  inactive: 'dashboard.panel.inactive',
+};
+
+import { cn } from '@/lib/utils/cn';
 
 /** 전체 AgentColumnKey 기본 목록 */
 const ALL_AGENT_COLUMNS: AgentColumnKey[] = ['name', 'type', 'status', 'uptime', 'messages', 'actions'];
@@ -67,14 +89,8 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
     () => (panelConfig?.config?.visibleColumns as AgentColumnKey[]) ?? [...ALL_AGENT_COLUMNS],
     [panelConfig?.config?.visibleColumns],
   );
-  const panelColor = panelConfig?.config?.panelColor as string | undefined;
-  const accentElements = (panelConfig?.config?.accentElements as Record<string, string | boolean>) ?? {};
-  const acColor = (group: string): string | undefined => {
-    if (accentElements[group] === false) return undefined;
-    const val = accentElements[group];
-    if (typeof val === 'string') return val;
-    return panelColor;
-  };
+  // 자리별 디자인(테이블 헤더·요소·요약 배지) 해석은 순수 모듈이 맡는다.
+  const design = useMemo(() => readListPanelStyle(panelConfig?.config), [panelConfig?.config]);
 
   // 숨겨진 컬럼으로 정렬 중이면 기본(name)으로 fallback
   useEffect(() => {
@@ -84,6 +100,12 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
   }, [visibleColumns, sort.field]);
 
   const show = (key: AgentColumnKey) => visibleColumns.includes(key);
+
+  // 그릴 요약 타일과 순서. 미설정이면 셋 다 기본 순서로.
+  const summaryItems = useMemo(
+    () => readSummaryItems(panelConfig?.config),
+    [panelConfig?.config],
+  );
 
   // 상태 요약 집계
   const summary = useMemo(() => {
@@ -247,7 +269,8 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
             <Bot className="h-4 w-4 shrink-0 text-(--color-text-muted)" />
             <h3
               className="truncate text-lg font-semibold text-(--color-text-primary)"
-              style={{ ...(acColor('header') ? { color: acColor('header')! } : undefined), ...titleStyle }}
+              // 타이틀 모양은 "타이틀 디자인" 한 곳이 정한다(플로우 현황과 같은 규칙).
+              style={titleStyle}
             >
               {title}
             </h3>
@@ -259,31 +282,39 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
         <div className="flex items-center justify-center py-8">
           <div
             className="h-6 w-6 animate-spin rounded-full border-2 border-(--color-border-strong) border-t-blue-600"
-            style={acColor('header') ? { borderTopColor: acColor('header')! } : undefined}
           />
         </div>
       ) : (
         <>
-          <div className="mb-6 flex shrink-0 gap-3">
-            <span
-              className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-              style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
-            >
-              {t('dashboard.panel.total')} {summary.total}
-            </span>
-            <span
-              className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1 text-sm font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400"
-              style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
-            >
-              {t('dashboard.panel.active')} {summary.active}
-            </span>
-            <span
-              className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-600 dark:bg-gray-700/30 dark:text-gray-400"
-              style={acColor('badges') ? { backgroundColor: `${acColor('badges')}20`, color: acColor('badges')! } : undefined}
-            >
-              {t('dashboard.panel.inactive')} {summary.inactive}
-            </span>
+          {design.showSummaryBadges && summaryItems.length > 0 && (
+          <div className="mb-6 flex shrink-0 gap-3" data-testid="agent-summary-badges">
+            {/*
+              고른 타일만 고른 순서로 그린다. 타일마다 디자인을 따로 정할 수 있고,
+              정하지 않은 것은 공통 배지 설정을 따른다.
+            */}
+            {summaryItems.map((item) => {
+              const tile = resolveSummaryTileStyle(
+                design.badgeStyle,
+                readSummaryTileFont(panelConfig?.config, item),
+              );
+              return (
+                <span
+                  key={item}
+                  data-testid={`agent-summary-${item}`}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium',
+                    // 배경을 직접 정하지 않았으면 상태별 기본 색이 그대로 산다 —
+                    // 색으로 상태를 읽던 단서를 뺏지 않는다.
+                    !tile.hasOwnBackground && SUMMARY_TILE_CLASS[item],
+                  )}
+                  style={tile.style}
+                >
+                  {t(SUMMARY_TILE_LABEL_KEY[item])} {summary[item]}
+                </span>
+              );
+            })}
           </div>
+          )}
 
           {/* 에이전트 리스트 테이블 */}
           {sortedAgents.length === 0 ? (
@@ -303,13 +334,13 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                           currentSort={sort}
                           onSort={handleSort}
                           className="px-4 py-3"
-                          accentColor={acColor('table') ?? panelColor}
+                          accentColor={design.headerAccent}
                         />
                       )}
                       {show('type') && (
                         <th
                           className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
-                          style={acColor('table') ? { color: acColor('table')! } : undefined}
+                          style={design.headerStyle}
                         >
                           {t('dashboard.col.type')}
                         </th>
@@ -317,7 +348,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                       {show('status') && (
                         <th
                           className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
-                          style={acColor('table') ? { color: acColor('table')! } : undefined}
+                          style={design.headerStyle}
                         >
                           {t('dashboard.col.status')}
                         </th>
@@ -325,7 +356,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                       {show('uptime') && (
                         <th
                           className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
-                          style={acColor('table') ? { color: acColor('table')! } : undefined}
+                          style={design.headerStyle}
                         >
                           {t('dashboard.col.uptime')}
                         </th>
@@ -333,7 +364,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                       {show('messages') && (
                         <th
                           className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
-                          style={acColor('table') ? { color: acColor('table')! } : undefined}
+                          style={design.headerStyle}
                         >
                           {t('dashboard.col.messages')}
                         </th>
@@ -341,7 +372,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                       {show('actions') && (
                         <th
                           className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-(--color-text-muted)"
-                          style={acColor('table') ? { color: acColor('table')! } : undefined}
+                          style={design.headerStyle}
                         >
                           {t('dashboard.col.actions')}
                         </th>
@@ -353,14 +384,23 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                       <tr
                         key={agent.id}
                         className="transition-colors hover:bg-(--color-bg-elevated)"
+                        // 글꼴·크기·굵기는 여기서 상속된다. 색은 안쪽 클래스가 이기므로
+                        // 글자를 직접 담은 자리에 따로 건다(아래).
+                        style={design.cellStyle}
                       >
                         {show('name') && (
-                          <td className="px-4 py-3 text-sm font-medium text-(--color-text-primary)">
+                          <td
+                            className="px-4 py-3 text-sm font-medium text-(--color-text-primary)"
+                            style={design.cellStyle}
+                          >
                             {agent.name}
                           </td>
                         )}
                         {show('type') && (
-                          <td className="px-4 py-3 text-sm text-(--color-text-secondary)">
+                          <td
+                            className="px-4 py-3 text-sm text-(--color-text-secondary)"
+                            style={design.cellStyle}
+                          >
                             {agent.type}
                           </td>
                         )}
@@ -380,7 +420,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                                   <Activity className="h-4 w-4" />
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center text-gray-400 dark:text-gray-500" title={t('dashboard.panel.disconnected')}>
+                                <span className="inline-flex items-center text-(--color-text-muted)" title={t('dashboard.panel.disconnected')}>
                                   <CircleStop className="h-4 w-4" />
                                 </span>
                               );

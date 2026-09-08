@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 
 import { useAuthStore } from '@/stores/authStore';
-import { useUIStore } from '@/stores/uiStore';
+import { useUIStore, type ThemeMode } from '@/stores/uiStore';
 import { usePermission } from '@/hooks/usePermission';
 import { useTheme } from '@/hooks/useTheme';
 import {
@@ -38,6 +38,7 @@ import { SystemInfoCard } from '@/components/system/SystemInfoCard';
 import { SystemRuntimeCard } from '@/components/system/SystemRuntimeCard';
 import RemoteManagementTab from '@/pages/settings/RemoteManagementTab';
 import { ScheduleLogStorageCard } from '@/pages/settings/ScheduleLogStorageCard';
+import { ThemePaletteEditor } from '@/components/theme/ThemePaletteEditor';
 import { cn } from '@/lib/utils/cn';
 import { useTranslation, type Locale, type TranslationFn } from '@/lib/i18n';
 
@@ -65,7 +66,7 @@ const TABS: TabItem[] = [
 // --- 테마 옵션 정의 ---
 
 interface ThemeOption {
-  value: 'system' | 'day' | 'night' | 'custom';
+  value: ThemeMode;
   /** 라벨 i18n 키 (렌더 시 t()로 변환) */
   labelKey: string;
   /** 설명 i18n 키 (렌더 시 t()로 변환) */
@@ -307,7 +308,7 @@ function ProfileTab() {
                     ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400'
                     : user?.role === 'editor'
                       ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
-                      : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300',
+                      : 'bg-(--color-bg-sunken) text-(--color-text-primary)',
                 )}
               >
                 {(() => {
@@ -324,7 +325,7 @@ function ProfileTab() {
       {/* 비밀번호 변경 카드 */}
       <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">
         <div className="flex items-center gap-2">
-          <Lock className="h-5 w-5 text-gray-400" aria-hidden="true" />
+          <Lock className="h-5 w-5 text-(--color-text-muted)" aria-hidden="true" />
           <h3 className="text-lg font-semibold text-(--color-text-primary)">{t('settings.changePassword')}</h3>
         </div>
         <p className="mt-1 text-sm text-(--color-text-muted)">
@@ -1203,9 +1204,14 @@ function ComponentLogLevelOverrides({
 // 테마 탭
 // ============================================================
 
-/** 테마 탭: 라이트/다크/시스템 테마 선택. 변경 시 즉시 적용. */
+/**
+ * 테마 탭: 모드(라이트/다크/시스템) 선택 + 팔레트 컬러 테이블 편집.
+ *
+ * 앱 전체에서 테마를 바꿀 수 있는 유일한 화면이다(헤더·대시보드의 테마
+ * 드롭다운은 제거됨). 모드 선택과 팔레트 편집 모두 즉시 적용된다.
+ */
 function ThemeTab() {
-  const { theme, setTheme } = useTheme();
+  const { theme, resolvedPreset, setTheme } = useTheme();
   const { t } = useTranslation();
 
   return (
@@ -1259,6 +1265,20 @@ function ThemeTab() {
             </button>
           );
         })}
+      </div>
+
+      {/* 팔레트 컬러 테이블 — 라이트/다크 각각을 편집한다. */}
+      <div className="mt-8">
+        <h4 className="text-base font-semibold text-(--color-text-primary)">
+          {t('settings.palette.title')}
+        </h4>
+        <p className="mt-1 text-sm text-(--color-text-muted)">
+          {theme === 'system'
+            ? t('settings.palette.systemHint')
+            : t('settings.palette.subtitle')}
+        </p>
+
+        <ThemePaletteEditor activePreset={resolvedPreset} />
       </div>
     </div>
   );

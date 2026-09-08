@@ -518,7 +518,7 @@ export function SeriesSelectTable({
                         onChange={() => onToggle(r.id)}
                         data-testid={`series-select-${safeId}`}
                         aria-label={t('series.selectRowAriaLabel').replace('{key}', r.key)}
-                        className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+                        className="h-3.5 w-3.5 rounded border-(--color-border-strong) text-blue-600"
                       />
                     </td>
                     <td className="max-w-[16rem] truncate px-2 py-1 font-mono text-(--color-text-primary)">
@@ -653,7 +653,7 @@ function FacetList({
             checked={selected.has(opt)}
             onChange={() => onToggle(opt)}
             data-testid={`series-filter-opt-${column}-${opt}`}
-            className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+            className="h-3.5 w-3.5 rounded border-(--color-border-strong) text-blue-600"
           />
           <span className="truncate font-mono text-(--color-text-primary)">{opt}</span>
         </label>

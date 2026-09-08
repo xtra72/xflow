@@ -61,7 +61,7 @@ export default function SingleDevicePanel({
         {showTitle && (
           <div className="mb-2 flex shrink-0 items-center justify-between">
             <span className="truncate text-sm font-medium text-(--color-text-primary)" style={titleStyle}>{title}</span>
-            <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-1 text-slate-400 dark:bg-slate-800 dark:text-slate-500">
+            <span className="inline-flex items-center rounded-full bg-(--color-bg-sunken) px-2 py-1 text-(--color-text-muted)">
               <Moon className="h-3.5 w-3.5" aria-label={t('dashboard.panel.loadingAria')} />
             </span>
           </div>
@@ -113,7 +113,7 @@ export default function SingleDevicePanel({
           'inline-flex items-center gap-1 rounded-full px-2 py-1',
           device.online
             ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400'
-            : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
+            : 'bg-(--color-bg-sunken) text-(--color-text-muted)',
         )}>
           {device.online
             ? <span title={t('dashboard.acPanel.operating')}><Activity className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.operating')} /></span>

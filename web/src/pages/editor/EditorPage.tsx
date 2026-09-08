@@ -749,7 +749,7 @@ function EditorPageInner() {
             (RemoteTitleBlock)에 통합한다. 과거의 별도 RemoteEditorBanner 는 헤더
             ("원격 · {hostname}")·툴바 배지·캔버스 액센트 링과 중복되어 제거했다. */}
         {isRemote ? (
-          <div className="flex items-center border-b border-(--color-border-default) bg-gray-50 px-3 py-1.5 dark:bg-gray-900/50">
+          <div className="flex items-center border-b border-(--color-border-default) bg-(--color-bg-secondary) px-3 py-1.5">
             <EditorToolbar
               flowId={effectiveFlowId ?? ''}
               target={toolbarTarget}
@@ -764,7 +764,7 @@ function EditorPageInner() {
           </div>
         ) : (
           flowId && (
-            <div className="flex items-center border-b border-(--color-border-default) bg-gray-50 px-3 py-1.5 dark:bg-gray-900/50">
+            <div className="flex items-center border-b border-(--color-border-default) bg-(--color-bg-secondary) px-3 py-1.5">
               <EditorToolbar
                 flowId={flowId}
                 showPortPanel={showPortPanel}
@@ -816,13 +816,13 @@ function EditorPageInner() {
             snapGrid={[editorSnapGridSize, editorSnapGridSize]}
             // 우측 하단 "React Flow" attribution 링크 숨김 (xyflow MIT — 제거 허용).
             proOptions={{ hideAttribution: true }}
-            className="bg-gray-50 dark:bg-gray-950"
+            className="bg-(--color-bg-secondary)"
           >
             <MiniMap
               nodeColor={miniMapNodeColor}
               nodeStrokeColor={miniMapNodeStrokeColor}
               maskColor="rgba(0, 0, 0, 0.1)"
-              className="!bg-white dark:!bg-gray-900 !border-gray-200 dark:!border-gray-700"
+              className="!bg-(--color-bg-surface) dark:!bg-gray-900 !border-(--color-border-default) dark:!border-gray-700"
             />
             <Controls className="!border-(--color-border-default) !bg-(--color-bg-elevated) !shadow-sm" />
             <Background

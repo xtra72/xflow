@@ -202,7 +202,7 @@ export default function HvacControlPanel({
               'rounded-full px-2 py-0.5 text-[10px] font-medium',
               powerOn
                 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                : 'bg-gray-100 text-gray-500 dark:bg-gray-700/30 dark:text-gray-400',
+                : 'bg-(--color-bg-sunken) text-(--color-text-muted)',
             )}
           >
             {powerOn ? t('dashboard.hvacPanel.operating') : t('dashboard.hvacControl.stopped')}
@@ -219,7 +219,7 @@ export default function HvacControlPanel({
               'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
               powerOn
                 ? 'bg-green-600 text-white hover:bg-green-700'
-                : 'bg-gray-200 text-gray-500 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600',
+                : 'bg-(--color-bg-sunken) text-(--color-text-muted) hover:bg-(--color-border-strong)',
             )}
           >
             <Power className="h-3.5 w-3.5" />

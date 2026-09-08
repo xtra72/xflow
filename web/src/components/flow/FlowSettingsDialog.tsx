@@ -113,7 +113,7 @@ export function FlowSettingsDialog({ isOpen, onClose, flowId }: FlowSettingsDial
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             aria-label={t('common.close')}
           >
             <X className="h-4 w-4" />

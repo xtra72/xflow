@@ -112,8 +112,7 @@ function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
           onClick={() => setAdding(!adding)}
           className={cn(
             'rounded p-0.5 transition-colors',
-            'text-gray-400 hover:bg-gray-100 hover:text-gray-600',
-            'dark:hover:bg-gray-800 dark:hover:text-gray-300',
+            'text-(--color-text-muted) hover:bg-(--color-bg-sunken) hover:text-(--color-text-secondary)',
           )}
           aria-label={t('property.panel.addPortAria')}
         >
@@ -150,7 +149,7 @@ function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
             onClick={() => handleDelete(idx)}
             className={cn(
               'rounded p-0.5 transition-colors',
-              'text-gray-400 hover:bg-red-50 hover:text-red-500',
+              'text-(--color-text-muted) hover:bg-red-50 hover:text-red-500',
               'dark:hover:bg-red-900/20 dark:hover:text-red-400',
             )}
             aria-label={t('property.panel.deletePortAria').replace('{name}', port.name)}
@@ -162,14 +161,13 @@ function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
 
       {/* 추가 폼 */}
       {adding && (
-        <div className="flex items-center gap-1.5 rounded border border-dashed border-gray-300 p-1.5 dark:border-gray-600">
+        <div className="flex items-center gap-1.5 rounded border border-dashed border-(--color-border-strong) p-1.5">
           <select
             value={newDirection}
             onChange={(e) => setNewDirection(e.target.value as 'input' | 'output')}
             className={cn(
               'rounded border px-1 py-0.5 text-xs',
-              'border-gray-200 bg-white text-gray-900',
-              'dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100',
+              'border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-primary)',
             )}
           >
             <option value="input">{t('property.panel.portInput')}</option>
@@ -187,9 +185,9 @@ function PortSection({ ports, onChange, portDescriptions }: PortSectionProps) {
             autoFocus
             className={cn(
               'min-w-0 flex-1 rounded border px-1.5 py-0.5 text-xs',
-              'border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-primary) placeholder:text-gray-400',
+              'border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-primary) placeholder:text-(--color-text-muted)',
               'focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400',
-              'dark:placeholder:text-gray-500',
+              '',
             )}
           />
           <button
@@ -380,7 +378,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
         className="flex w-[300px] shrink-0 flex-col items-center justify-center
           border-l border-(--color-border-default) bg-(--color-bg-surface) p-4"
       >
-        <Settings2 className="mb-2 h-8 w-8 text-gray-300 dark:text-gray-600" />
+        <Settings2 className="mb-2 h-8 w-8 text-(--color-border-strong)" />
         <p className="text-sm text-(--color-text-muted)">
           {t('editor.selectNode')}
         </p>
@@ -461,8 +459,8 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
         <button
           type="button"
           onClick={() => selectNode(null)}
-          className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600
-            dark:hover:bg-gray-800 dark:hover:text-gray-300 transition-colors"
+          className="shrink-0 rounded p-1 text-(--color-text-muted) hover:bg-(--color-bg-sunken) hover:text-(--color-text-secondary)
+            transition-colors"
           aria-label={t('property.panel.closeAria')}
         >
           <X className="h-4 w-4" />
@@ -508,9 +506,9 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
             onChange={(e) => handleDraftChange({ label: e.target.value })}
             placeholder={t('property.panel.labelPlaceholder')}
             className="w-full rounded-md border border-(--color-border-default) bg-(--color-bg-primary) px-2.5 py-1.5
-              text-sm text-(--color-text-primary) placeholder:text-gray-400
+              text-sm text-(--color-text-primary) placeholder:text-(--color-text-muted)
               focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400
-              dark:placeholder:text-gray-500 dark:focus:border-blue-500"
+              dark:focus:border-blue-500"
           />
         </div>
 
@@ -532,12 +530,12 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
               'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors',
               draft.enabled !== false
                 ? 'bg-blue-500 dark:bg-blue-600'
-                : 'bg-gray-300 dark:bg-gray-600',
+                : 'bg-(--color-border-strong)',
             )}
           >
             <span
               className={cn(
-                'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
+                'inline-block h-3.5 w-3.5 rounded-full bg-(--color-bg-surface) shadow transition-transform',
                 draft.enabled !== false ? 'translate-x-4.5' : 'translate-x-0.5',
               )}
             />
@@ -575,12 +573,12 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
               'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors',
               draft.suppress_unconnected_warning === true
                 ? 'bg-blue-500 dark:bg-blue-600'
-                : 'bg-gray-300 dark:bg-gray-600',
+                : 'bg-(--color-border-strong)',
             )}
           >
             <span
               className={cn(
-                'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
+                'inline-block h-3.5 w-3.5 rounded-full bg-(--color-bg-surface) shadow transition-transform',
                 draft.suppress_unconnected_warning === true ? 'translate-x-4.5' : 'translate-x-0.5',
               )}
             />
@@ -620,7 +618,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
               'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5',
               'text-sm font-medium transition-colors',
               hasMissingRequired
-                ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-gray-700 dark:text-gray-500'
+                ? 'cursor-not-allowed bg-(--color-bg-sunken) text-(--color-text-muted)'
                 : 'bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700',
             )}
           >
@@ -633,8 +631,7 @@ export function PropertyPanel({ width }: PropertyPanelProps) {
             className={cn(
               'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5',
               'text-sm font-medium transition-colors',
-              'border border-gray-300 bg-(--color-bg-surface) text-(--color-text-secondary) hover:bg-gray-50',
-              'dark:border-gray-600 dark:hover:bg-gray-700',
+              'border border-(--color-border-strong) bg-(--color-bg-surface) text-(--color-text-secondary) hover:bg-(--color-bg-secondary)',
             )}
           >
             <RotateCcw className="h-3.5 w-3.5" />

@@ -15,9 +15,9 @@ const statusStyles: Record<string, { bg: string; text: string; dot: string }> = 
     dot: 'bg-green-500',
   },
   stopped: {
-    bg: 'bg-gray-100 dark:bg-gray-700',
-    text: 'text-gray-500 dark:text-gray-400',
-    dot: 'bg-gray-400',
+    bg: 'bg-(--color-bg-sunken)',
+    text: 'text-(--color-text-muted)',
+    dot: 'bg-(--color-status-stopped)',
   },
   error: {
     bg: 'bg-red-100 dark:bg-red-900/30',
@@ -38,9 +38,9 @@ const statusStyles: Record<string, { bg: string; text: string; dot: string }> = 
 
 /** 기본 스타일 (알 수 없는 상태) */
 const defaultStyle = {
-  bg: 'bg-gray-100 dark:bg-gray-700',
-  text: 'text-gray-500 dark:text-gray-400',
-  dot: 'bg-gray-400',
+  bg: 'bg-(--color-bg-sunken)',
+  text: 'text-(--color-text-muted)',
+  dot: 'bg-(--color-status-stopped)',
 };
 
 /**

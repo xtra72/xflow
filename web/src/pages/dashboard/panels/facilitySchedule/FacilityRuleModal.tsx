@@ -172,7 +172,7 @@ export default function FacilityRuleModal({
             onClick={onCancel}
             aria-label="닫기"
             data-testid="facility-rule-cancel"
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
           >
             <X className="h-5 w-5" />
           </button>
@@ -660,7 +660,7 @@ function DeviceTargetTable({
                           title={r.device.online ? '온라인' : '오프라인'}
                           className={cn(
                             'inline-block h-1.5 w-1.5 shrink-0 rounded-full',
-                            r.device.online ? 'bg-green-500' : 'bg-gray-400',
+                            r.device.online ? 'bg-green-500' : 'bg-(--color-status-stopped)',
                           )}
                         />
                         {r.name}

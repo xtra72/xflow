@@ -1,7 +1,7 @@
 // BarChartPanel 테스트.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import type { ChartEntry } from './chartChannelTypes';
 
@@ -313,3 +313,267 @@ describe('BarChartPanel 특성화 (SPEC-CHART-002 M2)', () => {
 //
 // @spec SPEC-TSDB-002 §2.3 (U3) · §2.4 (U4) — plan.md §3.1 CT-01 ~ CT-05 / AC-09
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// SPEC-CHART-005 M1 — 특성화 테스트 (DDD PRESERVE).
+//
+// 바 차트에는 범례도 배치 편집도 없다는 현재 상태를 잠근다. M3·M4 가 이 서술을
+// 뒤집으며, **범례 기본 꺼짐**만은 그 뒤에도 유지되어야 한다(저장된 대시보드 보존).
+// ---------------------------------------------------------------------------
+describe('BarChartPanel 특성화 (SPEC-CHART-005 M1)', () => {
+  beforeEach(() => {
+    mockResult.current = {
+      entries: [],
+      status: 'connected',
+      closedReason: undefined,
+      errorReason: undefined,
+    };
+  });
+
+  /** 기본 `label_field` 는 `labels.name` 이다. */
+  const rows: ChartEntry[] = [
+    { timestamp: 1, value: 10, labels: { name: 'A' } },
+    { timestamp: 2, value: 20, labels: { name: 'B' } },
+  ];
+
+  it('AC-05: 범례는 기본으로 꺼져 있다 — 저장된 대시보드의 외형이 바뀌지 않는다', () => {
+    mockResult.current.entries = rows;
+    render(<BarChartPanel panelId="p1" config={{ channel_name: 'c', mode: 'category' }} />);
+    expect(screen.queryByTestId('pie-chart-legend')).toBeNull();
+  });
+
+  it('AC-06: 켜면 카테고리별 항목이 나온다', () => {
+    mockResult.current.entries = rows;
+    render(
+      <BarChartPanel
+        panelId="p1"
+        config={{ channel_name: 'c', mode: 'category', show_legend: true }}
+      />,
+    );
+    const names = screen.getAllByTestId('pie-legend-name').map((e) => e.textContent);
+    expect(names).toEqual(['A', 'B']);
+  });
+
+  it('AC-06: 범례는 비중을 내지 않는다 — 막대는 합계 대비 비중을 읽는 그림이 아니다', () => {
+    mockResult.current.entries = rows;
+    render(
+      <BarChartPanel
+        panelId="p1"
+        config={{ channel_name: 'c', mode: 'category', show_legend: true }}
+      />,
+    );
+    expect(screen.queryAllByTestId('pie-legend-percent')).toHaveLength(0);
+    expect(screen.getAllByTestId('pie-legend-value').length).toBeGreaterThan(0);
+  });
+
+  it('AC-06: 범례 자리·변위가 파이와 같은 키로 먹는다', () => {
+    mockResult.current.entries = rows;
+    render(
+      <BarChartPanel
+        panelId="p1"
+        config={{
+          channel_name: 'c',
+          mode: 'category',
+          show_legend: true,
+          legend_position: 'right',
+          legend_offset_y: 12,
+        }}
+      />,
+    );
+    // 오른쪽 배치에서 세로 변위는 기준 50% 에 접혀 `calc(62%)` 가 된다(파이와 같은 규칙).
+    const style = screen.getByTestId('pie-chart-legend').getAttribute('style') ?? '';
+    expect(style).toContain('62%');
+  });
+
+  it('AC-07: 플롯 오프셋·크기가 라인과 같은 키로 먹는다', () => {
+    mockResult.current.entries = rows;
+    render(
+      <BarChartPanel
+        panelId="p1"
+        config={{
+          channel_name: 'c',
+          mode: 'category',
+          plot_offset_x: 10,
+          plot_offset_y: -5,
+          plot_size: 80,
+        }}
+      />,
+    );
+    const box = screen.getByTestId('bar-chart-container');
+    expect(box.style.transform).toContain('translate(10%, -5%)');
+    expect(box.style.transform).toContain('scale(0.8)');
+  });
+
+  it('저장된 오프셋은 ±40 으로 죈다 — 그림 영역은 패널을 가득 채운다', () => {
+    // 그리는 쪽이 이미 ±40 이므로, 40 을 넘겨 저장된 값은 예전부터 40 으로 보였다.
+    // 끄는 쪽 상한을 40 으로 맞춰도 저장된 대시보드의 그림은 그대로다.
+    mockResult.current.entries = rows;
+    render(
+      <BarChartPanel
+        panelId="p1"
+        config={{ channel_name: 'c', mode: 'category', plot_offset_x: 999, plot_offset_y: -999 }}
+      />,
+    );
+    expect(screen.getByTestId('bar-chart-container').style.transform).toContain(
+      'translate(40%, -40%)',
+    );
+  });
+
+  it('AC-08: onConfigChange 가 없으면 편집 입구가 없다', () => {
+    mockResult.current.entries = rows;
+    const { container } = render(
+      <BarChartPanel panelId="p1" config={{ channel_name: 'c', mode: 'category' }} />,
+    );
+    expect(screen.queryByTestId('bar-chart-edit-toggle')).toBeNull();
+    expect(container.querySelectorAll('[data-panel-drag]')).toHaveLength(0);
+    expect(screen.queryByTestId('panel-edit-grid')).toBeNull();
+    expect(screen.queryByTestId('panel-align-toolbar')).toBeNull();
+  });
+
+  it('AC-08: forceEdit 면 그리드·툴바·드래그 표식이 나온다', () => {
+    mockResult.current.entries = rows;
+    const { container } = render(
+      <BarChartPanel
+        panelId="p1"
+        config={{ channel_name: 'c', mode: 'category', show_legend: true }}
+        onConfigChange={vi.fn()}
+        forceEdit
+      />,
+    );
+    expect(screen.getByTestId('panel-edit-grid')).toBeInTheDocument();
+    expect(screen.getByTestId('panel-edit-center')).toBeInTheDocument();
+    expect(screen.getByTestId('panel-align-toolbar')).toBeInTheDocument();
+    // 끌 수 있는 덩어리는 그림과 범례 둘이다.
+    expect(container.querySelectorAll('[data-panel-drag]')).toHaveLength(2);
+    // 미리보기는 토글을 감춘다.
+    expect(screen.queryByTestId('bar-chart-edit-toggle')).toBeNull();
+  });
+
+  it('AC-08: 범례가 꺼져 있으면 끌 덩어리는 그림 하나다', () => {
+    mockResult.current.entries = rows;
+    const { container } = render(
+      <BarChartPanel
+        panelId="p1"
+        config={{ channel_name: 'c', mode: 'category' }}
+        onConfigChange={vi.fn()}
+        forceEdit
+      />,
+    );
+    expect(container.querySelectorAll('[data-panel-drag]')).toHaveLength(1);
+  });
+
+  it('AC-09: 고르면 진한 실선이 되고 크기 손잡이가 붙는다', () => {
+    mockResult.current.entries = rows;
+    const { container } = render(
+      <BarChartPanel
+        panelId="p1"
+        config={{ channel_name: 'c', mode: 'category', show_legend: true }}
+        onConfigChange={vi.fn()}
+        forceEdit
+      />,
+    );
+
+    const plot = screen.getByTestId('bar-chart-container');
+    expect(plot.className).toContain('outline-dashed');
+
+    fireEvent.pointerDown(plot);
+    expect(screen.getByTestId('bar-chart-container').className).toContain('outline-2');
+    expect(container.querySelectorAll('[data-panel-resize]')).toHaveLength(1);
+  });
+
+  it('AC-16: 편집을 켜도 그림 상자의 크기 클래스가 살아 있다', () => {
+    mockResult.current.entries = rows;
+    render(
+      <BarChartPanel
+        panelId="p1"
+        config={{ channel_name: 'c', mode: 'category' }}
+        onConfigChange={vi.fn()}
+        forceEdit
+      />,
+    );
+    const box = screen.getByTestId('bar-chart-container');
+    expect(box.className).toContain('h-full');
+    expect(box.className).toContain('w-full');
+  });
+
+  it('AC-16: 편집 표식은 범례 자신에 붙는다 — 감싸는 상자를 만들지 않는다', () => {
+    mockResult.current.entries = rows;
+    const { container } = render(
+      <BarChartPanel
+        panelId="p1"
+        config={{ channel_name: 'c', mode: 'category', show_legend: true }}
+        onConfigChange={vi.fn()}
+        forceEdit
+      />,
+    );
+    const legend = screen.getByTestId('pie-chart-legend');
+    expect(legend).toHaveAttribute('data-panel-drag', 'legend');
+    expect([...container.querySelectorAll('[data-panel-drag="legend"]')]).toEqual([legend]);
+  });
+
+  it('AC-10: 배치 초기화가 두 요소의 오프셋을 한 번에 지운다', () => {
+    mockResult.current.entries = rows;
+    const onConfigChange = vi.fn();
+    render(
+      <BarChartPanel
+        panelId="p1"
+        config={{
+          channel_name: 'c',
+          mode: 'category',
+          show_legend: true,
+          plot_offset_x: 20,
+          legend_offset_y: 10,
+        }}
+        onConfigChange={onConfigChange}
+        forceEdit
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('panel-align-reset'));
+    expect(onConfigChange).toHaveBeenCalledTimes(1);
+    expect(onConfigChange.mock.calls[0]![0]).toEqual({
+      plot_offset_x: undefined,
+      plot_offset_y: undefined,
+      legend_offset_x: undefined,
+      legend_offset_y: undefined,
+    });
+  });
+
+  it('배치 값이 없으면 transform 을 붙이지 않는다 — 종전 화면 그대로다', () => {
+    mockResult.current.entries = rows;
+    render(<BarChartPanel panelId="p1" config={{ channel_name: 'c', mode: 'category' }} />);
+    expect(screen.getByTestId('bar-chart-container').style.transform).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 바는 사각형이라 폭·높이가 서로 다른 것을 가리킨다.
+//
+//   폭   → 막대 굵기(px). recharts `barSize`.
+//   높이 → 그림 영역 배율(%). 막대의 높이는 **값**이 정하므로 설정할 수 없다.
+// ---------------------------------------------------------------------------
+describe('바 차트는 막대 굵기와 그림 영역 높이를 따로 잡는다', () => {
+  const bar = (extra: Record<string, unknown> = {}) => (
+    <BarChartPanel panelId="p1" config={{ channel_name: 'c', mode: 'category', ...extra }} />
+  );
+
+  it('세로 배율을 주면 그림 영역이 축마다 다른 배율로 그려진다', () => {
+    render(bar({ plot_size: 100, plot_size_y: 60 }));
+    expect(screen.getByTestId('bar-chart-container').style.transform).toContain('scale(1, 0.6)');
+  });
+
+  it('세로 배율이 없으면 종전대로 균일 배율이다 — 저장된 설정이 그대로 그려진다', () => {
+    render(bar({ plot_size: 60 }));
+    expect(screen.getByTestId('bar-chart-container').style.transform).toContain('scale(0.6)');
+  });
+
+  it('가로 배율을 주면 그림 영역이 그만큼 좁아진다 — 손잡이가 잡는 것은 도형의 폭이다', () => {
+    render(bar({ plot_size: 60, plot_size_y: 100 }));
+    expect(screen.getByTestId('bar-chart-container').style.transform).toContain('scale(0.6, 1)');
+  });
+
+  it('막대 굵기는 범위 밖이면 무시한다 — 잘못된 저장값이 막대를 지우지 않는다', () => {
+    // 0 이나 음수가 그대로 내려가면 막대가 사라진다. 자동(미지정)으로 되돌린다.
+    render(bar({ bar_size: 0 }));
+    expect(screen.getByTestId('bar-chart-container')).toBeInTheDocument();
+  });
+});

@@ -261,7 +261,7 @@ export function EditKeyMetaDialog({
             type="button"
             onClick={onClose}
             disabled={isSubmitting}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 disabled:opacity-50 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary) disabled:opacity-50"
             aria-label={t('property.meta.closeAria')}
           >
             <X className="h-4 w-4" />
@@ -381,7 +381,7 @@ export function EditKeyMetaDialog({
                           type="button"
                           onClick={() => handleRemoveRow(row.id)}
                           disabled={isSubmitting}
-                          className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                          className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-red-900/20 dark:hover:text-red-400"
                           aria-label={t('property.tag.deleteAria')}
                         >
                           <X className="h-3.5 w-3.5" />

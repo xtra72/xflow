@@ -121,7 +121,7 @@ export function ConfirmDialog({
             type="button"
             onClick={onClose}
             disabled={isSubmitting}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 disabled:opacity-50 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary) disabled:opacity-50"
             aria-label={t('common.close')}
           >
             <X className="h-4 w-4" />

@@ -23,6 +23,11 @@ export interface DeviceMetadata {
   group: string;
   labels: Record<string, string>;
   pinned?: boolean;
+  /**
+   * 데이터 갱신 시간 제한(초). 마지막 갱신 후 이 시간이 지나면 화면에서 그 값을
+   * 오래된 것으로 표시한다. 미설정이면 아무 표시도 하지 않는다.
+   */
+  stale_after_sec?: number;
 }
 
 /**
@@ -155,4 +160,5 @@ export interface DeviceMetadataUpdateRequest {
   group?: string;
   labels?: Record<string, string>;
   pinned?: boolean;
+  stale_after_sec?: number;
 }

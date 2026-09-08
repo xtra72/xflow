@@ -950,3 +950,99 @@ func TestDeviceToResponse_ReportEnabled(t *testing.T) {
 	on := deviceToResponse(onAdapter)
 	assert.True(t, on.ReportEnabled, "on 어댑터는 report_enabled=true 반영")
 }
+
+// --- 고정 설치 복원용 소유 정보 저장 ---
+//
+// 메타데이터는 디바이스 UUID 로만 키잉되어 있어, 재시작 후 "어느 에이전트의 어떤
+// 로컬 ID 인지" 를 알 수 없었다. 그래서 부팅 복원 경로는 살아 있는 디바이스를 열거해
+// 매핑을 만들었고 — 이미 발견된 디바이스만 복원할 수 있는 순환이 됐다. 저장 시점에는
+// 디바이스가 살아 있으므로, 그때 소유 정보를 함께 적어 순환을 끊는다.
+
+// mockLocalIDDevice 는 LocalID() 확장 인터페이스를 구현하는 디바이스다.
+type mockLocalIDDevice struct {
+	mockDevice
+	localID string
+}
+
+func (m *mockLocalIDDevice) LocalID() string { return m.localID }
+
+func TestDeviceHandler_UpdateMetadata_PersistsOwnership(t *testing.T) {
+	var saved device.DeviceMetadata
+
+	registry := &mockDeviceRegistry{
+		getFn: func(string) (device.Device, error) {
+			return &mockLocalIDDevice{
+				mockDevice: mockDevice{id: "agent1:dev1", name: "AM103-081175", agentName: "chirpstack-client"},
+				localID:    "24e124725d081175",
+			}, nil
+		},
+		setMetadataFn: func(string, device.DeviceMetadata) error { return nil },
+	}
+	repo := &mockMetadataRepo{
+		saveFn: func(_ context.Context, _ string, meta device.DeviceMetadata) error {
+			saved = meta
+			return nil
+		},
+	}
+
+	router := setupDeviceRouter(registry, repo)
+	rec := doRequest(t, router, http.MethodPut,
+		"/api/v1/devices/agent1:dev1/metadata", strings.NewReader(`{"pinned":true}`))
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "chirpstack-client", saved.AgentName)
+	// 로스터 키(DevEUI)여야 한다 — 라벨을 저장하면 다음 부팅에서 복원되지 않는다.
+	assert.Equal(t, "24e124725d081175", saved.LocalID)
+}
+
+func TestDeviceHandler_UpdateMetadata_LocalIDFallsBackToName(t *testing.T) {
+	var saved device.DeviceMetadata
+
+	registry := &mockDeviceRegistry{
+		// LocalID() 를 구현하지 않는 어댑터 — 대부분 라벨과 내부 식별자가 같다.
+		getFn: func(string) (device.Device, error) {
+			return &mockDevice{id: "agent1:dev1", name: "zone-3", agentName: "lgap-1"}, nil
+		},
+		setMetadataFn: func(string, device.DeviceMetadata) error { return nil },
+	}
+	repo := &mockMetadataRepo{
+		saveFn: func(_ context.Context, _ string, meta device.DeviceMetadata) error {
+			saved = meta
+			return nil
+		},
+	}
+
+	router := setupDeviceRouter(registry, repo)
+	rec := doRequest(t, router, http.MethodPut,
+		"/api/v1/devices/agent1:dev1/metadata", strings.NewReader(`{"pinned":true}`))
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "zone-3", saved.LocalID)
+}
+
+func TestDeviceHandler_UpdateMetadata_IgnoresClientSuppliedOwnership(t *testing.T) {
+	var saved device.DeviceMetadata
+
+	registry := &mockDeviceRegistry{
+		getFn: func(string) (device.Device, error) {
+			return &mockDevice{id: "agent1:dev1", name: "real", agentName: "real-agent"}, nil
+		},
+		setMetadataFn: func(string, device.DeviceMetadata) error { return nil },
+	}
+	repo := &mockMetadataRepo{
+		saveFn: func(_ context.Context, _ string, meta device.DeviceMetadata) error {
+			saved = meta
+			return nil
+		},
+	}
+
+	// 소유 정보의 정본은 레지스트리다 — 요청 본문 값을 믿으면 남의 에이전트 소유로
+	// 위장해 엉뚱한 디바이스를 만들게 할 수 있다.
+	router := setupDeviceRouter(registry, repo)
+	rec := doRequest(t, router, http.MethodPut, "/api/v1/devices/agent1:dev1/metadata",
+		strings.NewReader(`{"pinned":true,"agent_name":"attacker","local_id":"spoofed"}`))
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "real-agent", saved.AgentName)
+	assert.Equal(t, "real", saved.LocalID)
+}

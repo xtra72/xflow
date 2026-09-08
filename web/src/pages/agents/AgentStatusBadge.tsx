@@ -16,13 +16,13 @@ export default function AgentStatusBadge({ connected }: AgentStatusBadgeProps) {
         'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium',
         isConnected
           ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-          : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
+          : 'bg-(--color-bg-sunken) text-(--color-text-muted)',
       )}
     >
       <span
         className={cn(
           'h-1.5 w-1.5 rounded-full',
-          isConnected ? 'bg-green-500 dark:bg-green-400' : 'bg-gray-400 dark:bg-gray-500',
+          isConnected ? 'bg-green-500 dark:bg-green-400' : 'bg-(--color-status-stopped)',
         )}
       />
       {isConnected ? '연결됨' : '연결 해제'}

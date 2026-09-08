@@ -42,7 +42,7 @@ export default function SortableHeader({
       className={`cursor-pointer select-none text-left text-xs font-medium uppercase tracking-wider transition-colors ${
         isActive
           ? 'text-(--color-text-secondary)'
-          : 'text-(--color-text-muted) hover:text-gray-700 dark:hover:text-gray-300'
+          : 'text-(--color-text-muted) hover:text-(--color-text-secondary)'
       } ${className}`}
       style={isActive && accentColor ? { color: accentColor } : undefined}
     >
@@ -50,7 +50,7 @@ export default function SortableHeader({
         {label}
         <span
           className={`text-[10px] ${
-            isActive ? 'text-blue-500 dark:text-blue-400' : 'text-gray-300 dark:text-gray-600'
+            isActive ? 'text-blue-500 dark:text-blue-400' : 'text-(--color-border-strong)'
           }`}
           style={isActive && accentColor ? { color: accentColor } : undefined}
           aria-hidden="true"

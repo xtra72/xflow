@@ -1400,3 +1400,189 @@ describe('LineChartSection — 캔들 게이팅', () => {
     expect(screen.queryByTestId('line-chart-candle-unsupported')).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// SPEC-CHART-003 M6 — stat 보조 표기 설정 UI.
+//
+// @spec SPEC-CHART-003 AC-18 / AC-23 / AC-25 (U5-1 · U5-2)
+// ---------------------------------------------------------------------------
+describe('StatChartSection 보조 표기 설정 (SPEC-CHART-003)', () => {
+  const statPanel = (config: Record<string, unknown> = {}) =>
+    makePanel('stat', { channel_name: 'c', ...config });
+
+  it('채널 모드에서 변화량 체크박스는 켜진 상태로 시작한다(레거시 경로 기본값)', () => {
+    render(<StatChartSection panel={statPanel()} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('stat-delta-enabled')).toBeChecked();
+  });
+
+  it('체크박스를 끄면 delta_display.enabled=false 가 명시적으로 저장된다', () => {
+    const onChange = vi.fn();
+    render(<StatChartSection panel={statPanel()} onConfigChange={onChange} />);
+    fireEvent.click(screen.getByTestId('stat-delta-enabled'));
+    expect(onChange).toHaveBeenCalledWith({ delta_display: { enabled: false } });
+  });
+
+  it('U5-2: 변화량이 꺼져 있으면 색 컨트롤을 내지 않는다', () => {
+    render(
+      <StatChartSection
+        panel={statPanel({ delta_display: { enabled: false } })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('stat-delta-colors')).toBeNull();
+    expect(screen.queryByTestId('stat-delta-up-color')).toBeNull();
+  });
+
+  it('변화량이 켜져 있으면 증가·감소·변화없음 색을 각각 편집할 수 있다', () => {
+    const onChange = vi.fn();
+    render(<StatChartSection panel={statPanel()} onConfigChange={onChange} />);
+    expect(screen.getByTestId('stat-delta-colors')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId('stat-delta-up-color'), {
+      target: { value: '#123456' },
+    });
+    expect(onChange).toHaveBeenCalledWith({ delta_display: { up_color: '#123456' } });
+  });
+
+  it('색 입력의 기본값은 현행 하드코딩 색이다(빈 값이 아니다)', () => {
+    render(<StatChartSection panel={statPanel()} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('stat-delta-up-color')).toHaveValue('#10b981');
+    expect(screen.getByTestId('stat-delta-down-color')).toHaveValue('#f43f5e');
+  });
+
+  it('구간 통계 체크박스 3개가 config 를 토글한다', () => {
+    const onChange = vi.fn();
+    render(<StatChartSection panel={statPanel()} onConfigChange={onChange} />);
+
+    for (const kind of ['avg', 'max', 'min'] as const) {
+      expect(screen.getByTestId(`stat-window-${kind}`)).not.toBeChecked();
+    }
+
+    fireEvent.click(screen.getByTestId('stat-window-max'));
+    expect(onChange).toHaveBeenCalledWith({ window_stats: { max: true } });
+  });
+
+  it('이미 켠 항목을 다시 누르면 꺼진다(다른 항목은 유지)', () => {
+    const onChange = vi.fn();
+    render(
+      <StatChartSection
+        panel={statPanel({ window_stats: { avg: true, max: true } })}
+        onConfigChange={onChange}
+      />,
+    );
+    expect(screen.getByTestId('stat-window-avg')).toBeChecked();
+
+    fireEvent.click(screen.getByTestId('stat-window-avg'));
+    expect(onChange).toHaveBeenCalledWith({ window_stats: { avg: false, max: true } });
+  });
+
+  it('AC-23: 채널 모드에서 구간 통계를 켜면 max_points 안내가 뜬다', () => {
+    render(
+      <StatChartSection
+        panel={statPanel({ window_stats: { avg: true } })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('stat-window-max-points-hint')).toBeInTheDocument();
+  });
+
+  it('AC-23: 구간 통계가 꺼져 있으면 안내를 내지 않는다', () => {
+    render(<StatChartSection panel={statPanel()} onConfigChange={vi.fn()} />);
+    expect(screen.queryByTestId('stat-window-max-points-hint')).toBeNull();
+  });
+
+  it('AC-23: 시리즈 소스 패널에서는 안내를 내지 않는다(조회 윈도우가 구간을 정한다)', () => {
+    render(
+      <StatChartSection
+        panel={statPanel({
+          window_stats: { avg: true },
+          data_source: 'store',
+          store_source: {
+            agent_name: 'store-1',
+            namespace: 'default',
+            selection_mode: 'keys',
+            series: [{ key: 'k1' }],
+            time_window_ms: 60_000,
+            interval_ms: 1_000,
+            aggregation: 'average',
+          },
+        })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('stat-window-max-points-hint')).toBeNull();
+  });
+
+  it('보조 줄 크기 배율을 편집하고 초기화할 수 있다', () => {
+    const onChange = vi.fn();
+    render(
+      <StatChartSection panel={statPanel({ sub_value_scale: 2 })} onConfigChange={onChange} />,
+    );
+    expect(screen.getByTestId('stat-sub-value-scale')).toHaveValue('2');
+
+    fireEvent.click(screen.getByTestId('stat-sub-value-scale-reset'));
+    expect(onChange).toHaveBeenCalledWith({ sub_value_scale: undefined });
+  });
+
+  it('보조 줄 배율은 본값 배율(value_scale)과 별개 슬라이더다', () => {
+    render(
+      <StatChartSection
+        panel={statPanel({ value_scale: 3, sub_value_scale: 1.5 })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('stat-value-scale')).toHaveValue('3');
+    expect(screen.getByTestId('stat-sub-value-scale')).toHaveValue('1.5');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-CHART-004 M7 — 배율 무시 안내.
+//
+// @spec SPEC-CHART-004 AC-29 / AC-30
+// ---------------------------------------------------------------------------
+describe('StatChartSection 배율 무시 안내 (SPEC-CHART-004)', () => {
+  const statPanel = (config: Record<string, unknown> = {}) =>
+    makePanel('stat', { channel_name: 'c', ...config });
+
+  it('AC-29: 배율 슬라이더가 유지된다', () => {
+    render(<StatChartSection panel={statPanel()} onConfigChange={vi.fn()} />);
+    expect(screen.getByTestId('stat-value-scale')).toBeInTheDocument();
+    expect(screen.getByTestId('stat-sub-value-scale')).toBeInTheDocument();
+  });
+
+  it('AC-30: font_size 가 없으면 안내를 내지 않는다', () => {
+    render(<StatChartSection panel={statPanel()} onConfigChange={vi.fn()} />);
+    expect(screen.queryByTestId('stat-font-size-override-notice')).toBeNull();
+  });
+
+  it('AC-30: 본값에 font_size 가 지정되면 안내가 뜬다', () => {
+    render(
+      <StatChartSection
+        panel={statPanel({ value_layout: { font_size: 50 } })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByTestId('stat-font-size-override-notice')).toHaveLength(1);
+  });
+
+  it('AC-30: 보조 줄 중 하나만 지정돼도 보조 줄 배율 옆에 안내가 뜬다', () => {
+    render(
+      <StatChartSection
+        panel={statPanel({ stats_layout: { font_size: 20 } })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByTestId('stat-font-size-override-notice')).toHaveLength(1);
+  });
+
+  it('본값과 보조 줄이 모두 지정되면 안내가 두 곳에 뜬다', () => {
+    render(
+      <StatChartSection
+        panel={statPanel({ value_layout: { font_size: 50 }, delta_layout: { font_size: 20 } })}
+        onConfigChange={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByTestId('stat-font-size-override-notice')).toHaveLength(2);
+  });
+});

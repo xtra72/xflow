@@ -352,7 +352,16 @@ function renderPanelBody(
     // 순으로 폴백하므로, 넘기지 않으면 사용자가 지정한 패널 이름 대신 채널 이름이 뜬다.
     // store/tsdb 소스 패널은 `channel_name` 이 비어 있어 "채널 미지정" 까지 내려간다.
     case 'stat':
-      return <StatPanel panelId={panel.id} title={panel.title} config={panel.config} />;
+      return (
+        <StatPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          // 대시보드에서도 요소를 끌어 배치한다(게이지·파이와 같은 규칙 — 편집모드 +
+          // 패널 안 토글로 두 겹 게이팅).
+          onConfigChange={onCfg}
+        />
+      );
     case 'graph-chart':
       return (
         <LineChartPanel
@@ -365,7 +374,16 @@ function renderPanelBody(
         />
       );
     case 'bar-chart':
-      return <BarChartPanel panelId={panel.id} title={panel.title} config={panel.config} />;
+      return (
+        <BarChartPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          // 대시보드에서도 그림·범례를 끌어 배치한다(파이와 같은 규칙 — 편집모드 +
+          // 패널 안 토글로 두 겹 게이팅).
+          onConfigChange={onCfg}
+        />
+      );
     case 'pie-chart':
       return (
         <PieChartPanel

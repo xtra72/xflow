@@ -236,7 +236,7 @@ export default function AcControlPanel({
             'inline-flex items-center gap-1 rounded-full px-2 py-1',
             power
               ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400'
-              : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
+              : 'bg-(--color-bg-sunken) text-(--color-text-muted)',
           )}>
             {power
               ? <span title={t('dashboard.acPanel.operating')}><Activity className="h-3.5 w-3.5" aria-label={t('dashboard.acPanel.operating')} /></span>
@@ -255,7 +255,7 @@ export default function AcControlPanel({
                 'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
                 power
                   ? 'bg-blue-500 text-white hover:bg-blue-600'
-                  : 'bg-slate-200 text-slate-500 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-400 dark:hover:bg-slate-600',
+                  : 'bg-(--color-bg-sunken) text-(--color-text-muted) hover:bg-(--color-border-strong)',
               )}
               aria-label={power ? t('dashboard.acControl.powerOffAria') : t('dashboard.acControl.powerOnAria')}
             >
@@ -268,8 +268,8 @@ export default function AcControlPanel({
       {/* ---- 전원 OFF: 중앙 OFF 표시 ---- */}
       {power === false && (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 py-6">
-          <Power className="h-10 w-10 text-slate-300 dark:text-slate-600" />
-          <span className="text-sm font-medium text-slate-400 dark:text-slate-500">{t('dashboard.acControl.powerOff')}</span>
+          <Power className="h-10 w-10 text-(--color-border-strong)" />
+          <span className="text-sm font-medium text-(--color-text-muted)">{t('dashboard.acControl.powerOff')}</span>
         </div>
       )}
 

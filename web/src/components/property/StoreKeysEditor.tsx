@@ -545,7 +545,7 @@ export function StoreKeysEditor({
                       <button
                         type="button"
                         onClick={() => handleRemoveRow(row.id)}
-                        className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                        className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
                         aria-label={t('property.store.deleteRowAria')}
                       >
                         <Trash2 className="h-3.5 w-3.5" />

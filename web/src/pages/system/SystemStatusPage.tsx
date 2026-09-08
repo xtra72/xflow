@@ -210,7 +210,7 @@ function ErrorState({
         type="button"
         data-testid="system-status-retry-button"
         onClick={onRetry}
-        className="mt-3 inline-flex items-center gap-1 rounded border border-red-300 bg-white px-3 py-1 text-xs font-medium text-red-800 hover:bg-red-100 dark:border-red-700 dark:bg-red-900 dark:text-red-100 dark:hover:bg-red-800"
+        className="mt-3 inline-flex items-center gap-1 rounded border border-red-300 bg-(--color-bg-surface) px-3 py-1 text-xs font-medium text-red-800 hover:bg-red-100 dark:border-red-700 dark:bg-red-900 dark:text-red-100 dark:hover:bg-red-800"
       >
         {t('common.retry')}
       </button>

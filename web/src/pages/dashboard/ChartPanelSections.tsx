@@ -5,7 +5,7 @@
 // 편집 UI 를 제공한다. 상위 PanelSettingsDialog 는 panel.type 에 따라
 // 분기하여 해당 Section 을 렌더링한다.
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, ChevronUp, Info, Plus, Trash2 } from 'lucide-react';
 
 import type { PanelConfig } from '@/stores/uiStore';
@@ -64,8 +64,21 @@ import {
 } from './panels/charts/decimalPlaces';
 import { DEFAULT_PIE_LABEL_MIN_PERCENT } from './panels/charts/pieLabel';
 import { DEFAULT_CHART_LEGEND_FONT_SIZE } from './panels/charts/chartChannelTypes';
-import { FONT_FAMILY_OPTIONS, type ChartFontFamily } from './panels/charts/textStyle';
-import { PANEL_SIZE_MAX, PANEL_SIZE_MIN, readPanelSize } from './panels/charts/panelGeometry';
+import { type ChartFontFamily } from './panels/charts/textStyle';
+// 글자 스타일 편집 칸과 두 입력 헬퍼는 `textStyleFields` 가 소유한다
+// (SPEC-CHART-004 §5 D5). 여기서는 그대로 다시 내보내 기존 호출부의 이름을 유지한다.
+import { inputClass, LabeledField, TextStyleFields } from './textStyleFields';
+
+export { TextStyleFields } from './textStyleFields';
+import {
+  BAR_SIZE_DEFAULT,
+  BAR_SIZE_MAX,
+  BAR_SIZE_MIN,
+  PANEL_SIZE_MAX,
+  PANEL_SIZE_MIN,
+  readBarSize,
+  readPanelSize,
+} from './panels/charts/panelGeometry';
 import {
   readValueScale,
   VALUE_SCALE_MAX,
@@ -83,6 +96,7 @@ import {
 } from './panels/charts/panelTagKeys';
 import {
   CAPABILITY_REASON_KEYS,
+  isPanelSeriesActive,
   MAX_SOURCES_PER_KIND,
   panelSourceCapabilities,
   readPanelSources,
@@ -91,6 +105,18 @@ import {
   sourceEntryLabel,
   type PanelSourceEntry,
 } from './panels/charts/panelDataSource';
+import {
+  readDeltaColors,
+  readDeltaEnabled,
+  readSubValueScale,
+  readWindowStats,
+  type StatRenderPath,
+  type WindowStatKind,
+} from './panels/charts/statDisplayOptions';
+import {
+  readStatLayoutFontSize,
+  type StatElementKind,
+} from './panels/charts/statLayout';
 import { FillStrategyField, TsdbSourceSection } from './TsdbSourceSection';
 import { FillPreviousLimitField } from './FillPreviousLimitField';
 import { SysmetricsSourceSection } from './SysmetricsSourceSection';
@@ -130,20 +156,12 @@ const DATA_SOURCE_LABEL_KEYS: Record<ChartDataSourceKind, string> = {
 type OnConfig = (config: Record<string, unknown>) => void;
 
 // --- 공용 입력 헬퍼 ---
+//
+// `LabeledField` · `inputClass` · `TextStyleFields` 는 `textStyleFields.tsx` 가 소유한다
+// (SPEC-CHART-004 §5 D5 — 통계 패널의 스타일 팝오버가 같은 컴포넌트를 쓰되, 패널이
+// 이 설정 모듈 전체를 번들로 끌어오지 않게 하기 위함). 여기서는 그대로 다시 내보내
+// 기존 호출부의 이름을 유지한다.
 
-function LabeledField(props: { label: string; children: React.ReactNode; hint?: string }): React.ReactElement {
-  return (
-    <div>
-      <label className="mb-1.5 block text-xs font-medium text-(--color-text-muted)">
-        {props.label}
-      </label>
-      {props.children}
-      {props.hint && (
-        <p className="mt-1 text-[10px] leading-snug text-(--color-text-muted)">{props.hint}</p>
-      )}
-    </div>
-  );
-}
 
 /**
  * 값 표기 소수점 자릿수 입력 — 차트 계열 패널이 공유한다.
@@ -360,9 +378,6 @@ export function UnitControl({
 }
 
 
-function inputClass(): string {
-  return 'w-full rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) px-3 py-1.5 text-sm text-(--color-text-primary) outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
-}
 
 /**
  * 다중 출력 타일 배열의 **행 수** 설정.
@@ -1511,7 +1526,7 @@ export function LineStyleControls({
           checked={value.smooth ?? false}
           onChange={(e) => onPatch({ smooth: e.target.checked })}
           data-testid={`${testIdPrefix}-smooth`}
-          className="h-3 w-3 rounded border-gray-300"
+          className="h-3 w-3 rounded border-(--color-border-strong)"
         />
         {t('dashboard.chart.curve')}
       </label>
@@ -1781,6 +1796,221 @@ export function SeriesDetailEditor({
 
 // --- 2. stat 패널 설정 (SPEC §4.2.2 stat) ---
 
+/** 색 스와치 한 칸 — 라벨 + 색 입력. 값 미지정이면 기본색을 미리보기로 보여 준다. */
+function DeltaColorSwatch({
+  label,
+  value,
+  fallback,
+  testId,
+  onChange,
+}: {
+  label: string;
+  value: string | undefined;
+  fallback: string;
+  testId: string;
+  onChange: (color: string) => void;
+}): React.ReactElement {
+  return (
+    <label className="flex items-center gap-1.5 text-[11px] text-(--color-text-muted)">
+      <span
+        className="h-4 w-4 shrink-0 rounded-sm border border-(--color-border-default)"
+        style={{ backgroundColor: value ?? fallback }}
+      />
+      {label}
+      <input
+        type="color"
+        data-testid={testId}
+        value={value ?? fallback}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-0 w-0 opacity-0"
+      />
+    </label>
+  );
+}
+
+/**
+ * 보조 표기 설정 — 변화량 · 구간 통계 · 보조 줄 크기. @spec SPEC-CHART-003 §2.5 [U5]
+ *
+ * 변화량 체크박스는 **지금 이 패널에서 실제로 보이는 상태**를 반영한다. 미지정의 뜻이
+ * 경로마다 다르므로(§5 D2), 판정을 그대로 화면에 쓰고 클릭 한 번으로 명시값이 된다.
+ */
+function StatSubLineFields({
+  config,
+  onConfigChange,
+}: {
+  config: Record<string, unknown>;
+  onConfigChange: OnConfig;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const delta = (config.delta_display ?? {}) as Record<string, unknown>;
+  const stats = (config.window_stats ?? {}) as Record<string, unknown>;
+  // 시리즈 소스 + 대표값이 있으면 타일 경로다 — 그 경로의 기본값으로 판정해야
+  // 체크박스가 실제 화면과 어긋나지 않는다.
+  const path: StatRenderPath =
+    isPanelSeriesActive(config) && config.series_reduce !== undefined ? 'tile' : 'legacy';
+  const deltaOn = readDeltaEnabled(config, path);
+  const colors = readDeltaColors(config);
+  const anyStatOn = readWindowStats(config).length > 0;
+
+  const patchDelta = (patch: Record<string, unknown>): void => {
+    onConfigChange({ delta_display: { ...delta, ...patch } });
+  };
+  const toggleStat = (kind: WindowStatKind): void => {
+    onConfigChange({ window_stats: { ...stats, [kind]: stats[kind] !== true } });
+  };
+
+  return (
+    <div className="space-y-2 rounded-lg border border-(--color-border-default) p-2.5">
+      {/* 변화량 */}
+      <label className="flex items-center gap-2 text-xs text-(--color-text-primary)">
+        <input
+          type="checkbox"
+          data-testid="stat-delta-enabled"
+          checked={deltaOn}
+          onChange={() => patchDelta({ enabled: !deltaOn })}
+          className="h-3.5 w-3.5 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
+        />
+        {t('dashboard.chart.deltaDisplay')}
+      </label>
+      {/* 꺼져 있으면 색 컨트롤을 내지 않는다 — 효과 없는 컨트롤을 남기지 않는다(U5-2). */}
+      {deltaOn && (
+        <div className="flex flex-wrap gap-3 pl-5" data-testid="stat-delta-colors">
+          <DeltaColorSwatch
+            label={t('dashboard.chart.deltaUpColor')}
+            value={delta.up_color as string | undefined}
+            fallback={colors.up}
+            testId="stat-delta-up-color"
+            onChange={(up_color) => patchDelta({ up_color })}
+          />
+          <DeltaColorSwatch
+            label={t('dashboard.chart.deltaDownColor')}
+            value={delta.down_color as string | undefined}
+            fallback={colors.down}
+            testId="stat-delta-down-color"
+            onChange={(down_color) => patchDelta({ down_color })}
+          />
+          <DeltaColorSwatch
+            label={t('dashboard.chart.deltaFlatColor')}
+            value={delta.flat_color as string | undefined}
+            fallback={colors.flat}
+            testId="stat-delta-flat-color"
+            onChange={(flat_color) => patchDelta({ flat_color })}
+          />
+        </div>
+      )}
+
+      {/* 구간 통계 */}
+      <div>
+        <span className="mb-1 block text-xs font-medium text-(--color-text-muted)">
+          {t('dashboard.chart.windowStats')}
+        </span>
+        <div className="flex flex-wrap gap-3 pl-0.5">
+          {(['avg', 'max', 'min'] as const).map((kind) => (
+            <label
+              key={kind}
+              className="flex items-center gap-1.5 text-xs text-(--color-text-primary)"
+            >
+              <input
+                type="checkbox"
+                data-testid={`stat-window-${kind}`}
+                checked={stats[kind] === true}
+                onChange={() => toggleStat(kind)}
+                className="h-3.5 w-3.5 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
+              />
+              {t(`dashboard.chart.windowStat.${kind}`)}
+            </label>
+          ))}
+        </div>
+        {/* 채널 모드에서는 max_points 가 구간의 크기를 정한다 — 기본값 2 에서는
+            평균·최대·최소가 전부 표본 2개에서 나온다(§5 D4). */}
+        {anyStatOn && !isPanelSeriesActive(config) && (
+          <p
+            data-testid="stat-window-max-points-hint"
+            className="mt-1 text-[11px] text-amber-600 dark:text-amber-400"
+          >
+            {t('dashboard.chart.windowStatsMaxPointsHint')}
+          </p>
+        )}
+      </div>
+
+      {/* 보조 줄 크기 — 변화량과 구간 통계에 함께 적용된다(§5 D3). */}
+      <SubValueScaleField config={config} onConfigChange={onConfigChange} />
+      {/* 미리보기에서 요소 크기를 직접 지정하면 배율이 죽는다(SPEC-CHART-004 §3.2).
+          슬라이더를 움직여도 화면이 안 바뀌는 이유가 보여야 한다. */}
+      <FontSizeOverrideNotice config={config} kinds={['delta', 'stats']} />
+    </div>
+  );
+}
+
+/**
+ * 배율이 무시되고 있음을 알리는 안내. @spec SPEC-CHART-004 §2.6 [U6-2]
+ *
+ * 요소에 `font_size` 가 직접 지정되면 배율(`value_scale` / `sub_value_scale`)은
+ * 폴백 자리로 물러난다(§3.2). 안내가 없으면 슬라이더를 움직여도 화면이 바뀌지 않는
+ * 이유를 알 수 없다.
+ */
+function FontSizeOverrideNotice({
+  config,
+  kinds,
+}: {
+  config: Record<string, unknown>;
+  /** 이 슬라이더가 담당하는 요소들. 하나라도 직접 지정되어 있으면 안내를 낸다. */
+  kinds: readonly StatElementKind[];
+}): React.ReactElement | null {
+  const { t } = useTranslation();
+  const overridden = kinds.some(
+    (kind) => readStatLayoutFontSize(config, kind) !== undefined,
+  );
+  if (!overridden) return null;
+  return (
+    <p
+      data-testid="stat-font-size-override-notice"
+      className="text-[11px] leading-snug text-amber-600 dark:text-amber-400"
+    >
+      {t('dashboard.chart.fontSizeOverridden')}
+    </p>
+  );
+}
+
+/** 보조 줄 크기 배율. 본값의 `ValueScaleField` 와 같은 형태이며 키만 다르다. */
+function SubValueScaleField({
+  config,
+  onConfigChange,
+}: {
+  config: Record<string, unknown>;
+  onConfigChange: OnConfig;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const scale = readSubValueScale(config);
+  return (
+    <LabeledField label={t('dashboard.chart.subValueScale')}>
+      <div className="flex items-center gap-2">
+        <input
+          type="range"
+          min={VALUE_SCALE_MIN}
+          max={VALUE_SCALE_MAX}
+          step={0.05}
+          value={scale}
+          onChange={(e) => onConfigChange({ sub_value_scale: Number(e.target.value) })}
+          data-testid="stat-sub-value-scale"
+          className="flex-1"
+        />
+        <span className="w-10 shrink-0 text-right text-xs tabular-nums text-(--color-text-muted)">
+          {scale.toFixed(2)}
+        </span>
+        <button
+          type="button"
+          onClick={() => onConfigChange({ sub_value_scale: undefined })}
+          data-testid="stat-sub-value-scale-reset"
+          className="shrink-0 rounded-md bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-secondary) transition-colors hover:bg-(--color-bg-elevated)/80"
+        >
+          {t('dashboard.chart.valueScaleReset')}
+        </button>
+      </div>
+    </LabeledField>
+  );
+}
+
 export function StatChartSection({
   panel,
   onConfigChange,
@@ -1839,10 +2069,12 @@ export function StatChartSection({
         onConfigChange={onConfigChange}
         testId="stat-value-scale"
       />
+      <FontSizeOverrideNotice config={config} kinds={['value']} />
       <TileRowsField
         value={config.tile_rows as number | undefined}
         onChange={(tile_rows) => onConfigChange({ tile_rows })}
       />
+      <StatSubLineFields config={config} onConfigChange={onConfigChange} />
       <div>
         <div className="mb-1.5 flex items-center justify-between">
           <label className="text-xs font-medium text-(--color-text-muted)">
@@ -1871,7 +2103,7 @@ export function StatChartSection({
               />
               <label className="relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md">
                 <span
-                  className="h-4 w-4 rounded-sm border border-gray-200 dark:border-gray-600"
+                  className="h-4 w-4 rounded-sm border border-(--color-border-default)"
                   style={{ backgroundColor: r.color }}
                 />
                 <input
@@ -1961,16 +2193,94 @@ function SettingsSection({
  *
  * 여는 방식(배지 버튼 · 바깥 클릭으로 닫기 · 자리)만 여기서 정하고, 내용은 호출부가 준다.
  */
+/** 팝오버 기본 폭(px). 내용이 넓어야 하는 팝오버만 `width` 로 넓힌다. */
+const DESIGN_POPOVER_WIDTH_PX = 288;
+
+/** 팝오버 상자와 잘라내는 경계 사이에 남겨 둘 여백(px). */
+const POPOVER_MARGIN_PX = 16;
+
+/** 세로로 아무리 좁아도 이만큼은 준다 — 컬럼이 스크롤되므로 잘려도 닿을 수 있다. */
+const POPOVER_MIN_HEIGHT_PX = 200;
+
+/**
+ * 가장 가까운 "잘라내는" 조상의 경계. 없으면 창 전체.
+ *
+ * 설정 컬럼은 `overflow-y-auto` 이고, CSS 는 한 축만 visible 이면 나머지 축도 auto 로
+ * 계산하므로 삐져나간 팝오버는 창이 아니라 **이 컬럼에서** 잘린다. 그래서 창 크기가
+ * 아니라 이 경계를 재야 한다.
+ */
+function clipRectOf(el: HTMLElement): { left: number; right: number; bottom: number } {
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    if (getComputedStyle(node).overflowX !== 'visible') {
+      const r = node.getBoundingClientRect();
+      return { left: r.left, right: r.right, bottom: r.bottom };
+    }
+  }
+  return { left: 0, right: window.innerWidth, bottom: window.innerHeight };
+}
+
 export function DesignPopover({
   testId,
   children,
+  label,
+  width = DESIGN_POPOVER_WIDTH_PX,
 }: {
   testId: string;
   children: React.ReactNode;
+  /** 단추 글자. 기본은 "디자인" 배지 — 배치 편집처럼 다른 것을 열 때만 바꾼다. */
+  label?: string;
+  /**
+   * 바라는 상자 폭(px). 격자 편집기처럼 넓어야 하는 내용에만 넓힌다.
+   *
+   * **바라는 값이지 확정이 아니다** — 설정 컬럼보다 넓으면 컬럼에 맞춰 줄인다. 클래스가
+   * 아니라 수로 받는 이유가 이것이다: 실제 폭을 알아야 잘릴지 아닐지 계산할 수 있다.
+   */
+  width?: number;
 }): React.ReactElement {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLSpanElement>(null);
+  // 왼쪽에 붙이면 상자가 경계를 넘는 자리에서만 오른쪽 정렬로 뒤집는다. 목록 오른쪽 끝에
+  // 놓인 항목별 설정 단추가 그런 자리다 — 고정으로 왼쪽에 붙이면 상자가 잘려 나간다.
+  /**
+   * 상자의 폭과, 단추 기준 가로 어긋남(px).
+   *
+   * 종전에는 왼쪽/오른쪽 어느 변에 붙일지만 골랐다. 그러면 상자가 잘라내는 영역보다 좁을
+   * 때만 통한다 — 넓은 상자는 어느 쪽에 붙여도 밖으로 나간다. 이제는 변에 붙이는 대신
+   * **영역 안에 들어오는 자리**를 직접 계산한다. 폭을 먼저 영역에 맞춰 줄이므로 항상 들어온다.
+   */
+  const [box, setBox] = useState<{ width: number; left: number; maxHeight: number | undefined }>({
+    width,
+    left: 0,
+    maxHeight: undefined,
+  });
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const el = containerRef.current;
+    if (!el) return;
+    const clip = clipRectOf(el);
+    const rect = el.getBoundingClientRect();
+    const clipWidth = clip.right - clip.left;
+    // 실측이 안 되는 환경(jsdom 등)에서는 바라는 값을 그대로 쓴다.
+    if (clipWidth <= 0) {
+      setBox({ width, left: 0, maxHeight: undefined });
+      return;
+    }
+    const applied = Math.min(width, clipWidth - POPOVER_MARGIN_PX * 2);
+    const min = clip.left + POPOVER_MARGIN_PX;
+    const max = clip.right - POPOVER_MARGIN_PX - applied;
+    // 단추 자리에서 시작하되, 영역 밖으로 나가면 안쪽으로 끌어당긴다.
+    const desired = Math.min(Math.max(rect.left, min), Math.max(min, max));
+    setBox({
+      width: applied,
+      left: desired - rect.left,
+      maxHeight:
+        clip.bottom > 0
+          ? Math.max(POPOVER_MIN_HEIGHT_PX, clip.bottom - rect.bottom - POPOVER_MARGIN_PX)
+          : undefined,
+    });
+  }, [open, width]);
 
   useEffect(() => {
     if (!open) return;
@@ -1993,12 +2303,13 @@ export function DesignPopover({
         data-testid={`${testId}-button`}
         className="rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-0.5 text-[11px] text-(--color-text-muted) transition-colors hover:text-(--color-text-primary)"
       >
-        {t('dashboard.chart.designBadge')}
+        {label ?? t('dashboard.chart.designBadge')}
       </button>
       {open && (
         <div
           data-testid={`${testId}-popover`}
-          className="absolute left-0 top-full z-30 mt-1 w-72 space-y-1.5 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2.5 text-left shadow-lg"
+          className="absolute top-full z-30 mt-1 space-y-1.5 overflow-y-auto rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-2.5 text-left shadow-lg"
+          style={{ width: box.width, left: box.left, maxHeight: box.maxHeight }}
         >
           {children}
         </div>
@@ -2653,7 +2964,7 @@ export function LineChartSection({
                     }
                     onChange={(e) => patchLegend({ [field]: e.target.checked })}
                     data-testid={`line-chart-legend-${field}`}
-                    className="h-3 w-3 rounded border-gray-300"
+                    className="h-3 w-3 rounded border-(--color-border-strong)"
                   />
                   {t(labelKeys[field])}
                 </label>
@@ -2687,7 +2998,7 @@ export function LineChartSection({
               checked={tooltipCfg.enabled !== false}
               onChange={(e) => patchTooltip({ enabled: e.target.checked })}
               data-testid="line-chart-tooltip-enabled"
-              className="h-3 w-3 rounded border-gray-300"
+              className="h-3 w-3 rounded border-(--color-border-strong)"
             />
             {t('dashboard.chart.tooltipEnabled')}
           </label>
@@ -2699,7 +3010,7 @@ export function LineChartSection({
                 checked={tooltipCfg.single === true}
                 onChange={(e) => patchTooltip({ single: e.target.checked })}
                 data-testid="line-chart-tooltip-single"
-                className="h-3 w-3 rounded border-gray-300"
+                className="h-3 w-3 rounded border-(--color-border-strong)"
               />
               {t('dashboard.chart.tooltipSingle')}
             </label>
@@ -2907,6 +3218,185 @@ export function BarChartSection({
           className={inputClass()}
         />
       </LabeledField>
+      <BarLegendFields config={config} onConfigChange={onConfigChange} />
+    </div>
+  );
+}
+
+/**
+ * 바 차트 범례 설정 (SPEC-CHART-005 §2.2).
+ *
+ * 키 이름과 뜻이 파이와 같으므로 항목도 같다 — 다만 **비중 표시는 내지 않는다.**
+ * 막대는 합계 대비 비중을 읽는 그림이 아니어서, 그 칸을 두면 켜도 화면이 안 바뀐다.
+ *
+ * 기본값이 파이와 다른 유일한 항목이 `show_legend` 다(바는 꺼짐 — §5 D4).
+ */
+function BarLegendFields({
+  config,
+  onConfigChange,
+}: {
+  config: Record<string, unknown>;
+  onConfigChange: OnConfig;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const showLegend = (config.show_legend as boolean | undefined) ?? false;
+  const legendPosition = (config.legend_position as PieLegendPosition | undefined) ?? 'bottom';
+  return (
+    <div className="space-y-2 rounded-lg border border-(--color-border-default) p-2.5">
+      <label className="flex items-center gap-2 text-xs text-(--color-text-primary)">
+        <input
+          type="checkbox"
+          data-testid="bar-chart-show-legend"
+          checked={showLegend}
+          onChange={(e) => onConfigChange({ show_legend: e.target.checked })}
+          className="h-3.5 w-3.5 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
+        />
+        {t('dashboard.chart.showLegend')}
+      </label>
+      {/* 아래 항목은 모두 범례를 켰을 때만 뜻이 있다. */}
+      {showLegend && (
+        <>
+          <LabeledField
+            label={t('dashboard.chart.legendPosition')}
+            hint={t('dashboard.chart.legendDragHint')}
+          >
+            <select
+              value={legendPosition}
+              onChange={(e) =>
+                onConfigChange({ legend_position: e.target.value as PieLegendPosition })
+              }
+              data-testid="bar-chart-legend-position"
+              className={inputClass()}
+            >
+              <option value="bottom">{t('dashboard.chart.legendBottom')}</option>
+              <option value="left">{t('dashboard.chart.legendLeft')}</option>
+              <option value="right">{t('dashboard.chart.legendRight')}</option>
+            </select>
+          </LabeledField>
+          <label className="flex items-center gap-2 text-xs text-(--color-text-primary)">
+            <input
+              type="checkbox"
+              data-testid="bar-chart-legend-show-value"
+              checked={(config.legend_show_value as boolean | undefined) ?? true}
+              onChange={(e) => onConfigChange({ legend_show_value: e.target.checked })}
+              className="h-3.5 w-3.5 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
+            />
+            {t('dashboard.chart.legendShowValue')}
+          </label>
+          <TextStyleFields
+            label={t('dashboard.chart.legendTextStyle')}
+            family={config.legend_font_family as ChartFontFamily | undefined}
+            size={config.legend_font_size as number | undefined}
+            color={config.legend_font_color as string | undefined}
+            sizePlaceholder={String(DEFAULT_PIE_LEGEND_FONT_SIZE)}
+            testIdPrefix="bar-chart-legend-font"
+            onChange={(patch) =>
+              onConfigChange({
+                ...('family' in patch ? { legend_font_family: patch.family } : null),
+                ...('size' in patch ? { legend_font_size: patch.size } : null),
+                ...('color' in patch ? { legend_font_color: patch.color } : null),
+              })
+            }
+          />
+        </>
+      )}
+
+      {/* ═══ 그래프 영역 ═══
+          바는 사각형이라 폭과 높이가 서로 다른 것을 가리킨다. 막대의 **높이는 값**이므로
+          설정할 수 없고, 대신 그림 영역 높이를 잡는다. 폭은 막대 굵기 그 자체다. */}
+      <SettingsSection title={t('dashboard.chart.plotAreaSection')}>
+        <LabeledField label={t('dashboard.chart.plotWidth')}>
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={PANEL_SIZE_MIN}
+              max={PANEL_SIZE_MAX}
+              step={1}
+              value={readPanelSize(config.plot_size) ?? PANEL_SIZE_MAX}
+              onChange={(e) => onConfigChange({ plot_size: Number(e.target.value) })}
+              data-testid="bar-chart-plot-width"
+              aria-label={t('dashboard.chart.plotWidth')}
+              className="flex-1"
+            />
+            <span className="w-12 shrink-0 text-right text-xs tabular-nums text-(--color-text-muted)">
+              {readPanelSize(config.plot_size) ?? PANEL_SIZE_MAX}%
+            </span>
+          </div>
+        </LabeledField>
+
+        {/* 막대 굵기는 도형의 폭이 아니라 그 안의 막대 하나하나에 대한 값이라 뜻이 다르다
+            — 손잡이는 도형 상자를 잡으므로 여기 슬라이더가 따로 맡는다. */}
+        <LabeledField label={t('dashboard.chart.barSize')}>
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={BAR_SIZE_MIN}
+              max={BAR_SIZE_MAX}
+              step={1}
+              value={readBarSize(config.bar_size) ?? BAR_SIZE_DEFAULT}
+              onChange={(e) => onConfigChange({ bar_size: Number(e.target.value) })}
+              data-testid="bar-chart-bar-size"
+              aria-label={t('dashboard.chart.barSize')}
+              className="flex-1"
+            />
+            <span className="w-12 shrink-0 text-right text-xs tabular-nums text-(--color-text-muted)">
+              {/* 값이 없으면 recharts 가 칸 폭에 맞춰 정한다 — 숫자를 적으면 거짓말이 된다. */}
+              {readBarSize(config.bar_size) === undefined
+                ? t('dashboard.chart.barSizeAuto')
+                : `${readBarSize(config.bar_size)}px`}
+            </span>
+          </div>
+        </LabeledField>
+
+        <LabeledField label={t('dashboard.chart.plotHeight')}>
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={PANEL_SIZE_MIN}
+              max={PANEL_SIZE_MAX}
+              step={1}
+              value={
+                readPanelSize(config.plot_size_y) ?? readPanelSize(config.plot_size) ?? PANEL_SIZE_MAX
+              }
+              onChange={(e) => onConfigChange({ plot_size_y: Number(e.target.value) })}
+              data-testid="bar-chart-plot-height"
+              aria-label={t('dashboard.chart.plotHeight')}
+              className="flex-1"
+            />
+            <span className="w-12 shrink-0 text-right text-xs tabular-nums text-(--color-text-muted)">
+              {readPanelSize(config.plot_size_y) ?? readPanelSize(config.plot_size) ?? PANEL_SIZE_MAX}%
+            </span>
+          </div>
+        </LabeledField>
+
+        {/* 굵기·높이·자리를 함께 되돌린다 — 셋은 같은 조작(손잡이 끌기)으로 어긋나므로
+            따로 되돌리면 한쪽이 남아 왜 제자리가 아닌지 알 수 없다. */}
+        {config.bar_size !== undefined ||
+        config.plot_size_y !== undefined ||
+        config.plot_size !== undefined ||
+        config.plot_offset_x ||
+        config.plot_offset_y ? (
+          <button
+            type="button"
+            data-testid="bar-chart-plot-reset"
+            onClick={() =>
+              onConfigChange({
+                bar_size: undefined,
+                plot_size: undefined,
+                plot_size_y: undefined,
+                plot_offset_x: undefined,
+                plot_offset_y: undefined,
+              })
+            }
+            className="rounded-md bg-(--color-bg-elevated) px-2 py-1 text-xs text-(--color-text-secondary) hover:bg-(--color-bg-elevated)/80"
+          >
+            {t('dashboard.chart.plotReset')}
+          </button>
+        ) : null}
+        <p className="text-[11px] leading-snug text-(--color-text-muted)">
+          {t('dashboard.chart.barPlotDragHint')}
+        </p>
+      </SettingsSection>
     </div>
   );
 }
@@ -2922,107 +3412,6 @@ export function BarChartSection({
  * 세 값 모두 **비우면 상속**이다. 색만 비우는 수단이 따로 필요한 이유는 색 입력에
  * "없음" 상태가 없기 때문이다 — 지정한 뒤에만 나타나는 초기화 버튼이 그 출구다.
  */
-export function TextStyleFields({
-  label,
-  family,
-  size,
-  color,
-  weight,
-  sizePlaceholder,
-  testIdPrefix,
-  onChange,
-}: {
-  label: string;
-  family: ChartFontFamily | undefined;
-  size: number | undefined;
-  color: string | undefined;
-  /**
-   * 굵기. **`undefined` 를 넘기면 굵기 칸 자체를 그리지 않는다** — 범례·라벨처럼 굵기를
-   * 고르지 않는 대상에 빈 칸이 생기면 무엇을 고르는 자리인지 읽히지 않는다.
-   */
-  weight?: 'normal' | 'bold' | 'inherit';
-  sizePlaceholder: string;
-  testIdPrefix: string;
-  onChange: (patch: {
-    family?: ChartFontFamily | undefined;
-    size?: number | undefined;
-    color?: string | undefined;
-    weight?: 'normal' | 'bold' | undefined;
-  }) => void;
-}): React.ReactElement {
-  const { t } = useTranslation();
-  return (
-    <LabeledField label={label}>
-      <div className="flex items-center gap-1.5">
-        <select
-          value={family ?? ''}
-          data-testid={`${testIdPrefix}-family`}
-          aria-label={`${label} ${t('dashboard.chart.fontFamily')}`}
-          onChange={(e) =>
-            onChange({ family: (e.target.value || undefined) as ChartFontFamily | undefined })
-          }
-          className={`${inputClass()} flex-1`}
-        >
-          <option value="">{t('dashboard.chart.inherit')}</option>
-          {FONT_FAMILY_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {t(o.labelKey)}
-            </option>
-          ))}
-        </select>
-        <input
-          type="number"
-          min={6}
-          max={40}
-          value={size ?? ''}
-          placeholder={sizePlaceholder}
-          data-testid={`${testIdPrefix}-size`}
-          aria-label={`${label} ${t('dashboard.chart.fontSize')}`}
-          onChange={(e) => {
-            const v = e.target.value;
-            onChange({ size: v === '' ? undefined : parseInt(v, 10) || undefined });
-          }}
-          className="w-16 shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-center text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
-        />
-        <input
-          type="color"
-          value={color ?? '#9ca3af'}
-          data-testid={`${testIdPrefix}-color`}
-          aria-label={`${label} ${t('dashboard.chart.fontColor')}`}
-          onChange={(e) => onChange({ color: e.target.value })}
-          className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
-        />
-        {weight !== undefined && (
-          <select
-            value={weight === 'inherit' ? '' : weight}
-            data-testid={`${testIdPrefix}-weight`}
-            aria-label={`${label} ${t('dashboard.chart.fontWeight')}`}
-            onChange={(e) =>
-              onChange({ weight: (e.target.value || undefined) as 'normal' | 'bold' | undefined })
-            }
-            className={`${inputClass()} w-20 shrink-0`}
-          >
-            <option value="">{t('dashboard.chart.inherit')}</option>
-            <option value="normal">{t('dashboard.chart.fontWeightNormal')}</option>
-            <option value="bold">{t('dashboard.chart.fontWeightBold')}</option>
-          </select>
-        )}
-        {color !== undefined && (
-          <button
-            type="button"
-            data-testid={`${testIdPrefix}-color-reset`}
-            aria-label={`${label} ${t('dashboard.chart.fontColorReset')}`}
-            title={t('dashboard.chart.fontColorReset')}
-            onClick={() => onChange({ color: undefined })}
-            className="h-7 w-7 shrink-0 rounded border border-(--color-border-default) text-xs text-(--color-text-muted) hover:bg-(--color-bg-elevated)"
-          >
-            x
-          </button>
-        )}
-      </div>
-    </LabeledField>
-  );
-}
 
 export function PieChartSection({
   panel,
@@ -3059,7 +3448,7 @@ export function PieChartSection({
         checked={checked}
         data-testid={testId}
         onChange={(e) => onConfigChange({ [key]: e.target.checked })}
-        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
       />
       <span className="text-sm text-(--color-text-primary)">{t(labelKey)}</span>
     </label>

@@ -49,8 +49,8 @@ const EVENT_CONFIG: Record<
   },
   system: {
     icon: Server,
-    color: 'text-gray-500',
-    bg: 'bg-gray-100 dark:bg-gray-700/30',
+    color: 'text-(--color-text-muted)',
+    bg: 'bg-(--color-bg-sunken)',
   },
 };
 
@@ -76,7 +76,7 @@ export default function EventTimeline({ events, title }: EventTimelineProps) {
       <div className="bg-(--color-bg-surface) rounded-lg shadow">
         {title && <TimelineHeader title={title} count={0} unit={t('monitoring.countUnit')} />}
         <div className="p-8 text-center">
-          <Info className="mx-auto h-8 w-8 text-gray-400 mb-2" />
+          <Info className="mx-auto h-8 w-8 text-(--color-text-muted) mb-2" />
           <p className="text-sm text-(--color-text-muted)">{t('monitoring.noEvents')}</p>
         </div>
       </div>

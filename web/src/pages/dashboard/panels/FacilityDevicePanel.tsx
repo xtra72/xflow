@@ -152,7 +152,7 @@ export default function FacilityDevicePanel({
             data-testid="facility-device-power-off"
             onClick={() => runPower(false)}
             disabled={isPending || !device.power}
-            className="inline-flex items-center gap-1 rounded-md bg-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-300 disabled:opacity-40 dark:bg-slate-700 dark:text-slate-300"
+            className="inline-flex items-center gap-1 rounded-md bg-(--color-bg-sunken) px-3 py-1.5 text-xs font-medium text-(--color-text-secondary) transition-colors hover:bg-(--color-border-strong) disabled:opacity-40"
             aria-label={t('dashboard.facility.control.powerOff')}
           >
             <Power className="h-3.5 w-3.5" />
@@ -227,7 +227,7 @@ function PanelShell({
               'inline-flex items-center gap-1 rounded-full px-2 py-1',
               online
                 ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400'
-                : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500',
+                : 'bg-(--color-bg-sunken) text-(--color-text-muted)',
             )}
           >
             {online ? (

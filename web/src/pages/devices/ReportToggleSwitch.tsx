@@ -30,12 +30,12 @@ export function ReportToggleSwitch({
       }}
       className={cn(
         'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2',
-        enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600',
+        enabled ? 'bg-green-500' : 'bg-(--color-border-strong)',
       )}
     >
       <span
         className={cn(
-          'pointer-events-none inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200',
+          'pointer-events-none inline-block h-3.5 w-3.5 rounded-full bg-(--color-bg-surface) shadow-sm ring-0 transition-transform duration-200',
           enabled ? 'translate-x-4' : 'translate-x-0.5',
         )}
       />

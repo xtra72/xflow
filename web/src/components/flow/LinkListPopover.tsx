@@ -71,7 +71,7 @@ export const LinkListPopover = forwardRef<HTMLDivElement, LinkListPopoverProps>(
           ref={ref}
           // 노드 바깥 플로팅 카드. 캔버스 줌과 무관하게 일정 크기를 유지한다.
           className={cn(
-            'nodrag nowheel min-w-[180px] max-w-[260px] rounded-md border bg-white p-1 shadow-lg',
+            'nodrag nowheel min-w-[180px] max-w-[260px] rounded-md border bg-(--color-bg-surface) p-1 shadow-lg',
             'border-zinc-200 dark:border-zinc-700 dark:bg-zinc-900',
             'text-zinc-700 dark:text-zinc-200',
           )}

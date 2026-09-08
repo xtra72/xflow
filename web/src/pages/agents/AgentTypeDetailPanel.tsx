@@ -74,7 +74,7 @@ export default function AgentTypeDetailPanel({ agentType }: AgentTypeDetailPanel
                       {field.required ? (
                         <span className="text-red-600 dark:text-red-400 font-medium">Y</span>
                       ) : (
-                        <span className="text-gray-400">-</span>
+                        <span className="text-(--color-text-muted)">-</span>
                       )}
                     </td>
                     <td className="py-2 pr-4 font-mono text-(--color-text-muted)">

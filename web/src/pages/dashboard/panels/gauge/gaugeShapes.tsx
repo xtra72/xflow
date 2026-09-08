@@ -12,7 +12,7 @@ import {
 } from '@/pages/dashboard/panels/charts/decimalPlaces';
 import { formatTickValue, scaleValueUnit } from '../charts/unitOptions';
 // 현재값 크기·위치는 통계 패널과 **같은 정본**을 쓴다(`charts/valueScale`).
-import { readValueOffset, readValueScale } from '../charts/valueScale';
+import { readValueScale } from '../charts/valueScale';
 import type { ReactElement } from 'react';
 
 export type GaugeType =
@@ -253,6 +253,31 @@ export function resolveGaugeValueColor(args: {
 
 // ---- config 파싱 ----
 
+/**
+ * 세로바의 **기본 도형 치수**(viewBox 단위)와 그것을 줄일 수 있는 범위.
+ *
+ * 폭·높이를 CSS 배율(`scale(x, y)`)로 바꾸면 그림뿐 아니라 눈금 글자와 값 글자까지
+ * 함께 눌린다 — 실제로 "폭을 줄이면 폰트 폭도 줄어든다" 는 보고가 있었다. 그래서
+ * 세로바만은 **도형의 치수 자체**를 바꾼다. 글자는 제 크기로 남는다.
+ *
+ * 기본값이 곧 최대값이다. 더 크게 그리려면 캔버스를 넓혀야 하는데, 그러면 다른
+ * 게이지 유형과 캔버스가 갈라져 값 글자 자리를 두 벌로 관리하게 된다.
+ */
+export const VBAR_BASE_WIDTH = 48;
+export const VBAR_BASE_HEIGHT = 180;
+/** 바의 가로 중심과 아래 끝(viewBox 단위). 치수를 줄여도 이 둘은 움직이지 않는다. */
+export const VBAR_CENTER_X = 84;
+export const VBAR_BOTTOM_Y = 190;
+export const VBAR_SIZE_MIN = 20;
+export const VBAR_SIZE_MAX = 100;
+
+/** 세로바 치수 배율(%)을 읽는다. 범위 밖이거나 수가 아니면 기본(100%)이다. */
+export function readVBarSize(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= VBAR_SIZE_MIN && v <= VBAR_SIZE_MAX
+    ? v
+    : VBAR_SIZE_MAX;
+}
+
 export function parseConfig(config: Record<string, unknown>) {
   const value = (config.value as number) ?? 0;
   // 값 표기 자릿수. 종전에는 `{value}` 를 그대로 찍어 21.533333333333335 가 나왔다.
@@ -272,8 +297,9 @@ export function parseConfig(config: Record<string, unknown>) {
   // 쓰면 다크·라이트 양쪽에서 보이던 성질을 잃지 않는다.
   const needleColor = typeof config.needle_color === 'string' ? config.needle_color : '';
   const valueScale = readValueScale(config.value_scale);
-  const valueOffsetX = readValueOffset(config.value_offset_x);
-  const valueOffsetY = readValueOffset(config.value_offset_y);
+  // 세로바 전용. 다른 유형은 읽지 않으므로 저장돼 있어도 무해하다.
+  const vbarWidth = readVBarSize(config.gauge_bar_width);
+  const vbarHeight = readVBarSize(config.gauge_bar_height);
   const colorMode: 'individual' | 'continuous' =
     config.colorMode === 'continuous' ? 'continuous' : 'individual';
   const colorTheme = config.colorTheme as string | undefined;
@@ -297,6 +323,8 @@ export function parseConfig(config: Record<string, unknown>) {
     /** 저장된 단위 설정. 값이 바뀔 때 접미사를 다시 정하려면 이 값이 필요하다. */
     configuredUnit,
     gaugeType,
+    vbarWidth,
+    vbarHeight,
     thresholds,
     showThresholdZones,
     halfRainbowDirection,
@@ -308,10 +336,6 @@ export function parseConfig(config: Record<string, unknown>) {
     needleColor,
     /** 현재값 글자 크기 배율(기본 1). */
     valueScale,
-    /** 현재값 가로 변위(viewBox 좌표, 기본 0). */
-    valueOffsetX,
-    /** 현재값 세로 변위(viewBox 좌표, 기본 0). */
-    valueOffsetY,
     /**
      * 이 값에 쓸 색. **유형과 무관하게 여기 하나에서 정한다.**
      *
@@ -480,86 +504,7 @@ function ThresholdTrackArc({
  *
  * 단위가 없으면 둘째 행을 만들지 않는다 — 빈 행이 값을 위로 밀어 올린다.
  */
-function GaugeValueText({
-  x,
-  y,
-  valueText,
-  unit,
-  valueSize,
-  unitSize,
-  hasValue,
-  valueFill,
-  unitClassName,
-  unitOpacity,
-  scale = 1,
-  offsetX = 0,
-  offsetY = 0,
-}: {
-  x: number;
-  y: number;
-  valueText: string;
-  unit: string;
-  valueSize: number;
-  unitSize: number;
-  hasValue: boolean;
-  /** 값 글자색 클래스 대신 직접 지정할 때(니들 배지처럼 어두운 바탕 위). */
-  valueFill?: string;
-  unitClassName?: string;
-  unitOpacity?: number;
-  /** 글자 크기 배율(기본 1). */
-  scale?: number;
-  /** 가로·세로 변위(viewBox 좌표, 기본 0). */
-  offsetX?: number;
-  offsetY?: number;
-}): ReactElement {
-  const twoLine = hasValue && unit !== '';
-  const vSize = valueSize * scale;
-  const uSize = unitSize * scale;
-  // 값과 단위의 행간.
-  //
-  // 종전에는 `uSize * 1.15` 로 **단위 크기만** 기준이었다. 그런데 아래로 뻗는 것은 값의
-  // 디센더(≈ 값 크기의 20%)이고 위로 뻗는 것은 단위의 캡 높이(≈ 단위 크기의 70%)라,
-  // 값이 단위보다 두 배 큰 기본 배치(28 / 14)에서 둘 사이가 1px 도 남지 않았다.
-  // 두 크기를 함께 세어 값이 커져도 간격이 따라 벌어지게 한다.
-  const lineStep = vSize * 0.35 + uSize * 0.95;
-  // 두 행이면 블록 전체가 아래로 한 행 내려가므로 시작점을 그 절반만큼 올린다.
-  const startY = (twoLine ? y - lineStep / 2 : y) + offsetY;
-  const cx = x + offsetX;
-  return (
-    <text
-      // 설정 미리보기의 드래그 레이어가 이 표시로 "값 글자를 잡았다" 를 판정한다.
-      // 대시보드에 놓인 패널에는 드래그 레이어가 없으므로 표시만 남고 아무 일도 없다.
-      data-gauge-value-text=""
-      x={cx}
-      y={startY}
-      textAnchor="middle"
-      dominantBaseline="central"
-      className={valueFill ? undefined : 'fill-(--color-text-primary)'}
-      fill={valueFill}
-      fontWeight={700}
-    >
-      <tspan x={cx} fontSize={vSize}>
-        {hasValue ? valueText : '--'}
-      </tspan>
-      {twoLine && (
-        <tspan
-          x={cx}
-          dy={lineStep}
-          fontSize={uSize}
-          className={unitClassName}
-          opacity={unitOpacity}
-        >
-          {unit}
-        </tspan>
-      )}
-    </text>
-  );
-}
-
-// ---- 게이지 렌더러 ----
-
-/** 1. Simple Gauge (도넛형) — 360° 도넛 */
-function SimpleGauge({ value, valueText, min, max, unit, thresholds, hasValue, showThresholdZones, valueColor: color, baseColor, valueScale, valueOffsetX, valueOffsetY }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
+function SimpleGauge({ value, min, max, thresholds, hasValue, showThresholdZones, valueColor: color, baseColor }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const ratio = normalize(value, min, max);
   const cx = 100, cy = 100, outerR = 90, innerR = 72;
   const valueAngle = ratio * 360;
@@ -586,18 +531,12 @@ function SimpleGauge({ value, valueText, min, max, unit, thresholds, hasValue, s
           )}
         </>
       )}
-      <GaugeValueText
-        x={cx} y={cy - 2} valueText={valueText} unit={unit}
-        valueSize={28} unitSize={14} hasValue={hasValue}
-        unitClassName="fill-(--color-text-muted)"
-        scale={valueScale} offsetX={valueOffsetX} offsetY={valueOffsetY}
-      />
     </svg>
   );
 }
 
 /** 2. Half-Circular Gauge (반원형) — 상단 180° */
-function HalfGauge({ value, valueText, min, max, unit, configuredUnit, thresholds, hasValue, showThresholdZones, valueColor: color, baseColor, valueScale, valueOffsetX, valueOffsetY }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
+function HalfGauge({ value, min, max, configuredUnit, thresholds, hasValue, showThresholdZones, valueColor: color, baseColor }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const ratio = normalize(value, min, max);
   const cx = 120, cy = 100, outerR = 80, innerR = 62;
   const startAngle = 270; // 9시(왼쪽) 시작
@@ -638,18 +577,12 @@ function HalfGauge({ value, valueText, min, max, unit, configuredUnit, threshold
         className="fill-(--color-text-muted)" fontSize={9} fontWeight={500}>
         {formatTickValue(max, configuredUnit)}
       </text>
-      <GaugeValueText
-        x={cx} y={cy + 10} valueText={valueText} unit={unit}
-        valueSize={24} unitSize={12} hasValue={hasValue}
-        unitClassName="fill-(--color-text-muted)"
-        scale={valueScale} offsetX={valueOffsetX} offsetY={valueOffsetY}
-      />
     </svg>
   );
 }
 
 /** 4. Circular Needle (원형 니들) — 360° + 니들 */
-function NeedleGauge({ value, valueText, min, max, unit, configuredUnit, thresholds, hasValue, showThresholdZones, valueColor: color, baseColor, needleColor, valueScale, valueOffsetX, valueOffsetY }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
+function NeedleGauge({ value, min, max, configuredUnit, thresholds, hasValue, showThresholdZones, valueColor: color, baseColor, needleColor }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const ratio = normalize(value, min, max);
   const cx = 100, cy = 100, r = 80;
   const needleAngle = ratio * 360;
@@ -714,20 +647,12 @@ function NeedleGauge({ value, valueText, min, max, unit, configuredUnit, thresho
       {!hasValue && (
         <circle cx={cx} cy={cy} r={4} fill="#9CA3AF" />
       )}
-      {/* 값 배지 — 흰 텍스트와의 대비를 위해 항상 어두운 배경 유지 */}
-      <rect x={cx - 26} y={cy + 28} width={52} height={20} rx={4} fill="#1E293B" />
-      <GaugeValueText
-        x={cx} y={cy + 38} valueText={valueText} unit={unit}
-        valueSize={10} unitSize={7} hasValue={hasValue}
-        valueFill="#FFFFFF" unitOpacity={0.7}
-        scale={valueScale} offsetX={valueOffsetX} offsetY={valueOffsetY}
-      />
     </svg>
   );
 }
 
 /** 5. Needle Rainbow (레인보우) — 270° 속도계 스타일 */
-function NeedleRainbowGauge({ value, valueText, min, max, unit, configuredUnit, thresholds, hasValue, showThresholdZones, baseColor, needleColor, valueScale, valueOffsetX, valueOffsetY }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
+function NeedleRainbowGauge({ value, min, max, configuredUnit, thresholds, hasValue, showThresholdZones, baseColor, needleColor }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const ratio = normalize(value, min, max);
   const cx = 110, cy = 105, outerR = 85, innerR = 75;
   const startAngle = 225; // 7시 방향 시작 (하단 열림)
@@ -822,21 +747,21 @@ function NeedleRainbowGauge({ value, valueText, min, max, unit, configuredUnit, 
       {!hasValue && (
         <circle cx={cx} cy={cy} r={4} fill="#9CA3AF" />
       )}
-      {/* 값 텍스트 */}
-      <GaugeValueText
-        x={cx} y={cy + 24} valueText={valueText} unit={unit}
-        valueSize={12} unitSize={8} hasValue={hasValue}
-        unitClassName="fill-(--color-text-muted)"
-        scale={valueScale} offsetX={valueOffsetX} offsetY={valueOffsetY}
-      />
     </svg>
   );
 }
 
 /** 9. Vertical Bar Gauge (세로 바) */
-function VerticalBarGauge({ value, valueText, min, max, unit, configuredUnit, thresholds, hasValue, showThresholdZones, valueColor: color, baseColor, valueScale, valueOffsetX, valueOffsetY }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
+
+function VerticalBarGauge({ value, min, max, configuredUnit, thresholds, hasValue, showThresholdZones, valueColor: color, baseColor, vbarWidth, vbarHeight }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const ratio = normalize(value, min, max);
-  const barW = 48, barH = 180, x = 60, y = 10;
+  // 도형 치수를 직접 줄인다(CSS 배율이 아니다) — 글자를 함께 누르지 않기 위해서다.
+  // 가로 중심과 아래 끝을 못박아 두면 치수를 바꿔도 값 글자와 눈금 라벨이 제자리에
+  // 남는다. 위/왼쪽으로만 줄어들면 읽는 기준선이 매번 옮겨간다.
+  const barW = (VBAR_BASE_WIDTH * vbarWidth) / 100;
+  const barH = (VBAR_BASE_HEIGHT * vbarHeight) / 100;
+  const x = VBAR_CENTER_X - barW / 2;
+  const y = VBAR_BOTTOM_Y - barH;
   const fillH = Math.max(0, ratio * barH);
 
   // 트랙(바)을 임계 구간으로 나눈다. 도넛·반원·바늘과 **같은 계산**을 쓴다 — 축이
@@ -889,12 +814,6 @@ function VerticalBarGauge({ value, valueText, min, max, unit, configuredUnit, th
           </g>
         );
       })}
-      <GaugeValueText
-        x={x + barW / 2} y={y + barH + 16} valueText={valueText} unit={unit}
-        valueSize={13} unitSize={8} hasValue={hasValue}
-        unitClassName="fill-(--color-text-muted)"
-        scale={valueScale} offsetX={valueOffsetX} offsetY={valueOffsetY}
-      />
     </svg>
   );
 }
@@ -923,7 +842,7 @@ export const HALF_RAINBOW_DIRECTIONS: readonly HalfRainbowDirection[] = [
  *
  * 각도는 12시가 0° 이고 시계방향으로 증가한다(`polarToCartesian`).
  */
-const HALF_RAINBOW_LAYOUT: Record<
+export const HALF_RAINBOW_LAYOUT: Record<
   HalfRainbowDirection,
   { viewBox: string; cx: number; cy: number; startAngle: number; valueDx: number; valueDy: number }
 > = {
@@ -945,7 +864,7 @@ export function readHalfRainbowDirection(raw: unknown): HalfRainbowDirection {
 }
 
 /** 10. Half Rainbow 2 (5단계 등급) */
-function HalfRainbowGauge({ value, valueText, min, max, unit, thresholds, hasValue, showThresholdZones, halfRainbowDirection, baseColor, needleColor, valueScale, valueOffsetX, valueOffsetY }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
+function HalfRainbowGauge({ value, min, max, thresholds, hasValue, showThresholdZones, halfRainbowDirection, baseColor, needleColor }: ReturnType<typeof parseConfig> & { hasValue: boolean }) {
   const ratio = normalize(value, min, max);
   const layout = HALF_RAINBOW_LAYOUT[halfRainbowDirection];
   const { cx, cy, startAngle } = layout;
@@ -1026,14 +945,6 @@ function HalfRainbowGauge({ value, valueText, min, max, unit, thresholds, hasVal
         <circle cx={cx} cy={cy} r={4} fill="#9CA3AF" />
       )}
       <circle cx={cx} cy={cy} r={3.5} className="fill-(--color-bg-surface)" />
-      {/* 값은 열린 쪽에 둔다 — 방향마다 그 자리가 다르다(HALF_RAINBOW_LAYOUT). */}
-      <GaugeValueText
-        x={cx + layout.valueDx} y={cy + layout.valueDy}
-        valueText={valueText} unit={unit}
-        valueSize={18} unitSize={11} hasValue={hasValue}
-        unitClassName="fill-(--color-text-muted)"
-        scale={valueScale} offsetX={valueOffsetX} offsetY={valueOffsetY}
-      />
     </svg>
   );
 }

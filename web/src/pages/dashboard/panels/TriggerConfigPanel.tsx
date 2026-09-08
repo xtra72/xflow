@@ -307,7 +307,7 @@ export default function TriggerConfigPanel({
         ) : (
           <span
             data-testid="trigger-badge-stopped"
-            className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+            className="inline-flex items-center gap-1 rounded-full bg-(--color-bg-sunken) px-2 py-1 text-xs font-medium text-(--color-text-muted)"
           >
             <CircleStop className="h-3.5 w-3.5" /> 중지됨
           </span>
@@ -358,7 +358,7 @@ export default function TriggerConfigPanel({
                     <button
                       type="button"
                       onClick={() => handleRemoveCatalog(name)}
-                      className="rounded p-0.5 text-gray-400 transition-colors hover:text-red-500"
+                      className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:text-red-500"
                       aria-label={`${name} 삭제`}
                       data-testid={`catalog-remove-${name}`}
                     >

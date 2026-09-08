@@ -294,7 +294,7 @@ function StateBadge({
   const cls =
     state === 'active'
       ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-      : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
+      : 'bg-(--color-bg-sunken) text-(--color-text-secondary)';
   return (
     <span
       data-testid="enrollment-token-state"

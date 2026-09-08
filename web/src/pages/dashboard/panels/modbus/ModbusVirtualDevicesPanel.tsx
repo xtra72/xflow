@@ -132,7 +132,7 @@ export default function ModbusVirtualDevicesPanel({
                   'inline-flex shrink-0 items-center',
                   isActive
                     ? 'text-green-600 dark:text-green-400'
-                    : 'text-gray-400 dark:text-gray-500',
+                    : 'text-(--color-text-muted)',
                 )}
                 title={isActive ? t('dashboard.modbus.active') : t('dashboard.modbus.stale')}
               >

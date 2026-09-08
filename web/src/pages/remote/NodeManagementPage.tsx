@@ -236,7 +236,7 @@ export default function NodeManagementPage(): React.JSX.Element {
             data-testid="node-management-no-selection"
             className="flex h-full min-h-64 flex-col items-center justify-center gap-3 p-8 text-center"
           >
-            <Network className="h-10 w-10 text-gray-300 dark:text-gray-600" aria-hidden="true" />
+            <Network className="h-10 w-10 text-(--color-border-strong)" aria-hidden="true" />
             <p className="text-sm text-(--color-text-muted)">
               {t('remote.managerView.selectNodeHint')}
             </p>

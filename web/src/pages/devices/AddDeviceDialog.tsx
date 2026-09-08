@@ -181,7 +181,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700"
+            className="rounded-md p-1 text-(--color-text-muted) hover:bg-(--color-bg-sunken) hover:text-(--color-text-secondary)"
           >
             <X className="h-4 w-4" />
           </button>
@@ -199,7 +199,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                 setSelectedAgentId(e.target.value);
                 resetForm();
               }}
-              className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+              className="block w-full rounded-md border border-(--color-border-strong) px-3 py-2 text-sm bg-(--color-bg-sunken) text-(--color-text-primary)"
             >
               <option value="">{t('devices.add.agentPlaceholder')}</option>
               {supportedAgents.map((a) => {
@@ -212,7 +212,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
               })}
             </select>
             {supportedAgents.length === 0 && (
-              <p className="mt-1 text-xs text-gray-500">{t('devices.add.noSupportedAgent')}</p>
+              <p className="mt-1 text-xs text-(--color-text-muted)">{t('devices.add.noSupportedAgent')}</p>
             )}
           </div>
 
@@ -228,7 +228,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                   placeholder={t('devices.add.deviceAddressPlaceholder')}
                   value={samsungHvacr01Address}
                   onChange={(e) => setSamsungHvacr01Address(e.target.value)}
-                  className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                  className="block w-full rounded-md border border-(--color-border-strong) px-3 py-2 text-sm bg-(--color-bg-sunken) text-(--color-text-primary)"
                 />
               </div>
               <div>
@@ -240,7 +240,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                   placeholder={t('devices.add.deviceIdPlaceholder')}
                   value={samsungHvacr01DeviceId}
                   onChange={(e) => setSamsungHvacr01DeviceId(e.target.value)}
-                  className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                  className="block w-full rounded-md border border-(--color-border-strong) px-3 py-2 text-sm bg-(--color-bg-sunken) text-(--color-text-primary)"
                 />
               </div>
               <div>
@@ -250,7 +250,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                 <select
                   value={samsungHvacr01DeviceType}
                   onChange={(e) => setSamsungHvacr01DeviceType(e.target.value)}
-                  className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                  className="block w-full rounded-md border border-(--color-border-strong) px-3 py-2 text-sm bg-(--color-bg-sunken) text-(--color-text-primary)"
                 >
                   <option value="">{t('devices.add.autoDetect')}</option>
                   <option value="HVACR.IDU">{t('devices.add.indoor')}</option>
@@ -275,12 +275,12 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                   onClick={() => setSamsungHvacr01ReportEnabled((v) => !v)}
                   className={cn(
                     'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2',
-                    samsungHvacr01ReportEnabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600',
+                    samsungHvacr01ReportEnabled ? 'bg-green-500' : 'bg-(--color-border-strong)',
                   )}
                 >
                   <span
                     className={cn(
-                      'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200',
+                      'pointer-events-none inline-block h-4 w-4 rounded-full bg-(--color-bg-surface) shadow-sm ring-0 transition-transform duration-200',
                       samsungHvacr01ReportEnabled ? 'translate-x-5' : 'translate-x-0.5',
                     )}
                   />
@@ -307,7 +307,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                     placeholder="1"
                     value={modbusUnitId}
                     onChange={(e) => setModbusUnitId(e.target.value)}
-                    className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                    className="block w-full rounded-md border border-(--color-border-strong) px-3 py-2 text-sm bg-(--color-bg-sunken) text-(--color-text-primary)"
                   />
                 </div>
                 <div>
@@ -319,7 +319,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                     placeholder="Device-1"
                     value={modbusName}
                     onChange={(e) => setModbusName(e.target.value)}
-                    className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                    className="block w-full rounded-md border border-(--color-border-strong) px-3 py-2 text-sm bg-(--color-bg-sunken) text-(--color-text-primary)"
                   />
                 </div>
               </div>
@@ -352,7 +352,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                               }));
                               if (checked) setExpandedAreas((prev) => ({ ...prev, [area]: true }));
                             }}
-                            className="h-3.5 w-3.5 rounded border-gray-300"
+                            className="h-3.5 w-3.5 rounded border-(--color-border-strong)"
                           />
                           <button
                             type="button"
@@ -362,7 +362,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                           >
                             {enabled && (expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />)}
                             {MODBUS_AREA_LABELS[area]}
-                            {enabled && <span className="ml-auto text-[10px] text-gray-400">{blocks.length}{t('devices.add.blocksUnit')}</span>}
+                            {enabled && <span className="ml-auto text-[10px] text-(--color-text-muted)">{blocks.length}{t('devices.add.blocksUnit')}</span>}
                           </button>
                         </div>
 
@@ -371,7 +371,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                           <div className="border-t border-(--color-border-default) px-3 pb-2 pt-1">
                             {blocks.map((blk, idx) => (
                               <div key={idx} className="mt-1 flex items-center gap-2">
-                                <span className="w-6 text-right text-[10px] text-gray-400">#{idx + 1}</span>
+                                <span className="w-6 text-right text-[10px] text-(--color-text-muted)">#{idx + 1}</span>
                                 <input
                                   type="number"
                                   min={0}
@@ -385,9 +385,9 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                                       return { ...prev, [area]: arr };
                                     });
                                   }}
-                                  className="w-20 rounded border border-gray-300 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                                  className="w-20 rounded border border-(--color-border-strong) px-2 py-1 text-xs bg-(--color-bg-sunken) text-(--color-text-primary)"
                                 />
-                                <span className="text-[10px] text-gray-400">~</span>
+                                <span className="text-[10px] text-(--color-text-muted)">~</span>
                                 <input
                                   type="number"
                                   min={1}
@@ -401,9 +401,9 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                                       return { ...prev, [area]: arr };
                                     });
                                   }}
-                                  className="w-20 rounded border border-gray-300 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                                  className="w-20 rounded border border-(--color-border-strong) px-2 py-1 text-xs bg-(--color-bg-sunken) text-(--color-text-primary)"
                                 />
-                                <span className="text-[10px] text-gray-400">{t('devices.add.countUnit')}</span>
+                                <span className="text-[10px] text-(--color-text-muted)">{t('devices.add.countUnit')}</span>
                                 {blocks.length > 1 && (
                                   <button
                                     type="button"
@@ -413,7 +413,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
                                         return { ...prev, [area]: arr };
                                       });
                                     }}
-                                    className="rounded p-0.5 text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20"
+                                    className="rounded p-0.5 text-(--color-text-muted) hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20"
                                   >
                                     <Trash2 className="h-3 w-3" />
                                   </button>
@@ -454,7 +454,7 @@ export default function AddDeviceDialog({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-(--color-text-secondary) hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700"
+            className="rounded-md border border-(--color-border-strong) px-4 py-2 text-sm font-medium text-(--color-text-secondary) hover:bg-(--color-bg-secondary)"
           >
             {t('common.cancel')}
           </button>

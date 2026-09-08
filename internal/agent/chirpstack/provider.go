@@ -439,6 +439,14 @@ func (a *chirpDeviceAdapter) UID() string {
 // Name 은 사용자 표시 이름(deviceName)을 반환한다.
 func (a *chirpDeviceAdapter) Name() string { return a.snap.deviceName }
 
+// LocalID 는 에이전트 내부 식별자(DevEUI)를 반환한다.
+//
+// 부팅 시 고정 설치 복원과 메타데이터의 소유 정보 저장이 이 값을 쓴다. Name() 은
+// ChirpStack 이 붙인 라벨이라 로스터 키(devEui)와 다르므로, 라벨로 복원하면 엉뚱한
+// 키의 디바이스가 생긴다. 확장 인터페이스이므로 구현하지 않으면 Name() 으로
+// 폴백된다(cmd/xflowd/main.go · internal/api/handler/device.go).
+func (a *chirpDeviceAdapter) LocalID() string { return a.snap.devEui }
+
 // Type 은 LoRaWAN 센서를 반영한다.
 func (a *chirpDeviceAdapter) Type() device.DeviceType { return device.DeviceTypeSensor }
 
@@ -646,3 +654,47 @@ func (a *chirpDeviceAdapter) Source() string { return "auto" }
 
 // Capabilities 는 패시브 수신 전용 capability 를 노출한다.
 func (a *chirpDeviceAdapter) Capabilities() []string { return []string{"passive-monitor"} }
+
+// RegisterPinnedDevices 는 고정 설치로 표시된 디바이스를 로스터에 미리 등록한다.
+// agent.Start() 이후 부팅 경로에서 호출된다(cmd/xflowd/main.go).
+//
+// 이 에이전트의 디바이스는 업링크가 도착해야 발견된다(upsertDevice). LoRaWAN 센서는
+// 보고 주기가 길어, 재시작 후 첫 업링크까지 로스터에서 사라진 것처럼 보인다 —
+// "재시작 시에도 디바이스를 유지합니다"라는 고정 설치의 약속이 깨지는 지점이다.
+//
+// 그래서 여기서는 **값이 없는 오프라인 자리표시자**를 만든다. lastSeen 이 제로라
+// Online() 은 false 이고 measurements 도 비어 있으므로, 실제 업링크가 오기 전까지
+// 없는 값을 지어내지 않는다. 업링크가 도착하면 upsertDevice 가 같은 키를 채운다.
+func (a *ChirpStackAgent) RegisterPinnedDevices(entries []agent.DeviceEntry) {
+	agentName := a.Name() // 락 보유 전 캡처(upsertDevice 와 같은 규율).
+
+	// 새로 만든 것만 모아 락 밖에서 저장소 I/O 를 수행한다(REQ-FROZEN-B).
+	var created []string
+
+	a.devicesMu.Lock()
+	for _, entry := range entries {
+		devEui := entry.Address
+		if devEui == "" {
+			continue
+		}
+		if _, exists := a.devices[devEui]; exists {
+			continue // 이미 발견됨 — 실제 값을 덮지 않는다.
+		}
+		a.devices[devEui] = &deviceState{
+			devEui: devEui,
+			// 라벨은 업링크가 알려 준다. 그전까지는 devEui 를 그대로 보여 준다 —
+			// 빈 이름은 목록에서 식별할 수 없다.
+			deviceName: devEui,
+		}
+		created = append(created, devEui)
+	}
+	a.devicesMu.Unlock()
+
+	for _, devEui := range created {
+		// UID 발급/조회 — 업링크 경로와 같은 식별자를 쓰도록 맞춘다.
+		_ = agent.ResolveDeviceID(context.Background(), agentName, devEui)
+		if a.logger != nil {
+			a.logger.Info("chirpstack: 고정 설치 디바이스 등록", "devEui", devEui)
+		}
+	}
+}

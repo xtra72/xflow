@@ -97,7 +97,7 @@ export default function CreateDashboardDialog({ open, onClose }: CreateDashboard
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-(--color-bg-elevated) hover:text-gray-600 dark:hover:text-gray-300"
+            className="rounded-md p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
             aria-label={t('dashboard.createDashboard.closeAria')}
           >
             <X className="h-5 w-5" />

@@ -195,7 +195,7 @@ func (h *DeviceHandler) List(ctx api.Context) error {
 
 		// 레지스트리 메타데이터 병합 (사용자 정의 이름 등)
 		if meta, err := h.registry.GetMetadata(d.ID()); err == nil {
-			if meta.Name != "" || meta.Location != "" || len(meta.Tags) > 0 || meta.Group != "" || len(meta.Labels) > 0 || meta.Pinned != nil {
+			if hasMetadata(meta) {
 				resp.Metadata = &meta
 				if meta.Name != "" {
 					resp.Name = meta.Name
@@ -375,7 +375,7 @@ func (h *DeviceHandler) respondWithDeviceDetail(ctx api.Context, d device.Device
 	}
 
 	// 메타데이터가 비어 있지 않으면 설정
-	if meta.Name != "" || meta.Location != "" || len(meta.Tags) > 0 || meta.Group != "" || len(meta.Labels) > 0 || meta.Pinned != nil {
+	if hasMetadata(meta) {
 		resp.Metadata = &meta
 		// 메타데이터의 Name이 설정되면 응답의 name을 오버라이드
 		if meta.Name != "" {
@@ -475,6 +475,35 @@ func (h *DeviceHandler) Execute(ctx api.Context) error {
 
 // UpdateMetadata 는 디바이스 메타데이터를 업데이트한다.
 // PUT /devices/{id}/metadata
+// hasMetadata 는 응답에 실어 보낼 만한 메타데이터가 하나라도 있는지 본다.
+//
+// 세 곳(목록·상세·해석)이 같은 판정을 하므로 한곳에 둔다. 종전에는 같은 긴 조건식이
+// 세 벌 있어, 필드를 늘릴 때 한 곳만 고치면 그 화면에서만 메타데이터가 사라졌다.
+func hasMetadata(meta device.DeviceMetadata) bool {
+	return meta.Name != "" ||
+		meta.Location != "" ||
+		len(meta.Tags) > 0 ||
+		meta.Group != "" ||
+		len(meta.Labels) > 0 ||
+		meta.Pinned != nil ||
+		meta.StaleAfterSec != nil
+}
+
+// deviceLocalID 는 에이전트 내부 식별자를 얻는다.
+//
+// LocalID() 는 선택적 확장 인터페이스다. 없으면 Name() 으로 떨어진다 — 대부분의
+// 어댑터가 라벨과 내부 식별자를 같게 쓰므로 복원에 충분하고, 부팅 경로도 같은
+// 폴백을 쓴다(cmd/xflowd/main.go).
+func deviceLocalID(dev device.Device) string {
+	type localIDProvider interface{ LocalID() string }
+	if lp, ok := dev.(localIDProvider); ok {
+		if id := lp.LocalID(); id != "" {
+			return id
+		}
+	}
+	return dev.Name()
+}
+
 func (h *DeviceHandler) UpdateMetadata(ctx api.Context) error {
 	id := ctx.Param("id")
 	if id == "" {
@@ -484,6 +513,20 @@ func (h *DeviceHandler) UpdateMetadata(ctx api.Context) error {
 	var meta device.DeviceMetadata
 	if err := ctx.Bind(&meta); err != nil {
 		return err
+	}
+
+	// 소유 정보(에이전트 이름 · 로컬 식별자)를 함께 적는다.
+	//
+	// 고정 설치 디바이스를 재시작 후 **다시 발견되기 전에** 복원하려면 어느
+	// 에이전트의 어떤 로컬 ID 인지 알아야 한다. 그 정보는 디바이스가 살아 있는
+	// 지금만 알 수 있으므로 여기서 채운다(DeviceMetadata 주석 참조).
+	//
+	// 요청 본문의 값은 신뢰하지 않는다 — 레지스트리가 정본이다.
+	meta.AgentName = ""
+	meta.LocalID = ""
+	if dev, err := h.registry.Get(id); err == nil && dev != nil {
+		meta.AgentName = dev.AgentName()
+		meta.LocalID = deviceLocalID(dev)
 	}
 
 	// 레지스트리의 인메모리 메타데이터 업데이트
@@ -572,7 +615,7 @@ func deviceToResponse(d device.Device) DeviceResponse {
 		resp.ReportEnabled = rc.ReportEnabled()
 	}
 
-	if meta.Name != "" || meta.Location != "" || len(meta.Tags) > 0 || meta.Group != "" || len(meta.Labels) > 0 || meta.Pinned != nil {
+	if hasMetadata(meta) {
 		resp.Metadata = &meta
 	}
 

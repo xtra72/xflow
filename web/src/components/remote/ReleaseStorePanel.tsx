@@ -258,7 +258,7 @@ export function ReleaseStorePanel(): React.JSX.Element {
           data-testid="release-store-empty"
           className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) py-12 text-center"
         >
-          <Package className="mx-auto h-10 w-10 text-gray-300 dark:text-gray-600" aria-hidden="true" />
+          <Package className="mx-auto h-10 w-10 text-(--color-border-strong)" aria-hidden="true" />
           <p className="mt-3 text-sm text-(--color-text-muted)">
             {t('remote.releaseStore.empty')}
           </p>
@@ -469,7 +469,7 @@ function ArchSlot({
         onSuccess: () => {
           addNotification({
             type: 'success',
-            message: t('remote.releaseStore.uploaded.success').replace('{slot}', slot),
+            message: t('remote.releaseStore.assetUploaded').replace('{slot}', slot),
           });
           setBinary(null);
           setSignature(null);

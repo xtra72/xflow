@@ -36,7 +36,7 @@ interface MetadataChipsProps {
 const DATA_TYPE_COLOR: Record<DataType, string> = {
   int: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
   float: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-  string: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200',
+  string: 'bg-(--color-bg-sunken) text-(--color-text-primary)',
   boolean:
     'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
   bytes: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
@@ -101,7 +101,7 @@ export function MetadataChips({
       )}
       {showAutoBadge && registration === 'manual' && (
         <span
-          className={`${chipBase} border border-slate-400 bg-slate-50 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300`}
+          className={`${chipBase} border border-(--color-border-strong) bg-(--color-bg-secondary) text-(--color-text-secondary)`}
           data-testid="metadata-registration-manual"
           title={t('property.metadataChips.manualTitle')}
           aria-label={t('property.metadataChips.manualAria')}
