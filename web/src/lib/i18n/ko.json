@@ -1139,6 +1139,10 @@
       "legendResizeAria": "범례 크기 조절",
       "transformReset": "배치 초기화"
     },
+    "canvas": {
+      "emptyState": "구성된 요소가 없습니다",
+      "error": "데이터 조회 오류 — 다음 주기에 재시도합니다"
+    },
     "chart": {
       "channelNameError": "유효한 채널 이름이 아닙니다. 영문자로 시작하고 영숫자/하이픈/밑줄만 허용됩니다 (최대 64자).",
       "channelNameLabel": "채널 이름",

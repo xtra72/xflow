@@ -1139,6 +1139,10 @@
       "legendResizeAria": "Resize legend",
       "transformReset": "Reset placement"
     },
+    "canvas": {
+      "emptyState": "No elements configured",
+      "error": "Data fetch error — will retry next cycle"
+    },
     "chart": {
       "channelNameError": "Invalid channel name. Must start with a letter and contain only letters, digits, hyphens, or underscores (max 64 chars).",
       "channelNameLabel": "Channel name",
