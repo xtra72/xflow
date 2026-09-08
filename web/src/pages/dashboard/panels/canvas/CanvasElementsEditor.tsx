@@ -23,7 +23,7 @@
 //
 // @spec SPEC-CANVAS-001
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, ChevronUp, Plus, Trash2 } from 'lucide-react';
 
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
@@ -38,6 +38,7 @@ import {
   type SysmetricsSourceConfig,
   type TsdbSourceConfig,
 } from '../charts/chartChannelTypes';
+import { nextSelection } from '../charts/panelEditSelection';
 import { toStoreShapedConfig } from '../charts/useSysMetricsChartData';
 import {
   DEFAULT_BOX_GEOMETRY,
@@ -90,24 +91,58 @@ const EASING_LABEL_KEY: Record<TweenEasing, string> = {
   'ease-in-out': 'dashboard.canvas.elements.easingInOut',
 };
 
-/** rect · ellipse 의 기하 축. */
-const BOX_AXES = ['x', 'y', 'w', 'h'] as const;
-/** line 의 기하 축. */
+// --- 기하 축의 두 갈래: **위치**와 **크기** ------------------------------
+//
+// 한 덩어리로 늘어놓던 좌표 칸들을 두 묶음으로 가른다. 가르는 선은 새로 지어낸 것이
+// 아니라 `canvasEditGeometry.handlesFor` 가 이미 종류마다 다르게 그어 둔 그 선이다 —
+// 캔버스에서 **옮기는 손잡이**와 **크기를 바꾸는 손잡이**가 갈리는 자리와 목록에서
+// 칸이 갈리는 자리가 같아야, 두 화면이 같은 모델을 말한다.
+//
+// 종류마다 비대칭인 것이 요점이다:
+//   - rect · ellipse: 위치(x·y) + 크기(w·h).
+//   - line: 두 끝점뿐이다. **크기 묶음이 없다** — 선의 길이는 두 끝점에서 따라 나오는
+//     값이지 따로 저술하는 값이 아니다. 없는 묶음을 만들어 보이면 사용자는 그 칸을 찾다
+//     못 찾는다.
+//   - text: 기준점뿐이다. 문구의 "크기" 는 글자 크기이며 그것은 문구 스타일 묶음에 있다.
+//     여기에 빈 크기 묶음을 두면 글자 크기를 두 자리에서 찾게 된다.
+
+/** rect · ellipse 의 위치 축. */
+const BOX_POSITION_AXES = ['x', 'y'] as const;
+/** rect · ellipse 의 크기 축. */
+const BOX_SIZE_AXES = ['w', 'h'] as const;
+/** line 의 기하 축 — 전부 위치다(두 끝점). */
 const LINE_AXES = ['x1', 'y1', 'x2', 'y2'] as const;
-/** text 의 기하 축. */
+/** text 의 기하 축 — 기준점뿐이다. */
 const POINT_AXES = ['x', 'y'] as const;
 
-/** 입력 공통 클래스(규칙 표 행과 같은 치수). */
+/**
+ * 입력 공통 클래스(규칙 표 행과 같은 치수).
+ *
+ * 글자 크기는 주변 설정 화면의 기본값(`text-xs` = 12px)이다. 이 편집기만 11px 이하로
+ * 적혀 있어 같은 다이얼로그 안에서 유독 작게 보였다 — 옆 절(`ChartPanelSections`)은
+ * `text-xs` 를 기본으로 쓰고 9px 는 한 군데도 쓰지 않는다.
+ */
 const INPUT_CLASS =
   'min-w-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-0.5 ' +
-  'text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500';
+  'text-xs text-(--color-text-primary) outline-none focus:border-blue-500';
 
 /** 순서 이동·삭제 아이콘 버튼 공통 클래스. */
 const ICON_BUTTON_CLASS =
   'shrink-0 text-(--color-text-muted) hover:text-(--color-text-secondary) disabled:opacity-30';
 
-/** 소구획 제목 클래스. */
-const GROUP_LABEL_CLASS = 'shrink-0 text-[10px] font-medium text-(--color-text-muted)';
+/** 소구획 제목 클래스. 칸의 이름이므로 본문과 같은 크기다. */
+const GROUP_LABEL_CLASS = 'shrink-0 text-xs font-medium text-(--color-text-muted)';
+
+/** 안내문 클래스 — 본문보다 한 단계 작은 부차 문구다(9px 는 쓰지 않는다). */
+const HINT_CLASS = 'px-1 text-[11px] leading-tight text-(--color-text-muted)';
+
+/**
+ * 순번 배지. 11px 두 자리가 들어가야 하므로 `h-4 w-4`(16px) 로는 좁다 —
+ * 글자를 키우면 상자도 함께 키운다.
+ */
+const ORDER_BADGE_CLASS =
+  'flex h-5 min-w-5 shrink-0 items-center justify-center rounded px-0.5 ' +
+  'bg-(--color-bg-elevated) text-[11px] tabular-nums text-(--color-text-muted)';
 
 // --- 타입 ---------------------------------------------------------------
 
@@ -383,7 +418,7 @@ function GeometryInput({
 }) {
   return (
     <label className="flex min-w-0 flex-1 items-center gap-1">
-      <span className="shrink-0 text-[10px] text-(--color-text-muted)">{axis}</span>
+      <span className="shrink-0 text-[11px] text-(--color-text-muted)">{axis}</span>
       <input
         type="number"
         step="any"
@@ -394,6 +429,29 @@ function GeometryInput({
         className={cn(INPUT_CLASS, 'w-full text-center tabular-nums')}
       />
     </label>
+  );
+}
+
+/**
+ * 이름 붙은 칸 묶음 하나.
+ *
+ * 위치·크기·도형 스타일·문구 스타일이 모두 같은 형상을 쓰므로 한 곳에 둔다 — 묶음마다
+ * 제목 span 과 flex 클래스를 되풀이하면 어느 묶음이 왜 다른 간격을 갖는지 알 수 없게 된다.
+ */
+function FieldGroup({
+  label,
+  testId,
+  children,
+}: {
+  label: string;
+  testId: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" data-testid={testId}>
+      <span className={GROUP_LABEL_CLASS}>{label}</span>
+      {children}
+    </div>
   );
 }
 
@@ -438,7 +496,7 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
   // 편집기만 단독으로 뜨는 자리(테스트·다이얼로그 밖)에서는 캔버스 선택이 없다. 그때
   // `useCanvasEditSelection` 은 로컬 선택으로 떨어지고 `autoExpandedId` 는 언제나 `null`
   // 이라, 아래 배선 전체가 조용히 무동작이 된다(canvasEditContext.tsx 의 계약).
-  const { selection, autoExpandedId } = useCanvasEditSelection();
+  const { selection, setSelection, autoExpandedId } = useCanvasEditSelection();
 
   /**
    * **캔버스가 펼친 행** 하나. `expandedIds` 와 **따로** 든다 — 그래야 캔버스는 자기가
@@ -468,6 +526,23 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
   /** 행이 펼쳐져 있는가 — 손으로 펼쳤거나(집합) 캔버스가 펼쳤거나(한 개) 둘 중 하나다. */
   const isExpanded = (id: string): boolean => expandedIds.has(id) || id === canvasExpandedId;
 
+  /**
+   * 행 머리줄을 눌렀을 때 — 펼침을 뒤집고, **펼치는 방향에서만** 그 요소를 고른다.
+   *
+   * 반대 방향(T10 은 캔버스 → 목록이었다)의 배선이 여기 한 줄이다. 같은 공유 컨텍스트를
+   * 쓰므로 오버레이의 윤곽선·손잡이가 곧바로 그 요소로 옮겨 간다 — 선택의 출처가 둘이
+   * 되면 "캔버스에서 고른 것" 과 "목록에서 고른 것" 이 서로 다른 것을 가리킬 수 있다.
+   *
+   * **왜 접는 방향에서는 고르지 않는가.** `autoExpandedId` 는 선택에서 **파생**된다
+   * (`canvasEditContext.canvasAutoExpandedId`). 접으면서도 고르면 그 선택이 곧바로 같은
+   * 행을 도로 펼치므로, 접기 단추가 접지 못하는 단추가 된다. 즉 "접으면서 고른다" 는
+   * 파생 관계와 모순이다. 그리고 뜻으로 보아도 사용자가 요청한 것은 **"요소 설정을
+   * 열면 그 요소가 골라진다"** 이지 "닫아도 골라진다" 가 아니다.
+   *
+   * 고르기는 오버레이와 **같은 규칙**(`nextSelection`)을 지난다. 이미 골라져 있으면 그
+   * 함수가 **같은 참조**를 돌려주므로 `setSelection` 이 상태를 갈지 않고, 그래서 이
+   * 되먹임 변이 다시 렌더를 부르지 않는다(진동 없음의 근거 절반이 이 한 줄이다).
+   */
   const toggleExpanded = (id: string): void => {
     const open = isExpanded(id);
     setExpandedIds((prev) => {
@@ -479,6 +554,10 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
     // 캔버스가 펼친 행을 손으로 접을 때는 그 자동 펼침도 함께 회수한다 — 회수하지 않으면
     // 파생 조건이 그대로 남아 도로 펼쳐지고, 사용자는 접을 방법이 없는 행을 갖게 된다.
     if (open && id === canvasExpandedId) setCanvasExpandedId(null);
+    if (!open) {
+      const picked = nextSelection(selection, id, false);
+      if (picked !== selection) setSelection(picked);
+    }
   };
 
   const emit = (next: CanvasElement[]): void => onConfigChange({ elements: next });
@@ -590,12 +669,12 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
       </div>
 
       {/* 001 의 z-order 는 배열 순서 하나뿐이다 — 그 사실을 화면에 적는다. */}
-      <p className="px-1 text-[10px] leading-tight text-(--color-text-muted)">
+      <p className={HINT_CLASS}>
         {t('dashboard.canvas.elements.orderHint')}
       </p>
 
       {elements.length === 0 ? (
-        <p className="px-1 text-[10px] text-(--color-text-muted)" data-testid="canvas-element-empty">
+        <p className={HINT_CLASS} data-testid="canvas-element-empty">
           {t('dashboard.canvas.elements.empty')}
         </p>
       ) : (
@@ -627,7 +706,7 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                 {/* 1행: 순번 · 종류 · 순서 이동 · 삭제 */}
                 <div className="flex w-full items-center gap-1.5">
                   <span
-                    className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-(--color-bg-elevated) text-[9px] tabular-nums text-(--color-text-muted)"
+                    className={ORDER_BADGE_CLASS}
                     data-testid={`canvas-element-order-${idx}`}
                   >
                     {idx + 1}
@@ -647,15 +726,16 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                     ))}
                   </select>
 
-                  {/* 접기 토글. 1행(순번 · 종류 · 순서 · 삭제)은 접혀도 남는다 —
-                      훑기·순서 조작·삭제는 펼치지 않고도 되어야 하는 일이다. */}
+                  {/* 접기 토글 겸 **고르기**. 1행(순번 · 종류 · 순서 · 삭제)은 접혀도
+                      남는다 — 훑기·순서 조작·삭제는 펼치지 않고도 되어야 하는 일이다.
+                      펼치는 방향에서만 고른다(위 `toggleExpanded` 주석). */}
                   <button
                     type="button"
                     onClick={() => toggleExpanded(el.id)}
                     aria-expanded={open}
                     aria-label={withIndex(t('dashboard.canvas.elements.detailsAria'), idx)}
                     data-testid={`canvas-element-toggle-${idx}`}
-                    className="flex min-w-0 flex-1 items-center gap-1 rounded text-left text-[10px] text-(--color-text-muted) hover:text-(--color-text-secondary)"
+                    className="flex min-w-0 flex-1 items-center gap-1 rounded text-left text-xs text-(--color-text-muted) hover:text-(--color-text-secondary)"
                   >
                     {open ? (
                       <ChevronDown className="h-3 w-3 shrink-0" />
@@ -700,71 +780,116 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                     되는데, 그 벽에서는 고치려는 칸을 찾는 것부터가 일이다. */}
                 {open && (
                   <>
-                  {/* 2행: 기하. 종류마다 요구하는 칸이 다르므로 종류별로 갈라 그린다 —
-                      합집합을 하나의 map 으로 접으면 `kind` 와 `geometry` 의 짝을 컴파일러가
-                      확인하지 못한다. 좌표는 정규화(0..1)이며 라벨로 그 사실을 알린다. */}
-                  <div className="flex w-full flex-wrap items-center gap-1.5">
-                    <span className={GROUP_LABEL_CLASS}>
-                      {t('dashboard.canvas.elements.geometryLabel')}
-                    </span>
-                    {(el.kind === 'rect' || el.kind === 'ellipse') &&
-                      BOX_AXES.map((axis) => (
-                        <GeometryInput
-                          key={axis}
-                          axis={axis}
-                          value={el.geometry[axis]}
-                          onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
-                          ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
-                          testId={`canvas-element-geo-${axis}-${idx}`}
-                        />
-                      ))}
-                    {el.kind === 'line' &&
-                      LINE_AXES.map((axis) => (
-                        <GeometryInput
-                          key={axis}
-                          axis={axis}
-                          value={el.geometry[axis]}
-                          onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
-                          ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
-                          testId={`canvas-element-geo-${axis}-${idx}`}
-                        />
-                      ))}
-                    {el.kind === 'text' &&
-                      POINT_AXES.map((axis) => (
-                        <GeometryInput
-                          key={axis}
-                          axis={axis}
-                          value={el.geometry[axis]}
-                          onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
-                          ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
-                          testId={`canvas-element-geo-${axis}-${idx}`}
-                        />
-                      ))}
+                  {/* 2행: 기하 — **위치**와 **크기**로 갈라 그린다. 종류마다 요구하는 칸이
+                      다르므로 종류별로 갈라 그린다(합집합을 하나의 map 으로 접으면 `kind` 와
+                      `geometry` 의 짝을 컴파일러가 확인하지 못한다). 좌표는 정규화(0..1)이며
+                      그 사실은 아래 안내 한 줄이 말한다 — 묶음 제목마다 되풀이하면 제목이
+                      길어져 정작 "위치" 와 "크기" 가 눈에 들어오지 않는다. */}
+                  <div className="flex w-full flex-wrap items-start gap-x-3 gap-y-1.5">
+                    {(el.kind === 'rect' || el.kind === 'ellipse') && (
+                      <>
+                        <FieldGroup
+                          label={t('dashboard.canvas.elements.positionLabel')}
+                          testId={`canvas-element-position-${idx}`}
+                        >
+                          {BOX_POSITION_AXES.map((axis) => (
+                            <GeometryInput
+                              key={axis}
+                              axis={axis}
+                              value={el.geometry[axis]}
+                              onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
+                              ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
+                              testId={`canvas-element-geo-${axis}-${idx}`}
+                            />
+                          ))}
+                        </FieldGroup>
+                        <FieldGroup
+                          label={t('dashboard.canvas.elements.sizeLabel')}
+                          testId={`canvas-element-size-${idx}`}
+                        >
+                          {BOX_SIZE_AXES.map((axis) => (
+                            <GeometryInput
+                              key={axis}
+                              axis={axis}
+                              value={el.geometry[axis]}
+                              onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
+                              ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
+                              testId={`canvas-element-geo-${axis}-${idx}`}
+                            />
+                          ))}
+                        </FieldGroup>
+                      </>
+                    )}
+                    {/* 선은 두 끝점이 전부다 — 크기 묶음을 만들지 않는다(위 축 상수 주석). */}
+                    {el.kind === 'line' && (
+                      <FieldGroup
+                        label={t('dashboard.canvas.elements.endpointsLabel')}
+                        testId={`canvas-element-position-${idx}`}
+                      >
+                        {LINE_AXES.map((axis) => (
+                          <GeometryInput
+                            key={axis}
+                            axis={axis}
+                            value={el.geometry[axis]}
+                            onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
+                            ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
+                            testId={`canvas-element-geo-${axis}-${idx}`}
+                          />
+                        ))}
+                      </FieldGroup>
+                    )}
+                    {/* 문구의 크기는 글자 크기이며 문구 스타일 묶음에 있다. */}
+                    {el.kind === 'text' && (
+                      <FieldGroup
+                        label={t('dashboard.canvas.elements.positionLabel')}
+                        testId={`canvas-element-position-${idx}`}
+                      >
+                        {POINT_AXES.map((axis) => (
+                          <GeometryInput
+                            key={axis}
+                            axis={axis}
+                            value={el.geometry[axis]}
+                            onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
+                            ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
+                            testId={`canvas-element-geo-${axis}-${idx}`}
+                          />
+                        ))}
+                      </FieldGroup>
+                    )}
                   </div>
+                  <p className={HINT_CLASS} data-testid={`canvas-element-coord-help-${idx}`}>
+                    {t('dashboard.canvas.elements.coordHint')}
+                  </p>
 
-                  {/* 3행: 기본 스타일. 비운 칸은 미지정이며 렌더측 기본을 따른다. */}
-                  <div className="flex w-full flex-wrap items-center gap-1.5">
+                  {/* 3행: **도형 스타일**. 비운 칸은 미지정이며 렌더측 기본을 따른다.
+                      `visible` 은 도형만이 아니라 요소 전체를 끄는 스위치지만, 이 묶음이
+                      요소 자체를 다루는 자리이므로 여기 둔다(문구만 숨기는 축은 없다). */}
+                  <div
+                    className="flex w-full flex-wrap items-center gap-1.5"
+                    data-testid={`canvas-element-shape-style-${idx}`}
+                  >
                     <span className={GROUP_LABEL_CLASS}>
-                      {t('dashboard.canvas.elements.styleLabel')}
+                      {t('dashboard.canvas.elements.shapeStyleLabel')}
                     </span>
 
-                    <ColorSwatchButton
-                      color={el.style.fill}
-                      onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'fill', c) })}
-                      ariaLabel={withIndex(t('dashboard.canvas.elements.fillAria'), idx)}
-                      testId={`canvas-element-fill-${idx}`}
-                    />
+                    {/* `fill` 의 자리는 **종류를 따른다.** 도형에서는 도형의 색이고,
+                        `kind:'text'` 에서는 칠할 도형이 없어 렌더 층이 이 값을 글자색의
+                        폴백으로 읽는다(`drawElement`: `textColor ?? fill`). 그래서 문구
+                        요소에서는 이 칸이 아래 문구 스타일 묶음에 선다 — 없는 도형의 색을
+                        "도형 스타일" 이라 부르면 화면이 거짓말을 한다. */}
+                    {el.kind !== 'text' && (
+                      <ColorSwatchButton
+                        color={el.style.fill}
+                        onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'fill', c) })}
+                        ariaLabel={withIndex(t('dashboard.canvas.elements.fillAria'), idx)}
+                        testId={`canvas-element-fill-${idx}`}
+                      />
+                    )}
                     <ColorSwatchButton
                       color={el.style.stroke}
                       onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'stroke', c) })}
                       ariaLabel={withIndex(t('dashboard.canvas.elements.strokeAria'), idx)}
                       testId={`canvas-element-stroke-${idx}`}
-                    />
-                    <ColorSwatchButton
-                      color={el.style.textColor}
-                      onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'textColor', c) })}
-                      ariaLabel={withIndex(t('dashboard.canvas.elements.textColorAria'), idx)}
-                      testId={`canvas-element-text-color-${idx}`}
                     />
 
                     <input
@@ -804,6 +929,59 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                       data-testid={`canvas-element-opacity-${idx}`}
                       className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
                     />
+
+                    {/* 표시 여부는 3지 선택이다 — 체크박스로는 "미지정"과 "숨김"을 구분할 수
+                        없고, 그 둘은 뜻이 다르다(규칙 표의 같은 컨트롤과 동일한 판단). */}
+                    <select
+                      value={el.style.visible === undefined ? '' : el.style.visible ? 'show' : 'hide'}
+                      onChange={(e) =>
+                        replaceAt(idx, {
+                          ...el,
+                          style: setStyleField(
+                            el.style,
+                            'visible',
+                            e.target.value === '' ? undefined : e.target.value === 'show',
+                          ),
+                        })
+                      }
+                      aria-label={withIndex(t('dashboard.canvas.elements.visibleAria'), idx)}
+                      data-testid={`canvas-element-visible-${idx}`}
+                      className={cn(INPUT_CLASS, 'shrink-0')}
+                    >
+                      <option value="">{t('dashboard.canvas.elements.unset')}</option>
+                      <option value="show">{t('dashboard.canvas.elements.visibleShow')}</option>
+                      <option value="hide">{t('dashboard.canvas.elements.visibleHide')}</option>
+                    </select>
+                  </div>
+
+                  {/* 4행: **문구 스타일**. 도형의 라벨이든 `kind:'text'` 요소든 글자에
+                      걸리는 축만 모은다 — 색·두께·불투명도와 섞여 있던 동안에는 "글자 크기"
+                      가 "선 두께" 옆에 서 있어 어느 것이 무엇에 걸리는지 읽히지 않았다. */}
+                  <div
+                    className="flex w-full flex-wrap items-center gap-1.5"
+                    data-testid={`canvas-element-text-style-${idx}`}
+                  >
+                    <span className={GROUP_LABEL_CLASS}>
+                      {t('dashboard.canvas.elements.textStyleLabel')}
+                    </span>
+
+                    <ColorSwatchButton
+                      color={el.style.textColor}
+                      onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'textColor', c) })}
+                      ariaLabel={withIndex(t('dashboard.canvas.elements.textColorAria'), idx)}
+                      testId={`canvas-element-text-color-${idx}`}
+                    />
+                    {/* 문구 요소의 `fill` 은 글자색 폴백이다 — 그래서 글자색 **바로 옆**에
+                        선다(위 도형 스타일 묶음의 주석 참조). */}
+                    {el.kind === 'text' && (
+                      <ColorSwatchButton
+                        color={el.style.fill}
+                        onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'fill', c) })}
+                        ariaLabel={withIndex(t('dashboard.canvas.elements.fillAria'), idx)}
+                        testId={`canvas-element-fill-${idx}`}
+                      />
+                    )}
+
                     <input
                       type="number"
                       step="any"
@@ -867,33 +1045,20 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                       <option value="center">{t('dashboard.canvas.elements.alignCenter')}</option>
                       <option value="right">{t('dashboard.canvas.elements.alignRight')}</option>
                     </select>
-
-                    {/* 표시 여부는 3지 선택이다 — 체크박스로는 "미지정"과 "숨김"을 구분할 수
-                        없고, 그 둘은 뜻이 다르다(규칙 표의 같은 컨트롤과 동일한 판단). */}
-                    <select
-                      value={el.style.visible === undefined ? '' : el.style.visible ? 'show' : 'hide'}
-                      onChange={(e) =>
-                        replaceAt(idx, {
-                          ...el,
-                          style: setStyleField(
-                            el.style,
-                            'visible',
-                            e.target.value === '' ? undefined : e.target.value === 'show',
-                          ),
-                        })
-                      }
-                      aria-label={withIndex(t('dashboard.canvas.elements.visibleAria'), idx)}
-                      data-testid={`canvas-element-visible-${idx}`}
-                      className={cn(INPUT_CLASS, 'shrink-0')}
-                    >
-                      <option value="">{t('dashboard.canvas.elements.unset')}</option>
-                      <option value="show">{t('dashboard.canvas.elements.visibleShow')}</option>
-                      <option value="hide">{t('dashboard.canvas.elements.visibleHide')}</option>
-                    </select>
                   </div>
+                  {/* 두 갈래를 **화면에 적는다.** 렌더 층의 규칙이 종류마다 다르고
+                      (`drawElement`: 문구는 `textColor ?? fill`, 도형 라벨은 `textColor` 만),
+                      게다가 도형에 문구를 처음 적는 순간 `canvasElementFactory` 가 글자색을
+                      대신 심는다. 적어 두지 않으면 사용자는 "고르지도 않은 색이 들어와 있다"
+                      를 결함으로 읽는다 — 그것은 라벨이 실제로 칠해지게 하는 값이다. */}
+                  <p className={HINT_CLASS} data-testid={`canvas-element-text-style-help-${idx}`}>
+                    {el.kind === 'text'
+                      ? t('dashboard.canvas.elements.textStyleHintText')
+                      : t('dashboard.canvas.elements.textStyleHintShape')}
+                  </p>
 
-                  {/* 4행: 문구 템플릿 · 소수 자리 · 단위. 토큰 3종을 옆에 적어 사용자가
-                      명세를 찾아보지 않아도 되게 한다. */}
+                  {/* 5행: 문구 내용(템플릿 · 소수 자리 · 단위). 토큰 3종을 옆에 적어
+                      사용자가 명세를 찾아보지 않아도 되게 한다. */}
                   <div className="flex w-full flex-wrap items-center gap-1.5">
                     <span className={GROUP_LABEL_CLASS}>
                       {t('dashboard.canvas.elements.textLabel')}
@@ -940,7 +1105,7 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                     />
                   </div>
                   <p
-                    className="px-1 text-[10px] leading-tight text-(--color-text-muted)"
+                    className={HINT_CLASS}
                     data-testid={`canvas-element-token-help-${idx}`}
                   >
                     {t('dashboard.canvas.elements.tokenHelp')}
@@ -983,7 +1148,7 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                         그대로다. */}
                     {bindingOptions.length === 0 && (
                       <p
-                        className="w-full px-1 text-[10px] leading-tight text-(--color-text-muted)"
+                        className={cn(HINT_CLASS, 'w-full')}
                         data-testid={`canvas-element-binding-hint-${idx}`}
                       >
                         {t('dashboard.canvas.elements.bindingNoSeries')}
@@ -1064,7 +1229,7 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
             key={k}
             type="button"
             onClick={() => addElement(k)}
-            className="rounded border border-(--color-border-default) px-1.5 py-0.5 text-[11px] font-medium text-blue-500 hover:text-blue-600"
+            className="rounded border border-(--color-border-default) px-1.5 py-0.5 text-xs font-medium text-blue-500 hover:text-blue-600"
             data-testid={`canvas-element-add-${k}`}
           >
             {t(KIND_LABEL_KEY[k])}

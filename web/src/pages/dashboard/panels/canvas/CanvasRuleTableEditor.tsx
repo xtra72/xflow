@@ -54,11 +54,24 @@ const NEW_ROW: RuleRow = { op: 'gt', value: 0, patch: {} };
 /** 입력 공통 클래스(기존 임계값 행과 같은 치수). */
 const INPUT_CLASS =
   'min-w-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1 py-0.5 ' +
-  'text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500 disabled:opacity-50';
+  'text-xs text-(--color-text-primary) outline-none focus:border-blue-500 disabled:opacity-50';
 
 /** 순서 이동·삭제 아이콘 버튼 공통 클래스. */
 const ICON_BUTTON_CLASS =
   'shrink-0 text-(--color-text-muted) hover:text-(--color-text-secondary) disabled:opacity-30';
+
+/**
+ * 안내문 클래스 — 본문(`text-xs`)보다 한 단계 작은 부차 문구다.
+ *
+ * 9px 는 쓰지 않는다. 이 표와 요소 편집기만 9~10px 로 적혀 있어 같은 다이얼로그 안에서
+ * 유독 작게 보였고, 주변 설정 절(`ChartPanelSections`)에는 9px 가 한 군데도 없다.
+ */
+const HINT_CLASS = 'px-1 text-[11px] leading-tight text-(--color-text-muted)';
+
+/** 순번 배지. 11px 두 자리가 들어가야 하므로 `h-4 w-4`(16px) 로는 좁다. */
+const ORDER_BADGE_CLASS =
+  'flex h-5 min-w-5 shrink-0 items-center justify-center rounded px-0.5 ' +
+  'bg-(--color-bg-elevated) text-[11px] tabular-nums text-(--color-text-muted)';
 
 export interface CanvasRuleTableEditorProps {
   /** 편집 대상 규칙 표. 미지정과 빈 표는 같은 상태다(파서가 빈 표를 미지정으로 접는다). */
@@ -255,12 +268,12 @@ export default function CanvasRuleTableEditor({
   return (
     <div className="space-y-2" data-testid="canvas-rule-table">
       {/* 이 표에서 새로 배우는 개념은 이 한 줄뿐이다. */}
-      <p className="px-1 text-[10px] leading-tight text-(--color-text-muted)">
+      <p className={HINT_CLASS}>
         {t('dashboard.canvas.rules.firstMatchWins')}
       </p>
 
       {/* 열 이름 — 명세의 `[조건] → [패치]` 표기를 그대로 화면에 옮긴다. */}
-      <div className="flex items-center gap-1 px-1 text-[10px] font-medium text-(--color-text-muted)">
+      <div className="flex items-center gap-1 px-1 text-xs font-medium text-(--color-text-muted)">
         <span>{t('dashboard.canvas.rules.headerCondition')}</span>
         <span aria-hidden="true">→</span>
         <span>{t('dashboard.canvas.rules.headerPatch')}</span>
@@ -268,7 +281,7 @@ export default function CanvasRuleTableEditor({
 
       {disabled && (
         <p
-          className="rounded border border-(--color-border-default) px-2 py-1 text-[10px] leading-tight text-(--color-text-muted)"
+          className="rounded border border-(--color-border-default) px-2 py-1 text-[11px] leading-tight text-(--color-text-muted)"
           data-testid="canvas-rule-disabled-hint"
         >
           {t('dashboard.canvas.rules.disabledHint')}
@@ -276,7 +289,7 @@ export default function CanvasRuleTableEditor({
       )}
 
       {rows.length === 0 ? (
-        <p className="px-1 text-[10px] text-(--color-text-muted)" data-testid="canvas-rule-empty">
+        <p className={cn(HINT_CLASS, 'leading-normal')} data-testid="canvas-rule-empty">
           {t('dashboard.canvas.rules.empty')}
         </p>
       ) : (
@@ -306,7 +319,7 @@ export default function CanvasRuleTableEditor({
                 {/* 1행: 순번 · 조건 · 일치 표시 · 순서/삭제 */}
                 <div className="flex w-full items-center gap-1.5">
                   <span
-                    className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-(--color-bg-elevated) text-[9px] tabular-nums text-(--color-text-muted)"
+                    className={ORDER_BADGE_CLASS}
                     data-testid={`canvas-rule-order-${idx}`}
                   >
                     {idx + 1}
@@ -351,7 +364,7 @@ export default function CanvasRuleTableEditor({
                       data-testid={`canvas-rule-value-low-${idx}`}
                         className={cn(INPUT_CLASS, 'flex-1 text-center tabular-nums')}
                       />
-                      <span className="shrink-0 text-[10px] text-(--color-text-muted)">~</span>
+                      <span className="shrink-0 text-[11px] text-(--color-text-muted)">~</span>
                       <input
                         type="number"
                         step="any"
@@ -369,7 +382,7 @@ export default function CanvasRuleTableEditor({
 
                   {isWinner && (
                     <span
-                      className="shrink-0 rounded bg-blue-600 px-1 py-px text-[9px] font-medium text-white"
+                      className="shrink-0 rounded bg-blue-600 px-1 py-px text-[11px] font-medium text-white"
                       data-testid={`canvas-rule-badge-${idx}`}
                     >
                       {t('dashboard.canvas.rules.matchWinner')}
@@ -377,7 +390,7 @@ export default function CanvasRuleTableEditor({
                   )}
                   {isSuperseded && (
                     <span
-                      className="shrink-0 rounded bg-(--color-bg-elevated) px-1 py-px text-[9px] font-medium text-(--color-text-muted) line-through"
+                      className="shrink-0 rounded bg-(--color-bg-elevated) px-1 py-px text-[11px] font-medium text-(--color-text-muted) line-through"
                       title={t('dashboard.canvas.rules.matchSupersededHint')}
                       data-testid={`canvas-rule-badge-${idx}`}
                     >
@@ -419,7 +432,7 @@ export default function CanvasRuleTableEditor({
 
                 {/* 2행: 패치. 비운 칸은 패치하지 않는다(= 기본 스타일 유지). */}
                 <div className="flex w-full flex-wrap items-center gap-1.5 pl-5">
-                  <span aria-hidden="true" className="shrink-0 text-[10px] text-(--color-text-muted)">
+                  <span aria-hidden="true" className="shrink-0 text-[11px] text-(--color-text-muted)">
                     →
                   </span>
 
@@ -547,7 +560,7 @@ export default function CanvasRuleTableEditor({
         type="button"
         onClick={addRow}
         disabled={disabled}
-        className="flex items-center gap-1 px-1 text-[11px] font-medium text-blue-500 hover:text-blue-600 disabled:opacity-30"
+        className="flex items-center gap-1 px-1 text-xs font-medium text-blue-500 hover:text-blue-600 disabled:opacity-30"
         data-testid="canvas-rule-add"
       >
         <Plus className="h-3 w-3" />

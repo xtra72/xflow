@@ -42,7 +42,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { useState } from 'react';
+import { Profiler, useState } from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
@@ -57,6 +57,7 @@ import type { StageSize } from './canvasGeometry';
 import { renderTextTemplate } from './canvasText';
 import { drawElements, type DrawContext2D } from './drawElement';
 import { SEED_COLOR, SEED_STROKE_WIDTH, SEED_TEXT_COLOR } from './canvasElementFactory';
+import CanvasEditOverlay from './CanvasEditOverlay';
 import CanvasElementsEditor from './CanvasElementsEditor';
 import {
   CanvasEditSelectionContext,
@@ -1650,5 +1651,310 @@ describe('CanvasElementsEditor — 살아 있는 시리즈가 config 추측을 �
     expect(testid('canvas-element-binding-hint-0').textContent).toBe(
       'dashboard.canvas.elements.bindingNoSeries',
     );
+  });
+});
+
+// --- 목록 행 → 캔버스 선택 (역방향 배선) -----------------------------------
+//
+// T10 이 놓은 변은 **캔버스 → 목록** 한 방향뿐이었다. 사용 시험이 되돌려 보낸 요구는 그
+// 반대다: "요소 설정 클릭시 해당 컴포넌트 선택". 두 변이 같은 공유 컨텍스트를 지나므로
+// 여기서 재는 것은 셋이다.
+//   1. 행을 펼치면 **그 요소가 실제로 골라진다**(그리고 오버레이가 그것을 본다).
+//   2. T10 의 자동 펼침 규칙 넷이 그대로 남는다 — 이미 있던 시험들이 그 몫을 지고 있으므로
+//      여기서는 되풀이하지 않고, 새 변이 그 시험들을 깨지 않는 것으로 확인한다.
+//   3. **진동이 없다.** 역방향 변(행 → 선택)이 순방향 변(선택 → 자동 펼침)을 도로 깨워
+//      다시 선택을 부르는 고리가 생기면 렌더가 멎지 않는다. 커밋 수를 세는 것이 그 사실을
+//      말하는 정직한 방법이다.
+
+/** 목록 편집기와 **진짜 오버레이**를 한 provider 아래 함께 세운다. */
+function ListAndOverlay({ elements }: { elements: CanvasElement[] }) {
+  const state = useCanvasEditSelectionState();
+  return (
+    <CanvasEditSelectionContext value={state}>
+      <CanvasEditOverlay
+        enabled
+        elements={elements}
+        stage={{ width: 200, height: 100 }}
+        textWidths={{}}
+        onElementsChange={() => {}}
+      />
+      <CanvasElementsEditor config={cfg(elements)} onConfigChange={() => {}} />
+    </CanvasEditSelectionContext>
+  );
+}
+
+describe('CanvasElementsEditor — 목록 행을 누르면 그 요소가 골라진다', () => {
+  it('행을 펼치면 그 행이 선택 표시를 얻는다', () => {
+    renderThree();
+    expect(testid('canvas-element-0').getAttribute('data-selected')).toBeNull();
+
+    fireEvent.click(testid('canvas-element-toggle-0'));
+
+    expect(testid('canvas-element-0').getAttribute('data-selected')).toBe('true');
+    expect(testid('canvas-element-1').getAttribute('data-selected')).toBeNull();
+  });
+
+  it('다음 행을 펼치면 선택이 그쪽으로 옮겨 간다 (단일 선택)', () => {
+    renderThree();
+    fireEvent.click(testid('canvas-element-toggle-0'));
+    fireEvent.click(testid('canvas-element-toggle-1'));
+
+    expect(testid('canvas-element-0').getAttribute('data-selected')).toBeNull();
+    expect(testid('canvas-element-1').getAttribute('data-selected')).toBe('true');
+  });
+
+  it('오버레이가 그 선택을 본다 — 같은 컨텍스트 하나를 지난다', () => {
+    // 목록과 캔버스가 각자 선택을 들면 "목록에서 고른 것" 과 "캔버스에서 고른 것" 이
+    // 서로 다른 것을 가리킬 수 있다. 진짜 오버레이를 세워 그 한 벌임을 잰다.
+    render(<ListAndOverlay elements={[rect({ id: 'a' }), rect({ id: 'b' })]} />);
+    expect(screen.queryByTestId('canvas-selection-a')).toBeNull();
+
+    fireEvent.click(testid('canvas-element-toggle-0'));
+
+    expect(screen.getByTestId('canvas-selection-a')).toBeTruthy();
+    expect(screen.queryByTestId('canvas-selection-b')).toBeNull();
+    // 단일 선택이므로 오버레이의 손잡이도 그 요소에 붙는다(모서리 하나만 확인한다).
+    expect(screen.getByTestId('canvas-handle-nw')).toBeTruthy();
+  });
+
+  it('접는 방향에서는 고르지 않는다 — 골랐다면 그 선택이 행을 도로 펼친다', () => {
+    // `autoExpandedId` 는 선택에서 **파생**되므로(canvasEditContext), "접으면서 고른다" 는
+    // 자기모순이다: 접기 단추가 접지 못하는 단추가 된다.
+    renderThree();
+    fireEvent.click(testid('canvas-element-toggle-0')); // 펼침 + 고름
+    expect(isRowOpen(0)).toBe(true);
+
+    fireEvent.click(testid('canvas-element-toggle-0')); // 접힘
+    expect(isRowOpen(0)).toBe(false);
+    // 선택은 남는다 — 접기가 캔버스의 손잡이까지 걷어 가지는 않는다.
+    expect(testid('canvas-element-0').getAttribute('data-selected')).toBe('true');
+  });
+
+  it('provider 가 없어도 죽지 않는다 — 로컬 선택으로 떨어진다', () => {
+    setup(cfg([rect({ id: 'a' })]), { expand: false });
+
+    fireEvent.click(testid('canvas-element-toggle-0'));
+
+    expect(isRowOpen(0)).toBe(true);
+    expect(testid('canvas-element-0').getAttribute('data-selected')).toBe('true');
+  });
+});
+
+// --- 진동 없음 (역방향 변이 순방향 변을 되깨우지 않는다) --------------------
+
+/**
+ * 커밋 횟수를 세면서 목록을 그린다.
+ *
+ * `Profiler` 는 이 부분 트리가 **실제로 커밋된 횟수**를 센다. 고리가 생겼다면 둘 중
+ * 하나가 일어난다: React 가 "Maximum update depth exceeded" 로 던지거나(그러면 시험이
+ * 그 자리에서 실패한다), 커밋 수가 상한 없이 늘어난다. 그래서 "클릭 한 번에 커밋 N회
+ * 이하" 는 진동이 없다는 말을 재는 정직한 방식이다 — `fireEvent` 가 돌아온 시점에는
+ * React 가 효과까지 모두 흘려보낸 뒤다.
+ */
+function renderCounted(elements: CanvasElement[]): { commits: () => number } {
+  let count = 0;
+  function Counted() {
+    const state = useCanvasEditSelectionState();
+    return (
+      <CanvasEditSelectionContext value={state}>
+        <Profiler id="editor" onRender={() => { count += 1; }}>
+          <CanvasElementsEditor config={cfg(elements)} onConfigChange={() => {}} />
+        </Profiler>
+      </CanvasEditSelectionContext>
+    );
+  }
+  render(<Counted />);
+  return { commits: () => count };
+}
+
+describe('CanvasElementsEditor — 역방향 배선에 진동이 없다', () => {
+  it('행을 펼쳐 고르는 한 번의 조작이 정해진 횟수 안에 가라앉는다', () => {
+    const { commits } = renderCounted([rect({ id: 'a' }), rect({ id: 'b' })]);
+    const base = commits();
+
+    fireEvent.click(testid('canvas-element-toggle-0'));
+
+    // 실제로는 둘이다: (1) 펼침 집합 + 선택이 함께 배치된 커밋, (2) `autoExpandedId` 를
+    // 본 효과가 `canvasExpandedId` 를 옮긴 커밋. 고리가 있었다면 여기서 멎지 않는다.
+    const afterFirst = commits() - base;
+    expect(afterFirst).toBeGreaterThan(0);
+    expect(afterFirst).toBeLessThanOrEqual(3);
+  });
+
+  it('이미 골라진 행을 다시 펼쳐도 선택 상태는 갈리지 않는다 (같은 참조를 돌려받는다)', () => {
+    // `nextSelection` 이 이미 골라진 것에 대해 **같은 Set** 을 돌려주므로 provider 의
+    // 상태가 바뀌지 않고, 따라서 순방향 변이 다시 깨어나지 않는다. 이것이 고리를 끊는
+    // 자리다 — 매번 새 Set 을 만들면 여기서 커밋이 한 번 더 붙는다.
+    const { commits } = renderCounted([rect({ id: 'a' })]);
+    fireEvent.click(testid('canvas-element-toggle-0')); // 펼침 + 고름
+    fireEvent.click(testid('canvas-element-toggle-0')); // 접힘 (고르지 않는다)
+    const base = commits();
+
+    fireEvent.click(testid('canvas-element-toggle-0')); // 다시 펼침 — 이미 골라져 있다
+
+    // 펼침 집합이 갈린 커밋 하나뿐이다. 선택이 갈렸다면 효과 커밋이 하나 더 붙는다.
+    expect(commits() - base).toBe(1);
+    expect(isRowOpen(0)).toBe(true);
+  });
+});
+
+// --- 위치 · 크기 · 도형 스타일 · 문구 스타일의 분리 --------------------------
+//
+// 한 줄에 늘어놓던 좌표와 스타일을 뜻이 다른 묶음으로 가른다. 여기서 재는 것은 **묶음의
+// 종류별 비대칭**이다 — line 과 text 에는 크기 묶음이 없어야 하고(없는 것을 만들어
+// 보이면 사용자는 그 칸을 찾다 못 찾는다), `fill` 은 그 종류에서 실제로 칠하는 자리에
+// 서야 한다.
+
+/** 이 행에 그려진 묶음 testid 들. */
+function hasGroup(name: string, idx = 0): boolean {
+  return screen.queryByTestId(`canvas-element-${name}-${idx}`) !== null;
+}
+
+describe('CanvasElementsEditor — 위치와 크기를 가른다', () => {
+  it('rect 는 위치(x·y)와 크기(w·h) 두 묶음을 낸다', () => {
+    setup(cfg([rect()]));
+
+    expect(hasGroup('position')).toBe(true);
+    expect(hasGroup('size')).toBe(true);
+
+    const position = testid('canvas-element-position-0');
+    const size = testid('canvas-element-size-0');
+    expect(position.contains(testid('canvas-element-geo-x-0'))).toBe(true);
+    expect(position.contains(testid('canvas-element-geo-y-0'))).toBe(true);
+    expect(size.contains(testid('canvas-element-geo-w-0'))).toBe(true);
+    expect(size.contains(testid('canvas-element-geo-h-0'))).toBe(true);
+    // 위치 묶음이 크기 칸을 물고 있으면 가른 뜻이 없다.
+    expect(position.contains(testid('canvas-element-geo-w-0'))).toBe(false);
+  });
+
+  it('ellipse 도 같은 두 묶음이다', () => {
+    setup(cfg([rect({ id: 'e', kind: 'ellipse' })]));
+
+    expect(hasGroup('position')).toBe(true);
+    expect(hasGroup('size')).toBe(true);
+  });
+
+  it('line 은 두 끝점뿐이며 **크기 묶음을 만들지 않는다**', () => {
+    setup(cfg([{ id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 1, y2: 1 }, style: {} }]));
+
+    expect(hasGroup('position')).toBe(true);
+    expect(hasGroup('size')).toBe(false);
+    for (const axis of ['x1', 'y1', 'x2', 'y2']) {
+      expect(testid('canvas-element-position-0').contains(testid(`canvas-element-geo-${axis}-0`))).toBe(
+        true,
+      );
+    }
+    expect(testid('canvas-element-position-0').textContent).toContain(
+      'dashboard.canvas.elements.endpointsLabel',
+    );
+  });
+
+  it('text 는 기준점뿐이며 크기 묶음이 없다 — 그 크기는 글자 크기다', () => {
+    setup(cfg([{ id: 't', kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: {} }]));
+
+    expect(hasGroup('position')).toBe(true);
+    expect(hasGroup('size')).toBe(false);
+    // 글자 크기는 문구 스타일 묶음에 **한 자리에만** 있다.
+    expect(screen.getByTestId('canvas-element-font-size-0')).toBeTruthy();
+  });
+
+  it('0..1 이라는 사실은 안내 한 줄이 계속 말한다', () => {
+    setup(cfg([rect()]));
+
+    expect(testid('canvas-element-coord-help-0').textContent).toBe(
+      'dashboard.canvas.elements.coordHint',
+    );
+  });
+
+  it('가른 것은 표현뿐이다 — 좌표는 종전대로 죄이지 않고 그대로 저술된다', () => {
+    const spy = setup(cfg([rect()]));
+
+    fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '-0.5' } });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: -0.5, y: 0.2, w: 0.3, h: 0.4 });
+
+    fireEvent.change(testid('canvas-element-geo-w-0'), { target: { value: '2' } });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 0.1, y: 0.2, w: 2, h: 0.4 });
+
+    // 비유한 입력은 여전히 0 으로 막힌다(NaN 이 기하에 들어가면 요소가 통째로 사라진다).
+    fireEvent.change(testid('canvas-element-geo-y-0'), { target: { value: '' } });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 0.1, y: 0, w: 0.3, h: 0.4 });
+  });
+});
+
+describe('CanvasElementsEditor — 도형 스타일과 문구 스타일을 가른다', () => {
+  it('도형에서는 채움·선이 도형 스타일에, 글자색·글자 크기·굵기·정렬이 문구 스타일에 선다', () => {
+    setup(cfg([rect()]));
+
+    const shape = testid('canvas-element-shape-style-0');
+    const text = testid('canvas-element-text-style-0');
+
+    for (const id of ['fill', 'stroke', 'stroke-width', 'opacity', 'visible']) {
+      expect(shape.contains(testid(`canvas-element-${id}-0`))).toBe(true);
+      expect(text.contains(testid(`canvas-element-${id}-0`))).toBe(false);
+    }
+    for (const id of ['text-color', 'font-size', 'font-weight', 'align']) {
+      expect(text.contains(testid(`canvas-element-${id}-0`))).toBe(true);
+      expect(shape.contains(testid(`canvas-element-${id}-0`))).toBe(false);
+    }
+  });
+
+  it('도형에서는 라벨이 글자색만 쓴다는 사실을 화면이 말한다 (자동으로 심긴 색이 결함으로 읽히지 않게)', () => {
+    setup(cfg([rect()]));
+
+    expect(testid('canvas-element-text-style-help-0').textContent).toBe(
+      'dashboard.canvas.elements.textStyleHintShape',
+    );
+  });
+
+  it('문구 요소에서는 채움색이 **문구 스타일 쪽**으로 옮겨 간다 (textColor ?? fill)', () => {
+    // 렌더 층은 `kind:'text'` 를 `textColor ?? fill` 로 칠한다(`drawElement`). 칠할 도형이
+    // 없는 요소의 채움색을 "도형 스타일" 이라 부르면 화면이 거짓말을 한다.
+    setup(cfg([{ id: 't', kind: 'text', geometry: { x: 0, y: 0 }, style: {} }]));
+
+    const shape = testid('canvas-element-shape-style-0');
+    const text = testid('canvas-element-text-style-0');
+    expect(text.contains(testid('canvas-element-fill-0'))).toBe(true);
+    expect(shape.contains(testid('canvas-element-fill-0'))).toBe(false);
+    // 글자색 바로 옆이다 — 그 둘이 한 값을 두고 폴백 관계이기 때문이다.
+    expect(text.contains(testid('canvas-element-text-color-0'))).toBe(true);
+    expect(testid('canvas-element-text-style-help-0').textContent).toBe(
+      'dashboard.canvas.elements.textStyleHintText',
+    );
+  });
+
+  it('가른 것은 표현뿐이다 — 어느 묶음에 서든 같은 style 키로 저술된다', () => {
+    const spy = setup(cfg([{ id: 't', kind: 'text', geometry: { x: 0, y: 0 }, style: {} }]));
+
+    fireEvent.change(testid('canvas-element-font-size-0'), { target: { value: '18' } });
+    expect(lastElements(spy)[0]!.style.fontSize).toBe(18);
+
+    fireEvent.change(testid('canvas-element-align-0'), { target: { value: 'center' } });
+    expect(lastElements(spy)[0]!.style.align).toBe('center');
+
+    fireEvent.change(testid('canvas-element-visible-0'), { target: { value: 'hide' } });
+    expect(lastElements(spy)[0]!.style.visible).toBe(false);
+  });
+});
+
+// --- 글자 크기 (사용 시험: "하부 메뉴들의 폰트가 너무 작음") ------------------
+
+describe('캔버스 편집기의 글자 크기는 주변 설정 화면을 따른다', () => {
+  it('두 편집기 어디에도 9px 이 남지 않는다', () => {
+    // 소스를 훑는 것이 정직한 방식이다: 클래스가 실제로 만드는 픽셀 크기는 jsdom 이
+    // 계산해 주지 않으므로(Tailwind 를 돌리지 않는다) 렌더 결과로는 잴 수 없고,
+    // 여기서 막으려는 것은 "다시 9px 을 적는 일" 그 자체다. 주변 설정 절
+    // (`ChartPanelSections.tsx`)에는 9px 이 한 군데도 없다.
+    for (const file of ['CanvasElementsEditor.tsx', 'CanvasRuleTableEditor.tsx']) {
+      const source = readFileSync(join(__dirname, file), 'utf-8');
+      expect(source).not.toMatch(/text-\[9px\]/);
+      expect(source).not.toMatch(/text-\[10px\]/);
+    }
+  });
+
+  it('입력 칸의 기본 글자 크기가 주변과 같은 text-xs 다', () => {
+    for (const file of ['CanvasElementsEditor.tsx', 'CanvasRuleTableEditor.tsx']) {
+      const source = readFileSync(join(__dirname, file), 'utf-8');
+      expect(source).toMatch(/const INPUT_CLASS =[\s\S]*?text-xs/);
+    }
   });
 });
