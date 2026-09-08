@@ -6,7 +6,13 @@
 //      text 는 기준점).
 //   3. 종류를 바꿔도 스타일·문구·바인딩·규칙이 살아남고 기하만 새 형상으로 옮겨진다.
 //   4. 여기서 내보낸 config 를 `parseCanvasConfig` 로 읽으면 **같은 것**이 나온다.
-//      넷 중 이것이 가장 센 보증이다 — 편집기와 파서가 갈라지는 순간을 잡는다.
+//      가장 센 보증이다 — 편집기와 파서가 갈라지는 순간을 잡는다.
+//   5. **여기서 만든 요소는 렌더 층이 실제로 칠한다.** 4번이 편집기↔파서 이음매를 지키듯
+//      이것은 편집기↔렌더 이음매를 지킨다. 두 층이 각자 옳으면서 사이가 빈 적이 있다:
+//      편집기는 `style: {}` 로 만들었고 렌더 층은 색 없는 요소를 (의도대로) 건너뛰어,
+//      "사각형" 을 눌러도 캔버스가 빈 채였다. 어느 쪽 단위 테스트도 이를 볼 수 없었으므로
+//      이 파일에서 `drawElement` 를 직접 불러 이음매를 건넌다.
+//   6. 한 요소의 세부 여섯 줄은 **접힌다.** 순번 · 종류 · 순서 · 삭제만 늘 보인다.
 //
 // i18n 은 `CanvasRuleTableEditor.test.tsx` 선례대로 키 통과 스텁으로 갈아끼운다. 그래서
 // 개별 컨트롤은 aria-label 이 아니라 `data-testid` 로 집는다(스텁 t 는 `{index}` 를
@@ -37,8 +43,11 @@ vi.mock('@/lib/i18n', () => ({
 }));
 
 import type { StoreSourceConfig } from '../charts/chartChannelTypes';
-import type { CanvasElement, CanvasPanelConfig } from './canvasConfig';
+import type { CanvasElement, CanvasElementKind, CanvasPanelConfig } from './canvasConfig';
 import { parseCanvasConfig } from './canvasConfig';
+import type { StageSize } from './canvasGeometry';
+import { renderTextTemplate } from './canvasText';
+import { drawElements, type DrawContext2D } from './drawElement';
 import CanvasElementsEditor from './CanvasElementsEditor';
 
 afterEach(cleanup);
@@ -82,10 +91,28 @@ function rect(over: Partial<CanvasElement> = {}): CanvasElement {
   } as CanvasElement;
 }
 
-/** 편집기를 그리고 onConfigChange 스파이를 돌려준다. */
-function setup(config: Record<string, unknown>) {
+/**
+ * 렌더된 모든 요소 줄을 펼친다.
+ *
+ * 세부 여섯 줄은 이제 기본이 접힘이라, 그 줄들을 보는 시험은 먼저 펼쳐야 한다. 펼치기는
+ * 각 시험의 관심사가 아니라 **전제**이므로 여기 한 곳에 둔다 — 시험 본문마다 클릭을
+ * 흩뿌리면 무엇을 시험하는 파일인지가 흐려진다.
+ */
+function expandAllRows(): void {
+  for (const btn of screen.queryAllByTestId(/^canvas-element-toggle-\d+$/)) {
+    fireEvent.click(btn);
+  }
+}
+
+/**
+ * 편집기를 그리고 onConfigChange 스파이를 돌려준다.
+ *
+ * 기본으로 모든 줄을 펼친다. 접힘 그 자체를 보는 시험만 `{ expand: false }` 로 끈다.
+ */
+function setup(config: Record<string, unknown>, opts: { expand?: boolean } = {}) {
   const onConfigChange = vi.fn();
   render(<CanvasElementsEditor config={config} onConfigChange={onConfigChange} />);
+  if (opts.expand !== false) expandAllRows();
   return onConfigChange;
 }
 
@@ -125,6 +152,7 @@ function setupStateful(initial: Record<string, unknown>): { config: Record<strin
     );
   }
   render(<Harness />);
+  expandAllRows();
   return live;
 }
 
@@ -805,5 +833,301 @@ describe('CanvasElementsEditor — parseCanvasConfig 왕복', () => {
     expect(el.kind).toBe('text');
     expect(el.rules).toEqual([{ op: 'between', value: [0, 42], patch: {} }]);
     expectRoundTrip(live.config);
+  });
+});
+
+// --- 편집기 ↔ 렌더 이음매 -------------------------------------------------
+
+/**
+ * 칠하기 호출만 기록하는 최소 2D context.
+ *
+ * `drawElement.test.ts` 의 기록 스텁과 같은 수법이되(구조 인터페이스 `DrawContext2D` 를
+ * 만족하는 가짜를 넘긴다) 여기서 물을 것은 **"무엇이든 칠해졌는가"** 하나뿐이라 경로·
+ * 인자까지 받아 적지 않는다. 그 검사는 저쪽 파일의 몫이다.
+ */
+interface PaintRecorder extends DrawContext2D {
+  readonly painted: string[];
+}
+
+function makePaintRecorder(): PaintRecorder {
+  const painted: string[] = [];
+  return {
+    painted,
+    save() {},
+    restore() {},
+    setTransform() {},
+    beginPath() {},
+    rect() {},
+    ellipse() {},
+    moveTo() {},
+    lineTo() {},
+    stroke() {
+      painted.push('stroke');
+    },
+    fill() {
+      painted.push('fill');
+    },
+    fillText(text: string) {
+      painted.push(`fillText:${text}`);
+    },
+    measureText(text: string) {
+      return { width: text.length * 8 };
+    },
+    clearRect() {},
+    fillRect() {},
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    globalAlpha: 1,
+    font: '',
+    textAlign: 'left',
+    textBaseline: 'middle',
+  };
+}
+
+/** 200×100 스테이지(`drawElement.test.ts` 와 같은 치수 — 정규화 좌표가 정수 px 로 떨어진다). */
+const STAGE: StageSize = { width: 200, height: 100 };
+
+/** 추가 버튼을 눌러 **편집기가 실제로 만든** 요소를 꺼낸다. */
+function addedElement(kind: CanvasElementKind): CanvasElement {
+  const spy = setup(cfg([]));
+  fireEvent.click(testid(`canvas-element-add-${kind}`));
+  const el = lastElements(spy)[0]!;
+  cleanup();
+  return el;
+}
+
+/** 요소 하나를 그리고 기록된 칠하기 호출을 돌려준다. */
+function paintCallsFor(el: CanvasElement, text?: string): string[] {
+  const ctx = makePaintRecorder();
+  // 스타일·문구 맵을 비워 넘기면 `drawElements` 는 요소 자신의 값으로 떨어진다 —
+  // 바인딩도 규칙도 없는 갓 만든 요소가 실제로 지나는 경로가 그것이다.
+  drawElements(ctx, [el], {}, text === undefined ? {} : { [el.id]: text }, STAGE);
+  return ctx.painted;
+}
+
+describe('CanvasElementsEditor — 만든 요소는 실제로 칠해진다', () => {
+  /**
+   * 이 파일이 `drawElement` 를 부르는 것은 층 경계를 넘는 일이며, **그것이 요점이다.**
+   * 편집기와 렌더 층은 각자 100% 덮여 있으면서도 사이가 비어 있었다: 편집기는 색 없는
+   * 요소를 만들었고, 렌더 층은 색 없는 요소를 (설계대로) 건너뛰었다. 두 계약 모두 옳은데
+   * 화면만 비었다. 그 빈자리를 재는 자는 이 시험뿐이다.
+   */
+  it('네 종류 모두 한 번 이상 칠한다 — 추가했는데 빈 캔버스가 나오지 않는다', () => {
+    for (const kind of ['rect', 'ellipse', 'line', 'text'] as const) {
+      const painted = paintCallsFor(addedElement(kind));
+      expect(painted.length, `${kind} 는 아무것도 칠하지 않았다`).toBeGreaterThan(0);
+    }
+  });
+
+  it('종류마다 그 종류를 보이게 하는 칠하기가 실제로 일어난다', () => {
+    expect(paintCallsFor(addedElement('rect'))).toContain('fill');
+    expect(paintCallsFor(addedElement('ellipse'))).toContain('fill');
+    // 선은 열린 경로라 채움이 뜻이 없다 — 색만으로도 부족하고 두께가 함께 있어야 그어진다.
+    expect(paintCallsFor(addedElement('line'))).toEqual(['stroke']);
+    expect(paintCallsFor(addedElement('text')).some((c) => c.startsWith('fillText:'))).toBe(true);
+  });
+
+  it('문구 요소는 바인딩이 없을 때의 치환 결과로도 칠해진다', () => {
+    // `CanvasPanel.buildCanvasFrame` 이 지나는 길이다 — 바인딩이 없으면 `{value}` 가
+    // 결측 표기로, `{name}`·`{unit}` 이 빈 문자열로 접힌다. 접힌 뒤에도 그릴 글자가
+    // 남아야 "문구 추가" 가 화면에 무언가를 낸다.
+    const el = addedElement('text');
+    const resolved = renderTextTemplate(el.text ?? '', {});
+    expect(resolved.trim()).not.toBe('');
+    expect(paintCallsFor(el, resolved).some((c) => c.startsWith('fillText:'))).toBe(true);
+  });
+
+  it('심어 둔 색은 2D context 가 받을 수 있는 실제 색 문자열이다', () => {
+    // CSS 변수(`var(--...)`)는 canvas 2D 가 해석하지 못한다 — 히트맵 프리셋과 같은 이유로
+    // hex 리터럴로 못박는다.
+    const hex = /^#[0-9a-f]{6}$/i;
+    expect(addedElement('rect').style.fill).toMatch(hex);
+    expect(addedElement('ellipse').style.fill).toMatch(hex);
+    expect(addedElement('line').style.stroke).toMatch(hex);
+    expect(addedElement('line').style.strokeWidth).toBeGreaterThan(0);
+    expect(addedElement('text').style.textColor).toMatch(hex);
+  });
+
+  it('심어 둔 문구는 토큰 3종을 그대로 보여 문구 칸이 곧 사용법이 된다', () => {
+    const text = addedElement('text').text ?? '';
+    expect(text).toContain('{value}');
+    expect(text).toContain('{name}');
+    expect(text).toContain('{unit}');
+  });
+});
+
+// --- 신규 요소의 자리 ----------------------------------------------------
+
+describe('CanvasElementsEditor — 신규 요소는 겹치지 않는다', () => {
+  /** 스테이지를 벗어났는지 본다(0..1 밖은 일부라도 화면 밖이다). */
+  function onStage(g: Record<string, number>): boolean {
+    return Object.values(g).every((v) => v >= 0 && v <= 1);
+  }
+
+  it('같은 종류를 세 번 더하면 세 자리가 모두 다르다', () => {
+    const live = setupStateful(cfg([]));
+    fireEvent.click(testid('canvas-element-add-rect'));
+    fireEvent.click(testid('canvas-element-add-rect'));
+    fireEvent.click(testid('canvas-element-add-rect'));
+
+    const geos = (live.config.elements as CanvasElement[]).map((e) => JSON.stringify(e.geometry));
+    expect(new Set(geos).size).toBe(3);
+    expect(geos[0]).toBe(JSON.stringify({ x: 0.1, y: 0.1, w: 0.2, h: 0.2 }));
+    expect(geos[1]).toBe(JSON.stringify({ x: 0.15, y: 0.15, w: 0.2, h: 0.2 }));
+    expect(geos[2]).toBe(JSON.stringify({ x: 0.2, y: 0.2, w: 0.2, h: 0.2 }));
+  });
+
+  it('선과 문구는 여유가 있는 세로 축으로만 내려온다', () => {
+    const live = setupStateful(cfg([]));
+    fireEvent.click(testid('canvas-element-add-line'));
+    fireEvent.click(testid('canvas-element-add-line'));
+    fireEvent.click(testid('canvas-element-add-text'));
+    fireEvent.click(testid('canvas-element-add-text'));
+
+    const els = live.config.elements as CanvasElement[];
+    // 가로는 이미 스테이지를 가로지르므로 건드리지 않는다.
+    expect(els[0]!.geometry).toEqual({ x1: 0.1, y1: 0.5, x2: 0.9, y2: 0.5 });
+    expect(els[1]!.geometry).toEqual({ x1: 0.1, y1: 0.55, x2: 0.9, y2: 0.55 });
+    // 문구는 기준점에서 오른쪽으로 흐르므로 가로를 밀면 글자가 밖으로 나간다.
+    expect(els[2]!.geometry).toEqual({ x: 0.5, y: 0.6 });
+    expect(els[3]!.geometry).toEqual({ x: 0.5, y: 0.65 });
+  });
+
+  it('계단은 되감긴다 — 아홉 번을 더해도 스테이지 밖으로 행진하지 않는다', () => {
+    const live = setupStateful(cfg([]));
+    for (let i = 0; i < 9; i++) fireEvent.click(testid('canvas-element-add-rect'));
+
+    const els = live.config.elements as CanvasElement[];
+    expect(els).toHaveLength(9);
+    for (const el of els) {
+      expect(onStage(el.geometry as unknown as Record<string, number>)).toBe(true);
+    }
+    // 아홉 번째는 첫 번째 자리로 되감긴다(되감기 폭 8).
+    expect(els[8]!.geometry).toEqual(els[0]!.geometry);
+  });
+
+  it('계단이 붙어도 좌표에 부동소수 찌꺼기가 남지 않는다', () => {
+    const live = setupStateful(cfg([]));
+    for (let i = 0; i < 4; i++) fireEvent.click(testid('canvas-element-add-rect'));
+
+    // 0.1 + 0.15 를 그대로 두면 0.25000000000000006 이 숫자 칸에 그대로 뜬다.
+    const shown = (live.config.elements as CanvasElement[]).map(
+      (e) => (e.geometry as { x: number }).x,
+    );
+    expect(shown).toEqual([0.1, 0.15, 0.2, 0.25]);
+  });
+
+  it('기존 요소의 좌표는 건드리지 않는다 — 스테이지 밖 저술은 합법이다', () => {
+    const live = setupStateful(
+      cfg([{ id: 'far', kind: 'rect', geometry: { x: -0.5, y: 2, w: 3, h: 4 }, style: {} }]),
+    );
+    fireEvent.click(testid('canvas-element-add-rect'));
+
+    const els = live.config.elements as CanvasElement[];
+    expect(els[0]!.geometry).toEqual({ x: -0.5, y: 2, w: 3, h: 4 });
+  });
+});
+
+// --- 접기 ---------------------------------------------------------------
+
+describe('CanvasElementsEditor — 요소 줄 접기', () => {
+  it('세부 여섯 줄은 펼치기 전에는 그려지지 않는다', () => {
+    setup(cfg([rect()]), { expand: false });
+
+    expect(screen.queryByTestId('canvas-element-geo-x-0')).toBeNull();
+    expect(screen.queryByTestId('canvas-element-fill-0')).toBeNull();
+    expect(screen.queryByTestId('canvas-element-text-0')).toBeNull();
+    expect(screen.queryByTestId('canvas-element-binding-0')).toBeNull();
+    expect(screen.queryByTestId('canvas-rule-add')).toBeNull();
+  });
+
+  it('머리줄을 누르면 펼쳐지고 다시 누르면 접힌다', () => {
+    setup(cfg([rect()]), { expand: false });
+    const toggle = testid('canvas-element-toggle-0');
+
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByTestId('canvas-element-geo-x-0')).toBeTruthy();
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByTestId('canvas-element-geo-x-0')).toBeNull();
+  });
+
+  it('접힌 줄에서도 순번 · 종류 · 순서 이동 · 삭제는 그대로 닿는다', () => {
+    const spy = setup(cfg([rect({ id: 'a' }), rect({ id: 'b' })]), { expand: false });
+
+    expect(testid('canvas-element-order-0').textContent).toBe('1');
+    expect((testid('canvas-element-move-down-0') as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.change(testid('canvas-element-kind-0'), { target: { value: 'ellipse' } });
+    expect(lastElements(spy)[0]!.kind).toBe('ellipse');
+
+    fireEvent.click(testid('canvas-element-move-down-0'));
+    expect(lastElements(spy).map((e) => e.id)).toEqual(['b', 'a']);
+
+    fireEvent.click(testid('canvas-element-delete-1'));
+    expect(lastElements(spy).map((e) => e.id)).toEqual(['a']);
+  });
+
+  it('갓 더한 요소는 펼쳐진 채로 붙는다 — 눌렀는데 아무 일도 없어 보이면 안 된다', () => {
+    setupStateful(cfg([rect({ id: 'old' })]));
+    // 하네스가 기존 줄을 펼쳤으므로 먼저 되접어 새 줄만 남긴다.
+    fireEvent.click(testid('canvas-element-toggle-0'));
+    expect(testid('canvas-element-toggle-0').getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(testid('canvas-element-add-rect'));
+
+    expect(testid('canvas-element-toggle-0').getAttribute('aria-expanded')).toBe('false');
+    expect(testid('canvas-element-toggle-1').getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByTestId('canvas-element-geo-x-1')).toBeTruthy();
+    expect(screen.queryByTestId('canvas-element-geo-x-0')).toBeNull();
+  });
+
+  it('펼침은 순번이 아니라 요소를 따라간다 — 순서를 바꿔도 열린 줄은 그 요소다', () => {
+    setupStateful(cfg([rect({ id: 'a' }), rect({ id: 'b' })]));
+    fireEvent.click(testid('canvas-element-toggle-1')); // b 만 접는다
+
+    fireEvent.click(testid('canvas-element-move-down-0')); // a 를 뒤로 → [b, a]
+
+    expect(testid('canvas-element-0').getAttribute('data-element-id')).toBe('b');
+    expect(testid('canvas-element-toggle-0').getAttribute('aria-expanded')).toBe('false');
+    expect(testid('canvas-element-toggle-1').getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('접힌 줄은 무엇이 접혀 있는지 한 줄로 알린다', () => {
+    setup(
+      cfg([
+        rect({ id: 'plain' }),
+        rect({
+          id: 'live',
+          binding: { series: TEMP_ID, agg: 'last' },
+          rules: [
+            { op: 'gt', value: 1, patch: {} },
+            { op: 'lt', value: 0, patch: {} },
+          ],
+        }),
+      ]),
+      { expand: false },
+    );
+
+    expect(testid('canvas-element-toggle-0').textContent).toBe(
+      'plain · dashboard.canvas.elements.summaryStatic',
+    );
+    // 스텁 t 는 키를 그대로 돌려주므로 `{count}` 자리가 채워지지 않는다(머리말의 `{index}`
+    // 와 같은 사정이다). 여기서 볼 것은 "규칙이 있는 줄만 규칙 칸을 낸다" 는 갈래다.
+    expect(testid('canvas-element-toggle-1').textContent).toBe(
+      'live · dashboard.canvas.elements.summaryBound · dashboard.canvas.elements.summaryRules',
+    );
+  });
+
+  it('펼쳐도 같은 요약이 남는다 — 머리줄 폭이 바뀌면 옆 버튼이 손 밑에서 움직인다', () => {
+    setup(cfg([rect({ id: 'plain' })]));
+    expect(testid('canvas-element-toggle-0').textContent).toBe(
+      'plain · dashboard.canvas.elements.summaryStatic',
+    );
   });
 });

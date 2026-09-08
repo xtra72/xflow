@@ -23,10 +23,10 @@
 //
 // @spec SPEC-CANVAS-001
 
-import { useMemo } from 'react';
-import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight, ChevronUp, Plus, Trash2 } from 'lucide-react';
 
-import { useTranslation } from '@/lib/i18n';
+import { useTranslation, type TranslationFn } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
 import ColorSwatchButton from '../../colorSwatchPalette';
@@ -255,17 +255,120 @@ function withKind(el: CanvasElement, kind: CanvasElementKind): CanvasElement {
   }
 }
 
-/** 신규 요소. 기본 스타일은 **비워** 둔다 — 사용자가 고르지 않은 색을 넣지 않는다. */
-function newElement(id: string, kind: CanvasElementKind): CanvasElement {
+/**
+ * 신규 요소가 입고 나오는 색.
+ *
+ * 렌더 층은 색이 없는 요소를 **아무것도 그리지 않는다**(`drawElement.paintFill` 주석 —
+ * "기본 색을 지어내면 사용자가 색을 지정하지 않음을 표현할 수 없다"). 그 규율은 그대로
+ * 두고, 대신 **만드는 쪽**에서 보이는 색을 심는다. 만들 때 심으면 값이 config 에 실려
+ * 색 칸에도 뜨고 저장 왕복에도 남지만, 그릴 때 지어내면 화면에만 있고 어디에도 없다.
+ * (스타일을 비워 두던 이전 판은 추가 버튼을 눌러도 캔버스가 비어 있었다.)
+ *
+ * 값은 팔레트 첫 칸과 같은 blue-500 이다(`colorPalette.ts`). 2D context 는 실제 색
+ * 문자열을 요구하므로 CSS 변수를 쓸 수 없고, 그래서 히트맵 프리셋과 같은 hex 리터럴이다
+ * (`heatmapColorPresets.ts`).
+ *
+ * 이 색은 밝은 패널 표면(#fbfcfe)에 3.60:1, 어두운 표면(#1f2937)에 3.99:1 로 닿는다.
+ * 한 색으로 두 표면을 동시에 만족시킬 수 있는 상한 자체가 3.79:1 이므로(두 표면의 명도가
+ * 양 끝이라 그 이상은 대수적으로 불가능하다) 이 값이 그 상한에 가장 가까운 축이며,
+ * 두 표면 모두에서 비문자 대비 기준 3:1 을 넘는다. 어차피 사용자가 갈아입힐 씨앗 색이다.
+ */
+const SEED_COLOR = '#3b82f6';
+
+/** 신규 선의 두께(px). 기본값 1 은 고DPI 표면에서 실오라기라 "그려졌다" 로 읽히지 않는다. */
+const SEED_STROKE_WIDTH = 2;
+
+/**
+ * 신규 문구 템플릿. 토큰 3종을 한 줄에 모아 **문구 칸 자체가 사용법이 되게** 한다
+ * (바로 아래 토큰 안내 문구와 같은 조합이다).
+ *
+ * 번역하지 않는다 — 이 문자열은 config 에 저장되어 대시보드를 함께 쓰는 다른 로케일의
+ * 사용자에게도 그대로 그려진다. 로케일이 config 에 박히는 것은 바인딩을 표시 이름이
+ * 아니라 동일성 키로 참조하는 것과 같은 이유로 피한다(규율 3).
+ */
+const SEED_TEXT = '{name} {value}{unit}';
+
+/** 겹침 방지 계단의 한 칸(정규화 좌표). */
+const SEED_OFFSET_STEP = 0.05;
+
+/** 계단이 스테이지를 벗어나기 전에 처음으로 되감는 칸 수. */
+const SEED_OFFSET_WRAP = 8;
+
+/**
+ * n 번째 신규 요소의 계단 변위. 되감으므로 **스테이지 밖으로 행진하지 않는다.**
+ *
+ * 이미 있는 요소 수만 보므로 결정적이다 — 같은 순서로 누르면 같은 자리가 나온다.
+ * 기존 요소의 좌표는 건드리지 않는다(스테이지 밖 저술은 합법이다). 새 요소가 어디서
+ * 시작하는지만 정한다.
+ */
+function seedOffset(count: number): number {
+  return (count % SEED_OFFSET_WRAP) * SEED_OFFSET_STEP;
+}
+
+/** 계단을 더한 좌표. 0.1 + 0.15 가 0.25000000000000006 으로 새지 않게 자른다. */
+function shifted(base: number, off: number): number {
+  return Math.round((base + off) * 1000) / 1000;
+}
+
+/**
+ * 신규 요소. **보이는 스타일을 심어** 내보낸다 — 위 `SEED_COLOR` 주석 참조.
+ *
+ * 계단은 종류마다 여유가 있는 축으로만 준다. 상자는 대각선(우하), 선은 가로로 이미
+ * 스테이지를 가로지르므로 세로로만, 문구는 오른쪽으로 흘러가므로 세로로만 내린다.
+ * 어느 쪽도 되감기 전에 1 을 넘지 않는다.
+ */
+function newElement(id: string, kind: CanvasElementKind, count: number): CanvasElement {
+  const off = seedOffset(count);
   switch (kind) {
     case 'rect':
-      return { id, kind, geometry: { ...DEFAULT_BOX_GEOMETRY }, style: {} };
+      return {
+        id,
+        kind,
+        geometry: {
+          x: shifted(DEFAULT_BOX_GEOMETRY.x, off),
+          y: shifted(DEFAULT_BOX_GEOMETRY.y, off),
+          w: DEFAULT_BOX_GEOMETRY.w,
+          h: DEFAULT_BOX_GEOMETRY.h,
+        },
+        style: { fill: SEED_COLOR },
+      };
     case 'ellipse':
-      return { id, kind, geometry: { ...DEFAULT_BOX_GEOMETRY }, style: {} };
+      return {
+        id,
+        kind,
+        geometry: {
+          x: shifted(DEFAULT_BOX_GEOMETRY.x, off),
+          y: shifted(DEFAULT_BOX_GEOMETRY.y, off),
+          w: DEFAULT_BOX_GEOMETRY.w,
+          h: DEFAULT_BOX_GEOMETRY.h,
+        },
+        style: { fill: SEED_COLOR },
+      };
     case 'line':
-      return { id, kind, geometry: { ...DEFAULT_LINE_GEOMETRY }, style: {} };
+      return {
+        id,
+        kind,
+        geometry: {
+          x1: DEFAULT_LINE_GEOMETRY.x1,
+          y1: shifted(DEFAULT_LINE_GEOMETRY.y1, off),
+          x2: DEFAULT_LINE_GEOMETRY.x2,
+          y2: shifted(DEFAULT_LINE_GEOMETRY.y2, off),
+        },
+        // 선은 채우지 않으므로(열린 경로) 색만으로는 그려지지 않는다 — 두께를 함께 심는다.
+        style: { stroke: SEED_COLOR, strokeWidth: SEED_STROKE_WIDTH },
+      };
     default:
-      return { id, kind, geometry: { ...DEFAULT_POINT_GEOMETRY }, style: {} };
+      return {
+        id,
+        kind,
+        geometry: {
+          x: DEFAULT_POINT_GEOMETRY.x,
+          y: shifted(DEFAULT_POINT_GEOMETRY.y, off),
+        },
+        style: { textColor: SEED_COLOR },
+        // 색만 심으면 여전히 보이지 않는다 — 그릴 글자가 없기 때문이다.
+        text: SEED_TEXT,
+      };
   }
 }
 
@@ -338,6 +441,30 @@ function withIndex(label: string, idx: number): string {
   return label.replace('{index}', String(idx + 1));
 }
 
+/**
+ * 접힌 줄의 한 줄 요약.
+ *
+ * 접기의 값은 "덜 보기" 가 아니라 "목록을 훑을 수 있음" 이다. 그래서 접혀도 각 줄은
+ * 자기 정체성(id) · 살아 있는지(바인딩) · 조건이 몇 줄인지를 계속 말한다 — 종류는 바로
+ * 옆 선택 상자가 이미 말하고 있으므로 여기서 되풀이하지 않는다.
+ *
+ * 펼쳐도 같은 문구를 유지한다. 펼칠 때만 사라지면 머리줄의 폭이 바뀌어 옆 버튼들이
+ * 자리를 옮기고, 그러면 연달아 접었다 펴는 동안 삭제 버튼이 손 밑에서 움직인다.
+ */
+function summaryOf(el: CanvasElement, t: TranslationFn): string {
+  const parts = [
+    el.id,
+    el.binding === undefined
+      ? t('dashboard.canvas.elements.summaryStatic')
+      : t('dashboard.canvas.elements.summaryBound'),
+  ];
+  const ruleCount = el.rules?.length ?? 0;
+  if (ruleCount > 0) {
+    parts.push(t('dashboard.canvas.elements.summaryRules').replace('{count}', String(ruleCount)));
+  }
+  return parts.join(' · ');
+}
+
 // --- 하위 표현 -----------------------------------------------------------
 
 /** 기하 좌표 한 칸. 축 이름을 눈에 보이게 붙여 어느 칸이 무엇인지 알 수 있게 한다. */
@@ -375,9 +502,14 @@ function GeometryInput({
 /**
  * 캔버스 요소 목록 편집기.
  *
- * 제어 컴포넌트다 — 내부 상태를 들지 않고 매 편집마다 config 패치를 올린다. 추가할
- * 종류만은 상태가 필요해 보이지만, 그것도 두지 않는다: 종류 선택 상자를 각 종류마다
- * 하나씩 두는 대신 "종류별 추가 버튼" 으로 두면 상태 없이도 같은 일이 된다.
+ * 저술 값에 대해서는 제어 컴포넌트다 — 값 상태를 들지 않고 매 편집마다 config 패치를
+ * 올린다. 추가할 종류만은 상태가 필요해 보이지만, 그것도 두지 않는다: 종류 선택 상자를
+ * 각 종류마다 하나씩 두는 대신 "종류별 추가 버튼" 으로 두면 상태 없이도 같은 일이 된다.
+ *
+ * 예외는 **펼침 여부** 하나다. 이것은 저술이 아니라 보기 상태라 config 에 넣지 않는다 —
+ * 넣으면 한 사람이 줄을 접은 것이 대시보드를 함께 보는 모두의 저장된 값이 된다. 그래서
+ * 지역 상태이고, 요소 **id** 로 키잉한다(순번으로 키잉하면 순서 이동·삭제가 남의 펼침
+ * 상태를 물려받는다 — 바인딩을 이름이 아니라 동일성 키로 참조하는 것과 같은 이유다).
  */
 export default function CanvasElementsEditor({ config, onConfigChange }: CanvasElementsEditorProps) {
   const { t } = useTranslation();
@@ -386,14 +518,31 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
   const elements = cfg.elements;
   const seriesOptions = useMemo(() => buildSeriesOptions(config), [config]);
 
+  /** 펼쳐 둔 요소의 id 집합. 기본은 전부 접힘이다. */
+  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
+
+  const toggleExpanded = (id: string): void =>
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+
   const emit = (next: CanvasElement[]): void => onConfigChange({ elements: next });
 
   const replaceAt = (idx: number, el: CanvasElement): void => {
     emit(elements.map((e, i) => (i === idx ? el : e)));
   };
 
+  /**
+   * 새 요소는 **펼친 채로** 붙는다. 추가는 되먹임이 필요한 동작이라(눌렀는데 아무 일도
+   * 없어 보이면 사용자는 다시 누른다) 갓 만든 것만은 열어 둔다 — 목록이 조용히 길어지는
+   * 대신 방금 만든 것이 화면에서 스스로를 소개한다.
+   */
   const addElement = (kind: CanvasElementKind): void => {
-    emit([...elements, newElement(nextElementId(elements), kind)]);
+    const created = newElement(nextElementId(elements), kind, elements.length);
+    setExpandedIds((prev) => new Set(prev).add(created.id));
+    emit([...elements, created]);
   };
 
   const removeAt = (idx: number): void => emit(elements.filter((_, i) => i !== idx));
@@ -487,6 +636,7 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
           {elements.map((el, idx) => {
             const bindingOptions = bindingOptionsFor(seriesOptions, el.binding?.series);
             const unbound = el.binding === undefined;
+            const open = expandedIds.has(el.id);
 
             return (
               <div
@@ -518,9 +668,23 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                     ))}
                   </select>
 
-                  <span className="min-w-0 flex-1 truncate text-[10px] text-(--color-text-muted)">
-                    {el.id}
-                  </span>
+                  {/* 접기 토글. 1행(순번 · 종류 · 순서 · 삭제)은 접혀도 남는다 —
+                      훑기·순서 조작·삭제는 펼치지 않고도 되어야 하는 일이다. */}
+                  <button
+                    type="button"
+                    onClick={() => toggleExpanded(el.id)}
+                    aria-expanded={open}
+                    aria-label={withIndex(t('dashboard.canvas.elements.detailsAria'), idx)}
+                    data-testid={`canvas-element-toggle-${idx}`}
+                    className="flex min-w-0 flex-1 items-center gap-1 rounded text-left text-[10px] text-(--color-text-muted) hover:text-(--color-text-secondary)"
+                  >
+                    {open ? (
+                      <ChevronDown className="h-3 w-3 shrink-0" />
+                    ) : (
+                      <ChevronRight className="h-3 w-3 shrink-0" />
+                    )}
+                    <span className="truncate">{summaryOf(el, t)}</span>
+                  </button>
 
                   <button
                     type="button"
@@ -553,337 +717,343 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                   </button>
                 </div>
 
-                {/* 2행: 기하. 종류마다 요구하는 칸이 다르므로 종류별로 갈라 그린다 —
-                    합집합을 하나의 map 으로 접으면 `kind` 와 `geometry` 의 짝을 컴파일러가
-                    확인하지 못한다. 좌표는 정규화(0..1)이며 라벨로 그 사실을 알린다. */}
-                <div className="flex w-full flex-wrap items-center gap-1.5">
-                  <span className={GROUP_LABEL_CLASS}>
-                    {t('dashboard.canvas.elements.geometryLabel')}
-                  </span>
-                  {(el.kind === 'rect' || el.kind === 'ellipse') &&
-                    BOX_AXES.map((axis) => (
-                      <GeometryInput
-                        key={axis}
-                        axis={axis}
-                        value={el.geometry[axis]}
-                        onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
-                        ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
-                        testId={`canvas-element-geo-${axis}-${idx}`}
-                      />
-                    ))}
-                  {el.kind === 'line' &&
-                    LINE_AXES.map((axis) => (
-                      <GeometryInput
-                        key={axis}
-                        axis={axis}
-                        value={el.geometry[axis]}
-                        onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
-                        ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
-                        testId={`canvas-element-geo-${axis}-${idx}`}
-                      />
-                    ))}
-                  {el.kind === 'text' &&
-                    POINT_AXES.map((axis) => (
-                      <GeometryInput
-                        key={axis}
-                        axis={axis}
-                        value={el.geometry[axis]}
-                        onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
-                        ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
-                        testId={`canvas-element-geo-${axis}-${idx}`}
-                      />
-                    ))}
-                </div>
+                {/* 2~6행은 접힌다. 요소가 몇 개만 되어도 여섯 줄씩 펼쳐진 벽이
+                    되는데, 그 벽에서는 고치려는 칸을 찾는 것부터가 일이다. */}
+                {open && (
+                  <>
+                  {/* 2행: 기하. 종류마다 요구하는 칸이 다르므로 종류별로 갈라 그린다 —
+                      합집합을 하나의 map 으로 접으면 `kind` 와 `geometry` 의 짝을 컴파일러가
+                      확인하지 못한다. 좌표는 정규화(0..1)이며 라벨로 그 사실을 알린다. */}
+                  <div className="flex w-full flex-wrap items-center gap-1.5">
+                    <span className={GROUP_LABEL_CLASS}>
+                      {t('dashboard.canvas.elements.geometryLabel')}
+                    </span>
+                    {(el.kind === 'rect' || el.kind === 'ellipse') &&
+                      BOX_AXES.map((axis) => (
+                        <GeometryInput
+                          key={axis}
+                          axis={axis}
+                          value={el.geometry[axis]}
+                          onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
+                          ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
+                          testId={`canvas-element-geo-${axis}-${idx}`}
+                        />
+                      ))}
+                    {el.kind === 'line' &&
+                      LINE_AXES.map((axis) => (
+                        <GeometryInput
+                          key={axis}
+                          axis={axis}
+                          value={el.geometry[axis]}
+                          onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
+                          ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
+                          testId={`canvas-element-geo-${axis}-${idx}`}
+                        />
+                      ))}
+                    {el.kind === 'text' &&
+                      POINT_AXES.map((axis) => (
+                        <GeometryInput
+                          key={axis}
+                          axis={axis}
+                          value={el.geometry[axis]}
+                          onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
+                          ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
+                          testId={`canvas-element-geo-${axis}-${idx}`}
+                        />
+                      ))}
+                  </div>
 
-                {/* 3행: 기본 스타일. 비운 칸은 미지정이며 렌더측 기본을 따른다. */}
-                <div className="flex w-full flex-wrap items-center gap-1.5">
-                  <span className={GROUP_LABEL_CLASS}>
-                    {t('dashboard.canvas.elements.styleLabel')}
-                  </span>
+                  {/* 3행: 기본 스타일. 비운 칸은 미지정이며 렌더측 기본을 따른다. */}
+                  <div className="flex w-full flex-wrap items-center gap-1.5">
+                    <span className={GROUP_LABEL_CLASS}>
+                      {t('dashboard.canvas.elements.styleLabel')}
+                    </span>
 
-                  <ColorSwatchButton
-                    color={el.style.fill}
-                    onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'fill', c) })}
-                    ariaLabel={withIndex(t('dashboard.canvas.elements.fillAria'), idx)}
-                    testId={`canvas-element-fill-${idx}`}
-                  />
-                  <ColorSwatchButton
-                    color={el.style.stroke}
-                    onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'stroke', c) })}
-                    ariaLabel={withIndex(t('dashboard.canvas.elements.strokeAria'), idx)}
-                    testId={`canvas-element-stroke-${idx}`}
-                  />
-                  <ColorSwatchButton
-                    color={el.style.textColor}
-                    onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'textColor', c) })}
-                    ariaLabel={withIndex(t('dashboard.canvas.elements.textColorAria'), idx)}
-                    testId={`canvas-element-text-color-${idx}`}
-                  />
+                    <ColorSwatchButton
+                      color={el.style.fill}
+                      onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'fill', c) })}
+                      ariaLabel={withIndex(t('dashboard.canvas.elements.fillAria'), idx)}
+                      testId={`canvas-element-fill-${idx}`}
+                    />
+                    <ColorSwatchButton
+                      color={el.style.stroke}
+                      onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'stroke', c) })}
+                      ariaLabel={withIndex(t('dashboard.canvas.elements.strokeAria'), idx)}
+                      testId={`canvas-element-stroke-${idx}`}
+                    />
+                    <ColorSwatchButton
+                      color={el.style.textColor}
+                      onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'textColor', c) })}
+                      ariaLabel={withIndex(t('dashboard.canvas.elements.textColorAria'), idx)}
+                      testId={`canvas-element-text-color-${idx}`}
+                    />
 
-                  <input
-                    type="number"
-                    step="any"
-                    min={0}
-                    value={el.style.strokeWidth ?? ''}
-                    onChange={(e) =>
-                      replaceAt(idx, {
-                        ...el,
-                        style: setStyleField(
-                          el.style,
-                          'strokeWidth',
-                          nonNegative(parseOptionalNumber(e.target.value)),
-                        ),
-                      })
-                    }
-                    placeholder={t('dashboard.canvas.elements.strokeWidthPlaceholder')}
-                    aria-label={withIndex(t('dashboard.canvas.elements.strokeWidthAria'), idx)}
-                    data-testid={`canvas-element-stroke-width-${idx}`}
-                    className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
-                  />
-                  <input
-                    type="number"
-                    step="any"
-                    min={0}
-                    max={1}
-                    value={el.style.opacity ?? ''}
-                    onChange={(e) =>
-                      replaceAt(idx, {
-                        ...el,
-                        style: setStyleField(el.style, 'opacity', clamp01(parseOptionalNumber(e.target.value))),
-                      })
-                    }
-                    placeholder={t('dashboard.canvas.elements.opacityPlaceholder')}
-                    aria-label={withIndex(t('dashboard.canvas.elements.opacityAria'), idx)}
-                    data-testid={`canvas-element-opacity-${idx}`}
-                    className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
-                  />
-                  <input
-                    type="number"
-                    step="any"
-                    min={0}
-                    value={el.style.fontSize ?? ''}
-                    onChange={(e) =>
-                      replaceAt(idx, {
-                        ...el,
-                        style: setStyleField(
-                          el.style,
-                          'fontSize',
-                          nonNegative(parseOptionalNumber(e.target.value)),
-                        ),
-                      })
-                    }
-                    placeholder={t('dashboard.canvas.elements.fontSizePlaceholder')}
-                    aria-label={withIndex(t('dashboard.canvas.elements.fontSizeAria'), idx)}
-                    data-testid={`canvas-element-font-size-${idx}`}
-                    className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
-                  />
+                    <input
+                      type="number"
+                      step="any"
+                      min={0}
+                      value={el.style.strokeWidth ?? ''}
+                      onChange={(e) =>
+                        replaceAt(idx, {
+                          ...el,
+                          style: setStyleField(
+                            el.style,
+                            'strokeWidth',
+                            nonNegative(parseOptionalNumber(e.target.value)),
+                          ),
+                        })
+                      }
+                      placeholder={t('dashboard.canvas.elements.strokeWidthPlaceholder')}
+                      aria-label={withIndex(t('dashboard.canvas.elements.strokeWidthAria'), idx)}
+                      data-testid={`canvas-element-stroke-width-${idx}`}
+                      className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
+                    />
+                    <input
+                      type="number"
+                      step="any"
+                      min={0}
+                      max={1}
+                      value={el.style.opacity ?? ''}
+                      onChange={(e) =>
+                        replaceAt(idx, {
+                          ...el,
+                          style: setStyleField(el.style, 'opacity', clamp01(parseOptionalNumber(e.target.value))),
+                        })
+                      }
+                      placeholder={t('dashboard.canvas.elements.opacityPlaceholder')}
+                      aria-label={withIndex(t('dashboard.canvas.elements.opacityAria'), idx)}
+                      data-testid={`canvas-element-opacity-${idx}`}
+                      className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
+                    />
+                    <input
+                      type="number"
+                      step="any"
+                      min={0}
+                      value={el.style.fontSize ?? ''}
+                      onChange={(e) =>
+                        replaceAt(idx, {
+                          ...el,
+                          style: setStyleField(
+                            el.style,
+                            'fontSize',
+                            nonNegative(parseOptionalNumber(e.target.value)),
+                          ),
+                        })
+                      }
+                      placeholder={t('dashboard.canvas.elements.fontSizePlaceholder')}
+                      aria-label={withIndex(t('dashboard.canvas.elements.fontSizeAria'), idx)}
+                      data-testid={`canvas-element-font-size-${idx}`}
+                      className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
+                    />
 
-                  <select
-                    value={el.style.fontWeight ?? ''}
-                    onChange={(e) =>
-                      replaceAt(idx, {
-                        ...el,
-                        style: setStyleField(
-                          el.style,
-                          'fontWeight',
-                          e.target.value === '' ? undefined : (e.target.value as ElementFontWeight),
-                        ),
-                      })
-                    }
-                    aria-label={withIndex(t('dashboard.canvas.elements.fontWeightAria'), idx)}
-                    data-testid={`canvas-element-font-weight-${idx}`}
-                    className={cn(INPUT_CLASS, 'shrink-0')}
+                    <select
+                      value={el.style.fontWeight ?? ''}
+                      onChange={(e) =>
+                        replaceAt(idx, {
+                          ...el,
+                          style: setStyleField(
+                            el.style,
+                            'fontWeight',
+                            e.target.value === '' ? undefined : (e.target.value as ElementFontWeight),
+                          ),
+                        })
+                      }
+                      aria-label={withIndex(t('dashboard.canvas.elements.fontWeightAria'), idx)}
+                      data-testid={`canvas-element-font-weight-${idx}`}
+                      className={cn(INPUT_CLASS, 'shrink-0')}
+                    >
+                      <option value="">{t('dashboard.canvas.elements.unset')}</option>
+                      <option value="normal">{t('dashboard.canvas.elements.fontWeightNormal')}</option>
+                      <option value="bold">{t('dashboard.canvas.elements.fontWeightBold')}</option>
+                    </select>
+
+                    <select
+                      value={el.style.align ?? ''}
+                      onChange={(e) =>
+                        replaceAt(idx, {
+                          ...el,
+                          style: setStyleField(
+                            el.style,
+                            'align',
+                            e.target.value === '' ? undefined : (e.target.value as ElementAlign),
+                          ),
+                        })
+                      }
+                      aria-label={withIndex(t('dashboard.canvas.elements.alignAria'), idx)}
+                      data-testid={`canvas-element-align-${idx}`}
+                      className={cn(INPUT_CLASS, 'shrink-0')}
+                    >
+                      <option value="">{t('dashboard.canvas.elements.unset')}</option>
+                      <option value="left">{t('dashboard.canvas.elements.alignLeft')}</option>
+                      <option value="center">{t('dashboard.canvas.elements.alignCenter')}</option>
+                      <option value="right">{t('dashboard.canvas.elements.alignRight')}</option>
+                    </select>
+
+                    {/* 표시 여부는 3지 선택이다 — 체크박스로는 "미지정"과 "숨김"을 구분할 수
+                        없고, 그 둘은 뜻이 다르다(규칙 표의 같은 컨트롤과 동일한 판단). */}
+                    <select
+                      value={el.style.visible === undefined ? '' : el.style.visible ? 'show' : 'hide'}
+                      onChange={(e) =>
+                        replaceAt(idx, {
+                          ...el,
+                          style: setStyleField(
+                            el.style,
+                            'visible',
+                            e.target.value === '' ? undefined : e.target.value === 'show',
+                          ),
+                        })
+                      }
+                      aria-label={withIndex(t('dashboard.canvas.elements.visibleAria'), idx)}
+                      data-testid={`canvas-element-visible-${idx}`}
+                      className={cn(INPUT_CLASS, 'shrink-0')}
+                    >
+                      <option value="">{t('dashboard.canvas.elements.unset')}</option>
+                      <option value="show">{t('dashboard.canvas.elements.visibleShow')}</option>
+                      <option value="hide">{t('dashboard.canvas.elements.visibleHide')}</option>
+                    </select>
+                  </div>
+
+                  {/* 4행: 문구 템플릿 · 소수 자리 · 단위. 토큰 3종을 옆에 적어 사용자가
+                      명세를 찾아보지 않아도 되게 한다. */}
+                  <div className="flex w-full flex-wrap items-center gap-1.5">
+                    <span className={GROUP_LABEL_CLASS}>
+                      {t('dashboard.canvas.elements.textLabel')}
+                    </span>
+                    <input
+                      type="text"
+                      value={el.text ?? ''}
+                      onChange={(e) =>
+                        replaceAt(idx, setElementField(el, 'text', optionalText(e.target.value)))
+                      }
+                      placeholder={t('dashboard.canvas.elements.textPlaceholder')}
+                      aria-label={withIndex(t('dashboard.canvas.elements.textAria'), idx)}
+                      data-testid={`canvas-element-text-${idx}`}
+                      className={cn(INPUT_CLASS, 'min-w-16 flex-1')}
+                    />
+                    <input
+                      type="number"
+                      step={1}
+                      min={0}
+                      value={el.decimals ?? ''}
+                      onChange={(e) =>
+                        replaceAt(
+                          idx,
+                          setElementField(el, 'decimals', decimalsOf(parseOptionalNumber(e.target.value))),
+                        )
+                      }
+                      placeholder={t('dashboard.canvas.elements.decimalsPlaceholder')}
+                      aria-label={withIndex(t('dashboard.canvas.elements.decimalsAria'), idx)}
+                      data-testid={`canvas-element-decimals-${idx}`}
+                      className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
+                    />
+                    <input
+                      type="text"
+                      value={el.unit ?? ''}
+                      onChange={(e) =>
+                        replaceAt(idx, setElementField(el, 'unit', optionalText(e.target.value)))
+                      }
+                      placeholder={t('dashboard.canvas.elements.unitPlaceholder')}
+                      aria-label={withIndex(t('dashboard.canvas.elements.unitAria'), idx)}
+                      data-testid={`canvas-element-unit-${idx}`}
+                      className={cn(INPUT_CLASS, 'w-16')}
+                    />
+                  </div>
+                  <p
+                    className="px-1 text-[10px] leading-tight text-(--color-text-muted)"
+                    data-testid={`canvas-element-token-help-${idx}`}
                   >
-                    <option value="">{t('dashboard.canvas.elements.unset')}</option>
-                    <option value="normal">{t('dashboard.canvas.elements.fontWeightNormal')}</option>
-                    <option value="bold">{t('dashboard.canvas.elements.fontWeightBold')}</option>
-                  </select>
+                    {t('dashboard.canvas.elements.tokenHelp')}
+                  </p>
 
-                  <select
-                    value={el.style.align ?? ''}
-                    onChange={(e) =>
-                      replaceAt(idx, {
-                        ...el,
-                        style: setStyleField(
-                          el.style,
-                          'align',
-                          e.target.value === '' ? undefined : (e.target.value as ElementAlign),
-                        ),
-                      })
-                    }
-                    aria-label={withIndex(t('dashboard.canvas.elements.alignAria'), idx)}
-                    data-testid={`canvas-element-align-${idx}`}
-                    className={cn(INPUT_CLASS, 'shrink-0')}
-                  >
-                    <option value="">{t('dashboard.canvas.elements.unset')}</option>
-                    <option value="left">{t('dashboard.canvas.elements.alignLeft')}</option>
-                    <option value="center">{t('dashboard.canvas.elements.alignCenter')}</option>
-                    <option value="right">{t('dashboard.canvas.elements.alignRight')}</option>
-                  </select>
+                  {/* 5행: 바인딩 · 요소 트윈 덮어쓰기. 바인딩이 없으면 정적 도형이며,
+                      규칙은 평가되지 않는다(그래서 아래 표가 읽기 전용으로 잠긴다). */}
+                  <div className="flex w-full flex-wrap items-center gap-1.5">
+                    <span className={GROUP_LABEL_CLASS}>
+                      {t('dashboard.canvas.elements.bindingLabel')}
+                    </span>
+                    <select
+                      value={el.binding?.series ?? ''}
+                      onChange={(e) =>
+                        replaceAt(
+                          idx,
+                          setElementField(
+                            el,
+                            'binding',
+                            e.target.value === '' ? undefined : { series: e.target.value, agg: 'last' },
+                          ),
+                        )
+                      }
+                      aria-label={withIndex(t('dashboard.canvas.elements.bindingAria'), idx)}
+                      data-testid={`canvas-element-binding-${idx}`}
+                      className={cn(INPUT_CLASS, 'min-w-24 flex-1')}
+                    >
+                      <option value="">{t('dashboard.canvas.elements.bindingNone')}</option>
+                      {bindingOptions.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
 
-                  {/* 표시 여부는 3지 선택이다 — 체크박스로는 "미지정"과 "숨김"을 구분할 수
-                      없고, 그 둘은 뜻이 다르다(규칙 표의 같은 컨트롤과 동일한 판단). */}
-                  <select
-                    value={el.style.visible === undefined ? '' : el.style.visible ? 'show' : 'hide'}
-                    onChange={(e) =>
-                      replaceAt(idx, {
-                        ...el,
-                        style: setStyleField(
-                          el.style,
-                          'visible',
-                          e.target.value === '' ? undefined : e.target.value === 'show',
-                        ),
-                      })
-                    }
-                    aria-label={withIndex(t('dashboard.canvas.elements.visibleAria'), idx)}
-                    data-testid={`canvas-element-visible-${idx}`}
-                    className={cn(INPUT_CLASS, 'shrink-0')}
-                  >
-                    <option value="">{t('dashboard.canvas.elements.unset')}</option>
-                    <option value="show">{t('dashboard.canvas.elements.visibleShow')}</option>
-                    <option value="hide">{t('dashboard.canvas.elements.visibleHide')}</option>
-                  </select>
-                </div>
+                    <span className={GROUP_LABEL_CLASS}>
+                      {t('dashboard.canvas.elements.tweenLabel')}
+                    </span>
+                    <input
+                      type="number"
+                      step="any"
+                      min={0}
+                      value={el.tween?.duration_ms ?? ''}
+                      onChange={(e) =>
+                        replaceAt(
+                          idx,
+                          setElementField(
+                            el,
+                            'tween',
+                            tweenWithDuration(el.tween, nonNegative(parseOptionalNumber(e.target.value))),
+                          ),
+                        )
+                      }
+                      placeholder={t('dashboard.canvas.elements.tweenDurationPlaceholder')}
+                      aria-label={withIndex(t('dashboard.canvas.elements.tweenDurationAria'), idx)}
+                      data-testid={`canvas-element-tween-duration-${idx}`}
+                      className={cn(INPUT_CLASS, 'w-16 text-center tabular-nums')}
+                    />
+                    <select
+                      value={el.tween?.easing ?? DEFAULT_TWEEN_EASING}
+                      onChange={(e) =>
+                        replaceAt(
+                          idx,
+                          setElementField(
+                            el,
+                            'tween',
+                            tweenWithEasing(el.tween, e.target.value as TweenEasing),
+                          ),
+                        )
+                      }
+                      aria-label={withIndex(t('dashboard.canvas.elements.tweenEasingAria'), idx)}
+                      data-testid={`canvas-element-tween-easing-${idx}`}
+                      className={cn(INPUT_CLASS, 'shrink-0')}
+                    >
+                      {TWEEN_EASINGS.map((ea) => (
+                        <option key={ea} value={ea}>
+                          {t(EASING_LABEL_KEY[ea])}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-                {/* 4행: 문구 템플릿 · 소수 자리 · 단위. 토큰 3종을 옆에 적어 사용자가
-                    명세를 찾아보지 않아도 되게 한다. */}
-                <div className="flex w-full flex-wrap items-center gap-1.5">
-                  <span className={GROUP_LABEL_CLASS}>
-                    {t('dashboard.canvas.elements.textLabel')}
-                  </span>
-                  <input
-                    type="text"
-                    value={el.text ?? ''}
-                    onChange={(e) =>
-                      replaceAt(idx, setElementField(el, 'text', optionalText(e.target.value)))
-                    }
-                    placeholder={t('dashboard.canvas.elements.textPlaceholder')}
-                    aria-label={withIndex(t('dashboard.canvas.elements.textAria'), idx)}
-                    data-testid={`canvas-element-text-${idx}`}
-                    className={cn(INPUT_CLASS, 'min-w-16 flex-1')}
-                  />
-                  <input
-                    type="number"
-                    step={1}
-                    min={0}
-                    value={el.decimals ?? ''}
-                    onChange={(e) =>
-                      replaceAt(
-                        idx,
-                        setElementField(el, 'decimals', decimalsOf(parseOptionalNumber(e.target.value))),
-                      )
-                    }
-                    placeholder={t('dashboard.canvas.elements.decimalsPlaceholder')}
-                    aria-label={withIndex(t('dashboard.canvas.elements.decimalsAria'), idx)}
-                    data-testid={`canvas-element-decimals-${idx}`}
-                    className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
-                  />
-                  <input
-                    type="text"
-                    value={el.unit ?? ''}
-                    onChange={(e) =>
-                      replaceAt(idx, setElementField(el, 'unit', optionalText(e.target.value)))
-                    }
-                    placeholder={t('dashboard.canvas.elements.unitPlaceholder')}
-                    aria-label={withIndex(t('dashboard.canvas.elements.unitAria'), idx)}
-                    data-testid={`canvas-element-unit-${idx}`}
-                    className={cn(INPUT_CLASS, 'w-16')}
-                  />
-                </div>
-                <p
-                  className="px-1 text-[10px] leading-tight text-(--color-text-muted)"
-                  data-testid={`canvas-element-token-help-${idx}`}
-                >
-                  {t('dashboard.canvas.elements.tokenHelp')}
-                </p>
-
-                {/* 5행: 바인딩 · 요소 트윈 덮어쓰기. 바인딩이 없으면 정적 도형이며,
-                    규칙은 평가되지 않는다(그래서 아래 표가 읽기 전용으로 잠긴다). */}
-                <div className="flex w-full flex-wrap items-center gap-1.5">
-                  <span className={GROUP_LABEL_CLASS}>
-                    {t('dashboard.canvas.elements.bindingLabel')}
-                  </span>
-                  <select
-                    value={el.binding?.series ?? ''}
-                    onChange={(e) =>
-                      replaceAt(
-                        idx,
-                        setElementField(
-                          el,
-                          'binding',
-                          e.target.value === '' ? undefined : { series: e.target.value, agg: 'last' },
-                        ),
-                      )
-                    }
-                    aria-label={withIndex(t('dashboard.canvas.elements.bindingAria'), idx)}
-                    data-testid={`canvas-element-binding-${idx}`}
-                    className={cn(INPUT_CLASS, 'min-w-24 flex-1')}
-                  >
-                    <option value="">{t('dashboard.canvas.elements.bindingNone')}</option>
-                    {bindingOptions.map((o) => (
-                      <option key={o.id} value={o.id}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  <span className={GROUP_LABEL_CLASS}>
-                    {t('dashboard.canvas.elements.tweenLabel')}
-                  </span>
-                  <input
-                    type="number"
-                    step="any"
-                    min={0}
-                    value={el.tween?.duration_ms ?? ''}
-                    onChange={(e) =>
-                      replaceAt(
-                        idx,
-                        setElementField(
-                          el,
-                          'tween',
-                          tweenWithDuration(el.tween, nonNegative(parseOptionalNumber(e.target.value))),
-                        ),
-                      )
-                    }
-                    placeholder={t('dashboard.canvas.elements.tweenDurationPlaceholder')}
-                    aria-label={withIndex(t('dashboard.canvas.elements.tweenDurationAria'), idx)}
-                    data-testid={`canvas-element-tween-duration-${idx}`}
-                    className={cn(INPUT_CLASS, 'w-16 text-center tabular-nums')}
-                  />
-                  <select
-                    value={el.tween?.easing ?? DEFAULT_TWEEN_EASING}
-                    onChange={(e) =>
-                      replaceAt(
-                        idx,
-                        setElementField(
-                          el,
-                          'tween',
-                          tweenWithEasing(el.tween, e.target.value as TweenEasing),
-                        ),
-                      )
-                    }
-                    aria-label={withIndex(t('dashboard.canvas.elements.tweenEasingAria'), idx)}
-                    data-testid={`canvas-element-tween-easing-${idx}`}
-                    className={cn(INPUT_CLASS, 'shrink-0')}
-                  >
-                    {TWEEN_EASINGS.map((ea) => (
-                      <option key={ea} value={ea}>
-                        {t(EASING_LABEL_KEY[ea])}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* 6행: 조건 규칙 표. 별도 컴포넌트다(§위험 R4) — 여기서는 붙이기만 한다. */}
-                <div className="rounded border border-(--color-border-default) p-1.5">
-                  <CanvasRuleTableEditor
-                    rules={el.rules}
-                    onChange={(rules: RuleRow[] | undefined) =>
-                      replaceAt(idx, setElementField(el, 'rules', rules))
-                    }
-                    disabled={unbound}
-                  />
-                </div>
+                  {/* 6행: 조건 규칙 표. 별도 컴포넌트다(§위험 R4) — 여기서는 붙이기만 한다. */}
+                  <div className="rounded border border-(--color-border-default) p-1.5">
+                    <CanvasRuleTableEditor
+                      rules={el.rules}
+                      onChange={(rules: RuleRow[] | undefined) =>
+                        replaceAt(idx, setElementField(el, 'rules', rules))
+                      }
+                      disabled={unbound}
+                    />
+                  </div>
+                  </>
+                )}
               </div>
             );
           })}
