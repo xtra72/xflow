@@ -1143,7 +1143,7 @@
       "transformReset": "Reset placement"
     },
     "canvas": {
-      "emptyState": "No elements configured",
+      "emptyState": "No elements configured. Turn on Edit Mode, then add elements in Panel settings.",
       "error": "Data fetch error — will retry next cycle",
       "elements": {
         "orderHint": "Elements lower in the list are drawn on top. Moving up/down is the draw order.",
