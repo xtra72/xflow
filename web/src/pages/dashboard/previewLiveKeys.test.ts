@@ -63,6 +63,7 @@ describe('끌어서 고치는 값은 모두 목록에 있다', () => {
     // 바 차트 손잡이는 축을 나눈다 — 두 축 모두 목록에 있어야 한다.
     ['바 차트 막대 굵기·그림 영역 높이', ['bar_size', 'plot_size_y']],
     ['라인 차트 범례', ['legend']],
+    ['패널 타이틀', ['title_font']],
   ])('%s', (_name, keys) => {
     for (const key of keys) {
       expect(PREVIEW_LIVE_KEYS as readonly string[]).toContain(key);

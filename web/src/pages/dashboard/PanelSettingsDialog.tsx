@@ -536,6 +536,43 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     [storePanel, draftConfig, draftTitle],
   );
 
+  // 목록형 패널(플로우 현황 · 에이전트 현황)의 자리별 글자 모양.
+  const tableHeaderFont = (panel?.config?.table_header_font as PanelTitleFont | undefined) ?? {};
+  const tableCellFont = (panel?.config?.table_cell_font as PanelTitleFont | undefined) ?? {};
+  const badgeFont = (panel?.config?.badge_font as PanelTitleFont | undefined) ?? {};
+
+  // 속성 그리드 카드의 조각별 글자 모양(항목명 · 값 · 갱신 시각).
+
+  /** 컬럼 설정 옆에 접어 두는 디자인 팝오버 — 목록형 패널이 공유한다. */
+  const columnsDesignPopover = (testId: string) => (
+    <DesignPopover testId={testId}>
+      <TextStyleFields
+        label={t('dashboard.settings.listPanel.tableHeaderStyle')}
+        family={tableHeaderFont.family}
+        size={tableHeaderFont.size}
+        color={tableHeaderFont.color}
+        weight={tableHeaderFont.weight ?? 'inherit'}
+        sizePlaceholder={t('dashboard.chart.inherit')}
+        testIdPrefix="table-header-font"
+        onChange={(patch) =>
+          handleConfigChange({ table_header_font: mergeFont(tableHeaderFont, patch) })
+        }
+      />
+      <TextStyleFields
+        label={t('dashboard.settings.listPanel.tableCellStyle')}
+        family={tableCellFont.family}
+        size={tableCellFont.size}
+        color={tableCellFont.color}
+        weight={tableCellFont.weight ?? 'inherit'}
+        sizePlaceholder={t('dashboard.chart.inherit')}
+        testIdPrefix="table-cell-font"
+        onChange={(patch) =>
+          handleConfigChange({ table_cell_font: mergeFont(tableCellFont, patch) })
+        }
+      />
+    </DesignPopover>
+  );
+
   /**
    * 요약 배지 설정(표시 여부 + 디자인) — 목록형 패널이 공유한다.
    *
@@ -558,10 +595,28 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
           />
           {t('dashboard.settings.listPanel.showSummaryBadges')}
         </label>
+        {/* 감춘 배지에는 걸 곳이 없으므로 표시할 때만 낸다(타이틀 디자인과 같은 규칙). */}
+        {panel?.config?.showSummaryBadges !== false && (
+          <DesignPopover testId="badge-design">
+            <TextStyleFields
+              label={t('dashboard.settings.listPanel.badgeStyle')}
+              family={badgeFont.family}
+              size={badgeFont.size}
+              color={badgeFont.color}
+              weight={badgeFont.weight ?? 'inherit'}
+              sizePlaceholder={t('dashboard.chart.inherit')}
+              testIdPrefix="badge-font"
+              onChange={(patch) => handleConfigChange({ badge_font: mergeFont(badgeFont, patch) })}
+            />
+          </DesignPopover>
+        )}
       </div>
       {panel?.config?.showSummaryBadges !== false && extra}
     </CollapsibleSection>
   );
+
+  // 타이틀 글자 모양 — 모든 패널 공통 크롬 옵션(`panelChromeContext`).
+  const titleFont = (panel?.config?.title_font as PanelTitleFont | undefined) ?? {};
 
   // 라인 차트 배치(그림 상자 크기·자리 + 범례 자리) — 미리보기에서 끌어 고치는 값들이다.
   // 판정과 되돌리기는 순수 모듈이 소유한다(`chartLayout.ts`).
@@ -877,6 +932,29 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 <TitleSection
                   panel={panel}
                   onTitleChange={(v) => handleTitleChange(v)}
+                  design={
+                    /* 타이틀을 감춘 패널에는 걸 곳이 없으므로 표시할 때만 낸다.
+                       미지정은 각 패널이 쓰던 모양 그대로다. */
+                    panel.config?.showTitle !== false ? (
+                      <DesignPopover testId="panel-title-design">
+                        <TextStyleFields
+                          label={t('dashboard.settings.titleTextStyle')}
+                          family={titleFont.family}
+                          size={titleFont.size}
+                          color={titleFont.color}
+                          weight={titleFont.weight ?? 'inherit'}
+                          sizePlaceholder={t('dashboard.chart.inherit')}
+                          testIdPrefix="panel-title-font"
+                          onChange={(patch) => {
+                            const next = { ...titleFont, ...patch };
+                            // 전부 비면 필드를 지운다 — 빈 객체가 남으면 "설정했다" 로 읽힌다.
+                            const empty = Object.values(next).every((v) => v === undefined);
+                            handleConfigChange({ title_font: empty ? undefined : next });
+                          }}
+                        />
+                      </DesignPopover>
+                    ) : null
+                  }
                 />
                 {/* 타이틀 바 표시(모든 패널 공통). 기본 표시 — 명시적으로 끌 때만 config 에 남긴다. */}
                 <label className="flex items-center gap-2 text-xs text-(--color-text-secondary)">
@@ -925,6 +1003,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   labels={Object.fromEntries(ALL_FLOW_COLUMNS.map((k) => [k, t(FLOW_COLUMN_LABEL_KEYS[k])])) as Record<FlowColumnKey, string>}
                   visibleColumns={(panel.config?.visibleColumns as FlowColumnKey[]) ?? [...ALL_FLOW_COLUMNS]}
                   onChange={(cols) => handleConfigChange({ visibleColumns: cols })}
+                  design={columnsDesignPopover('flow-columns-design')}
                 />
               </CollapsibleSection>
             )}
@@ -936,6 +1015,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   labels={Object.fromEntries(ALL_AGENT_COLUMNS.map((k) => [k, t(AGENT_COLUMN_LABEL_KEYS[k])])) as Record<AgentColumnKey, string>}
                   visibleColumns={(panel.config?.visibleColumns as AgentColumnKey[]) ?? [...ALL_AGENT_COLUMNS]}
                   onChange={(cols) => handleConfigChange({ visibleColumns: cols })}
+                  design={columnsDesignPopover('agent-columns-design')}
                 />
               </CollapsibleSection>
             )}
@@ -958,6 +1038,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                   labels={Object.fromEntries(ALL_DEVICE_COLUMNS.map((k) => [k, t(DEVICE_COLUMN_LABELS[k])])) as Record<DeviceListColumnKey, string>}
                   visibleColumns={(panel.config?.visibleColumns as DeviceListColumnKey[]) ?? [...ALL_DEVICE_COLUMNS]}
                   onChange={(cols) => handleConfigChange({ visibleColumns: cols })}
+                  design={columnsDesignPopover('device-columns-design')}
                 />
               </CollapsibleSection>
             )}
@@ -1063,6 +1144,23 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                           />
                           {t('dashboard.settings.propertiesGridOpt.showBadges')}
                         </label>
+                        {panel.config?.showBadges !== false && (
+                          <DesignPopover testId="badge-design">
+                            <TextStyleFields
+                              label={t('dashboard.settings.listPanel.badgeStyle')}
+                              family={badgeFont.family}
+                              size={badgeFont.size}
+                              color={badgeFont.color}
+                              weight={badgeFont.weight ?? 'inherit'}
+                              align={badgeFont.align ?? 'inherit'}
+                              sizePlaceholder={t('dashboard.chart.inherit')}
+                              testIdPrefix="badge-font"
+                              onChange={(patch) =>
+                                handleConfigChange({ badge_font: mergeFont(badgeFont, patch) })
+                              }
+                            />
+                          </DesignPopover>
+                        )}
                       </div>
                       {panel.config?.showBadges !== false && (
                         <TileListEditor<AgentBadge>
@@ -1973,9 +2071,12 @@ function CollapsibleSection({
 function TitleSection({
   panel,
   onTitleChange,
+  design,
 }: {
   panel: PanelConfig;
   onTitleChange: (title: string) => void;
+  /** 글자 모양 배지. 축·범례와 같은 자리에 접는다 — 자주 고치는 것은 제목 글자뿐이다. */
+  design?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState(panel.title);
@@ -1999,6 +2100,7 @@ function TitleSection({
         <label className="block text-xs font-medium text-(--color-text-muted)">
           {t('dashboard.settings.titleLabel')}
         </label>
+        {design}
       </div>
       <input
         type="text"
@@ -2019,11 +2121,17 @@ function ColumnsSection<T extends string>({
   labels,
   visibleColumns,
   onChange,
+  design,
 }: {
   allColumns: T[];
   labels: Record<T, string>;
   visibleColumns: T[];
   onChange: (cols: T[]) => void;
+  /**
+   * 라벨 옆에 접어 두는 디자인 팝오버. 타이틀과 같은 자리·같은 조작이라
+   * "디자인은 설정 옆에 접혀 있다"를 한 번만 배우면 된다.
+   */
+  design?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const toggle = (key: T) => {
@@ -2042,6 +2150,7 @@ function ColumnsSection<T extends string>({
         <label className="text-xs font-medium text-(--color-text-muted)">
           {t('dashboard.settings.visibleColumns')}
         </label>
+        {design}
       </div>
       <div className="space-y-1">
         {allColumns.map((key) => (

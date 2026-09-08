@@ -305,10 +305,11 @@ export default function DevicePanel({
                       <tr
                         key={device.uid ?? device.id}
                         className="transition-colors hover:bg-(--color-bg-elevated)"
+                        style={design.cellStyle}
                       >
                         {visibleColumns.map((col) => (
                           // 색은 셀 안쪽 클래스가 이기므로 td 까지 내려보낸다.
-                          <DeviceCell key={col} column={col} device={device} t={t} />
+                          <DeviceCell key={col} column={col} device={device} t={t} style={design.cellStyle} />
                         ))}
                       </tr>
                     ))}

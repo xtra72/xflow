@@ -386,10 +386,12 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                         className="transition-colors hover:bg-(--color-bg-elevated)"
                         // 글꼴·크기·굵기는 여기서 상속된다. 색은 안쪽 클래스가 이기므로
                         // 글자를 직접 담은 자리에 따로 건다(아래).
+                        style={design.cellStyle}
                       >
                         {show('name') && (
                           <td
                             className="px-4 py-3 text-sm font-medium text-(--color-text-primary)"
+                            style={design.cellStyle}
                           >
                             {agent.name}
                           </td>
@@ -397,6 +399,7 @@ export default function AgentPanel({ panelConfig }: AgentPanelProps) {
                         {show('type') && (
                           <td
                             className="px-4 py-3 text-sm text-(--color-text-secondary)"
+                            style={design.cellStyle}
                           >
                             {agent.type}
                           </td>

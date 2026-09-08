@@ -378,6 +378,7 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
                       className="transition-colors hover:bg-(--color-bg-elevated)"
                       // 글꼴·크기·굵기는 여기서 상속된다. 색은 안쪽 클래스가 이기므로
                       // 글자를 직접 담은 자리에 따로 건다(아래).
+                      style={design.cellStyle}
                     >
                       {show('name') && (
                         <td className="px-4 py-3">
@@ -386,6 +387,7 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
                             // 표시한다(편집은 노드 대시보드 플로우 서브탭 — REQ-L12).
                             <span
                               className="text-sm font-medium text-(--color-text-primary)"
+                              style={design.cellStyle}
                             >
                               {flow.name}
                             </span>
@@ -393,6 +395,7 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
                             <Link
                               to={`/editor/${flow.id}`}
                               className="text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+                              style={design.cellStyle}
                             >
                               {flow.name}
                             </Link>
@@ -416,6 +419,7 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
                       {show('node_count') && (
                         <td
                           className="px-4 py-3 text-sm text-(--color-text-secondary)"
+                          style={design.cellStyle}
                         >
                           {flow.node_count}
                         </td>
@@ -423,6 +427,7 @@ export default function FlowPanel({ flows: localFlows, panelConfig }: FlowPanelP
                       {show('updated_at') && (
                         <td
                           className="px-4 py-3 text-sm text-(--color-text-muted)"
+                          style={design.cellStyle}
                         >
                           {timeStr ? formatDate(timeStr, 'relative') : '-'}
                         </td>

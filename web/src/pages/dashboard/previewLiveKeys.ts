@@ -54,6 +54,8 @@ export const PREVIEW_LIVE_KEYS = [
   'legend_font_color',
   'legend_position',
   'show_legend',
+  // 타이틀 글자 모양(모든 패널 공통).
+  'title_font',
 ] as const;
 
 /**

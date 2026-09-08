@@ -47,7 +47,7 @@ describe('readSummaryTileFont', () => {
 });
 
 describe('resolveSummaryTileStyle', () => {
-  const base = readListPanelStyle({ accentElements: { badges: '#3b82f6' } }).badgeStyle;
+  const base = readListPanelStyle({ badge_font: { size: 12 } }).badgeStyle;
 
   it('타일별 설정이 없으면 공통 배지 설정을 그대로 쓴다', () => {
     const got = resolveSummaryTileStyle(base, {});
@@ -60,7 +60,7 @@ describe('resolveSummaryTileStyle', () => {
   });
 
   it('타일 색을 정하면 배경 틴트도 그 색으로 다시 만든다 — 남겨 두면 글자와 배경이 어긋난다', () => {
-    const withColor = readListPanelStyle({ accentElements: { badges: '#ff0000' } }).badgeStyle;
+    const withColor = readListPanelStyle({ badge_font: { color: '#ff0000' } }).badgeStyle;
     const got = resolveSummaryTileStyle(withColor, { color: '#00ff00' });
     expect(got.style).toMatchObject({ color: '#00ff00', backgroundColor: '#00ff0020' });
   });

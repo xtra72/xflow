@@ -719,7 +719,7 @@ describe('CanvasElementsEditor — 빈 칸은 부재다', () => {
     expect('decimals' in lastElements(spy)[0]!).toBe(false);
   });
 
-  it('문구 토큰 3종을 요소마다 제목 뒤 ? 도움말에 담아 명세를 찾지 않아도 되게 한다', () => {
+  it('문구 토큰 3종을 요소마다 옆에 적어 명세를 찾지 않아도 되게 한다', () => {
     setup(cfg([rect()]));
     expect(testid('canvas-element-token-help-0').textContent).toBe(
       'dashboard.canvas.elements.tokenHelp',
@@ -780,16 +780,15 @@ describe('CanvasElementsEditor — 트윈', () => {
   });
 
   // 이 칸이 무엇을 하는지는 값이 **바뀌는 순간에만** 드러나므로 겉모습으로 읽히지 않는다.
-  // 그래서 설명이 화면에 상주해야 한다(AC-E16) — 줄로 깔지 않고 제목 뒤 `?` 에 담되,
-  // 설명 자체는 sr-only 로 항상 DOM 에 있어 스크린리더가 읽는다(`FieldHelp`).
-  it('요소 전환 효과 제목의 ? 가 무엇이 바뀌는지와 0 의 뜻을 말한다 (AC-E16)', () => {
+  // 그래서 설명이 화면에 상주해야 한다(AC-E16) — `tokenHelp` 가 같은 이유로 같은 자리에 있다.
+  it('요소 칸 아래 한 줄이 무엇이 바뀌는지와 0 의 뜻을 말한다 (AC-E16)', () => {
     setup(cfg([rect()]));
     expect(testid('canvas-element-tween-hint-0').textContent).toBe(
       'dashboard.canvas.elements.tweenHint',
     );
   });
 
-  it('패널 기본값 쪽 ? 에도 그 설명이 있다 — 같은 빈칸이 두 자리에서 다른 뜻이다 (AC-E16)', () => {
+  it('패널 기본값 아래에도 그 설명이 있다 — 같은 빈칸이 두 자리에서 다른 뜻이다 (AC-E16)', () => {
     setup(cfg([]));
     // 요소 쪽 빈칸은 "패널 기본 사용", 패널 쪽 빈칸은 "즉시 전환" 이므로 문장을 돌려 쓰지 않는다.
     expect(testid('canvas-panel-tween-hint').textContent).toBe(
@@ -1879,34 +1878,12 @@ describe('CanvasElementsEditor — 위치와 크기를 가른다', () => {
     expect(screen.getByTestId('canvas-element-font-size-0')).toBeTruthy();
   });
 
-  it('0..1 이라는 사실은 위치 묶음 제목 뒤 ? 가 계속 말한다', () => {
+  it('0..1 이라는 사실은 안내 한 줄이 계속 말한다', () => {
     setup(cfg([rect()]));
 
     expect(testid('canvas-element-coord-help-0').textContent).toBe(
       'dashboard.canvas.elements.coordHint',
     );
-  });
-
-  // 설명을 `?` 뒤로 옮겼다고 **접근성이 내려가면 안 된다**: 설명은 sr-only 로 DOM 에
-  // 상주하고(위 검사), 눈으로 보려면 키보드로 닿는 button 을 눌러 연다.
-  it('좌표 설명의 ? 는 위치 묶음 안에 있고 눌러야 눈에 보인다', () => {
-    setup(cfg([rect()]));
-
-    const group = testid('canvas-element-position-0');
-    expect(group.contains(testid('canvas-element-coord-help-0'))).toBe(true);
-    // 크기 묶음에는 같은 말을 두 번 두지 않는다.
-    expect(testid('canvas-element-size-0').contains(testid('canvas-element-coord-help-0'))).toBe(
-      false,
-    );
-
-    const button = group.querySelector('button[aria-expanded]');
-    expect(button).toBeTruthy();
-    expect(button!.getAttribute('aria-expanded')).toBe('false');
-
-    fireEvent.click(button!);
-
-    expect(button!.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByRole('tooltip').textContent).toBe('dashboard.canvas.elements.coordHint');
   });
 
   it('가른 것은 표현뿐이다 — 좌표는 종전대로 죄이지 않고 그대로 저술된다', () => {
@@ -1941,7 +1918,7 @@ describe('CanvasElementsEditor — 도형 스타일과 문구 스타일을 가�
     }
   });
 
-  it('도형에서는 라벨이 글자색만 쓴다는 사실을 문구 스타일 제목 뒤 ? 가 말한다 (자동으로 심긴 색이 결함으로 읽히지 않게)', () => {
+  it('도형에서는 라벨이 글자색만 쓴다는 사실을 화면이 말한다 (자동으로 심긴 색이 결함으로 읽히지 않게)', () => {
     setup(cfg([rect()]));
 
     expect(testid('canvas-element-text-style-help-0').textContent).toBe(

@@ -26,7 +26,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, ChevronUp, Plus, Trash2 } from 'lucide-react';
 
-import { FieldHelp } from '@/components/property/FieldHelp';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
@@ -442,19 +441,15 @@ function GeometryInput({
 function FieldGroup({
   label,
   testId,
-  help,
   children,
 }: {
   label: string;
   testId: string;
-  /** 묶음 제목 뒤에 붙는 `?` 도움말. 없으면 아이콘도 없다. */
-  help?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" data-testid={testId}>
       <span className={GROUP_LABEL_CLASS}>{label}</span>
-      {help}
       {children}
     </div>
   );
@@ -641,13 +636,6 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
         />
 
         <span className={GROUP_LABEL_CLASS}>{t('dashboard.canvas.elements.panelTween')}</span>
-        {/* 이 칸이 무엇을 하는지는 겉모습만으로 읽히지 않는다 — 값이 바뀌는 **순간에만**
-            드러나는 효과이기 때문이다. 그래서 무엇이 옮겨 가는지와 0 의 뜻을 적되,
-            줄로 깔지 않고 제목 뒤 `?` 뒤에 넣는다(설정 화면 전체의 규칙). */}
-        <FieldHelp
-          text={t('dashboard.canvas.elements.panelTweenHint')}
-          testId="canvas-panel-tween-hint"
-        />
         <input
           type="number"
           step="any"
@@ -680,9 +668,14 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
         </select>
       </div>
 
-      {/* 001 의 z-order 는 배열 순서 하나뿐이다 — 그 사실을 화면에 적는다.
-          이 한 줄만 인라인으로 남는다: 목록 전체에 대한 말이라 뒤에 `?` 를 달 제목이
-          없고, 제목 없는 물음표는 무엇을 묻는지 알 수 없는 단추가 된다. */}
+      {/* 이 칸이 무엇을 하는지는 겉모습만으로 읽히지 않는다 — 값이 바뀌는 **순간에만**
+          드러나는 효과이기 때문이다. 그래서 무엇이 옮겨 가는지와 0 의 뜻을 적는다
+          (`orderHint` 가 z-order 에 대해 하는 일과 같다). */}
+      <p className={HINT_CLASS} data-testid="canvas-panel-tween-hint">
+        {t('dashboard.canvas.elements.panelTweenHint')}
+      </p>
+
+      {/* 001 의 z-order 는 배열 순서 하나뿐이다 — 그 사실을 화면에 적는다. */}
       <p className={HINT_CLASS}>
         {t('dashboard.canvas.elements.orderHint')}
       </p>
@@ -796,22 +789,15 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                   <>
                   {/* 2행: 기하 — **위치**와 **크기**로 갈라 그린다. 종류마다 요구하는 칸이
                       다르므로 종류별로 갈라 그린다(합집합을 하나의 map 으로 접으면 `kind` 와
-                      `geometry` 의 짝을 컴파일러가 확인하지 못한다). 좌표가 정규화(0..1)라는
-                      사실은 이 행의 **첫 묶음 제목 뒤 `?`** 가 말한다 — 줄로 깔면 요소마다
-                      한 줄씩 늘어 목록이 안내문으로 뒤덮이고, 묶음마다 되풀이하면 같은 말이
-                      한 화면에 두 번 선다. */}
+                      `geometry` 의 짝을 컴파일러가 확인하지 못한다). 좌표는 정규화(0..1)이며
+                      그 사실은 아래 안내 한 줄이 말한다 — 묶음 제목마다 되풀이하면 제목이
+                      길어져 정작 "위치" 와 "크기" 가 눈에 들어오지 않는다. */}
                   <div className="flex w-full flex-wrap items-start gap-x-3 gap-y-1.5">
                     {(el.kind === 'rect' || el.kind === 'ellipse') && (
                       <>
                         <FieldGroup
                           label={t('dashboard.canvas.elements.positionLabel')}
                           testId={`canvas-element-position-${idx}`}
-                          help={
-                            <FieldHelp
-                              text={t('dashboard.canvas.elements.coordHint')}
-                              testId={`canvas-element-coord-help-${idx}`}
-                            />
-                          }
                         >
                           {BOX_POSITION_AXES.map((axis) => (
                             <GeometryInput
@@ -846,12 +832,6 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                       <FieldGroup
                         label={t('dashboard.canvas.elements.endpointsLabel')}
                         testId={`canvas-element-position-${idx}`}
-                        help={
-                          <FieldHelp
-                            text={t('dashboard.canvas.elements.coordHint')}
-                            testId={`canvas-element-coord-help-${idx}`}
-                          />
-                        }
                       >
                         {LINE_AXES.map((axis) => (
                           <GeometryInput
@@ -870,12 +850,6 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                       <FieldGroup
                         label={t('dashboard.canvas.elements.positionLabel')}
                         testId={`canvas-element-position-${idx}`}
-                        help={
-                          <FieldHelp
-                            text={t('dashboard.canvas.elements.coordHint')}
-                            testId={`canvas-element-coord-help-${idx}`}
-                          />
-                        }
                       >
                         {POINT_AXES.map((axis) => (
                           <GeometryInput
@@ -890,6 +864,9 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                       </FieldGroup>
                     )}
                   </div>
+                  <p className={HINT_CLASS} data-testid={`canvas-element-coord-help-${idx}`}>
+                    {t('dashboard.canvas.elements.coordHint')}
+                  </p>
 
                   {/* 3행: **도형 스타일**. 비운 칸은 미지정이며 렌더측 기본을 따른다.
                       `visible` 은 도형만이 아니라 요소 전체를 끄는 스위치지만, 이 묶음이
@@ -994,19 +971,6 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                     <span className={GROUP_LABEL_CLASS}>
                       {t('dashboard.canvas.elements.textStyleLabel')}
                     </span>
-                    {/* 두 갈래를 **화면에 적는다.** 렌더 층의 규칙이 종류마다 다르고
-                        (`drawElement`: 문구는 `textColor ?? fill`, 도형 라벨은 `textColor` 만),
-                        게다가 도형에 문구를 처음 적는 순간 `canvasElementFactory` 가 글자색을
-                        대신 심는다. 적어 두지 않으면 사용자는 "고르지도 않은 색이 들어와 있다"
-                        를 결함으로 읽는다 — 그것은 라벨이 실제로 칠해지게 하는 값이다. */}
-                    <FieldHelp
-                      text={
-                        el.kind === 'text'
-                          ? t('dashboard.canvas.elements.textStyleHintText')
-                          : t('dashboard.canvas.elements.textStyleHintShape')
-                      }
-                      testId={`canvas-element-text-style-help-${idx}`}
-                    />
 
                     <ColorSwatchButton
                       color={el.style.textColor}
@@ -1089,16 +1053,23 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                       <option value="right">{t('dashboard.canvas.elements.alignRight')}</option>
                     </select>
                   </div>
-                  {/* 5행: 문구 내용(템플릿 · 소수 자리 · 단위). 토큰 3종은 제목 뒤 `?` 에
-                      담아 사용자가 명세를 찾아보지 않아도 되게 한다. */}
+                  {/* 두 갈래를 **화면에 적는다.** 렌더 층의 규칙이 종류마다 다르고
+                      (`drawElement`: 문구는 `textColor ?? fill`, 도형 라벨은 `textColor` 만),
+                      게다가 도형에 문구를 처음 적는 순간 `canvasElementFactory` 가 글자색을
+                      대신 심는다. 적어 두지 않으면 사용자는 "고르지도 않은 색이 들어와 있다"
+                      를 결함으로 읽는다 — 그것은 라벨이 실제로 칠해지게 하는 값이다. */}
+                  <p className={HINT_CLASS} data-testid={`canvas-element-text-style-help-${idx}`}>
+                    {el.kind === 'text'
+                      ? t('dashboard.canvas.elements.textStyleHintText')
+                      : t('dashboard.canvas.elements.textStyleHintShape')}
+                  </p>
+
+                  {/* 5행: 문구 내용(템플릿 · 소수 자리 · 단위). 토큰 3종을 옆에 적어
+                      사용자가 명세를 찾아보지 않아도 되게 한다. */}
                   <div className="flex w-full flex-wrap items-center gap-1.5">
                     <span className={GROUP_LABEL_CLASS}>
                       {t('dashboard.canvas.elements.textLabel')}
                     </span>
-                    <FieldHelp
-                      text={t('dashboard.canvas.elements.tokenHelp')}
-                      testId={`canvas-element-token-help-${idx}`}
-                    />
                     {/* 문구만은 `setElementField` 가 아니라 팩토리를 지난다 — 도형에 라벨이
                         생기는 순간 글자색이 함께 심겨야 그 라벨이 실제로 칠해진다. */}
                     <input
@@ -1140,6 +1111,12 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                       className={cn(INPUT_CLASS, 'w-16')}
                     />
                   </div>
+                  <p
+                    className={HINT_CLASS}
+                    data-testid={`canvas-element-token-help-${idx}`}
+                  >
+                    {t('dashboard.canvas.elements.tokenHelp')}
+                  </p>
 
                   {/* 5행: 바인딩 · 요소 트윈 덮어쓰기. 바인딩이 없으면 정적 도형이며,
                       규칙은 평가되지 않는다(그래서 아래 표가 읽기 전용으로 잠긴다). */}
@@ -1188,12 +1165,6 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                     <span className={GROUP_LABEL_CLASS}>
                       {t('dashboard.canvas.elements.tweenLabel')}
                     </span>
-                    {/* 패널 쪽과 같은 이유로 적는다 — 다만 **비웠을 때의 뜻이 다르다**:
-                        여기서 비우면 꺼지는 것이 아니라 패널 기본값을 따른다. */}
-                    <FieldHelp
-                      text={t('dashboard.canvas.elements.tweenHint')}
-                      testId={`canvas-element-tween-hint-${idx}`}
-                    />
                     <input
                       type="number"
                       step="any"
@@ -1236,6 +1207,14 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                         </option>
                       ))}
                     </select>
+                    {/* 패널 쪽과 같은 이유로 적는다 — 다만 **비웠을 때의 뜻이 다르다**:
+                        여기서 비우면 꺼지는 것이 아니라 패널 기본값을 따른다. */}
+                    <p
+                      className={cn(HINT_CLASS, 'w-full')}
+                      data-testid={`canvas-element-tween-hint-${idx}`}
+                    >
+                      {t('dashboard.canvas.elements.tweenHint')}
+                    </p>
                   </div>
 
                   {/* 6행: 조건 규칙 표. 별도 컴포넌트다(§위험 R4) — 여기서는 붙이기만 한다. */}

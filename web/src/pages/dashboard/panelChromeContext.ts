@@ -21,11 +21,11 @@ import {
 } from './panels/charts/textStyle';
 
 /**
- * 글자 모양 한 벌. 요약 타일·속성 그리드 카드처럼 "자리마다 글자 모양을 고르는" 설정이
- * 공유하는 값이다(타이틀 글자 설정은 걷어냈다 — `PanelChrome.titleStyle` 주석 참조).
+ * 타이틀 글자 모양. 패널 28종이 공유하는 값이라 크롬 옵션으로 둔다 — 패널마다 따로 두면
+ * 같은 설정이 패널마다 다른 이름·다른 자리에 생긴다.
  *
  * 어휘는 차트 글자 스타일(`textStyle.ts`)과 **같다**. 파이 범례·축 글꼴을 이미 그 토큰으로
- * 고르고 있으므로, 여기만 다른 어휘를 쓰면 사용자가 두 번 배워야 한다.
+ * 고르고 있으므로, 타이틀만 다른 어휘를 쓰면 사용자가 두 번 배워야 한다.
  */
 export interface PanelTitleFont {
   family?: ChartFontFamily;
@@ -42,13 +42,11 @@ export interface PanelChrome {
   /** 타이틀 바를 그릴지 여부. */
   showTitle: boolean;
   /**
-   * 타이틀에 얹을 인라인 스타일.
+   * 타이틀에 얹을 인라인 스타일. **미설정이면 `undefined`** 다.
    *
-   * **더는 아무도 채우지 않는다.** 유일한 입력이던 타이틀 글자 모양 설정을 걷어내면서
-   * 타이틀은 각 패널의 Tailwind 기본 모양으로 돌아갔다(지운 키 이름은
-   * `removedFontConfigKeys.test.ts` 가 갖는다). 이 필드와 `usePanelTitleStyle` 은
-   * 호출부 정리가 끝나면 함께 사라진다 — 남겨 둔 이유는 `CanvasPanel.tsx` 가 수정 금지
-   * 파일이어서 30곳 중 한 곳을 지울 수 없기 때문이다(보고서 참조).
+   * 빈 객체가 아니라 `undefined` 인 것이 중요하다 — 각 패널의 타이틀은 Tailwind 클래스로
+   * 크기·굵기·색을 이미 정해 두었고, 인라인 스타일은 그것을 이긴다. 설정하지 않은 값까지
+   * 채워 넣으면 저장된 대시보드의 타이틀이 조용히 바뀐다.
    */
   titleStyle?: CSSProperties;
 }
@@ -85,6 +83,7 @@ export const PanelChromeContext = createContext<PanelChrome>(DEFAULT_CHROME);
 export function readPanelChrome(config: Record<string, unknown> | undefined): PanelChrome {
   return {
     showTitle: config?.showTitle !== false,
+    titleStyle: resolvePanelTitleStyle(config?.title_font),
   };
 }
 
@@ -93,10 +92,7 @@ export function usePanelTitleVisible(): boolean {
   return useContext(PanelChromeContext).showTitle;
 }
 
-/**
- * 타이틀에 얹을 스타일. 입력을 걷어냈으므로 **항상 `undefined`** 다(`PanelChrome.titleStyle`
- * 주석 참조). 호출부와 함께 지워질 자리다.
- */
+/** 타이틀에 얹을 스타일. Provider 밖·미설정이면 `undefined`(기존 모양 그대로). */
 export function usePanelTitleStyle(): CSSProperties | undefined {
   return useContext(PanelChromeContext).titleStyle;
 }
