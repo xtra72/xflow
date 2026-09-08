@@ -13,7 +13,8 @@
 //   3. **수명주기를 새로 만들지 않는다.** 인터벌 해제·AbortController 중단은 훅의 몫이다.
 //
 // 견고성 축(REQ-05)은 네 갈래이며 각각 인수 기준에 묶여 있다.
-//   - AC-E1 요소 0개 → 빈 상태 안내(렌더 예외 없음).
+//   - AC-E1 요소 0개 → 빈 상태 안내(렌더 예외 없음). **안내는 표면을 대신하지 않고 겹친다**
+//     (AC-E9 — 002 의 팔레트가 그 표면 위에 있으므로, 대신하면 첫 도형을 놓을 곳이 사라진다).
 //   - AC-E2 시리즈 결측/무값 → 요소는 **기본 스타일로 그대로 그려지고**, `{value}` 는 결측
 //     표기로 치환되며, `nodata` 행은 정상적으로 일치한다.
 //   - AC-E3 규칙 미일치 → 기본 스타일·기본 문구(오류가 아니다).
@@ -244,7 +245,13 @@ export default function CanvasPanel({
   // 참조 안정성이 곧 유휴다 — 표면은 props 참조가 그대로면 프레임을 예약하지 않는다(AC-E6).
   const frame = useMemo(() => buildCanvasFrame(cfg.elements, readings), [cfg.elements, readings]);
 
-  // AC-E1: 요소가 없으면 표면 대신 빈 상태 안내를 그린다(렌더 예외 없음).
+  // AC-E1: 요소가 없으면 빈 상태 안내를 **표면 위에 겹쳐** 알린다(렌더 예외 없음).
+  //
+  // **표면을 대신하지 않는다**(AC-E9). 001 이 이 자리를 분기로 쓴 것은 그때 패널이 렌더
+  // 전용이어서(가정 A7) 요소 0개면 그릴 것도, 누를 것도 없었기 때문이다. 002 가 오버레이에
+  // 도형 팔레트를 얹으면서 그 전제가 깨졌다 — 표면이 없으면 오버레이도 없고, 오버레이가
+  // 없으면 팔레트도 없다. 즉 **첫 도형을 놓아야 할 바로 그때 놓을 곳이 사라진다.** 안내는
+  // 여전히 필요하므로 없애지 않고 겹치는 층으로 옮긴다.
   const isEmpty = cfg.elements.length === 0;
   const headerVisible = showTitle && !!title;
 
@@ -275,15 +282,37 @@ export default function CanvasPanel({
    */
   const renderOverlay = useCallback(
     ({ stage, textWidths }: CanvasOverlayContext) => (
-      <CanvasEditOverlay
-        enabled={edit.active}
-        elements={cfg.elements}
-        stage={stage}
-        textWidths={textWidths}
-        onElementsChange={handleElementsChange}
-      />
+      <>
+        {/*
+          빈 상태 안내(AC-E1 · AC-E9). 표면의 컨테이너가 이미 `relative` 이므로 이 층은
+          `absolute inset-0` 하나로 캔버스와 정확히 같은 상자를 덮는다 — 제목 줄까지 덮지
+          않는다.
+
+          **포인터를 먹지 않는다.** `pointer-events-none` 이 없으면 이 안내가 곧 편집을
+          막는 유리판이 되어, 팔레트 버튼도 캔버스 누름도 안내에 걸린다 — 고치려던 결함이
+          모양만 바꿔 되돌아온다. 오버레이보다 **먼저** 놓아 팔레트가 위에 오게 한다.
+        */}
+        {isEmpty && (
+          <div
+            data-testid="canvas-empty"
+            className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-md border border-dashed border-(--color-border-default) p-4 text-center"
+          >
+            <Shapes className="h-6 w-6 text-(--color-text-muted)" />
+            <span className="text-sm text-(--color-text-muted)">
+              {t('dashboard.canvas.emptyState')}
+            </span>
+          </div>
+        )}
+        <CanvasEditOverlay
+          enabled={edit.active}
+          elements={cfg.elements}
+          stage={stage}
+          textWidths={textWidths}
+          onElementsChange={handleElementsChange}
+        />
+      </>
     ),
-    [edit.active, cfg.elements, handleElementsChange],
+    [isEmpty, t, edit.active, cfg.elements, handleElementsChange],
   );
 
   return (
@@ -300,30 +329,18 @@ export default function CanvasPanel({
         </div>
       )}
 
-      {isEmpty ? (
-        <div
-          data-testid="canvas-empty"
-          className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-md border border-dashed border-(--color-border-default) p-4 text-center"
-        >
-          <Shapes className="h-6 w-6 text-(--color-text-muted)" />
-          <span className="text-sm text-(--color-text-muted)">
-            {t('dashboard.canvas.emptyState')}
-          </span>
-        </div>
-      ) : (
-        // 오류 상태에서도 **표면을 내리지 않는다**(AC-E4). 마지막 프레임은 표면의 백킹 버퍼에
-        // 남아 있고, 내려보내는 목표도 마지막 성공값이라 다시 그릴 것이 없다.
-        <CanvasSurface
-          elements={cfg.elements}
-          targetStyles={frame.targetStyles}
-          texts={frame.texts}
-          panelTween={cfg.tween}
-          background={cfg.background}
-          visibilitySource={visibilitySource}
-          scheduler={scheduler}
-          overlay={renderOverlay}
-        />
-      )}
+      {/* 표면은 **언제나** 있다. 오류 상태에서도 내리지 않고(AC-E4), 요소가 0개여도 내리지
+          않는다(AC-E9) — 빈 안내는 위 `renderOverlay` 안에서 겹치는 층으로 나온다. */}
+      <CanvasSurface
+        elements={cfg.elements}
+        targetStyles={frame.targetStyles}
+        texts={frame.texts}
+        panelTween={cfg.tween}
+        background={cfg.background}
+        visibilitySource={visibilitySource}
+        scheduler={scheduler}
+        overlay={renderOverlay}
+      />
 
       {/* 배치 편집 토글. `canEdit && dashboardEditMode && !forced` 일 때만 나온다. */}
       {edit.toggle}

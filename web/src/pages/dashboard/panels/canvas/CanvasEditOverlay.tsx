@@ -16,6 +16,17 @@
 // 두 벌이 되는 순간 외곽선과 핸들이 도형에서 미끄러지고, 그 결함은 "가끔 어긋난다" 로만
 // 보고되어 원인을 찾기 어렵다.
 //
+// **포인터만은 제 공간을 스스로 맞춰 온다**(위험 R1 이 실제로 터진 자리 — AC-E9). 설정
+// 미리보기는 패널을 대시보드에서의 실제 픽셀 크기로 렌더한 뒤 **통째로 축소**한다
+// (`PanelSettingsDialog` §미리보기 — `computePreviewStage` + `previewZoom`). 그래서
+// `getBoundingClientRect()` 는 변환 **뒤**의 화면 px 를 주고, 표면의 `ResizeObserver` 가 잰
+// `stage` 는 변환 **앞**의 CSS px 다 — `ResizeObserver` 는 CSS 변환을 보지 않기 때문이다.
+// 두 값을 그대로 섞으면 모든 포인터 좌표가 **정확히 축척만큼** 어긋나, 고른 도형이 엉뚱해지고
+// 끌린 거리가 달라진다. 그 어긋남은 사용자에게 "도형의 영역과 그려진 자리가 다르다" 로만
+// 보인다. 그래서 이 파일은 세 번째 측정원을 만드는 대신 **이미 손에 든 두 값의 비**
+// (`rect.width / stage.width`)로 포인터를 `stage` 의 공간으로 되돌린다. 좌표 공간을 넘는
+// 자리는 `stagePoint` **한 곳뿐**이다 — 둘이 되면 갈라진다.
+//
 // **핸들은 칠한 그림이 아니라 진짜 DOM 요소다**(REQ-01 · 위험 R10). 이 층을 DOM 으로 둔
 // 근거 셋 중 하나가 바로 그것이다 — 핸들이 초점을 받는 `<button>` 이면 `aria-label`·탭
 // 이동·호버가 전부 따라오고, 칠한 핸들이라면 그 전부를 손으로 다시 만들어야 한다. 종류별
@@ -175,6 +186,23 @@ interface DragBase {
   geometry: Geometry;
 }
 
+/**
+ * 화면 좌표를 스테이지 로컬 CSS px 로 옮길 때 쓰는 **한 벌의 기준**.
+ *
+ * 원점(`left`·`top`)만으로는 모자란다. 미리보기가 패널을 통째로 축소하면 화면에서 잰 상자는
+ * 변환 **뒤**의 크기이고 표면이 잰 `stage` 는 변환 **앞**의 크기여서, 원점만 빼면 남는 값이
+ * 여전히 화면 px 공간에 있다(파일 머리말 §포인터). 축척을 함께 들어야 포인터가 `stage` 와
+ * 투영이 쓰는 그 공간으로 돌아온다.
+ */
+interface PointerFrame {
+  /** 컨테이너의 화면 원점. */
+  left: number;
+  top: number;
+  /** 화면 px ÷ 스테이지 px. 변환이 없으면 1 이다. */
+  scaleX: number;
+  scaleY: number;
+}
+
 /** 어느 드래그든 공통으로 드는 것. */
 interface DragCommon {
   /** 이 드래그를 시작한 포인터. 다른 포인터의 이동은 무시한다(멀티터치 방어). */
@@ -182,10 +210,10 @@ interface DragCommon {
   /** 잡은 자리(스테이지 로컬 CSS px). 이동량의 원점이다. */
   origin: PxPoint;
   /**
-   * 잡는 순간의 컨테이너 화면 좌표. 드래그 중에 다시 재지 않는다 — 재면 그 사이의
-   * 스크롤·레이아웃 변화가 이동량에 섞여 들어간다.
+   * 잡는 순간의 좌표 기준(화면 원점 + 축척). 드래그 중에 다시 재지 않는다 — 재면 그 사이의
+   * 스크롤·레이아웃·확대 변화가 이동량에 섞여 들어간다.
    */
-  rect: { left: number; top: number };
+  frame: PointerFrame;
 }
 
 /**
@@ -202,7 +230,7 @@ interface MoveDrag extends DragCommon {
    *
    * 잡은 요소 하나가 기준이며 무리는 같은 델타로 따라온다 — 무리의 각 요소를 저마다
    * 격자에 붙이면 끌려가는 동안 무리가 서로 흩어진다. 격자 붙임이 꺼져 있으면 쓰이지
-   * 않으며, **잡는 순간의 값**이라 드래그 도중에 다시 재지 않는다(`rect` 와 같은 규율).
+   * 않으며, **잡는 순간의 값**이라 드래그 도중에 다시 재지 않는다(`frame` 과 같은 규율).
    */
   anchor: PxBox;
 }
@@ -560,6 +588,50 @@ function patchNodeFontSize(
   );
 }
 
+/**
+ * 한 축의 축척. 화면 길이 ÷ 스테이지 길이다.
+ *
+ * 둘 중 하나라도 0·음수·비유한이면 **1 을 돌려준다**. 그 몫은 NaN 이거나 Infinity 인데,
+ * 그런 값이 포인터를 타고 흐르면 히트가 조용히 전부 빗나가고 이동량이 요소를 화면 밖으로
+ * 날린다(§품질 게이트 Secured: 외부 입력은 NaN/Infinity 방어). 1 로 떨어지면 최악이라도
+ * 변환 이전 — 즉 이 결함을 고치기 전 — 의 동작이며, 그 자리는 축척이 1 인 대시보드다.
+ */
+function axisScale(screenLength: number, stageLength: number): number {
+  if (!Number.isFinite(screenLength) || !Number.isFinite(stageLength)) return 1;
+  if (!(screenLength > 0) || !(stageLength > 0)) return 1;
+  return screenLength / stageLength;
+}
+
+/**
+ * 컨테이너의 화면 상자와 표면이 잰 스테이지 크기에서 좌표 기준을 만든다.
+ *
+ * **세 번째 측정원을 만들지 않는다**(AC-E2). 여기서 새로 재는 것은 없다 — 이미 손에 든
+ * 두 값(포인터를 받으려면 어차피 불러야 하는 `getBoundingClientRect()`, 표면이 넘겨준
+ * `stage`)의 비를 취할 뿐이다.
+ */
+function pointerFrameOf(rect: DOMRect, stage: StageSize): PointerFrame {
+  return {
+    left: rect.left,
+    top: rect.top,
+    scaleX: axisScale(rect.width, stage.width),
+    scaleY: axisScale(rect.height, stage.height),
+  };
+}
+
+/**
+ * 포인터 화면 좌표 → 스테이지 로컬 CSS px.
+ *
+ * **이 파일에서 좌표 공간을 넘는 유일한 자리다.** 누름·이동·뗌·취소·핸들 드래그가 전부 이
+ * 한 함수를 지난다 — 변환이 두 벌이 되면 한쪽만 고쳐진 채 갈라지고, 그 갈라짐은 "핸들로
+ * 잡으면 조금 밀린다" 처럼 부분적인 증상으로만 보고된다.
+ */
+function stagePoint(clientX: number, clientY: number, frame: PointerFrame): PxPoint {
+  return {
+    x: (clientX - frame.left) / frame.scaleX,
+    y: (clientY - frame.top) / frame.scaleY,
+  };
+}
+
 // --- 컴포넌트 -----------------------------------------------------------
 
 export default function CanvasEditOverlay({
@@ -722,17 +794,11 @@ export default function CanvasEditOverlay({
     [],
   );
 
-  /** 포인터 화면 좌표 → 스테이지 로컬 CSS px. 컨테이너 원점을 빼는 뺄셈 하나다. */
-  const localPoint = (clientX: number, clientY: number, left: number, top: number): PxPoint => ({
-    x: clientX - left,
-    y: clientY - top,
-  });
-
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
     if (!enabled) return;
     const host = event.currentTarget;
-    const rect = host.getBoundingClientRect();
-    const point = localPoint(event.clientX, event.clientY, rect.left, rect.top);
+    const frame = pointerFrameOf(host.getBoundingClientRect(), stage);
+    const point = stagePoint(event.clientX, event.clientY, frame);
 
     const hit = hitTest(elements, point, stage, textWidths);
     if (hit === undefined) {
@@ -777,7 +843,7 @@ export default function CanvasEditOverlay({
       mode: 'move',
       pointerId: event.pointerId,
       origin: point,
-      rect: { left: rect.left, top: rect.top },
+      frame,
       bases,
       // 선택 외곽선이 두르는 **그 상자**다 — 화면에 보이는 테두리와 격자에 붙는 중심이
       // 다른 상자에서 나오면 "보이는 것과 다른 곳에 붙는다" 가 된다.
@@ -808,11 +874,11 @@ export default function CanvasEditOverlay({
 
     // 핸들이 DOM 에 있다는 것이 곧 루트가 마운트되어 있다는 뜻이다(핸들은 루트의 자식이다).
     const host = rootRef.current!;
-    const rect = host.getBoundingClientRect();
+    const frame = pointerFrameOf(host.getBoundingClientRect(), stage);
     const next = handleDragState(el, handle, {
       pointerId: event.pointerId,
-      origin: localPoint(event.clientX, event.clientY, rect.left, rect.top),
-      rect: { left: rect.left, top: rect.top },
+      origin: stagePoint(event.clientX, event.clientY, frame),
+      frame,
     });
     if (next === null) return;
 
@@ -826,7 +892,7 @@ export default function CanvasEditOverlay({
     if (drag === null || event.pointerId !== drag.pointerId) return;
     event.preventDefault();
     pendingRef.current = {
-      point: localPoint(event.clientX, event.clientY, drag.rect.left, drag.rect.top),
+      point: stagePoint(event.clientX, event.clientY, drag.frame),
       shift: event.shiftKey,
     };
     // 한 프레임 사이에 이벤트가 열 번 와도 쓰기는 한 번이다(AC-E4).
@@ -844,7 +910,7 @@ export default function CanvasEditOverlay({
     event.preventDefault();
     releaseCapture(event.currentTarget, event.pointerId);
     finishDrag({
-      point: localPoint(event.clientX, event.clientY, drag.rect.left, drag.rect.top),
+      point: stagePoint(event.clientX, event.clientY, drag.frame),
       shift: event.shiftKey,
     });
   };

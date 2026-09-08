@@ -544,6 +544,48 @@ describe('CanvasElementsEditor — 바인딩 선택', () => {
   });
 });
 
+// --- 결함 C(사용 시험): 고를 것이 없으면 어디로 가야 하는지 말한다 --------
+//
+// "바인딩 없음" 하나만 든 상자는 사용자에게 **아무것도 설명하지 않는다.** 목록이 비는
+// 정상적인 이유는 하나뿐이므로(데이터 소스에 시리즈가 아직 없다) 그 한 문장을 말한다.
+// 히트맵의 `heatmapNoSensors` 가 같은 자리에서 같은 일을 하는 이 저장소의 관용구다.
+
+describe('바인딩 선택지가 비면 데이터 소스로 안내한다', () => {
+  it('시리즈가 하나도 없으면 안내가 뜬다', () => {
+    setup({ data_source: 'store', elements: [rect()] });
+
+    expect(testid('canvas-element-binding-hint-0').textContent).toBe(
+      'dashboard.canvas.elements.bindingNoSeries',
+    );
+  });
+
+  it('tsdb · sysmetrics 소스가 비어 있을 때도 같은 안내가 뜬다', () => {
+    setup({ data_source: 'tsdb', elements: [rect()] });
+    expect(screen.getByTestId('canvas-element-binding-hint-0')).toBeTruthy();
+
+    cleanup();
+    setup({ data_source: 'sysmetrics', elements: [rect()] });
+    expect(screen.getByTestId('canvas-element-binding-hint-0')).toBeTruthy();
+  });
+
+  it('시리즈가 있으면 안내는 나오지 않는다 — 고를 것이 있는데 하는 잔소리는 잡음이다', () => {
+    setup(cfg([rect()]));
+
+    expect(screen.queryByTestId('canvas-element-binding-hint-0')).toBeNull();
+  });
+
+  it('목록이 비어도 저장된 바인딩이 되살아나 있으면 안내하지 않는다', () => {
+    // 소스를 잠시 바꿨다 되돌리는 편집 도중의 자리다. 되살린 항목이 곧 고를 것이므로
+    // "설정하세요" 는 그 자리에서 거짓말이 된다(`bindingOptionsFor` 계약).
+    setup({
+      data_source: 'store',
+      elements: [rect({ binding: { series: 'temp value room=A', agg: 'last' } })],
+    });
+
+    expect(screen.queryByTestId('canvas-element-binding-hint-0')).toBeNull();
+  });
+});
+
 // --- 옵셔널 필드의 부재 규율 ---------------------------------------------
 
 describe('CanvasElementsEditor — 빈 칸은 부재다', () => {

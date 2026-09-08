@@ -2523,3 +2523,155 @@ describe('편집기 조작은 프레임을 예약하지 않는다 (AC-E4)', () =
     expect(emit).toHaveBeenCalledTimes(1);
   });
 });
+
+// --- 축소된 미리보기 안의 포인터 (AC-E9 · 위험 R1) ------------------------
+//
+// **이 결함이 빠져나간 이유는 여기 있던 모든 시험이 축척 1 에서 쟀기 때문이다.**
+// `stubOverlayRect()` 의 기본 크기가 `STAGE` 와 같으면 `rect.width / stage.width === 1`
+// 이라 나눗셈이 항등이 되어, 변환을 아예 하지 않는 코드와 하는 코드가 구별되지 않는다.
+//
+// 설정 다이얼로그의 미리보기는 패널을 대시보드에서의 **실제 픽셀 크기로 렌더한 뒤 통째로
+// 축소**한다(`PanelSettingsDialog` §미리보기). CSS 변환이므로 `getBoundingClientRect()` 는
+// 변환 **뒤**를, 표면의 `ResizeObserver` 는 변환 **앞**을 준다. 그래서 아래 고정 입력은
+// **축척을 1 이 아닌 값으로 둔다**: 스테이지 800×400 을 400×200 상자로 재게 하여 **0.5** 다.
+// 이 값이 1 이면 아래 시험들은 결함을 통과시킨다.
+
+/** 축소 미리보기 고정 입력 — 스테이지는 변환 **앞**, 상자는 변환 **뒤**의 크기다. */
+const ZOOM_STAGE: StageSize = { width: 800, height: 400 };
+const ZOOM_RECT = { left: 50, top: 30, width: 400, height: 200 };
+/** 이 파일이 쓰는 유일한 비단위 축척. 0.5 = 400/800 = 200/400. */
+const ZOOM_SCALE = 0.5;
+
+/** 스테이지 로컬 px → 화면 px(축소 미리보기의 정방향 변환). 시험이 손을 놓을 자리를 만든다. */
+function toScreen(stageX: number, stageY: number): { x: number; y: number } {
+  return { x: ZOOM_RECT.left + stageX * ZOOM_SCALE, y: ZOOM_RECT.top + stageY * ZOOM_SCALE };
+}
+
+/** 스테이지 한가운데를 차지하는 사각형 — 정규화 중심이 (0.5, 0.5) 다. */
+const CENTER_BOX: BoxGeometry = { x: 0.4, y: 0.4, w: 0.2, h: 0.2 };
+
+/**
+ * 축척 s 로 렌더된 오버레이. `stage` 는 표면이 잰 값(변환 앞)이고 심어 주는 상자는
+ * 화면에서 잰 값(변환 뒤)이다.
+ */
+function renderScaled(
+  elements: readonly CanvasElement[],
+  emit: ReturnType<typeof vi.fn>,
+  scale = ZOOM_SCALE,
+) {
+  render(<Harness elements={elements} stage={ZOOM_STAGE} onElementsChange={emit} />);
+  stubOverlayRect(
+    ZOOM_RECT.left,
+    ZOOM_RECT.top,
+    ZOOM_STAGE.width * scale,
+    ZOOM_STAGE.height * scale,
+  );
+  return emit;
+}
+
+describe('축소된 미리보기 안에서도 포인터가 도형과 같은 공간에 있다 (AC-E9)', () => {
+  it('축척 0.5 에서 도형의 시각적 한가운데를 누르면 그 도형이 골라진다', () => {
+    renderScaled([rect('a', CENTER_BOX)], vi.fn());
+
+    // 정규화 (0.5, 0.5) = 스테이지 (400, 200) = 화면 (250, 130).
+    const at = toScreen(400, 200);
+    expect(at).toEqual({ x: 250, y: 130 });
+    send('pointerdown', at.x, at.y);
+
+    expect(selectionText()).toBe('a');
+  });
+
+  it('축척을 무시했다면 맞았을 자리는 빗나간다 (결함의 거울상)', () => {
+    renderScaled([rect('a', CENTER_BOX)], vi.fn());
+
+    // 화면 (400, 200) 을 누른다.
+    //   - 옳은 읽기: (400-50)/0.5 = 700, (200-30)/0.5 = 340 → 정규화 (0.875, 0.85).
+    //     상자(0.4..0.6) 밖이므로 아무것도 골라지지 않는다.
+    //   - 결함 당시의 읽기: 원점만 빼 (350, 170) → 정규화 (0.4375, 0.425). 상자 **안**이다.
+    // 즉 이 한 줄이 결함의 유무를 정확히 가른다.
+    send('pointerdown', 400, 200);
+
+    expect(selectionText()).toBe('');
+  });
+
+  it('축척 0.5 에서 화면 N px 를 끌면 요소는 스테이지 N/0.5 px 만큼 움직인다', async () => {
+    const emit = renderScaled([rect('a', CENTER_BOX)], vi.fn());
+
+    const from = toScreen(400, 200);
+    // 화면에서 (40, 20) px 를 끈다 → 스테이지 (80, 40) px → 정규화 (0.1, 0.1).
+    send('pointerdown', from.x, from.y);
+    send('pointermove', from.x + 40, from.y + 20);
+    await nextFrame();
+
+    expectBox(emittedGeometry(emit, 'a'), { x: 0.5, y: 0.5, w: 0.2, h: 0.2 });
+  });
+
+  it('축척 1 에서는 같은 화면 이동량이 그대로 스테이지 이동량이다 (되돌림 방어)', async () => {
+    const emit = renderScaled([rect('a', CENTER_BOX)], vi.fn(), 1);
+
+    // 축척 1 이므로 스테이지 px = 화면 px - 원점이다.
+    const from = { x: ZOOM_RECT.left + 400, y: ZOOM_RECT.top + 200 };
+    send('pointerdown', from.x, from.y);
+    send('pointermove', from.x + 40, from.y + 20);
+    await nextFrame();
+
+    // 화면 (40, 20) = 스테이지 (40, 20) → 정규화 (0.05, 0.05).
+    expectBox(emittedGeometry(emit, 'a'), { x: 0.45, y: 0.45, w: 0.2, h: 0.2 });
+  });
+
+  it('놓는 순간의 좌표도 같은 공간으로 옮긴다 (pointerup 이 마지막 자리를 확정한다)', async () => {
+    const emit = renderScaled([rect('a', CENTER_BOX)], vi.fn());
+
+    const from = toScreen(400, 200);
+    send('pointerdown', from.x, from.y);
+    // 합류 프레임을 기다리지 않고 바로 뗀다 — 확정 경로가 같은 변환을 쓰는지 본다.
+    send('pointerup', from.x + 40, from.y + 20);
+
+    expectBox(emittedGeometry(emit, 'a'), { x: 0.5, y: 0.5, w: 0.2, h: 0.2 });
+  });
+
+  it('핸들 드래그도 같은 공간을 쓴다 — 손잡이가 커서 아래에 남는다', async () => {
+    const emit = renderScaled([rect('a', CENTER_BOX)], vi.fn());
+    // 먼저 골라야 핸들이 뜬다.
+    const center = toScreen(400, 200);
+    send('pointerdown', center.x, center.y);
+    send('pointerup', center.x, center.y);
+
+    // 우하단 핸들의 CSS 자리는 **스테이지 px** 이므로, 손은 그것을 화면으로 옮겨 잡는다.
+    const se = handleEl('se');
+    const grip = toScreen(Number.parseFloat(se.style.left), Number.parseFloat(se.style.top));
+    sendAt(se, 'pointerdown', grip.x, grip.y);
+    // 스테이지 (600, 300) = 정규화 (0.75, 0.75) 로 끈다.
+    const to = toScreen(600, 300);
+    send('pointermove', to.x, to.y);
+    await nextFrame();
+
+    expectBox(emittedGeometry(emit, 'a'), { x: 0.4, y: 0.4, w: 0.35, h: 0.35 });
+  });
+
+  it('스테이지를 아직 재지 못했으면 축척 1 로 떨어진다 (NaN·Infinity 를 흘리지 않는다)', () => {
+    const emit = vi.fn();
+    // 스테이지 0×0 + 화면 상자 0×0 — 두 몫이 모두 0/0 이다.
+    render(
+      <Harness elements={[rect('a', CENTER_BOX)]} stage={{ width: 0, height: 0 }} onElementsChange={emit} />,
+    );
+    stubOverlayRect(0, 0, 0, 0);
+
+    // 판정 자체가 NaN 으로 조용히 무너지지 않는지만 본다 — 크기가 0 이면 드래그는
+    // 어차피 시작되지 않는다(기존 0 나눗셈 가드).
+    expect(() => send('pointerdown', 10, 10)).not.toThrow();
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('상자 크기가 비유한이면 축척 1 로 떨어져 판정이 종전과 같아진다', () => {
+    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={vi.fn()} />);
+    // 잰 적 없는 상자(분리된 노드 등)가 NaN 을 주는 자리다. 축척이 NaN 이 되면 모든 좌표가
+    // NaN 이라 아무것도 고를 수 없게 되므로, 1 로 떨어져 원점만 뺀 값이 남아야 한다.
+    stubOverlayRect(0, 0, Number.NaN, Number.NaN);
+
+    // STAGE 200×100 위의 상자 (20,10,40,20) 안 — 축척 1 로 읽어야 맞는 자리다.
+    send('pointerdown', 30, 15);
+
+    expect(selectionText()).toBe('a');
+  });
+});

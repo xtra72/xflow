@@ -1223,6 +1223,7 @@
         "bindingLabel": "바인딩",
         "bindingAria": "요소 {index} 바인딩 시리즈",
         "bindingNone": "바인딩 없음 (정적 도형)",
+        "bindingNoSeries": "바인딩할 시리즈가 없습니다. 데이터 소스에서 시리즈를 먼저 설정하세요.",
         "tweenLabel": "트윈",
         "tweenDurationPlaceholder": "ms",
         "tweenDurationAria": "요소 {index} 트윈 지속 시간 (ms)",

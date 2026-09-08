@@ -1223,6 +1223,7 @@
         "bindingLabel": "Binding",
         "bindingAria": "Element {index} bound series",
         "bindingNone": "No binding (static shape)",
+        "bindingNoSeries": "No series to bind. Set the series in the data source first.",
         "tweenLabel": "Tween",
         "tweenDurationPlaceholder": "ms",
         "tweenDurationAria": "Element {index} tween duration (ms)",

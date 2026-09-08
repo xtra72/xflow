@@ -945,6 +945,20 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                         </option>
                       ))}
                     </select>
+                    {/* 고를 것이 하나도 없으면 **왜 없는지**를 말한다. 목록이 비는 정상적인
+                        이유는 하나뿐이다 — 데이터 소스에 시리즈가 아직 없다. 그 말을 하지
+                        않으면 사용자는 "바인딩 없음" 만 있는 상자를 보고 고장으로 읽는다.
+                        히트맵의 `heatmapNoSensors` 가 같은 자리에서 같은 일을 하며, 가리키는
+                        곳도 화면이 그 절을 부르는 이름(`dashboard.settings.dataSource`)
+                        그대로다. */}
+                    {bindingOptions.length === 0 && (
+                      <p
+                        className="w-full px-1 text-[10px] leading-tight text-(--color-text-muted)"
+                        data-testid={`canvas-element-binding-hint-${idx}`}
+                      >
+                        {t('dashboard.canvas.elements.bindingNoSeries')}
+                      </p>
+                    )}
 
                     <span className={GROUP_LABEL_CLASS}>
                       {t('dashboard.canvas.elements.tweenLabel')}

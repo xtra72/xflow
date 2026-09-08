@@ -373,17 +373,37 @@ describe('CanvasPanel — 문구 템플릿 토큰 치환 (AC-04)', () => {
 // --- AC-E1 ---------------------------------------------------------------
 
 describe('CanvasPanel — 요소 0개 (AC-E1)', () => {
-  it('빈 상태 안내를 그리고 캔버스 표면을 만들지 않는다', () => {
-    const { getByTestId, queryByTestId, container } = renderPanel(makeConfig([]));
+  // **이 시험의 주장이 002 사용 시험에서 뒤집혔다.** 001 이 쓴 원래 문장은 "빈 상태 안내를
+  // 그리고 캔버스 표면을 만들지 않는다" 였고, 그때는 옳았다 — 패널이 렌더 전용(가정 A7)이라
+  // 요소가 0개면 표면에 그릴 것도 누를 것도 없었기 때문이다. 002 가 그 표면 위에 도형
+  // 팔레트를 얹으면서 전제가 깨졌다: 표면이 없으면 오버레이도 팔레트도 없어, **첫 도형을
+  // 놓아야 할 바로 그 순간에 놓을 곳이 사라진다.** 그래서 "만들지 않는다" 를 "표면 위에
+  // 겹친다" 로 **의도적으로** 바꾼다. AC-E1 이 실제로 요구하는 것(안내가 있고 렌더 예외가
+  // 없다)은 그대로 성립하며, 오히려 AC-E9 가 그 위에 얹힌다.
+  it('빈 상태 안내를 표면 위에 겹쳐 그린다 (표면을 대신하지 않는다 — AC-E9)', () => {
+    const { getByTestId, container } = renderPanel(makeConfig([]));
 
     expect(getByTestId('canvas-empty').textContent).toContain('dashboard.canvas.emptyState');
-    expect(queryByTestId('canvas-surface')).toBeNull();
-    expect(container.querySelector('canvas')).toBeNull();
+    // 표면은 살아 있다 — 002 의 팔레트가 얹힐 자리다.
+    expect(getByTestId('canvas-surface')).toBeTruthy();
+    expect(container.querySelector('canvas')).toBeTruthy();
+  });
+
+  it('빈 안내는 포인터를 먹지 않는다 (팔레트·캔버스 누름을 가리는 유리판이 아니다)', () => {
+    const { getByTestId } = renderPanel(makeConfig([]));
+    expect(getByTestId('canvas-empty').className).toContain('pointer-events-none');
   });
 
   it('config 가 아예 손상되어도 예외 없이 빈 상태로 떨어진다', () => {
     const { getByTestId } = renderPanel({ elements: 'not-an-array' });
     expect(getByTestId('canvas-empty')).toBeTruthy();
+  });
+
+  it('요소가 생기면 안내가 사라진다', () => {
+    const { queryByTestId } = renderPanel(
+      makeConfig([{ id: 'a', kind: 'rect', geometry: { x: 0, y: 0, w: 1, h: 1 }, style: {} }]),
+    );
+    expect(queryByTestId('canvas-empty')).toBeNull();
   });
 });
 
@@ -931,5 +951,34 @@ describe('CanvasPanel — 편집 표면 조작 전량이 유휴 정지를 지킨
     // 그 프레임을 그리고 나면 진행 중 트윈이 없으므로 루프는 다시 유휴로 돌아간다.
     clock.flush(100);
     expect(clock.pending).toBe(0);
+  });
+});
+
+// --- 결함 A(사용 시험): 요소 0개일 때 팔레트가 사라지지 않는다 (AC-E9) ----
+//
+// 001 의 빈 상태 분기는 표면을 **대신했고**, 002 는 팔레트를 그 표면의 오버레이 슬롯에
+// 얹었다. 두 결정이 만나 "첫 도형을 놓을 수 없다" 가 되었다 — 어느 쪽 시험도 혼자서는
+// 그것을 볼 수 없었다. 그래서 둘이 만나는 지점을 여기서 못박는다.
+
+describe('CanvasPanel — 요소가 0개여도 팔레트로 첫 도형을 놓을 수 있다 (AC-E9)', () => {
+  it('요소 0개 + 편집에서 팔레트 버튼 4개가 모두 떠 있고 안내도 함께 보인다', () => {
+    renderEditablePanel([], { onConfigChange: vi.fn(), forceEdit: true });
+
+    expect(screen.getByTestId('canvas-empty')).toBeTruthy();
+    for (const kind of ['rect', 'ellipse', 'line', 'text']) {
+      expect(screen.getByTestId(`canvas-palette-add-${kind}`)).toBeTruthy();
+    }
+  });
+
+  it('요소 0개에서 팔레트를 누르면 첫 요소가 config 로 흘러간다', () => {
+    const onConfigChange = vi.fn();
+    renderEditablePanel([], { onConfigChange, forceEdit: true });
+
+    fireEvent.click(screen.getByTestId('canvas-palette-add-rect'));
+
+    expect(onConfigChange).toHaveBeenCalledTimes(1);
+    const patch = onConfigChange.mock.calls[0]![0] as { elements: Array<{ kind: string }> };
+    expect(patch.elements).toHaveLength(1);
+    expect(patch.elements[0]!.kind).toBe('rect');
   });
 });
