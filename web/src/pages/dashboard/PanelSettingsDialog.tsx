@@ -238,6 +238,7 @@ import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/Heatm
 // 히트맵 프리뷰(설정 다이얼로그 내 실제 패널 렌더 — MODBUS 프리뷰 선례와 동일 방식).
 import HeatmapPanel from './panels/heatmap/HeatmapPanel';
 import CanvasPanel from './panels/canvas/CanvasPanel';
+import CanvasElementsEditor from './panels/canvas/CanvasElementsEditor';
 import BarChartPanel from './panels/charts/BarChartPanel';
 import LineChartPanel from './panels/charts/LineChartPanel';
 import PieChartPanel from './panels/charts/PieChartPanel';
@@ -1325,6 +1326,18 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               <CollapsibleSection title={t('dashboard.settings.heatmap')} defaultOpen={true}>
                 <HeatmapSettingsSection
                   panel={panel}
+                  onConfigChange={(c) => handleConfigChange(c)}
+                />
+              </CollapsibleSection>
+            )}
+
+            {/* SPEC-CANVAS-001 REQ-01 (6): 캔버스 요소 설정 섹션. **마운트 지점만** 둔다 —
+                본문(요소 목록 · 기하 수치 · 스타일 · 바인딩 · 규칙 표)은 전부
+                `panels/canvas/CanvasElementsEditor.tsx` 에 있다(§위험 R4). */}
+            {panel.type === 'canvas' && (
+              <CollapsibleSection title={t('dashboard.settings.canvas')} defaultOpen={true}>
+                <CanvasElementsEditor
+                  config={panel.config ?? {}}
                   onConfigChange={(c) => handleConfigChange(c)}
                 />
               </CollapsibleSection>
