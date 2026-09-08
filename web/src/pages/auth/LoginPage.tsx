@@ -2,21 +2,25 @@
 // 사용자명/비밀번호 입력 폼을 제공하며 인증 API를 호출한다.
 
 import { useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router';
+import { useNavigate } from 'react-router';
 import { Eye, EyeOff, LogIn } from 'lucide-react';
 
 import { useAuth } from '@/hooks/useAuth';
 import { useTranslation } from '@/lib/i18n';
 
+/** 로그인 성공 후 이동할 경로. 대시보드는 인증만 요구하므로 항상 도달 가능하다. */
+const DASHBOARD_PATH = '/';
+
 /**
  * 로그인 페이지.
- * 사용자명과 비밀번호를 입력받아 인증 후 returnUrl 또는 '/'로 이동한다.
+ *
+ * 사용자명과 비밀번호를 입력받아 인증 후 **항상 대시보드로** 이동한다.
+ * 세션 만료 직전에 보던 화면으로 되돌아가지 않는다 — 로그인 직후의 시작점은
+ * 언제나 대시보드 하나로 고정한다.
  */
 export default function LoginPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const returnUrl = searchParams.get('returnUrl') || '/';
 
   const { login, isLoading } = useAuth();
 
@@ -41,7 +45,7 @@ export default function LoginPage() {
 
     try {
       await login(username.trim(), password);
-      navigate(returnUrl, { replace: true });
+      navigate(DASHBOARD_PATH, { replace: true });
     } catch {
       setError(t('auth.loginError'));
     }
