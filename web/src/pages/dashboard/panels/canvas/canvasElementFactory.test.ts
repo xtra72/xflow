@@ -29,13 +29,30 @@ import {
   SEED_COLOR,
   SEED_STROKE_WIDTH,
   SEED_TEXT,
+  SEED_TEXT_COLOR,
+  withElementText,
 } from './canvasElementFactory';
 
 const KINDS: readonly CanvasElementKind[] = ['rect', 'ellipse', 'line', 'text'];
 
+/** 도형 3종 — 라벨이 붙을 수 있으나 `textColor` 없이는 칠해지지 않는 종류들이다. */
+const SHAPE_KINDS = ['rect', 'ellipse', 'line'] as const;
+
 /** 사각형 하나(주어진 id 로). 배열을 만드는 데만 쓴다. */
 function rect(id: string): CanvasElement {
   return { id, kind: 'rect', geometry: { x: 0, y: 0, w: 0.1, h: 0.1 }, style: {} };
+}
+
+/** 종류별 도형 하나. 씨앗이 심는 것과 같은 스타일을 입되 글자색은 없다. */
+function shape(kind: (typeof SHAPE_KINDS)[number]): CanvasElement {
+  return kind === 'line'
+    ? {
+        id: 's1',
+        kind: 'line',
+        geometry: { x1: 0.1, y1: 0.5, x2: 0.9, y2: 0.5 },
+        style: { stroke: SEED_COLOR, strokeWidth: SEED_STROKE_WIDTH },
+      }
+    : { id: 's1', kind, geometry: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 }, style: { fill: SEED_COLOR } };
 }
 
 // --- id 규칙 -------------------------------------------------------------
@@ -178,3 +195,91 @@ describe('canvasElementFactory — appendElement', () => {
     expect(els[8]!.geometry).toEqual(els[0]!.geometry);
   });
 });
+
+// --- 문구 편집 -----------------------------------------------------------
+
+describe('canvasElementFactory — withElementText', () => {
+  it('도형에 문구가 생기면 글자색을 함께 심는다 — 없으면 렌더 층이 라벨을 건너뛴다', () => {
+    for (const kind of SHAPE_KINDS) {
+      const next = withElementText(shape(kind), '{value}');
+      expect(next.text, `${kind} 의 문구가 실리지 않았다`).toBe('{value}');
+      expect(next.style.textColor, `${kind} 에 글자색이 심기지 않았다`).toBe(SEED_TEXT_COLOR);
+    }
+  });
+
+  it('심은 글자색은 도형 자신의 색이 아니다 — 같으면 라벨이 제 도형에 묻힌다', () => {
+    // 렌더 층이 `fill` 로 폴백하지 않는 이유가 바로 이것이며(`drawElement` 주석), 저술
+    // 시점에 폴백과 같은 값을 심으면 그 규율을 우회해 같은 결함을 되돌려 놓게 된다.
+    expect(SEED_TEXT_COLOR).not.toBe(SEED_COLOR);
+  });
+
+  it('심은 글자색은 2D context 가 받을 수 있는 실제 색 문자열이다', () => {
+    // CSS 변수(`var(--...)`)는 canvas 2D 가 해석하지 못한다 — `SEED_COLOR` 와 같은 규율이다.
+    expect(SEED_TEXT_COLOR).toMatch(/^#[0-9a-f]{6}$/i);
+  });
+
+  it('심은 글자색은 도형 채움·밝은 표면·어두운 표면 어디서도 사라지지 않는다', () => {
+    // 세 배경을 한 색으로 만족시킬 수 있는 상한이 1.998:1 이다(`SEED_TEXT_COLOR` 주석의
+    // 계산). 흰색(밝은 표면에서 1.03:1)이나 검정에 가까운 색(어두운 표면에서 1.22:1)으로
+    // 바꾸면 절반의 사용자에게 결함이 되돌아오므로, 그 선택을 이 단언이 막는다.
+    for (const background of [SEED_COLOR, '#fbfcfe', '#1f2937']) {
+      expect(contrastRatio(SEED_TEXT_COLOR, background), `${background} 위에서 묻힌다`)
+        .toBeGreaterThan(1.9);
+    }
+  });
+
+  it('사용자가 고른 글자색은 덮지 않는다', () => {
+    const chosen: CanvasElement = { ...shape('rect'), style: { fill: SEED_COLOR, textColor: '#ff0000' } };
+    expect(withElementText(chosen, '{value}').style.textColor).toBe('#ff0000');
+  });
+
+  it('문구를 지워도 그때 심긴 색은 남는다 — 다시 적을 때 색을 잃지 않는다', () => {
+    const seeded = withElementText(shape('rect'), '{value}');
+    const cleared = withElementText(seeded, undefined);
+    expect('text' in cleared).toBe(false);
+    expect(cleared.style.textColor).toBe(SEED_TEXT_COLOR);
+  });
+
+  it('빈 문구는 색을 심지 않는다 — 렌더 층이 빈 문구를 그리지 않는 것과 같은 판정이다', () => {
+    expect(withElementText(shape('rect'), undefined).style.textColor).toBeUndefined();
+    // 호출부가 `''` 를 접어 준다고 가정하지 않는다.
+    expect(withElementText(shape('rect'), '').style.textColor).toBeUndefined();
+  });
+
+  it("kind:'text' 는 그대로다 — 문구 요소는 textColor ?? fill 로 칠해진다", () => {
+    const text: CanvasElement = { id: 't1', kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: {} };
+    const next = withElementText(text, '{value}');
+    expect(next.text).toBe('{value}');
+    expect(next.style.textColor).toBeUndefined();
+  });
+
+  it('받은 요소를 제자리에서 고치지 않는다', () => {
+    const before = shape('rect');
+    withElementText(before, '{value}');
+    expect(before.text).toBeUndefined();
+    expect(before.style.textColor).toBeUndefined();
+  });
+});
+
+/** sRGB 채널 하나를 선형 광량으로(WCAG 2.x 상대 명도 정의). */
+function channelLuminance(byte: number): number {
+  const c = byte / 255;
+  return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+/** `#rrggbb` 의 상대 명도. */
+function relativeLuminance(hex: string): number {
+  const n = Number.parseInt(hex.slice(1), 16);
+  return (
+    0.2126 * channelLuminance((n >> 16) & 0xff) +
+    0.7152 * channelLuminance((n >> 8) & 0xff) +
+    0.0722 * channelLuminance(n & 0xff)
+  );
+}
+
+/** 두 색의 WCAG 대비율. */
+function contrastRatio(a: string, b: string): number {
+  const la = relativeLuminance(a);
+  const lb = relativeLuminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}

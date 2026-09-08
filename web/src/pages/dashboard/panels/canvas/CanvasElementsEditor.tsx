@@ -63,7 +63,7 @@ import {
   useCanvasLiveSeries,
   type CanvasSeriesOption,
 } from './canvasEditContext';
-import { appendElement } from './canvasElementFactory';
+import { appendElement, withElementText } from './canvasElementFactory';
 import CanvasRuleTableEditor from './CanvasRuleTableEditor';
 
 // --- 상수 ---------------------------------------------------------------
@@ -267,6 +267,9 @@ function withKind(el: CanvasElement, kind: CanvasElementKind): CanvasElement {
  * 씨앗 스타일·계단 오프셋·id 규칙은 **`canvasElementFactory.ts` 가 소유한다**
  * (SPEC-CANVAS-002 T9). 캔버스 도형 팔레트가 같은 것을 만들어야 하므로 두 호출부가 한
  * 구현을 부른다 — 규칙이 둘이 되면 "어디서 더했는가" 에 따라 결과가 달라진다(가정 A7).
+ *
+ * **문구 템플릿 편집도 같은 모듈을 지난다**(`withElementText`). 도형에 라벨이 생기는
+ * 순간 글자색을 심는 규칙이 거기 있고, 여기에 사본을 두지 않는다 — 씨앗 규칙과 같은 이유다.
  */
 
 /**
@@ -895,11 +898,13 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                     <span className={GROUP_LABEL_CLASS}>
                       {t('dashboard.canvas.elements.textLabel')}
                     </span>
+                    {/* 문구만은 `setElementField` 가 아니라 팩토리를 지난다 — 도형에 라벨이
+                        생기는 순간 글자색이 함께 심겨야 그 라벨이 실제로 칠해진다. */}
                     <input
                       type="text"
                       value={el.text ?? ''}
                       onChange={(e) =>
-                        replaceAt(idx, setElementField(el, 'text', optionalText(e.target.value)))
+                        replaceAt(idx, withElementText(el, optionalText(e.target.value)))
                       }
                       placeholder={t('dashboard.canvas.elements.textPlaceholder')}
                       aria-label={withIndex(t('dashboard.canvas.elements.textAria'), idx)}

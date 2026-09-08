@@ -12,6 +12,11 @@
 //      편집기는 `style: {}` 로 만들었고 렌더 층은 색 없는 요소를 (의도대로) 건너뛰어,
 //      "사각형" 을 눌러도 캔버스가 빈 채였다. 어느 쪽 단위 테스트도 이를 볼 수 없었으므로
 //      이 파일에서 `drawElement` 를 직접 불러 이음매를 건넌다.
+//      **같은 이음매가 두 번 비었다.** 두 번째는 요소를 만드는 경로가 아니라 **문구를
+//      적는** 경로였다: 도형의 문구 칸에 `{value}` 를 적어도 아무도 `textColor` 를 심지
+//      않아 라벨이 그려지지 않았다(도형 라벨은 `fill` 로 폴백하지 않는다 — 폴백하면 라벨이
+//      제 도형과 같은 색이 되므로 그 거절은 옳다). 그래서 이제 이 파일은 "추가 버튼을
+//      눌렀다" 뿐 아니라 **"문구를 타이핑했다"** 도 렌더 층까지 끌고 간다.
 //   6. 한 요소의 세부 여섯 줄은 **접힌다.** 순번 · 종류 · 순서 · 삭제만 늘 보인다.
 //
 // i18n 은 `CanvasRuleTableEditor.test.tsx` 선례대로 키 통과 스텁으로 갈아끼운다. 그래서
@@ -51,6 +56,7 @@ import { parseCanvasConfig } from './canvasConfig';
 import type { StageSize } from './canvasGeometry';
 import { renderTextTemplate } from './canvasText';
 import { drawElements, type DrawContext2D } from './drawElement';
+import { SEED_COLOR, SEED_STROKE_WIDTH, SEED_TEXT_COLOR } from './canvasElementFactory';
 import CanvasElementsEditor from './CanvasElementsEditor';
 import {
   CanvasEditSelectionContext,
@@ -949,6 +955,45 @@ function addedElement(kind: CanvasElementKind): CanvasElement {
   return el;
 }
 
+/** 라벨이 붙을 수 있는 도형 3종. `kind:'text'` 는 색 규칙이 달라 여기 들지 않는다. */
+const SHAPE_KINDS = ['rect', 'ellipse', 'line'] as const;
+
+/**
+ * 씨앗이 심는 것과 **같은 스타일**을 입은 도형 하나. 글자색은 없다 — 사용자가 도형을
+ * 더한 직후의 상태가 정확히 이것이고, 결함이 살던 자리도 여기다.
+ */
+function shapeEl(
+  kind: (typeof SHAPE_KINDS)[number],
+  style?: CanvasElement['style'],
+): CanvasElement {
+  return kind === 'line'
+    ? {
+        id: 's1',
+        kind: 'line',
+        geometry: { x1: 0.1, y1: 0.5, x2: 0.9, y2: 0.5 },
+        style: style ?? { stroke: SEED_COLOR, strokeWidth: SEED_STROKE_WIDTH },
+      }
+    : {
+        id: 's1',
+        kind,
+        geometry: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 },
+        style: style ?? { fill: SEED_COLOR },
+      };
+}
+
+/** 문구 칸에 **실제로 타이핑해** 편집기가 내보낸 요소를 꺼낸다. */
+function typedLabel(
+  kind: (typeof SHAPE_KINDS)[number],
+  text: string,
+  style?: CanvasElement['style'],
+): CanvasElement {
+  const spy = setup(cfg([shapeEl(kind, style)]));
+  fireEvent.change(testid('canvas-element-text-0'), { target: { value: text } });
+  const el = lastElements(spy)[0]!;
+  cleanup();
+  return el;
+}
+
 /** 요소 하나를 그리고 기록된 칠하기 호출을 돌려준다. */
 function paintCallsFor(el: CanvasElement, text?: string): string[] {
   const ctx = makePaintRecorder();
@@ -1006,6 +1051,63 @@ describe('CanvasElementsEditor — 만든 요소는 실제로 칠해진다', () 
     expect(text).toContain('{value}');
     expect(text).toContain('{name}');
     expect(text).toContain('{unit}');
+  });
+
+  /**
+   * 같은 이음매의 두 번째 구멍이다. 앞의 시험들은 **추가 버튼**이 낸 요소가 칠해지는지만
+   * 재고 있었고, 그 사이로 이것이 빠져나갔다: 도형에 **문구를 적는** 경로에는 아무도
+   * 색을 심지 않아, 사용자가 시리즈를 묶고 `{value}` 를 적어도 화면에는 아무것도 나오지
+   * 않았다(라벨은 `textColor` 로만 칠해지고 `fill` 로 폴백하지 않는다 — 폴백하면 라벨이
+   * 제 도형과 같은 색이 되므로 그 거절은 옳다).
+   *
+   * 그래서 여기서는 **실제 편집기 UI 에 문구를 타이핑해** 나온 요소를 그대로 `drawElements`
+   * 에 넣는다. 편집기만 보면 "값이 잘 실렸다" 로, 렌더 층만 보면 "색 없는 라벨은 안 그린다"
+   * 로 각각 통과하므로, 두 층을 잇지 않고서는 이 결함을 볼 수 없다.
+   */
+  it('도형에 문구를 적으면 렌더 층이 그 글자를 실제로 칠한다', () => {
+    for (const kind of SHAPE_KINDS) {
+      const el = typedLabel(kind, '{value}');
+      // 바인딩이 없는 갓 적은 라벨이 실제로 지나는 길이다(`CanvasPanel.buildCanvasFrame`).
+      const painted = paintCallsFor(el, renderTextTemplate(el.text ?? '', {}));
+      expect(
+        painted.some((c) => c.startsWith('fillText:')),
+        `${kind} 에 문구를 적었는데 라벨이 칠해지지 않았다`,
+      ).toBe(true);
+    }
+  });
+
+  it('그 글자색은 config 에 실려 편집기의 글자색 칸에도 뜬다', () => {
+    // 렌더 층이 색을 지어내는 대신 저술 시점에 심는 이유다 — 지어낸 색은 화면에만 있어
+    // 사용자가 갈아입힐 수 없다.
+    for (const kind of SHAPE_KINDS) {
+      expect(typedLabel(kind, '{value}').style.textColor, `${kind}`).toBe(SEED_TEXT_COLOR);
+    }
+  });
+
+  it('사용자가 고른 글자색은 문구를 적어도 덮이지 않는다', () => {
+    const el = typedLabel('rect', '{value}', { fill: SEED_COLOR, textColor: '#ff0000' });
+    expect(el.style.textColor).toBe('#ff0000');
+  });
+
+  it('문구를 지워도 그때 심긴 색은 남는다 — 다시 적을 때 색을 잃지 않는다', () => {
+    const live = setupStateful(cfg([shapeEl('rect')]));
+    fireEvent.change(testid('canvas-element-text-0'), { target: { value: '{value}' } });
+    fireEvent.change(testid('canvas-element-text-0'), { target: { value: '' } });
+
+    const el = (live.config.elements as CanvasElement[])[0]!;
+    expect(el.text).toBeUndefined();
+    expect(el.style.textColor).toBe(SEED_TEXT_COLOR);
+  });
+
+  it("kind:'text' 는 종전 그대로다 — 문구 요소는 textColor ?? fill 로 칠해진다", () => {
+    const spy = setup(
+      cfg([{ id: 't1', kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: {} }]),
+    );
+    fireEvent.change(testid('canvas-element-text-0'), { target: { value: '{value}' } });
+
+    const el = lastElements(spy)[0]!;
+    expect(el.text).toBe('{value}');
+    expect(el.style.textColor).toBeUndefined();
   });
 });
 
