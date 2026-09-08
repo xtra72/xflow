@@ -53,6 +53,13 @@ vi.mock('@/lib/i18n', () => ({
 
 import { storeSeriesId } from '../charts/chartChannelTypes';
 import CanvasPanel from './CanvasPanel';
+import CanvasElementsEditor from './CanvasElementsEditor';
+import {
+  CanvasEditSelectionContext,
+  CanvasLiveSeriesContext,
+  useCanvasEditSelectionState,
+  useCanvasLiveSeriesState,
+} from './canvasEditContext';
 import type { FrameScheduler } from './CanvasSurface';
 
 // --- ResizeObserver 오버라이드 ------------------------------------------
@@ -980,5 +987,260 @@ describe('CanvasPanel — 요소가 0개여도 팔레트로 첫 도형을 놓을
     const patch = onConfigChange.mock.calls[0]![0] as { elements: Array<{ kind: string }> };
     expect(patch.elements).toHaveLength(1);
     expect(patch.elements[0]!.kind).toBe('rect');
+  });
+});
+
+// --- 결함 D(사용 시험): 고른 시리즈가 실제로 값을 낸다 --------------------
+//
+// 목록 편집기가 내던 바인딩 값과 패널이 판독값을 찾던 키가 **서로 다른 공간**이었다.
+// 편집기는 config 만 보고 언제나 `storeSeriesId(...)` 를 냈고, 패널은 조회 컬럼 수가
+// config 의 참조 수와 같을 때만 그 동일성 키를 쓰고 **아닐 때는 조회 이름**을 썼다.
+// 참조 하나가 태그로 여러 컬럼으로 펼쳐지는 흔한 경우가 정확히 그 "아닐 때" 이므로,
+// 사용자가 고른 키는 어느 판독값과도 만나지 못하고 `{value}` 가 결측 표기로 남았다.
+//
+// **이 결함이 기존 시험 전부를 빠져나간 이유**: 바인딩을 다룬 모든 고정 입력이
+// 컬럼 수 == 참조 수(1:1)였다. 그 형상에서는 두 공간이 우연히 같으므로 결함이 없다.
+// 그래서 아래 시험의 고정 입력은 **참조 1개 → 컬럼 3개(비정렬)** 다.
+
+/** 참조 하나가 컬럼 셋으로 펼쳐지는 조회 결과(태그 팬아웃). 이름은 훅이 정한 표기다. */
+const FANOUT_COLUMNS = ['temp · value{room=A}', 'temp · value{room=B}', 'temp · value{room=C}'];
+
+/** 그 팬아웃을 낳는 config — store 참조는 **하나**뿐이다(태그 필터 한 줄). */
+function fanoutConfig(elements: unknown[]): Record<string, unknown> {
+  return {
+    data_source: 'store',
+    store_source: {
+      agent_name: 'a',
+      namespace: 'default',
+      selection_mode: 'keys',
+      series: [{ key: 'temp', field: 'value', tags: { room: '*' } }],
+      time_window_ms: 1000,
+      interval_ms: 1000,
+      aggregation: 'last',
+    },
+    elements,
+  };
+}
+
+/** 편집기가 config 만 보고 냈던(=결함이 있던) 키. 어느 판독값과도 만나지 못한다. */
+const CONFIG_DERIVED_KEY = storeSeriesId('temp', 'value', { room: '*' });
+
+/** `{value}` 만 찍는 텍스트 요소 하나. 바인딩은 아직 없다 — 사용자가 곧 고른다. */
+const VALUE_LABEL = {
+  id: 'v',
+  kind: 'text',
+  geometry: { x: 0.5, y: 0.5 },
+  style: { textColor: '#000000' },
+  text: '{value}',
+  decimals: 0,
+};
+
+/**
+ * 설정 다이얼로그와 **같은 형상**: 미리보기 패널과 목록 편집기가 한 config 와
+ * 두 컨텍스트를 나눠 쓴다. 결함이 두 컴포넌트 **사이**에 있었으므로 어느 한쪽만
+ * 렌더하는 시험으로는 볼 수 없다.
+ */
+function BindingHost({ clock }: { clock: ReturnType<typeof makeScheduler> }) {
+  const [cfg, setCfg] = useState<Record<string, unknown>>(() => fanoutConfig([VALUE_LABEL]));
+  const patch = (p: Record<string, unknown>) => setCfg((prev) => ({ ...prev, ...p }));
+  const selection = useCanvasEditSelectionState();
+  const liveSeries = useCanvasLiveSeriesState();
+  return (
+    <CanvasLiveSeriesContext value={liveSeries}>
+      <CanvasEditSelectionContext value={selection}>
+        <CanvasPanel
+          panelId="p1"
+          config={cfg}
+          onConfigChange={patch}
+          forceEdit
+          scheduler={clock.scheduler}
+          visibilitySource={ALWAYS_VISIBLE}
+        />
+        <CanvasElementsEditor config={cfg} onConfigChange={patch} />
+      </CanvasEditSelectionContext>
+    </CanvasLiveSeriesContext>
+  );
+}
+
+/** 숙주를 렌더하고 첫 행을 펼친다(세부는 기본이 접힘이다). */
+function renderBindingHost() {
+  const clock = makeScheduler();
+  const view = render(<BindingHost clock={clock} />);
+  for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
+  fireEvent.click(screen.getByTestId('canvas-element-toggle-0'));
+  return { ...view, clock };
+}
+
+/** 바인딩 드롭다운의 선택지 값 목록. */
+function bindingValues(): string[] {
+  const select = screen.getByTestId('canvas-element-binding-0') as HTMLSelectElement;
+  return Array.from(select.options).map((o) => o.value);
+}
+
+describe('CanvasPanel ↔ CanvasElementsEditor — 고른 시리즈가 값을 낸다 (결함 D)', () => {
+  it('참조 1개가 컬럼 3개로 펼쳐지면 편집기는 **판독값 키 3개**를 낸다', () => {
+    setSeries({
+      [FANOUT_COLUMNS[0]!]: reading(11),
+      [FANOUT_COLUMNS[1]!]: reading(22),
+      [FANOUT_COLUMNS[2]!]: reading(33),
+    });
+    renderBindingHost();
+
+    expect(bindingValues()).toEqual(['', ...FANOUT_COLUMNS]);
+    // config 만 보고 낸 키는 이 목록에 없다 — 있으면 고른 순간 값을 잃는다.
+    expect(bindingValues()).not.toContain(CONFIG_DERIVED_KEY);
+  });
+
+  it('그 선택지를 고르면 그 컬럼의 값이 실제로 `{value}` 로 그려진다', () => {
+    setSeries({
+      [FANOUT_COLUMNS[0]!]: reading(11),
+      [FANOUT_COLUMNS[1]!]: reading(22),
+      [FANOUT_COLUMNS[2]!]: reading(33),
+    });
+    const { clock } = renderBindingHost();
+
+    // 아직 바인딩이 없으므로 결측 표기다.
+    expect(drawnTexts()).toContain('-');
+
+    // 가운데 컬럼을 고른다 — 첫 컬럼을 고르면 "정렬됐을 때와 우연히 같은" 자리라
+    // 결함을 통과시킬 수 있다.
+    fireEvent.change(screen.getByTestId('canvas-element-binding-0'), {
+      target: { value: FANOUT_COLUMNS[1]! },
+    });
+    for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(100 + i * 16);
+
+    expect(drawnTexts()).toContain('22');
+  });
+
+  it('컬럼 수와 참조 수가 1:1 이면 종전대로 동일성 키를 낸다 (정렬 경로 회귀)', () => {
+    // 참조 1개 · 컬럼 1개. 이 형상에서 패널은 조회 이름이 아니라 동일성 키로 키잉한다.
+    setSeries({ 'temp · value{room=A}': reading(42) });
+    const clock = makeScheduler();
+    function Aligned() {
+      const [cfg, setCfg] = useState<Record<string, unknown>>(() =>
+        fanoutConfig([{ ...VALUE_LABEL }]),
+      );
+      const patch = (p: Record<string, unknown>) => setCfg((prev) => ({ ...prev, ...p }));
+      const liveSeries = useCanvasLiveSeriesState();
+      return (
+        <CanvasLiveSeriesContext value={liveSeries}>
+          <CanvasPanel
+            panelId="p1"
+            config={cfg}
+            onConfigChange={patch}
+            forceEdit
+            scheduler={clock.scheduler}
+            visibilitySource={ALWAYS_VISIBLE}
+          />
+          <CanvasElementsEditor config={cfg} onConfigChange={patch} />
+        </CanvasLiveSeriesContext>
+      );
+    }
+    render(<Aligned />);
+    for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
+    fireEvent.click(screen.getByTestId('canvas-element-toggle-0'));
+
+    expect(bindingValues()).toEqual(['', CONFIG_DERIVED_KEY]);
+
+    fireEvent.change(screen.getByTestId('canvas-element-binding-0'), {
+      target: { value: CONFIG_DERIVED_KEY },
+    });
+    for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(100 + i * 16);
+
+    expect(drawnTexts()).toContain('42');
+  });
+
+  it('조회가 아직 비어 있으면 config 로 뽑은 목록으로 떨어진다 (첫 조회 전)', () => {
+    // 미리보기가 아직 아무 컬럼도 받지 못한 순간. 목록이 통째로 비면 사용자는 고를
+    // 것이 없다고 읽으므로, 최선 추정이라도 내놓는다.
+    renderBindingHost();
+    expect(bindingValues()).toEqual(['', CONFIG_DERIVED_KEY]);
+  });
+
+  it('시리즈가 살아 있으면 "고를 것이 없다" 안내는 뜨지 않는다', () => {
+    setSeries({
+      [FANOUT_COLUMNS[0]!]: reading(11),
+      [FANOUT_COLUMNS[1]!]: reading(22),
+      [FANOUT_COLUMNS[2]!]: reading(33),
+    });
+    renderBindingHost();
+
+    expect(bindingValues()).toContain(FANOUT_COLUMNS[0]!);
+    expect(screen.queryByTestId('canvas-element-binding-hint-0')).toBeNull();
+  });
+
+  it('소스도 조회도 비면 안내가 뜬다 (진짜로 바인딩할 것이 없다)', () => {
+    const clock = makeScheduler();
+    function Bare() {
+      const liveSeries = useCanvasLiveSeriesState();
+      const cfg = { data_source: 'store', elements: [VALUE_LABEL] };
+      return (
+        <CanvasLiveSeriesContext value={liveSeries}>
+          <CanvasPanel
+            panelId="p1"
+            config={cfg}
+            onConfigChange={() => {}}
+            forceEdit
+            scheduler={clock.scheduler}
+            visibilitySource={ALWAYS_VISIBLE}
+          />
+          <CanvasElementsEditor config={cfg} onConfigChange={() => {}} />
+        </CanvasLiveSeriesContext>
+      );
+    }
+    render(<Bare />);
+    for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
+    fireEvent.click(screen.getByTestId('canvas-element-toggle-0'));
+
+    expect(bindingValues()).toEqual(['']);
+    expect(screen.getByTestId('canvas-element-binding-hint-0')).toBeTruthy();
+  });
+
+  it('발행은 값이 같으면 다시 일어나지 않는다 (폴링마다 렌더가 도는 고리를 막는다)', () => {
+    setSeries({ [FANOUT_COLUMNS[0]!]: reading(11) });
+    let editorRenders = 0;
+    const clock = makeScheduler();
+
+    function CountingEditor(props: {
+      config: Record<string, unknown>;
+      onConfigChange: (p: Record<string, unknown>) => void;
+    }) {
+      editorRenders += 1;
+      return <CanvasElementsEditor {...props} />;
+    }
+
+    function Host() {
+      const [cfg, setCfg] = useState<Record<string, unknown>>(() =>
+        fanoutConfig([VALUE_LABEL]),
+      );
+      const patch = (p: Record<string, unknown>) => setCfg((prev) => ({ ...prev, ...p }));
+      const liveSeries = useCanvasLiveSeriesState();
+      return (
+        <CanvasLiveSeriesContext value={liveSeries}>
+          <CanvasPanel
+            panelId="p1"
+            config={cfg}
+            onConfigChange={patch}
+            forceEdit
+            scheduler={clock.scheduler}
+            visibilitySource={ALWAYS_VISIBLE}
+          />
+          <CountingEditor config={cfg} onConfigChange={patch} />
+        </CanvasLiveSeriesContext>
+      );
+    }
+
+    const { rerender } = render(<Host />);
+    for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
+    const afterFirstPublish = editorRenders;
+
+    // 같은 값을 다시 조회한 것과 같은 상황: 판독값 맵은 새 참조지만 값은 그대로다.
+    setSeries({ [FANOUT_COLUMNS[0]!]: reading(11) });
+    act(() => {
+      rerender(<Host />);
+    });
+
+    // 값이 같으므로 발행이 상태를 갈지 않았고, 편집기는 부모 렌더 한 번만큼만 돌았다.
+    expect(editorRenders).toBe(afterFirstPublish + 1);
   });
 });

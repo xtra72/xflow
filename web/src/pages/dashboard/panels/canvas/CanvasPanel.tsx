@@ -29,7 +29,7 @@
 //
 // @spec SPEC-CANVAS-001 · SPEC-CANVAS-002 (T6 — 편집 배선)
 
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Shapes } from 'lucide-react';
 
 import { useTranslation } from '@/lib/i18n';
@@ -42,6 +42,10 @@ import type { VisibilitySource } from '../charts/visiblePolling';
 import { usePanelEditMode } from '../PanelEditToggle';
 import type { CanvasElement } from './canvasConfig';
 import { parseCanvasConfig } from './canvasConfig';
+import {
+  useCanvasLiveSeriesPublisher,
+  type CanvasSeriesOption,
+} from './canvasEditContext';
 import CanvasEditOverlay from './CanvasEditOverlay';
 import { evaluateRules, type ResolvedStyle } from './canvasRules';
 import { renderTextTemplate } from './canvasText';
@@ -244,6 +248,29 @@ export default function CanvasPanel({
 
   // 참조 안정성이 곧 유휴다 — 표면은 props 참조가 그대로면 프레임을 예약하지 않는다(AC-E6).
   const frame = useMemo(() => buildCanvasFrame(cfg.elements, readings), [cfg.elements, readings]);
+
+  // --- 결함 D: 바인딩 선택지를 **판독값과 같은 공간**에서 낸다 ---
+  //
+  // `buildCanvasFrame` 이 `readings.get(el.binding.series)` 로 찾는 바로 그 키 집합을 그대로
+  // 내놓는다. 목록 편집기가 config 로 키를 **추측**하면 위 `resolveSeriesReadings` 의 정렬
+  // 판정과 갈라지고(참조 1개가 컬럼 3개로 펼쳐지는 흔한 경우), 그때 고른 키는 어느 판독값
+  // 과도 만나지 못한다. 두 공간을 하나로 묶는 유일한 길은 **찾는 쪽이 내놓는 것**이다.
+  //
+  // 래치된 `readings` 를 쓴다 — 폴링이 한 번 실패했다고 사용자가 편집 중인 드롭다운이
+  // 비워지면, 고르던 항목이 손 밑에서 사라진다(AC-E4 와 같은 근거).
+  const liveSeriesOptions = useMemo<CanvasSeriesOption[]>(
+    () => [...readings].map(([id, reading]) => ({ id, label: reading.name })),
+    [readings],
+  );
+
+  const publishSeries = useCanvasLiveSeriesPublisher();
+
+  // 렌더 중에 쓰지 않고 효과로 미룬다 — 렌더 단계에서 남의 상태를 갈면 React 가 그 렌더를
+  // 버리고 다시 돌린다. 매 폴링마다 이 효과는 다시 돌지만(판독값 맵이 새 참조다) 발행은
+  // **값이 실제로 달라졌을 때만** 상태를 갈므로 고리가 생기지 않는다(`sameSeriesOptions`).
+  useEffect(() => {
+    publishSeries(liveSeriesOptions);
+  }, [publishSeries, liveSeriesOptions]);
 
   // AC-E1: 요소가 없으면 빈 상태 안내를 **표면 위에 겹쳐** 알린다(렌더 예외 없음).
   //

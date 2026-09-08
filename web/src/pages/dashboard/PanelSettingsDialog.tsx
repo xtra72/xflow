@@ -239,7 +239,12 @@ import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/Heatm
 import HeatmapPanel from './panels/heatmap/HeatmapPanel';
 import CanvasPanel from './panels/canvas/CanvasPanel';
 import CanvasElementsEditor from './panels/canvas/CanvasElementsEditor';
-import { CanvasEditSelectionContext, useCanvasEditSelectionState } from './panels/canvas/canvasEditContext';
+import {
+  CanvasEditSelectionContext,
+  CanvasLiveSeriesContext,
+  useCanvasEditSelectionState,
+  useCanvasLiveSeriesState,
+} from './panels/canvas/canvasEditContext';
 import BarChartPanel from './panels/charts/BarChartPanel';
 import LineChartPanel from './panels/charts/LineChartPanel';
 import PieChartPanel from './panels/charts/PieChartPanel';
@@ -890,6 +895,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // SPEC-CANVAS-002 T11: 캔버스 미리보기와 요소 목록 편집기가 **한 선택**을 나눠 쓰게 한다.
   // 본문은 전부 `panels/canvas/` 에 있고 여기에는 감싸기와 `forceEdit` 만 더한다(§위험 R5).
   const canvasSelection = useCanvasEditSelectionState();
+  // 그리고 **한 시리즈 목록**을 나눠 쓰게 한다. 미리보기가 판독값을 키잉한 그 집합을
+  // 내놓고 목록 편집기의 바인딩 드롭다운이 그것을 그대로 쓴다 — 두 곳이 각자 키를
+  // 추측하다 갈라진 자리를 없앤다. 여기도 감싸기 한 줄뿐이다(§위험 R4).
+  const canvasLiveSeries = useCanvasLiveSeriesState();
 
   if (!panel) return null;
 
@@ -1341,12 +1350,14 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 `panels/canvas/CanvasElementsEditor.tsx` 에 있다(§위험 R4). */}
             {panel.type === 'canvas' && (
               <CollapsibleSection title={t('dashboard.settings.canvas')} defaultOpen={true}>
-                <CanvasEditSelectionContext value={canvasSelection}>
-                  <CanvasElementsEditor
-                    config={panel.config ?? {}}
-                    onConfigChange={(c) => handleConfigChange(c)}
-                  />
-                </CanvasEditSelectionContext>
+                <CanvasLiveSeriesContext value={canvasLiveSeries}>
+                  <CanvasEditSelectionContext value={canvasSelection}>
+                    <CanvasElementsEditor
+                      config={panel.config ?? {}}
+                      onConfigChange={(c) => handleConfigChange(c)}
+                    />
+                  </CanvasEditSelectionContext>
+                </CanvasLiveSeriesContext>
               </CollapsibleSection>
             )}
 
@@ -1871,15 +1882,17 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 style={PREVIEW_CHILD_STYLE}
                 onWheel={handlePreviewWheel}
               >
-                <CanvasEditSelectionContext value={canvasSelection}>
-                  <CanvasPanel
-                    panelId={panel.id}
-                    title={panel.title}
-                    config={panel.config}
-                    onConfigChange={(c) => handleConfigChange(c)}
-                    forceEdit
-                  />
-                </CanvasEditSelectionContext>
+                <CanvasLiveSeriesContext value={canvasLiveSeries}>
+                  <CanvasEditSelectionContext value={canvasSelection}>
+                    <CanvasPanel
+                      panelId={panel.id}
+                      title={panel.title}
+                      config={panel.config}
+                      onConfigChange={(c) => handleConfigChange(c)}
+                      forceEdit
+                    />
+                  </CanvasEditSelectionContext>
+                </CanvasLiveSeriesContext>
               </div>
             )}
       </div>

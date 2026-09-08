@@ -54,7 +54,10 @@ import { drawElements, type DrawContext2D } from './drawElement';
 import CanvasElementsEditor from './CanvasElementsEditor';
 import {
   CanvasEditSelectionContext,
+  CanvasLiveSeriesContext,
   useCanvasEditSelectionState,
+  type CanvasLiveSeriesValue,
+  type CanvasSeriesOption,
 } from './canvasEditContext';
 
 afterEach(cleanup);
@@ -1443,5 +1446,107 @@ describe('순서 이동 규칙은 한 곳에만 있다 (REQ-04)', () => {
     // 둘이 짝을 이뤄야 이 가드가 실제로 문을 막는다.
     const source = readFileSync(join(__dirname, 'CanvasElementsEditor.tsx'), 'utf-8');
     expect(source).toMatch(/import \{ moveElementTo \} from '\.\/canvasEditArrange'/);
+  });
+});
+
+// --- 결함 D: 살아 있는 패널이 낸 키 집합이 config 추측을 이긴다 -----------
+//
+// 편집기가 config 만 보고 만든 목록은 **추측**이다 — 참조 하나가 태그로 여러 컬럼으로
+// 펼쳐지면 그 추측은 패널이 실제로 쓰는 키와 갈라지고, 사용자가 고른 값은 어느 판독값과도
+// 만나지 못한다. 그래서 곁에 미리보기가 있으면 그쪽이 낸 것을 그대로 쓴다.
+//
+// 두 층이 실제로 이어지는지(고른 값이 진짜 그려지는지)는 `CanvasPanel.test.tsx` 가
+// 두 컴포넌트를 함께 세워 잰다. 여기서는 편집기 쪽 계약만 잠근다.
+
+/** 패널이 이미 키 집합을 내놓은 상태를 흉내 낸 provider 값. */
+function liveValue(options: CanvasSeriesOption[]): CanvasLiveSeriesValue {
+  return { options, publish: () => {} };
+}
+
+/** 라이브 채널을 물린 채 편집기를 그리고 모든 줄을 펼친다. */
+function setupWithLive(
+  config: Record<string, unknown>,
+  options: CanvasSeriesOption[],
+): ReturnType<typeof vi.fn> {
+  const onConfigChange = vi.fn();
+  render(
+    <CanvasLiveSeriesContext value={liveValue(options)}>
+      <CanvasElementsEditor config={config} onConfigChange={onConfigChange} />
+    </CanvasLiveSeriesContext>,
+  );
+  expandAllRows();
+  return onConfigChange;
+}
+
+/** 바인딩 드롭다운의 선택지 값 목록. */
+function bindingValues(): string[] {
+  return Array.from((testid('canvas-element-binding-0') as HTMLSelectElement).options).map(
+    (o) => o.value,
+  );
+}
+
+const FANOUT: CanvasSeriesOption[] = [
+  { id: 'temp · value{room=A}', label: 'temp · value{room=A}' },
+  { id: 'temp · value{room=B}', label: 'temp · value{room=B}' },
+];
+
+describe('CanvasElementsEditor — 살아 있는 시리즈가 config 추측을 이긴다 (결함 D)', () => {
+  it('패널이 낸 키 집합이 있으면 그것만 낸다 (config 로 뽑은 동일성 키는 나오지 않는다)', () => {
+    setupWithLive(cfg([rect()]), FANOUT);
+
+    expect(bindingValues()).toEqual(['', FANOUT[0]!.id, FANOUT[1]!.id]);
+    expect(bindingValues()).not.toContain(TEMP_ID);
+  });
+
+  it('고른 값은 그 키 그대로 올라간다 (집계는 여전히 last 다)', () => {
+    const spy = setupWithLive(cfg([rect()]), FANOUT);
+
+    fireEvent.change(testid('canvas-element-binding-0'), { target: { value: FANOUT[1]!.id } });
+
+    expect(lastElements(spy)[0]!.binding).toEqual({ series: FANOUT[1]!.id, agg: 'last' });
+  });
+
+  it('표시 이름은 패널이 준 것을 그대로 쓴다 (훅이 정한 이름 하나뿐이다)', () => {
+    setupWithLive(cfg([rect()]), [{ id: 'k', label: '실습실 온도' }]);
+
+    const select = testid('canvas-element-binding-0') as HTMLSelectElement;
+    expect(select.options[1]!.value).toBe('k');
+    expect(select.options[1]!.textContent).toBe('실습실 온도');
+  });
+
+  it('아직 아무것도 내놓지 않았으면 config 목록으로 떨어진다 (첫 조회 전)', () => {
+    setupWithLive(cfg([rect()]), []);
+
+    expect(bindingValues()).toEqual(['', TEMP_ID, HUM_ID]);
+  });
+
+  it('provider 가 아예 없어도 config 목록으로 동작한다 (편집기 단독 렌더)', () => {
+    setup(cfg([rect()]));
+
+    expect(bindingValues()).toEqual(['', TEMP_ID, HUM_ID]);
+  });
+
+  it('저장된 바인딩이 라이브 목록에 없으면 되살린다 (되살리기 규칙은 그대로다)', () => {
+    setupWithLive(cfg([rect({ binding: { series: 'ghost key ', agg: 'last' } })]), FANOUT);
+
+    const select = testid('canvas-element-binding-0') as HTMLSelectElement;
+    expect(select.value).toBe('ghost key ');
+    expect(bindingValues()).toEqual(['', FANOUT[0]!.id, FANOUT[1]!.id, 'ghost key ']);
+  });
+
+  it('라이브 시리즈가 있으면 config 소스가 비어도 안내는 뜨지 않는다', () => {
+    // 태그 팬아웃처럼 config 만으로는 목록을 세울 수 없는 자리다. 고를 것이 있으므로
+    // "데이터 소스를 먼저 설정하라" 는 그 자리에서 거짓말이 된다.
+    setupWithLive({ data_source: 'store', elements: [rect()] }, FANOUT);
+
+    expect(screen.queryByTestId('canvas-element-binding-hint-0')).toBeNull();
+  });
+
+  it('라이브도 config 도 비면 안내가 그대로 뜬다 (AC-E11 회귀)', () => {
+    setupWithLive({ data_source: 'store', elements: [rect()] }, []);
+
+    expect(testid('canvas-element-binding-hint-0').textContent).toBe(
+      'dashboard.canvas.elements.bindingNoSeries',
+    );
   });
 });

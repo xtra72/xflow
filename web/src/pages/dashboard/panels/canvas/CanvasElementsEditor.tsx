@@ -58,7 +58,11 @@ import {
   type TweenSpec,
 } from './canvasConfig';
 import { moveElementTo } from './canvasEditArrange';
-import { useCanvasEditSelection } from './canvasEditContext';
+import {
+  useCanvasEditSelection,
+  useCanvasLiveSeries,
+  type CanvasSeriesOption,
+} from './canvasEditContext';
 import { appendElement } from './canvasElementFactory';
 import CanvasRuleTableEditor from './CanvasRuleTableEditor';
 
@@ -117,19 +121,29 @@ export interface CanvasElementsEditorProps {
   onConfigChange: (patch: Record<string, unknown>) => void;
 }
 
-/** 바인딩 선택지 한 줄 — 값은 동일성 키, 표시는 사람이 읽는 이름이다. */
-interface SeriesOption {
-  id: string;
-  label: string;
-}
+/**
+ * 바인딩 선택지 한 줄 — 값은 판독값 키, 표시는 사람이 읽는 이름이다.
+ *
+ * 형상은 라이브 채널이 소유한다(`canvasEditContext`). 같은 형상을 두 번 적으면 두 목록이
+ * 한 `<select>` 에 섞여 들어가는 이 자리에서 조용히 갈라질 수 있다.
+ */
+type SeriesOption = CanvasSeriesOption;
 
 // --- 순수 도우미 ---------------------------------------------------------
 
 /**
- * 데이터 소스 config 에서 바인딩 선택지를 만든다.
+ * 데이터 소스 config 에서 바인딩 선택지를 만든다 — **살아 있는 패널이 없을 때의 폴백**이다.
  *
- * 값(=`binding.series`)은 **`CanvasPanel` 이 조회 결과를 옮겨 놓는 그 공간**이어야 한다
- * (`CanvasPanel.resolveSeriesReadings`). 그 공간은 소스마다 다르다:
+ * 값(=`binding.series`)은 `CanvasPanel` 이 판독값을 키잉한 공간이어야 하는데, **config 만
+ * 보고서는 그 공간을 알 수 없다.** 참조 하나가 태그 필터로 여러 컬럼으로 펼쳐지면
+ * `CanvasPanel.resolveSeriesReadings` 는 정렬을 포기하고 조회 이름을 키로 쓰지만, 여기서는
+ * 아래처럼 여전히 동일성 키를 낸다 — 그 어긋남이 곧 "골랐는데 값이 안 나온다" 였다.
+ *
+ * 그래서 지금 이 함수의 자리는 **최선 추정 폴백**이다. 살아 있는 미리보기가 자기 키 집합을
+ * 내놓았다면(`useCanvasLiveSeries`) 그쪽이 이긴다. 이 함수는 미리보기가 아직 첫 조회를
+ * 마치지 않았거나(설정 창을 막 열었을 때) 곁에 미리보기가 아예 없을 때만 쓰인다.
+ *
+ * 폴백이 내는 공간은 소스마다 다르다:
  *   - **store**: 시리즈 동일성 키 `storeSeriesId(key, field, tags)`. 히트맵이 센서 좌표를
  *     키잉하는 공간과 같다(`sensorIdentity.heatmapSensorId`) — 표시 이름(alias)을 바꿔도
  *     바인딩이 끊기지 않는 이유다.
@@ -399,7 +413,18 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
 
   const cfg = useMemo(() => parseCanvasConfig(config), [config]);
   const elements = cfg.elements;
-  const seriesOptions = useMemo(() => buildSeriesOptions(config), [config]);
+
+  // --- 결함 D: 바인딩 선택지는 **살아 있는 패널이 낸 키 집합**을 먼저 쓴다 ---
+  //
+  // 미리보기 패널이 내놓은 목록은 추측이 아니라 **판독값을 실제로 키잉한 그 집합**이므로,
+  // 여기서 고른 값은 정의상 값을 찾는다(`canvasEditContext` 의 라이브 시리즈 채널 주석).
+  //
+  // 비었을 때 config 로 떨어지는 것은 두 자리를 함께 덮는다: 곁에 미리보기가 없는 자리
+  // (provider 없음 — 편집기 단독 렌더)와, 미리보기가 아직 첫 조회를 마치지 않은 순간이다.
+  // 소스가 정말 비어 있으면 폴백도 비므로 "고를 것이 없다" 안내는 그대로 뜬다.
+  const configSeriesOptions = useMemo(() => buildSeriesOptions(config), [config]);
+  const liveSeriesOptions = useCanvasLiveSeries();
+  const seriesOptions = liveSeriesOptions.length > 0 ? liveSeriesOptions : configSeriesOptions;
 
   /** **사용자가 손으로** 펼쳐 둔 요소의 id 집합. 기본은 전부 접힘이다. */
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
