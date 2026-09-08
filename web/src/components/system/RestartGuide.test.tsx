@@ -184,7 +184,11 @@ describe('RestartGuide', () => {
             screen.queryByTestId('restart-guide-copied-systemd'),
           ).not.toBeInTheDocument();
         },
-        { timeout: 2000 },
+        // 이 시험은 이름대로 **실제 setTimeout** 이 도는 것을 본다(가짜 타이머로 바꾸면
+        // 검사하려던 것이 사라진다). 그래서 관측 상한은 스위트 전체의 부하에 걸린다 —
+        // 파일이 400개를 넘어 병렬로 도는 동안 이벤트 루프가 굶으면 50ms 타이머의 만료를
+        // 2초 안에 보지 못해 간헐적으로 실패했다. 여유를 크게 두어 부하와 무관하게 만든다.
+        { timeout: 15000 },
       );
     } finally {
       setTimeoutSpy.mockRestore();

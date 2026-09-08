@@ -1,6 +1,6 @@
 ---
 id: SPEC-CANVAS-002
-version: "0.1.0"
+version: "0.2.0"
 status: draft
 created: 2026-09-08
 updated: 2026-09-08
@@ -21,6 +21,7 @@ tags: [dashboard, panel, canvas, editor, drag, resize, hit-test, frontend]
 | 일자 | 버전 | 변경 | 작성자 |
 |------|------|------|--------|
 | 2026-09-08 | 0.1.0 | 최초 작성. 사용자 요구("도형 팔레트를 두고, 도형을 드래그 및 리사이즈. 컴포넌트 클릭하여 속성 설정")를 그대로 MVP 로 삼는다. 001 이 가정 A7 로 이연한 **좌표 역산 히트 테스트**가 여기서 풀린다. 선택 오버레이는 캔버스에 그리지 않고 **DOM 층**으로 두어 001 의 rAF 유휴 정지 보장을 건드리지 않는다. 정렬·스냅·z-order 는 MVP 에 포함, **그룹은 004 의 `group` 노드가 소유**하므로 제외, **배경 에셋은 SPEC-CANVAS-005 로 분리**한다. 001 §위험 R5(편집 툴킷 API 불안정)는 SPEC-CHART-004/005 가 main 에 머지되어 **해소됨**. | xtra |
+| 2026-09-08 | 0.2.0 | **설계 변경(구현 중 확정): `CanvasSurface` 의 포인터 통과 슬롯 넷을 두지 않는다.** 0.1.0 은 §표면의 오버레이 슬롯에서 `<canvas>` 가 `pointerdown` 을 받고 표면이 그것을 `onCanvasPointerDown`/`Move`/`Up`/`Cancel` 로 흘려보내는 형상을 그렸고, T3 이 그대로 구현했다. 그러나 T5 가 오버레이를 지으면서 포인터를 **오버레이 루트**에서 받는 편이 옳다는 것이 확정되었다 — T8 의 초점 받는 핸들과 T9 의 팔레트가 어차피 그 층 안의 진짜 DOM 요소여서 좌표 기준이 하나로 유지되고, 칠해진 픽셀인 캔버스에는 애초에 잡을 노드가 없다. 그 결과 넷은 **호출부가 하나도 없는 API** 로 남았다. 위험 R4 가 이름으로 적은 대로 `CanvasSurface.tsx` 는 SPEC-CANVAS-004 가 다시 고칠 파일이므로, 부르는 곳이 없는 통과 슬롯을 남겨 다음 저자에게 "여기로도 포인터가 들어온다" 고 거짓말하지 않기로 한다. **후퇴가 아니라 더 나은 자리를 찾은 것이며**, AC-E3 은 약해지지 않는다 — 그 인수 기준이 요구하는 것은 "어느 노드가 받는가" 가 아니라 **"소비하지 않는다"** 이고, 그 책임은 처음부터 오버레이의 것이다. 덧붙여 목록 편집기 `moveAt` 의 인라인 splice 를 `canvasEditArrange.moveElementTo` 로 모아 REQ-04 의 "두 번째 정렬 규칙을 만들지 않는다" 를 실제로 하나로 만들었다(행위 보존 — 기존 86개 시험 무수정 통과). | xtra |
 
 ## 개요 (Overview)
 
@@ -372,12 +373,12 @@ hitTest(
 (휠 확대)이 걸려 있고 패널 크기 조절도 있다. `PanelDragLayer` 헤더는 바로 이 이유로 "그 밖을 잡으면
 아무 일도 없다" 를 규칙으로 삼았다. 캔버스도 같다 — **아무 데나 잡아서 끌리지 않는다.**
 
-- `pointerdown` 은 `<canvas>` 가 받는다. 히트가 **있으면** 선택·드래그를 시작하고 그 이벤트를 소비한다
-  (`stopPropagation` + `preventDefault`).
+- `pointerdown` 은 **오버레이 루트**가 받는다(0.2.0 에서 확정 — HISTORY). 히트가 **있으면** 선택·드래그를
+  시작하고 그 이벤트를 소비한다(`stopPropagation` + `preventDefault`).
 - 히트가 **없으면** 선택만 비우고 **이벤트를 소비하지 않는다.** 상위의 휠 확대·크기 조절이 종전대로
-  동작한다.
-- 핸들·팔레트는 DOM 오버레이 안에 있고 스스로 `pointer-events-auto` 이므로, 핸들을 잡은 포인터는 캔버스에
-  닿지 않는다.
+  동작한다. **어느 노드가 받는가는 이 규칙과 무관하다** — 중요한 것은 소비 여부뿐이다.
+- 핸들·팔레트는 같은 DOM 오버레이 안에 있고 스스로 이벤트를 끊으므로, 핸들을 잡은 포인터는 몸통 히트
+  테스트에 닿지 않는다.
 
 ### 선택 오버레이 — 캔버스에 칠하지 않고 DOM 층으로 둔다
 
@@ -409,15 +410,20 @@ hitTest(
 장점의 값보다 크다. 유휴 정지는 001 이 기능이 아니라 **금지 조항**으로 못박은 성질이고, 그것을 편집기
 편의를 위해 무르는 것은 대시보드 전체의 발열·배터리를 담보로 잡는 일이다.
 
-**표면의 오버레이 슬롯.** `CanvasSurface` 에 선택 prop 둘을 더한다.
+**표면의 오버레이 슬롯.** `CanvasSurface` 에 선택 prop **하나**를 더한다.
 
 ```
 overlay?: (ctx: { stage: StageSize; textWidths: Record<string, number> }) => React.ReactNode
-onCanvasPointerDown?: (e: React.PointerEvent<HTMLCanvasElement>) => void   // 그 밖 pointer 핸들러도 같은 형태
 ```
 
-둘 다 미지정이면 **001 과 동작이 완전히 같다**(오버레이 없음, 핸들러 없음). 무동작 보장이 여기서도
-성립한다.
+미지정이면 **001 과 동작이 완전히 같다**(오버레이 없음, 추가 DOM 노드 없음, 추가 프레임 없음). 무동작
+보장이 여기서도 성립한다.
+
+**포인터 통과 슬롯(`onCanvasPointerDown`/`Move`/`Up`/`Cancel`)은 두지 않는다.** 0.1.0 은 `<canvas>` 가
+포인터를 받는 형상을 그렸고 T3 이 그대로 구현했으나, 오버레이가 서면서 포인터는 **오버레이 루트**가
+받는 것으로 확정되었다(HISTORY 0.2.0). 그 넷은 호출부가 하나도 없는 API 로 남았고, 부르는 곳이 없는
+통과 슬롯은 이 파일을 다시 고칠 004 에게 거짓말이 된다(위험 R4). 표면은 포인터 리스너를 **아예 달지
+않으므로** "표면은 포인터로 아무것도 하지 않는다" 는 무조건적 보장이 되었다.
 
 ### 도형 팔레트
 
@@ -565,7 +571,7 @@ onCanvasPointerDown?: (e: React.PointerEvent<HTMLCanvasElement>) => void   // �
 - `canvasEditContext.tsx` — 선택 상태 공유(미리보기 ↔ 목록 편집기). provider 없이도 동작하는 기본값.
 
 수정(행위 보존):
-- `CanvasSurface.tsx` — `overlay` 렌더 prop + 포인터 핸들러 통과 추가. **둘 다 미지정이면 001 과 동일.**
+- `CanvasSurface.tsx` — `overlay` 렌더 prop **하나만** 추가. **미지정이면 001 과 동일.** 포인터 리스너는 달지 않는다(HISTORY 0.2.0).
 - `drawElement.ts` — `drawElements` 의 **반환 타입만** `void → Record<string, number>`(요소 id → 실측
   글자 폭). 인자·`DrawContext2D`·그리기 동작 **불변**.
 - `CanvasPanel.tsx` — `usePanelEditMode` 배선, 오버레이 마운트, `onConfigChange` 를 **실제로 쓴다**
@@ -574,14 +580,15 @@ onCanvasPointerDown?: (e: React.PointerEvent<HTMLCanvasElement>) => void   // �
   기존 추가 버튼·접이식 구조는 그대로.
 - `PanelSettingsDialog.tsx` — 두 마운트 지점을 provider 로 감싸고 미리보기에 `forced` 를 넘긴다.
   **본문은 더하지 않는다**(001 §위험 R4).
-- `i18n/{ko,en}.json` — 팔레트·핸들·정렬·스냅·z-order 문구와 `aria-label`.
+- `i18n/{ko,en}.json` — 팔레트·핸들·정렬·스냅·z-order 문구와 `aria-label`, 그리고 오버레이 루트의
+  **키보드 안내문**(`keyboardHint` — `aria-describedby` 로 잇는 sr-only 문단, T15).
 
 **등록 6지점은 수정하지 않는다** — 001 이 `onConfigChange` 를 미리 흘려 둔 덕분이다.
 
 ### 추적성 (Traceability)
 
 - REQ-01 → `CanvasPanel.tsx`(`usePanelEditMode` 배선) · `CanvasEditOverlay.tsx`(팔레트) · `CanvasElementsEditor.tsx`(추가 버튼 유지·수치 입력 유지) · `i18n/{ko,en}.json`
-- REQ-02 → `canvasHitTest.ts` · `CanvasEditOverlay.tsx`(pointerdown 분기) · `CanvasSurface.tsx`(포인터 통과) · `drawElement.ts`(실측 폭 반환)
+- REQ-02 → `canvasHitTest.ts` · `CanvasEditOverlay.tsx`(오버레이 루트의 pointerdown 분기) · `drawElement.ts`(실측 폭 반환)
 - REQ-03 → `canvasEditGeometry.ts`(이동·크기 조절·박스 정규화) · `CanvasEditOverlay.tsx`(핸들·capture) · `CanvasPanel.tsx`(config 쓰기)
 - REQ-04 → `canvasEditGeometry.ts`(스냅·정렬 래퍼) · `PanelEditGrid`(재사용) · `CanvasElementsEditor.tsx`(자동 펼침·순서 이동) · `canvasEditContext.tsx`
 - REQ-05 → `CanvasSurface.tsx`(루프 규율 불변·오버레이 슬롯 무동작) · `CanvasEditOverlay.tsx`(빈 지점 비가로채기) · `canvasEditGeometry.ts`(clamp 금지)

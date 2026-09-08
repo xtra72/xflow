@@ -42,8 +42,10 @@
   **`textBaseline='middle'` 을 반영한 텍스트 상자**. DOM 무의존이므로 jsdom 없이 전량 단위 테스트한다.
 - T2. `drawElement.ts` 수정(DDD, 행위 보존): `drawElements` 의 **반환 타입만** `void → Record<string, number>`.
   인자·`DrawContext2D`·그리기 순서·그리기 결과 불변. 기존 테스트가 한 건도 바뀌지 않아야 한다.
-- T3. `CanvasSurface.tsx` 수정(DDD, 행위 보존): `overlay` 렌더 prop(`{ stage, textWidths }`)과 포인터 핸들러
-  통과. **둘 다 미지정이면 001 과 동작이 완전히 같다** — 이 무동작 보장을 테스트로 먼저 못박고 시작한다.
+- T3. `CanvasSurface.tsx` 수정(DDD, 행위 보존): `overlay` 렌더 prop(`{ stage, textWidths }`) **하나**만
+  더한다. **미지정이면 001 과 동작이 완전히 같다** — 이 무동작 보장을 테스트로 먼저 못박고 시작한다.
+  (착수 시점에는 포인터 통과 슬롯 넷도 함께 달았으나, T5 가 포인터를 오버레이 루트에서 받기로
+  확정하면서 호출부가 없는 API 로 남아 걷어냈다 — spec.md HISTORY 0.2.0.)
 - T4. `canvasEditContext.tsx`(신규): 선택 상태 + 캔버스 자동 펼침 id. provider 없이도 동작하는 기본값
   (대시보드에 놓인 패널에는 목록 편집기가 없다).
 - T5. `CanvasEditOverlay.tsx`(신규) 1차: 선택 외곽선 + `pointerdown` 히트 분기(**히트 없으면 이벤트를
@@ -106,7 +108,7 @@
 | R1 | 오버레이와 캔버스가 **서로 다른 좌표**를 믿어 핸들이 도형에서 미끄러진다 | 조작 불가에 가까운 어긋남. "가끔 어긋난다" 로만 보고되어 원인 추적이 어렵다 | 측정원 하나(`CanvasSurface` 의 `ResizeObserver`) + 투영 하나(`canvasGeometry`). 오버레이는 스테이지 크기를 **스스로 재지 않는다**. AC-E2 가 핸들 px 와 투영 px 의 일치를 검증한다 |
 | R2 | 캔버스 드래그가 미리보기의 **휠 확대·패널 크기 조절**과 부딪힌다 | 미리보기에서 도형을 끌면 패널이 함께 움직이는 종류의 결함 | `PanelDragLayer` 가 같은 이유로 택한 규칙을 그대로 쓴다 — **히트가 있을 때만 이벤트를 소비**하고, 빈 지점 누름은 소비하지 않는다. 핸들·팔레트는 자기 `pointer-events-auto` 로 캔버스에 닿지 않는다. AC-E3 가 검증한다 |
 | R3 | 편집기 상태가 **rAF 루프를 깨우는 새 경로**를 만든다 | 001 이 금지 조항으로 못박은 유휴 정지가 무너져 대시보드 전체가 발열·배터리를 태운다 | 오버레이를 DOM 에 두어 선택·호버·핸들이 캔버스 props 를 건드리지 않게 한다. 깨우기 경로는 종전의 props 변경 하나뿐이다. AC-E4 가 "선택·호버 시 프레임 요청 0" 을 직접 센다 |
-| R4 | **004 와 같은 파일을 고친다**(`drawElement.ts` · `CanvasSurface.tsx` · `CanvasPanel.tsx` · `CanvasElementsEditor.tsx`) | 순서가 뒤집혀 004 가 002 위에 오므로 충돌·재작업 | 002 의 변경을 **덧붙임(additive)** 으로 한정하고 명세에 이름으로 적는다: `drawElements` 는 **반환 타입만**, `CanvasSurface` 는 **선택 prop 둘만**, `drawElement` 의 인자·`DrawContext2D` 는 불변. 여기에 REQ-06 의 네 가지 전방 호환(히트 레코드 · 노드 id 키잉 · 기하 쓰기 단일 통로 · 그룹이 드래그 단위)을 더한다 |
+| R4 | **004 와 같은 파일을 고친다**(`drawElement.ts` · `CanvasSurface.tsx` · `CanvasPanel.tsx` · `CanvasElementsEditor.tsx`) | 순서가 뒤집혀 004 가 002 위에 오므로 충돌·재작업 | 002 의 변경을 **덧붙임(additive)** 으로 한정하고 명세에 이름으로 적는다: `drawElements` 는 **반환 타입만**, `CanvasSurface` 는 **선택 prop `overlay` 하나만**(HISTORY 0.2.0 — 포인터 통과 슬롯 넷은 호출부가 없어 걷어냈다), `drawElement` 의 인자·`DrawContext2D` 는 불변. 여기에 REQ-06 의 네 가지 전방 호환(히트 레코드 · 노드 id 키잉 · 기하 쓰기 단일 통로 · 그룹이 드래그 단위)을 더한다 |
 | R5 | `PanelSettingsDialog.tsx`(8,000행+)가 또 자란다 | 001 §위험 R4 의 재발 | 오버레이·팔레트·provider 본문을 전부 `panels/canvas/` 아래에 두고, 다이얼로그에는 **감싸는 줄과 `forced` prop** 만 더한다 |
 | R6 | 스냅 재사용 시 **상한 무한대를 잊는다** | 캔버스 드래그가 스테이지의 40% 지점에 **조용히** 붙잡힌다. 오동작이 아니라 "왜 더 안 가지" 로 보인다 | 래퍼 함수 하나(`snapDelta`)만 상한을 넘기게 하고 호출부가 원 함수를 직접 부르지 못하게 한다. AC-E5 가 스테이지 밖 드래그로 검증한다 |
 | R7 | 크기 조절로 **음수 크기 박스**가 저장된다 | 잡은 핸들이 커서에서 떨어져 나가고, 이후 편집이 예측 불가가 된다 | 쓰기 직전에 박스를 **정규화**한다(`x = min`, `w = abs`). 001 이 음수 크기를 그릴 수 있게 해 둔 것은 **읽기 경로의 견고성**이지 편집기가 만들 값이 아니다 |
