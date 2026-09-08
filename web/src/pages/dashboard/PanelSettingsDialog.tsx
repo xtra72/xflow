@@ -1432,12 +1432,18 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               - 통계도 내지 않는다 — 그룹 4개 중 header/badges/table 은 StatPanel 이
                 읽지 않는 죽은 컨트롤이었고, 살아 있던 `_base`(= panelColor)는 패널
                 옵션으로 올라갔다(SPEC-CHART-003 §5 D1). 남는 항목이 없다.
+              - 캔버스도 내지 않는다 — 같은 이유다. 캔버스는 `accentElements` 를 어디서도
+                읽지 않고(`panels/canvas/` 전체에 그 이름이 없다), 타입 분기에도 없어
+                기본 이름표(타이틀·요약 배지·테이블 헤더)가 흘러들어왔다. 캔버스에는
+                요약 배지도 표도 없으므로 셋 다 가리킬 대상이 없는 이름이고, 색을 골라도
+                화면은 그대로다.
             */}
             {panel.type === 'flows' ||
             panel.type === 'agents' ||
             panel.type === 'devices' ||
             panel.type === 'properties-grid' ||
             panel.type === 'stat' ||
+            panel.type === 'canvas' ||
             panel.type === 'agent-status' ? null : panel.type === 'ac-control' ? (
               <CollapsibleSection title={t('dashboard.settings.style')} defaultOpen={true}>
                 <AcControlStyleSection

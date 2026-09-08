@@ -16,9 +16,17 @@ interface FieldHelpProps {
   text: string;
   /** aria-describedby 가 참조하는 id (sr-only 설명에 부여) */
   describedById?: string;
+  /**
+   * sr-only 설명 span 에 붙일 test id.
+   *
+   * 인라인 안내문을 이 도움말로 옮긴 자리에서, "그 설명이 실제로 렌더된다" 를 보던
+   * 기존 검사가 같은 뜻으로 살아 있게 한다. 설명은 팝오버를 열지 않아도 sr-only 로
+   * 항상 DOM 에 있으므로, 이 span 이 곧 "설명이 있다" 의 자리다.
+   */
+  testId?: string;
 }
 
-export function FieldHelp({ text, describedById }: FieldHelpProps) {
+export function FieldHelp({ text, describedById, testId }: FieldHelpProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
@@ -61,7 +69,7 @@ export function FieldHelp({ text, describedById }: FieldHelpProps) {
       </button>
 
       {/* 스크린리더용 — aria-describedby 가 항상 참조 가능하도록 DOM 에 유지 */}
-      <span id={describedById} className="sr-only">
+      <span id={describedById} data-testid={testId} className="sr-only">
         {text}
       </span>
 

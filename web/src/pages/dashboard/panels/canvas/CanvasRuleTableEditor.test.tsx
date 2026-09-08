@@ -75,11 +75,29 @@ describe('CanvasRuleTableEditor — 표 렌더와 순서', () => {
     expect((testid('canvas-rule-move-down-0') as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('순서 설명 문구를 항상 보인다 — 이 표에서 새로 배우는 개념이다', () => {
+  // 설명은 줄로 깔지 않고 열 이름 뒤 `?` 에 담는다. 다만 **사라지지는 않는다** —
+  // `FieldHelp` 가 sr-only 로 DOM 에 상주시키므로 스크린리더는 팝오버를 열지 않아도 읽는다.
+  it('순서 설명을 열 이름 뒤 ? 에 담되 DOM 에서는 항상 읽을 수 있다', () => {
     setup([row()]);
-    expect(screen.getByText('dashboard.canvas.rules.firstMatchWins')).toBeTruthy();
+    expect(screen.getByTestId('canvas-rule-order-help').textContent).toBe(
+      'dashboard.canvas.rules.firstMatchWins',
+    );
     expect(screen.getByText('dashboard.canvas.rules.headerCondition')).toBeTruthy();
     expect(screen.getByText('dashboard.canvas.rules.headerPatch')).toBeTruthy();
+  });
+
+  it('? 단추는 키보드로 닿는 button 이며 눌러야 설명이 눈에 보인다', () => {
+    setup([row()]);
+    // 도움말 단추는 `property.fieldHelp.viewDescription` 를 aria-label 로 쓴다(키 통과 스텁).
+    const button = screen.getByRole('button', { name: 'property.fieldHelp.viewDescription' });
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(button);
+
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('tooltip').textContent).toBe(
+      'dashboard.canvas.rules.firstMatchWins',
+    );
   });
 });
 
