@@ -42,7 +42,7 @@ import {
  */
 export const SEED_COLOR = '#3b82f6';
 
-/** 신규 선의 두께(px). 기본값 1 은 고DPI 표면에서 실오라기라 "그려졌다" 로 읽히지 않는다. */
+/** 신규 선의 두께(px — 화면 양이지 캔버스 단위가 아니다). 1 은 고DPI 표면에서 실오라기다. */
 export const SEED_STROKE_WIDTH = 2;
 
 /**
@@ -84,10 +84,17 @@ export const SEED_TEXT = '{name} {value}{unit}';
  */
 export const SEED_TEXT_COLOR = '#565656';
 
-/** 겹침 방지 계단의 한 칸(정규화 좌표). */
-const SEED_OFFSET_STEP = 0.05;
+/**
+ * 겹침 방지 계단의 한 칸(정수 캔버스 단위).
+ *
+ * 기본 캔버스(500 × 400)의 5% 자리 — 정규화 시절의 `0.05` 를 그 크기로 옮겨 적은 값이라
+ * 연속으로 놓았을 때 흩어지는 모습이 종전과 같다. 캔버스 크기와 무관한 상수인 것에 뜻이
+ * 있다: 계단은 "겹치지 않을 만큼만" 어긋나면 되고, 캔버스가 작으면 되감기가 더 빨리
+ * 돌아올 뿐이다.
+ */
+const SEED_OFFSET_STEP = 25;
 
-/** 계단이 스테이지를 벗어나기 전에 처음으로 되감는 칸 수. */
+/** 계단이 캔버스를 벗어나기 전에 처음으로 되감는 칸 수. */
 const SEED_OFFSET_WRAP = 8;
 
 // --- 순수 도우미 ---------------------------------------------------------
@@ -111,17 +118,24 @@ export function seedOffset(count: number): number {
   return (count % SEED_OFFSET_WRAP) * SEED_OFFSET_STEP;
 }
 
-/** 계단을 더한 좌표. 0.1 + 0.15 가 0.25000000000000006 으로 새지 않게 자른다. */
+/**
+ * 계단을 더한 좌표.
+ *
+ * 정수끼리의 덧셈이라 자를 부동소수 꼬리가 없다 — 정규화 시절 이 함수가 `0.1 + 0.15` 를
+ * `0.25000000000000006` 으로 흘리지 않으려고 하던 반올림은 이제 항등이다. 그래도 함수를
+ * 남기는 것은 씨앗 상수가 손으로 고쳐질 때(예: 소수 한 칸) 정수 좌표계로 들어오는 문이
+ * 여기 하나이기 때문이다.
+ */
 function shifted(base: number, off: number): number {
-  return Math.round((base + off) * 1000) / 1000;
+  return Math.round(base + off);
 }
 
 /**
  * 신규 요소. **보이는 스타일을 심어** 내보낸다 — 위 `SEED_COLOR` 주석 참조.
  *
  * 계단은 종류마다 여유가 있는 축으로만 준다. 상자는 대각선(우하), 선은 가로로 이미
- * 스테이지를 가로지르므로 세로로만, 문구는 오른쪽으로 흘러가므로 세로로만 내린다.
- * 어느 쪽도 되감기 전에 1 을 넘지 않는다.
+ * 캔버스를 가로지르므로 세로로만, 문구는 오른쪽으로 흘러가므로 세로로만 내린다.
+ * 어느 쪽도 되감기 전에 기본 캔버스를 벗어나지 않는다(최대 7칸 × 25 = 175 단위).
  */
 export function newElement(id: string, kind: CanvasElementKind, count: number): CanvasElement {
   const off = seedOffset(count);

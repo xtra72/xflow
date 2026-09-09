@@ -38,8 +38,8 @@ import {
   projectPoint,
   resolveTextOrigin,
   type BackingSize,
+  type CanvasProjection,
   type PxPoint,
-  type StageSize,
 } from './canvasGeometry';
 import type { ResolvedStyle } from './canvasRules';
 
@@ -211,11 +211,11 @@ export function drawElement(
   el: CanvasElement,
   style: ResolvedStyle,
   text: string | undefined,
-  stage: StageSize,
+  proj: CanvasProjection,
 ): void {
   // 시그니처는 001 그대로다(반환 없음). 잰 폭이 필요한 쪽은 `drawElements` 뿐이므로
   // 폭을 흘려보내는 통로는 아래 내부 함수에 두고, 이 공개 함수는 001 의 형상을 지킨다.
-  drawMeasuredElement(ctx, el, style, text, stage);
+  drawMeasuredElement(ctx, el, style, text, proj);
 }
 
 /**
@@ -232,7 +232,7 @@ function drawMeasuredElement(
   el: CanvasElement,
   style: ResolvedStyle,
   text: string | undefined,
-  stage: StageSize,
+  proj: CanvasProjection,
 ): number | undefined {
   if (style.visible === false) return undefined;
   let measured: number | undefined;
@@ -241,7 +241,7 @@ function drawMeasuredElement(
     ctx.globalAlpha = resolveAlpha(style.opacity);
     switch (el.kind) {
       case 'rect': {
-        const box = projectBox(el.geometry, stage);
+        const box = projectBox(el.geometry, proj);
         ctx.beginPath();
         ctx.rect(box.x, box.y, box.w, box.h);
         paintFill(ctx, style);
@@ -249,7 +249,7 @@ function drawMeasuredElement(
         break;
       }
       case 'ellipse': {
-        const { cx, cy, rx, ry } = ellipseParams(projectBox(el.geometry, stage));
+        const { cx, cy, rx, ry } = ellipseParams(projectBox(el.geometry, proj));
         ctx.beginPath();
         ctx.ellipse(cx, cy, rx, ry, 0, 0, FULL_TURN);
         paintFill(ctx, style);
@@ -257,7 +257,7 @@ function drawMeasuredElement(
         break;
       }
       case 'line': {
-        const line = projectLine(el.geometry, stage);
+        const line = projectLine(el.geometry, proj);
         ctx.beginPath();
         ctx.moveTo(line.x1, line.y1);
         ctx.lineTo(line.x2, line.y2);
@@ -269,7 +269,7 @@ function drawMeasuredElement(
         measured = paintText(
           ctx,
           text,
-          projectPoint(el.geometry, stage),
+          projectPoint(el.geometry, proj),
           style,
           style.textColor ?? style.fill,
         );
@@ -278,7 +278,7 @@ function drawMeasuredElement(
     }
     // 도형에 붙은 라벨(REQ-02). text 요소는 위에서 이미 그렸다.
     if (el.kind !== 'text') {
-      paintText(ctx, text, labelAnchor(el, stage), style, style.textColor);
+      paintText(ctx, text, labelAnchor(el, proj), style, style.textColor);
     }
   } catch {
     // 손상 요소 하나가 프레임 전체를 무너뜨리지 않는다(REQ-05). 재다 만 폭은 버린다 —
@@ -316,7 +316,7 @@ export function drawElements(
   elements: readonly CanvasElement[],
   styles: Record<string, ResolvedStyle>,
   texts: Record<string, string | undefined>,
-  stage: StageSize,
+  proj: CanvasProjection,
 ): Record<string, number> {
   const textWidths: Record<string, number> = {};
   for (const el of elements) {
@@ -325,7 +325,7 @@ export function drawElements(
       el,
       styles[el.id] ?? el.style,
       texts[el.id] ?? el.text,
-      stage,
+      proj,
     );
     if (measured !== undefined) textWidths[el.id] = measured;
   }

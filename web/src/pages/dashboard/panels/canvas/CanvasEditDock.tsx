@@ -273,7 +273,7 @@ export interface CanvasEditDockBodyProps {
   /** 격자 표시·붙임(하나의 토글이 둘을 함께 켠다 — T12). */
   snapToGrid: boolean;
   onSnapToGridChange: (next: boolean) => void;
-  /** 격자 간격(%). 그려지는 격자와 붙는 눈금이 **같은 값 하나**를 본다. */
+  /** 격자 간격(정수 캔버스 단위). 그림·붙임·Shift 한 칸이 **같은 값 하나**를 본다. */
   gridStep: number;
   onGridStepChange: (next: number) => void;
   /** 맞출 상대가 있는가(2개 이상). */
@@ -364,10 +364,14 @@ export function CanvasEditDockBody({
           <Grid3x3 className={ICON_CLASS} aria-hidden="true" />
           <span>{t('dashboard.canvas.edit.gridSnap')}</span>
         </button>
-        {/* 격자 간격 — 고른 값 하나가 **그려지는 격자와 붙는 눈금을 함께** 정한다.
-            자유 입력이 아니라 목록인 이유: 임의의 수를 받으면 100 을 나누어떨어지지 않는
-            간격(예: 7%)이 들어와 마지막 칸이 잘리고, 그 잘린 칸에도 붙기 때문에 "왜 저기
-            붙지" 가 된다. 고를 수 있는 값은 `canvasEditArrange` 가 소유한다.
+        {/* 격자 간격 — 고른 값 하나가 **그려지는 격자 · 붙는 눈금 · Shift+방향키 한 칸**을
+            함께 정한다. 단위는 **캔버스 좌표 그대로**다: 500 폭 캔버스에 25 를 고르면 가로
+            스무 칸이며, 패널을 어떻게 늘여도 그 칸 수는 변하지 않는다(옛 백분율 간격은
+            스테이지 종횡비에 따라 세로에 반 칸짜리 자투리를 남겼다).
+
+            자유 입력이 아니라 목록인 이유: 임의의 수를 받으면 캔버스 축을 나누어떨어지지
+            않는 간격(예: 7)이 들어와 마지막 칸이 잘리고, 그 잘린 칸에도 붙기 때문에 "왜
+            저기 붙지" 가 된다. 고를 수 있는 값은 `canvasEditArrange` 가 소유한다.
 
             격자가 꺼져 있으면 끈다 — 눌러도 화면이 그대로인 컨트롤은 고장으로 보인다
             (정렬 버튼이 같은 이유로 같은 일을 한다). */}
@@ -381,8 +385,11 @@ export function CanvasEditDockBody({
           className={SELECT_CLASS}
         >
           {CANVAS_GRID_STEP_CHOICES.map((choice) => (
-            // 눈금 이름은 숫자와 `%` 뿐이라 번역할 것이 없다.
-            <option key={choice} value={choice}>{`${choice}%`}</option>
+            // 단위 이름은 번역한다 — 벌거벗은 숫자만 보이면 그것이 백분율인지 좌표인지
+            // 알 수 없고, 좌표계가 바뀐 이번 변경에서 그 모호함이 바로 그 오해의 씨앗이다.
+            <option key={choice} value={choice}>
+              {t('dashboard.canvas.edit.gridStepOption').replace('{step}', String(choice))}
+            </option>
           ))}
         </select>
       </section>

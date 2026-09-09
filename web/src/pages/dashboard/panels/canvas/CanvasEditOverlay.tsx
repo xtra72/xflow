@@ -94,16 +94,15 @@
 //      그 칸이기도 하다(AC-E5).
 //
 // 방향키 이동은 **격자 붙임 토글을 보지 않는다.** `snapDelta` 는 "지금 자리에서 가장 가까운
-// 격자선" 으로 죄는 계산이라 1px 미세 이동을 0 으로 만들어 버린다 — 격자를 켜는 순간
+// 격자선" 으로 죄는 계산이라 1 단위 미세 이동을 0 으로 만들어 버린다 — 격자를 켜는 순간
 // 방향키가 죽는 것은 접근성 후퇴다. 격자 칸 단위 이동은 Shift 가 이미 제공하고, 그 칸은
-// **화면에 그려진 바로 그 칸**이므로 격자 어휘는 여전히 하나다 — 그리는 값 · 붙는 값 ·
-// Shift 한 칸이 전부 `gridStep` 한 변수에서 `squareGridSteps` 로 파생된다(원 함수
-// `snapOffsetToGrid` 는 이 파일에서 부르지 않는다 — 위험 R6).
+// **화면에 그려진 바로 그 칸**이므로 격자 어휘는 여전히 하나다.
 //
-// 그 칸은 **정사각형**이다. 백분율은 제 축 길이에 대한 값이라 두 축에 같은 수를 주면
-// 정사각형이 아닌 패널에서 칸이 직사각형이 되는데, 여기는 그림을 그리는 자리다. 그래서
-// 한 물리 칸에서 두 축의 백분율을 파생하며, 그 결과 Shift+→ 와 Shift+↓ 는 **서로 다른
-// 백분율**을 쓰되 **같은 px** 를 옮긴다.
+// 어휘가 하나로 유지되는 방식이 0.8.0 에서 달라졌다. 종전에는 `gridStep` 한 변수에서
+// `squareGridSteps` 가 축 쌍을 파생했고, 그리는 쪽·붙는 쪽·Shift 세 자리가 모두 그 파생을
+// 지나야 했다. 이제 붙임과 Shift 는 **그 정수를 그대로** 쓴다(캔버스 단위끼리라 환산할
+// 것이 없다). 백분율로 옮겨 적는 자리는 **그리는 쪽 하나뿐**이며, 그래서 셋이 갈라질 수
+// 있는 자리 자체가 사라졌다 — 환산이 없는 곳은 어긋날 수도 없다.
 //
 // @spec SPEC-CANVAS-002 REQ-01 / REQ-02 / REQ-03 / REQ-04 / REQ-05 / REQ-06
 
@@ -135,15 +134,14 @@ import {
   type BoxHandleId,
   type CanvasHandleId,
   type LineHandleId,
-  type NormalizedDelta,
 } from './canvasEditGeometry';
 import {
-  CANVAS_GRID_STEP_PERCENT,
+  CANVAS_GRID_STEP_UNITS,
   alignDeltas,
   bringToFront,
+  gridPercents,
   sendToBack,
   snapDelta,
-  squareGridSteps,
   type AlignAxis,
   type AlignMode,
 } from './canvasEditArrange';
@@ -154,6 +152,11 @@ import {
   projectLine,
   projectPoint,
   resolveTextOrigin,
+  unprojectBox,
+  unprojectPoint,
+  type CanvasBox,
+  type CanvasDelta,
+  type CanvasProjection,
   type PxBox,
   type PxPoint,
   type StageSize,
@@ -171,8 +174,11 @@ export interface CanvasEditOverlayProps {
   enabled: boolean;
   /** 배열 순서 = 그리기 순서(뒤가 위). 히트 순회의 z-order 이기도 하다. */
   elements: readonly CanvasElement[];
-  /** 표면이 잰 스테이지 CSS px 크기. 이 층은 크기를 **스스로 재지 않는다**. */
-  stage: StageSize;
+  /**
+   * 표면이 넘겨준 투영 한 벌(잰 스테이지 px + config 의 캔버스 단위 크기).
+   * 이 층은 크기를 **스스로 재지 않고** 투영을 **다시 만들지 않는다**.
+   */
+  projection: CanvasProjection;
   /** 직전 프레임이 잰 글자 폭(요소 id → px). 없으면 기준점 둘레로 폴백한다(AC-E7). */
   textWidths: Readonly<Record<string, number>>;
   /**
@@ -228,13 +234,13 @@ interface MoveDrag extends DragCommon {
   mode: 'move';
   bases: DragBase[];
   /**
-   * 격자 붙임의 **기준 상자**(잡는 순간의 스테이지 로컬 px, 양수 범위).
+   * 격자 붙임의 **기준 상자**(잡는 순간의 캔버스 단위, 양수 범위).
    *
    * 잡은 요소 하나가 기준이며 무리는 같은 델타로 따라온다 — 무리의 각 요소를 저마다
    * 격자에 붙이면 끌려가는 동안 무리가 서로 흩어진다. 격자 붙임이 꺼져 있으면 쓰이지
    * 않으며, **잡는 순간의 값**이라 드래그 도중에 다시 재지 않는다(`frame` 과 같은 규율).
    */
-  anchor: PxBox;
+  anchor: CanvasBox;
 }
 
 /** 박스 8핸들 드래그. 잡는 순간의 기하를 들고 매 프레임 **절대 포인터 자리**로 다시 잡는다. */
@@ -334,14 +340,17 @@ const HANDLE_CLASS =
   'border border-white bg-blue-500 shadow focus:outline-none focus:ring-2 focus:ring-blue-300';
 
 /**
- * 방향키 한 번의 **미세 이동**(CSS px). 화면 양이지 정규화 양이 아니다 — 집기 여유
- * (`HIT_TOLERANCE_PX`)를 화면 양으로 둔 것과 같은 판단이며(가정 A2), 정규화 공간에서
- * 재면 같은 숫자가 큰 패널에서는 성큼 뛰고 작은 패널에서는 꿈쩍하지 않는다.
+ * 방향키 한 번의 **미세 이동**(캔버스 단위).
  *
- * 1px 인 것은 이 조작의 뜻이 "손으로는 낼 수 없는 정밀도" 이기 때문이다. 성큼 옮기고
- * 싶은 사람에게는 Shift 가 한 격자 칸을 준다.
+ * 좌표계가 정수가 되면서 이 값이 1 CSS px 에서 **1 캔버스 단위**로 바뀌었다. 정수
+ * 좌표계에서 1 단위는 저술할 수 있는 **가장 작은 차이**이므로, 이 조작의 뜻("손으로는
+ * 낼 수 없는 정밀도")이 그대로 유지된다 — 오히려 더 정확해진다: 종전에는 1px 를 분수로
+ * 환산해 더했으므로 패널 크기에 따라 저장되는 값이 달라졌지만, 이제는 어떤 패널에서
+ * 눌러도 정확히 1 단위가 더해진다.
+ *
+ * 성큼 옮기고 싶은 사람에게는 Shift 가 한 격자 칸을 준다.
  */
-const NUDGE_PX = 1;
+const NUDGE_UNITS = 1;
 
 /**
  * 방향키 → 축 방향. 여기 없는 키는 **우리 것이 아니므로 소비하지 않는다**(Tab·Esc 같은
@@ -391,17 +400,17 @@ function resolveMeasuredWidth(width: number | undefined): number {
  */
 function outlineBox(
   el: CanvasElement,
-  stage: StageSize,
+  proj: CanvasProjection,
   textWidths: Readonly<Record<string, number>>,
 ): PxBox {
   switch (el.kind) {
     case 'rect':
     case 'ellipse': {
-      const box = projectBox(el.geometry, stage);
+      const box = projectBox(el.geometry, proj);
       return normalizeBox(box);
     }
     case 'line': {
-      const line = projectLine(el.geometry, stage);
+      const line = projectLine(el.geometry, proj);
       return normalizeBox({
         x: line.x1,
         y: line.y1,
@@ -413,7 +422,7 @@ function outlineBox(
       const width = resolveMeasuredWidth(textWidths[el.id]);
       const fontSize = resolveFontSize(el.style.fontSize);
       const origin = resolveTextOrigin(
-        projectPoint(el.geometry, stage),
+        projectPoint(el.geometry, proj),
         el.style.align ?? 'left',
         width,
       );
@@ -531,10 +540,12 @@ function stagePoint(clientX: number, clientY: number, frame: PointerFrame): PxPo
 export default function CanvasEditOverlay({
   enabled,
   elements,
-  stage,
+  projection,
   textWidths,
   onElementsChange,
 }: CanvasEditOverlayProps) {
+  /** 스테이지 px 크기 — 포인터 좌표를 화면에서 스테이지로 옮길 때만 쓴다. */
+  const stage = projection.stage;
   const { t } = useTranslation();
   // provider 가 없으면 로컬 선택이다 — 대시보드에 놓인 패널에는 목록 편집기가 없다.
   const { selection, setSelection } = useCanvasEditSelection();
@@ -562,30 +573,27 @@ export default function CanvasEditOverlay({
   const [snapToGrid, setSnapToGrid] = useState(false);
 
   /**
-   * 격자 간격(%). **이 값 하나가 그려지는 격자와 붙는 눈금을 함께 정한다** — 아래에서
-   * `PanelEditGrid` 로 가는 축 쌍과 `snapDelta` 의 `step` 이 모두 이 변수에서 파생되고
-   * (`squareGridSteps`), 그것이 이 값을 두 곳에 나누어 두지 않는 유일한 이유다. 보이는
-   * 간격과 붙는 간격이 갈라지면 화면이 거짓말을 하며, 그 거짓말은 "붙긴 붙는데 선하고
-   * 안 맞는다" 로만 보고된다.
+   * 격자 간격(정수 캔버스 단위). **이 값 하나가 그려지는 격자 · 드래그 붙임 · Shift+방향키
+   * 한 칸을 함께 정한다.** 셋 중 둘(붙임 · Shift)은 이 정수를 **그대로** 쓰고, 남은
+   * 하나(그림)만 `gridPercents` 로 축마다의 백분율로 옮겨 적는다. 보이는 간격과 붙는
+   * 간격이 갈라지면 화면이 거짓말을 하며, 그 거짓말은 "붙긴 붙는데 선하고 안 맞는다"
+   * 로만 보고된다 — 환산이 한 곳뿐이면 갈라질 자리도 한 곳도 없다.
    *
    * 고를 수 있는 값은 `canvasEditArrange` 가 소유한다(격자 어휘의 주인은 여전히 그 모듈
    * 하나다). 격자 토글과 같이 **저장하지 않는 표시 상태**다(가정 A4) — config 스키마를
    * 넓히지 않으며, 이 값을 바꿔도 캔버스 props 는 그대로라 프레임을 예약하지 않는다(AC-E4).
    */
-  const [gridStep, setGridStep] = useState<number>(CANVAS_GRID_STEP_PERCENT);
+  const [gridStep, setGridStep] = useState<number>(CANVAS_GRID_STEP_UNITS);
 
   /**
-   * 지금 격자의 **두 축 간격**(%) — 고른 값 하나와 스테이지의 종횡비에서 파생된 정사각 칸.
+   * 격자를 **그리기 위한** 두 축의 백분율. 고른 정수 간격 하나를 캔버스 축 길이로 나눈
+   * 값이며, 그 환산은 `gridPercents` 한 곳에만 있다.
    *
-   * 백분율이 축마다 다른 것이 칸이 두 종류라는 뜻은 아니다. 칸은 px 하나이고, 그것을
-   * 그리는 자리와 붙이는 자리가 둘 다 **제 축 길이에 대한 백분율**로만 말할 수 있어서 두
-   * 번 옮겨 적을 뿐이다(`squareGridSteps`).
-   *
-   * 이 값을 그림(`PanelEditGrid`)과 Shift+방향키가 함께 본다. 드래그 붙임은 `snapDelta`
-   * **안에서 같은 함수로 다시 파생**하므로 세 자리가 한 계산을 공유한다 — 축 쌍을 손으로
-   * 조립해 넘기는 자리를 만들지 않는 것이 요점이다.
+   * **이 값을 보는 곳은 `PanelEditGrid` 하나뿐이다.** 붙임(`snapDelta`)과 Shift+방향키는
+   * 백분율을 거치지 않고 `gridStep` 정수를 그대로 쓴다 — 셋이 갈라질 수 없는 이유가
+   * 그것이다. 축 쌍을 손으로 조립해 넘기는 자리도, 두 번째 환산도 없다.
    */
-  const gridCell = squareGridSteps(gridStep, stage);
+  const gridCell = gridPercents(gridStep, projection.canvas);
 
   /**
    * 오버레이 루트. 핸들에서 시작한 드래그도 **루트의 상자**로 좌표를 옮기고 **루트에서**
@@ -605,9 +613,9 @@ export default function CanvasEditOverlay({
    * `elements` 가 새로 오므로, 예약 시점의 클로저를 그대로 쓰면 한 프레임 뒤처진 배열에
    * 기하를 써 넣게 된다.
    */
-  const latestRef = useRef({ elements, stage, onElementsChange, snapToGrid, gridStep });
+  const latestRef = useRef({ elements, projection, onElementsChange, snapToGrid, gridStep });
   useEffect(() => {
-    latestRef.current = { elements, stage, onElementsChange, snapToGrid, gridStep };
+    latestRef.current = { elements, projection, onElementsChange, snapToGrid, gridStep };
   });
 
   /**
@@ -620,7 +628,7 @@ export default function CanvasEditOverlay({
    * 기하 쓰기는 언제나 `patchNodeGeometry` 한 함수를 지난다(REQ-06). 그 통로를 지나지 않는
    * 쓰기는 **글자 크기 하나뿐**이며, 그것은 기하가 아니라 스타일이기 때문이다(REQ-03).
    *
-   * **clamp 하지 않는다**(가정 A5 · AC-E5). 스테이지 밖으로 나간 배치도 뜻이 있는
+   * **clamp 하지 않는다**(가정 A5 · AC-E5). 캔버스 밖으로 나간 배치도 뜻이 있는
    * 저술이며, 전부 나간 요소의 회수 경로는 목록 편집기의 수치 입력이다. 글자 크기만은
    * 예외로 죄는데(`resizeFontSize`), 그것은 좌표가 아니라 화면에서 글자를 잃지 않기 위한
    * 범위이며 수치 입력으로 범위 밖을 저술하는 길은 그대로 열려 있다.
@@ -633,26 +641,29 @@ export default function CanvasEditOverlay({
 
     const {
       elements: els,
-      stage: size,
+      projection: proj,
       onElementsChange: emit,
       snapToGrid: snap,
       gridStep: step,
     } = latestRef.current;
     // 0 으로 나눈 이동량은 요소를 화면 밖으로 날린다.
-    if (!(size.width > 0) || !(size.height > 0)) return;
+    if (!(proj.stage.width > 0) || !(proj.stage.height > 0)) return;
 
     const { point } = pending;
     const px = { dx: point.x - drag.origin.x, dy: point.y - drag.origin.y };
-    const pointer = { x: point.x / size.width, y: point.y / size.height };
+    // 포인터 자리와 이동량을 **캔버스 단위**로 되돌린다. 두 점을 각각 되돌려 빼므로
+    // 역투영을 부르는 함수가 하나로 유지된다(`canvasGeometry` §역투영).
+    const pointer = unprojectPoint(point, proj);
+    const originUnits = unprojectPoint(drag.origin, proj);
 
     switch (drag.mode) {
       case 'move': {
-        const raw = { dx: px.dx / size.width, dy: px.dy / size.height };
-        // 켜져 있을 때만 죈다. 상한은 래퍼(`canvasEditArrange.snapDelta`)가 무한대로
-        // 넘기므로 스테이지의 40% 지점에 조용히 붙잡히지 않는다(위험 R6 · AC-E5).
-        // 간격은 **화면에 그려진 그 칸**이다 — 같은 `gridStep`·같은 `stage` 에서
-        // `squareGridSteps` 가 파생하는 축 쌍이 `PanelEditGrid` 로도 간다.
-        const delta = snap ? snapDelta(raw, drag.anchor, size, step) : raw;
+        const raw = { dx: pointer.x - originUnits.x, dy: pointer.y - originUnits.y };
+        // 켜져 있을 때만 죈다. 붙임은 백분율 공간을 지나지 않으므로 `clampPercentOffset`
+        // 의 ±40 함정이 닿을 자리가 아예 없다(위험 R6 · AC-E5).
+        // 간격은 **화면에 그려진 그 칸**이다 — 그리는 쪽은 같은 `gridStep` 을
+        // `gridPercents` 로 옮겨 적을 뿐이라 둘이 갈라질 수 없다.
+        const delta = snap ? snapDelta(raw, drag.anchor, step) : raw;
         let next: CanvasElement[] = [...els];
         for (const base of drag.bases) {
           next = patchNodeGeometry(next, base.nodeId, moveGeometry(base.geometry, delta));
@@ -676,7 +687,7 @@ export default function CanvasEditOverlay({
       }
       default: {
         // 유일하게 기하 통로를 지나지 않는 쓰기다. 델타가 px 인 것은 글자 크기가 **화면
-        // 양**이기 때문이다 — 정규화 공간에서 재면 패널이 클수록 손이 더 가야 같은 크기가 된다.
+        // 양**이기 때문이다 — 캔버스 단위로 재면 캔버스가 클수록 손이 더 가야 같은 크기가 된다.
         emit(patchNodeFontSize(els, drag.nodeId, resizeFontSize(drag.fontSize, px)));
       }
     }
@@ -728,7 +739,7 @@ export default function CanvasEditOverlay({
     const frame = pointerFrameOf(host.getBoundingClientRect(), stage);
     const point = stagePoint(event.clientX, event.clientY, frame);
 
-    const hit = hitTest(elements, point, stage, textWidths);
+    const hit = hitTest(elements, point, projection, textWidths);
     if (hit === undefined) {
       // 빈 지점: 선택만 비우고 **이벤트를 소비하지 않는다**(AC-E3). 상위의 휠 확대·
       // 패널 크기 조절·패널 끌기가 종전대로 동작해야 한다.
@@ -754,7 +765,7 @@ export default function CanvasEditOverlay({
 
     if (!(stage.width > 0) || !(stage.height > 0)) return;
 
-    // 무리 이동: 같은 정규화 델타를 선택된 **모든** 요소에 더한다. 상한이 없으므로
+    // 무리 이동: 같은 캔버스 단위 델타를 선택된 **모든** 요소에 더한다. 상한이 없으므로
     // `clampGroupDelta` 는 쓰지 않는다 — 아무 일도 하지 않는 호출은 읽는 사람에게
     // 상한이 있다고 거짓말한다(spec.md §드래그 기구).
     const bases: DragBase[] = elements
@@ -773,9 +784,10 @@ export default function CanvasEditOverlay({
       origin: point,
       frame,
       bases,
-      // 선택 외곽선이 두르는 **그 상자**다 — 화면에 보이는 테두리와 격자에 붙는 중심이
-      // 다른 상자에서 나오면 "보이는 것과 다른 곳에 붙는다" 가 된다.
-      anchor: outlineBox(anchorEl, stage, textWidths),
+      // 선택 외곽선이 두르는 **그 상자**를 캔버스 단위로 되돌린 값이다 — 화면에 보이는
+      // 테두리와 격자에 붙는 중심이 다른 상자에서 나오면 "보이는 것과 다른 곳에 붙는다"
+      // 가 된다. 잡는 순간 한 번만 되돌리고 드래그 중에는 다시 재지 않는다(`frame` 규율).
+      anchor: unprojectBox(outlineBox(anchorEl, projection, textWidths), projection),
     };
     // 포인터가 스테이지를 벗어나도 이벤트가 계속 오게 한다. jsdom 에는 없는 API 라
     // 존재를 확인하고 부른다(§품질 게이트).
@@ -852,7 +864,7 @@ export default function CanvasEditOverlay({
   };
 
   /**
-   * 고른 것들을 정규화 델타만큼 옮긴다 — **드래그의 키보드 등가물**이다(T15 · REQ-04).
+   * 고른 것들을 캔버스 단위 델타만큼 옮긴다 — **드래그의 키보드 등가물**이다(T15 · REQ-04).
    *
    * 쓰기는 드래그와 **같은 통로**를 지난다: `moveGeometry` 로 기하를 옮기고
    * `patchNodeGeometry` 로 배열에 써 넣는다(REQ-06). 두 번째 이동 규칙을 만들면 "끌었을
@@ -865,7 +877,7 @@ export default function CanvasEditOverlay({
    * 된다) 순회는 **배열** 쪽을 돈다. 옮길 것이 하나도 없으면 쓰지 않는다 — 헛된 config
    * 쓰기는 곧 헛된 렌더 프레임이다(AC-E4).
    */
-  const nudgeSelection = (delta: NormalizedDelta): boolean => {
+  const nudgeSelection = (delta: CanvasDelta): boolean => {
     let next: CanvasElement[] = [...elements];
     let moved = false;
     for (const el of elements) {
@@ -901,23 +913,11 @@ export default function CanvasEditOverlay({
     if (dragRef.current !== null) return;
     if (selection.size === 0) return;
 
-    let delta: NormalizedDelta;
-    if (event.shiftKey) {
-      // 격자 칸은 스테이지 축 길이에 대한 **분수**라 나눌 것이 없다 — 그래서 아직 크기를
-      // 재지 못한 순간에도 뜻이 성립한다. 간격은 **지금 그려진 그 칸**이다 — "한 격자 칸"
-      // 이 화면에 그려진 칸과 다르면 그 이름이 거짓이 되므로, 격자 표시·드래그 붙임과
-      // 같은 파생(`squareGridSteps`)을 본다.
-      //
-      // 축마다 백분율이 다른 것이 요점이다. 칸은 정사각이므로 **가로 한 칸과 세로 한 칸은
-      // 같은 px** 이고, 그것을 각 축의 분수로 옮기면 두 수가 갈린다 — 여기서 한 값을 두
-      // 축에 쓰면 세로 한 칸이 그려진 칸을 건너뛰거나 못 미친다.
-      delta = { dx: (step.x * gridCell.x) / 100, dy: (step.y * gridCell.y) / 100 };
-    } else {
-      // 미세 이동은 화면 양이므로 축 길이로 나눈다. 0 으로 나눈 이동량은 요소를 화면 밖으로
-      // 날린다 — 드래그가 같은 자리에서 같은 판정을 한다.
-      if (!(stage.width > 0) || !(stage.height > 0)) return;
-      delta = { dx: (step.x * NUDGE_PX) / stage.width, dy: (step.y * NUDGE_PX) / stage.height };
-    }
+    // 두 갈래 다 **캔버스 단위 정수**라 나눌 것도 환산할 것도 없다. 그래서 스테이지를
+    // 아직 재지 못한 순간에도 뜻이 성립하며, 무엇보다 "한 격자 칸" 이 화면에 그려진 그
+    // 칸과 **정의상** 같다 — 그리는 쪽이 같은 `gridStep` 을 백분율로 옮겨 적을 뿐이다.
+    const amount = event.shiftKey ? gridStep : NUDGE_UNITS;
+    const delta: CanvasDelta = { dx: step.x * amount, dy: step.y * amount };
 
     if (!nudgeSelection(delta)) return;
     // 여기까지 왔다는 것은 실제로 옮겼다는 뜻이다 — 그때에만 스크롤을 막는다.
@@ -958,8 +958,8 @@ export default function CanvasEditOverlay({
   const applyAlign = (axis: AlignAxis, mode: AlignMode): void => {
     const picked = elements.filter((el) => selection.has(el.id));
     const deltas = alignDeltas(
-      picked.map((el) => ({ nodeId: el.id, box: outlineBox(el, stage, textWidths) })),
-      stage,
+      picked.map((el) => ({ nodeId: el.id, box: outlineBox(el, projection, textWidths) })),
+      projection,
       axis,
       mode,
     );
@@ -1047,9 +1047,12 @@ export default function CanvasEditOverlay({
           진하기 한 벌(`strong`)만 더 두고 여기서 그것을 고른다.
 
           간격은 **`snapDelta` 가 쓰는 그 칸**이다. 두 축에 서로 다른 백분율이 가는 것은
-          칸을 **정사각**으로 두기 위해서다 — 백분율은 제 축 길이에 대한 값이라 같은 수를
-          두 축에 주면 정사각형이 아닌 패널에서 칸이 직사각형이 된다. 그리는 값과 붙는
-          값을 각자 정하는 자리는 여전히 없다: 둘 다 `squareGridSteps` 한 계산에서 온다. */}
+          `repeating-linear-gradient` 의 백분율이 제 축 길이에 대한 값이기 때문이며, 두 값
+          모두 **같은 정수 간격**을 캔버스 축 길이로 나눈 것이다(`gridPercents`). 그래서
+          칸 수는 스테이지가 아니라 캔버스가 정한다 — 500 폭에 25 간격이면 패널을 어떻게
+          늘여도 가로 스무 칸이고, **자투리 칸이 없다**(사용 시험: "격자가 일정하지 않음").
+          그리는 값과 붙는 값을 각자 정하는 자리는 없다: 붙임은 이 백분율을 아예 보지 않고
+          같은 정수를 그대로 쓴다. */}
       <PanelEditGrid
         enabled={snapToGrid}
         step={gridCell.x}
@@ -1088,7 +1091,7 @@ export default function CanvasEditOverlay({
         )}
       {elements.map((el) => {
         if (!selection.has(el.id)) return null;
-        const box = outlineBox(el, stage, textWidths);
+        const box = outlineBox(el, projection, textWidths);
         return (
           <div
             key={el.id}
@@ -1106,7 +1109,7 @@ export default function CanvasEditOverlay({
         );
       })}
       {handleHost !== undefined &&
-        handlePositions(handleHost, stage, {
+        handlePositions(handleHost, projection, {
           measuredWidth: resolveMeasuredWidth(textWidths[handleHost.id]),
         }).map((handle) => (
           <button

@@ -271,7 +271,7 @@ describe('CanvasPanel — 도형 구성 렌더 + 규칙 적용 (AC-01)', () => {
     {
       id: 'tank',
       kind: 'rect',
-      geometry: { x: 0, y: 0, w: 0.5, h: 0.5 },
+      geometry: { x: 0, y: 0, w: 250, h: 200 },
       style: { fill: '#888888', stroke: '#000000', strokeWidth: 2 },
       binding: { series: sid('tank.level'), agg: 'last' },
       rules: [
@@ -279,9 +279,9 @@ describe('CanvasPanel — 도형 구성 렌더 + 규칙 적용 (AC-01)', () => {
         { op: 'gt', value: 50, patch: { fill: '#ffff00', strokeWidth: 4 } },
       ],
     },
-    { id: 'e1', kind: 'ellipse', geometry: { x: 0.5, y: 0, w: 0.3, h: 0.3 }, style: { fill: '#00ff00' } },
-    { id: 'l1', kind: 'line', geometry: { x1: 0, y1: 1, x2: 1, y2: 1 }, style: { stroke: '#0000ff', strokeWidth: 1 } },
-    { id: 't1', kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: { textColor: '#111111' }, text: 'label' },
+    { id: 'e1', kind: 'ellipse', geometry: { x: 250, y: 0, w: 150, h: 120 }, style: { fill: '#00ff00' } },
+    { id: 'l1', kind: 'line', geometry: { x1: 0, y1: 400, x2: 500, y2: 400 }, style: { stroke: '#0000ff', strokeWidth: 1 } },
+    { id: 't1', kind: 'text', geometry: { x: 250, y: 200 }, style: { textColor: '#111111' }, text: 'label' },
   ];
 
   it('4종 요소를 배열 순서대로 그리고, 바인딩 최신값 90 에 첫 일치 행의 채움색을 쓴다', () => {
@@ -338,7 +338,7 @@ describe('CanvasPanel — 문구 템플릿 토큰 치환 (AC-04)', () => {
           {
             id: 'label',
             kind: 'text',
-            geometry: { x: 0.5, y: 0.5 },
+            geometry: { x: 250, y: 200 },
             style: { textColor: '#000000' },
             text: '{name}: {value}{unit} {foo}',
             decimals: 1,
@@ -361,7 +361,7 @@ describe('CanvasPanel — 문구 템플릿 토큰 치환 (AC-04)', () => {
           {
             id: 'p',
             kind: 'text',
-            geometry: { x: 0.5, y: 0.5 },
+            geometry: { x: 250, y: 200 },
             style: { textColor: '#000000' },
             text: '기본 {value}',
             decimals: 0,
@@ -409,7 +409,7 @@ describe('CanvasPanel — 요소 0개 (AC-E1)', () => {
 
   it('요소가 생기면 안내가 사라진다', () => {
     const { queryByTestId } = renderPanel(
-      makeConfig([{ id: 'a', kind: 'rect', geometry: { x: 0, y: 0, w: 1, h: 1 }, style: {} }]),
+      makeConfig([{ id: 'a', kind: 'rect', geometry: { x: 0, y: 0, w: 500, h: 400 }, style: {} }]),
     );
     expect(queryByTestId('canvas-empty')).toBeNull();
   });
@@ -422,7 +422,7 @@ describe('CanvasPanel — 바인딩 시리즈 결측 (AC-E2)', () => {
     {
       id: 'r',
       kind: 'rect',
-      geometry: { x: 0, y: 0, w: 1, h: 1 },
+      geometry: { x: 0, y: 0, w: 500, h: 400 },
       style: { fill: '#cccccc', textColor: '#000000' },
       text: '{value}',
       binding: { series: sid('sensor.a'), agg: 'last' },
@@ -482,7 +482,7 @@ describe('CanvasPanel — 일치하는 규칙 없음 (AC-E3)', () => {
         {
           id: 'r',
           kind: 'rect',
-          geometry: { x: 0, y: 0, w: 1, h: 1 },
+          geometry: { x: 0, y: 0, w: 500, h: 400 },
           style: { fill: '#cccccc', textColor: '#000000' },
           text: '기본 {value}',
           decimals: 0,
@@ -507,7 +507,7 @@ describe('CanvasPanel — 폴링 실패 (AC-E4)', () => {
     {
       id: 'r',
       kind: 'rect',
-      geometry: { x: 0, y: 0, w: 1, h: 1 },
+      geometry: { x: 0, y: 0, w: 500, h: 400 },
       style: { fill: '#cccccc', textColor: '#000000' },
       text: '{value}',
       decimals: 0,
@@ -591,7 +591,7 @@ describe('CanvasPanel — 정적 요소와 값 방어', () => {
         {
           id: 'static',
           kind: 'rect',
-          geometry: { x: 0, y: 0, w: 1, h: 1 },
+          geometry: { x: 0, y: 0, w: 500, h: 400 },
           style: { fill: '#cccccc', textColor: '#000000' },
           text: '정적 {value}',
           // 바인딩이 없으므로 이 행은 절대 평가되지 않는다.
@@ -609,7 +609,7 @@ describe('CanvasPanel — 정적 요소와 값 방어', () => {
     setSeries({ 'tank.level': reading(90) });
     renderPanel(
       makeConfig([
-        { id: 'plain', kind: 'rect', geometry: { x: 0, y: 0, w: 1, h: 1 }, style: { fill: '#cccccc' } },
+        { id: 'plain', kind: 'rect', geometry: { x: 0, y: 0, w: 500, h: 400 }, style: { fill: '#cccccc' } },
       ]),
     );
 
@@ -623,7 +623,7 @@ describe('CanvasPanel — 정적 요소와 값 방어', () => {
         {
           id: 'r',
           kind: 'rect',
-          geometry: { x: 0, y: 0, w: 1, h: 1 },
+          geometry: { x: 0, y: 0, w: 500, h: 400 },
           style: { fill: '#cccccc', textColor: '#000000' },
           text: '{value}',
           binding: { series: sid('tank.level'), agg: 'last' },
@@ -648,7 +648,7 @@ describe('CanvasPanel — 정적 요소와 값 방어', () => {
         {
           id: 'r',
           kind: 'rect',
-          geometry: { x: 0, y: 0, w: 1, h: 1 },
+          geometry: { x: 0, y: 0, w: 500, h: 400 },
           style: { fill: '#cccccc', textColor: '#000000' },
           text: '{value}',
           decimals: 0,
@@ -669,7 +669,7 @@ describe('CanvasPanel — 정적 요소와 값 방어', () => {
           {
             id: 'r',
             kind: 'rect',
-            geometry: { x: 0, y: 0, w: 1, h: 1 },
+            geometry: { x: 0, y: 0, w: 500, h: 400 },
             style: { fill: '#cccccc', textColor: '#000000' },
             text: '{name}={value}',
             decimals: 0,
@@ -691,7 +691,7 @@ describe('CanvasPanel — 정적 요소와 값 방어', () => {
           {
             id: 'r',
             kind: 'rect',
-            geometry: { x: 0, y: 0, w: 1, h: 1 },
+            geometry: { x: 0, y: 0, w: 500, h: 400 },
             style: { fill: '#cccccc', textColor: '#000000' },
             text: '{value}',
             decimals: 0,
@@ -763,11 +763,16 @@ async function nextBrowserFrame(): Promise<void> {
   });
 }
 
-/** 스테이지 200×100 위의 사각형 하나. px 상자는 (20, 10, 40, 20) 이다. */
+/**
+ * 사각형 하나 — 기본 캔버스(500x400) 좌표로 (50, 40, 100, 80).
+ *
+ * config 에 `canvas` 키가 없으므로 파서가 기본 크기를 채운다(001·002 가 쓴 config 와
+ * 같은 형상이다). 스테이지 200×100 에 투영하면 px 상자는 (20, 10, 40, 20) 이다.
+ */
 const EDIT_RECT = {
   id: 'a',
   kind: 'rect',
-  geometry: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 },
+  geometry: { x: 50, y: 40, w: 100, h: 80 },
   style: { fill: '#888888' },
 };
 
@@ -843,11 +848,13 @@ describe('CanvasPanel — 드래그가 onConfigChange 로 흘러간다 (AC-03)',
     expect(onConfigChange).toHaveBeenCalledTimes(1);
     const patch = onConfigChange.mock.calls[0]![0] as { elements: Array<{ id: string; geometry: unknown }> };
     expect(Object.keys(patch)).toEqual(['elements']);
+    // 화면에서 (20,10)px 끌었다 — 스테이지 200x100 위의 그 길이는 기본 캔버스
+    // (500x400) 단위로 (50, 40) 이다. 자리는 캔버스 단위 정수로 저장된다.
     expect(patch.elements.find((el) => el.id === 'a')!.geometry).toEqual({
-      x: 0.2,
-      y: 0.2,
-      w: 0.2,
-      h: 0.2,
+      x: 100,
+      y: 80,
+      w: 100,
+      h: 80,
     });
   });
 
@@ -868,7 +875,7 @@ describe('CanvasPanel — 드래그가 onConfigChange 로 흘러간다 (AC-03)',
 describe('CanvasPanel — 편집기가 유휴 정지를 깨지 않는다 (AC-E4)', () => {
   it('선택과 호버는 프레임을 단 한 건도 요청하지 않는다', () => {
     const { clock } = renderEditablePanel(
-      [EDIT_RECT, { ...EDIT_RECT, id: 'b', geometry: { x: 0.5, y: 0.5, w: 0.2, h: 0.2 } }],
+      [EDIT_RECT, { ...EDIT_RECT, id: 'b', geometry: { x: 250, y: 200, w: 100, h: 80 } }],
       { onConfigChange: vi.fn(), forceEdit: true },
     );
     // 유휴에 들었다 — 여기서부터의 요청은 전부 편집기 탓이다.
@@ -1036,7 +1043,7 @@ const CONFIG_DERIVED_KEY = storeSeriesId('temp', 'value', { room: '*' });
 const VALUE_LABEL = {
   id: 'v',
   kind: 'text',
-  geometry: { x: 0.5, y: 0.5 },
+  geometry: { x: 250, y: 200 },
   style: { textColor: '#000000' },
   text: '{value}',
   decimals: 0,
@@ -1273,7 +1280,7 @@ function labelElement(over: Record<string, unknown> = {}): Record<string, unknow
   return {
     id: 'lbl',
     kind: 'text',
-    geometry: { x: 0.5, y: 0.5 },
+    geometry: { x: 250, y: 200 },
     style: { textColor: '#000000' },
     text: '{value}{unit}',
     decimals: 1,
@@ -1374,7 +1381,7 @@ describe('CanvasPanel — 숫자를 끄면 규칙은 "값 없음" 행만 남는�
     return {
       id: 'box',
       kind: 'rect',
-      geometry: { x: 0, y: 0, w: 1, h: 1 },
+      geometry: { x: 0, y: 0, w: 500, h: 400 },
       style: { fill: '#888888' },
       binding: { series: sid('pump.state'), agg: 'last' },
       rules: [

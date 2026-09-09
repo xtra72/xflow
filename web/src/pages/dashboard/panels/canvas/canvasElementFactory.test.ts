@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_BOX_GEOMETRY,
+  DEFAULT_CANVAS_SIZE,
   DEFAULT_LINE_GEOMETRY,
   DEFAULT_POINT_GEOMETRY,
   type CanvasElement,
@@ -40,7 +41,7 @@ const SHAPE_KINDS = ['rect', 'ellipse', 'line'] as const;
 
 /** 사각형 하나(주어진 id 로). 배열을 만드는 데만 쓴다. */
 function rect(id: string): CanvasElement {
-  return { id, kind: 'rect', geometry: { x: 0, y: 0, w: 0.1, h: 0.1 }, style: {} };
+  return { id, kind: 'rect', geometry: { x: 0, y: 0, w: 50, h: 40 }, style: {} };
 }
 
 /** 종류별 도형 하나. 씨앗이 심는 것과 같은 스타일을 입되 글자색은 없다. */
@@ -49,10 +50,10 @@ function shape(kind: (typeof SHAPE_KINDS)[number]): CanvasElement {
     ? {
         id: 's1',
         kind: 'line',
-        geometry: { x1: 0.1, y1: 0.5, x2: 0.9, y2: 0.5 },
+        geometry: { x1: 50, y1: 200, x2: 450, y2: 200 },
         style: { stroke: SEED_COLOR, strokeWidth: SEED_STROKE_WIDTH },
       }
-    : { id: 's1', kind, geometry: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 }, style: { fill: SEED_COLOR } };
+    : { id: 's1', kind, geometry: { x: 50, y: 40, w: 100, h: 80 }, style: { fill: SEED_COLOR } };
 }
 
 // --- id 규칙 -------------------------------------------------------------
@@ -79,15 +80,19 @@ describe('canvasElementFactory — nextElementId', () => {
 // --- 계단 오프셋 ---------------------------------------------------------
 
 describe('canvasElementFactory — seedOffset', () => {
-  it('한 칸은 0.05 이고 요소 수에 비례해 커진다', () => {
+  it('한 칸은 25 단위이고 요소 수에 비례해 커진다', () => {
     expect(seedOffset(0)).toBe(0);
-    expect(seedOffset(1)).toBeCloseTo(0.05, 10);
-    expect(seedOffset(3)).toBeCloseTo(0.15, 10);
+    expect(seedOffset(1)).toBe(25);
+    expect(seedOffset(3)).toBe(75);
   });
 
-  it('여덟 칸에서 되감긴다 — 계단이 스테이지 밖으로 행진하지 않는다', () => {
+  it('여덟 칸에서 되감긴다 — 계단이 캔버스 밖으로 행진하지 않는다', () => {
     expect(seedOffset(8)).toBe(seedOffset(0));
-    expect(seedOffset(9)).toBeCloseTo(seedOffset(1), 10);
+    expect(seedOffset(9)).toBe(seedOffset(1));
+  });
+
+  it('계단은 정수다 — 좌표계가 정수이므로 씨앗도 정수여야 한다', () => {
+    for (let n = 0; n < 16; n += 1) expect(Number.isInteger(seedOffset(n))).toBe(true);
   });
 });
 
@@ -124,15 +129,20 @@ describe('canvasElementFactory — newElement', () => {
   });
 
   it('상자는 대각선으로, 선과 문구는 여유가 있는 세로 축으로만 내려온다', () => {
-    // 가로는 선이 이미 스테이지를 가로지르고 문구는 오른쪽으로 흐르므로 건드리지 않는다.
-    expect(newElement('a', 'rect', 1).geometry).toEqual({ x: 0.15, y: 0.15, w: 0.2, h: 0.2 });
-    expect(newElement('a', 'line', 1).geometry).toEqual({ x1: 0.1, y1: 0.55, x2: 0.9, y2: 0.55 });
-    expect(newElement('a', 'text', 1).geometry).toEqual({ x: 0.5, y: 0.55 });
+    // 가로는 선이 이미 캔버스를 가로지르고 문구는 오른쪽으로 흐르므로 건드리지 않는다.
+    expect(newElement('a', 'rect', 1).geometry).toEqual({ x: 75, y: 65, w: 100, h: 80 });
+    expect(newElement('a', 'line', 1).geometry).toEqual({ x1: 50, y1: 225, x2: 450, y2: 225 });
+    expect(newElement('a', 'text', 1).geometry).toEqual({ x: 250, y: 225 });
   });
 
-  it('계단이 붙어도 좌표에 부동소수 찌꺼기가 남지 않는다', () => {
-    // 0.1 + 0.15 를 그대로 두면 0.25000000000000006 이 숫자 칸에 그대로 뜬다.
-    expect((newElement('a', 'rect', 3).geometry as { x: number }).x).toBe(0.25);
+  it('씨앗 좌표는 언제나 정수다 (정수 좌표계)', () => {
+    for (const kind of KINDS) {
+      for (let n = 0; n < 9; n += 1) {
+        const geo = newElement('a', kind, n).geometry as unknown as Record<string, number>;
+        for (const v of Object.values(geo)) expect(Number.isInteger(v)).toBe(true);
+      }
+    }
+    expect((newElement('a', 'rect', 3).geometry as { x: number }).x).toBe(125);
   });
 
   it('id 와 kind 는 받은 것을 그대로 쓴다', () => {
@@ -161,7 +171,7 @@ describe('canvasElementFactory — appendElement', () => {
     expect(before).toHaveLength(1);
   });
 
-  it('기존 요소의 좌표는 건드리지 않는다 — 스테이지 밖 저술은 합법이다', () => {
+  it('기존 요소의 좌표는 건드리지 않는다 — 캔버스 밖 저술은 합법이다', () => {
     const far: CanvasElement = {
       id: 'far',
       kind: 'rect',
@@ -177,19 +187,20 @@ describe('canvasElementFactory — appendElement', () => {
     for (let i = 0; i < 3; i++) els = appendElement(els, 'rect').next;
     const geos = els.map((e) => JSON.stringify(e.geometry));
     expect(new Set(geos).size).toBe(3);
-    expect(geos[0]).toBe(JSON.stringify({ x: 0.1, y: 0.1, w: 0.2, h: 0.2 }));
-    expect(geos[1]).toBe(JSON.stringify({ x: 0.15, y: 0.15, w: 0.2, h: 0.2 }));
-    expect(geos[2]).toBe(JSON.stringify({ x: 0.2, y: 0.2, w: 0.2, h: 0.2 }));
+    expect(geos[0]).toBe(JSON.stringify({ x: 50, y: 40, w: 100, h: 80 }));
+    expect(geos[1]).toBe(JSON.stringify({ x: 75, y: 65, w: 100, h: 80 }));
+    expect(geos[2]).toBe(JSON.stringify({ x: 100, y: 90, w: 100, h: 80 }));
   });
 
-  it('아홉 번을 붙여도 스테이지 밖으로 행진하지 않는다', () => {
+  it('아홉 번을 붙여도 기본 캔버스 밖으로 행진하지 않는다', () => {
     let els: CanvasElement[] = [];
     for (let i = 0; i < 9; i++) els = appendElement(els, 'rect').next;
     for (const el of els) {
-      for (const v of Object.values(el.geometry as unknown as Record<string, number>)) {
-        expect(v).toBeGreaterThanOrEqual(0);
-        expect(v).toBeLessThanOrEqual(1);
-      }
+      const geo = el.geometry as unknown as Record<string, number>;
+      expect(geo.x!).toBeGreaterThanOrEqual(0);
+      expect(geo.y!).toBeGreaterThanOrEqual(0);
+      expect(geo.x! + geo.w!).toBeLessThanOrEqual(DEFAULT_CANVAS_SIZE.width);
+      expect(geo.y! + geo.h!).toBeLessThanOrEqual(DEFAULT_CANVAS_SIZE.height);
     }
     // 아홉 번째는 첫 번째 자리로 되감긴다(되감기 폭 8).
     expect(els[8]!.geometry).toEqual(els[0]!.geometry);

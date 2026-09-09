@@ -3,10 +3,11 @@
 // **역산하지 않는다.** 001 은 "요소 선택은 좌표 역산 히트 테스트다" 라고 적어 두었지만,
 // 002 는 그 문제를 반대 방향으로 푼다 — 요소를 `canvasGeometry` 의 **기존 투영 함수로
 // 순방향 투영**한 뒤, 스테이지 로컬 CSS px 공간에서 점을 판정한다. 도형별 역산 함수는
-// 이 파일에 하나도 없다.
+// 이 파일에 하나도 없다(`canvasGeometry.unprojectPoint` 는 **자리**를 되돌리는 산술이지
+// 판정이 아니다 — 그 구분은 그 모듈의 §역투영 주석에 있다).
 //
 // 그렇게 정한 이유는 하나다: **집기 여유는 화면 양이다.** `HIT_TOLERANCE_PX` 는 패널이
-// 크든 작든 6px 이어야 한다. 정규화(0..1) 공간에서 여유를 주면 같은 숫자가 큰 패널에서는
+// 크든 작든 6px 이어야 한다. 캔버스 단위 공간에서 여유를 주면 같은 숫자가 큰 패널에서는
 // 헐거워지고 작은 패널에서는 잡히지 않는다. 부수 효과로 투영 구현이 하나로 유지된다 —
 // 렌더·히트·핸들이 **같은 함수**를 쓰므로 셋이 갈라질 수 없다(REQ-05 의 "두 번째 측정원을
 // 만들지 않는다" 와 같은 규율).
@@ -28,10 +29,10 @@ import {
   projectLine,
   projectPoint,
   resolveTextOrigin,
+  type CanvasProjection,
   type PxBox,
   type PxLine,
   type PxPoint,
-  type StageSize,
 } from './canvasGeometry';
 import { TEXT_BASELINE } from './drawElement';
 
@@ -167,17 +168,17 @@ function hitsLine(line: PxLine, point: PxPoint, strokeWidth: number, pad: number
 function hitsElement(
   el: CanvasElement,
   point: PxPoint,
-  stage: StageSize,
+  proj: CanvasProjection,
   textWidths: Readonly<Record<string, number>>,
 ): boolean {
   switch (el.kind) {
     case 'rect':
-      return hitsBox(projectBox(el.geometry, stage), point, HIT_TOLERANCE_PX);
+      return hitsBox(projectBox(el.geometry, proj), point, HIT_TOLERANCE_PX);
     case 'ellipse':
-      return hitsEllipse(projectBox(el.geometry, stage), point, HIT_TOLERANCE_PX);
+      return hitsEllipse(projectBox(el.geometry, proj), point, HIT_TOLERANCE_PX);
     case 'line':
       return hitsLine(
-        projectLine(el.geometry, stage),
+        projectLine(el.geometry, proj),
         point,
         resolveStrokeWidth(el.style.strokeWidth),
         HIT_TOLERANCE_PX,
@@ -186,7 +187,7 @@ function hitsElement(
       // 좌측 끝 원점은 렌더가 쓰는 그 함수에서 나온다(정렬이 두 벌이 되지 않는다).
       const width = resolveMeasuredWidth(textWidths[el.id]);
       const fontSize = resolveFontSize(el.style.fontSize);
-      const origin = resolveTextOrigin(projectPoint(el.geometry, stage), el.style.align ?? 'left', width);
+      const origin = resolveTextOrigin(projectPoint(el.geometry, proj), el.style.align ?? 'left', width);
       const box: PxBox = {
         x: origin.x,
         y: origin.y - fontSize * TEXT_BOX_TOP_RATIO[TEXT_BASELINE],
@@ -215,13 +216,13 @@ function hitsElement(
  *
  * @param elements 배열 순서가 z-order 다(뒤가 위).
  * @param point 스테이지 로컬 CSS px 지점.
- * @param stage 표면이 잰 스테이지 크기. 이 모듈은 크기를 **스스로 재지 않는다**.
+ * @param proj 표면이 잰 스테이지 크기 + config 의 캔버스 크기. 이 모듈은 **스스로 재지 않는다**.
  * @param textWidths 렌더 층이 잰 글자 폭(요소 id → px). 없는 항목은 폴백된다(AC-E7).
  */
 export function hitTest(
   elements: readonly CanvasElement[],
   point: PxPoint,
-  stage: StageSize,
+  proj: CanvasProjection,
   textWidths: Readonly<Record<string, number>>,
 ): CanvasHit | undefined {
   // 손상된 포인터 좌표 방어. 비유한 좌표로 판정하면 모든 비교가 false 가 되어 "아무것도
@@ -229,7 +230,7 @@ export function hitTest(
   if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return undefined;
   for (const el of [...elements].reverse()) {
     if (el.style.visible === false) continue;
-    if (hitsElement(el, point, stage, textWidths)) return { nodeId: el.id };
+    if (hitsElement(el, point, proj, textWidths)) return { nodeId: el.id };
   }
   return undefined;
 }

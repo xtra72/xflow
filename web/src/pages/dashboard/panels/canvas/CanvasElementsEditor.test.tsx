@@ -57,8 +57,8 @@ vi.mock('@/lib/i18n', () => ({
 
 import type { StoreSourceConfig } from '../charts/chartChannelTypes';
 import type { CanvasElement, CanvasElementKind, CanvasPanelConfig } from './canvasConfig';
-import { parseCanvasConfig } from './canvasConfig';
-import type { StageSize } from './canvasGeometry';
+import { DEFAULT_CANVAS_SIZE, parseCanvasConfig } from './canvasConfig';
+import type { CanvasProjection } from './canvasGeometry';
 import { renderTextTemplate } from './canvasText';
 import { drawElements, type DrawContext2D } from './drawElement';
 import { SEED_COLOR, SEED_STROKE_WIDTH, SEED_TEXT_COLOR } from './canvasElementFactory';
@@ -108,7 +108,7 @@ function rect(over: Partial<CanvasElement> = {}): CanvasElement {
   return {
     id: 'r1',
     kind: 'rect',
-    geometry: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+    geometry: { x: 50, y: 80, w: 150, h: 160 },
     style: {},
     ...over,
   } as CanvasElement;
@@ -186,8 +186,11 @@ function setupStateful(initial: Record<string, unknown>): { config: Record<strin
 // 기하·계단 오프셋·편집기↔렌더 이음매 — 은 지우는 대신 **남은 입구로 옮겨** 같은 상태에
 // 닿는다. 지우면 그 상태를 아무도 보지 않게 되는데, 결함이 살던 곳이 바로 거기다.
 
-/** 팔레트 시험이 쓰는 스테이지. 칠하기 시험과 같은 치수라 좌표가 정수 px 로 떨어진다. */
-const PALETTE_STAGE: StageSize = { width: 200, height: 100 };
+/** 팔레트 시험이 쓰는 투영. 칠하기 시험과 같은 치수다. */
+const PALETTE_PROJ: CanvasProjection = {
+  stage: { width: 200, height: 100 },
+  canvas: { ...DEFAULT_CANVAS_SIZE },
+};
 
 /**
  * 도크 팔레트(+ 선택사항으로 목록 편집기)를 세우고 **살아 있는 요소 배열**을 돌려준다.
@@ -210,7 +213,7 @@ function setupPalette(
           <CanvasEditOverlay
             enabled
             elements={elements}
-            stage={PALETTE_STAGE}
+            projection={PALETTE_PROJ}
             textWidths={{}}
             onElementsChange={setElements}
           />
@@ -272,18 +275,18 @@ describe('CanvasElementsEditor — 요소 목록', () => {
     place('rect');
     expect(live.elements).toHaveLength(1);
     expect(live.elements[0]!.kind).toBe('rect');
-    expect(live.elements[0]!.geometry).toEqual({ x: 0.1, y: 0.1, w: 0.2, h: 0.2 });
+    expect(live.elements[0]!.geometry).toEqual({ x: 50, y: 40, w: 100, h: 80 });
     expect(live.elements[0]!.id).toBe('el-1');
 
     cleanup();
     const line = setupPalette();
     place('line');
-    expect(line.elements[0]!.geometry).toEqual({ x1: 0.1, y1: 0.5, x2: 0.9, y2: 0.5 });
+    expect(line.elements[0]!.geometry).toEqual({ x1: 50, y1: 200, x2: 450, y2: 200 });
 
     cleanup();
     const text = setupPalette();
     place('text');
-    expect(text.elements[0]!.geometry).toEqual({ x: 0.5, y: 0.5 });
+    expect(text.elements[0]!.geometry).toEqual({ x: 250, y: 200 });
 
     cleanup();
     const ellipse = setupPalette();
@@ -331,53 +334,175 @@ describe('CanvasElementsEditor — 종류별 기하 칸', () => {
       expect(screen.getByTestId(`canvas-element-geo-${axis}-1`)).toBeTruthy();
     }
     expect(screen.queryByTestId('canvas-element-geo-x1-0')).toBeNull();
-    expect((testid('canvas-element-geo-w-0') as HTMLInputElement).value).toBe('0.3');
+    expect((testid('canvas-element-geo-w-0') as HTMLInputElement).value).toBe('150');
   });
 
   it('line 은 두 끝점만 낸다', () => {
-    setup(cfg([{ id: 'l1', kind: 'line', geometry: { x1: 0, y1: 0.1, x2: 1, y2: 0.9 }, style: {} }]));
+    setup(cfg([{ id: 'l1', kind: 'line', geometry: { x1: 0, y1: 40, x2: 500, y2: 360 }, style: {} }]));
     for (const axis of ['x1', 'y1', 'x2', 'y2']) {
       expect(screen.getByTestId(`canvas-element-geo-${axis}-0`)).toBeTruthy();
     }
     expect(screen.queryByTestId('canvas-element-geo-w-0')).toBeNull();
-    expect((testid('canvas-element-geo-y2-0') as HTMLInputElement).value).toBe('0.9');
+    expect((testid('canvas-element-geo-y2-0') as HTMLInputElement).value).toBe('360');
   });
 
   it('text 는 기준점만 낸다', () => {
-    setup(cfg([{ id: 't1', kind: 'text', geometry: { x: 0.4, y: 0.6 }, style: {}, text: 'hi' }]));
+    setup(cfg([{ id: 't1', kind: 'text', geometry: { x: 200, y: 240 }, style: {}, text: 'hi' }]));
     expect(screen.getByTestId('canvas-element-geo-x-0')).toBeTruthy();
     expect(screen.getByTestId('canvas-element-geo-y-0')).toBeTruthy();
     expect(screen.queryByTestId('canvas-element-geo-w-0')).toBeNull();
     expect(screen.queryByTestId('canvas-element-geo-x1-0')).toBeNull();
   });
 
-  it('기하 칸은 0..1 밖의 값도 그대로 받는다 — 스테이지에 걸치는 배치도 뜻이 있다', () => {
+  it('기하 칸은 캔버스 밖의 값도 그대로 받는다 — 걸치는 배치도 뜻이 있다', () => {
     const spy = setup(cfg([rect()]));
-    fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '-0.5' } });
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x: -0.5, y: 0.2, w: 0.3, h: 0.4 });
+    fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '-250' } });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: -250, y: 80, w: 150, h: 160 });
 
-    fireEvent.change(testid('canvas-element-geo-w-0'), { target: { value: '2.5' } });
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 0.1, y: 0.2, w: 2.5, h: 0.4 });
+    fireEvent.change(testid('canvas-element-geo-w-0'), { target: { value: '1250' } });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 50, y: 80, w: 1250, h: 160 });
   });
 
   it('빈 기하 칸은 0 으로 떨어진다 — NaN 이 들어가면 요소가 통째로 사라진다', () => {
     const spy = setup(cfg([rect()]));
     fireEvent.change(testid('canvas-element-geo-y-0'), { target: { value: '' } });
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 0.1, y: 0, w: 0.3, h: 0.4 });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 50, y: 0, w: 150, h: 160 });
   });
 
   it('line 과 text 의 기하 칸도 같은 경로로 편집된다', () => {
     const spy = setup(
       cfg([
-        { id: 'l1', kind: 'line', geometry: { x1: 0, y1: 0, x2: 1, y2: 1 }, style: {} },
-        { id: 't1', kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: {} },
+        { id: 'l1', kind: 'line', geometry: { x1: 0, y1: 0, x2: 500, y2: 400 }, style: {} },
+        { id: 't1', kind: 'text', geometry: { x: 250, y: 200 }, style: {} },
       ]),
     );
-    fireEvent.change(testid('canvas-element-geo-x2-0'), { target: { value: '0.75' } });
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x1: 0, y1: 0, x2: 0.75, y2: 1 });
+    fireEvent.change(testid('canvas-element-geo-x2-0'), { target: { value: '375' } });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x1: 0, y1: 0, x2: 375, y2: 400 });
 
-    fireEvent.change(testid('canvas-element-geo-y-1'), { target: { value: '0.25' } });
-    expect(lastElements(spy)[1]!.geometry).toEqual({ x: 0.5, y: 0.25 });
+    fireEvent.change(testid('canvas-element-geo-y-1'), { target: { value: '100' } });
+    expect(lastElements(spy)[1]!.geometry).toEqual({ x: 250, y: 100 });
+  });
+});
+
+// --- 정수 좌표계 (SPEC-CANVAS-002 0.8.0) ---------------------------------
+//
+// 이 절이 고정하는 것은 **저장 왕복에 값이 바뀌지 않는다**(규율 2)의 정수판이다. 파서가
+// 반올림하고 퇴화를 되살리므로, 편집기가 그보다 느슨한 값을 쓰면 사용자가 적은 것과
+// 다시 열었을 때 보이는 것이 달라진다.
+
+describe('CanvasElementsEditor — 기하 칸은 정수 칸이다', () => {
+  it('위치·크기 칸의 step 이 1 이다 — 화살표 한 번이 곧 한 단위다', () => {
+    setup(cfg([rect()]));
+    for (const axis of ['x', 'y', 'w', 'h']) {
+      expect(testid(`canvas-element-geo-${axis}-0`).getAttribute('step')).toBe('1');
+    }
+  });
+
+  it('소수를 적으면 반올림해 저술한다 — 파서가 어차피 반올림하므로 여기서 먼저 맞춘다', () => {
+    const spy = setup(cfg([rect()]));
+    fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '10.4' } });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 10, y: 80, w: 150, h: 160 });
+
+    fireEvent.change(testid('canvas-element-geo-y-0'), { target: { value: '10.6' } });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 50, y: 11, w: 150, h: 160 });
+  });
+
+  it('편집기가 내보낸 기하는 파서를 지나도 그대로다(왕복 안정성)', () => {
+    const spy = setup(cfg([rect()]));
+    fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '10.4' } });
+    const written = lastElements(spy)[0]!.geometry;
+    const reparsed = parseCanvasConfig(cfg(lastElements(spy))).elements[0]!.geometry;
+    expect(reparsed).toEqual(written);
+  });
+
+  it('크기 칸만 하한을 갖는다 — 위치는 음수도 캔버스 밖도 합법이다', () => {
+    setup(cfg([rect()]));
+    expect(testid('canvas-element-geo-w-0').getAttribute('min')).toBe('1');
+    expect(testid('canvas-element-geo-h-0').getAttribute('min')).toBe('1');
+    // 없는 하한을 적어 두면 그 자리가 곧 사용자 의도를 자르는 자리가 된다.
+    expect(testid('canvas-element-geo-x-0').getAttribute('min')).toBeNull();
+    expect(testid('canvas-element-geo-y-0').getAttribute('min')).toBeNull();
+  });
+
+  it('크기 칸을 비우거나 0 을 적어도 최소 크기로 남는다 — 요소가 사라지지 않는다', () => {
+    // 0 을 그대로 쓰면 파서가 퇴화로 보고 씨앗 기하로 되살려, 칸을 비우는 순간 요소가
+    // 화면 반대편으로 순간이동한다. 그 되살림은 옛 config 를 위한 것이지 이 조작을 위한
+    // 것이 아니다.
+    const spy = setup(cfg([rect()]));
+    fireEvent.change(testid('canvas-element-geo-w-0'), { target: { value: '' } });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 50, y: 80, w: 1, h: 160 });
+
+    fireEvent.change(testid('canvas-element-geo-h-0'), { target: { value: '0' } });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 50, y: 80, w: 150, h: 1 });
+
+    fireEvent.change(testid('canvas-element-geo-w-0'), { target: { value: '-40' } });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 50, y: 80, w: 1, h: 160 });
+  });
+
+  it('선의 끝점 칸도 정수 칸이다', () => {
+    const spy = setup(
+      cfg([{ id: 'l1', kind: 'line', geometry: { x1: 0, y1: 0, x2: 500, y2: 400 }, style: {} }]),
+    );
+    for (const axis of ['x1', 'y1', 'x2', 'y2']) {
+      expect(testid(`canvas-element-geo-${axis}-0`).getAttribute('step')).toBe('1');
+      // 끝점은 자리이지 크기가 아니므로 하한이 없다.
+      expect(testid(`canvas-element-geo-${axis}-0`).getAttribute('min')).toBeNull();
+    }
+    fireEvent.change(testid('canvas-element-geo-x2-0'), { target: { value: '300.5' } });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x1: 0, y1: 0, x2: 301, y2: 400 });
+  });
+});
+
+describe('CanvasElementsEditor — 캔버스 크기 (모든 좌표의 분모)', () => {
+  it('두 칸이 파싱된 크기를 보인다', () => {
+    setup(cfg([rect()]));
+    expect((testid('canvas-panel-width') as HTMLInputElement).value).toBe('500');
+    expect((testid('canvas-panel-height') as HTMLInputElement).value).toBe('400');
+  });
+
+  it('크기가 없는 config(001 · 002 가 쓴 전부)도 기본값을 보인다', () => {
+    setup({ ...cfg([rect()]) });
+    expect((testid('canvas-panel-width') as HTMLInputElement).value).toBe('500');
+  });
+
+  it('정수 칸이다 — 좌표계와 같은 단위를 쓴다', () => {
+    setup(cfg([rect()]));
+    expect(testid('canvas-panel-width').getAttribute('step')).toBe('1');
+    expect(testid('canvas-panel-height').getAttribute('step')).toBe('1');
+  });
+
+  it('바꾸면 canvas 패치가 나가고 다른 축은 그대로 실려 간다', () => {
+    const spy = setup(cfg([rect()]));
+    fireEvent.change(testid('canvas-panel-width'), { target: { value: '800' } });
+    expect(spy).toHaveBeenLastCalledWith({ canvas: { width: 800, height: 400 } });
+
+    fireEvent.change(testid('canvas-panel-height'), { target: { value: '600' } });
+    expect(spy).toHaveBeenLastCalledWith({ canvas: { width: 500, height: 600 } });
+  });
+
+  it('소수는 반올림하고 0 이하는 최소값으로 올린다 — 0 축은 모든 요소를 지운다', () => {
+    const spy = setup(cfg([rect()]));
+    fireEvent.change(testid('canvas-panel-width'), { target: { value: '640.4' } });
+    expect(spy).toHaveBeenLastCalledWith({ canvas: { width: 640, height: 400 } });
+
+    fireEvent.change(testid('canvas-panel-width'), { target: { value: '0' } });
+    expect(spy).toHaveBeenLastCalledWith({ canvas: { width: 1, height: 400 } });
+
+    fireEvent.change(testid('canvas-panel-width'), { target: { value: '' } });
+    expect(spy).toHaveBeenLastCalledWith({ canvas: { width: 1, height: 400 } });
+  });
+
+  it('크기를 바꿔도 **요소 좌표는 건드리지 않는다**', () => {
+    // 함께 늘이면 정수 좌표에 반올림 오차가 쌓여 손으로 맞춰 둔 자리가 크기를 바꿀 때마다
+    // 조금씩 어긋난다. 종이를 키운 것이지 그림을 키운 것이 아니다.
+    const spy = setup(cfg([rect()]));
+    fireEvent.change(testid('canvas-panel-width'), { target: { value: '1000' } });
+    expect(Object.keys(spy.mock.calls.at(-1)![0] as object)).toEqual(['canvas']);
+  });
+
+  it('설명은 제목 뒤 `?` 에 있다 — 줄로 깔지 않는다', () => {
+    setup(cfg([rect()]));
+    expect(testid('canvas-panel-size-hint')).toBeTruthy();
   });
 });
 
@@ -402,59 +527,59 @@ describe('CanvasElementsEditor — 종류 변경', () => {
 
     const el = lastElements(spy)[0]!;
     expect(el.kind).toBe('line');
-    expect(el.geometry).toEqual({ x1: 0.1, y1: 0.2, x2: 0.9, y2: 0.5 });
+    expect(el.geometry).toEqual({ x1: 50, y1: 80, x2: 450, y2: 200 });
   });
 
   it('rect → text: 기준점만 남는다', () => {
     const spy = setup(cfg([rich]));
     fireEvent.change(testid('canvas-element-kind-0'), { target: { value: 'text' } });
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 0.1, y: 0.2 });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 50, y: 80 });
   });
 
   it('line → rect: 첫 끝점이 좌상단이 되고 크기는 기본값이다', () => {
     const spy = setup(
-      cfg([{ id: 'l1', kind: 'line', geometry: { x1: 0.3, y1: 0.4, x2: 0.8, y2: 0.9 }, style: {} }]),
+      cfg([{ id: 'l1', kind: 'line', geometry: { x1: 150, y1: 160, x2: 400, y2: 360 }, style: {} }]),
     );
     fireEvent.change(testid('canvas-element-kind-0'), { target: { value: 'rect' } });
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 0.3, y: 0.4, w: 0.2, h: 0.2 });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 150, y: 160, w: 100, h: 80 });
   });
 
   it('line → text: 첫 끝점이 정렬 기준점이 된다', () => {
     const spy = setup(
-      cfg([{ id: 'l1', kind: 'line', geometry: { x1: 0.2, y1: 0.6, x2: 0.8, y2: 0.6 }, style: {} }]),
+      cfg([{ id: 'l1', kind: 'line', geometry: { x1: 100, y1: 240, x2: 400, y2: 240 }, style: {} }]),
     );
     fireEvent.change(testid('canvas-element-kind-0'), { target: { value: 'text' } });
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 0.2, y: 0.6 });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 100, y: 240 });
   });
 
   it('text → text 처럼 형상이 이미 맞으면 기준점을 그대로 둔다', () => {
-    const spy = setup(cfg([{ id: 't1', kind: 'text', geometry: { x: 0.3, y: 0.9 }, style: {} }]));
+    const spy = setup(cfg([{ id: 't1', kind: 'text', geometry: { x: 150, y: 360 }, style: {} }]));
     fireEvent.change(testid('canvas-element-kind-0'), { target: { value: 'text' } });
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 0.3, y: 0.9 });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 150, y: 360 });
   });
 
   it('line → line 도 두 끝점을 그대로 둔다', () => {
     const spy = setup(
-      cfg([{ id: 'l1', kind: 'line', geometry: { x1: 0, y1: 0.1, x2: 0.5, y2: 0.7 }, style: {} }]),
+      cfg([{ id: 'l1', kind: 'line', geometry: { x1: 0, y1: 40, x2: 250, y2: 280 }, style: {} }]),
     );
     fireEvent.change(testid('canvas-element-kind-0'), { target: { value: 'line' } });
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x1: 0, y1: 0.1, x2: 0.5, y2: 0.7 });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x1: 0, y1: 40, x2: 250, y2: 280 });
   });
 
   it('text → line · text → rect 도 기준점을 살린다', () => {
-    const spy = setup(cfg([{ id: 't1', kind: 'text', geometry: { x: 0.7, y: 0.8 }, style: {} }]));
+    const spy = setup(cfg([{ id: 't1', kind: 'text', geometry: { x: 350, y: 320 }, style: {} }]));
 
     fireEvent.change(testid('canvas-element-kind-0'), { target: { value: 'line' } });
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x1: 0.7, y1: 0.8, x2: 0.9, y2: 0.5 });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x1: 350, y1: 320, x2: 450, y2: 200 });
 
     fireEvent.change(testid('canvas-element-kind-0'), { target: { value: 'ellipse' } });
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 0.7, y: 0.8, w: 0.2, h: 0.2 });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 350, y: 320, w: 100, h: 80 });
   });
 
   it('rect → ellipse 처럼 형상이 같으면 기하가 그대로다', () => {
     const spy = setup(cfg([rich]));
     fireEvent.change(testid('canvas-element-kind-0'), { target: { value: 'ellipse' } });
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 0.1, y: 0.2, w: 0.3, h: 0.4 });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 50, y: 80, w: 150, h: 160 });
   });
 
   it('종류를 바꿔도 스타일 · 문구 · 바인딩 · 규칙 · 트윈은 잃지 않는다', () => {
@@ -911,13 +1036,13 @@ describe('CanvasElementsEditor — parseCanvasConfig 왕복', () => {
           ],
           tween: { duration_ms: 250, easing: 'ease-in' },
         }),
-        { id: 'l1', kind: 'line', geometry: { x1: -0.2, y1: 0.5, x2: 1.4, y2: 0.5 }, style: {} },
-        { id: 't1', kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: { align: 'center' }, text: 'hi' },
+        { id: 'l1', kind: 'line', geometry: { x1: -100, y1: 200, x2: 700, y2: 200 }, style: {} },
+        { id: 't1', kind: 'text', geometry: { x: 250, y: 200 }, style: { align: 'center' }, text: 'hi' },
       ]),
     );
 
     // 픽스처를 그대로 파싱하면 파서만 검사한다 — 실제로 편집해 편집기가 만든 배열을 본다.
-    fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '0.15' } });
+    fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '75' } });
     fireEvent.change(testid('canvas-element-unit-0'), { target: { value: 'kPa' } });
     fireEvent.change(testid('canvas-element-align-2'), { target: { value: 'right' } });
     expectRoundTrip(live.config);
@@ -1035,8 +1160,11 @@ function makePaintRecorder(): PaintRecorder {
   };
 }
 
-/** 200×100 스테이지(`drawElement.test.ts` 와 같은 치수 — 정규화 좌표가 정수 px 로 떨어진다). */
-const STAGE: StageSize = { width: 200, height: 100 };
+/** 200×100 스테이지에 기본 캔버스(500×400)를 투영한다(`drawElement.test.ts` 와 같은 치수). */
+const PROJ: CanvasProjection = {
+  stage: { width: 200, height: 100 },
+  canvas: { ...DEFAULT_CANVAS_SIZE },
+};
 
 /**
  * 팔레트를 눌러 **화면이 실제로 만든** 요소를 꺼낸다.
@@ -1068,13 +1196,13 @@ function shapeEl(
     ? {
         id: 's1',
         kind: 'line',
-        geometry: { x1: 0.1, y1: 0.5, x2: 0.9, y2: 0.5 },
+        geometry: { x1: 50, y1: 200, x2: 450, y2: 200 },
         style: style ?? { stroke: SEED_COLOR, strokeWidth: SEED_STROKE_WIDTH },
       }
     : {
         id: 's1',
         kind,
-        geometry: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 },
+        geometry: { x: 50, y: 40, w: 100, h: 80 },
         style: style ?? { fill: SEED_COLOR },
       };
 }
@@ -1097,7 +1225,7 @@ function paintCallsFor(el: CanvasElement, text?: string): string[] {
   const ctx = makePaintRecorder();
   // 스타일·문구 맵을 비워 넘기면 `drawElements` 는 요소 자신의 값으로 떨어진다 —
   // 바인딩도 규칙도 없는 갓 만든 요소가 실제로 지나는 경로가 그것이다.
-  drawElements(ctx, [el], {}, text === undefined ? {} : { [el.id]: text }, STAGE);
+  drawElements(ctx, [el], {}, text === undefined ? {} : { [el.id]: text }, PROJ);
   return ctx.painted;
 }
 
@@ -1199,7 +1327,7 @@ describe('CanvasElementsEditor — 만든 요소는 실제로 칠해진다', () 
 
   it("kind:'text' 는 종전 그대로다 — 문구 요소는 textColor ?? fill 로 칠해진다", () => {
     const spy = setup(
-      cfg([{ id: 't1', kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: {} }]),
+      cfg([{ id: 't1', kind: 'text', geometry: { x: 250, y: 200 }, style: {} }]),
     );
     fireEvent.change(testid('canvas-element-text-0'), { target: { value: '{value}' } });
 
@@ -1213,8 +1341,16 @@ describe('CanvasElementsEditor — 만든 요소는 실제로 칠해진다', () 
 
 describe('CanvasElementsEditor — 신규 요소는 겹치지 않는다', () => {
   /** 스테이지를 벗어났는지 본다(0..1 밖은 일부라도 화면 밖이다). */
-  function onStage(g: Record<string, number>): boolean {
-    return Object.values(g).every((v) => v >= 0 && v <= 1);
+  /** 기본 캔버스(500x400) 안에 온전히 들어 있는가. */
+  function onCanvas(g: Record<string, number>): boolean {
+    const right = (g.x ?? 0) + (g.w ?? 0);
+    const bottom = (g.y ?? 0) + (g.h ?? 0);
+    return (
+      (g.x ?? 0) >= 0 &&
+      (g.y ?? 0) >= 0 &&
+      right <= DEFAULT_CANVAS_SIZE.width &&
+      bottom <= DEFAULT_CANVAS_SIZE.height
+    );
   }
 
   it('같은 종류를 세 번 더하면 세 자리가 모두 다르다', () => {
@@ -1225,9 +1361,9 @@ describe('CanvasElementsEditor — 신규 요소는 겹치지 않는다', () => 
 
     const geos = live.elements.map((e) => JSON.stringify(e.geometry));
     expect(new Set(geos).size).toBe(3);
-    expect(geos[0]).toBe(JSON.stringify({ x: 0.1, y: 0.1, w: 0.2, h: 0.2 }));
-    expect(geos[1]).toBe(JSON.stringify({ x: 0.15, y: 0.15, w: 0.2, h: 0.2 }));
-    expect(geos[2]).toBe(JSON.stringify({ x: 0.2, y: 0.2, w: 0.2, h: 0.2 }));
+    expect(geos[0]).toBe(JSON.stringify({ x: 50, y: 40, w: 100, h: 80 }));
+    expect(geos[1]).toBe(JSON.stringify({ x: 75, y: 65, w: 100, h: 80 }));
+    expect(geos[2]).toBe(JSON.stringify({ x: 100, y: 90, w: 100, h: 80 }));
   });
 
   it('선과 문구는 여유가 있는 세로 축으로만 내려온다', () => {
@@ -1238,43 +1374,43 @@ describe('CanvasElementsEditor — 신규 요소는 겹치지 않는다', () => 
     place('text');
 
     const els = live.elements;
-    // 가로는 이미 스테이지를 가로지르므로 건드리지 않는다.
-    expect(els[0]!.geometry).toEqual({ x1: 0.1, y1: 0.5, x2: 0.9, y2: 0.5 });
-    expect(els[1]!.geometry).toEqual({ x1: 0.1, y1: 0.55, x2: 0.9, y2: 0.55 });
+    // 가로는 이미 캔버스를 가로지르므로 건드리지 않는다.
+    expect(els[0]!.geometry).toEqual({ x1: 50, y1: 200, x2: 450, y2: 200 });
+    expect(els[1]!.geometry).toEqual({ x1: 50, y1: 225, x2: 450, y2: 225 });
     // 문구는 기준점에서 오른쪽으로 흐르므로 가로를 밀면 글자가 밖으로 나간다.
-    expect(els[2]!.geometry).toEqual({ x: 0.5, y: 0.6 });
-    expect(els[3]!.geometry).toEqual({ x: 0.5, y: 0.65 });
+    expect(els[2]!.geometry).toEqual({ x: 250, y: 250 });
+    expect(els[3]!.geometry).toEqual({ x: 250, y: 275 });
   });
 
-  it('계단은 되감긴다 — 아홉 번을 더해도 스테이지 밖으로 행진하지 않는다', () => {
+  it('계단은 되감긴다 — 아홉 번을 더해도 캔버스 밖으로 행진하지 않는다', () => {
     const live = setupPalette();
     for (let i = 0; i < 9; i++) place('rect');
 
     const els = live.elements;
     expect(els).toHaveLength(9);
     for (const el of els) {
-      expect(onStage(el.geometry as unknown as Record<string, number>)).toBe(true);
+      expect(onCanvas(el.geometry as unknown as Record<string, number>)).toBe(true);
     }
     // 아홉 번째는 첫 번째 자리로 되감긴다(되감기 폭 8).
     expect(els[8]!.geometry).toEqual(els[0]!.geometry);
   });
 
-  it('계단이 붙어도 좌표에 부동소수 찌꺼기가 남지 않는다', () => {
+  it('계단이 붙어도 좌표가 정수로 남는다 — 숫자 칸이 소수를 보이지 않는다', () => {
     const live = setupPalette();
     for (let i = 0; i < 4; i++) place('rect');
 
-    // 0.1 + 0.15 를 그대로 두면 0.25000000000000006 이 숫자 칸에 그대로 뜬다.
     const shown = live.elements.map((e) => (e.geometry as { x: number }).x);
-    expect(shown).toEqual([0.1, 0.15, 0.2, 0.25]);
+    expect(shown).toEqual([50, 75, 100, 125]);
+    for (const v of shown) expect(Number.isInteger(v)).toBe(true);
   });
 
-  it('기존 요소의 좌표는 건드리지 않는다 — 스테이지 밖 저술은 합법이다', () => {
+  it('기존 요소의 좌표는 건드리지 않는다 — 캔버스 밖 저술은 합법이다', () => {
     const live = setupPalette([
-      { id: 'far', kind: 'rect', geometry: { x: -0.5, y: 2, w: 3, h: 4 }, style: {} },
+      { id: 'far', kind: 'rect', geometry: { x: -250, y: 800, w: 1500, h: 1600 }, style: {} },
     ]);
     place('rect');
 
-    expect(live.elements[0]!.geometry).toEqual({ x: -0.5, y: 2, w: 3, h: 4 });
+    expect(live.elements[0]!.geometry).toEqual({ x: -250, y: 800, w: 1500, h: 1600 });
   });
 });
 
@@ -1593,7 +1729,7 @@ describe('CanvasElementsEditor — 캔버스 선택이 수치 입력을 밀어�
 
   it('선과 문구도 자기 축의 칸을 그대로 낸다', () => {
     setupPicked(
-      [{ id: 'a', kind: 'line', geometry: { x1: 0, y1: 0, x2: 1, y2: 1 }, style: {} }],
+      [{ id: 'a', kind: 'line', geometry: { x1: 0, y1: 0, x2: 500, y2: 400 }, style: {} }],
       'a',
     );
     for (const axis of ['x1', 'y1', 'x2', 'y2']) {
@@ -1601,7 +1737,7 @@ describe('CanvasElementsEditor — 캔버스 선택이 수치 입력을 밀어�
     }
 
     cleanup();
-    setupPicked([{ id: 'a', kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: {} }], 'a');
+    setupPicked([{ id: 'a', kind: 'text', geometry: { x: 250, y: 200 }, style: {} }], 'a');
     for (const axis of ['x', 'y']) {
       expect((testid(`canvas-element-geo-${axis}-0`) as HTMLInputElement).disabled).toBe(false);
     }
@@ -1613,10 +1749,10 @@ describe('CanvasElementsEditor — 캔버스 선택이 수치 입력을 밀어�
     const spy = setupPicked([rect({ id: 'a' })], 'a');
     spy.mockClear();
 
-    // 스테이지 밖으로 전부 나간 요소를 되돌리는 그 조작이다(clamp 하지 않으므로 가능하다).
-    fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '-0.5' } });
+    // 캔버스 밖으로 전부 나간 요소를 되돌리는 그 조작이다(clamp 하지 않으므로 가능하다).
+    fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '-250' } });
 
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x: -0.5, y: 0.2, w: 0.3, h: 0.4 });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: -250, y: 80, w: 150, h: 160 });
   });
 
   it('순서·삭제도 캔버스 선택과 무관하게 목록에 그대로 남는다', () => {
@@ -1766,7 +1902,7 @@ function ListAndOverlay({ elements }: { elements: CanvasElement[] }) {
       <CanvasEditOverlay
         enabled
         elements={elements}
-        stage={{ width: 200, height: 100 }}
+        projection={{ stage: { width: 200, height: 100 }, canvas: { ...DEFAULT_CANVAS_SIZE } }}
         textWidths={{}}
         onElementsChange={() => {}}
       />
@@ -1927,7 +2063,7 @@ describe('CanvasElementsEditor — 위치와 크기를 가른다', () => {
   });
 
   it('line 은 두 끝점뿐이며 **크기 묶음을 만들지 않는다**', () => {
-    setup(cfg([{ id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 1, y2: 1 }, style: {} }]));
+    setup(cfg([{ id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 500, y2: 400 }, style: {} }]));
 
     expect(hasGroup('position')).toBe(true);
     expect(hasGroup('size')).toBe(false);
@@ -1942,7 +2078,7 @@ describe('CanvasElementsEditor — 위치와 크기를 가른다', () => {
   });
 
   it('text 는 기준점뿐이며 크기 묶음이 없다 — 그 크기는 글자 크기다', () => {
-    setup(cfg([{ id: 't', kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: {} }]));
+    setup(cfg([{ id: 't', kind: 'text', geometry: { x: 250, y: 200 }, style: {} }]));
 
     expect(hasGroup('position')).toBe(true);
     expect(hasGroup('size')).toBe(false);
@@ -1983,15 +2119,15 @@ describe('CanvasElementsEditor — 위치와 크기를 가른다', () => {
   it('가른 것은 표현뿐이다 — 좌표는 종전대로 죄이지 않고 그대로 저술된다', () => {
     const spy = setup(cfg([rect()]));
 
-    fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '-0.5' } });
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x: -0.5, y: 0.2, w: 0.3, h: 0.4 });
+    fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '-250' } });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: -250, y: 80, w: 150, h: 160 });
 
-    fireEvent.change(testid('canvas-element-geo-w-0'), { target: { value: '2' } });
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 0.1, y: 0.2, w: 2, h: 0.4 });
+    fireEvent.change(testid('canvas-element-geo-w-0'), { target: { value: '1000' } });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 50, y: 80, w: 1000, h: 160 });
 
     // 비유한 입력은 여전히 0 으로 막힌다(NaN 이 기하에 들어가면 요소가 통째로 사라진다).
     fireEvent.change(testid('canvas-element-geo-y-0'), { target: { value: '' } });
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 0.1, y: 0, w: 0.3, h: 0.4 });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x: 50, y: 0, w: 150, h: 160 });
   });
 });
 
@@ -2134,7 +2270,7 @@ describe('CanvasElementsEditor — 요소 카드는 묶음 일곱을 정해진 �
   });
 
   it('line 은 크기 묶음이 빠진 여섯이다 — 길이는 끝점에서 따라 나오는 값이다', () => {
-    setup(cfg([{ id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 1, y2: 1 }, style: {} }]));
+    setup(cfg([{ id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 500, y2: 400 }, style: {} }]));
 
     expect(groupOrder()).toEqual([
       'position',
@@ -2147,7 +2283,7 @@ describe('CanvasElementsEditor — 요소 카드는 묶음 일곱을 정해진 �
   });
 
   it('text 도 크기 묶음이 없다 — 그 크기는 텍스트 묶음의 글자 크기다', () => {
-    setup(cfg([{ id: 't', kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: {} }]));
+    setup(cfg([{ id: 't', kind: 'text', geometry: { x: 250, y: 200 }, style: {} }]));
 
     expect(groupOrder()).toEqual([
       'position',
@@ -2207,7 +2343,7 @@ describe('CanvasElementsEditor — 색 스와치는 종류를 따라 자리를 �
   });
 
   it('선도 같다 — 채우기는 선 자체에 뜻이 없어도 규칙 패치가 쓸 수 있는 축이다', () => {
-    setup(cfg([{ id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 1, y2: 1 }, style: {} }]));
+    setup(cfg([{ id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 500, y2: 400 }, style: {} }]));
     expect(swatchOrder('shape-style')).toEqual(['stroke', 'fill']);
   });
 
@@ -2279,7 +2415,7 @@ describe('CanvasElementsEditor — 종류는 머리줄이 아니라 도형 묶�
 
     fireEvent.change(testid('canvas-element-kind-0'), { target: { value: 'line' } });
     expect(lastElements(spy)[0]!.kind).toBe('line');
-    expect(lastElements(spy)[0]!.geometry).toEqual({ x1: 0.1, y1: 0.2, x2: 0.9, y2: 0.5 });
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x1: 50, y1: 80, x2: 450, y2: 200 });
   });
 
   it('종류를 바꾼 뒤에도 그 줄은 펼친 채로 남는다 — 바꾼 칸이 손 밑에서 사라지면 안 된다', () => {

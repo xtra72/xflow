@@ -14,7 +14,7 @@ import type {
   RectElement,
   TextElement,
 } from './canvasConfig';
-import type { StageSize } from './canvasGeometry';
+import type { CanvasProjection } from './canvasGeometry';
 import type { ResolvedStyle } from './canvasRules';
 import {
   clearSurface,
@@ -155,20 +155,28 @@ function argsOf(ctx: Recorder, op: string): unknown[] | undefined {
 
 // --- 고정 입력 -----------------------------------------------------------
 
-/** 200×100 스테이지 — 정규화 좌표가 정수 px 로 떨어진다. */
-const STAGE: StageSize = { width: 200, height: 100 };
+/**
+ * 500×400 캔버스를 200×100 스테이지에 그린다 — 축척은 **가로 0.4 · 세로 0.25**.
+ *
+ * 두 축척이 서로 다른 것이 요점이다. 같으면 축을 뒤바꾼 투영이 시험을 통과하고, 1 이면
+ * 캔버스 크기를 아예 무시한 구현도 통과한다.
+ */
+const PROJ: CanvasProjection = {
+  stage: { width: 200, height: 100 },
+  canvas: { width: 500, height: 400 },
+};
 
 function rectEl(over: Partial<RectElement> = {}): RectElement {
-  return { id: 'r1', kind: 'rect', geometry: { x: 0.1, y: 0.2, w: 0.5, h: 0.4 }, style: {}, ...over };
+  return { id: 'r1', kind: 'rect', geometry: { x: 50, y: 80, w: 250, h: 160 }, style: {}, ...over };
 }
 function ellipseEl(over: Partial<EllipseElement> = {}): EllipseElement {
-  return { id: 'e1', kind: 'ellipse', geometry: { x: 0.1, y: 0.2, w: 0.5, h: 0.4 }, style: {}, ...over };
+  return { id: 'e1', kind: 'ellipse', geometry: { x: 50, y: 80, w: 250, h: 160 }, style: {}, ...over };
 }
 function lineEl(over: Partial<LineElement> = {}): LineElement {
-  return { id: 'l1', kind: 'line', geometry: { x1: 0, y1: 0, x2: 1, y2: 1 }, style: {}, ...over };
+  return { id: 'l1', kind: 'line', geometry: { x1: 0, y1: 0, x2: 500, y2: 400 }, style: {}, ...over };
 }
 function textEl(over: Partial<TextElement> = {}): TextElement {
-  return { id: 't1', kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: {}, ...over };
+  return { id: 't1', kind: 'text', geometry: { x: 250, y: 200 }, style: {}, ...over };
 }
 
 const EMPTY: ResolvedStyle = {};
@@ -176,7 +184,7 @@ const EMPTY: ResolvedStyle = {};
 describe('drawElement — 도형 4종', () => {
   it('rect 는 투영된 px 사각형 경로를 그리고 채움·선을 적용한다', () => {
     const ctx = makeRecorder();
-    drawElement(ctx, rectEl(), { fill: '#ff0000', stroke: '#000000', strokeWidth: 3 }, undefined, STAGE);
+    drawElement(ctx, rectEl(), { fill: '#ff0000', stroke: '#000000', strokeWidth: 3 }, undefined, PROJ);
 
     // 0.1*200=20, 0.2*100=20, 0.5*200=100, 0.4*100=40.
     expect(argsOf(ctx, 'rect')).toEqual([20, 20, 100, 40]);
@@ -198,7 +206,7 @@ describe('drawElement — 도형 4종', () => {
 
   it('ellipse 는 중심+반지름으로 그린다(ellipseParams 규약)', () => {
     const ctx = makeRecorder();
-    drawElement(ctx, ellipseEl(), { fill: '#00ff00' }, undefined, STAGE);
+    drawElement(ctx, ellipseEl(), { fill: '#00ff00' }, undefined, PROJ);
 
     // 박스 (20,20,100,40) → 중심 (70,40), 반지름 (50,20).
     expect(argsOf(ctx, 'ellipse')).toEqual([70, 40, 50, 20, 0, 0, Math.PI * 2]);
@@ -207,7 +215,7 @@ describe('drawElement — 도형 4종', () => {
 
   it('line 은 두 끝점을 잇고 채우지 않는다(열린 경로의 fill 은 뜻이 없다)', () => {
     const ctx = makeRecorder();
-    drawElement(ctx, lineEl(), { fill: '#ff0000', stroke: '#0000ff', strokeWidth: 2 }, undefined, STAGE);
+    drawElement(ctx, lineEl(), { fill: '#ff0000', stroke: '#0000ff', strokeWidth: 2 }, undefined, PROJ);
 
     expect(argsOf(ctx, 'moveTo')).toEqual([0, 0]);
     expect(argsOf(ctx, 'lineTo')).toEqual([200, 100]);
@@ -222,7 +230,7 @@ describe('drawElement — 도형 4종', () => {
       textEl({ style: {} }),
       { textColor: '#111111', align: 'center', fontSize: 20, fontWeight: 'bold' },
       'ab',
-      STAGE,
+      PROJ,
     );
 
     expect(argsOf(ctx, 'font')).toEqual([`bold 20px ${DEFAULT_FONT_FAMILY}`]);
@@ -235,7 +243,7 @@ describe('drawElement — 도형 4종', () => {
 
   it('text 의 기본 글꼴은 굵기 없는 기본 크기다', () => {
     const ctx = makeRecorder();
-    drawElement(ctx, textEl(), { textColor: '#111111' }, 'x', STAGE);
+    drawElement(ctx, textEl(), { textColor: '#111111' }, 'x', PROJ);
     expect(argsOf(ctx, 'font')).toEqual([`14px ${DEFAULT_FONT_FAMILY}`]);
     // align 미지정 = left → 원점이 기준점 그대로.
     expect(argsOf(ctx, 'fillText')).toEqual(['x', 100, 50]);
@@ -245,47 +253,47 @@ describe('drawElement — 도형 4종', () => {
 describe('drawElement — 스타일 규율', () => {
   it('visible:false 면 save/restore 조차 하지 않고 아무것도 그리지 않는다', () => {
     const ctx = makeRecorder();
-    drawElement(ctx, rectEl(), { fill: '#ff0000', visible: false }, 'label', STAGE);
+    drawElement(ctx, rectEl(), { fill: '#ff0000', visible: false }, 'label', PROJ);
     expect(ctx.calls).toHaveLength(0);
   });
 
   it('fill 이 없으면 채우지 않고 stroke 가 없으면 긋지 않는다(기본색을 지어내지 않는다)', () => {
     const ctx = makeRecorder();
-    drawElement(ctx, rectEl(), EMPTY, undefined, STAGE);
+    drawElement(ctx, rectEl(), EMPTY, undefined, PROJ);
     expect(ops(ctx)).toEqual(['save', 'globalAlpha', 'beginPath', 'rect', 'restore']);
   });
 
   it('strokeWidth 가 0 이면 stroke 색이 있어도 긋지 않는다', () => {
     const ctx = makeRecorder();
-    drawElement(ctx, rectEl(), { stroke: '#000000', strokeWidth: 0 }, undefined, STAGE);
+    drawElement(ctx, rectEl(), { stroke: '#000000', strokeWidth: 0 }, undefined, PROJ);
     expect(ops(ctx)).not.toContain('stroke');
   });
 
   it('strokeWidth 미지정은 기본 두께로 긋는다', () => {
     const ctx = makeRecorder();
-    drawElement(ctx, rectEl(), { stroke: '#000000' }, undefined, STAGE);
+    drawElement(ctx, rectEl(), { stroke: '#000000' }, undefined, PROJ);
     expect(argsOf(ctx, 'lineWidth')).toEqual([1]);
   });
 
   it('opacity 는 globalAlpha 로 적용되며 미지정·손상 값은 1 로 떨어진다', () => {
     const half = makeRecorder();
-    drawElement(half, rectEl(), { opacity: 0.25 }, undefined, STAGE);
+    drawElement(half, rectEl(), { opacity: 0.25 }, undefined, PROJ);
     expect(argsOf(half, 'globalAlpha')).toEqual([0.25]);
 
     const missing = makeRecorder();
-    drawElement(missing, rectEl(), EMPTY, undefined, STAGE);
+    drawElement(missing, rectEl(), EMPTY, undefined, PROJ);
     expect(argsOf(missing, 'globalAlpha')).toEqual([1]);
 
     const broken = makeRecorder();
-    drawElement(broken, rectEl(), { opacity: Number.NaN }, undefined, STAGE);
+    drawElement(broken, rectEl(), { opacity: Number.NaN }, undefined, PROJ);
     expect(argsOf(broken, 'globalAlpha')).toEqual([1]);
 
     const over = makeRecorder();
-    drawElement(over, rectEl(), { opacity: 4 }, undefined, STAGE);
+    drawElement(over, rectEl(), { opacity: 4 }, undefined, PROJ);
     expect(argsOf(over, 'globalAlpha')).toEqual([1]);
 
     const under = makeRecorder();
-    drawElement(under, rectEl(), { opacity: -1 }, undefined, STAGE);
+    drawElement(under, rectEl(), { opacity: -1 }, undefined, PROJ);
     expect(argsOf(under, 'globalAlpha')).toEqual([0]);
   });
 
@@ -296,7 +304,7 @@ describe('drawElement — 스타일 규율', () => {
       [rectEl({ id: 'a' }), rectEl({ id: 'b' })],
       { a: { fill: '#ff0000', opacity: 0.5 }, b: {} },
       {},
-      STAGE,
+      PROJ,
     );
     expect(ops(ctx)).toEqual([
       'save',
@@ -321,37 +329,37 @@ describe('drawElement — 스타일 규율', () => {
 describe('drawElement — 도형 라벨', () => {
   it('도형에 붙은 문구는 labelAnchor 에 그려진다(rect 는 중심)', () => {
     const ctx = makeRecorder();
-    drawElement(ctx, rectEl(), { fill: '#ff0000', textColor: '#ffffff' }, 'ab', STAGE);
+    drawElement(ctx, rectEl(), { fill: '#ff0000', textColor: '#ffffff' }, 'ab', PROJ);
     // rect 중심 (70,40), 폭 20, align 미지정(left) → 원점 (70,40).
     expect(argsOf(ctx, 'fillText')).toEqual(['ab', 70, 40]);
   });
 
   it('line 라벨은 중점에 그려진다', () => {
     const ctx = makeRecorder();
-    drawElement(ctx, lineEl(), { stroke: '#000000', textColor: '#ffffff' }, 'ab', STAGE);
+    drawElement(ctx, lineEl(), { stroke: '#000000', textColor: '#ffffff' }, 'ab', PROJ);
     expect(argsOf(ctx, 'fillText')).toEqual(['ab', 100, 50]);
   });
 
   it('도형 라벨은 textColor 가 없으면 그리지 않는다(도형 fill 로 폴백하면 제 색에 묻힌다)', () => {
     const ctx = makeRecorder();
-    drawElement(ctx, rectEl(), { fill: '#ff0000' }, 'ab', STAGE);
+    drawElement(ctx, rectEl(), { fill: '#ff0000' }, 'ab', PROJ);
     expect(ops(ctx)).not.toContain('fillText');
   });
 
   it('text 요소는 textColor 가 없으면 fill 을 글자색으로 쓴다(채울 도형이 없다)', () => {
     const ctx = makeRecorder();
-    drawElement(ctx, textEl(), { fill: '#123456' }, 'ab', STAGE);
+    drawElement(ctx, textEl(), { fill: '#123456' }, 'ab', PROJ);
     expect(argsOf(ctx, 'fillStyle')).toEqual(['#123456']);
     expect(ops(ctx)).toContain('fillText');
   });
 
   it('문구가 없거나 빈 문자열이면 글자를 그리지 않는다', () => {
     const none = makeRecorder();
-    drawElement(none, textEl(), { textColor: '#000000' }, undefined, STAGE);
+    drawElement(none, textEl(), { textColor: '#000000' }, undefined, PROJ);
     expect(ops(none)).not.toContain('fillText');
 
     const empty = makeRecorder();
-    drawElement(empty, textEl(), { textColor: '#000000' }, '', STAGE);
+    drawElement(empty, textEl(), { textColor: '#000000' }, '', PROJ);
     expect(ops(empty)).not.toContain('fillText');
   });
 });
@@ -362,10 +370,10 @@ describe('drawElement — 견고성', () => {
     const malformed = {
       id: 'x',
       kind: 'diamond',
-      geometry: { x: 0.5, y: 0.5 },
+      geometry: { x: 250, y: 200 },
       style: {},
     } as unknown as CanvasElement;
-    expect(() => drawElement(ctx, malformed, EMPTY, undefined, STAGE)).not.toThrow();
+    expect(() => drawElement(ctx, malformed, EMPTY, undefined, PROJ)).not.toThrow();
     expect(ops(ctx)).toEqual(['save', 'globalAlpha', 'restore']);
   });
 
@@ -374,7 +382,7 @@ describe('drawElement — 견고성', () => {
     ctx.rect = () => {
       throw new Error('boom');
     };
-    expect(() => drawElement(ctx, rectEl(), { fill: '#ff0000' }, undefined, STAGE)).not.toThrow();
+    expect(() => drawElement(ctx, rectEl(), { fill: '#ff0000' }, undefined, PROJ)).not.toThrow();
     expect(ops(ctx).at(-1)).toBe('restore');
   });
 });
@@ -387,7 +395,7 @@ describe('drawElements', () => {
       [textEl({ id: 'first' }), textEl({ id: 'second' })],
       { first: { textColor: '#000000' }, second: { textColor: '#000000' } },
       { first: 'A', second: 'B' },
-      STAGE,
+      PROJ,
     );
     const drawn = ctx.calls.filter((c) => c[0] === 'fillText').map((c) => c[1]);
     expect(drawn).toEqual(['A', 'B']);
@@ -395,14 +403,14 @@ describe('drawElements', () => {
 
   it('맵에 항목이 없으면 요소의 기본 스타일·기본 문구로 떨어진다(AC-E2/AC-E3)', () => {
     const ctx = makeRecorder();
-    drawElements(ctx, [textEl({ style: { textColor: '#abcdef' }, text: 'base' })], {}, {}, STAGE);
+    drawElements(ctx, [textEl({ style: { textColor: '#abcdef' }, text: 'base' })], {}, {}, PROJ);
     expect(argsOf(ctx, 'fillStyle')).toEqual(['#abcdef']);
     expect(argsOf(ctx, 'fillText')).toEqual(['base', 100, 50]);
   });
 
   it('요소가 0개면 아무 호출도 하지 않는다(AC-E1)', () => {
     const ctx = makeRecorder();
-    drawElements(ctx, [], {}, {}, STAGE);
+    drawElements(ctx, [], {}, {}, PROJ);
     expect(ctx.calls).toHaveLength(0);
   });
 });
@@ -441,7 +449,7 @@ describe('drawElements — 실측 글자 폭 장부 (SPEC-CANVAS-002)', () => {
       [textEl({ id: 'a' }), textEl({ id: 'b' })],
       { a: { textColor: '#000000' }, b: { textColor: '#000000' } },
       { a: 'ab', b: 'xyz' },
-      STAGE,
+      PROJ,
     );
     // 스텁의 measureText 는 글자 수 × CHAR_WIDTH 다.
     expect(widths).toEqual({ a: 2 * CHAR_WIDTH, b: 3 * CHAR_WIDTH });
@@ -454,7 +462,7 @@ describe('drawElements — 실측 글자 폭 장부 (SPEC-CANVAS-002)', () => {
       [textEl({ id: 'a' })],
       { a: { textColor: '#000000', align: 'center' } },
       { a: 'ab' },
-      STAGE,
+      PROJ,
     );
     // 기준점 (100,50), 폭 20, center → 좌측 끝 x = 100 - 20/2 = 90.
     expect(argsOf(ctx, 'fillText')).toEqual(['ab', 90, 50]);
@@ -469,7 +477,7 @@ describe('drawElements — 실측 글자 폭 장부 (SPEC-CANVAS-002)', () => {
       ctx.calls.push(['measureText', text]);
       return { width: 0 };
     };
-    const widths = drawElements(ctx, [textEl({ id: 'a' })], { a: { textColor: '#000000' } }, { a: 'ab' }, STAGE);
+    const widths = drawElements(ctx, [textEl({ id: 'a' })], { a: { textColor: '#000000' } }, { a: 'ab' }, PROJ);
 
     expect(Object.prototype.hasOwnProperty.call(widths, 'a')).toBe(true);
     expect(widths.a).toBe(0);
@@ -486,7 +494,7 @@ describe('drawElements — 실측 글자 폭 장부 (SPEC-CANVAS-002)', () => {
         l: { stroke: '#000000', textColor: '#ffffff' },
       },
       { r: 'label', e: 'label', l: 'label' },
-      STAGE,
+      PROJ,
     );
     // 라벨은 실제로 그려졌지만(= 재어졌지만) 장부는 비어 있다.
     expect(ctx.calls.filter((c) => c[0] === 'fillText')).toHaveLength(3);
@@ -510,14 +518,14 @@ describe('drawElements — 실측 글자 폭 장부 (SPEC-CANVAS-002)', () => {
         empty: { textColor: '#000000' },
       },
       { hidden: 'ab', noText: undefined, noPaint: 'ab', empty: '' },
-      STAGE,
+      PROJ,
     );
     expect(widths).toEqual({});
   });
 
   it('요소가 0개면 빈 장부를 돌려준다', () => {
     const ctx = makeRecorder();
-    expect(drawElements(ctx, [], {}, {}, STAGE)).toEqual({});
+    expect(drawElements(ctx, [], {}, {}, PROJ)).toEqual({});
   });
 
   it('그리다 던진 요소의 폭은 담지 않고 나머지 요소는 계속 담는다', () => {
@@ -532,15 +540,15 @@ describe('drawElements — 실측 글자 폭 장부 (SPEC-CANVAS-002)', () => {
       [textEl({ id: 'bad' }), textEl({ id: 'good' })],
       { bad: { textColor: '#000000' }, good: { textColor: '#000000' } },
       { bad: 'boom', good: 'ab' },
-      STAGE,
+      PROJ,
     );
     expect(widths).toEqual({ good: 2 * CHAR_WIDTH });
   });
 
   it('장부는 호출마다 새로 만들어진다(프레임 간에 값이 새지 않는다)', () => {
     const ctx = makeRecorder();
-    const first = drawElements(ctx, [textEl({ id: 'a' })], { a: { textColor: '#000000' } }, { a: 'ab' }, STAGE);
-    const second = drawElements(ctx, [textEl({ id: 'b' })], { b: { textColor: '#000000' } }, { b: 'c' }, STAGE);
+    const first = drawElements(ctx, [textEl({ id: 'a' })], { a: { textColor: '#000000' } }, { a: 'ab' }, PROJ);
+    const second = drawElements(ctx, [textEl({ id: 'b' })], { b: { textColor: '#000000' } }, { b: 'c' }, PROJ);
     expect(first).toEqual({ a: 2 * CHAR_WIDTH });
     expect(second).toEqual({ b: 1 * CHAR_WIDTH });
   });

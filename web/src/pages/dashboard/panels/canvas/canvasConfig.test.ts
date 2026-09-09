@@ -18,6 +18,10 @@ import {
   DEFAULT_BOX_GEOMETRY,
   DEFAULT_LINE_GEOMETRY,
   DEFAULT_POINT_GEOMETRY,
+  DEFAULT_CANVAS_SIZE,
+  MAX_CANVAS_DIMENSION,
+  MIN_CANVAS_DIMENSION,
+  parseCanvasSize,
   type BoxGeometry,
   type LineGeometry,
   type PointGeometry,
@@ -27,7 +31,7 @@ import {
 
 /** 최소 유효 요소를 만든다(테스트 잡음 축소). */
 function rawRect(over: Record<string, unknown> = {}): Record<string, unknown> {
-  return { id: 'a', kind: 'rect', geometry: { x: 0, y: 0, w: 1, h: 1 }, ...over };
+  return { id: 'a', kind: 'rect', geometry: { x: 0, y: 0, w: 100, h: 100 }, ...over };
 }
 
 /** 파싱 결과의 첫 요소를 꺼낸다(없으면 실패). */
@@ -56,6 +60,17 @@ describe('buildDefaultCanvasConfig', () => {
     });
   });
 
+  it('캔버스 크기 기본값은 500 x 400 이다', () => {
+    expect(buildDefaultCanvasConfig().canvas).toEqual({ width: 500, height: 400 });
+  });
+
+  it('호출마다 새 크기 객체를 준다(패널 간 공유 방지)', () => {
+    const a = buildDefaultCanvasConfig();
+    const b = buildDefaultCanvasConfig();
+    expect(a.canvas).not.toBe(b.canvas);
+    expect(a.canvas).not.toBe(DEFAULT_CANVAS_SIZE);
+  });
+
   it('호출마다 새 배열을 준다(패널 간 요소 누수 방지)', () => {
     expect(buildDefaultCanvasConfig().elements).not.toBe(buildDefaultCanvasConfig().elements);
   });
@@ -78,6 +93,8 @@ describe('parseCanvasConfig — 손상/결측 입력', () => {
       expect(cfg.data_source).toBeUndefined();
       expect(cfg.store_source).toBeUndefined();
       expect(cfg.tsdb_source).toBeUndefined();
+      // 크기만은 예외다 — 투영이 언제나 요구하므로 "미지정" 이라는 상태가 없다.
+      expect(cfg.canvas).toEqual({ ...DEFAULT_CANVAS_SIZE });
     },
   );
 
@@ -173,10 +190,10 @@ describe('parseCanvasConfig — 요소 탈락 경로', () => {
 describe('parseCanvasConfig — 기하 보정(손상 시 기본 기하 대체)', () => {
   it('rect/ellipse 기하의 손상 필드만 기본값으로 대체한다', () => {
     const el = firstElement({
-      elements: [rawRect({ geometry: { x: 0.3, y: NaN, w: '0.5', h: Infinity } })],
+      elements: [rawRect({ geometry: { x: 30, y: NaN, w: '50', h: Infinity } })],
     });
     expect(el.geometry as BoxGeometry).toEqual({
-      x: 0.3,
+      x: 30,
       y: DEFAULT_BOX_GEOMETRY.y,
       w: DEFAULT_BOX_GEOMETRY.w,
       h: DEFAULT_BOX_GEOMETRY.h,
@@ -192,28 +209,187 @@ describe('parseCanvasConfig — 기하 보정(손상 시 기본 기하 대체)',
 
   it('line 기하는 끝점 단위로 보정한다', () => {
     const el = firstElement({
-      elements: [{ id: 'l', kind: 'line', geometry: { x1: 0.2, y1: 0.2, x2: null, y2: 0.9 } }],
+      elements: [{ id: 'l', kind: 'line', geometry: { x1: 20, y1: 20, x2: null, y2: 90 } }],
     });
     expect(el.geometry as LineGeometry).toEqual({
-      x1: 0.2,
-      y1: 0.2,
+      x1: 20,
+      y1: 20,
       x2: DEFAULT_LINE_GEOMETRY.x2,
-      y2: 0.9,
+      y2: 90,
     });
   });
 
   it('text 기하는 기준점 단위로 보정한다', () => {
     const el = firstElement({
-      elements: [{ id: 't', kind: 'text', geometry: { x: 0.4 }, text: '{value}' }],
+      elements: [{ id: 't', kind: 'text', geometry: { x: 40 }, text: '{value}' }],
     });
-    expect(el.geometry as PointGeometry).toEqual({ x: 0.4, y: DEFAULT_POINT_GEOMETRY.y });
+    expect(el.geometry as PointGeometry).toEqual({ x: 40, y: DEFAULT_POINT_GEOMETRY.y });
   });
 
-  it('0..1 밖 좌표는 잘라내지 않는다(스테이지 밖 걸침도 저술이다)', () => {
+  it('캔버스 밖 좌표는 잘라내지 않는다(밖으로 걸침도 저술이다)', () => {
     const el = firstElement({
-      elements: [rawRect({ geometry: { x: -0.5, y: 0, w: 2, h: 1 } })],
+      elements: [rawRect({ geometry: { x: -500, y: 0, w: 2000, h: 1000 } })],
     });
-    expect(el.geometry as BoxGeometry).toEqual({ x: -0.5, y: 0, w: 2, h: 1 });
+    expect(el.geometry as BoxGeometry).toEqual({ x: -500, y: 0, w: 2000, h: 1000 });
+  });
+});
+
+// --- 정수 좌표계 (SPEC-CANVAS-002 0.8.0) ---------------------------------
+//
+// 두 갈래를 함께 고정한다. **반올림**은 좌표계가 정수라는 사실 그 자체이고, **퇴화
+// 폴백**은 그 반올림이 만들어 내는 새 함정(옛 0..1 좌표가 크기 0 으로 접힌다)에 대한
+// 대책이다. 둘을 한 절에 두는 것은 둘째가 첫째 없이는 존재할 이유가 없기 때문이다.
+
+describe('parseCanvasConfig — 정수 좌표', () => {
+  it('소수 좌표를 반올림한다', () => {
+    const el = firstElement({
+      elements: [rawRect({ geometry: { x: 10.4, y: 10.6, w: 99.5, h: 100.49 } })],
+    });
+    expect(el.geometry as BoxGeometry).toEqual({ x: 10, y: 11, w: 100, h: 100 });
+  });
+
+  it('음수 좌표도 반올림만 하고 부호를 지키지 않는다(캔버스 밖은 합법이다)', () => {
+    const el = firstElement({
+      elements: [{ id: 't', kind: 'text', geometry: { x: -10.5, y: -0.4 } }],
+    });
+    // -10.5 는 JS 규칙대로 0 쪽으로(-10) 반올림된다 — 여기서 고정하는 것은 그 규칙이
+    // 아니라 "부호가 살아남는다" 는 성질이다.
+    expect((el.geometry as PointGeometry).x).toBe(-10);
+    expect((el.geometry as PointGeometry).y).toBe(-0);
+  });
+
+  it('선의 끝점도 정수로 반올림한다', () => {
+    const el = firstElement({
+      elements: [{ id: 'l', kind: 'line', geometry: { x1: 1.2, y1: 2.7, x2: 300.5, y2: 4.4 } }],
+    });
+    expect(el.geometry as LineGeometry).toEqual({ x1: 1, y1: 3, x2: 301, y2: 4 });
+  });
+});
+
+describe('parseCanvasConfig — 퇴화 기하는 씨앗 기하로 되살린다', () => {
+  it('반올림해서 크기 0 이 되는 상자는 기본 기하로 바뀐다 (옛 0..1 config)', () => {
+    // 001 · 002 가 저장한 좌표다. `Math.round(0.2)` 는 0 이므로 그대로 두면 **보이지 않는**
+    // 요소가 되고, 보이지 않는 요소는 사용자가 찾을 수 없어 고칠 수도 없다.
+    const el = firstElement({
+      elements: [rawRect({ geometry: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 } })],
+    });
+    expect(el.geometry as BoxGeometry).toEqual({ ...DEFAULT_BOX_GEOMETRY });
+  });
+
+  it('한 축만 0 이어도 퇴화다 — 폭 0 인 사각형은 선이 아니라 없음이다', () => {
+    const flat = firstElement({ elements: [rawRect({ geometry: { x: 10, y: 10, w: 0, h: 50 } })] });
+    expect(flat.geometry as BoxGeometry).toEqual({ ...DEFAULT_BOX_GEOMETRY });
+    const thin = firstElement({ elements: [rawRect({ geometry: { x: 10, y: 10, w: 50, h: 0 } })] });
+    expect(thin.geometry as BoxGeometry).toEqual({ ...DEFAULT_BOX_GEOMETRY });
+  });
+
+  it('음수 크기 상자도 씨앗으로 되살린다(그려질 것이 없다)', () => {
+    const el = firstElement({ elements: [rawRect({ geometry: { x: 10, y: 10, w: -50, h: 50 } })] });
+    expect(el.geometry as BoxGeometry).toEqual({ ...DEFAULT_BOX_GEOMETRY });
+  });
+
+  it('크기 1 짜리 상자는 퇴화가 아니다 — 한 단위는 저술할 수 있는 가장 작은 크기다', () => {
+    const el = firstElement({ elements: [rawRect({ geometry: { x: 10, y: 10, w: 1, h: 1 } })] });
+    expect(el.geometry as BoxGeometry).toEqual({ x: 10, y: 10, w: 1, h: 1 });
+  });
+
+  it('길이 0 인 선은 기본 선으로 되살린다', () => {
+    const el = firstElement({
+      elements: [{ id: 'l', kind: 'line', geometry: { x1: 40, y1: 40, x2: 40, y2: 40 } }],
+    });
+    expect(el.geometry as LineGeometry).toEqual({ ...DEFAULT_LINE_GEOMETRY });
+  });
+
+  it('한 단위짜리 선은 퇴화가 아니다', () => {
+    const el = firstElement({
+      elements: [{ id: 'l', kind: 'line', geometry: { x1: 40, y1: 40, x2: 41, y2: 40 } }],
+    });
+    expect(el.geometry as LineGeometry).toEqual({ x1: 40, y1: 40, x2: 41, y2: 40 });
+  });
+
+  it('기준점에는 퇴화가 없다 — 옛 좌표는 왼쪽 위 모서리 근처로 접힐 뿐 사라지지 않는다', () => {
+    const el = firstElement({
+      elements: [{ id: 't', kind: 'text', geometry: { x: 0.5, y: 0.5 }, text: 'hi' }],
+    });
+    // 자리는 틀렸지만 화면에 남아 있어 사용자가 보고 고칠 수 있다.
+    expect(el.geometry as PointGeometry).toEqual({ x: 1, y: 1 });
+  });
+
+  it('퇴화 폴백은 기하만 바꾸고 스타일·문구·바인딩은 그대로 둔다', () => {
+    const el = firstElement({
+      elements: [
+        rawRect({
+          geometry: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 },
+          style: { fill: '#abcdef' },
+          text: '{value}',
+          binding: { series: 's1' },
+        }),
+      ],
+    });
+    expect(el.geometry as BoxGeometry).toEqual({ ...DEFAULT_BOX_GEOMETRY });
+    expect(el.style.fill).toBe('#abcdef');
+    expect(el.text).toBe('{value}');
+    expect(el.binding).toEqual({ series: 's1', agg: 'last' });
+  });
+});
+
+describe('parseCanvasSize', () => {
+  it('두 정수를 그대로 통과시킨다', () => {
+    expect(parseCanvasSize({ width: 800, height: 600 })).toEqual({ width: 800, height: 600 });
+  });
+
+  it('결측·비객체는 기본 크기다', () => {
+    expect(parseCanvasSize(undefined)).toEqual({ ...DEFAULT_CANVAS_SIZE });
+    expect(parseCanvasSize('nope')).toEqual({ ...DEFAULT_CANVAS_SIZE });
+    expect(parseCanvasSize(null)).toEqual({ ...DEFAULT_CANVAS_SIZE });
+  });
+
+  it('축마다 따로 떨어진다 — 한 축이 깨졌다고 멀쩡한 축까지 버리지 않는다', () => {
+    expect(parseCanvasSize({ width: 640, height: 'x' })).toEqual({
+      width: 640,
+      height: DEFAULT_CANVAS_SIZE.height,
+    });
+  });
+
+  it('소수는 반올림한다', () => {
+    expect(parseCanvasSize({ width: 640.4, height: 480.6 })).toEqual({ width: 640, height: 481 });
+  });
+
+  it('0 이하는 기본값으로 떨어뜨린다(0 축은 모든 요소를 화면에서 지운다)', () => {
+    expect(parseCanvasSize({ width: 0, height: -5 })).toEqual({ ...DEFAULT_CANVAS_SIZE });
+    expect(parseCanvasSize({ width: 0.4, height: 1 })).toEqual({
+      width: DEFAULT_CANVAS_SIZE.width,
+      height: MIN_CANVAS_DIMENSION,
+    });
+  });
+
+  it('비유한 값도 기본값으로 떨어뜨린다', () => {
+    expect(parseCanvasSize({ width: NaN, height: Infinity })).toEqual({ ...DEFAULT_CANVAS_SIZE });
+  });
+
+  it('상한을 넘는 값은 상한으로 죈다', () => {
+    expect(parseCanvasSize({ width: 1e9, height: 1e9 })).toEqual({
+      width: MAX_CANVAS_DIMENSION,
+      height: MAX_CANVAS_DIMENSION,
+    });
+  });
+});
+
+describe('parseCanvasConfig — 캔버스 크기', () => {
+  it('config 의 크기를 읽는다', () => {
+    expect(parseCanvasConfig({ canvas: { width: 320, height: 240 } }).canvas).toEqual({
+      width: 320,
+      height: 240,
+    });
+  });
+
+  it('크기가 없는 config(001 · 002 가 쓴 전부)는 기본 크기를 얻는다', () => {
+    expect(parseCanvasConfig({ elements: [] }).canvas).toEqual({ ...DEFAULT_CANVAS_SIZE });
+  });
+
+  it('크기가 든 config 는 왕복에 값이 바뀌지 않는다', () => {
+    const cfg = parseCanvasConfig({ canvas: { width: 320, height: 240 }, elements: [] });
+    expect(parseCanvasConfig(cfg)).toEqual(cfg);
   });
 });
 
@@ -520,10 +696,10 @@ describe('parseCanvasConfig — 도형 종류별 왕복', () => {
   it('4종 요소를 모두 보존하고 알 수 없는 요소 필드는 버린다', () => {
     const cfg = parseCanvasConfig({
       elements: [
-        { id: 'r', kind: 'rect', geometry: { x: 0, y: 0, w: 0.5, h: 0.5 }, zIndex: 9 },
-        { id: 'e', kind: 'ellipse', geometry: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 } },
-        { id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 1, y2: 1 } },
-        { id: 't', kind: 'text', geometry: { x: 0.5, y: 0.5 }, text: 'hi' },
+        { id: 'r', kind: 'rect', geometry: { x: 0, y: 0, w: 250, h: 200 }, zIndex: 9 },
+        { id: 'e', kind: 'ellipse', geometry: { x: 50, y: 40, w: 100, h: 80 } },
+        { id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 500, y2: 400 } },
+        { id: 't', kind: 'text', geometry: { x: 250, y: 200 }, text: 'hi' },
       ],
     });
     expect(cfg.elements.map((e) => e.kind)).toEqual(['rect', 'ellipse', 'line', 'text']);

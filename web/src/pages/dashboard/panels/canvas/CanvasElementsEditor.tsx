@@ -45,6 +45,9 @@ import {
   DEFAULT_BOX_GEOMETRY,
   DEFAULT_LINE_GEOMETRY,
   DEFAULT_TWEEN_EASING,
+  MAX_CANVAS_DIMENSION,
+  MIN_CANVAS_DIMENSION,
+  MIN_ELEMENT_EXTENT,
   isNumericElement,
   parseCanvasConfig,
   type BoxGeometry,
@@ -321,13 +324,37 @@ function withKind(el: CanvasElement, kind: CanvasElementKind): CanvasElement {
 /**
  * 기하 좌표 입력 파싱. 빈 칸·비수치는 0 으로 본다(규칙 표 임계값과 같은 규율).
  *
- * **0..1 로 자르지 않는다.** 스테이지 밖으로 일부 걸치는 배치도 뜻이 있는 저술이며,
- * 렌더러가 그것을 허용한다(파서의 좌표 정책과 같은 이유). 다만 비유한 값은 막는다 —
- * NaN 이 기하에 들어가면 그 요소는 화면에서 통째로 사라진다.
+ * **캔버스 안으로 자르지 않는다.** 캔버스 밖으로 일부 걸치는 배치도 뜻이 있는 저술이며,
+ * 렌더러가 그것을 허용한다(파서의 좌표 정책과 같은 이유). 다만 두 가지는 막는다 —
+ * 비유한 값(NaN 이 기하에 들어가면 그 요소는 화면에서 통째로 사라진다)과 **소수 자리**
+ * (좌표계가 정수라 저장할 곳이 없다. 파서가 어차피 반올림하므로 여기서 먼저 반올림해야
+ * 저장 왕복에 값이 바뀌지 않는다 — 규율 2).
  */
 function parseCoordinate(raw: string): number {
   const n = Number(raw.trim());
-  return Number.isFinite(n) ? n : 0;
+  return Number.isFinite(n) ? Math.round(n) : 0;
+}
+
+/**
+ * 크기 축(w · h)의 입력 파싱. 좌표와 같되 **최소 크기 아래로 내려가지 않는다**.
+ *
+ * 파서는 폭·높이 0 인 기하를 퇴화로 보고 씨앗 기하로 되살린다. 그 되살림이 옳은 것은
+ * 옛 config 를 읽을 때이고, 사용자가 칸을 비우는 순간 요소가 화면 반대편으로 순간이동하는
+ * 것은 옳지 않다. 그래서 쓰는 쪽이 애초에 만들지 않는다 — 캔버스 손잡이가 같은 이유로
+ * 같은 하한을 지킨다(`canvasEditGeometry` §기하 쓰기 단일 통로).
+ */
+function parseExtent(raw: string): number {
+  return Math.max(MIN_ELEMENT_EXTENT, parseCoordinate(raw));
+}
+
+/**
+ * 캔버스 한 축 크기의 입력 파싱. 비운 칸은 **부재가 아니라 최소값**이다 — 캔버스 크기에는
+ * "지정 안 함" 이 없고(투영이 언제나 요구한다), 0 축은 모든 요소를 화면에서 지운다.
+ */
+function parseCanvasDimension(raw: string): number {
+  const n = Math.round(Number(raw.trim()));
+  if (!Number.isFinite(n)) return MIN_CANVAS_DIMENSION;
+  return Math.min(Math.max(n, MIN_CANVAS_DIMENSION), MAX_CANVAS_DIMENSION);
 }
 
 /** 옵셔널 수치 입력 파싱. **빈 칸은 부재**이며 0 이 아니다. */
@@ -413,8 +440,57 @@ function summaryOf(el: CanvasElement, t: TranslationFn): string {
 
 // --- 하위 표현 -----------------------------------------------------------
 
-/** 기하 좌표 한 칸. 축 이름을 눈에 보이게 붙여 어느 칸이 무엇인지 알 수 있게 한다. */
+/**
+ * 기하 좌표 한 칸. 축 이름을 눈에 보이게 붙여 어느 칸이 무엇인지 알 수 있게 한다.
+ *
+ * **정수 칸이다**(`step=1`). 좌표계가 정수이므로 화살표 한 번이 곧 저장되는 한 단위이며,
+ * 소수를 적어 넣어도 파싱이 반올림한다 — 브라우저의 `step` 검증에 기대지 않는 것은
+ * 붙여넣기·IME 처럼 검증을 지나치는 입력 경로가 있기 때문이다.
+ *
+ * `extent` 인 칸(폭·높이)만 하한을 갖는다. 위치는 음수도 캔버스 밖도 합법이므로 하한이
+ * 없다 — 없는 하한을 `min={0}` 으로 적어 두면 그것이 곧 사용자 의도를 자르는 자리가 된다.
+ */
 function GeometryInput({
+  axis,
+  value,
+  onChange,
+  ariaLabel,
+  testId,
+  extent = false,
+}: {
+  axis: string;
+  value: number;
+  onChange: (next: number) => void;
+  ariaLabel: string;
+  testId: string;
+  /** 이 칸이 **크기** 축인가. 참이면 최소 크기 아래로 내려가지 않는다. */
+  extent?: boolean;
+}) {
+  return (
+    <label className="flex min-w-0 flex-1 items-center gap-1">
+      <span className="shrink-0 text-[11px] text-(--color-text-muted)">{axis}</span>
+      <input
+        type="number"
+        step={1}
+        {...(extent ? { min: MIN_ELEMENT_EXTENT } : {})}
+        value={value}
+        onChange={(e) => onChange(extent ? parseExtent(e.target.value) : parseCoordinate(e.target.value))}
+        aria-label={ariaLabel}
+        data-testid={testId}
+        className={cn(INPUT_CLASS, 'w-full text-center tabular-nums')}
+      />
+    </label>
+  );
+}
+
+/**
+ * 캔버스 한 축 크기의 입력 칸.
+ *
+ * `GeometryInput` 과 나란한 모양이되 **부재가 없다**(위 `parseCanvasDimension`). 요소의
+ * 좌표는 비워 둘 수 있는 값이 아니고 캔버스 크기는 더더욱 그렇다 — 이 두 정수가 모든
+ * 좌표의 분모이므로, 값이 없는 순간 그릴 수 있는 것이 하나도 없다.
+ */
+function CanvasSizeInput({
   axis,
   value,
   onChange,
@@ -428,16 +504,18 @@ function GeometryInput({
   testId: string;
 }) {
   return (
-    <label className="flex min-w-0 flex-1 items-center gap-1">
+    <label className="flex items-center gap-1">
       <span className="shrink-0 text-[11px] text-(--color-text-muted)">{axis}</span>
       <input
         type="number"
-        step="any"
+        step={1}
+        min={MIN_CANVAS_DIMENSION}
+        max={MAX_CANVAS_DIMENSION}
         value={value}
-        onChange={(e) => onChange(parseCoordinate(e.target.value))}
+        onChange={(e) => onChange(parseCanvasDimension(e.target.value))}
         aria-label={ariaLabel}
         data-testid={testId}
-        className={cn(INPUT_CLASS, 'w-full text-center tabular-nums')}
+        className={cn(INPUT_CLASS, 'w-16 text-center tabular-nums')}
       />
     </label>
   );
@@ -640,6 +718,36 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
 
   return (
     <div className="space-y-3" data-testid="canvas-elements-editor">
+      {/* 캔버스 크기 — **모든 좌표의 분모**다. 그래서 배경색·트윈보다 먼저 온다: 요소를
+          놓기 전에 종이 크기를 정하는 것이 순서이고, 이 값이 격자 칸 수와 수치 칸의
+          범위를 함께 정한다.
+
+          요소 좌표를 함께 늘이지 않는다. 늘이면 정수 좌표에 반올림 오차가 쌓여 사용자가
+          손으로 맞춰 둔 자리가 크기를 바꿀 때마다 조금씩 어긋나고, 그 어긋남은 되돌릴 수
+          없다. 대신 캔버스가 넓어지면 요소가 상대적으로 작아 보인다 — 종이를 키운 것이지
+          그림을 키운 것이 아니라는 뜻이며, 그것이 이 칸의 정직한 동작이다. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={GROUP_LABEL_CLASS}>{t('dashboard.canvas.elements.panelSize')}</span>
+        <FieldHelp
+          text={t('dashboard.canvas.elements.panelSizeHint')}
+          testId="canvas-panel-size-hint"
+        />
+        <CanvasSizeInput
+          axis="W"
+          value={cfg.canvas.width}
+          onChange={(w) => onConfigChange({ canvas: { ...cfg.canvas, width: w } })}
+          ariaLabel={t('dashboard.canvas.elements.panelWidthAria')}
+          testId="canvas-panel-width"
+        />
+        <CanvasSizeInput
+          axis="H"
+          value={cfg.canvas.height}
+          onChange={(h) => onConfigChange({ canvas: { ...cfg.canvas, height: h } })}
+          ariaLabel={t('dashboard.canvas.elements.panelHeightAria')}
+          testId="canvas-panel-height"
+        />
+      </div>
+
       {/* 패널 축 — 배경색과 기본 트윈. 요소가 덮어쓸 수 있는 값들이다. */}
       <div className="flex flex-wrap items-center gap-2">
         <span className={GROUP_LABEL_CLASS}>{t('dashboard.canvas.elements.panelBackground')}</span>
@@ -843,6 +951,7 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                             <GeometryInput
                               key={axis}
                               axis={axis}
+                              extent
                               value={el.geometry[axis]}
                               onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
                               ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}

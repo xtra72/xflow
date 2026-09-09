@@ -26,19 +26,22 @@ vi.mock('@/lib/i18n', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 
-import type { CanvasElement } from './canvasConfig';
+import { DEFAULT_CANVAS_SIZE, type CanvasElement } from './canvasConfig';
 import { CanvasEditDockRegion } from './CanvasEditDock';
 import CanvasEditOverlay from './CanvasEditOverlay';
 import { CanvasEditSelectionContext, useCanvasEditSelectionState } from './canvasEditContext';
 import { appendElement } from './canvasElementFactory';
-import type { StageSize } from './canvasGeometry';
+import type { CanvasProjection } from './canvasGeometry';
 
 afterEach(cleanup);
 
-const STAGE: StageSize = { width: 200, height: 100 };
+const PROJ: CanvasProjection = {
+  stage: { width: 200, height: 100 },
+  canvas: { ...DEFAULT_CANVAS_SIZE },
+};
 
 function rect(id: string): CanvasElement {
-  return { id, kind: 'rect', geometry: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 }, style: {} };
+  return { id, kind: 'rect', geometry: { x: 50, y: 40, w: 100, h: 80 }, style: {} };
 }
 
 /**
@@ -61,7 +64,7 @@ function Harness({
       <CanvasEditOverlay
         enabled
         elements={elements}
-        stage={STAGE}
+        projection={PROJ}
         textWidths={{}}
         onElementsChange={setElements}
       />
@@ -160,7 +163,7 @@ describe('도형 놓기는 공유 모듈과 한 경로다 — 이제 유일한 �
 
     const geos = liveElements().map((e) => JSON.stringify(e.geometry));
     expect(new Set(geos).size).toBe(2);
-    expect(geos[1]).toBe(JSON.stringify({ x: 0.15, y: 0.15, w: 0.2, h: 0.2 }));
+    expect(geos[1]).toBe(JSON.stringify({ x: 75, y: 65, w: 100, h: 80 }));
   });
 
   it('놓은 것이 곧바로 골라진다 — 다음 몸짓이 배치 드래그다', () => {

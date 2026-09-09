@@ -12,8 +12,9 @@
 //      `canvasGeometry` 의 `projectBox`/`projectLine`/`projectPoint`/`resolveTextOrigin` 을
 //      그대로 통과시킨다. 두 벌이 되면 핸들이 도형에서 미끄러지고, 그 결함은 "가끔
 //      어긋난다" 로만 보고되어 원인을 찾기 어렵다.
-//   2) **clamp 하지 않는다**(가정 A5). 스테이지 밖 배치는 합법인 저술이다. 이 모듈은
-//      좌표를 0..1 로 자르지 않으며, 자를 자리도 두지 않는다.
+//   2) **clamp 하지 않는다**(가정 A5). 캔버스 밖 배치는 합법인 저술이다. 이 모듈은
+//      좌표를 캔버스 안으로 자르지 않으며, 자를 자리도 두지 않는다. 죄는 것은 **자릿수**
+//      뿐이다 — 좌표계가 정수이므로 쓰기 직전에 반올림한다(아래 §기하 쓰기 단일 통로).
 //   3) **음수 크기 박스를 만들지 않는다**(위험 R7). 001 이 음수 크기를 그릴 수 있게 해 둔
 //      것은 **읽기 경로의 견고성**이지 편집기가 만들어야 할 값이 아니다. 정규화하지 않으면
 //      뒤집는 순간 잡은 핸들이 커서에서 떨어져 나간다. 쓰기는 언제나 `x = min`, `w = |w|` 다.
@@ -27,6 +28,7 @@
 
 import {
   DEFAULT_FONT_SIZE,
+  MIN_ELEMENT_EXTENT,
   type BoxGeometry,
   type CanvasElement,
   type CanvasElementKind,
@@ -39,9 +41,11 @@ import {
   projectLine,
   projectPoint,
   resolveTextOrigin,
+  type CanvasDelta,
+  type CanvasPoint,
+  type CanvasProjection,
   type PxBox,
   type PxPoint,
-  type StageSize,
 } from './canvasGeometry';
 import { FONT_SIZE_MAX, FONT_SIZE_MIN } from '../charts/statLayout';
 
@@ -73,18 +77,6 @@ export interface CanvasHandle {
   id: CanvasHandleId;
   role: CanvasHandleRole;
   point: PxPoint;
-}
-
-/** 정규화(0..1) 공간의 이동량. */
-export interface NormalizedDelta {
-  dx: number;
-  dy: number;
-}
-
-/** 정규화(0..1) 공간의 포인터 자리. `PointGeometry` 와 형상은 같고 뜻이 다르다. */
-export interface NormalizedPoint {
-  x: number;
-  y: number;
 }
 
 /** CSS px 공간의 이동량. 글자 크기 핸들만 이 단위를 쓴다(크기는 화면 양이다). */
@@ -179,7 +171,7 @@ function finite(v: number): number {
 }
 
 /** 두 축이 모두 유한한 포인터인가. 비유한 포인터는 **조작을 무시**하는 근거가 된다. */
-function isFinitePoint(p: NormalizedPoint): boolean {
+function isFinitePoint(p: CanvasPoint): boolean {
   return Number.isFinite(p.x) && Number.isFinite(p.y);
 }
 
@@ -272,13 +264,13 @@ export function handlesFor(kind: CanvasElementKind): readonly CanvasHandleId[] {
  */
 export function handlePositions(
   el: CanvasElement,
-  stage: StageSize,
+  proj: CanvasProjection,
   opts: HandleLayoutOptions = {},
 ): CanvasHandle[] {
   switch (el.kind) {
     case 'rect':
     case 'ellipse': {
-      const box = normalizePxBox(projectBox(el.geometry, stage));
+      const box = normalizePxBox(projectBox(el.geometry, proj));
       return BOX_HANDLE_IDS.map((id): CanvasHandle => {
         const [fx, fy] = BOX_HANDLE_FACTORS[id];
         return {
@@ -289,7 +281,7 @@ export function handlePositions(
       });
     }
     case 'line': {
-      const line = projectLine(el.geometry, stage);
+      const line = projectLine(el.geometry, proj);
       return [
         { id: 'p1', role: handleRole('p1'), point: { x: line.x1, y: line.y1 } },
         { id: 'p2', role: handleRole('p2'), point: { x: line.x2, y: line.y2 } },
@@ -299,7 +291,7 @@ export function handlePositions(
       const fontSize = clampCanvasFontSize(el.style.fontSize ?? DEFAULT_FONT_SIZE);
       const width = Math.max(0, finite(opts.measuredWidth ?? 0));
       const origin = resolveTextOrigin(
-        projectPoint(el.geometry, stage),
+        projectPoint(el.geometry, proj),
         el.style.align ?? 'left',
         width,
       );
@@ -317,17 +309,18 @@ export function handlePositions(
 // --- 이동 ---------------------------------------------------------------
 
 /**
- * 기하를 정규화 델타만큼 옮긴다.
+ * 기하를 캔버스 단위 델타만큼 옮긴다.
  *
  * rect/ellipse 는 좌상단만, line 은 **두 끝점 모두**, text 는 기준점을 옮긴다.
- * **clamp 하지 않는다** — 스테이지 밖으로 나간 배치도 뜻이 있는 저술이다(가정 A5).
+ * **clamp 하지 않는다** — 캔버스 밖으로 나간 배치도 뜻이 있는 저술이다(가정 A5).
+ * **정수화도 하지 않는다** — 그 일은 쓰기 통로(`patchNodeGeometry`) 한 곳의 몫이다.
  * 회수 경로는 목록 편집기의 수치 입력이며, 그것이 항상 남아 있어야 하는 이유 중 하나다.
  */
-export function moveGeometry(geometry: BoxGeometry, delta: NormalizedDelta): BoxGeometry;
-export function moveGeometry(geometry: LineGeometry, delta: NormalizedDelta): LineGeometry;
-export function moveGeometry(geometry: PointGeometry, delta: NormalizedDelta): PointGeometry;
-export function moveGeometry(geometry: Geometry, delta: NormalizedDelta): Geometry;
-export function moveGeometry(geometry: Geometry, delta: NormalizedDelta): Geometry {
+export function moveGeometry(geometry: BoxGeometry, delta: CanvasDelta): BoxGeometry;
+export function moveGeometry(geometry: LineGeometry, delta: CanvasDelta): LineGeometry;
+export function moveGeometry(geometry: PointGeometry, delta: CanvasDelta): PointGeometry;
+export function moveGeometry(geometry: Geometry, delta: CanvasDelta): Geometry;
+export function moveGeometry(geometry: Geometry, delta: CanvasDelta): Geometry {
   const dx = finite(delta.dx);
   const dy = finite(delta.dy);
 
@@ -362,7 +355,7 @@ export function moveGeometry(geometry: Geometry, delta: NormalizedDelta): Geomet
 export function resizeBox(
   box: BoxGeometry,
   handle: BoxHandleId,
-  pointer: NormalizedPoint,
+  pointer: CanvasPoint,
   opts: ResizeBoxOptions = {},
 ): BoxGeometry {
   const base = normalizeBox(box);
@@ -410,16 +403,17 @@ export function resizeBox(
  * 선의 한 끝점만 옮긴다. 몸통 드래그(두 끝점 동시 이동)는 `moveGeometry` 다.
  *
  * `constrainAngle`(Shift)은 **고정된 반대 끝점에서 본 방향**을 45° 배수로 죄고, 끌린
- * 거리는 그대로 유지한다. 죔이 정규화 공간에서 일어나므로 스테이지가 정사각형이 아니면
- * 화면상 각도는 45° 에서 조금 벗어난다 — 저장되는 값이 정규화 좌표이고 그 값이 곧
- * 저술 결과이므로, 화면 각도를 맞추려고 스테이지 크기를 이 순수 모듈에 들이지 않는다.
+ * 거리는 그대로 유지한다. 죔이 캔버스 단위 공간에서 일어나므로, 스테이지의 종횡비가
+ * 캔버스의 종횡비와 다르면 화면상 각도는 45° 에서 조금 벗어난다 — 저장되는 값이 캔버스
+ * 좌표이고 그 값이 곧 저술 결과이므로, 화면 각도를 맞추려고 스테이지 크기를 이 순수
+ * 모듈에 들이지 않는다.
  *
  * 비유한 포인터는 `resizeBox` 와 같은 이유로 조작을 무시한다.
  */
 export function resizeLine(
   line: LineGeometry,
   endpoint: LineHandleId,
-  pointer: NormalizedPoint,
+  pointer: CanvasPoint,
   opts: ResizeLineOptions = {},
 ): LineGeometry {
   const base = sanitizeLine(line);
@@ -471,6 +465,55 @@ export function resizeFontSize(baseFontSize: number, delta: PxDelta): number {
 }
 
 // --- 기하 쓰기 단일 통로 (REQ-06) ---------------------------------------
+//
+// ## 정수화와 퇴화 방지가 이 절에 있는 이유
+//
+// 좌표계가 정수이므로 어디선가 반올림해야 하고, **어디서 하느냐가 곧 설계**다. 조작
+// 함수마다 반올림하면 이동은 이동대로 크기 조절은 크기대로 자기 반올림을 갖게 되어,
+// 같은 손짓이 경로에 따라 한 단위씩 다른 곳에 떨어진다. 그래서 조작 함수들은 실수를
+// 그대로 돌려주고 **쓰기 직전 한 곳**에서만 정수가 된다 — 004 가 그룹 분기를 더할 자리를
+// 하나로 두려던 그 이유와 같은 이유다.
+//
+// 같은 자리에서 **퇴화도 막는다**(`MIN_ELEMENT_EXTENT`). 읽는 쪽(파서)은 퇴화 기하를
+// 씨앗으로 되살리지만, 그 되살림이 드래그 중에 일어나면 손잡이를 반대 변까지 끌었을 때
+// 요소가 화면 반대편으로 **순간이동**한다. 쓰는 쪽이 애초에 만들지 않으면 그 되살림은
+// 옛 config 를 읽을 때에만 쓰이며, 그것이 두 규율의 옳은 분담이다.
+
+/** 쓰기용 박스 — 정수로 반올림하고 최소 크기를 보장한다. 음수 크기는 만들지 않는다. */
+function writableBox(geo: BoxGeometry): BoxGeometry {
+  const b = sanitizeBox(geo);
+  const w = Math.round(Math.abs(b.w));
+  const h = Math.round(Math.abs(b.h));
+  return {
+    x: Math.round(b.x),
+    y: Math.round(b.y),
+    w: Math.max(MIN_ELEMENT_EXTENT, w),
+    h: Math.max(MIN_ELEMENT_EXTENT, h),
+  };
+}
+
+/**
+ * 쓰기용 선 — 정수로 반올림하고 **길이 0 을 만들지 않는다**.
+ *
+ * 두 끝점이 같아지면 두 번째 점을 한 단위 밀어 둔다. 씨앗 선으로 되돌리지 않는 것에 뜻이
+ * 있다 — 지금 손에 쥐고 끄는 중인 선이 갑자기 캔버스를 가로지르면 그것이야말로 순간이동이며,
+ * 한 단위 짜리 선은 사용자가 손을 조금만 더 움직이면 곧바로 자란다.
+ */
+function writableLine(geo: LineGeometry): LineGeometry {
+  const l = sanitizeLine(geo);
+  const x1 = Math.round(l.x1);
+  const y1 = Math.round(l.y1);
+  const x2 = Math.round(l.x2);
+  const y2 = Math.round(l.y2);
+  const degenerate = x1 === x2 && y1 === y2;
+  return { x1, y1, x2: degenerate ? x2 + MIN_ELEMENT_EXTENT : x2, y2 };
+}
+
+/** 쓰기용 기준점 — 정수로 반올림한다. 넓이가 없으므로 퇴화도 없다. */
+function writablePoint(geo: PointGeometry): PointGeometry {
+  const p = sanitizePoint(geo);
+  return { x: Math.round(p.x), y: Math.round(p.y) };
+}
 
 /**
  * **모든 기하 쓰기가 지나는 한 함수**(REQ-06). 새 배열을 돌려주며 입력을 건드리지 않는다.
@@ -484,7 +527,7 @@ export function resizeFontSize(baseFontSize: number, delta: PxDelta): number {
  * 드래그 중 요소가 재정렬되면 index 는 다른 것을 가리킨다(REQ-06).
  *
  * 요소 종류와 기하 형상이 어긋나면(예: rect 에 선 기하) 그 요소를 **그대로 둔다**.
- * 형상이 맞으면 손상 필드를 떨궈(`finite`) NaN 이 config 에 들어가지 않게 한다.
+ * 형상이 맞으면 손상 필드를 떨구고(`finite`) **정수로 반올림하며 퇴화를 막는다**(위 §정수화).
  */
 export function patchNodeGeometry(
   elements: readonly CanvasElement[],
@@ -498,16 +541,16 @@ export function patchNodeGeometry(
       case 'rect':
       case 'ellipse': {
         if (!('w' in geometry)) return el;
-        return { ...el, geometry: sanitizeBox(geometry) };
+        return { ...el, geometry: writableBox(geometry) };
       }
       case 'line': {
         if (!('x1' in geometry)) return el;
-        return { ...el, geometry: sanitizeLine(geometry) };
+        return { ...el, geometry: writableLine(geometry) };
       }
       default: {
         if ('w' in geometry) return el;
         if ('x1' in geometry) return el;
-        return { ...el, geometry: sanitizePoint(geometry) };
+        return { ...el, geometry: writablePoint(geometry) };
       }
     }
   });

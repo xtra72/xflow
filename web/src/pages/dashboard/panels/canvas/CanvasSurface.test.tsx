@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, cleanup, act, fireEvent, screen } from '@testing-library/react';
 
 import type { VisibilitySource } from '../charts/visiblePolling';
-import type { RectElement } from './canvasConfig';
+import type { CanvasSize, RectElement } from './canvasConfig';
 import CanvasSurface, {
   type CanvasOverlayContext,
   type FrameScheduler,
@@ -166,8 +166,16 @@ function makeVisibility(initial = true) {
 
 // --- 고정 입력 -----------------------------------------------------------
 
+/**
+ * 대표 캔버스(200x160) — 스테이지(100x80)의 두 배라 축척이 0.5 다.
+ *
+ * 1:1 로 두지 않는 것에 뜻이 있다: 축척이 1 이면 캔버스 크기를 아예 무시한 투영도 이
+ * 파일의 기대값을 통과한다.
+ */
+const CANVAS: CanvasSize = { width: 200, height: 160 };
+
 function rectEl(id: string, over: Partial<RectElement> = {}): RectElement {
-  return { id, kind: 'rect', geometry: { x: 0, y: 0, w: 1, h: 1 }, style: {}, ...over };
+  return { id, kind: 'rect', geometry: { x: 0, y: 0, w: 200, h: 160 }, style: {}, ...over };
 }
 
 const LINEAR_300 = { duration_ms: 300, easing: 'linear' } as const;
@@ -195,6 +203,7 @@ describe('CanvasSurface — 백킹 버퍼와 첫 프레임 (AC-E5)', () => {
     const clock = makeScheduler();
     const { container } = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
@@ -215,6 +224,7 @@ describe('CanvasSurface — 백킹 버퍼와 첫 프레임 (AC-E5)', () => {
     const clock = makeScheduler();
     render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
@@ -233,7 +243,7 @@ describe('CanvasSurface — 백킹 버퍼와 첫 프레임 (AC-E5)', () => {
       [1, 0, 0, 1, 0, 0],
       [2, 0, 0, 2, 0, 0],
     ]);
-    // 정규화 (0,0,1,1) → CSS px 전체 (0,0,100,80).
+    // 캔버스 (0,0,200,160) = 캔버스 전체 → CSS px 전체 (0,0,100,80).
     expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 100, 80]);
   });
 
@@ -241,7 +251,8 @@ describe('CanvasSurface — 백킹 버퍼와 첫 프레임 (AC-E5)', () => {
     const clock = makeScheduler();
     const { container } = render(
       <CanvasSurface
-        elements={[rectEl('a', { geometry: { x: 0.5, y: 0.5, w: 0.5, h: 0.5 } })]}
+        canvas={CANVAS}
+        elements={[rectEl('a', { geometry: { x: 100, y: 80, w: 100, h: 80 } })]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
         scheduler={clock.scheduler}
@@ -270,6 +281,7 @@ describe('CanvasSurface — 백킹 버퍼와 첫 프레임 (AC-E5)', () => {
     const clock = makeScheduler();
     render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
@@ -288,6 +300,7 @@ describe('CanvasSurface — 백킹 버퍼와 첫 프레임 (AC-E5)', () => {
     const clock = makeScheduler();
     const { container } = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
@@ -307,7 +320,8 @@ describe('CanvasSurface — 백킹 버퍼와 첫 프레임 (AC-E5)', () => {
     expect(() => {
       render(
         <CanvasSurface
-          elements={[rectEl('a')]}
+          canvas={CANVAS}
+        elements={[rectEl('a')]}
           targetStyles={{ a: { fill: '#ff0000' } }}
           texts={{}}
           scheduler={clock.scheduler}
@@ -324,6 +338,7 @@ describe('CanvasSurface — 백킹 버퍼와 첫 프레임 (AC-E5)', () => {
     const clock = makeScheduler();
     const { container } = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{}}
         texts={{}}
@@ -342,6 +357,7 @@ describe('CanvasSurface — 유휴 정지 (AC-E6)', () => {
     const clock = makeScheduler();
     render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
@@ -361,6 +377,7 @@ describe('CanvasSurface — 유휴 정지 (AC-E6)', () => {
     const clock = makeScheduler();
     const view = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#000000' } }}
         texts={{}}
@@ -375,6 +392,7 @@ describe('CanvasSurface — 유휴 정지 (AC-E6)', () => {
     // 목표가 바뀌면 루프가 깨어난다.
     view.rerender(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ffffff' } }}
         texts={{}}
@@ -402,6 +420,7 @@ describe('CanvasSurface — 유휴 정지 (AC-E6)', () => {
     const visibility = makeVisibility();
     const view = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={elements}
         targetStyles={targetStyles}
         texts={texts}
@@ -415,6 +434,7 @@ describe('CanvasSurface — 유휴 정지 (AC-E6)', () => {
     // 같은 참조로 재렌더 — 폴링이 실패해 새 데이터가 없는 상황이다.
     view.rerender(
       <CanvasSurface
+        canvas={CANVAS}
         elements={elements}
         targetStyles={targetStyles}
         texts={texts}
@@ -433,6 +453,7 @@ describe('CanvasSurface — 가시성 게이팅 (AC-E6)', () => {
     const visibility = makeVisibility();
     const view = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#000000' } }}
         texts={{}}
@@ -446,6 +467,7 @@ describe('CanvasSurface — 가시성 게이팅 (AC-E6)', () => {
     visibility.set(false);
     view.rerender(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ffffff' } }}
         texts={{}}
@@ -470,6 +492,7 @@ describe('CanvasSurface — 가시성 게이팅 (AC-E6)', () => {
     const visibility = makeVisibility();
     const view = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#000000' } }}
         texts={{}}
@@ -481,6 +504,7 @@ describe('CanvasSurface — 가시성 게이팅 (AC-E6)', () => {
     clock.flush(1000);
     view.rerender(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ffffff' } }}
         texts={{}}
@@ -504,6 +528,7 @@ describe('CanvasSurface — 트윈 리타깃 (AC-03)', () => {
     const visibility = makeVisibility();
     const black = (
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#000000' } }}
         texts={{}}
@@ -514,6 +539,7 @@ describe('CanvasSurface — 트윈 리타깃 (AC-03)', () => {
     );
     const white = (
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ffffff' } }}
         texts={{}}
@@ -550,6 +576,7 @@ describe('CanvasSurface — 트윈 리타깃 (AC-03)', () => {
     const element = rectEl('a', { tween: { duration_ms: 0, easing: 'linear' } });
     const view = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[element]}
         targetStyles={{ a: { fill: '#000000' } }}
         texts={{}}
@@ -561,6 +588,7 @@ describe('CanvasSurface — 트윈 리타깃 (AC-03)', () => {
     clock.flush(1000);
     view.rerender(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[element]}
         targetStyles={{ a: { fill: '#ffffff' } }}
         texts={{}}
@@ -580,6 +608,7 @@ describe('CanvasSurface — 트윈 리타깃 (AC-03)', () => {
     const visibility = makeVisibility();
     const view = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a'), rectEl('b')]}
         targetStyles={{ a: { fill: '#ff0000' }, b: { fill: '#00ff00' } }}
         texts={{}}
@@ -593,6 +622,7 @@ describe('CanvasSurface — 트윈 리타깃 (AC-03)', () => {
     ctxStub.calls.length = 0;
     view.rerender(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('b')]}
         targetStyles={{ b: { fill: '#00ff00' } }}
         texts={{}}
@@ -609,6 +639,7 @@ describe('CanvasSurface — 트윈 리타깃 (AC-03)', () => {
     const clock = makeScheduler();
     render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a', { style: { fill: '#abcdef' } })]}
         targetStyles={{}}
         texts={{}}
@@ -627,6 +658,7 @@ describe('CanvasSurface — 수명주기와 기본 주입값', () => {
     const visibility = makeVisibility();
     const view = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
@@ -647,6 +679,7 @@ describe('CanvasSurface — 수명주기와 기본 주입값', () => {
   it('예약기·가시성을 주입하지 않으면 브라우저 기본(requestAnimationFrame/document)을 쓴다', async () => {
     render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
@@ -662,7 +695,7 @@ describe('CanvasSurface — 수명주기와 기본 주입값', () => {
   it('기본 예약기에서도 언마운트가 예약을 취소한다', () => {
     const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame');
     const view = render(
-      <CanvasSurface elements={[rectEl('a')]} targetStyles={{}} texts={{}} />,
+      <CanvasSurface canvas={CANVAS} elements={[rectEl('a')]} targetStyles={{}} texts={{}} />,
     );
     view.unmount();
     expect(cancelSpy).toHaveBeenCalled();
@@ -672,6 +705,7 @@ describe('CanvasSurface — 수명주기와 기본 주입값', () => {
     const clock = makeScheduler();
     const { container } = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[]}
         targetStyles={{}}
         texts={{}}
@@ -700,6 +734,7 @@ describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 
     const clock = makeScheduler();
     const { container } = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{}}
         texts={{}}
@@ -718,9 +753,10 @@ describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 
     const clock = makeScheduler();
     render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[
-          rectEl('r', { geometry: { x: 0, y: 0, w: 0.5, h: 0.5 } }),
-          { id: 't', kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: {} },
+          rectEl('r', { geometry: { x: 0, y: 0, w: 100, h: 80 } }),
+          { id: 't', kind: 'text', geometry: { x: 100, y: 80 }, style: {} },
         ]}
         targetStyles={{
           r: { fill: '#ff0000', textColor: '#ffffff' },
@@ -767,6 +803,7 @@ describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 
     const clock = makeScheduler();
     render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
@@ -786,6 +823,7 @@ describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 
     const visibility = makeVisibility();
     const view = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#000000' } }}
         texts={{}}
@@ -799,6 +837,7 @@ describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 
 
     view.rerender(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ffffff' } }}
         texts={{}}
@@ -820,6 +859,7 @@ describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 
     const visibility = makeVisibility();
     const view = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#000000' } }}
         texts={{}}
@@ -833,6 +873,7 @@ describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 
     visibility.set(false);
     view.rerender(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ffffff' } }}
         texts={{}}
@@ -852,6 +893,7 @@ describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 
     const visibility = makeVisibility();
     const view = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
@@ -877,6 +919,7 @@ describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 
     const visibility = makeVisibility();
     const view = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={elements}
         targetStyles={targetStyles}
         texts={texts}
@@ -890,6 +933,7 @@ describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 
 
     view.rerender(
       <CanvasSurface
+        canvas={CANVAS}
         elements={elements}
         targetStyles={targetStyles}
         texts={texts}
@@ -932,6 +976,7 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     const spy = makeOverlaySpy();
     const { container } = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{}}
         texts={{}}
@@ -953,7 +998,8 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     const spy = makeOverlaySpy();
     render(
       <CanvasSurface
-        elements={[rectEl('a', { geometry: { x: 0, y: 0, w: 1, h: 1 } })]}
+        canvas={CANVAS}
+        elements={[rectEl('a', { geometry: { x: 0, y: 0, w: 200, h: 160 } })]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
         scheduler={clock.scheduler}
@@ -963,10 +1009,55 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     );
     clock.flush(0);
 
-    // 정규화 (0,0,1,1) 은 스테이지 전체이므로 투영된 px 상자가 곧 스테이지 크기다.
+    // 캔버스 전체를 덮는 상자이므로 투영된 px 상자가 곧 스테이지 크기다.
     const projected = ctxStub.calls.find((c) => c[0] === 'rect')!.slice(1);
-    expect(spy.last!.stage).toEqual({ width: projected[2], height: projected[3] });
-    expect(spy.last!.stage).toEqual({ width: 100, height: 80 });
+    expect(spy.last!.projection.stage).toEqual({ width: projected[2], height: projected[3] });
+    expect(spy.last!.projection.stage).toEqual({ width: 100, height: 80 });
+  });
+
+  it('오버레이는 캔버스 단위 크기도 함께 받는다 — 투영에는 두 크기가 모두 필요하다', () => {
+    // 스테이지만 넘기면 받는 쪽이 나머지 하나를 스스로 구하게 되고, 그 자리가 곧 두 번째
+    // 출처다(위험 R1). 그래서 표면이 **한 벌로 묶어** 넘긴다.
+    const clock = makeScheduler();
+    const spy = makeOverlaySpy();
+    render(
+      <CanvasSurface
+        canvas={CANVAS}
+        elements={[rectEl('a')]}
+        targetStyles={{}}
+        texts={{}}
+        scheduler={clock.scheduler}
+        visibilitySource={makeVisibility().source}
+        overlay={spy.render}
+      />,
+    );
+    clock.flush(0);
+
+    expect(spy.last!.projection.canvas).toEqual(CANVAS);
+    expect(spy.last!.projection.canvas).not.toEqual(spy.last!.projection.stage);
+  });
+
+  it('캔버스 크기가 바뀌면 같은 요소가 새 축척으로 다시 그려진다', () => {
+    // 캔버스 크기는 모든 좌표의 분모이므로, 바뀌면 그림이 달라진다 — 프레임을 예약하는
+    // props 축이라는 뜻이다(선택·호버 같은 편집 상태와 다른 부류다).
+    const clock = makeScheduler();
+    const props = {
+      elements: [rectEl('a', { geometry: { x: 0, y: 0, w: 100, h: 80 } })],
+      targetStyles: { a: { fill: '#ff0000' } },
+      texts: {},
+      scheduler: clock.scheduler,
+      visibilitySource: makeVisibility().source,
+    };
+    const { rerender } = render(<CanvasSurface canvas={CANVAS} {...props} />);
+    clock.flush(0);
+    // 200x160 캔버스의 절반 → 스테이지(100x80)의 절반.
+    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 50, 40]);
+
+    ctxStub.calls.length = 0;
+    rerender(<CanvasSurface canvas={{ width: 100, height: 80 }} {...props} />);
+    clock.flush(16);
+    // 같은 좌표가 이제 캔버스 전체다 → 스테이지 전체를 덮는다.
+    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 100, 80]);
   });
 
   it('패널 크기가 바뀌면 오버레이의 스테이지도 같은 새 값으로 따라온다(AC-E2)', () => {
@@ -974,7 +1065,8 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     const spy = makeOverlaySpy();
     render(
       <CanvasSurface
-        elements={[rectEl('a', { geometry: { x: 0, y: 0, w: 1, h: 1 } })]}
+        canvas={CANVAS}
+        elements={[rectEl('a', { geometry: { x: 0, y: 0, w: 200, h: 160 } })]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
         scheduler={clock.scheduler}
@@ -983,7 +1075,7 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
       />,
     );
     clock.flush(0);
-    expect(spy.last!.stage).toEqual({ width: 100, height: 80 });
+    expect(spy.last!.projection.stage).toEqual({ width: 100, height: 80 });
 
     ctxStub.calls.length = 0;
     act(() => {
@@ -992,16 +1084,17 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     clock.flush(16);
 
     const projected = ctxStub.calls.find((c) => c[0] === 'rect')!.slice(1);
-    expect(spy.last!.stage).toEqual({ width: 50, height: 40 });
-    expect(spy.last!.stage).toEqual({ width: projected[2], height: projected[3] });
+    expect(spy.last!.projection.stage).toEqual({ width: 50, height: 40 });
+    expect(spy.last!.projection.stage).toEqual({ width: projected[2], height: projected[3] });
   });
 
   it('폭 장부는 첫 프레임 전에는 비어 있고, 그 뒤에는 직전 프레임이 잰 값이다(AC-E7)', () => {
     const clock = makeScheduler();
     const spy = makeOverlaySpy();
-    const elements = [{ id: 't', kind: 'text' as const, geometry: { x: 0.5, y: 0.5 }, style: {} }];
+    const elements = [{ id: 't', kind: 'text' as const, geometry: { x: 100, y: 80 }, style: {} }];
     const view = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={elements}
         targetStyles={{ t: { textColor: '#000000' } }}
         texts={{ t: 'ab' }}
@@ -1017,6 +1110,7 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     // 그리기는 재렌더를 낳지 않는다(ref 다) — 다음 렌더가 직전 프레임의 장부를 본다.
     view.rerender(
       <CanvasSurface
+        canvas={CANVAS}
         elements={elements}
         targetStyles={{ t: { textColor: '#111111' } }}
         texts={{ t: 'ab' }}
@@ -1036,6 +1130,7 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     const clock = makeScheduler();
     render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={[rectEl('a')]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
@@ -1067,6 +1162,7 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     const texts = {};
     const view = render(
       <CanvasSurface
+        canvas={CANVAS}
         elements={elements}
         targetStyles={targetStyles}
         texts={texts}
@@ -1083,7 +1179,8 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     for (const _ of [0, 1, 2]) {
       view.rerender(
         <CanvasSurface
-          elements={elements}
+          canvas={CANVAS}
+        elements={elements}
           targetStyles={targetStyles}
           texts={texts}
           scheduler={clock.scheduler}

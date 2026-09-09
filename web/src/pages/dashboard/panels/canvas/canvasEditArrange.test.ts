@@ -3,39 +3,49 @@
 // 덮는 인수 기준: AC-E5(상한에 붙잡히지 않는다 · 중심 기준 스냅), AC-08(정렬은 2개 이상),
 // REQ-04(z-order 는 목록 편집기와 같은 연산), REQ-06(식별은 언제나 nodeId).
 //
-// 이 파일에서 가장 중요한 것은 **위험 R6** 두 갈래다: 스냅과 정렬 어느 쪽이든 원 함수의
-// 기본 상한(±40)이 새어 들어오면 캔버스 조작이 스테이지의 40% 지점에서 조용히 멈춘다.
-// 그래서 40% 를 **넘어가는** 값을 일부러 만들어 그 값이 그대로 살아 나오는지 본다 —
-// 붙잡히면 0.4 가, 살아 나오면 원래 값이 나온다. 두 값이 다르므로 실패가 곧 진단이다.
+// 이 파일에서 가장 중요한 것은 **위험 R6** 이다: 정렬에 원 함수의 기본 상한(±40)이 새어
+// 들어오면 캔버스 조작이 기준 상자의 40% 지점에서 조용히 멈춘다. 그래서 40% 를
+// **넘어가는** 값을 일부러 만들어 그 값이 그대로 살아 나오는지 본다 — 붙잡히면 40% 에
+// 해당하는 값이, 살아 나오면 원래 값이 나온다. 두 값이 다르므로 실패가 곧 진단이다.
+//
+// 붙임 쪽은 0.8.0 에서 그 위험을 **구조적으로** 없앴다. 좌표가 정수 캔버스 단위가 되면서
+// 붙임이 백분율 공간을 아예 지나지 않게 되었고, 지나지 않는 함정에는 걸릴 수 없다.
+// 그래서 이 파일은 그 사실 자체(§격자 붙임은 백분율 공간을 지나지 않는다)를 시험한다.
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import type { BoxGeometry, CanvasElement } from './canvasConfig';
+import { DEFAULT_CANVAS_SIZE, type BoxGeometry, type CanvasElement, type CanvasSize } from './canvasConfig';
 import {
   CANVAS_GRID_STEP_CHOICES,
-  CANVAS_GRID_STEP_PERCENT,
+  CANVAS_GRID_STEP_UNITS,
   alignDeltas,
   bringToFront,
+  gridPercents,
   moveElementTo,
   sendToBack,
   snapDelta,
-  squareGridSteps,
   type AlignTarget,
 } from './canvasEditArrange';
-import type { StageSize } from './canvasGeometry';
+import type { CanvasProjection, StageSize } from './canvasGeometry';
 
 // --- 고정 입력 -----------------------------------------------------------
 
-/** 축이 서로 달라야 축을 뒤바꾼 계산이 드러난다. 격자 한 칸은 x 20px · y 10px 이다. */
+/** 축이 서로 달라야 축을 뒤바꾼 계산이 드러난다. */
 const STAGE: StageSize = { width: 200, height: 100 };
 
-/** 중심이 (40, 20) px = 스테이지의 (20%, 20%) 에 있는 상자. */
-const ANCHOR = { x: 20, y: 10, w: 40, h: 20 };
+/** 기본 캔버스(500x400). 위 스테이지와 짝지으면 축척이 가로 0.4 · 세로 0.25 로 갈린다. */
+const CANVAS: CanvasSize = { ...DEFAULT_CANVAS_SIZE };
 
-function rect(id: string, geometry: BoxGeometry = { x: 0, y: 0, w: 0.1, h: 0.1 }): CanvasElement {
+/** 대표 투영 한 벌. */
+const PROJ: CanvasProjection = { stage: STAGE, canvas: CANVAS };
+
+/** 중심이 (100, 80) 캔버스 단위에 있는 상자 — 어느 간격으로도 눈금 위가 아니다. */
+const ANCHOR = { x: 50, y: 40, w: 100, h: 80 };
+
+function rect(id: string, geometry: BoxGeometry = { x: 0, y: 0, w: 50, h: 40 }): CanvasElement {
   return { id, kind: 'rect', geometry, style: {} };
 }
 
@@ -58,21 +68,39 @@ describe('원 함수를 부르는 자리는 이 모듈 하나뿐이다 (위험 R
     expect(offenders).toEqual([]);
   });
 
-  it('격자 간격의 기본값은 panelEditAlign 의 값을 그대로 다시 내보낸다 (캔버스 전용 기본값이 없다)', () => {
-    expect(CANVAS_GRID_STEP_PERCENT).toBe(10);
+  it('원 모듈을 들이는 시험이 무동작이 아니다 — 정렬이 여전히 그 함수를 부른다', () => {
+    // 붙임이 `snapOffsetToGrid` 를 걷어낸 뒤에도 위 가드가 **무언가를 지키고 있는지**를
+    // 여기서 확인한다. 이 모듈이 원 모듈을 아예 들이지 않게 되면 위 시험은 언제나
+    // 통과하는 빈 가드가 되므로, 그때는 가드를 지울 것이 아니라 이 사실이 먼저 깨져야 한다.
+    const source = readFileSync(join(__dirname, 'canvasEditArrange.ts'), 'utf-8');
+    expect(source).toMatch(/from '.*panelEditAlign'/);
+    expect(source).toMatch(/computeAlignPatches/);
   });
 
-  it('고를 수 있는 간격 목록은 그 기본값을 품는다 — 목록이 기본값을 밀어내지 않는다', () => {
+  it('격자 붙임은 백분율 공간을 지나지 않는다 — ±40 함정이 닿을 자리가 없다', () => {
+    // 0.8.0 이 붙임에서 `snapOffsetToGrid` 를 걷어낸 것이 위험 R6 의 절반을 **구조적으로**
+    // 없앤 조치다. 그 함수를 다시 들이면 단위 → 백분율 → 단위 왕복이 생기고, 그 왕복이
+    // 하는 일은 상한 인자를 다시 요구하는 것뿐이다.
+    // 주석은 걷어내고 **코드만** 본다 — 머리말이 그 함수를 이름으로 설명하고 있으며,
+    // 설명하는 것과 부르는 것은 다른 일이다.
+    const code = readFileSync(join(__dirname, 'canvasEditArrange.ts'), 'utf-8')
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join('\n');
+    expect(code).not.toMatch(/snapOffsetToGrid/);
+    // `clampPercentOffset` 이 사는 모듈도 마찬가지다(위 panelGeometry 가드와 짝을 이룬다).
+    expect(code).not.toMatch(/clampPercentOffset/);
+  });
+
+  it('격자 간격의 기본값은 고를 수 있는 목록 안에 있다 — 목록이 기본값을 밀어내지 않는다', () => {
     // 목록이 기본값을 품지 않으면 처음 켠 격자가 목록의 어느 칸과도 맞지 않아,
     // 고르개가 빈 값을 보여 준다(그리고 사용자는 자기가 고르지 않은 간격을 보게 된다).
-    expect(CANVAS_GRID_STEP_CHOICES).toContain(CANVAS_GRID_STEP_PERCENT);
+    expect(CANVAS_GRID_STEP_CHOICES).toContain(CANVAS_GRID_STEP_UNITS);
   });
 
-  it('고를 수 있는 간격은 모두 100 을 나누어떨어지게 한다 (자투리 칸이 생기지 않는다)', () => {
-    // 7% 같은 값이 들어오면 마지막 칸이 잘리고, 잘린 칸에도 붙기 때문에 "왜 저기 붙지" 가 된다.
-    for (const step of CANVAS_GRID_STEP_CHOICES) {
-      expect(100 % step).toBe(0);
-    }
+  it('기본 간격은 정수다 — 좌표계가 정수이므로 간격도 정수여야 눈금이 정수에 앉는다', () => {
+    expect(Number.isInteger(CANVAS_GRID_STEP_UNITS)).toBe(true);
+    for (const step of CANVAS_GRID_STEP_CHOICES) expect(Number.isInteger(step)).toBe(true);
   });
 
   it('panels/canvas 안에서 죄기 도우미(panelGeometry)를 직접 들이는 파일은 없다', () => {
@@ -89,179 +117,193 @@ describe('원 함수를 부르는 자리는 이 모듈 하나뿐이다 (위험 R
   });
 });
 
-// --- 정사각 칸 (사용 시험: "격자가 일정하지 않음") -------------------------
+// --- 격자는 자투리를 남기지 않는다 (사용 시험: "격자가 일정하지 않음") ----
 //
-// 백분율은 언제나 **제 축 길이에 대한** 값이라, 두 축에 같은 10% 를 주면 정사각형이 아닌
-// 스테이지에서 칸이 직사각형이 된다. 그래서 여기서 쓰는 픽스처는 **정사각형이 아니어야
-// 한다** — 800×400 이면 옛 방식이 80×40 px 을 내고 새 방식이 80×80 px 을 낸다. 정사각
-// 픽스처(예: 400×400)로는 두 방식이 같은 값을 내므로 이 시험이 실패할 수 없다.
+// 옛 모델에서 세로 백분율은 **스테이지 종횡비**에서 파생됐다(`squareGridSteps`). 그래서
+// 1749×796 스테이지에서 그 값이 21.97% 가 되어 마지막 줄이 반 칸으로 잘렸고, 칸 수가
+// 패널을 늘일 때마다 달라졌다. 이제 백분율의 분모는 **캔버스**이므로 칸 수가 스테이지와
+// 무관하다 — 아래 시험들이 그 두 가지(정수 칸 수 · 스테이지 독립)를 함께 못박는다.
 
-/** 가로가 세로의 두 배인 스테이지. 정사각 픽스처로는 이 절의 시험이 성립하지 않는다. */
-const WIDE_STAGE: StageSize = { width: 800, height: 400 };
-
-/** 한 축의 백분율이 실제로 몇 px 인가. */
-function cellPx(percent: number, axisLength: number): number {
-  return (percent / 100) * axisLength;
+/** 그 간격으로 한 축이 몇 칸인가. 백분율이 100 을 나누어떨어지게 하면 정수다. */
+function cellCount(percent: number): number {
+  return 100 / percent;
 }
 
-describe('격자 칸은 정사각형이다 (사용 시험: "격자가 일정하지 않음")', () => {
-  it('가로세로 비가 다른 스테이지에서도 두 축의 칸이 **같은 px** 이다', () => {
+describe('격자 칸 수는 정수다 (기본 캔버스 · 고를 수 있는 모든 간격)', () => {
+  it('두 축 모두 나머지 없이 떨어진다', () => {
     for (const step of CANVAS_GRID_STEP_CHOICES) {
-      const cell = squareGridSteps(step, WIDE_STAGE);
-      expect(cellPx(cell.x, WIDE_STAGE.width), `${step}%`).toBeCloseTo(
-        cellPx(cell.y, WIDE_STAGE.height),
-        6,
-      );
+      const cell = gridPercents(step, CANVAS);
+      expect(Number.isInteger(cellCount(cell.x)), `${step} 단위 가로`).toBe(true);
+      expect(Number.isInteger(cellCount(cell.y)), `${step} 단위 세로`).toBe(true);
     }
   });
 
-  it('기준 축은 **폭**이다 — 고른 값이 가로에서 그대로 뜻을 갖는다', () => {
-    // "10% = 가로 10칸" 이라는 화면의 말이 남아야 하고, 그래야 목록의 5·10·20 이
-    // 100 을 나누어떨어지게 뽑힌 근거도 남는다.
-    expect(squareGridSteps(10, WIDE_STAGE)).toEqual({ x: 10, y: 20 });
-    expect(squareGridSteps(20, WIDE_STAGE)).toEqual({ x: 20, y: 40 });
-    expect(squareGridSteps(5, WIDE_STAGE)).toEqual({ x: 5, y: 10 });
+  it('칸 수는 캔버스 크기 ÷ 간격 그대로다', () => {
+    for (const step of CANVAS_GRID_STEP_CHOICES) {
+      const cell = gridPercents(step, CANVAS);
+      expect(cellCount(cell.x)).toBeCloseTo(CANVAS.width / step, 9);
+      expect(cellCount(cell.y)).toBeCloseTo(CANVAS.height / step, 9);
+    }
   });
 
-  it('세로로 긴 스테이지에서는 세로 백분율이 작아진다 (비의 방향을 뒤집지 않는다)', () => {
-    expect(squareGridSteps(10, { width: 400, height: 800 })).toEqual({ x: 10, y: 5 });
+  it('기본 간격 25 는 20 x 16 칸이다', () => {
+    const cell = gridPercents(CANVAS_GRID_STEP_UNITS, CANVAS);
+    expect(cell).toEqual({ x: 5, y: 6.25 });
+    expect(cellCount(cell.x)).toBe(20);
+    expect(cellCount(cell.y)).toBe(16);
   });
 
-  it('정사각 스테이지에서는 두 축이 같은 값이다 (종전과 같은 그림)', () => {
-    expect(squareGridSteps(10, { width: 400, height: 400 })).toEqual({ x: 10, y: 10 });
+  it('고를 수 있는 간격은 모두 캔버스 두 축을 나누어떨어지게 한다', () => {
+    for (const step of CANVAS_GRID_STEP_CHOICES) {
+      expect(CANVAS.width % step, `${step} 단위 가로`).toBe(0);
+      expect(CANVAS.height % step, `${step} 단위 세로`).toBe(0);
+    }
+  });
+});
+
+describe('칸 수는 스테이지 크기와 무관하다 (자투리의 출처가 사라졌다)', () => {
+  /**
+   * 정사각형이 **아닌** 스테이지들. 옛 결함은 스테이지와 캔버스의 종횡비 차이에서
+   * 살았으므로 정사각 픽스처로는 이 절의 시험이 실패할 수 없다. 1749x796 은 사용자가
+   * 실제로 반 칸을 본 그 크기다(4.55 줄).
+   */
+  const stages: StageSize[] = [
+    { width: 1749, height: 796 },
+    { width: 200, height: 100 },
+    { width: 300, height: 900 },
+    { width: 1024, height: 768 },
+  ];
+
+  it('어떤 스테이지에서도 두 축의 칸 수가 정수다', () => {
+    for (const stage of stages) {
+      for (const step of CANVAS_GRID_STEP_CHOICES) {
+        // 백분율은 스테이지를 보지 않는다 — 그것이 이 성질의 근거 전부다.
+        const cell = gridPercents(step, CANVAS);
+        const cols = cellCount(cell.x);
+        const rows = cellCount(cell.y);
+        expect(Number.isInteger(cols), `${stage.width}x${stage.height} / ${step}`).toBe(true);
+        expect(Number.isInteger(rows), `${stage.width}x${stage.height} / ${step}`).toBe(true);
+      }
+    }
   });
 
-  it('소수 넷째 자리에서 턴다 — 그리는 쪽과 붙는 쪽이 같은 수를 본다', () => {
-    // 나누어떨어지지 않는 비에서도 두 자리가 **한 함수**를 지나므로 값이 갈리지 않는다.
-    const cell = squareGridSteps(10, { width: 300, height: 173 });
-    expect(cell.y).toBe(17.3410);
+  it('모든 칸이 같은 크기다 — 마지막 칸이 반 칸으로 잘리지 않는다', () => {
+    for (const stage of stages) {
+      for (const step of CANVAS_GRID_STEP_CHOICES) {
+        const cell = gridPercents(step, CANVAS);
+        const colPx = (cell.x / 100) * stage.width;
+        const rowPx = (cell.y / 100) * stage.height;
+        // 마지막 칸까지 온전하려면 축 길이가 칸 크기의 정수배여야 한다.
+        expect(stage.width / colPx).toBeCloseTo(Math.round(stage.width / colPx), 9);
+        expect(stage.height / rowPx).toBeCloseTo(Math.round(stage.height / rowPx), 9);
+      }
+    }
   });
 
-  it('잴 수 없는 스테이지에서는 두 축에 같은 값을 준다 (종전 동작)', () => {
-    // 이 경로의 값이 쓰이는 곳은 Shift+방향키 한 칸뿐이며, 거기서는 "축 길이의 step%" 가
-    // 여전히 뜻이 성립한다(붙임 자체는 손대지 않는 경로로 빠진다).
-    expect(squareGridSteps(10, { width: 0, height: 0 })).toEqual({ x: 10, y: 10 });
-    expect(squareGridSteps(10, { width: 200, height: 0 })).toEqual({ x: 10, y: 10 });
-    expect(squareGridSteps(10, { width: Number.NaN, height: 100 })).toEqual({ x: 10, y: 10 });
+  it('패널을 늘여도 칸 수가 그대로다 (옛 모델에서는 달라졌다)', () => {
+    const small = gridPercents(25, CANVAS);
+    const large = gridPercents(25, CANVAS);
+    expect(small).toEqual(large);
   });
 
-  it('붙는 자리도 그 정사각 칸을 따른다 — 파생이 한 함수를 지나기 때문이다', () => {
-    // 800×400 · 간격 10% → 칸은 80px. 중심이 (100,100) px 인 상자를 살짝 끈다.
-    const anchor = { x: 60, y: 80, w: 80, h: 40 };
-    const cell = squareGridSteps(10, WIDE_STAGE);
-    const px = cellPx(cell.x, WIDE_STAGE.width);
-    expect(px).toBe(80);
+  it('캔버스를 바꾸면 칸 수가 달라진다 — 칸 수의 주인은 캔버스다', () => {
+    expect(gridPercents(25, { width: 1000, height: 400 })).toEqual({ x: 2.5, y: 6.25 });
+  });
 
-    const snapped = snapDelta({ dx: 0.03, dy: 0.06 }, anchor, WIDE_STAGE);
-    const centerX = anchor.x + anchor.w / 2 + snapped.dx * WIDE_STAGE.width;
-    const centerY = anchor.y + anchor.h / 2 + snapped.dy * WIDE_STAGE.height;
-
-    // 100 + 24 = 124 → 80 의 배수 중 가장 가까운 것은 160. 100 + 24 = 124 → 160.
-    expect(centerX % px).toBeCloseTo(0, 6);
-    expect(centerY % px).toBeCloseTo(0, 6);
+  it('잴 수 없는 캔버스에서는 간격을 그대로 돌려준다 (0 으로 나누지 않는다)', () => {
+    expect(gridPercents(25, { width: 0, height: 0 })).toEqual({ x: 25, y: 25 });
+    expect(gridPercents(25, { width: Number.NaN, height: 400 })).toEqual({ x: 25, y: 25 });
   });
 });
 
 // --- 격자 붙임 (T12 · AC-E5) ----------------------------------------------
 
 describe('격자 붙임은 요소의 **중심**을 격자에 맞춘다 (AC-E5)', () => {
+  // ANCHOR 의 중심은 (100, 80). 기본 간격 25 의 눈금은 ... 75 · 100 · 125 ... 다.
   it('중심이 다음 눈금으로 끌려간 만큼만 이동량이 늘어난다', () => {
-    // 중심 20% + 이동 6.25% = 26.25% → 30% 로 붙는다 → 이동량은 10% = 0.1.
-    expect(snapDelta({ dx: 0.0625, dy: 0 }, ANCHOR, STAGE).dx).toBeCloseTo(0.1, 9);
+    // 중심 100 + 15 = 115 → 125 로 붙는다 → 이동량 25.
+    expect(snapDelta({ dx: 15, dy: 0 }, ANCHOR).dx).toBe(25);
   });
 
   it('가까운 눈금으로 되돌아오기도 한다 (반올림이지 올림이 아니다)', () => {
-    // 중심 20% + 12.5% = 32.5% → 30% 로 붙는다 → 이동량 10%.
-    expect(snapDelta({ dx: 0.125, dy: 0 }, ANCHOR, STAGE).dx).toBeCloseTo(0.1, 9);
+    // 중심 100 + 10 = 110 → 100 으로 되돌아온다 → 이동량 0.
+    expect(snapDelta({ dx: 10, dy: 0 }, ANCHOR).dx).toBe(0);
   });
 
-  it('두 축이 저마다의 스테이지 길이로 죄인다 (축을 뒤바꾸지 않는다)', () => {
-    // 칸은 정사각이므로 두 축 모두 20px 이다(폭 200 의 10%). y 는 스테이지가 100px 이라
-    // 그 20px 이 20% 다 — 중심 20px + 12px = 32px → 40px 로 붙는다 → 이동량 20px = 0.2.
-    const snapped = snapDelta({ dx: 0, dy: 0.12 }, ANCHOR, STAGE);
-    expect(snapped.dy).toBeCloseTo(0.2, 9);
-    expect(snapped.dx).toBeCloseTo(0, 9);
+  it('두 축이 같은 정수 간격으로 죄인다 (축마다 다른 눈금이 아니다)', () => {
+    // 세로 중심 80 + 15 = 95 → 100 으로 붙는다 → 이동량 20.
+    const snapped = snapDelta({ dx: 15, dy: 15 }, ANCHOR);
+    expect(snapped.dx).toBe(25);
+    expect(snapped.dy).toBe(20);
   });
 
   it('이미 눈금 위면 이동량이 그대로다', () => {
-    // x 는 40px + 20px = 60px, y 는 20px + 20px = 40px — 둘 다 20px 칸의 배수다.
-    expect(snapDelta({ dx: 0.1, dy: 0.2 }, ANCHOR, STAGE)).toEqual({ dx: 0.1, dy: 0.2 });
+    // x: 100 + 25 = 125, y: 80 + 20 = 100 — 둘 다 25 의 배수다.
+    expect(snapDelta({ dx: 25, dy: 20 }, ANCHOR)).toEqual({ dx: 25, dy: 20 });
   });
 
-  it('**스테이지의 40% 를 넘어가도 붙잡히지 않는다** — 상한을 무한대로 넘긴다 (위험 R6)', () => {
-    // 기본 상한(±40)이 새어 들어오면 0.4 가 나온다. 그것이 이 SPEC 이 이름 붙인 함정이다.
-    expect(snapDelta({ dx: 0.6, dy: 0 }, ANCHOR, STAGE).dx).toBeCloseTo(0.6, 9);
+  it('**캔버스의 40% 를 넘어가도 붙잡히지 않는다** (위험 R6)', () => {
+    // 옛 상한(±40%)이 새어 들어오면 200 단위(= 500 의 40%)에서 멈춘다.
+    // 중심 100 + 300 = 400 은 이미 눈금이므로 이동량이 그대로 살아 나온다.
+    expect(snapDelta({ dx: 300, dy: 0 }, ANCHOR).dx).toBe(300);
   });
 
-  it('스테이지를 통째로 벗어나는 이동량도 그대로 살아 나온다', () => {
-    // y 는 칸이 20px(= 20%) 이므로 중심 20px + 100px = 120px 이 그대로 눈금 위다.
-    const snapped = snapDelta({ dx: 1.3, dy: 1.0 }, ANCHOR, STAGE);
-    expect(snapped.dx).toBeCloseTo(1.3, 9);
-    expect(snapped.dy).toBeCloseTo(1.0, 9);
+  it('캔버스를 통째로 벗어나는 이동량도 그대로 살아 나온다', () => {
+    // 중심 100 + 650 = 750 → 25 의 배수다. 세로 80 + 520 = 600 도 그렇다.
+    expect(snapDelta({ dx: 650, dy: 520 }, ANCHOR)).toEqual({ dx: 650, dy: 520 });
   });
 
   it('음의 방향도 마찬가지다 (상한은 양쪽에 없다)', () => {
-    expect(snapDelta({ dx: -0.7, dy: 0 }, ANCHOR, STAGE).dx).toBeCloseTo(-0.7, 9);
-  });
-
-  it('스테이지를 잴 수 없으면 이동량에 손대지 않는다 (0 으로 죄면 요소가 얼어붙는다)', () => {
-    const zero: StageSize = { width: 0, height: 0 };
-    expect(snapDelta({ dx: 0.33, dy: 0.44 }, ANCHOR, zero)).toEqual({ dx: 0.33, dy: 0.44 });
+    // 중심 100 - 350 = -250 → 25 의 배수다.
+    expect(snapDelta({ dx: -350, dy: 0 }, ANCHOR).dx).toBe(-350);
   });
 
   it('수가 아닌 이동량·기준 상자에는 손대지 않는다', () => {
-    expect(snapDelta({ dx: Number.NaN, dy: 0.0625 }, ANCHOR, STAGE).dx).toBeNaN();
-    const broken = { x: Number.NaN, y: 10, w: 40, h: 20 };
-    expect(snapDelta({ dx: 0.0625, dy: 0 }, broken, STAGE).dx).toBeCloseTo(0.0625, 9);
+    expect(snapDelta({ dx: Number.NaN, dy: 15 }, ANCHOR).dx).toBeNaN();
+    const broken = { x: Number.NaN, y: 40, w: 100, h: 80 };
+    expect(snapDelta({ dx: 15, dy: 0 }, broken).dx).toBe(15);
   });
 });
 
 describe('붙는 눈금은 넘긴 간격을 따른다 (화면에 그린 간격과 같은 값이다)', () => {
-  // 중심 20% 에서 6.25% 를 끈 자리(26.25%)는 간격마다 다른 눈금으로 붙는다 —
-  // 5% → 25%, 10% → 30%, 20% → 20%. 셋이 서로 다르므로 간격이 실제로 쓰였는지 갈린다.
-  it('5% 간격이면 가장 가까운 5의 배수로 붙는다', () => {
-    expect(snapDelta({ dx: 0.0625, dy: 0 }, ANCHOR, STAGE, 5).dx).toBeCloseTo(0.05, 9);
+  // 중심 100 에서 15 를 끈 자리(115)는 간격마다 다른 눈금으로 붙는다 —
+  // 10 → 120, 20 → 120, 25 → 125, 50 → 100. 넷이 갈리므로 간격이 실제로 쓰였는지 드러난다.
+  it('10 단위 간격이면 가장 가까운 10 의 배수로 붙는다', () => {
+    expect(snapDelta({ dx: 15, dy: 0 }, ANCHOR, 10).dx).toBe(20);
   });
 
-  it('20% 간격이면 되돌아오기도 한다 (가장 가까운 20의 배수는 뒤쪽이다)', () => {
-    expect(snapDelta({ dx: 0.0625, dy: 0 }, ANCHOR, STAGE, 20).dx).toBeCloseTo(0, 9);
+  it('50 단위 간격이면 되돌아온다 (가장 가까운 50 의 배수는 뒤쪽이다)', () => {
+    expect(snapDelta({ dx: 15, dy: 0 }, ANCHOR, 50).dx).toBe(0);
   });
 
   it('간격을 생략하면 기본값으로 붙는다 — 명시한 기본값과 결과가 같다', () => {
-    const implicit = snapDelta({ dx: 0.0625, dy: 0.07 }, ANCHOR, STAGE);
-    const explicit = snapDelta({ dx: 0.0625, dy: 0.07 }, ANCHOR, STAGE, CANVAS_GRID_STEP_PERCENT);
+    const implicit = snapDelta({ dx: 15, dy: 17 }, ANCHOR);
+    const explicit = snapDelta({ dx: 15, dy: 17 }, ANCHOR, CANVAS_GRID_STEP_UNITS);
     expect(implicit).toEqual(explicit);
   });
 
-  it('두 축은 같은 **px 칸**을 쓴다 — 그래서 백분율은 서로 다르다', () => {
-    // 간격 20% 는 폭 200px 의 20% = 40px 칸이다. 세로도 같은 40px 이며, 그것이 높이
-    // 100px 에 대해서는 40% 다. 두 축에 같은 20% 를 주던 시절에는 칸이 40×20 px 이었다.
-    //
-    // x: 중심 40px + 50px = 90px → 80px 로 붙는다 → 이동량 40px = 0.2.
-    // y: 중심 20px + 50px = 70px → 80px 로 붙는다 → 이동량 60px = 0.6.
-    const snapped = snapDelta({ dx: 0.25, dy: 0.5 }, ANCHOR, STAGE, 20);
-
-    const centerX = ANCHOR.x + ANCHOR.w / 2 + snapped.dx * STAGE.width;
-    const centerY = ANCHOR.y + ANCHOR.h / 2 + snapped.dy * STAGE.height;
-    // 붙은 중심이 두 축 모두 **같은 40px 칸**의 배수 위에 앉는다.
-    expect(centerX).toBeCloseTo(80, 6);
-    expect(centerY).toBeCloseTo(80, 6);
-  });
-
-  it('**간격을 바꿔도 상한은 여전히 무한대다** — 위험 R6 은 간격마다 되살아날 수 있다', () => {
-    // 간격 인자를 넘기려면 상한 인자를 지나야 한다(둘은 같은 호출의 4·5번째 자리다).
-    // 그 자리에서 상한을 흘리면 5% 든 20% 든 0.4 에서 멈춘다.
+  it('**간격을 바꿔도 상한은 여전히 없다** — 위험 R6 은 간격마다 되살아날 수 있다', () => {
     for (const step of CANVAS_GRID_STEP_CHOICES) {
-      expect(snapDelta({ dx: 0.6, dy: 0 }, ANCHOR, STAGE, step).dx).toBeGreaterThan(0.4);
-      expect(snapDelta({ dx: -0.7, dy: 0 }, ANCHOR, STAGE, step).dx).toBeLessThan(-0.4);
+      expect(snapDelta({ dx: 300, dy: 0 }, ANCHOR, step).dx).toBeGreaterThan(200);
+      expect(snapDelta({ dx: -350, dy: 0 }, ANCHOR, step).dx).toBeLessThan(-200);
     }
   });
 
   it('간격이 0 이하면 붙이지 않는다 (0 으로 죄면 요소가 얼어붙는다)', () => {
-    expect(snapDelta({ dx: 0.0625, dy: 0.07 }, ANCHOR, STAGE, 0)).toEqual({
-      dx: 0.0625,
-      dy: 0.07,
-    });
+    expect(snapDelta({ dx: 15, dy: 17 }, ANCHOR, 0)).toEqual({ dx: 15, dy: 17 });
+    expect(snapDelta({ dx: 15, dy: 17 }, ANCHOR, -5)).toEqual({ dx: 15, dy: 17 });
+  });
+
+  it('붙은 자리는 **그려진 눈금 위**다 — 그림과 붙임이 같은 정수를 본다', () => {
+    for (const step of CANVAS_GRID_STEP_CHOICES) {
+      const snapped = snapDelta({ dx: 17, dy: 23 }, ANCHOR, step);
+      const centerX = ANCHOR.x + ANCHOR.w / 2 + snapped.dx;
+      const centerY = ANCHOR.y + ANCHOR.h / 2 + snapped.dy;
+      // 그려지는 선의 자리는 `gridPercents` 가 낸 백분율 × 캔버스 축 길이 = step 의 배수다.
+      const cell = gridPercents(step, CANVAS);
+      expect(centerX % ((cell.x / 100) * CANVAS.width)).toBeCloseTo(0, 9);
+      expect(centerY % ((cell.y / 100) * CANVAS.height)).toBeCloseTo(0, 9);
+    }
   });
 });
 
@@ -272,50 +314,52 @@ describe('정렬은 맞출 상대가 있어야 한다 (AC-08)', () => {
   const b: AlignTarget = { nodeId: 'b', box: { x: 100, y: 50, w: 20, h: 10 } };
 
   it('0개면 빈 배열이다', () => {
-    expect(alignDeltas([], STAGE, 'horizontal', 'start')).toEqual([]);
+    expect(alignDeltas([], PROJ, 'horizontal', 'start')).toEqual([]);
   });
 
   it('1개면 빈 배열이다 — 하나만 골라 놓고 맞출 곳은 없다', () => {
-    expect(alignDeltas([a], STAGE, 'horizontal', 'start')).toEqual([]);
+    expect(alignDeltas([a], PROJ, 'horizontal', 'start')).toEqual([]);
   });
 
   it('스테이지를 잴 수 없으면 빈 배열이다', () => {
-    expect(alignDeltas([a, b], { width: 0, height: 0 }, 'horizontal', 'start')).toEqual([]);
+    expect(
+      alignDeltas([a, b], { stage: { width: 0, height: 0 }, canvas: CANVAS }, 'horizontal', 'start'),
+    ).toEqual([]);
   });
 });
 
-describe('정렬 변환 사슬 — 투영 px 상자 → 백분율 → ÷100 → 정규화 델타 (T13)', () => {
+describe('정렬 변환 사슬 — 투영 px 상자 → 백분율 → ÷100 × 캔버스 축 길이 (T13)', () => {
   const a: AlignTarget = { nodeId: 'a', box: { x: 10, y: 10, w: 40, h: 20 } };
   const b: AlignTarget = { nodeId: 'b', box: { x: 100, y: 50, w: 20, h: 10 } };
 
   /** 축 하나만 담긴 델타를 읽기 쉽게 편다. */
   function deltaOf(axis: 'horizontal' | 'vertical', mode: 'start' | 'center' | 'end') {
-    const out = alignDeltas([a, b], STAGE, axis, mode);
+    const out = alignDeltas([a, b], PROJ, axis, mode);
     return Object.fromEntries(out.map((d) => [d.nodeId, d.delta]));
   }
 
   it('왼쪽 맞춤 — 바깥 상자의 왼쪽 변(10px)에 붙는다', () => {
     const d = deltaOf('horizontal', 'start');
     expect(d.a!.dx).toBeCloseTo(0, 9);
-    // b 는 100px → 10px 로 90px 왼쪽 = 스테이지 폭의 -45% = -0.45.
-    expect(d.b!.dx).toBeCloseTo(-0.45, 9);
+    // b 는 100px → 10px 로 90px 왼쪽 = 스테이지 폭의 -45% = 캔버스 폭 500 의 -225 단위.
+    expect(d.b!.dx).toBeCloseTo(-225, 9);
   });
 
-  it('왼쪽 맞춤의 -0.45 가 **상한 ±40 에 붙잡히지 않는다** (위험 R6 의 정렬 쪽)', () => {
-    // 기본 상한이 새어 들어오면 -0.4 가 나온다. 두 값이 다르므로 실패가 곧 진단이다.
-    expect(deltaOf('horizontal', 'start').b!.dx).not.toBeCloseTo(-0.4, 3);
+  it('왼쪽 맞춤의 -225 가 **상한 ±40% 에 붙잡히지 않는다** (위험 R6 의 정렬 쪽)', () => {
+    // 기본 상한이 새어 들어오면 -40% = -200 단위가 나온다. 두 값이 다르므로 실패가 곧 진단이다.
+    expect(deltaOf('horizontal', 'start').b!.dx).not.toBeCloseTo(-200, 3);
   });
 
   it('오른쪽 맞춤 — 바깥 상자의 오른쪽 변(120px)에 붙는다', () => {
     const d = deltaOf('horizontal', 'end');
-    expect(d.a!.dx).toBeCloseTo(0.35, 9);
+    expect(d.a!.dx).toBeCloseTo(175, 9);
     expect(d.b!.dx).toBeCloseTo(0, 9);
   });
 
   it('가로 가운데 맞춤 — 바깥 상자의 가운데(65px)에 중심을 맞춘다', () => {
     const d = deltaOf('horizontal', 'center');
-    expect(d.a!.dx).toBeCloseTo(0.175, 9);
-    expect(d.b!.dx).toBeCloseTo(-0.225, 9);
+    expect(d.a!.dx).toBeCloseTo(87.5, 9);
+    expect(d.b!.dx).toBeCloseTo(-112.5, 9);
   });
 
   it('가로 정렬은 세로를 건드리지 않는다', () => {
@@ -326,22 +370,22 @@ describe('정렬 변환 사슬 — 투영 px 상자 → 백분율 → ÷100 → 
     }
   });
 
-  it('위 맞춤 — 세로는 스테이지 높이(100px)로 나눈다 (축을 뒤바꾸지 않는다)', () => {
+  it('위 맞춤 — 세로는 스테이지 높이(100px)로 나누고 캔버스 높이(400)를 곱한다', () => {
     const d = deltaOf('vertical', 'start');
     expect(d.a!.dy).toBeCloseTo(0, 9);
-    expect(d.b!.dy).toBeCloseTo(-0.4, 9);
+    expect(d.b!.dy).toBeCloseTo(-160, 9);
   });
 
   it('아래 맞춤 — 바깥 상자의 아래 변(60px)에 붙는다', () => {
     const d = deltaOf('vertical', 'end');
-    expect(d.a!.dy).toBeCloseTo(0.3, 9);
+    expect(d.a!.dy).toBeCloseTo(120, 9);
     expect(d.b!.dy).toBeCloseTo(0, 9);
   });
 
   it('세로 가운데 맞춤 — 바깥 상자의 가운데(35px)에 중심을 맞춘다', () => {
     const d = deltaOf('vertical', 'center');
-    expect(d.a!.dy).toBeCloseTo(0.15, 9);
-    expect(d.b!.dy).toBeCloseTo(-0.2, 9);
+    expect(d.a!.dy).toBeCloseTo(60, 9);
+    expect(d.b!.dy).toBeCloseTo(-80, 9);
   });
 
   it('세로 정렬은 가로를 건드리지 않는다', () => {
@@ -353,7 +397,7 @@ describe('정렬 변환 사슬 — 투영 px 상자 → 백분율 → ÷100 → 
   });
 
   it('결과는 넘긴 순서대로 노드 id 를 달고 나온다 (배열 위치를 들고 다니지 않는다)', () => {
-    expect(alignDeltas([a, b], STAGE, 'horizontal', 'start').map((d) => d.nodeId)).toEqual([
+    expect(alignDeltas([a, b], PROJ, 'horizontal', 'start').map((d) => d.nodeId)).toEqual([
       'a',
       'b',
     ]);

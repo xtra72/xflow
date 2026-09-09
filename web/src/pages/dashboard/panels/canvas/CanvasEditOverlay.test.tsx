@@ -24,7 +24,7 @@ vi.mock('@/lib/i18n', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 
-import type { BoxGeometry, CanvasElement } from './canvasConfig';
+import type { BoxGeometry, CanvasElement, CanvasSize } from './canvasConfig';
 import { CanvasEditDockRegion } from './CanvasEditDock';
 import CanvasEditOverlay from './CanvasEditOverlay';
 import {
@@ -32,12 +32,23 @@ import {
   useCanvasEditSelectionState,
 } from './canvasEditContext';
 import { appendElement } from './canvasElementFactory';
-import type { StageSize } from './canvasGeometry';
+import type { CanvasProjection, StageSize } from './canvasGeometry';
 
 // --- 고정 입력 -----------------------------------------------------------
 
 /** 기본 스테이지 — 축이 서로 달라야 축을 뒤바꾼 계산이 드러난다. */
 const STAGE: StageSize = { width: 200, height: 100 };
+
+/**
+ * 기본 캔버스 — 500x400(기본 크기 그대로).
+ *
+ * 위 스테이지와 짝지으면 축척이 **가로 0.4 · 세로 0.25** 로 갈린다. 1:1 로 두지 않는 것에
+ * 뜻이 있다: 축척이 1 이면 캔버스 크기를 무시한 투영도 이 파일의 기대값을 통과한다.
+ */
+const CANVAS: CanvasSize = { width: 500, height: 400 };
+
+/** 기본 투영 한 벌 — 위 둘을 묶은 것이다. */
+const PROJ: CanvasProjection = { stage: STAGE, canvas: CANVAS };
 
 function rect(id: string, geometry: BoxGeometry): CanvasElement {
   return { id, kind: 'rect', geometry, style: {} };
@@ -49,6 +60,7 @@ interface HarnessProps {
   enabled?: boolean;
   elements: readonly CanvasElement[];
   stage?: StageSize;
+  canvas?: CanvasSize;
   textWidths?: Record<string, number>;
   onElementsChange: (next: CanvasElement[]) => void;
   onParentDown?: () => void;
@@ -64,6 +76,7 @@ function Harness({
   enabled = true,
   elements,
   stage = STAGE,
+  canvas = CANVAS,
   textWidths = {},
   onElementsChange,
   onParentDown,
@@ -86,7 +99,7 @@ function Harness({
           <CanvasEditOverlay
             enabled={enabled}
             elements={elements}
-            stage={stage}
+            projection={{ stage, canvas }}
             textWidths={textWidths}
             onElementsChange={onElementsChange}
           />
@@ -185,12 +198,12 @@ afterEach(() => {
 
 describe('편집 게이팅 — 꺼져 있으면 표시 전용이다 (AC-07)', () => {
   it('편집이 꺼져 있으면 오버레이가 DOM 에 없다', () => {
-    render(<Harness enabled={false} elements={[rect('a', { x: 0, y: 0, w: 1, h: 1 })]} onElementsChange={vi.fn()} />);
+    render(<Harness enabled={false} elements={[rect('a', { x: 0, y: 0, w: 500, h: 400 })]} onElementsChange={vi.fn()} />);
     expect(screen.queryByTestId('canvas-edit-overlay')).toBeNull();
   });
 
   it('편집을 끄면 골라져 있던 것이 풀린다', () => {
-    const elements = [rect('a', { x: 0, y: 0, w: 1, h: 1 })];
+    const elements = [rect('a', { x: 0, y: 0, w: 500, h: 400 })];
     const emit = vi.fn();
     const view = render(<Harness elements={elements} onElementsChange={emit} />);
     stubOverlayRect();
@@ -208,7 +221,7 @@ describe('누르면 고른다 — 배열 뒤가 위다 (AC-01)', () => {
   it('겹친 자리에서는 배열 뒤(위)에 있는 요소가 이긴다', () => {
     render(
       <Harness
-        elements={[rect('a', { x: 0, y: 0, w: 1, h: 1 }), rect('b', { x: 0, y: 0, w: 1, h: 1 })]}
+        elements={[rect('a', { x: 0, y: 0, w: 500, h: 400 }), rect('b', { x: 0, y: 0, w: 500, h: 400 })]}
         onElementsChange={vi.fn()}
       />,
     );
@@ -221,7 +234,7 @@ describe('누르면 고른다 — 배열 뒤가 위다 (AC-01)', () => {
   });
 
   it('컨테이너 원점이 0 이 아니어도 스테이지 로컬 좌표로 옮겨 판정한다', () => {
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={vi.fn()} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={vi.fn()} />);
     // 오버레이가 화면 (10, 20) 에 있다 — 그만큼 빼야 스테이지 로컬 px 이다.
     stubOverlayRect(10, 20);
     // 스테이지 로컬 (30, 15) = 요소 상자(20,10,40,20) 안.
@@ -233,8 +246,8 @@ describe('누르면 고른다 — 배열 뒤가 위다 (AC-01)', () => {
     render(
       <Harness
         elements={[
-          rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 }),
-          rect('b', { x: 0.5, y: 0.5, w: 0.2, h: 0.2 }),
+          rect('a', { x: 50, y: 40, w: 100, h: 80 }),
+          rect('b', { x: 250, y: 200, w: 100, h: 80 }),
         ]}
         onElementsChange={vi.fn()}
       />,
@@ -252,8 +265,8 @@ describe('누르면 고른다 — 배열 뒤가 위다 (AC-01)', () => {
     render(
       <Harness
         elements={[
-          rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 }),
-          rect('b', { x: 0.5, y: 0.5, w: 0.2, h: 0.2 }),
+          rect('a', { x: 50, y: 40, w: 100, h: 80 }),
+          rect('b', { x: 250, y: 200, w: 100, h: 80 }),
         ]}
         onElementsChange={vi.fn()}
       />,
@@ -270,7 +283,7 @@ describe('누르면 고른다 — 배열 뒤가 위다 (AC-01)', () => {
     const hidden: CanvasElement = {
       id: 'h',
       kind: 'rect',
-      geometry: { x: 0, y: 0, w: 1, h: 1 },
+      geometry: { x: 0, y: 0, w: 500, h: 400 },
       style: { visible: false },
     };
     render(<Harness elements={[hidden]} onElementsChange={vi.fn()} />);
@@ -287,7 +300,7 @@ describe('빈 지점 누름은 상위 조작으로 흘려보낸다 (AC-E3)', () 
     const parent = vi.fn();
     render(
       <Harness
-        elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]}
+        elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]}
         onElementsChange={vi.fn()}
         onParentDown={parent}
       />,
@@ -309,7 +322,7 @@ describe('빈 지점 누름은 상위 조작으로 흘려보낸다 (AC-E3)', () 
     const parent = vi.fn();
     render(
       <Harness
-        elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]}
+        elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]}
         onElementsChange={vi.fn()}
         onParentDown={parent}
       />,
@@ -327,7 +340,7 @@ describe('빈 지점 누름은 상위 조작으로 흘려보낸다 (AC-E3)', () 
 describe('끌어 옮긴다 (AC-03)', () => {
   it('이동량을 정규화 델타로 바꿔 기하에 더한다', async () => {
     const emit = vi.fn();
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={emit} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={emit} />);
     stubOverlayRect();
 
     send('pointerdown', 30, 15);
@@ -335,12 +348,12 @@ describe('끌어 옮긴다 (AC-03)', () => {
     await nextFrame();
 
     // 폭 200 에서 20px = 0.1, 높이 100 에서 10px = 0.1. 크기는 그대로다.
-    expect(emittedGeometry(emit, 'a')).toEqual({ x: 0.2, y: 0.2, w: 0.2, h: 0.2 });
+    expect(emittedGeometry(emit, 'a')).toEqual({ x: 100, y: 80, w: 100, h: 80 });
   });
 
   it('한 프레임 사이의 여러 이동은 한 번만 쓰인다', async () => {
     const emit = vi.fn();
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={emit} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={emit} />);
     stubOverlayRect();
 
     send('pointerdown', 30, 15);
@@ -351,7 +364,7 @@ describe('끌어 옮긴다 (AC-03)', () => {
 
     expect(emit).toHaveBeenCalledTimes(1);
     // 합류해도 결과는 **마지막 자리**다(누적이 아니라 시작점 대비 절대량이다).
-    expect(emittedGeometry(emit, 'a')).toEqual({ x: 0.2, y: 0.2, w: 0.2, h: 0.2 });
+    expect(emittedGeometry(emit, 'a')).toEqual({ x: 100, y: 80, w: 100, h: 80 });
   });
 
   it('요소가 둘 이상 골라져 있으면 같은 델타가 전부에 적용된다', async () => {
@@ -359,8 +372,8 @@ describe('끌어 옮긴다 (AC-03)', () => {
     render(
       <Harness
         elements={[
-          rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 }),
-          rect('b', { x: 0.5, y: 0.5, w: 0.2, h: 0.2 }),
+          rect('a', { x: 50, y: 40, w: 100, h: 80 }),
+          rect('b', { x: 250, y: 200, w: 100, h: 80 }),
         ]}
         onElementsChange={emit}
       />,
@@ -374,13 +387,13 @@ describe('끌어 옮긴다 (AC-03)', () => {
     send('pointermove', 130, 65);
     await nextFrame();
 
-    expect(emittedGeometry(emit, 'a')).toEqual({ x: 0.2, y: 0.2, w: 0.2, h: 0.2 });
-    expect(emittedGeometry(emit, 'b')).toEqual({ x: 0.6, y: 0.6, w: 0.2, h: 0.2 });
+    expect(emittedGeometry(emit, 'a')).toEqual({ x: 100, y: 80, w: 100, h: 80 });
+    expect(emittedGeometry(emit, 'b')).toEqual({ x: 300, y: 240, w: 100, h: 80 });
   });
 
   it('보조키를 누른 채로는 끌리지 않는다 (고르기 전용 조작이다)', async () => {
     const emit = vi.fn();
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={emit} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={emit} />);
     stubOverlayRect();
 
     send('pointerdown', 30, 15, { shiftKey: true });
@@ -392,7 +405,7 @@ describe('끌어 옮긴다 (AC-03)', () => {
 
   it('빈 지점에서 시작한 움직임은 아무것도 옮기지 않는다', async () => {
     const emit = vi.fn();
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={emit} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={emit} />);
     stubOverlayRect();
 
     send('pointerdown', 180, 90);
@@ -406,7 +419,7 @@ describe('끌어 옮긴다 (AC-03)', () => {
     const emit = vi.fn();
     render(
       <Harness
-        elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]}
+        elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]}
         stage={{ width: 0, height: 0 }}
         onElementsChange={emit}
       />,
@@ -427,26 +440,26 @@ describe('끌어 옮긴다 (AC-03)', () => {
 describe('스테이지 밖으로 나가도 잘라내지 않는다 (AC-E5)', () => {
   it('정규화 좌표가 1 을 넘어도 그대로 저장된다', async () => {
     const emit = vi.fn();
-    render(<Harness elements={[rect('a', { x: 0.8, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={emit} />);
+    render(<Harness elements={[rect('a', { x: 400, y: 40, w: 100, h: 80 })]} onElementsChange={emit} />);
     stubOverlayRect();
 
     send('pointerdown', 170, 15);
     send('pointermove', 370, 15);
     await nextFrame();
 
-    expect(emittedGeometry(emit, 'a')).toEqual({ x: 1.8, y: 0.1, w: 0.2, h: 0.2 });
+    expect(emittedGeometry(emit, 'a')).toEqual({ x: 900, y: 40, w: 100, h: 80 });
   });
 
   it('음수 쪽으로 나가도 0 으로 붙잡히지 않는다', async () => {
     const emit = vi.fn();
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={emit} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={emit} />);
     stubOverlayRect();
 
     send('pointerdown', 30, 15);
     send('pointermove', -70, -35);
     await nextFrame();
 
-    expect(emittedGeometry(emit, 'a')).toEqual({ x: -0.4, y: -0.4, w: 0.2, h: 0.2 });
+    expect(emittedGeometry(emit, 'a')).toEqual({ x: -200, y: -160, w: 100, h: 80 });
   });
 });
 
@@ -455,18 +468,18 @@ describe('스테이지 밖으로 나가도 잘라내지 않는다 (AC-E5)', () =
 describe('드래그의 끝 — 마지막 유효 위치를 확정한다 (AC-03)', () => {
   it('pointerup 은 그 이벤트의 자리로 확정한다', async () => {
     const emit = vi.fn();
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={emit} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={emit} />);
     stubOverlayRect();
 
     send('pointerdown', 30, 15);
     send('pointerup', 50, 25);
 
-    expect(emittedGeometry(emit, 'a')).toEqual({ x: 0.2, y: 0.2, w: 0.2, h: 0.2 });
+    expect(emittedGeometry(emit, 'a')).toEqual({ x: 100, y: 80, w: 100, h: 80 });
   });
 
   it('pointercancel 은 되돌리지 않고 마지막 자리를 그대로 확정한다', () => {
     const emit = vi.fn();
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={emit} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={emit} />);
     stubOverlayRect();
 
     send('pointerdown', 30, 15);
@@ -474,12 +487,12 @@ describe('드래그의 끝 — 마지막 유효 위치를 확정한다 (AC-03)',
     send('pointermove', 50, 25);
     send('pointercancel', 0, 0);
 
-    expect(emittedGeometry(emit, 'a')).toEqual({ x: 0.2, y: 0.2, w: 0.2, h: 0.2 });
+    expect(emittedGeometry(emit, 'a')).toEqual({ x: 100, y: 80, w: 100, h: 80 });
   });
 
   it('손을 뗀 뒤의 움직임은 더 이상 옮기지 않는다', async () => {
     const emit = vi.fn();
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={emit} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={emit} />);
     stubOverlayRect();
 
     send('pointerdown', 30, 15);
@@ -496,7 +509,7 @@ describe('드래그의 끝 — 마지막 유효 위치를 확정한다 (AC-03)',
 
 describe('선택 외곽선은 투영 결과와 같은 자리에 선다 (AC-E2)', () => {
   it('사각형 외곽선이 projectBox 결과와 일치한다', () => {
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.4 })]} onElementsChange={vi.fn()} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 160 })]} onElementsChange={vi.fn()} />);
     stubOverlayRect();
     send('pointerdown', 30, 15);
 
@@ -511,7 +524,7 @@ describe('선택 외곽선은 투영 결과와 같은 자리에 선다 (AC-E2)',
     const line: CanvasElement = {
       id: 'l',
       kind: 'line',
-      geometry: { x1: 0.1, y1: 0.2, x2: 0.5, y2: 0.6 },
+      geometry: { x1: 50, y1: 80, x2: 250, y2: 240 },
       style: {},
     };
     render(<Harness elements={[line]} onElementsChange={vi.fn()} />);
@@ -529,7 +542,7 @@ describe('선택 외곽선은 투영 결과와 같은 자리에 선다 (AC-E2)',
     const text: CanvasElement = {
       id: 't',
       kind: 'text',
-      geometry: { x: 0.5, y: 0.5 },
+      geometry: { x: 250, y: 200 },
       style: { fontSize: 20 },
       text: 'abc',
     };
@@ -549,7 +562,7 @@ describe('선택 외곽선은 투영 결과와 같은 자리에 선다 (AC-E2)',
     const text: CanvasElement = {
       id: 't',
       kind: 'text',
-      geometry: { x: 0.5, y: 0.5 },
+      geometry: { x: 250, y: 200 },
       style: { fontSize: 20 },
       text: 'abc',
     };
@@ -564,7 +577,7 @@ describe('선택 외곽선은 투영 결과와 같은 자리에 선다 (AC-E2)',
   });
 
   it('크기 0 인 퇴화 도형도 외곽선이 보인다 (AC-E6)', () => {
-    render(<Harness elements={[rect('a', { x: 0.5, y: 0.5, w: 0, h: 0 })]} onElementsChange={vi.fn()} />);
+    render(<Harness elements={[rect('a', { x: 250, y: 200, w: 0, h: 0 })]} onElementsChange={vi.fn()} />);
     stubOverlayRect();
     send('pointerdown', 100, 50);
 
@@ -575,7 +588,7 @@ describe('선택 외곽선은 투영 결과와 같은 자리에 선다 (AC-E2)',
   });
 
   it('음수 크기 박스도 양수 범위로 펴서 두른다', () => {
-    render(<Harness elements={[rect('a', { x: 0.5, y: 0.5, w: -0.2, h: -0.2 })]} onElementsChange={vi.fn()} />);
+    render(<Harness elements={[rect('a', { x: 250, y: 200, w: -100, h: -80 })]} onElementsChange={vi.fn()} />);
     stubOverlayRect();
     send('pointerdown', 100, 50);
 
@@ -594,7 +607,7 @@ describe('언마운트 정리', () => {
     const emit = vi.fn();
     const cancel = vi.spyOn(globalThis, 'cancelAnimationFrame');
     const view = render(
-      <Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={emit} />,
+      <Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={emit} />,
     );
     stubOverlayRect();
 
@@ -613,7 +626,7 @@ describe('언마운트 정리', () => {
 describe('포인터 캡처 — 스테이지를 벗어나도 이벤트가 이어진다', () => {
   it('드래그를 시작하면 포인터를 잡고, 손을 떼면 놓아준다', () => {
     const emit = vi.fn();
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={emit} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={emit} />);
     stubOverlayRect();
     const api = stubPointerCapture();
 
@@ -623,11 +636,11 @@ describe('포인터 캡처 — 스테이지를 벗어나도 이벤트가 이어�
     send('pointerup', 50, 25, {}, 7);
     expect(api.hasPointerCapture).toHaveBeenCalledWith(7);
     expect(api.releasePointerCapture).toHaveBeenCalledWith(7);
-    expect(emittedGeometry(emit, 'a')).toEqual({ x: 0.2, y: 0.2, w: 0.2, h: 0.2 });
+    expect(emittedGeometry(emit, 'a')).toEqual({ x: 100, y: 80, w: 100, h: 80 });
   });
 
   it('잡은 적이 없으면 놓아 달라고 하지 않는다 (브라우저가 예외를 던진다)', () => {
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={vi.fn()} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={vi.fn()} />);
     stubOverlayRect();
     const api = stubPointerCapture(false);
 
@@ -639,7 +652,7 @@ describe('포인터 캡처 — 스테이지를 벗어나도 이벤트가 이어�
 
   it('다른 포인터의 이동·놓기·취소는 무시한다 (멀티터치 방어)', async () => {
     const emit = vi.fn();
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={emit} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={emit} />);
     stubOverlayRect();
 
     send('pointerdown', 30, 15, {}, 1);
@@ -653,7 +666,7 @@ describe('포인터 캡처 — 스테이지를 벗어나도 이벤트가 이어�
 
   it('드래그가 없을 때의 놓기·취소는 아무 일도 하지 않는다', () => {
     const emit = vi.fn();
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={emit} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={emit} />);
     stubOverlayRect();
 
     const up = send('pointerup', 50, 25);
@@ -672,7 +685,7 @@ describe('결측·손상 값에도 외곽선과 쓰기가 무너지지 않는다
     const text: CanvasElement = {
       id: 't',
       kind: 'text',
-      geometry: { x: 0.5, y: 0.5 },
+      geometry: { x: 250, y: 200 },
       style: {},
       text: 'abc',
     };
@@ -689,7 +702,7 @@ describe('결측·손상 값에도 외곽선과 쓰기가 무너지지 않는다
     const text: CanvasElement = {
       id: 't',
       kind: 'text',
-      geometry: { x: 0.5, y: 0.5 },
+      geometry: { x: 250, y: 200 },
       style: { fontSize: 0 },
       text: 'abc',
     };
@@ -702,7 +715,7 @@ describe('결측·손상 값에도 외곽선과 쓰기가 무너지지 않는다
 
   it('움직이지 않은 채 취소되면 쓸 것이 없다', () => {
     const emit = vi.fn();
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={emit} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={emit} />);
     stubOverlayRect();
 
     send('pointerdown', 30, 15);
@@ -713,7 +726,7 @@ describe('결측·손상 값에도 외곽선과 쓰기가 무너지지 않는다
 
   it('끄는 도중 스테이지가 무너지면(높이 0) 쓰지 않는다', async () => {
     const emit = vi.fn();
-    const elements = [rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })];
+    const elements = [rect('a', { x: 50, y: 40, w: 100, h: 80 })];
     const view = render(<Harness elements={elements} onElementsChange={emit} />);
     stubOverlayRect();
 
@@ -748,8 +761,8 @@ import enMessages from '@/lib/i18n/en.json';
 import type { LineGeometry, PointGeometry } from './canvasConfig';
 import {
   CANVAS_GRID_STEP_CHOICES,
-  CANVAS_GRID_STEP_PERCENT,
-  squareGridSteps,
+  CANVAS_GRID_STEP_UNITS,
+  gridPercents,
 } from './canvasEditArrange';
 import {
   BOX_HANDLE_IDS,
@@ -761,17 +774,17 @@ import {
 // --- 고정 입력 -----------------------------------------------------------
 
 /** 스테이지 위 px 상자가 (40,20,80,40) 이 되는 사각형 — 여덟 핸들 자리가 모두 정수다. */
-const BOX_GEOMETRY: BoxGeometry = { x: 0.2, y: 0.2, w: 0.4, h: 0.4 };
+const BOX_GEOMETRY: BoxGeometry = { x: 100, y: 80, w: 200, h: 160 };
 
 const LINE_ELEMENT: CanvasElement = {
   id: 'l',
   kind: 'line',
-  geometry: { x1: 0.1, y1: 0.2, x2: 0.5, y2: 0.6 },
+  geometry: { x1: 50, y1: 80, x2: 250, y2: 240 },
   style: {},
 };
 
 function textElement(id = 't', fontSize = 20): CanvasElement {
-  return { id, kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: { fontSize }, text: 'abc' };
+  return { id, kind: 'text', geometry: { x: 250, y: 200 }, style: { fontSize }, text: 'abc' };
 }
 
 // --- 핸들 관용구 ----------------------------------------------------------
@@ -877,7 +890,7 @@ describe('종류마다 다른 핸들 집합이 뜬다 (AC-04)', () => {
   it('둘 이상 고르면 핸들이 없다 — 무리의 조작은 이동과 정렬이다', () => {
     render(
       <Harness
-        elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 }), rect('b', { x: 0.5, y: 0.5, w: 0.2, h: 0.2 })]}
+        elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 }), rect('b', { x: 250, y: 200, w: 100, h: 80 })]}
         onElementsChange={vi.fn()}
       />,
     );
@@ -912,7 +925,7 @@ describe('핸들 px 는 투영 결과와 정확히 같다 (AC-E2)', () => {
     const element = rect('a', BOX_GEOMETRY);
     renderSelectedBox();
 
-    for (const handle of handlePositions(element, STAGE)) {
+    for (const handle of handlePositions(element, PROJ)) {
       const node = handleEl(handle.id);
       expect(node.style.left).toBe(`${handle.point.x}px`);
       expect(node.style.top).toBe(`${handle.point.y}px`);
@@ -924,7 +937,7 @@ describe('핸들 px 는 투영 결과와 정확히 같다 (AC-E2)', () => {
     stubOverlayRect();
     send('pointerdown', 60, 40);
 
-    for (const handle of handlePositions(LINE_ELEMENT, STAGE)) {
+    for (const handle of handlePositions(LINE_ELEMENT, PROJ)) {
       expect(handleEl(handle.id).style.left).toBe(`${handle.point.x}px`);
       expect(handleEl(handle.id).style.top).toBe(`${handle.point.y}px`);
     }
@@ -939,7 +952,7 @@ describe('핸들 px 는 투영 결과와 정확히 같다 (AC-E2)', () => {
     stubOverlayRect();
     send('pointerdown', 110, 50);
 
-    const [handle] = handlePositions(element, STAGE, { measuredWidth: 30 });
+    const [handle] = handlePositions(element, PROJ, { measuredWidth: 30 });
     expect(handleEl('font').style.left).toBe(`${handle!.point.x}px`);
     expect(handleEl('font').style.top).toBe(`${handle!.point.y}px`);
   });
@@ -955,7 +968,7 @@ describe('핸들 px 는 투영 결과와 정확히 같다 (AC-E2)', () => {
     const wider: StageSize = { width: 400, height: 200 };
     view.rerender(<Harness elements={elements} stage={wider} onElementsChange={emit} />);
 
-    for (const handle of handlePositions(elements[0]!, wider)) {
+    for (const handle of handlePositions(elements[0]!, { stage: wider, canvas: CANVAS })) {
       expect(handleEl(handle.id).style.left).toBe(`${handle.point.x}px`);
       expect(handleEl(handle.id).style.top).toBe(`${handle.point.y}px`);
     }
@@ -970,28 +983,28 @@ describe('박스 핸들을 끌면 그 모서리·변만 움직인다 (AC-04)', (
     const emit = renderSelectedBox();
     await dragHandle('se', { x: 160, y: 80 });
 
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2, y: 0.2, w: 0.6, h: 0.6 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 100, y: 80, w: 300, h: 240 });
   });
 
   it('왼쪽 위 모서리는 왼쪽 변과 위 변을 함께 옮긴다', async () => {
     const emit = renderSelectedBox();
     await dragHandle('nw', { x: 20, y: 10 });
 
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.1, y: 0.1, w: 0.5, h: 0.5 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 50, y: 40, w: 250, h: 200 });
   });
 
   it('오른쪽 변 핸들은 세로를 건드리지 않는다', async () => {
     const emit = renderSelectedBox();
     await dragHandle('e', { x: 180, y: 90 });
 
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2, y: 0.2, w: 0.7, h: 0.4 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 100, y: 80, w: 350, h: 160 });
   });
 
   it('위쪽 변 핸들은 가로를 건드리지 않는다', async () => {
     const emit = renderSelectedBox();
     await dragHandle('n', { x: 10, y: 5 });
 
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2, y: 0.05, w: 0.4, h: 0.55 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 100, y: 20, w: 200, h: 220.0 });
   });
 
   it('반대 모서리 너머로 끌면 박스를 정규화해 **음수 크기를 저장하지 않는다** (AC-E6)', async () => {
@@ -1003,7 +1016,7 @@ describe('박스 핸들을 끌면 그 모서리·변만 움직인다 (AC-04)', (
     expect(stored.w).toBeGreaterThan(0);
     expect(stored.h).toBeGreaterThan(0);
     // 좌표는 음수로 남는다 — 스테이지 밖은 합법이므로 clamp 하지 않는다(AC-E5).
-    expectBox(stored, { x: -0.2, y: -0.2, w: 0.4, h: 0.4 });
+    expectBox(stored, { x: -100, y: -80, w: 200, h: 160 });
   });
 
   it('크기 조절도 한 프레임에 한 번만 쓴다', async () => {
@@ -1016,7 +1029,7 @@ describe('박스 핸들을 끌면 그 모서리·변만 움직인다 (AC-04)', (
     await nextFrame();
 
     expect(emit).toHaveBeenCalledTimes(1);
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2, y: 0.2, w: 0.6, h: 0.6 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 100, y: 80, w: 300, h: 240 });
   });
 
   it('손을 떼면 그 자리로 확정한다', () => {
@@ -1024,19 +1037,19 @@ describe('박스 핸들을 끌면 그 모서리·변만 움직인다 (AC-04)', (
     sendAt(handleEl('se'), 'pointerdown', 120, 60);
     send('pointerup', 160, 80);
 
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2, y: 0.2, w: 0.6, h: 0.6 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 100, y: 80, w: 300, h: 240 });
   });
 });
 
 describe('Shift 는 모서리에서 종횡비를 지킨다 (AC-04)', () => {
-  /** 가로:세로 = 2:1 인 사각형. 비가 1 이면 유지 여부를 구별할 수 없다. */
-  const WIDE: BoxGeometry = { x: 0.2, y: 0.2, w: 0.4, h: 0.2 };
+  /** 가로:세로 = 2:1 인 사각형(캔버스 단위). 비가 1 이면 유지 여부를 구별할 수 없다. */
+  const WIDE: BoxGeometry = { x: 100, y: 80, w: 200, h: 100 };
 
   it('Shift 없이 끌면 비가 자유롭게 바뀐다', async () => {
     const emit = renderSelectedBox(WIDE);
     await dragHandle('se', { x: 160, y: 90 });
 
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2, y: 0.2, w: 0.6, h: 0.7 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 100, y: 80, w: 300, h: 280 });
   });
 
   it('Shift 를 누른 채 모서리를 끌면 원래 비(2:1)가 유지된다', async () => {
@@ -1044,8 +1057,9 @@ describe('Shift 는 모서리에서 종횡비를 지킨다 (AC-04)', () => {
     await dragHandle('se', { x: 160, y: 90 }, { shiftKey: true });
 
     const stored = emittedGeometry(emit, 'a') as BoxGeometry;
-    expect(stored.w / stored.h).toBeCloseTo(2, 10);
-    expectBox(stored, { x: 0.2, y: 0.2, w: 1.4, h: 0.7 });
+    expect(stored.w / stored.h).toBe(2);
+    // 세로가 더 멀리 갔으므로 세로가 비를 정한다 — 280 × 2 = 560.
+    expectBox(stored, { x: 100, y: 80, w: 560, h: 280 });
   });
 
   it('끌던 도중에 Shift 를 눌러도 그 자리에서 죄인다 (잡을 때 값을 얼리지 않는다)', async () => {
@@ -1053,12 +1067,12 @@ describe('Shift 는 모서리에서 종횡비를 지킨다 (AC-04)', () => {
     sendAt(handleEl('se'), 'pointerdown', 120, 40);
     send('pointermove', 160, 90);
     await nextFrame();
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2, y: 0.2, w: 0.6, h: 0.7 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 100, y: 80, w: 300, h: 280 });
 
     send('pointermove', 160, 90, { shiftKey: true });
     await nextFrame();
 
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2, y: 0.2, w: 1.4, h: 0.7 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 100, y: 80, w: 560, h: 280 });
   });
 });
 
@@ -1077,10 +1091,10 @@ describe('선은 끝점만 움직인다 (AC-04)', () => {
     await dragHandle('p2', { x: 180, y: 20 });
 
     const g = emittedGeometry(emit, 'l') as LineGeometry;
-    expect(g.x1).toBeCloseTo(0.1, 10);
-    expect(g.y1).toBeCloseTo(0.2, 10);
-    expect(g.x2).toBeCloseTo(0.9, 10);
-    expect(g.y2).toBeCloseTo(0.2, 10);
+    expect(g.x1).toBeCloseTo(50, 10);
+    expect(g.y1).toBeCloseTo(80, 10);
+    expect(g.x2).toBeCloseTo(450, 10);
+    expect(g.y2).toBeCloseTo(80, 10);
   });
 
   it('시작점 핸들은 시작점만 옮긴다', async () => {
@@ -1088,17 +1102,17 @@ describe('선은 끝점만 움직인다 (AC-04)', () => {
     await dragHandle('p1', { x: 20, y: 80 });
 
     const g = emittedGeometry(emit, 'l') as LineGeometry;
-    expect(g.x1).toBeCloseTo(0.1, 10);
-    expect(g.y1).toBeCloseTo(0.8, 10);
-    expect(g.x2).toBeCloseTo(0.5, 10);
-    expect(g.y2).toBeCloseTo(0.6, 10);
+    expect(g.x1).toBeCloseTo(50, 10);
+    expect(g.y1).toBeCloseTo(320, 10);
+    expect(g.x2).toBeCloseTo(250, 10);
+    expect(g.y2).toBeCloseTo(240, 10);
   });
 
   it('Shift 는 끝점 방향을 0°/45°/90° 로 죈다', async () => {
     const flat: CanvasElement = {
       id: 'l',
       kind: 'line',
-      geometry: { x1: 0.5, y1: 0.5, x2: 0.6, y2: 0.5 },
+      geometry: { x1: 250, y1: 200, x2: 300, y2: 200 },
       style: {},
     };
     const emit = vi.fn();
@@ -1108,7 +1122,7 @@ describe('선은 끝점만 움직인다 (AC-04)', () => {
 
     // 살짝 아래로 벌어진 방향 → 0° 로 죄여 y 가 시작점과 같아진다.
     await dragHandle('p2', { x: 160, y: 55 }, { shiftKey: true });
-    expect((emittedGeometry(emit, 'l') as LineGeometry).y2).toBeCloseTo(0.5, 10);
+    expect((emittedGeometry(emit, 'l') as LineGeometry).y2).toBeCloseTo(200, 10);
 
     // 45° 근처 방향 → 두 축의 변위가 같아진다.
     await dragHandle('p2', { x: 160, y: 70 }, { shiftKey: true });
@@ -1121,8 +1135,8 @@ describe('선은 끝점만 움직인다 (AC-04)', () => {
     await dragHandle('p2', { x: 160, y: 55 });
 
     const g = emittedGeometry(emit, 'l') as LineGeometry;
-    expect(g.x2).toBeCloseTo(0.8, 10);
-    expect(g.y2).toBeCloseTo(0.55, 10);
+    expect(g.x2).toBeCloseTo(400, 10);
+    expect(g.y2).toBeCloseTo(220.0, 10);
   });
 });
 
@@ -1143,7 +1157,7 @@ describe('문구의 크기 핸들은 기하가 아니라 글자 크기를 쓴다
 
     const el = emittedElement(emit, 't');
     expect(el?.style.fontSize).toBeCloseTo(60, 10);
-    expect(el?.geometry as PointGeometry).toEqual({ x: 0.5, y: 0.5 });
+    expect(el?.geometry as PointGeometry).toEqual({ x: 250, y: 200 });
   });
 
   it('안쪽으로 끌면 작아진다', async () => {
@@ -1171,7 +1185,7 @@ describe('문구의 크기 핸들은 기하가 아니라 글자 크기를 쓴다
     const bare: CanvasElement = {
       id: 't',
       kind: 'text',
-      geometry: { x: 0.5, y: 0.5 },
+      geometry: { x: 250, y: 200 },
       style: {},
       text: 'abc',
     };
@@ -1191,7 +1205,7 @@ describe('문구의 크기 핸들은 기하가 아니라 글자 크기를 쓴다
     const other: CanvasElement = {
       id: 'u',
       kind: 'text',
-      geometry: { x: 0.1, y: 0.1 },
+      geometry: { x: 50, y: 40 },
       style: { fontSize: 12 },
       text: 'abc',
     };
@@ -1214,7 +1228,7 @@ describe('문구의 크기 핸들은 기하가 아니라 글자 크기를 쓴다
     const styled: CanvasElement = {
       id: 't',
       kind: 'text',
-      geometry: { x: 0.5, y: 0.5 },
+      geometry: { x: 250, y: 200 },
       style: { fontSize: 20, textColor: '#ff0000', fontWeight: 'bold' },
       text: 'abc',
     };
@@ -1234,7 +1248,7 @@ describe('핸들을 잡은 포인터는 몸통 히트 테스트에 닿지 않는
     const parent = vi.fn();
     render(
       <Harness
-        elements={[rect('a', BOX_GEOMETRY), rect('b', { x: 0.55, y: 0.55, w: 0.2, h: 0.2 })]}
+        elements={[rect('a', BOX_GEOMETRY), rect('b', { x: 275, y: 220.0, w: 100, h: 80 })]}
         onElementsChange={vi.fn()}
         onParentDown={parent}
       />,
@@ -1257,7 +1271,7 @@ describe('핸들을 잡은 포인터는 몸통 히트 테스트에 닿지 않는
     const emit = vi.fn();
     render(
       <Harness
-        elements={[rect('a', BOX_GEOMETRY), rect('b', { x: 0.55, y: 0.55, w: 0.2, h: 0.2 })]}
+        elements={[rect('a', BOX_GEOMETRY), rect('b', { x: 275, y: 220.0, w: 100, h: 80 })]}
         onElementsChange={emit}
       />,
     );
@@ -1265,7 +1279,7 @@ describe('핸들을 잡은 포인터는 몸통 히트 테스트에 닿지 않는
     send('pointerdown', 80, 40);
     await dragHandle('se', { x: 160, y: 80 });
 
-    expect(emittedGeometry(emit, 'b')).toEqual({ x: 0.55, y: 0.55, w: 0.2, h: 0.2 });
+    expect(emittedGeometry(emit, 'b')).toEqual({ x: 275, y: 220.0, w: 100, h: 80 });
   });
 
   it('드래그를 시작하면 **루트에서** 포인터를 잡는다', () => {
@@ -1347,7 +1361,7 @@ describe('선택·호버·초점은 프레임을 예약하지 않는다 (AC-E4)'
   it('고르고 · 선택을 옮기고 · 핸들에 초점을 주고 · 호버해도 프레임 요청이 0 건이다', () => {
     render(
       <Harness
-        elements={[rect('a', BOX_GEOMETRY), rect('b', { x: 0.75, y: 0.05, w: 0.2, h: 0.2 })]}
+        elements={[rect('a', BOX_GEOMETRY), rect('b', { x: 375, y: 20, w: 100, h: 80 })]}
         onElementsChange={vi.fn()}
       />,
     );
@@ -1397,7 +1411,7 @@ function PaletteHarness({ initial }: { initial: readonly CanvasElement[] }) {
         <CanvasEditOverlay
           enabled
           elements={elements}
-          stage={STAGE}
+          projection={PROJ}
           textWidths={{}}
           onElementsChange={setElements}
         />
@@ -1477,7 +1491,7 @@ describe('도형 팔레트 (AC-05)', () => {
     expect(geos).toHaveLength(3);
     expect(new Set(geos).size).toBe(3);
     // 목록 편집기가 내는 자리와 같다.
-    expect(geos[1]).toBe(JSON.stringify({ x: 0.15, y: 0.15, w: 0.2, h: 0.2 }));
+    expect(geos[1]).toBe(JSON.stringify({ x: 75, y: 65, w: 100, h: 80 }));
   });
 
   it('새 요소가 배열 끝(맨 위)에 붙고 **선택된다** — 팔레트가 추가로 하는 유일한 일이다', () => {
@@ -1506,7 +1520,7 @@ describe('도형 팔레트 (AC-05)', () => {
 
   it('팔레트 위의 누름은 아래 캔버스의 히트 테스트까지 흘러가지 않는다', () => {
     // 끊지 않으면 버튼을 눌렀는데 그 뒤 도형이 함께 골라지고 이동 드래그까지 시작된다.
-    render(<PaletteHarness initial={[rect('a', { x: 0, y: 0, w: 1, h: 1 })]} />);
+    render(<PaletteHarness initial={[rect('a', { x: 0, y: 0, w: 500, h: 400 })]} />);
     stubOverlayRect();
 
     const evt = pointer('pointerdown', 5, 5);
@@ -1527,18 +1541,19 @@ describe('도형 팔레트 (AC-05)', () => {
     await nextFrame();
 
     const moved = liveElements()[0]!.geometry as { x: number; y: number };
-    expect(moved.x).toBeCloseTo(0.2, 6);
-    expect(moved.y).toBeCloseTo(0.2, 6);
+    expect(moved.x).toBeCloseTo(100, 6);
+    expect(moved.y).toBeCloseTo(80, 6);
   });
 });
 
 
 // --- 격자 붙임 · 정렬 · z-order (T12 · T13 · T14) --------------------------
 //
-// 이 절의 중심은 **위험 R6** 이다. `snapOffsetToGrid` 의 오프셋 상한 기본값이 ±40 이라,
-// 래퍼가 상한을 무한대로 넘기지 않으면 캔버스 드래그가 스테이지의 40% 지점에서 조용히
-// 멈춘다 — 오류가 아니라 "왜 더 안 가지" 로만 보인다. 그래서 아래에는 **40% 를 한참
-// 넘겨 계속 끄는** 시험이 있고, 붙잡히면 0.4 가 나와 즉시 갈린다.
+// 이 절의 중심은 **위험 R6** 이다. 백분율 공간의 오프셋 상한 기본값이 ±40 이라, 붙임이
+// 그 공간을 지나면 캔버스 드래그가 기준 상자의 40% 지점에서 조용히 멈춘다 — 오류가
+// 아니라 "왜 더 안 가지" 로만 보인다. 0.8.0 은 붙임을 정수 반올림으로 바꿔 그 공간을
+// 아예 지나지 않게 했지만, 시험은 남긴다: 구조가 다시 바뀔 수 있고 그때 이 시험이
+// 먼저 깨져야 한다. 그래서 아래에는 **40% 를 한참 넘겨 계속 끄는** 시험이 있다.
 //
 // 정렬·순서는 순수 모듈(`canvasEditArrange`)이 규칙을 소유하므로 여기서는 **배선**을 본다:
 // 버튼이 어떤 축·방식을 부르는가, 몇 개 골랐을 때 쓸 수 있는가, 쓰기가 실제로 나가는가.
@@ -1548,8 +1563,13 @@ function gridToggle(): HTMLElement {
   return screen.getByTestId('canvas-grid-toggle');
 }
 
-/** 스테이지 px 상자가 (10,10,40,20) 이 되는 사각형 — 중심 x 가 격자 위가 **아니다**. */
-const SNAP_GEOMETRY: BoxGeometry = { x: 0.05, y: 0.1, w: 0.2, h: 0.2 };
+/**
+ * 캔버스 (25,40,90,80) — 스테이지 px 상자는 (10,10,36,20) 이다.
+ *
+ * 중심이 (70, 80) 으로 **어느 격자 눈금 위도 아니다**(10·20·25·50 어느 것으로도
+ * 나누어떨어지지 않는다). 눈금 위에서 시작하면 붙임이 무동작이 되어 시험이 성립하지 않는다.
+ */
+const SNAP_GEOMETRY: BoxGeometry = { x: 25, y: 40, w: 90, h: 80 };
 
 describe('격자 붙임 — 토글 하나가 표시와 붙임을 함께 켠다 (T12)', () => {
   it('처음에는 꺼져 있고 격자도 없다 — 붙임은 켜야 하는 것이지 기본값이 아니다', () => {
@@ -1603,8 +1623,8 @@ describe('격자 붙임 — 토글 하나가 표시와 붙임을 함께 켠다 (
     send('pointermove', 60, 20);
     await nextFrame();
 
-    // 40px = 스테이지 폭의 0.2. 붙임이 꺼져 있으므로 그대로다.
-    expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBeCloseTo(0.25, 9);
+    // 40px = 캔버스 100 단위. 붙임이 꺼져 있으므로 그대로다.
+    expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBe(125);
   });
 
   it('켜져 있으면 **중심**이 격자에 붙는다 (다른 패널의 격자와 같은 기준)', async () => {
@@ -1617,11 +1637,11 @@ describe('격자 붙임 — 토글 하나가 표시와 붙임을 함께 켠다 (
     send('pointermove', 60, 20);
     await nextFrame();
 
-    // 중심 15% + 20% = 35% → 40% 로 붙는다 → 이동량 25% → x = 0.05 + 0.25 = 0.30.
+    // 중심 70 + 100 = 170 → 기본 간격 25 의 눈금 175 로 붙는다 → 이동량 105 → x = 130.
     const moved = emittedGeometry(emit, 'a') as BoxGeometry;
-    expect(moved.x).toBeCloseTo(0.3, 9);
-    // 중심이 실제로 눈금(40%) 위에 앉았다.
-    expect((moved.x + moved.w / 2) * 100).toBeCloseTo(40, 6);
+    expect(moved.x).toBe(130);
+    // 중심이 실제로 눈금(175) 위에 앉았다.
+    expect((moved.x + moved.w / 2) % CANVAS_GRID_STEP_UNITS).toBe(0);
   });
 
   it('세로도 자기 축 길이로 죈다 (축을 뒤바꾸지 않는다)', async () => {
@@ -1630,15 +1650,15 @@ describe('격자 붙임 — 토글 하나가 표시와 붙임을 함께 켠다 (
     stubOverlayRect();
     fireEvent.click(gridToggle());
 
-    // 칸은 정사각이라 세로도 20px 이다(폭 200 의 10%). 중심 20px + 12px = 32px → 40px.
+    // 세로 12px = 캔버스 48 단위. 중심 80 + 48 = 128 → 눈금 125 로 되돌아 붙는다.
     send('pointerdown', 20, 20);
     send('pointermove', 20, 32);
     await nextFrame();
 
     const moved = emittedGeometry(emit, 'a') as BoxGeometry;
-    expect(moved.y).toBeCloseTo(0.3, 9);
-    // 중심이 실제로 20px 칸의 배수(40px) 위에 앉았다 — 가로 칸과 같은 px 다.
-    expect((moved.y + moved.h / 2) * 100).toBeCloseTo(40, 6);
+    expect(moved.y).toBe(85);
+    // 두 축이 **같은 정수 간격**을 쓴다 — 축마다 다른 백분율이 아니다.
+    expect((moved.y + moved.h / 2) % CANVAS_GRID_STEP_UNITS).toBe(0);
   });
 
   it('**스테이지의 40% 를 한참 넘겨도 계속 간다** — 상한이 새어 들어오면 0.4 에서 멈춘다 (위험 R6 · AC-E5)', async () => {
@@ -1648,29 +1668,28 @@ describe('격자 붙임 — 토글 하나가 표시와 붙임을 함께 켠다 (
     fireEvent.click(gridToggle());
 
     send('pointerdown', 20, 20);
-    // 180px = 스테이지 폭의 90% — 이미 상한(40%)의 두 배가 넘는다.
+    // 180px = 캔버스 450 단위 — 이미 옛 상한(캔버스 폭의 40% = 200)의 두 배가 넘는다.
     send('pointermove', 200, 20);
     await nextFrame();
     const half = emittedGeometry(emit, 'a') as BoxGeometry;
-    expect(half.x).toBeCloseTo(1.0, 9);
-    expect(half.x).toBeGreaterThan(0.4);
+    expect(half.x).toBe(480);
+    expect(half.x).toBeGreaterThan(CANVAS.width * 0.4);
 
-    // 그리고 **계속 간다** — 스테이지를 통째로 벗어난 뒤에도 붙잡히지 않는다.
-    // 390px = 스테이지 폭의 195% 이며, 중심 15% + 195% = 210% 로 눈금 위에 그대로 앉는다.
+    // 그리고 **계속 간다** — 캔버스를 통째로 벗어난 뒤에도 붙잡히지 않는다.
     send('pointermove', 410, 20);
     await nextFrame();
     const far = emittedGeometry(emit, 'a') as BoxGeometry;
-    expect(far.x).toBeCloseTo(2.0, 9);
+    expect(far.x).toBe(1005);
 
-    // clamp 도 없다 — 0..1 로 잘리지 않고 그대로 저장된다(가정 A5).
-    expect(far.x).toBeGreaterThan(1);
+    // clamp 도 없다 — 캔버스 안으로 잘리지 않고 그대로 저장된다(가정 A5).
+    expect(far.x).toBeGreaterThan(CANVAS.width);
   });
 
   it('무리 이동은 잡은 요소 하나를 기준으로 죈다 (무리가 흩어지지 않는다)', async () => {
     const emit = vi.fn();
     render(
       <Harness
-        elements={[rect('a', SNAP_GEOMETRY), rect('b', { x: 0.6, y: 0.6, w: 0.1, h: 0.1 })]}
+        elements={[rect('a', SNAP_GEOMETRY), rect('b', { x: 300, y: 240, w: 50, h: 40 })]}
         onElementsChange={emit}
       />,
     );
@@ -1685,9 +1704,9 @@ describe('격자 붙임 — 토글 하나가 표시와 붙임을 함께 켠다 (
     send('pointermove', 60, 20);
     await nextFrame();
 
-    // 기준은 잡은 a 다. 둘 다 **같은 이동량**(0.25)을 받는다.
-    expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBeCloseTo(0.3, 9);
-    expect((emittedGeometry(emit, 'b') as BoxGeometry).x).toBeCloseTo(0.85, 9);
+    // 기준은 잡은 a 다. 둘 다 **같은 이동량**(105 단위)을 받는다.
+    expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBe(130);
+    expect((emittedGeometry(emit, 'b') as BoxGeometry).x).toBe(405);
   });
 });
 
@@ -1707,9 +1726,9 @@ function gridStepSelect(): HTMLSelectElement {
   return screen.getByTestId('canvas-grid-step') as HTMLSelectElement;
 }
 
-/** 격자 간격을 고른다. */
-function pickGridStep(percent: number): void {
-  fireEvent.change(gridStepSelect(), { target: { value: String(percent) } });
+/** 격자 간격을 고른다(정수 캔버스 단위). */
+function pickGridStep(step: number): void {
+  fireEvent.change(gridStepSelect(), { target: { value: String(step) } });
 }
 
 /** 지금 그려진 격자의 `background-image`. */
@@ -1718,12 +1737,13 @@ function gridImage(): string {
 }
 
 /**
- * 격자를 켜고 간격을 고른 뒤 20px(= 스테이지 폭의 10%) 를 끈다.
+ * 격자를 켜고 간격을 고른 뒤 24px(= 캔버스 60 단위)를 끈다.
  *
- * 중심 15% + 10% = 25% 는 간격마다 다른 눈금으로 붙는다 — 5% → 25%, 10% → 30%, 20% → 20%.
- * 셋이 서로 다르므로 "간격이 실제로 붙임까지 갔는가" 가 좌표 하나로 갈린다.
+ * 중심 70 + 60 = 130 은 **네 간격이 모두 다른 눈금**으로 붙는 자리다 —
+ * 10 → 130, 20 → 140, 25 → 125, 50 → 150. 넷이 갈리므로 "간격이 실제로 붙임까지
+ * 갔는가" 가 좌표 하나로 드러난다.
  */
-async function dragTenPercent(step?: number): Promise<ReturnType<typeof vi.fn>> {
+async function dragOffGrid(step?: number): Promise<ReturnType<typeof vi.fn>> {
   const emit = vi.fn();
   render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={emit} />);
   stubOverlayRect();
@@ -1731,7 +1751,7 @@ async function dragTenPercent(step?: number): Promise<ReturnType<typeof vi.fn>> 
   if (step !== undefined) pickGridStep(step);
 
   send('pointerdown', 20, 20);
-  send('pointermove', 40, 20);
+  send('pointermove', 44, 20);
   await nextFrame();
   return emit;
 }
@@ -1741,8 +1761,11 @@ describe('격자 간격 — 고른 값 하나가 그림과 붙임을 함께 정�
     render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={vi.fn()} />);
     fireEvent.click(gridToggle());
 
-    expect(gridStepSelect().value).toBe(String(CANVAS_GRID_STEP_PERCENT));
-    expect(gridImage()).toContain(`transparent 1px ${CANVAS_GRID_STEP_PERCENT}%`);
+    expect(gridStepSelect().value).toBe(String(CANVAS_GRID_STEP_UNITS));
+    // 그려지는 값은 그 정수를 **캔버스 축 길이로 나눈** 백분율이다(환산은 한 곳뿐이다).
+    const cell = gridPercents(CANVAS_GRID_STEP_UNITS, CANVAS);
+    expect(gridImage()).toContain(`transparent 1px ${cell.x}%`);
+    expect(gridImage()).toContain(`transparent 1px ${cell.y}%`);
   });
 
   it('고를 수 있는 값은 canvasEditArrange 가 소유한 목록 그대로다', () => {
@@ -1773,40 +1796,47 @@ describe('격자 간격 — 고른 값 하나가 그림과 붙임을 함께 정�
     render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={vi.fn()} />);
     fireEvent.click(gridToggle());
 
+    // 20 단위 → 가로 4% (500/20 = 25칸) · 세로 5% (400/20 = 20칸).
     pickGridStep(20);
-    expect(gridImage()).toContain('transparent 1px 20%');
-    expect(gridImage()).not.toContain('transparent 1px 10%');
-
-    pickGridStep(5);
+    expect(gridImage()).toContain('transparent 1px 4%');
     expect(gridImage()).toContain('transparent 1px 5%');
-    expect(gridImage()).not.toContain('transparent 1px 20%');
+
+    // 50 단위 → 가로 10% (10칸) · 세로 12.5% (8칸).
+    pickGridStep(50);
+    expect(gridImage()).toContain('transparent 1px 10%');
+    expect(gridImage()).toContain('transparent 1px 12.5%');
+    expect(gridImage()).not.toContain('transparent 1px 4%');
   });
 
   it('간격을 바꾸면 **붙는 자리**도 함께 바뀐다 (CSS 만 바뀌고 붙임이 남으면 화면이 거짓말이다)', async () => {
-    // 중심 15% + 10% = 25%.
-    // 5% → 25% 에 붙는다 → 이동량 10% → x = 0.15.
-    const fine = await dragTenPercent(5);
-    expect((emittedGeometry(fine, 'a') as BoxGeometry).x).toBeCloseTo(0.15, 9);
+    // 중심 70 + 60 = 130. 네 간격이 저마다 다른 눈금을 고른다.
+    const fine = await dragOffGrid(10);
+    expect((emittedGeometry(fine, 'a') as BoxGeometry).x).toBe(85); // 중심 130
     cleanup();
 
-    // 10%(기본) → 30% 에 붙는다 → 이동량 15% → x = 0.20.
-    const base = await dragTenPercent();
-    expect((emittedGeometry(base, 'a') as BoxGeometry).x).toBeCloseTo(0.2, 9);
+    const mid = await dragOffGrid(20);
+    expect((emittedGeometry(mid, 'a') as BoxGeometry).x).toBe(95); // 중심 140
     cleanup();
 
-    // 20% → 20% 로 되돌아간다 → 이동량 5% → x = 0.10.
-    const coarse = await dragTenPercent(20);
-    expect((emittedGeometry(coarse, 'a') as BoxGeometry).x).toBeCloseTo(0.1, 9);
+    const base = await dragOffGrid(); // 기본 25
+    expect((emittedGeometry(base, 'a') as BoxGeometry).x).toBe(80); // 중심 125
+    cleanup();
+
+    const coarse = await dragOffGrid(50);
+    expect((emittedGeometry(coarse, 'a') as BoxGeometry).x).toBe(105); // 중심 150
   });
 
   it('붙은 중심이 **그려진 선 위**에 앉는다 (두 값이 같은 값인지 좌표로 확인한다)', async () => {
-    const emit = await dragTenPercent(20);
+    const emit = await dragOffGrid(20);
 
     const moved = emittedGeometry(emit, 'a') as BoxGeometry;
-    const centerPercent = (moved.x + moved.w / 2) * 100;
-    // 20% 간격의 선은 0·20·40·… 에 있다. 그 위에 앉지 않으면 그림과 붙임이 갈라진 것이다.
-    expect(centerPercent % 20).toBeCloseTo(0, 6);
-    expect(gridImage()).toContain('transparent 1px 20%');
+    const center = moved.x + moved.w / 2;
+    // 20 단위 간격의 선은 0·20·40·… 에 있다. 그 위에 앉지 않으면 그림과 붙임이 갈라진 것이다.
+    expect(center % 20).toBe(0);
+    // 그리고 그려진 백분율이 실제로 그 정수에서 파생된 값이다.
+    const drawn = gridPercents(20, CANVAS);
+    expect((drawn.x / 100) * CANVAS.width).toBe(20);
+    expect(gridImage()).toContain(`transparent 1px ${drawn.x}%`);
   });
 
   it('간격을 바꿔도 상한은 여전히 무한대다 (위험 R6 은 간격마다 되살아날 수 있다)', async () => {
@@ -1817,11 +1847,11 @@ describe('격자 간격 — 고른 값 하나가 그림과 붙임을 함께 정�
     pickGridStep(20);
 
     send('pointerdown', 20, 20);
-    // 180px = 스테이지 폭의 90% — 상한(40%)의 두 배가 넘는다.
+    // 180px = 캔버스 450 단위 — 옛 상한(캔버스 폭의 40% = 200)의 두 배가 넘는다.
     send('pointermove', 200, 20);
     await nextFrame();
 
-    expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBeGreaterThan(0.4);
+    expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBeGreaterThan(CANVAS.width * 0.4);
   });
 
   it('Shift+방향키의 "한 칸" 도 고른 간격을 따른다 — 그리지 않은 칸으로 뛰지 않는다', () => {
@@ -1832,7 +1862,7 @@ describe('격자 간격 — 고른 값 하나가 그림과 붙임을 함께 정�
 
     sendKey('ArrowRight', { shiftKey: true });
 
-    expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBeCloseTo(0.05 + 0.2, 10);
+    expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBe(25 + 20);
   });
 
   it('간격을 바꿔도 프레임을 예약하지 않는다 — 표시 상태일 뿐이다 (AC-E4)', () => {
@@ -1841,25 +1871,28 @@ describe('격자 간격 — 고른 값 하나가 그림과 붙임을 함께 정�
     const raf = vi.spyOn(globalThis, 'requestAnimationFrame');
 
     pickGridStep(20);
-    pickGridStep(5);
+    pickGridStep(50);
 
     expect(raf).not.toHaveBeenCalled();
   });
 });
 
-// --- 격자 칸은 정사각형이다 (사용 시험: "격자가 일정하지 않음") -------------
+// --- 격자 칸은 일정하다 (사용 시험: "격자가 일정하지 않음") -----------------
 //
-// 그라디언트의 백분율은 **제 축 길이에 대한** 값이다. 그래서 두 축에 같은 10% 를 주면
-// 800×400 패널에서 칸이 80×40 px 이 된다 — 화면에서 본 그대로 직사각형이다.
+// 옛 모델의 결함은 **세로 백분율을 스테이지 종횡비에서 파생**한 데 있었다. 정사각 칸을
+// 얻으려고 그렇게 했는데, 그 값은 대개 100 을 나누어떨어지지 않아 **마지막 줄이 반 칸**
+// 으로 잘렸다(1749×796 스테이지에서 21.97% = 4.55 줄). 칸 수가 패널 크기를 따라 달라지는
+// 것도 같은 뿌리다.
 //
-// **픽스처가 정사각형이면 이 절은 실패할 수 없다.** 400×400 에서는 옛 방식과 새 방식이
-// 같은 값을 낸다. 그래서 여기서만 스테이지를 800×400 으로 두고, `stubOverlayRect` 도 같은
-// 치수로 심는다(포인터 좌표가 스테이지 공간으로 되돌아오는 그 비를 1 로 만든다).
+// 이제 백분율의 분모는 **캔버스**다. 그래서 이 절은 두 가지를 함께 본다:
+//   1) 그려진 칸 수가 두 축 모두 **정수**다(자투리가 없다).
+//   2) 스테이지를 바꿔도 그 칸 수가 **변하지 않는다**(칸 수의 주인은 캔버스다).
 //
-// 그리고 **그린 것과 붙는 것을 함께** 본다. 정사각 칸을 그리면서 옛 백분율로 붙으면
-// 화면이 거짓말을 하는데, 그 거짓말은 CSS 만 보는 시험도 좌표만 보는 시험도 보지 못한다.
+// **픽스처가 정사각형이면 이 절은 실패할 수 없다.** 옛 결함은 스테이지와 캔버스의 종횡비
+// 차이에서 살았으므로, 여기서는 스테이지를 800×400 으로 두고 캔버스(500×400)와 비를
+// 어긋나게 한다. `stubOverlayRect` 도 같은 치수로 심어 포인터 축척을 1 로 만든다.
 
-/** 가로가 세로의 두 배인 스테이지. 정사각 픽스처로는 이 절의 시험이 성립하지 않는다. */
+/** 가로가 세로의 두 배인 스테이지. 캔버스(500×400)와 종횡비가 다르다. */
 const WIDE_STAGE: StageSize = { width: 800, height: 400 };
 
 /** 그려진 격자의 두 축 백분율을 CSS 에서 그대로 읽는다. */
@@ -1872,16 +1905,19 @@ function drawnSteps(): { x: number; y: number } {
   return { x: Number(right![1]), y: Number(bottom![1]) };
 }
 
-/** 그려진 칸 하나의 실제 크기(px). 두 축이 같아야 칸이 정사각형이다. */
-function drawnCellPx(): { x: number; y: number } {
+/** 그려진 격자의 축별 칸 수. 정수가 아니면 마지막 칸이 잘린다는 뜻이다. */
+function drawnCellCount(): { x: number; y: number } {
   const steps = drawnSteps();
-  return {
-    x: (steps.x / 100) * WIDE_STAGE.width,
-    y: (steps.y / 100) * WIDE_STAGE.height,
-  };
+  return { x: 100 / steps.x, y: 100 / steps.y };
 }
 
-/** 800×400 스테이지에 사각형 하나를 세우고 격자를 켠다. px 상자는 (40,40,160,80) 이다. */
+/** 그려진 칸 하나의 실제 크기(px). 축 길이를 칸 수로 나눈 값이다. */
+function drawnCellPx(stage: StageSize = WIDE_STAGE): { x: number; y: number } {
+  const count = drawnCellCount();
+  return { x: stage.width / count.x, y: stage.height / count.y };
+}
+
+/** 800×400 스테이지에 사각형 하나를 세우고 격자를 켠다. */
 function renderWide(step?: number): ReturnType<typeof vi.fn> {
   const emit = vi.fn();
   render(
@@ -1893,80 +1929,103 @@ function renderWide(step?: number): ReturnType<typeof vi.fn> {
   return emit;
 }
 
-/** 지금 통보된 사각형의 중심(스테이지 로컬 px). */
-function centerPx(emit: ReturnType<typeof vi.fn>): { x: number; y: number } {
+/** 지금 통보된 사각형의 중심(캔버스 단위). */
+function centerUnits(emit: ReturnType<typeof vi.fn>): { x: number; y: number } {
   const g = emittedGeometry(emit, 'a') as BoxGeometry;
-  return {
-    x: (g.x + g.w / 2) * WIDE_STAGE.width,
-    y: (g.y + g.h / 2) * WIDE_STAGE.height,
-  };
+  return { x: g.x + g.w / 2, y: g.y + g.h / 2 };
 }
 
-describe('격자 칸은 정사각형이다 (사용 시험: "격자가 일정하지 않음")', () => {
-  it('가로세로 비가 다른 패널에서도 그려진 칸의 두 변이 **같은 px** 이다', () => {
+describe('격자 칸은 일정하다 (사용 시험: "격자가 일정하지 않음")', () => {
+  it('그려진 칸 수가 두 축 모두 정수다 — 반 칸짜리 자투리가 없다', () => {
+    for (const step of CANVAS_GRID_STEP_CHOICES) {
+      cleanup();
+      renderWide(step);
+      const count = drawnCellCount();
+      expect(Number.isInteger(count.x), `${step} 단위 가로 칸 수 ${count.x}`).toBe(true);
+      expect(Number.isInteger(count.y), `${step} 단위 세로 칸 수 ${count.y}`).toBe(true);
+    }
+  });
+
+  it('칸 수는 **캔버스 크기 ÷ 간격**이다 — 스테이지를 보지 않는다', () => {
+    for (const step of CANVAS_GRID_STEP_CHOICES) {
+      cleanup();
+      renderWide(step);
+      expect(drawnCellCount()).toEqual({ x: CANVAS.width / step, y: CANVAS.height / step });
+    }
+  });
+
+  it('스테이지가 달라져도 같은 칸 수를 그린다 (옛 모델에서는 달라졌다)', () => {
+    // 옛 파생(스테이지 종횡비)에서는 이 두 값이 서로 달랐고, 그 차이가 곧 자투리였다.
+    renderWide();
+    const wide = drawnSteps();
+    cleanup();
+
+    render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={vi.fn()} />);
+    fireEvent.click(gridToggle());
+    const narrow = drawnSteps();
+
+    expect(wide).toEqual(narrow);
+  });
+
+  it('사용자가 반 칸을 본 그 크기에서도 칸 수가 정수다 (1749×796)', () => {
+    // 옛 방식은 이 스테이지에서 세로 21.97% = 4.55 줄을 냈다. 그 0.55 가 잘린 칸이다.
+    render(
+      <Harness
+        elements={[rect('a', SNAP_GEOMETRY)]}
+        stage={{ width: 1749, height: 796 }}
+        onElementsChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(gridToggle());
+
+    const count = drawnCellCount();
+    expect(count).toEqual({ x: 20, y: 16 });
+  });
+
+  it('모든 칸이 같은 크기다 — 마지막 칸도 온전하다', () => {
     for (const step of CANVAS_GRID_STEP_CHOICES) {
       cleanup();
       renderWide(step);
       const cell = drawnCellPx();
-      expect(cell.x, `${step}% 에서 칸이 직사각형이다`).toBeCloseTo(cell.y, 6);
+      const count = drawnCellCount();
+      // 축 길이가 칸 크기의 정수배다 = 마지막 칸이 잘리지 않는다.
+      expect(cell.x * count.x).toBeCloseTo(WIDE_STAGE.width, 6);
+      expect(cell.y * count.y).toBeCloseTo(WIDE_STAGE.height, 6);
     }
   });
 
-  it('두 축의 **백분율**은 서로 다르다 — 그것이 정사각형이 되는 방식이다', () => {
-    renderWide();
-    // 800×400 이면 세로 백분율이 두 배다. 같은 수를 두 축에 쓰던 것이 결함이었다.
-    expect(drawnSteps()).toEqual({ x: 10, y: 20 });
-  });
-
-  it('붙는 자리가 **그려진 칸**의 배수다 — 간격을 바꿔도 그렇다', async () => {
+  it('붙는 자리가 **그려진 선** 위다 — 간격을 바꿔도 그렇다', async () => {
     // 그림과 붙임이 갈라지면 "붙긴 붙는데 선하고 안 맞는다" 가 된다. 간격을 여러 개
     // 지나는 것이 중요하다 — 한 값에서만 맞는 파생은 파생이 아니라 우연이다.
     for (const step of CANVAS_GRID_STEP_CHOICES) {
       cleanup();
       const emit = renderWide(step);
-      const cell = drawnCellPx();
 
-      // 상자 안(120,80)을 잡아 대각선으로 끈다 — 두 축이 함께 걸린다.
-      send('pointerdown', 120, 80);
-      send('pointermove', 170, 130);
+      // 상자 안(20,15)을 잡아 대각선으로 끈다 — 두 축이 함께 걸린다.
+      send('pointerdown', 60, 60);
+      send('pointermove', 130, 110);
       await nextFrame();
 
-      const center = centerPx(emit);
-      expect(center.x % cell.x, `${step}% 가로`).toBeCloseTo(0, 6);
-      expect(center.y % cell.y, `${step}% 세로`).toBeCloseTo(0, 6);
+      const center = centerUnits(emit);
+      expect(center.x % step, `${step} 단위 가로`).toBe(0);
+      expect(center.y % step, `${step} 단위 세로`).toBe(0);
     }
   });
 
-  it('붙은 뒤 두 축이 같은 눈금 값을 가리킨다 (축을 뒤바꾸지 않는다)', async () => {
+  it('Shift+방향키가 **그려진 칸 하나**만큼 옮긴다', () => {
     const emit = renderWide();
-    const cell = drawnCellPx();
-
-    send('pointerdown', 120, 80);
-    send('pointermove', 170, 130);
-    await nextFrame();
-
-    // 칸 80px · 중심 (120,80) → (170,130) → 가장 가까운 눈금은 두 축 모두 160px 이다.
-    expect(cell.x).toBe(80);
-    const center = centerPx(emit);
-    expect(center.x).toBeCloseTo(160, 6);
-    expect(center.y).toBeCloseTo(160, 6);
-  });
-
-  it('Shift+방향키가 **그려진 칸 하나**만큼 옮긴다 (두 축이 같은 px 다)', () => {
-    const emit = renderWide();
-    const cell = drawnCellPx();
 
     // 눌러서 고른 뒤 손을 뗀다(놓기가 "제자리 확정" 쓰기를 한 번 낸다). 하네스는 통보를
-    // 되먹이지 않으므로 **매 키의 기준은 언제나 초기 기하**이며, 그 중심이 (120,80) 이다.
-    send('pointerdown', 120, 80);
-    send('pointerup', 120, 80);
+    // 되먹이지 않으므로 **매 키의 기준은 언제나 초기 기하**다.
+    send('pointerdown', 60, 60);
+    send('pointerup', 60, 60);
     emit.mockClear();
 
     sendKey('ArrowRight', { shiftKey: true });
-    expect(centerPx(emit).x - 120).toBeCloseTo(cell.x, 6);
+    expect(centerUnits(emit).x - 70).toBe(CANVAS_GRID_STEP_UNITS);
 
     sendKey('ArrowDown', { shiftKey: true });
-    expect(centerPx(emit).y - 80).toBeCloseTo(cell.y, 6);
+    expect(centerUnits(emit).y - 80).toBe(CANVAS_GRID_STEP_UNITS);
   });
 });
 
@@ -1978,8 +2037,8 @@ function alignBtn(id: string): HTMLElement {
 }
 
 /** 정렬 시험용 두 사각형 — px 상자가 (10,10,40,20) 과 (100,50,20,10) 이다. */
-const ALIGN_A: BoxGeometry = { x: 0.05, y: 0.1, w: 0.2, h: 0.2 };
-const ALIGN_B: BoxGeometry = { x: 0.5, y: 0.5, w: 0.1, h: 0.1 };
+const ALIGN_A: BoxGeometry = { x: 25, y: 40, w: 100, h: 80 };
+const ALIGN_B: BoxGeometry = { x: 250, y: 200, w: 50, h: 40 };
 
 /** 두 사각형을 함께 골라 둔 상태로 만든다. */
 function renderTwoSelected(emit: ReturnType<typeof vi.fn>) {
@@ -2049,8 +2108,8 @@ describe('정렬은 2개 이상 골랐을 때만 뜻이 있다 (T13 · AC-08)', 
     renderTwoSelected(emit);
     fireEvent.click(alignBtn('left'));
 
-    expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBeCloseTo(0.05, 9);
-    expect((emittedGeometry(emit, 'b') as BoxGeometry).x).toBeCloseTo(0.05, 9);
+    expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBeCloseTo(25, 9);
+    expect((emittedGeometry(emit, 'b') as BoxGeometry).x).toBeCloseTo(25, 9);
   });
 
   it('오른쪽 맞춤 — 오른쪽 변이 같아진다', () => {
@@ -2060,8 +2119,8 @@ describe('정렬은 2개 이상 골랐을 때만 뜻이 있다 (T13 · AC-08)', 
 
     const a = emittedGeometry(emit, 'a') as BoxGeometry;
     const b = emittedGeometry(emit, 'b') as BoxGeometry;
-    expect(a.x + a.w).toBeCloseTo(0.6, 9);
-    expect(b.x + b.w).toBeCloseTo(0.6, 9);
+    expect(a.x + a.w).toBeCloseTo(300, 9);
+    expect(b.x + b.w).toBeCloseTo(300, 9);
   });
 
   it('가로 가운데 맞춤 — 중심의 가로가 같아진다', () => {
@@ -2071,8 +2130,10 @@ describe('정렬은 2개 이상 골랐을 때만 뜻이 있다 (T13 · AC-08)', 
 
     const a = emittedGeometry(emit, 'a') as BoxGeometry;
     const b = emittedGeometry(emit, 'b') as BoxGeometry;
-    expect(a.x + a.w / 2).toBeCloseTo(0.325, 9);
-    expect(b.x + b.w / 2).toBeCloseTo(0.325, 9);
+    // 바깥 상자의 가운데는 162.5 단위지만 좌표는 정수로 저장되므로 두 중심이 같은
+    // **정수 눈금**(163)에 앉는다 — 맞춰졌다는 사실은 두 값이 같다는 데 있다.
+    expect(a.x + a.w / 2).toBe(b.x + b.w / 2);
+    expect(Math.abs(a.x + a.w / 2 - 162.5)).toBeLessThanOrEqual(0.5);
   });
 
   it('가로 정렬은 세로를 건드리지 않는다', () => {
@@ -2080,8 +2141,8 @@ describe('정렬은 2개 이상 골랐을 때만 뜻이 있다 (T13 · AC-08)', 
     renderTwoSelected(emit);
     fireEvent.click(alignBtn('center-x'));
 
-    expect((emittedGeometry(emit, 'a') as BoxGeometry).y).toBeCloseTo(0.1, 9);
-    expect((emittedGeometry(emit, 'b') as BoxGeometry).y).toBeCloseTo(0.5, 9);
+    expect((emittedGeometry(emit, 'a') as BoxGeometry).y).toBeCloseTo(40, 9);
+    expect((emittedGeometry(emit, 'b') as BoxGeometry).y).toBeCloseTo(200, 9);
   });
 
   it('위 맞춤 — 위 변이 같아진다', () => {
@@ -2089,8 +2150,8 @@ describe('정렬은 2개 이상 골랐을 때만 뜻이 있다 (T13 · AC-08)', 
     renderTwoSelected(emit);
     fireEvent.click(alignBtn('top'));
 
-    expect((emittedGeometry(emit, 'a') as BoxGeometry).y).toBeCloseTo(0.1, 9);
-    expect((emittedGeometry(emit, 'b') as BoxGeometry).y).toBeCloseTo(0.1, 9);
+    expect((emittedGeometry(emit, 'a') as BoxGeometry).y).toBeCloseTo(40, 9);
+    expect((emittedGeometry(emit, 'b') as BoxGeometry).y).toBeCloseTo(40, 9);
   });
 
   it('아래 맞춤 — 아래 변이 같아진다', () => {
@@ -2100,8 +2161,8 @@ describe('정렬은 2개 이상 골랐을 때만 뜻이 있다 (T13 · AC-08)', 
 
     const a = emittedGeometry(emit, 'a') as BoxGeometry;
     const b = emittedGeometry(emit, 'b') as BoxGeometry;
-    expect(a.y + a.h).toBeCloseTo(0.6, 9);
-    expect(b.y + b.h).toBeCloseTo(0.6, 9);
+    expect(a.y + a.h).toBeCloseTo(240, 9);
+    expect(b.y + b.h).toBeCloseTo(240, 9);
   });
 
   it('세로 가운데 맞춤 — 중심의 세로가 같아진다', () => {
@@ -2111,8 +2172,8 @@ describe('정렬은 2개 이상 골랐을 때만 뜻이 있다 (T13 · AC-08)', 
 
     const a = emittedGeometry(emit, 'a') as BoxGeometry;
     const b = emittedGeometry(emit, 'b') as BoxGeometry;
-    expect(a.y + a.h / 2).toBeCloseTo(0.35, 9);
-    expect(b.y + b.h / 2).toBeCloseTo(0.35, 9);
+    expect(a.y + a.h / 2).toBeCloseTo(140, 9);
+    expect(b.y + b.h / 2).toBeCloseTo(140, 9);
   });
 
   it('세로 정렬은 가로를 건드리지 않는다', () => {
@@ -2120,15 +2181,15 @@ describe('정렬은 2개 이상 골랐을 때만 뜻이 있다 (T13 · AC-08)', 
     renderTwoSelected(emit);
     fireEvent.click(alignBtn('top'));
 
-    expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBeCloseTo(0.05, 9);
-    expect((emittedGeometry(emit, 'b') as BoxGeometry).x).toBeCloseTo(0.5, 9);
+    expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBeCloseTo(25, 9);
+    expect((emittedGeometry(emit, 'b') as BoxGeometry).x).toBeCloseTo(250, 9);
   });
 
   it('고르지 않은 요소는 제자리에 남는다', () => {
     const emit = vi.fn();
     render(
       <Harness
-        elements={[rect('a', ALIGN_A), rect('b', ALIGN_B), rect('c', { x: 0.9, y: 0.9, w: 0.05, h: 0.05 })]}
+        elements={[rect('a', ALIGN_A), rect('b', ALIGN_B), rect('c', { x: 450, y: 360, w: 25, h: 20 })]}
         onElementsChange={emit}
       />,
     );
@@ -2137,7 +2198,7 @@ describe('정렬은 2개 이상 골랐을 때만 뜻이 있다 (T13 · AC-08)', 
     send('pointerdown', 110, 55, { shiftKey: true });
     fireEvent.click(alignBtn('left'));
 
-    expect((emittedGeometry(emit, 'c') as BoxGeometry).x).toBeCloseTo(0.9, 9);
+    expect((emittedGeometry(emit, 'c') as BoxGeometry).x).toBeCloseTo(450, 9);
   });
 
   it('쓰기는 기하 통로(`patchNodeGeometry`)를 지나 스타일·문구를 보존한다 (REQ-06)', () => {
@@ -2178,7 +2239,7 @@ describe('정렬은 2개 이상 골랐을 때만 뜻이 있다 (T13 · AC-08)', 
 
     // 바깥 상자의 왼쪽 변은 a 의 10px 이므로 문구는 90px = 0.45 만큼 왼쪽으로 간다.
     const moved = emittedGeometry(emit, 't') as PointGeometry;
-    expect(moved.x).toBeCloseTo(0.05, 9);
+    expect(moved.x).toBeCloseTo(25, 9);
   });
 });
 
@@ -2191,9 +2252,9 @@ function orderBtn(dir: 'front' | 'back'): HTMLButtonElement {
 
 /** 겹치지 않는 세 사각형 — 하나씩 눌러 고를 수 있다. */
 const ORDER_ELEMENTS: CanvasElement[] = [
-  rect('a', { x: 0.05, y: 0.1, w: 0.1, h: 0.2 }),
-  rect('b', { x: 0.3, y: 0.1, w: 0.1, h: 0.2 }),
-  rect('c', { x: 0.6, y: 0.1, w: 0.1, h: 0.2 }),
+  rect('a', { x: 25, y: 40, w: 50, h: 80 }),
+  rect('b', { x: 150, y: 40, w: 50, h: 80 }),
+  rect('c', { x: 300, y: 40, w: 50, h: 80 }),
 ];
 
 /** 마지막으로 통보된 배열의 그리기 순서(= 배열 순서 = 001 의 유일한 z-order). */
@@ -2431,56 +2492,66 @@ describe('키보드로 닿는다 — 루트가 초점을 받는 자리다 (AC-08
 });
 
 describe('방향키가 고른 것을 옮긴다 (AC-08)', () => {
-  it('한 번에 1 CSS px 씩 옮긴다 — 축마다 자기 길이로 나눈다', () => {
+  it('한 번에 **1 캔버스 단위**씩 옮긴다 — 어느 패널에서 눌러도 같은 값이다', () => {
+    // 정수 좌표계에서 1 단위는 저술할 수 있는 가장 작은 차이다. 종전에는 1 CSS px 을
+    // 분수로 환산해 더했으므로 패널 크기에 따라 저장되는 값이 달라졌다.
     const emit = renderPickedBox();
 
     expect(sendKey('ArrowRight')).toBe(false); // 소비했다
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2 + 1 / 200, y: 0.2, w: 0.4, h: 0.4 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 101, y: 80, w: 200, h: 160 });
 
     sendKey('ArrowDown');
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2, y: 0.2 + 1 / 100, w: 0.4, h: 0.4 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 100, y: 81, w: 200, h: 160 });
   });
 
   it('왼쪽·위는 음의 방향이다 (축을 뒤바꾸지 않는다)', () => {
     const emit = renderPickedBox();
 
     sendKey('ArrowLeft');
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2 - 1 / 200, y: 0.2, w: 0.4, h: 0.4 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 99, y: 80, w: 200, h: 160 });
 
     sendKey('ArrowUp');
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2, y: 0.2 - 1 / 100, w: 0.4, h: 0.4 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 100, y: 79, w: 200, h: 160 });
   });
 
-  it('Shift 는 한 격자 칸을 옮긴다 — 칸은 정사각이라 축마다 분수가 다르다', () => {
+  it('Shift 는 한 격자 칸을 옮긴다 — 두 축이 **같은 정수**를 쓴다', () => {
+    // 격자 간격이 캔버스 단위이므로 환산이 없다. 종전에는 축마다 백분율이 갈려 두 수를
+    // 따로 파생해야 했고, 그 파생이 곧 그림과 어긋날 수 있는 자리였다.
     const emit = renderPickedBox();
-    // 200×100 스테이지에서 10% 칸은 20px 이다. 가로로는 스테이지의 0.1, 세로로는 0.2 —
-    // **같은 px** 를 두 축의 분수로 옮기면 두 수가 갈린다.
-    const cell = squareGridSteps(CANVAS_GRID_STEP_PERCENT, STAGE);
-    expect((cell.x / 100) * STAGE.width).toBeCloseTo((cell.y / 100) * STAGE.height, 6);
 
     sendKey('ArrowRight', { shiftKey: true });
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2 + cell.x / 100, y: 0.2, w: 0.4, h: 0.4 });
+    expectBox(emittedGeometry(emit, 'a'), {
+      x: 100 + CANVAS_GRID_STEP_UNITS,
+      y: 80,
+      w: 200,
+      h: 160,
+    });
 
     sendKey('ArrowUp', { shiftKey: true });
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2, y: 0.2 - cell.y / 100, w: 0.4, h: 0.4 });
+    expectBox(emittedGeometry(emit, 'a'), {
+      x: 100,
+      y: 80 - CANVAS_GRID_STEP_UNITS,
+      w: 200,
+      h: 160,
+    });
   });
 
   it('크기는 건드리지 않는다 — 방향키는 이동이지 크기 조절이 아니다', () => {
     // px 상자 (20,10,60,50) — 가운데는 (50,35) 다.
-    const emit = renderPickedBox({ x: 0.1, y: 0.1, w: 0.3, h: 0.5 }, { x: 50, y: 35 });
+    const emit = renderPickedBox({ x: 50, y: 40, w: 150, h: 200 }, { x: 50, y: 35 });
 
     sendKey('ArrowRight');
 
     const g = emittedGeometry(emit, 'a') as BoxGeometry;
-    expect(g.w).toBeCloseTo(0.3, 10);
-    expect(g.h).toBeCloseTo(0.5, 10);
+    expect(g.w).toBe(150);
+    expect(g.h).toBe(200);
   });
 
   it('둘 이상 골랐으면 같은 델타가 전부에 적용된다 (드래그와 같은 규칙)', () => {
     const emit = vi.fn();
     render(
       <Harness
-        elements={[rect('a', BOX_GEOMETRY), rect('b', { x: 0.75, y: 0.05, w: 0.2, h: 0.2 })]}
+        elements={[rect('a', BOX_GEOMETRY), rect('b', { x: 375, y: 20, w: 100, h: 80 })]}
         onElementsChange={emit}
       />,
     );
@@ -2494,16 +2565,16 @@ describe('방향키가 고른 것을 옮긴다 (AC-08)', () => {
 
     sendKey('ArrowRight', { shiftKey: true });
 
-    const cell = CANVAS_GRID_STEP_PERCENT / 100;
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2 + cell, y: 0.2, w: 0.4, h: 0.4 });
-    expectBox(emittedGeometry(emit, 'b'), { x: 0.75 + cell, y: 0.05, w: 0.2, h: 0.2 });
+    const cell = CANVAS_GRID_STEP_UNITS;
+    expectBox(emittedGeometry(emit, 'a'), { x: 100 + cell, y: 80, w: 200, h: 160 });
+    expectBox(emittedGeometry(emit, 'b'), { x: 375 + cell, y: 20, w: 100, h: 80 });
   });
 
   it('고르지 않은 요소는 제자리에 남는다', () => {
     const emit = vi.fn();
     render(
       <Harness
-        elements={[rect('a', BOX_GEOMETRY), rect('b', { x: 0.75, y: 0.05, w: 0.2, h: 0.2 })]}
+        elements={[rect('a', BOX_GEOMETRY), rect('b', { x: 375, y: 20, w: 100, h: 80 })]}
         onElementsChange={emit}
       />,
     );
@@ -2514,7 +2585,7 @@ describe('방향키가 고른 것을 옮긴다 (AC-08)', () => {
 
     sendKey('ArrowRight');
 
-    expectBox(emittedGeometry(emit, 'b'), { x: 0.75, y: 0.05, w: 0.2, h: 0.2 });
+    expectBox(emittedGeometry(emit, 'b'), { x: 375, y: 20, w: 100, h: 80 });
   });
 
   it('선도 같은 통로로 옮긴다 — 두 끝점이 함께 간다 (종류별 이동 규칙을 만들지 않는다)', () => {
@@ -2529,12 +2600,12 @@ describe('방향키가 고른 것을 옮긴다 (AC-08)', () => {
 
     sendKey('ArrowRight', { shiftKey: true });
 
-    const cell = CANVAS_GRID_STEP_PERCENT / 100;
+    const cell = CANVAS_GRID_STEP_UNITS;
     const g = emittedGeometry(emit, 'l') as LineGeometry;
-    expect(g.x1).toBeCloseTo(0.1 + cell, 10);
-    expect(g.x2).toBeCloseTo(0.5 + cell, 10);
-    expect(g.y1).toBeCloseTo(0.2, 10);
-    expect(g.y2).toBeCloseTo(0.6, 10);
+    expect(g.x1).toBe(50 + cell);
+    expect(g.x2).toBe(250 + cell);
+    expect(g.y1).toBe(80);
+    expect(g.y2).toBe(240);
   });
 
   it('문구도 자기 기준점만 옮긴다 (기하가 점 하나뿐인 종류)', () => {
@@ -2551,10 +2622,9 @@ describe('방향키가 고른 것을 옮긴다 (AC-08)', () => {
 
     sendKey('ArrowDown', { shiftKey: true });
 
-    const cell = squareGridSteps(CANVAS_GRID_STEP_PERCENT, STAGE);
     const g = emittedGeometry(emit, 't') as PointGeometry;
-    expect(g.x).toBeCloseTo(0.5, 10);
-    expect(g.y).toBeCloseTo(0.5 + cell.y / 100, 10);
+    expect(g.x).toBe(250);
+    expect(g.y).toBe(200 + CANVAS_GRID_STEP_UNITS);
   });
 
   it('쓰기는 기하 통로를 지나 스타일·문구를 보존한다 (REQ-06)', () => {
@@ -2582,24 +2652,26 @@ describe('방향키가 고른 것을 옮긴다 (AC-08)', () => {
 });
 
 describe('방향키도 잘라내지 않는다 (AC-E5)', () => {
-  it('오른쪽 끝을 넘어가도 1 에서 붙잡히지 않는다', () => {
-    // px 상자 (190,20,80,40) — 가운데는 (230,40) 으로 스테이지 밖이지만 판정은 px 공간이다.
-    const emit = renderPickedBox({ x: 0.95, y: 0.2, w: 0.4, h: 0.4 }, { x: 230, y: 40 });
+  it('오른쪽 끝을 넘어가도 캔버스 폭에서 붙잡히지 않는다', () => {
+    // px 상자 (192,20,80,40) — 가운데는 (232,40) 으로 스테이지 밖이지만 판정은 px 공간이다.
+    const emit = renderPickedBox({ x: 480, y: 80, w: 200, h: 160 }, { x: 230, y: 40 });
 
     sendKey('ArrowRight', { shiftKey: true });
 
     const g = emittedGeometry(emit, 'a') as BoxGeometry;
-    expect(g.x).toBeCloseTo(1.05, 10);
+    expect(g.x).toBe(480 + CANVAS_GRID_STEP_UNITS);
+    expect(g.x).toBeGreaterThan(CANVAS.width);
   });
 
   it('왼쪽으로 나가도 0 에서 붙잡히지 않는다', () => {
     // px 상자 (4,20,80,40) — 가운데는 (44,40) 이다.
-    const emit = renderPickedBox({ x: 0.02, y: 0.2, w: 0.4, h: 0.4 }, { x: 44, y: 40 });
+    const emit = renderPickedBox({ x: 10, y: 80, w: 200, h: 160 }, { x: 44, y: 40 });
 
     sendKey('ArrowLeft', { shiftKey: true });
 
     const g = emittedGeometry(emit, 'a') as BoxGeometry;
-    expect(g.x).toBeCloseTo(-0.08, 10);
+    expect(g.x).toBe(10 - CANVAS_GRID_STEP_UNITS);
+    expect(g.x).toBeLessThan(0);
   });
 });
 
@@ -2637,7 +2709,10 @@ describe('우리 것이 아닌 키는 소비하지 않는다 (AC-E3 과 같은 �
     expect(screen.queryByTestId('canvas-edit-overlay')).toBeNull();
   });
 
-  it('스테이지를 아직 재지 못했으면 미세 이동은 하지 않는다 (0 으로 나누지 않는다)', () => {
+  it('스테이지를 아직 재지 못했어도 미세 이동은 성립한다 (나눌 것이 없다)', () => {
+    // 종전에는 1 CSS px 을 스테이지 길이로 나눠야 했으므로 재기 전에는 이동을 포기했다.
+    // 이제 이동량이 캔버스 단위 정수라 나눗셈이 아예 없다 — 접힌 패널에서도 방향키가
+    // 살아 있고, 이것은 잃은 성질이 아니라 되찾은 성질이다.
     const emit = vi.fn();
     render(
       <Harness
@@ -2652,11 +2727,11 @@ describe('우리 것이 아닌 키는 소비하지 않는다 (AC-E3 과 같은 �
     expect(selectionText()).toBe('a');
     emit.mockClear();
 
-    expect(sendKey('ArrowRight')).toBe(true);
-    expect(emit).not.toHaveBeenCalled();
+    expect(sendKey('ArrowRight')).toBe(false);
+    expectBox(emittedGeometry(emit, 'a'), { x: 101, y: 80, w: 200, h: 160 });
   });
 
-  it('그래도 한 격자 칸 이동은 성립한다 — 칸은 축 길이에 대한 분수라 나눌 것이 없다', () => {
+  it('한 격자 칸 이동도 마찬가지다 — 간격이 캔버스 단위라 스테이지를 보지 않는다', () => {
     const emit = vi.fn();
     render(
       <Harness
@@ -2671,10 +2746,10 @@ describe('우리 것이 아닌 키는 소비하지 않는다 (AC-E3 과 같은 �
 
     expect(sendKey('ArrowRight', { shiftKey: true })).toBe(false);
     expectBox(emittedGeometry(emit, 'a'), {
-      x: 0.2 + CANVAS_GRID_STEP_PERCENT / 100,
-      y: 0.2,
-      w: 0.4,
-      h: 0.4,
+      x: 100 + CANVAS_GRID_STEP_UNITS,
+      y: 80,
+      w: 200,
+      h: 160,
     });
   });
 
@@ -2716,8 +2791,8 @@ describe('포인터를 전혀 쓰지 않는 경로가 끝까지 이어진다 (AC
     sendKey('ArrowRight', { shiftKey: true });
 
     const after = liveElements()[0]!.geometry as BoxGeometry;
-    expect(after.x).toBeCloseTo(before.x + CANVAS_GRID_STEP_PERCENT / 100, 10);
-    expect(after.y).toBeCloseTo(before.y, 10);
+    expect(after.x).toBe(before.x + CANVAS_GRID_STEP_UNITS);
+    expect(after.y).toBe(before.y);
   });
 
   it('핸들은 초점을 받고 라벨을 가진다 — 골라 둔 것 위에 진짜 버튼이 선다', () => {
@@ -2737,7 +2812,7 @@ describe('포인터를 전혀 쓰지 않는 경로가 끝까지 이어진다 (AC
 
     // 핸들은 루트의 자식이므로 키가 루트까지 올라온다.
     expect(fireEvent.keyDown(handleEl('se'), { key: 'ArrowRight' })).toBe(false);
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2 + 1 / 200, y: 0.2, w: 0.4, h: 0.4 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 101, y: 80, w: 200, h: 160 });
   });
 });
 
@@ -2860,7 +2935,7 @@ function toScreen(stageX: number, stageY: number): { x: number; y: number } {
 }
 
 /** 스테이지 한가운데를 차지하는 사각형 — 정규화 중심이 (0.5, 0.5) 다. */
-const CENTER_BOX: BoxGeometry = { x: 0.4, y: 0.4, w: 0.2, h: 0.2 };
+const CENTER_BOX: BoxGeometry = { x: 200, y: 160, w: 100, h: 80 };
 
 /**
  * 축척 s 로 렌더된 오버레이. `stage` 는 표면이 잰 값(변환 앞)이고 심어 주는 상자는
@@ -2915,7 +2990,7 @@ describe('축소된 미리보기 안에서도 포인터가 도형과 같은 공�
     send('pointermove', from.x + 40, from.y + 20);
     await nextFrame();
 
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.5, y: 0.5, w: 0.2, h: 0.2 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 250, y: 200, w: 100, h: 80 });
   });
 
   it('축척 1 에서는 같은 화면 이동량이 그대로 스테이지 이동량이다 (되돌림 방어)', async () => {
@@ -2928,7 +3003,7 @@ describe('축소된 미리보기 안에서도 포인터가 도형과 같은 공�
     await nextFrame();
 
     // 화면 (40, 20) = 스테이지 (40, 20) → 정규화 (0.05, 0.05).
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.45, y: 0.45, w: 0.2, h: 0.2 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 225, y: 180, w: 100, h: 80 });
   });
 
   it('놓는 순간의 좌표도 같은 공간으로 옮긴다 (pointerup 이 마지막 자리를 확정한다)', async () => {
@@ -2939,7 +3014,7 @@ describe('축소된 미리보기 안에서도 포인터가 도형과 같은 공�
     // 합류 프레임을 기다리지 않고 바로 뗀다 — 확정 경로가 같은 변환을 쓰는지 본다.
     send('pointerup', from.x + 40, from.y + 20);
 
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.5, y: 0.5, w: 0.2, h: 0.2 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 250, y: 200, w: 100, h: 80 });
   });
 
   it('핸들 드래그도 같은 공간을 쓴다 — 손잡이가 커서 아래에 남는다', async () => {
@@ -2958,7 +3033,7 @@ describe('축소된 미리보기 안에서도 포인터가 도형과 같은 공�
     send('pointermove', to.x, to.y);
     await nextFrame();
 
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.4, y: 0.4, w: 0.35, h: 0.35 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 200, y: 160, w: 175, h: 140 });
   });
 
   it('스테이지를 아직 재지 못했으면 축척 1 로 떨어진다 (NaN·Infinity 를 흘리지 않는다)', () => {
@@ -2976,7 +3051,7 @@ describe('축소된 미리보기 안에서도 포인터가 도형과 같은 공�
   });
 
   it('상자 크기가 비유한이면 축척 1 로 떨어져 판정이 종전과 같아진다', () => {
-    render(<Harness elements={[rect('a', { x: 0.1, y: 0.1, w: 0.2, h: 0.2 })]} onElementsChange={vi.fn()} />);
+    render(<Harness elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]} onElementsChange={vi.fn()} />);
     // 잰 적 없는 상자(분리된 노드 등)가 NaN 을 주는 자리다. 축척이 NaN 이 되면 모든 좌표가
     // NaN 이라 아무것도 고를 수 없게 되므로, 1 로 떨어져 원점만 뺀 값이 남아야 한다.
     stubOverlayRect(0, 0, Number.NaN, Number.NaN);

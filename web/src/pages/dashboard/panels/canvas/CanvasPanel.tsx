@@ -336,14 +336,14 @@ export default function CanvasPanel({
   );
 
   /**
-   * 표면의 오버레이 슬롯. 스테이지 크기와 실측 글자 폭은 **표면이 잰 것을 그대로**
-   * 받아 넘긴다(측정원이 하나다 — AC-E2).
+   * 표면의 오버레이 슬롯. 투영 한 벌(스테이지 px + 캔버스 단위 크기)과 실측 글자 폭은
+   * **표면이 든 것을 그대로** 받아 넘긴다(측정원이 하나다 — AC-E2).
    *
    * 이 렌더 prop 은 표면의 어느 효과 의존성에도 들어가지 않으므로 프레임을 예약하지
    * 않는다. 선택·호버가 루프를 깨우지 않는다는 보장이 여기서 성립한다(AC-E4).
    */
   const renderOverlay = useCallback(
-    ({ stage, textWidths }: CanvasOverlayContext) => (
+    ({ projection, textWidths }: CanvasOverlayContext) => (
       <>
         {/*
           빈 상태 안내(AC-E1 · AC-E9). 표면의 컨테이너가 이미 `relative` 이므로 이 층은
@@ -368,7 +368,7 @@ export default function CanvasPanel({
         <CanvasEditOverlay
           enabled={edit.active}
           elements={cfg.elements}
-          stage={stage}
+          projection={projection}
           textWidths={textWidths}
           onElementsChange={handleElementsChange}
         />
@@ -395,6 +395,7 @@ export default function CanvasPanel({
           않는다(AC-E9) — 빈 안내는 위 `renderOverlay` 안에서 겹치는 층으로 나온다. */}
       <CanvasSurface
         elements={cfg.elements}
+        canvas={cfg.canvas}
         targetStyles={frame.targetStyles}
         texts={frame.texts}
         panelTween={cfg.tween}

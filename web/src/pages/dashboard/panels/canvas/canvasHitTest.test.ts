@@ -3,6 +3,7 @@
 // 고정하는 계약 여섯:
 //   1) 순회는 **배열 역순**이다 — 뒤가 위이고, 위에 있는 것이 이긴다(AC-01).
 //   2) 판정은 **순방향 투영 후 스테이지 px 공간**에서 이뤄지며 집기 여유는 화면 양이다(AC-02).
+//      투영은 캔버스 크기와 스테이지 크기를 **모두** 쓴다(정수 좌표계).
 //   3) 타원은 **바운딩 박스가 아니라 타원 방정식**으로 잡는다(박스 모서리는 빗나간다).
 //   4) 텍스트 상자의 세로 기준은 `drawElement.TEXT_BASELINE === 'middle'` 이므로
 //      기준점이 상자의 **세로 중심**이다(위험 R8 — 위·아래 경계를 각각 확인한다).
@@ -25,10 +26,16 @@ import type {
   LineGeometry,
   PointGeometry,
 } from './canvasConfig';
-import type { PxPoint, StageSize } from './canvasGeometry';
+import type { CanvasProjection, PxPoint } from './canvasGeometry';
 
-/** 대표 스테이지(800x600). 정규화 좌표가 딱 떨어지는 px 가 되도록 고른 크기다. */
-const STAGE: StageSize = { width: 800, height: 600 };
+/**
+ * 대표 투영 — 500x400 캔버스를 800x600 스테이지에.
+ *
+ * 축척이 **가로 1.6 · 세로 1.5** 로 서로 다른 것이 이 픽스처의 요점이다: 두 축이 같은
+ * 축척이면 축을 뒤바꾼 구현이 시험을 통과한다. 집기 여유(6px)는 두 축 모두 **화면 양**
+ * 이므로 축척과 무관하게 6px 이어야 하며, 아래 경계 시험들이 그것을 고정한다.
+ */
+const PROJ: CanvasProjection = { stage: { width: 800, height: 600 }, canvas: { width: 500, height: 400 } };
 
 /** 판정할 때마다 넘길 빈 실측 폭 표(도형은 폭을 쓰지 않는다). */
 const NO_WIDTHS: Record<string, number> = {};
@@ -62,7 +69,7 @@ function hitOne(
   point: PxPoint,
   widths: Record<string, number> = NO_WIDTHS,
 ): CanvasHit | undefined {
-  return hitTest([el], point, STAGE, widths);
+  return hitTest([el], point, PROJ, widths);
 }
 
 describe('HIT_TOLERANCE_PX', () => {
@@ -73,11 +80,11 @@ describe('HIT_TOLERANCE_PX', () => {
 
 describe('hitTest — 빈 입력과 손상 입력', () => {
   it('요소가 없으면 아무것도 맞지 않는다', () => {
-    expect(hitTest([], at(400, 300), STAGE, NO_WIDTHS)).toBeUndefined();
+    expect(hitTest([], at(400, 300), PROJ, NO_WIDTHS)).toBeUndefined();
   });
 
   it('비유한 포인터 좌표는 판정하지 않는다(NaN 비교가 조용히 빗나가는 것을 막는다)', () => {
-    const el = rect('r', { x: 0, y: 0, w: 1, h: 1 });
+    const el = rect('r', { x: 0, y: 0, w: 500, h: 400 });
     expect(hitOne(el, at(NaN, 300))).toBeUndefined();
     expect(hitOne(el, at(400, NaN))).toBeUndefined();
     expect(hitOne(el, at(Infinity, 300))).toBeUndefined();
@@ -85,7 +92,7 @@ describe('hitTest — 빈 입력과 손상 입력', () => {
   });
 
   it('비유한 기하는 던지지 않고 0 으로 떨어진 자리에서 판정된다', () => {
-    const el = rect('r', { x: NaN, y: 0.5, w: Infinity, h: 0.2 });
+    const el = rect('r', { x: NaN, y: 200, w: Infinity, h: 80 });
     // projectBox 가 비유한 좌표를 0 으로 떨어뜨리므로 상자는 x 0, y 300, w 0, h 120 이다.
     expect(() => hitOne(el, at(0, 300))).not.toThrow();
     expect(hitOne(el, at(0, 300))).toEqual({ nodeId: 'r' });
@@ -93,15 +100,16 @@ describe('hitTest — 빈 입력과 손상 입력', () => {
   });
 
   it('크기가 아직 잡히지 않은 스테이지에서도 원점 둘레의 여유 상자로 잡힌다', () => {
-    const el = rect('r', { x: 0.25, y: 0.25, w: 0.5, h: 0.5 });
-    expect(hitTest([el], at(0, 0), { width: 0, height: 0 }, NO_WIDTHS)).toEqual({ nodeId: 'r' });
-    expect(hitTest([el], at(20, 0), { width: 0, height: 0 }, NO_WIDTHS)).toBeUndefined();
+    const el = rect('r', { x: 125, y: 100, w: 250, h: 200 });
+    const zero: CanvasProjection = { stage: { width: 0, height: 0 }, canvas: PROJ.canvas };
+    expect(hitTest([el], at(0, 0), zero, NO_WIDTHS)).toEqual({ nodeId: 'r' });
+    expect(hitTest([el], at(20, 0), zero, NO_WIDTHS)).toBeUndefined();
   });
 });
 
 describe('hitTest — rect', () => {
-  // 정규화 0.25/0.25/0.5/0.5 → px 200..600 × 150..450. 여유 6px 을 더하면 194..606 × 144..456.
-  const el = rect('r', { x: 0.25, y: 0.25, w: 0.5, h: 0.5 });
+  // 캔버스 125/100/250/200 → px 200..600 × 150..450. 여유 6px 을 더하면 194..606 × 144..456.
+  const el = rect('r', { x: 125, y: 100, w: 250, h: 200 });
 
   it('상자 안을 누르면 맞는다', () => {
     expect(hitOne(el, at(400, 300))).toEqual({ nodeId: 'r' });
@@ -122,14 +130,14 @@ describe('hitTest — rect', () => {
   });
 
   it('음수 크기 상자는 양수 범위로 정규화되어 같은 자리를 잡는다', () => {
-    const flipped = rect('r', { x: 0.75, y: 0.75, w: -0.5, h: -0.5 });
+    const flipped = rect('r', { x: 375, y: 300, w: -250, h: -200 });
     expect(hitOne(flipped, at(400, 300))).toEqual({ nodeId: 'r' });
     expect(hitOne(flipped, at(194, 144))).toEqual({ nodeId: 'r' });
     expect(hitOne(flipped, at(193, 300))).toBeUndefined();
   });
 
   it('폭·높이가 0 인 퇴화 상자도 여유 크기 상자로 잡힌다(화면에서 되살릴 수 있다)', () => {
-    const degenerate = rect('r', { x: 0.5, y: 0.5, w: 0, h: 0 });
+    const degenerate = rect('r', { x: 250, y: 200, w: 0, h: 0 });
     expect(hitOne(degenerate, at(400, 300))).toEqual({ nodeId: 'r' });
     expect(hitOne(degenerate, at(406, 306))).toEqual({ nodeId: 'r' });
     expect(hitOne(degenerate, at(407, 300))).toBeUndefined();
@@ -138,7 +146,7 @@ describe('hitTest — rect', () => {
 
 describe('hitTest — ellipse', () => {
   // px 200..600 × 150..450 → 중심 (400,300), 반지름 200×150. 여유를 더해 206×156.
-  const el = ellipse('e', { x: 0.25, y: 0.25, w: 0.5, h: 0.5 });
+  const el = ellipse('e', { x: 125, y: 100, w: 250, h: 200 });
 
   it('중심을 누르면 맞는다', () => {
     expect(hitOne(el, at(400, 300))).toEqual({ nodeId: 'e' });
@@ -158,13 +166,13 @@ describe('hitTest — ellipse', () => {
   });
 
   it('반지름 하나가 0 인 퇴화 타원은 여유 반지름의 점 판정으로 폴백한다', () => {
-    const flat = ellipse('e', { x: 0.5, y: 0.25, w: 0, h: 0.5 });
+    const flat = ellipse('e', { x: 250, y: 100, w: 0, h: 200 });
     expect(hitOne(flat, at(404, 300))).toEqual({ nodeId: 'e' });
     expect(hitOne(flat, at(408, 300))).toBeUndefined();
   });
 
   it('두 반지름이 모두 0 인 퇴화 타원도 여유 반지름의 점 판정이다', () => {
-    const dot = ellipse('e', { x: 0.5, y: 0.5, w: 0, h: 0 });
+    const dot = ellipse('e', { x: 250, y: 200, w: 0, h: 0 });
     expect(hitOne(dot, at(400, 300))).toEqual({ nodeId: 'e' });
     expect(hitOne(dot, at(404, 300))).toEqual({ nodeId: 'e' });
     expect(hitOne(dot, at(407, 300))).toBeUndefined();
@@ -173,7 +181,7 @@ describe('hitTest — ellipse', () => {
 
 describe('hitTest — line', () => {
   // px (200,300) → (600,300) 인 수평선.
-  const geo: LineGeometry = { x1: 0.25, y1: 0.5, x2: 0.75, y2: 0.5 };
+  const geo: LineGeometry = { x1: 125, y1: 200, x2: 375, y2: 200 };
 
   it('두께가 미지정이면 기본 1px 이고, 임계는 여유 6px 이다(머리카락 선을 누를 수 있다)', () => {
     const el = line('l', geo);
@@ -213,7 +221,7 @@ describe('hitTest — line', () => {
   });
 
   it('두 끝점이 같은 퇴화 선분은 점 판정으로 폴백한다', () => {
-    const el = line('l', { x1: 0.5, y1: 0.5, x2: 0.5, y2: 0.5 });
+    const el = line('l', { x1: 250, y1: 200, x2: 250, y2: 200 });
     expect(hitOne(el, at(400, 300))).toEqual({ nodeId: 'l' });
     expect(hitOne(el, at(400, 305))).toEqual({ nodeId: 'l' });
     expect(hitOne(el, at(400, 310))).toBeUndefined();
@@ -221,7 +229,7 @@ describe('hitTest — line', () => {
 
   it('비스듬한 선도 수직 거리로 판정한다', () => {
     // px (200,150) → (600,450). 방향 (400,300), 길이 500.
-    const el = line('l', { x1: 0.25, y1: 0.25, x2: 0.75, y2: 0.75 });
+    const el = line('l', { x1: 125, y1: 100, x2: 375, y2: 300 });
     expect(hitOne(el, at(400, 300))).toEqual({ nodeId: 'l' });
     // 중점에서 법선 방향(0.6,-0.8)으로 5px → 임계 6px 안.
     expect(hitOne(el, at(403, 296))).toEqual({ nodeId: 'l' });
@@ -232,7 +240,7 @@ describe('hitTest — line', () => {
 
 describe('hitTest — text (세로 기준이 상자의 중심이다)', () => {
   // 기준점 (400,300), 글자 크기 20, 실측 폭 120.
-  const geo: PointGeometry = { x: 0.5, y: 0.5 };
+  const geo: PointGeometry = { x: 250, y: 200 };
   const widths: Record<string, number> = { t: 120 };
 
   it('drawElement 의 기준선은 middle 이다(이 파일의 기대값이 딛고 선 전제)', () => {
@@ -325,54 +333,54 @@ describe('hitTest — text (세로 기준이 상자의 중심이다)', () => {
 });
 
 describe('hitTest — z-order 와 가시성', () => {
-  const lower = rect('a', { x: 0.25, y: 0.25, w: 0.5, h: 0.5 });
-  const upper = rect('b', { x: 0.25, y: 0.25, w: 0.5, h: 0.5 });
+  const lower = rect('a', { x: 125, y: 100, w: 250, h: 200 });
+  const upper = rect('b', { x: 125, y: 100, w: 250, h: 200 });
 
   it('겹친 자리에서는 배열 뒤(=위)에 있는 요소가 이긴다', () => {
-    expect(hitTest([lower, upper], at(400, 300), STAGE, NO_WIDTHS)).toEqual({ nodeId: 'b' });
+    expect(hitTest([lower, upper], at(400, 300), PROJ, NO_WIDTHS)).toEqual({ nodeId: 'b' });
     // 순서를 뒤집으면 승자도 뒤집힌다 — 배열 순서가 유일한 z-order 임을 보인다.
-    expect(hitTest([upper, lower], at(400, 300), STAGE, NO_WIDTHS)).toEqual({ nodeId: 'a' });
+    expect(hitTest([upper, lower], at(400, 300), PROJ, NO_WIDTHS)).toEqual({ nodeId: 'a' });
   });
 
   it('히트 결과는 레코드이며 002 는 partId 를 채우지 않는다(REQ-06)', () => {
-    const hit = hitTest([lower, upper], at(400, 300), STAGE, NO_WIDTHS);
+    const hit = hitTest([lower, upper], at(400, 300), PROJ, NO_WIDTHS);
     expect(hit).toEqual({ nodeId: 'b' });
     expect(hit && 'partId' in hit).toBe(false);
   });
 
   it('visible === false 인 요소는 최상위여도 건너뛴다', () => {
-    const hidden = rect('b', { x: 0.25, y: 0.25, w: 0.5, h: 0.5 }, { visible: false });
-    expect(hitTest([lower, hidden], at(400, 300), STAGE, NO_WIDTHS)).toEqual({ nodeId: 'a' });
+    const hidden = rect('b', { x: 125, y: 100, w: 250, h: 200 }, { visible: false });
+    expect(hitTest([lower, hidden], at(400, 300), PROJ, NO_WIDTHS)).toEqual({ nodeId: 'a' });
   });
 
   it('맞는 요소가 모두 숨겨져 있으면 아무것도 맞지 않는다', () => {
-    const hidden = rect('a', { x: 0, y: 0, w: 1, h: 1 }, { visible: false });
-    expect(hitTest([hidden], at(400, 300), STAGE, NO_WIDTHS)).toBeUndefined();
+    const hidden = rect('a', { x: 0, y: 0, w: 500, h: 400 }, { visible: false });
+    expect(hitTest([hidden], at(400, 300), PROJ, NO_WIDTHS)).toBeUndefined();
   });
 
   it('visible 이 true 이거나 미지정이면 정상 판정된다', () => {
-    const shown = rect('a', { x: 0.25, y: 0.25, w: 0.5, h: 0.5 }, { visible: true });
-    expect(hitTest([shown], at(400, 300), STAGE, NO_WIDTHS)).toEqual({ nodeId: 'a' });
+    const shown = rect('a', { x: 125, y: 100, w: 250, h: 200 }, { visible: true });
+    expect(hitTest([shown], at(400, 300), PROJ, NO_WIDTHS)).toEqual({ nodeId: 'a' });
   });
 });
 
-describe('hitTest — 스테이지 밖 배치(clamp 하지 않는다)', () => {
+describe('hitTest — 캔버스 밖 배치(clamp 하지 않는다)', () => {
   it('음수 좌표에 놓인 요소도 그 자리에서 잡힌다', () => {
-    const el = rect('r', { x: -0.5, y: -0.5, w: 0.2, h: 0.2 });
+    const el = rect('r', { x: -250, y: -200, w: 100, h: 80 });
     // px -400..-240 × -300..-180.
     expect(hitOne(el, at(-300, -200))).toEqual({ nodeId: 'r' });
     expect(hitOne(el, at(0, 0))).toBeUndefined();
   });
 
-  it('1 을 넘는 좌표에 놓인 요소도 그 자리에서 잡힌다', () => {
-    const el = ellipse('e', { x: 1.1, y: 1.1, w: 0.2, h: 0.2 });
+  it('캔버스 크기를 넘는 좌표에 놓인 요소도 그 자리에서 잡힌다', () => {
+    const el = ellipse('e', { x: 550, y: 440, w: 100, h: 80 });
     // px 880..1040 × 660..780 → 중심 (960,720).
     expect(hitOne(el, at(960, 720))).toEqual({ nodeId: 'e' });
     expect(hitOne(el, at(400, 300))).toBeUndefined();
   });
 
-  it('선 끝점이 스테이지 밖으로 나가도 그대로 판정한다', () => {
-    const el = line('l', { x1: -0.5, y1: 0.5, x2: 0.5, y2: 0.5 });
+  it('선 끝점이 캔버스 밖으로 나가도 그대로 판정한다', () => {
+    const el = line('l', { x1: -250, y1: 200, x2: 250, y2: 200 });
     // px (-400,300) → (400,300).
     expect(hitOne(el, at(-200, 300))).toEqual({ nodeId: 'l' });
     expect(hitOne(el, at(-200, 320))).toBeUndefined();
@@ -386,44 +394,47 @@ describe('hitTest — 라벨에는 별도 히트 영역이 없다', () => {
     const el: CanvasElement = {
       id: 'r',
       kind: 'rect',
-      geometry: { x: 0.49, y: 0.49, w: 0.02, h: 0.02 },
+      geometry: { x: 245, y: 196, w: 10, h: 8 },
       style: {},
       text: '아주 긴 라벨 문구가 여기에 붙어 있다',
     };
     const widths: Record<string, number> = { r: 400 };
-    expect(hitTest([el], at(400, 300), STAGE, widths)).toEqual({ nodeId: 'r' });
+    expect(hitTest([el], at(400, 300), PROJ, widths)).toEqual({ nodeId: 'r' });
     // 라벨이 상자였다면 잡혔을 지점(도형 밖).
-    expect(hitTest([el], at(560, 300), STAGE, widths)).toBeUndefined();
+    expect(hitTest([el], at(560, 300), PROJ, widths)).toBeUndefined();
   });
 
   it('라벨이 붙은 선도 선분 둘레에서만 잡힌다', () => {
     const el: CanvasElement = {
       id: 'l',
       kind: 'line',
-      geometry: { x1: 0.25, y1: 0.5, x2: 0.75, y2: 0.5 },
+      geometry: { x1: 125, y1: 200, x2: 375, y2: 200 },
       style: {},
       text: '라벨',
     };
     const widths: Record<string, number> = { l: 200 };
-    expect(hitTest([el], at(400, 300), STAGE, widths)).toEqual({ nodeId: 'l' });
-    expect(hitTest([el], at(400, 340), STAGE, widths)).toBeUndefined();
+    expect(hitTest([el], at(400, 300), PROJ, widths)).toEqual({ nodeId: 'l' });
+    expect(hitTest([el], at(400, 340), PROJ, widths)).toBeUndefined();
   });
 });
 
 describe('hitTest — 순수성', () => {
   it('요소 배열·요소·지점·폭 표를 하나도 바꾸지 않는다', () => {
     const elements: CanvasElement[] = [
-      rect('a', { x: 0.25, y: 0.25, w: 0.5, h: 0.5 }),
-      text('t', { x: 0.5, y: 0.5 }, { fontSize: 20 }),
+      rect('a', { x: 125, y: 100, w: 250, h: 200 }),
+      text('t', { x: 250, y: 200 }, { fontSize: 20 }),
     ];
     const point = at(400, 300);
-    const stage: StageSize = { width: 800, height: 600 };
+    const proj: CanvasProjection = {
+      stage: { width: 800, height: 600 },
+      canvas: { width: 500, height: 400 },
+    };
     const widths: Record<string, number> = { t: 120 };
-    const before = structuredClone({ elements, point, stage, widths });
+    const before = structuredClone({ elements, point, proj, widths });
 
-    expect(hitTest(elements, point, stage, widths)).toEqual({ nodeId: 't' });
+    expect(hitTest(elements, point, proj, widths)).toEqual({ nodeId: 't' });
 
-    expect({ elements, point, stage, widths }).toEqual(before);
+    expect({ elements, point, proj, widths }).toEqual(before);
     // 역순 순회가 원본 배열의 z-order 를 뒤집지 않았는지 따로 못박는다.
     expect(elements.map((el) => el.id)).toEqual(['a', 't']);
   });

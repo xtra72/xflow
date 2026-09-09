@@ -3,7 +3,7 @@
 //
 // 이 컴포넌트가 지는 책임은 셋이며, 셋 다 인수 기준에 묶여 있다.
 //   1) 백킹 버퍼(AC-E5) — 표시 크기·devicePixelRatio 가 바뀌면 버퍼를 다시 잡고 다시 그린다.
-//      정규화 좌표를 새 크기로 재투영하므로 요소는 화면상 같은 상대 위치에 남는다.
+//      캔버스 좌표를 새 크기로 재투영하므로 요소는 화면상 같은 상대 위치에 남는다.
 //   2) 트윈 장부(AC-03) — 요소별 `TweenState` 를 들고, 목표가 바뀌면 **진행 중인 값에서**
 //      다시 트윈한다(retarget). 그래서 값이 튀지 않는다.
 //   3) 루프 규율(AC-E6) — 모든 트윈이 끝난 프레임 뒤에는 다음 프레임을 예약하지 않고
@@ -45,8 +45,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { documentVisibility, type VisibilitySource } from '../charts/visiblePolling';
-import type { CanvasElement, TweenSpec } from './canvasConfig';
-import { computeBackingSize, type StageSize } from './canvasGeometry';
+import type { CanvasElement, CanvasSize, TweenSpec } from './canvasConfig';
+import { computeBackingSize, type CanvasProjection, type StageSize } from './canvasGeometry';
 import type { ResolvedStyle } from './canvasRules';
 import { beginTween, retargetTween, sampleTween, type TweenState } from './canvasTween';
 import { clearSurface, drawElements, type DrawContext2D } from './drawElement';
@@ -81,10 +81,13 @@ const DEFAULT_SCHEDULER: FrameScheduler = {
  */
 export interface CanvasOverlayContext {
   /**
-   * 표면의 `ResizeObserver` 가 잰 스테이지 CSS px 크기. 프레임이 투영에 쓰는 바로 그 값이다
-   * (측정원이 하나다 — AC-E2).
+   * 프레임이 투영에 쓰는 **바로 그 한 벌** — 표면의 `ResizeObserver` 가 잰 스테이지 CSS px
+   * 크기와 config 가 정한 캔버스 단위 크기다(측정원이 하나다 — AC-E2).
+   *
+   * 둘을 묶어 넘기는 것에 뜻이 있다. 정수 좌표계에서 투영은 두 크기를 **모두** 요구하므로,
+   * 하나만 넘기면 받는 쪽이 나머지 하나를 스스로 구하게 되고 그 자리가 곧 두 번째 출처다.
    */
-  stage: StageSize;
+  projection: CanvasProjection;
   /**
    * **직전에 그린 프레임**이 잰 글자 폭(`kind:'text'` 요소 id → CSS px). `drawElements` 가
    * 프레임마다 이미 재던 값을 그대로 흘려보낸 것이라 두 번째 측정원이 아니다.
@@ -99,6 +102,12 @@ export interface CanvasOverlayContext {
 export interface CanvasSurfaceProps {
   /** 배열 순서 = 그리기 순서(뒤가 위). */
   elements: CanvasElement[];
+  /**
+   * 캔버스 좌표계의 크기(정수 단위). 요소 기하가 이 단위로 적혀 있으므로, 투영은 축마다
+   * `스테이지 px / 이 값` 을 곱한다. 값이 바뀌면 같은 요소가 다른 자리에 그려지므로
+   * 프레임을 예약하는 props 축이다(아래 효과의 의존성 목록).
+   */
+  canvas: CanvasSize;
   /** 요소 id → 규칙 평가가 확정한 목표 스타일. 없으면 요소의 기본 스타일을 쓴다. */
   targetStyles: Record<string, ResolvedStyle>;
   /** 요소 id → 토큰 치환이 끝난 문구. 없으면 요소의 기본 문구를 쓴다. */
@@ -152,6 +161,7 @@ function sameStyle(a: ResolvedStyle, b: ResolvedStyle): boolean {
 
 export default function CanvasSurface({
   elements,
+  canvas,
   targetStyles,
   texts,
   panelTween,
@@ -174,6 +184,7 @@ export default function CanvasSurface({
    */
   const latest = useRef({
     elements,
+    canvas,
     targetStyles,
     texts,
     panelTween,
@@ -203,7 +214,16 @@ export default function CanvasSurface({
 
   // props → ref 동기화. 이 훅이 가장 먼저 선언되어 있어야 아래 효과들이 최신값을 본다.
   useEffect(() => {
-    latest.current = { elements, targetStyles, texts, panelTween, background, display, scheduler };
+    latest.current = {
+      elements,
+      canvas,
+      targetStyles,
+      texts,
+      panelTween,
+      background,
+      display,
+      scheduler,
+    };
   });
 
   /**
@@ -262,32 +282,40 @@ export default function CanvasSurface({
    */
   const drawFrame = useCallback(
     (nowMs: number): boolean => {
-      const canvas = canvasRef.current;
-      if (canvas === null) return true;
-      if (ctxRef.current === null) ctxRef.current = canvas.getContext('2d');
+      // 지역 이름이 `canvas` 가 아닌 것에 뜻이 있다 — 이 컴포넌트에는 같은 이름의 prop
+      // (캔버스 **좌표계 크기**)이 있고, 둘이 가려지면 어느 쪽을 쓰는지 읽어서 알 수 없다.
+      const surface = canvasRef.current;
+      if (surface === null) return true;
+      if (ctxRef.current === null) ctxRef.current = surface.getContext('2d');
       const ctx = ctxRef.current;
       if (ctx === null) return true;
 
-      const { display: size, background: bg, texts: labels, elements: els } = latest.current;
+      const {
+        display: size,
+        background: bg,
+        texts: labels,
+        elements: els,
+        canvas: units,
+      } = latest.current;
       const dpr =
         typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
       const backing = computeBackingSize(size.width, size.height, dpr);
       if (backing.width === 0 || backing.height === 0) return true;
 
       // 백킹 버퍼는 값이 바뀔 때만 쓴다 — canvas.width 대입은 표면을 지우는 부수효과가 있다.
-      if (canvas.width !== backing.width) canvas.width = backing.width;
-      if (canvas.height !== backing.height) canvas.height = backing.height;
-      canvas.style.width = `${size.width}px`;
-      canvas.style.height = `${size.height}px`;
+      if (surface.width !== backing.width) surface.width = backing.width;
+      if (surface.height !== backing.height) surface.height = backing.height;
+      surface.style.width = `${size.width}px`;
+      surface.style.height = `${size.height}px`;
 
       const { styles, allDone } = advance(nowMs);
 
       clearSurface(ctx, backing, bg);
-      // 이후 그리기는 CSS px 좌표계에서 이뤄진다(정규화 좌표 × 표시 크기).
+      // 이후 그리기는 CSS px 좌표계에서 이뤄진다(캔버스 좌표 ÷ 캔버스 크기 × 표시 크기).
       ctx.setTransform(backing.scale, 0, 0, backing.scale, 0, 0);
       // 반환값은 이 프레임이 잰 글자 폭이다 — 재는 곳이 늘어난 것이 아니라, 원래 재던
       // 값을 오버레이 쪽으로 흘려보낼 뿐이다(측정은 여전히 프레임당 1회).
-      textWidthsRef.current = drawElements(ctx, els, styles, labels, size);
+      textWidthsRef.current = drawElements(ctx, els, styles, labels, { stage: size, canvas: units });
       return allDone;
     },
     [advance],
@@ -346,7 +374,7 @@ export default function CanvasSurface({
   // 마지막 프레임이 그대로 남는다(AC-E4).
   useEffect(() => {
     scheduleFrame();
-  }, [elements, targetStyles, texts, panelTween, background, display, scheduleFrame]);
+  }, [elements, canvas, targetStyles, texts, panelTween, background, display, scheduleFrame]);
 
   // 언마운트 시 예약된 프레임 정리.
   useEffect(() => cancelFrame, [cancelFrame]);
@@ -368,10 +396,13 @@ export default function CanvasSurface({
         스스로 `absolute inset-0` 을 잡으면 된다. 미지정이면 옵셔널 호출이 인자 평가조차
         건너뛰고 `undefined` 를 렌더하므로 DOM 에 아무것도 더해지지 않는다(AC-E1).
 
-        스테이지는 프레임이 투영에 쓰는 그 state 를 그대로 넘긴다 — 오버레이용 두 번째
-        측정을 만들지 않기 위해서다(AC-E2). 폭은 직전 프레임의 장부다.
+        투영 한 벌은 프레임이 쓰는 그 값들을 그대로 넘긴다 — 오버레이용 두 번째 측정을
+        만들지 않기 위해서다(AC-E2). 폭은 직전 프레임의 장부다.
       */}
-      {overlay?.({ stage: display, textWidths: textWidthsRef.current })}
+      {overlay?.({
+        projection: { stage: display, canvas },
+        textWidths: textWidthsRef.current,
+      })}
     </div>
   );
 }

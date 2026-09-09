@@ -1,8 +1,23 @@
 // 캔버스 패널 config 타입 + 관용 파서 (SPEC-CANVAS-001 T1).
 //
-// 캔버스 패널은 사용자가 저술한 도형 목록(elements)을 정규화(0..1) 스테이지 좌표로
-// 들고 있다가 Canvas 2D 로 그린다. 각 요소는 시리즈에 바인딩되어, 조건 규칙 표
-// (first-match-wins)의 결과로 스타일·문구가 바뀐다(REQ-02/REQ-03/REQ-04).
+// 캔버스 패널은 사용자가 저술한 도형 목록(elements)을 **정수 캔버스 좌표**로 들고 있다가
+// Canvas 2D 로 그린다. 각 요소는 시리즈에 바인딩되어, 조건 규칙 표(first-match-wins)의
+// 결과로 스타일·문구가 바뀐다(REQ-02/REQ-03/REQ-04).
+//
+// ## 좌표계가 정수인 이유 (SPEC-CANVAS-002 0.8.0)
+//
+// 001~002 는 좌표를 정규화(0..1) 분수로 들었다. 그 모델에서 격자는 **백분율**로만 말할 수
+// 있었고, 백분율은 제 축 길이에 대한 값이라 정사각 칸을 얻으려면 세로 백분율을 스테이지
+// 종횡비에서 파생해야 했다 — 1749×796 스테이지에서 그 값은 21.97% 가 되어 마지막 줄이
+// **반 칸**으로 잘렸다. 자투리 칸은 계산 실수가 아니라 그 모델의 필연이었다.
+//
+// 캔버스 크기를 **정수 두 개**(기본 500 × 400)로 정하고 요소 기하를 그 단위의 정수로 두면
+// 자투리가 사라진다: 10 단위 격자는 50 × 40 칸으로 **나머지 없이** 떨어진다. 백분율은
+// 사라지고(화면에 그릴 때만 `step / 캔버스 축 길이 × 100` 으로 한 번 환산된다), 그와 함께
+// 도형 팔레트의 "비율" 어휘도 사라진다.
+//
+// 좌표는 여전히 **clamp 하지 않는다** — 캔버스 밖 저술은 합법이다(가정 A5). 정수인 것과
+// 범위가 있는 것은 다른 축이며, 여기서 죄는 것은 **자릿수뿐**이다.
 //
 // config 는 기존 패널과 동일하게 Go 쪽에서 불투명 JSON 으로 영속되므로 백엔드 변경이
 // 없다. 그래서 스키마가 002/003 을 거치며 자라도 구버전 패널이 깨지지 않으려면 읽기
@@ -39,12 +54,49 @@ export const DEFAULT_TWEEN_DURATION_MS = 300;
 /** 신규 패널의 기본 이징. */
 export const DEFAULT_TWEEN_EASING: TweenEasing = 'ease-out';
 
-/** rect/ellipse 기하가 손상됐을 때 대신 쓰는 좌상단+크기(정규화 0..1). */
-export const DEFAULT_BOX_GEOMETRY: Readonly<BoxGeometry> = { x: 0.1, y: 0.1, w: 0.2, h: 0.2 };
-/** line 기하가 손상됐을 때 대신 쓰는 두 끝점(정규화 0..1). */
-export const DEFAULT_LINE_GEOMETRY: Readonly<LineGeometry> = { x1: 0.1, y1: 0.5, x2: 0.9, y2: 0.5 };
-/** text 기하가 손상됐을 때 대신 쓰는 정렬 기준점(정규화 0..1). */
-export const DEFAULT_POINT_GEOMETRY: Readonly<PointGeometry> = { x: 0.5, y: 0.5 };
+/**
+ * 신규 패널의 캔버스 크기(정수 캔버스 단위).
+ *
+ * 500 × 400 인 것에 두 가지 뜻이 있다. 하나는 **가로가 조금 긴 판**이라 대시보드 패널의
+ * 흔한 모양에 가깝다는 것이고, 다른 하나는 두 축이 **100 의 배수**라는 것이다 — 고를 수
+ * 있는 격자 간격이 모두 100 의 약수이므로(`CANVAS_GRID_STEP_CHOICES`), 기본 크기에서는
+ * 어떤 간격을 골라도 두 축이 나머지 없이 떨어진다.
+ */
+export const DEFAULT_CANVAS_SIZE: Readonly<CanvasSize> = { width: 500, height: 400 };
+
+/**
+ * 캔버스 한 축의 최소 길이(단위). 0 이하는 투영이 성립하지 않는다(0 으로 나눈다).
+ * 파서는 그런 값을 받으면 기본 크기로 떨어뜨린다.
+ */
+export const MIN_CANVAS_DIMENSION = 1;
+
+/**
+ * 캔버스 한 축의 최대 길이(단위). 좌표가 이보다 커진다고 그림이 달라지지는 않지만
+ * (투영은 비율이다), 편집기의 수치 칸이 감당할 자릿수에 상한이 있어야 한다.
+ */
+export const MAX_CANVAS_DIMENSION = 100000;
+
+/**
+ * 도형이 가질 수 있는 **최소 크기**(단위) — 곧 "퇴화" 의 경계다.
+ *
+ * 정수 좌표계에서 폭·높이 0 은 화면에서 사라진다는 뜻이고, 사라진 요소는 사용자가
+ * **찾을 수 없어 고칠 수도 없다**. 그래서 읽는 쪽(파서)은 퇴화 기하를 씨앗 기하로
+ * 대체하고, 쓰는 쪽(`patchNodeGeometry`)은 아예 만들지 않는다. 두 규율이 같은 상수를
+ * 보므로 "읽을 때는 살아나는데 끌면 다시 사라진다" 가 생기지 않는다.
+ */
+export const MIN_ELEMENT_EXTENT = 1;
+
+/**
+ * rect/ellipse 기하가 손상·퇴화했을 때 대신 쓰는 좌상단+크기(정수 캔버스 단위).
+ *
+ * 기본 캔버스(500×400)의 10% 자리에서 20% 크기 — 정규화 시절의 `0.1/0.1/0.2/0.2` 를 그
+ * 크기로 옮겨 적은 값이라 화면에 나타나는 모습이 종전과 같다.
+ */
+export const DEFAULT_BOX_GEOMETRY: Readonly<BoxGeometry> = { x: 50, y: 40, w: 100, h: 80 };
+/** line 기하가 손상·퇴화했을 때 대신 쓰는 두 끝점(정수 캔버스 단위). */
+export const DEFAULT_LINE_GEOMETRY: Readonly<LineGeometry> = { x1: 50, y1: 200, x2: 450, y2: 200 };
+/** text 기하가 손상됐을 때 대신 쓰는 정렬 기준점(정수 캔버스 단위). */
+export const DEFAULT_POINT_GEOMETRY: Readonly<PointGeometry> = { x: 250, y: 200 };
 
 // --- 타입 ---------------------------------------------------------------
 
@@ -66,7 +118,16 @@ export type ElementAlign = 'left' | 'center' | 'right';
 /** 바인딩 집계. 001 은 최신값만 쓴다 — 다른 집계는 후속 SPEC. */
 export type ElementBindingAgg = 'last';
 
-/** rect | ellipse 기하 — 좌상단 + 크기. 모두 정규화(0..1) 스테이지 좌표. */
+/**
+ * 캔버스 좌표계의 크기(정수 단위). 요소 기하는 **이 단위의 정수**이며, 화면 px 로 가는
+ * 길은 `canvasGeometry` 의 투영 하나뿐이다(축마다 `스테이지 px / 캔버스 단위` 를 곱한다).
+ */
+export interface CanvasSize {
+  width: number;
+  height: number;
+}
+
+/** rect | ellipse 기하 — 좌상단 + 크기. 모두 정수 캔버스 좌표. */
 export interface BoxGeometry {
   x: number;
   y: number;
@@ -74,7 +135,7 @@ export interface BoxGeometry {
   h: number;
 }
 
-/** line 기하 — 두 끝점. 모두 정규화(0..1) 스테이지 좌표. */
+/** line 기하 — 두 끝점. 모두 정수 캔버스 좌표. */
 export interface LineGeometry {
   x1: number;
   y1: number;
@@ -82,7 +143,7 @@ export interface LineGeometry {
   y2: number;
 }
 
-/** text 기하 — 정렬 기준점. 정규화(0..1) 스테이지 좌표. */
+/** text 기하 — 정렬 기준점. 정수 캔버스 좌표. */
 export interface PointGeometry {
   x: number;
   y: number;
@@ -211,6 +272,12 @@ export type CanvasElement = RectElement | EllipseElement | LineElement | TextEle
  * `ChartPanelConfigBase` 를 그대로 확장한다(신규 데이터 경로 없음, REQ-03).
  */
 export interface CanvasPanelConfig extends ChartPanelConfigBase {
+  /**
+   * 캔버스 좌표계의 크기(정수 단위). **파싱된 view 에는 언제나 있다** — 투영이 이 값
+   * 없이는 성립하지 않으므로 "미지정" 이라는 상태를 만들지 않는다(결측 config 는 파서가
+   * `DEFAULT_CANVAS_SIZE` 로 채운다).
+   */
+  canvas: CanvasSize;
   /** 캔버스 배경색. 미지정이면 패널 표면색. */
   background?: string;
   /** 패널 기본 트윈. 요소가 덮어쓸 수 있다. */
@@ -236,9 +303,57 @@ function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
-/** 유한 숫자면 그대로, 아니면 폴백. 기하 좌표 보정에 쓴다. */
+/**
+ * 유한 숫자면 **정수로 반올림**해서, 아니면 폴백. 기하 좌표 보정에 쓴다.
+ *
+ * 반올림이 이 함수가 하는 일의 전부다 — **범위는 죄지 않는다**. 캔버스 밖 좌표는 합법인
+ * 저술이며(가정 A5), 잘라내면 사용자 의도가 조용히 바뀐다. 정수화는 그와 다른 축이다:
+ * 좌표계 자체가 정수라 소수 자리는 저장할 곳이 없고, 남겨 두면 격자·붙임·수치 칸이
+ * 저마다 다른 반올림을 하게 된다.
+ */
 function coordinate(v: unknown, fallback: number): number {
-  return isFiniteNumber(v) ? v : fallback;
+  return isFiniteNumber(v) ? Math.round(v) : fallback;
+}
+
+/**
+ * 캔버스 한 축의 길이. 유한 정수 양수만 통과하며, 그 밖은 **기본 크기로 떨어뜨린다**.
+ *
+ * 0 이하를 폴백으로 보내는 것이 요점이다 — 0 축은 투영에서 0 으로 나누는 자리이고,
+ * 그 결과(NaN)는 모든 요소를 화면에서 지운다.
+ */
+function dimension(v: unknown, fallback: number): number {
+  if (!isFiniteNumber(v)) return fallback;
+  const n = Math.round(v);
+  if (n < MIN_CANVAS_DIMENSION) return fallback;
+  return Math.min(n, MAX_CANVAS_DIMENSION);
+}
+
+/**
+ * 캔버스 크기. 결측·손상은 축마다 따로 기본값으로 떨어진다 — 한 축이 깨졌다고 멀쩡한
+ * 다른 축까지 버리면 사용자가 정한 값이 이유 없이 사라진다.
+ */
+export function parseCanvasSize(raw: unknown): CanvasSize {
+  const c = asRecord(raw);
+  return {
+    width: dimension(c.width, DEFAULT_CANVAS_SIZE.width),
+    height: dimension(c.height, DEFAULT_CANVAS_SIZE.height),
+  };
+}
+
+/**
+ * 폭·높이가 화면에서 사라지는 크기인가(퇴화).
+ *
+ * 정수 좌표계에서 0 은 "아주 얇음" 이 아니라 **없음**이다. 음수도 함께 잡는다 — 001 의
+ * 렌더 층은 음수 크기 박스를 견디지만(읽기 경로의 견고성), 그 견고성은 그려질 무언가가
+ * 있을 때의 이야기이고 여기서 걸러지는 것은 애초에 그려지지 않는 값이다.
+ */
+export function isDegenerateBox(g: BoxGeometry): boolean {
+  return !(g.w >= MIN_ELEMENT_EXTENT) || !(g.h >= MIN_ELEMENT_EXTENT);
+}
+
+/** 두 끝점이 같은 선인가(퇴화). 길이 0 선은 어떤 두께로도 그려지지 않는다. */
+export function isDegenerateLine(g: LineGeometry): boolean {
+  return g.x1 === g.x2 && g.y1 === g.y2;
 }
 
 /** 값이 아예 없는가(부재). null 도 부재로 본다 — JSON 왕복에서 흔한 형태다. */
@@ -275,31 +390,49 @@ function optionalOpacity(v: unknown): number | undefined {
  * 좌표 한 칸이 손상됐다고 요소를 버리면 그 요소의 스타일·규칙·바인딩이 저장 왕복
  * 한 번에 사라진다 — 사용자가 되돌릴 수 없는 손실이다. 기본 기하로 대체하면 요소가
  * 화면에 남아 사용자가 보고 고칠 수 있다. 요소를 버리는 것은 **정체성이 없을 때**
- * (id 결측·미지 kind)로 한정한다. 좌표는 0..1 로 clamp 하지 않는다 — 스테이지 밖으로
+ * (id 결측·미지 kind)로 한정한다. 좌표는 캔버스 안으로 clamp 하지 않는다 — 캔버스 밖으로
  * 일부 걸치는 배치도 뜻이 있는 저술이며, 잘라내면 사용자 의도가 조용히 바뀐다.
+ *
+ * ## 퇴화는 필드 폴백만으로 막을 수 없다 (정수 좌표계)
+ *
+ * 필드 폴백은 **결측·비유한**만 잡는다. 정수 좌표계에서는 그 그물을 빠져나가는 두 번째
+ * 경로가 있다: 값이 멀쩡한 숫자인데 **반올림하면 0 이 되는** 경우다. 옛 0..1 좌표가 정확히
+ * 그렇다 — `Math.round(0.2)` 는 0 이므로 옛 사각형은 크기 0 짜리 **보이지 않는** 요소가
+ * 된다. 자리가 틀린 요소는 사용자가 찾아서 고칠 수 있지만 보이지 않는 요소는 그럴 수
+ * 없으므로, 보이지 않는 편이 더 나쁘다. 그래서 반올림 **뒤에** 한 번 더 보고, 퇴화했으면
+ * 기하 전체를 씨앗 기하로 바꾼다(필드 하나만 고치면 나머지 옛 값과 뒤섞여 아무 데도 아닌
+ * 자리가 나온다).
  */
 function parseBoxGeometry(raw: unknown): BoxGeometry {
   const g = asRecord(raw);
-  return {
+  const box: BoxGeometry = {
     x: coordinate(g.x, DEFAULT_BOX_GEOMETRY.x),
     y: coordinate(g.y, DEFAULT_BOX_GEOMETRY.y),
     w: coordinate(g.w, DEFAULT_BOX_GEOMETRY.w),
     h: coordinate(g.h, DEFAULT_BOX_GEOMETRY.h),
   };
+  return isDegenerateBox(box) ? { ...DEFAULT_BOX_GEOMETRY } : box;
 }
 
-/** line 기하. 손상 필드는 기본 끝점으로 대체한다(위 정책 동일). */
+/** line 기하. 손상 필드는 기본 끝점으로, 길이 0 은 기본 선으로 대체한다(위 정책 동일). */
 function parseLineGeometry(raw: unknown): LineGeometry {
   const g = asRecord(raw);
-  return {
+  const line: LineGeometry = {
     x1: coordinate(g.x1, DEFAULT_LINE_GEOMETRY.x1),
     y1: coordinate(g.y1, DEFAULT_LINE_GEOMETRY.y1),
     x2: coordinate(g.x2, DEFAULT_LINE_GEOMETRY.x2),
     y2: coordinate(g.y2, DEFAULT_LINE_GEOMETRY.y2),
   };
+  return isDegenerateLine(line) ? { ...DEFAULT_LINE_GEOMETRY } : line;
 }
 
-/** text 기하. 손상 필드는 기본 기준점으로 대체한다(위 정책 동일). */
+/**
+ * text 기하. 손상 필드는 기본 기준점으로 대체한다(위 정책 동일).
+ *
+ * **퇴화 검사가 없는 것이 옳다** — 기준점에는 크기가 없어 0 이 될 수 있는 넓이가 없다.
+ * 옛 0..1 좌표는 여기서 캔버스의 왼쪽 위 모서리 근처(0 또는 1 단위)로 반올림되는데,
+ * 그것은 자리가 틀린 것이지 사라진 것이 아니므로 사용자가 보고 고칠 수 있다.
+ */
 function parsePointGeometry(raw: unknown): PointGeometry {
   const g = asRecord(raw);
   return {
@@ -513,6 +646,7 @@ export function buildDefaultCanvasConfig(): CanvasPanelConfig {
     channel_name: '',
     data_source: 'store',
     store_source: buildDefaultStoreSource(),
+    canvas: { ...DEFAULT_CANVAS_SIZE },
     tween: { duration_ms: DEFAULT_TWEEN_DURATION_MS, easing: DEFAULT_TWEEN_EASING },
     elements: [],
   };
@@ -549,6 +683,9 @@ export function parseCanvasConfig(raw: unknown): CanvasPanelConfig {
       : {}),
     ...(background !== undefined ? { background } : {}),
     ...(tween !== undefined ? { tween } : {}),
+    // 크기는 **언제나** 있다(위 `CanvasPanelConfig.canvas` 주석) — 옵셔널로 두면 투영하는
+    // 자리마다 "없으면 기본" 을 적게 되고, 그중 하나가 다른 기본을 적는 순간 갈라진다.
+    canvas: parseCanvasSize(cfg.canvas),
     elements: parseElements(cfg.elements),
   };
 }
