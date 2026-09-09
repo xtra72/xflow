@@ -20,8 +20,12 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_CANVAS_SIZE, type BoxGeometry, type CanvasElement, type CanvasSize } from './canvasConfig';
 import {
   CANVAS_GRID_STEP_CHOICES,
+  CANVAS_GRID_STEP_MAX,
+  CANVAS_GRID_STEP_MIN,
   CANVAS_GRID_STEP_UNITS,
   alignDeltas,
+  clampGridStep,
+  gridDividesCanvas,
   bringToFront,
   moveElementTo,
   sendToBack,
@@ -420,5 +424,90 @@ describe('맨 앞·맨 뒤로 보내기는 무리의 상대 순서를 보존한�
   it('선택에 없는 id 가 섞여 있어도 있는 것만 옮긴다', () => {
     expect(ids(bringToFront(four, new Set(['a', 'zzz'])))).toEqual(['b', 'c', 'd', 'a']);
     expect(ids(sendToBack(four, new Set(['d', 'zzz'])))).toEqual(['d', 'a', 'b', 'c']);
+  });
+});
+
+// --- 자유 간격의 난간과 그 대가 (0.11.0) ---------------------------------
+//
+// 목록 넷이 지키던 성질("두 축이 나머지 없이 떨어진다")은 **기본 캔버스에 한해서만** 참인
+// 성질이었다. 자유 입력을 열면서 그 성질은 보장이 아니라 **고지의 대상**이 되었고, 이 절이
+// 재는 것은 그 둘이다: 난간이 실제로 막는가(`clampGridStep`), 그리고 자투리를 정확히
+// 판별하는가(`gridDividesCanvas`).
+
+describe('격자 간격의 난간 — 자유 입력이 통과시키는 것과 막는 것', () => {
+  it('범위 안의 정수는 그대로 지난다', () => {
+    for (const step of [1, 7, 25, 137, 1000]) {
+      expect(clampGridStep(step, CANVAS_GRID_STEP_UNITS)).toBe(step);
+    }
+  });
+
+  it('범위 밖은 가까운 난간으로 죈다', () => {
+    expect(clampGridStep(0, 25)).toBe(CANVAS_GRID_STEP_MIN);
+    expect(clampGridStep(-40, 25)).toBe(CANVAS_GRID_STEP_MIN);
+    expect(clampGridStep(CANVAS_GRID_STEP_MAX + 1, 25)).toBe(CANVAS_GRID_STEP_MAX);
+    expect(clampGridStep(1e9, 25)).toBe(CANVAS_GRID_STEP_MAX);
+  });
+
+  it('소수는 정수로 내린다 — 좌표계가 정수이므로 간격도 정수여야 눈금이 정수에 앉는다', () => {
+    expect(clampGridStep(12.9, 25)).toBe(12);
+  });
+
+  it('읽을 수 없는 입력에는 옛 값을 지킨다 (빈 칸 · 공백 · 글자 · NaN)', () => {
+    // `Number('')` 이 0 이라는 사실이 이 시험의 존재 이유다 — 0 으로 떨어뜨리면 사용자가
+    // 한 글자를 지우는 순간 격자가 1 단위로 무너진다.
+    expect(clampGridStep('', 25)).toBe(25);
+    expect(clampGridStep('   ', 25)).toBe(25);
+    expect(clampGridStep('abc', 25)).toBe(25);
+    expect(clampGridStep(Number.NaN, 25)).toBe(25);
+    expect(clampGridStep(Number.POSITIVE_INFINITY, 25)).toBe(25);
+  });
+
+  it('문자열 숫자도 같은 규칙으로 읽는다 — 부르는 쪽이 손수 거를 자리를 남기지 않는다', () => {
+    expect(clampGridStep('7', 25)).toBe(7);
+    expect(clampGridStep('0', 25)).toBe(CANVAS_GRID_STEP_MIN);
+  });
+
+  it('난간은 하한이 1 · 상한이 1000 이다', () => {
+    expect(CANVAS_GRID_STEP_MIN).toBe(1);
+    expect(CANVAS_GRID_STEP_MAX).toBe(1000);
+    expect(Number.isInteger(CANVAS_GRID_STEP_MIN)).toBe(true);
+    expect(Number.isInteger(CANVAS_GRID_STEP_MAX)).toBe(true);
+  });
+
+  it('기본값과 제안값 넷은 모두 난간 안에 있다 — 난간이 제 기본값을 막으면 안 된다', () => {
+    for (const step of [CANVAS_GRID_STEP_UNITS, ...CANVAS_GRID_STEP_CHOICES]) {
+      expect(clampGridStep(step, CANVAS_GRID_STEP_UNITS)).toBe(step);
+    }
+  });
+});
+
+describe('자투리 판별 — 자유 입력이 새로 지는 고지의 근거', () => {
+  it('두 축을 모두 나누면 참이다', () => {
+    expect(gridDividesCanvas(25, CANVAS)).toBe(true);
+    expect(gridDividesCanvas(10, CANVAS)).toBe(true);
+  });
+
+  it('한 축만 나누어도 거짓이다 — 자투리는 한 축에만 생겨도 눈에 보인다', () => {
+    // 500 % 100 === 0 이지만 400 % 100 === 0 이므로 둘 다 나눈다. 250 은 가로만 나눈다.
+    expect(CANVAS.width % 250).toBe(0);
+    expect(CANVAS.height % 250).not.toBe(0);
+    expect(gridDividesCanvas(250, CANVAS)).toBe(false);
+  });
+
+  it('어느 축도 나누지 못하면 거짓이다', () => {
+    expect(gridDividesCanvas(7, CANVAS)).toBe(false);
+  });
+
+  it('캔버스를 바꾸면 제안값 넷도 자투리를 낼 수 있다 — 넷은 보장이 아니라 곁들이다', () => {
+    // 640 % 25 === 15 — 흔한 화면비 하나만 잡아도 제안값이 자투리를 낸다.
+    const odd: CanvasSize = { width: 640, height: 480 };
+    expect(gridDividesCanvas(25, odd)).toBe(false);
+    expect(gridDividesCanvas(10, odd)).toBe(true);
+  });
+
+  it('잴 수 없는 값에서는 거짓이다 — 알 수 없으면 고지하는 편이 안전하다', () => {
+    expect(gridDividesCanvas(0, CANVAS)).toBe(false);
+    expect(gridDividesCanvas(Number.NaN, CANVAS)).toBe(false);
+    expect(gridDividesCanvas(25, { width: Number.NaN, height: 400 })).toBe(false);
   });
 });

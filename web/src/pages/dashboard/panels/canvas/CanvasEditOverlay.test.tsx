@@ -762,6 +762,8 @@ import enMessages from '@/lib/i18n/en.json';
 import type { LineGeometry, PointGeometry } from './canvasConfig';
 import {
   CANVAS_GRID_STEP_CHOICES,
+  CANVAS_GRID_STEP_MAX,
+  CANVAS_GRID_STEP_MIN,
   CANVAS_GRID_STEP_UNITS,
 } from './canvasEditArrange';
 import {
@@ -1721,9 +1723,12 @@ describe('격자 붙임 — 토글 하나가 표시와 붙임을 함께 켠다 (
 // 보는 자리는 인라인 `style` 로 들어가는 `background-image` 뿐이며, 그것은 이 컴포넌트가
 // 실제로 쓴 값 그대로다.)
 
-/** 격자 간격 고르개. */
-function gridStepSelect(): HTMLSelectElement {
-  return screen.getByTestId('canvas-grid-step') as HTMLSelectElement;
+/**
+ * 격자 간격 칸. 0.11.0 에서 목록(`<select>`)이 자유 입력(`<input type="number">`)이 되었다 —
+ * 재는 것(값 · 잠김 · 바꾸면 그림과 붙임이 따라오는가)은 그대로이므로 픽스처만 갈아탄다.
+ */
+function gridStepSelect(): HTMLInputElement {
+  return screen.getByTestId('canvas-grid-step') as HTMLInputElement;
 }
 
 /** 격자 간격을 고른다(정수 캔버스 단위). */
@@ -1786,11 +1791,68 @@ describe('격자 간격 — 고른 값 하나가 그림과 붙임을 함께 정�
     expect(gridImage()).not.toContain('%');
   });
 
-  it('고를 수 있는 값은 canvasEditArrange 가 소유한 목록 그대로다', () => {
+  it('제안값은 canvasEditArrange 가 소유한 목록 그대로다', () => {
+    // 0.11.0: 목록은 **고를 수 있는 값의 전부**에서 **곁들이는 제안**으로 격이 바뀌었다.
+    // 재는 것은 그대로다 — 그 넷을 화면이 실제로 내놓는가, 그리고 그 출처가 여전히
+    // `canvasEditArrange` 한 곳인가.
     render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={vi.fn()} />);
 
-    const values = [...gridStepSelect().options].map((o) => o.value);
+    const list = screen.getByTestId('canvas-grid-step-suggestions');
+    const values = [...list.querySelectorAll('option')].map((o) => o.value);
     expect(values).toEqual(CANVAS_GRID_STEP_CHOICES.map(String));
+    // 칸이 그 목록을 실제로 가리킨다 — 이어져 있지 않으면 제안은 화면에 뜨지 않는다.
+    expect(gridStepSelect().getAttribute('list')).toBe(list.id);
+  });
+
+  it('목록 밖의 정수도 그대로 받는다 — 목록은 이제 난간이 아니다', () => {
+    renderGridHarness();
+    fireEvent.click(gridToggle());
+
+    // 7 은 목록에 없고 캔버스 두 축(500 × 400)을 나누지도 못한다. 그래도 값은 그대로 선다.
+    pickGridStep(7);
+    expect(gridStepSelect().value).toBe('7');
+  });
+
+  it('난간 밖의 입력은 범위 안으로 죈다 (0 · 음수 · 천문학적 수)', () => {
+    renderGridHarness();
+    fireEvent.click(gridToggle());
+
+    pickGridStep(0);
+    expect(gridStepSelect().value).toBe(String(CANVAS_GRID_STEP_MIN));
+    pickGridStep(-40);
+    expect(gridStepSelect().value).toBe(String(CANVAS_GRID_STEP_MIN));
+    pickGridStep(999999);
+    expect(gridStepSelect().value).toBe(String(CANVAS_GRID_STEP_MAX));
+    // 화면도 같은 수를 적어 둔다 — 죄는 것을 조용히 하려면 난간이 보여야 한다.
+    expect(gridStepSelect().getAttribute('min')).toBe(String(CANVAS_GRID_STEP_MIN));
+    expect(gridStepSelect().getAttribute('max')).toBe(String(CANVAS_GRID_STEP_MAX));
+  });
+
+  it('읽을 수 없는 입력은 옛 값을 지킨다 — 한 글자를 지우는 도중은 잘못된 상태가 아니다', () => {
+    renderGridHarness();
+    fireEvent.click(gridToggle());
+    pickGridStep(20);
+
+    fireEvent.change(gridStepSelect(), { target: { value: '' } });
+    expect(gridStepSelect().value).toBe('20');
+  });
+
+  it('나누어떨어지지 않는 값에는 `?` 고지가 붙고, 떨어지면 사라진다', () => {
+    renderGridHarness();
+    fireEvent.click(gridToggle());
+
+    // 25 는 기본 캔버스(500 × 400)의 두 축을 모두 나눈다 — 자투리가 없다.
+    expect(screen.queryByTestId('canvas-grid-step-partial')).toBeNull();
+
+    pickGridStep(7);
+    const hint = screen.getByTestId('canvas-grid-step-partial');
+    // 고지는 **읽히도록** 붙는다 — 눈으로 보는 사람에게는 `?`, 보조기기에게는 이 연결이다.
+    // (문구에 실제 수가 들어가는지는 `CanvasEditDock.gridStep.test.tsx` 가 본다 — 이 파일의
+    // i18n 은 키를 그대로 돌려주므로 자리표시자가 채워지지 않는다.)
+    expect(gridStepSelect().getAttribute('aria-describedby')).toBe(hint.id);
+
+    pickGridStep(50);
+    expect(screen.queryByTestId('canvas-grid-step-partial')).toBeNull();
   });
 
   it('격자가 꺼져 있으면 고르개도 꺼진다 — 눌러도 화면이 그대로인 컨트롤은 고장으로 보인다', () => {

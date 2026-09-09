@@ -1124,7 +1124,8 @@
           "eq": "Equals",
           "ne": "Not equal"
         }
-      }
+      },
+      "previewPanAria": "Pan preview — drag or use arrow keys"
     },
     "heatmap": {
       "stagePlaceholder": "Heatmap rendering coming soon (MVP)",
@@ -1182,7 +1183,8 @@
         "dockShapes": "Shapes",
         "dockGrid": "Grid",
         "dockAlign": "Align",
-        "dockOrder": "Order"
+        "dockOrder": "Order",
+        "gridStepPartial": "A {width} x {height} canvas is not divisible by a spacing of {step}, so the last cell is clipped. Grid, snapping and Shift+arrow still work in {step}-unit steps. Enter a value that divides both axes to fill the canvas evenly."
       },
       "elements": {
         "orderHint": "Elements lower in the list are drawn on top. Moving up/down is the draw order.",

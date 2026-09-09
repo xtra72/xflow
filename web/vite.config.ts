@@ -56,6 +56,9 @@ export default defineConfig({
         'src/pages/dashboard/usePanelElementEdit.tsx',
         'src/pages/dashboard/panelEditContext.ts',
         'src/pages/dashboard/previewStage.ts',
+        // SPEC-CANVAS-002 — 미리보기 이동(팬). `previewStage.ts` 의 이웃이며, 위 주석과
+        // 같은 이유로 여기 적는다(명시 허용목록이라 적지 않으면 조용히 0% 로 빠진다).
+        'src/pages/dashboard/previewPan.ts',
         'src/pages/dashboard/previewGridSize.ts',
         'src/pages/dashboard/StatElementStylePopover.tsx',
         'src/pages/dashboard/textStyleFields.tsx',

@@ -1124,7 +1124,8 @@
           "eq": "같음",
           "ne": "다름"
         }
-      }
+      },
+      "previewPanAria": "미리보기 이동 — 끌거나 방향키로 옮깁니다"
     },
     "heatmap": {
       "stagePlaceholder": "히트맵 렌더 준비 중 (MVP)",
@@ -1182,7 +1183,8 @@
         "dockShapes": "도형",
         "dockGrid": "격자",
         "dockAlign": "정렬",
-        "dockOrder": "순서"
+        "dockOrder": "순서",
+        "gridStepPartial": "캔버스 {width} × {height} 는 간격 {step} 로 나누어떨어지지 않아 마지막 칸이 잘립니다. 격자 · 붙임 · Shift+방향키는 그대로 {step} 단위로 동작합니다. 두 축을 나누어떨어뜨리는 값을 적으면 칸이 고르게 채워집니다."
       },
       "elements": {
         "orderHint": "목록에서 아래에 있는 요소가 위에 그려집니다. 위/아래 이동이 곧 앞뒤 순서입니다.",

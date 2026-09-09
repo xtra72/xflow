@@ -149,6 +149,7 @@ import {
 } from './panels/PropertiesGridPanel';
 import { renderDashboardPanel } from './renderDashboardPanel';
 import { computeFitScale, computePreviewStage, initialPreviewZoom } from './previewStage';
+import { panTransform, usePreviewPan } from './previewPan';
 import { PanelGridBackdrop } from './PanelGridBackdrop';
 import {
   AGENT_BADGES,
@@ -811,6 +812,30 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     },
     [zoomIn, zoomOut],
   );
+
+  // 미리보기 스테이지 — 패널을 대시보드에서의 실제 픽셀 크기로 렌더한 뒤 통째로
+  // 축소한다. 미리보기 크기에 맞춰 다시 레이아웃하면 반응형 재배치가 일어나
+  // 대시보드와 다른 화면이 되기 때문이다(previewStage.ts 주석 참조).
+  //
+  // 조기 반환(`if (!panel) return null`)보다 **위**에 있다 — 바로 아래 팬 훅이 이 값을
+  // 쓰는데, 훅이 조기 반환 아래에 서면 패널이 생겼다 사라질 때 훅 개수가 달라진다.
+  const previewStage = computePreviewStage({
+    w: effectiveSize?.w ?? 0,
+    h: effectiveSize?.h ?? 0,
+    cell: gridCell,
+    areaW: fitSize.w,
+    areaH: fitSize.h,
+    mode: previewFillMode,
+    zoom: previewZoom,
+  });
+  const previewBox =
+    previewStage !== null ? { w: previewStage.screenW, h: previewStage.screenH } : null;
+
+  // 미리보기 이동(팬) — 확대해서 영역보다 커진 그림의 가장자리에 닿는 유일한 길이다
+  // (`previewPan.ts` §왜 이 층에 있는가). 넘치지 않으면 이 한 벌은 통째로 잠들어 있다.
+  const previewPan = usePreviewPan(previewBox, fitSize, {
+    surfaceAria: t('dashboard.settings.previewPanAria'),
+  });
 
   // 2경계 비율(옵션 컬럼 폭 + 미리보기 높이 비율) — 패널별 localStorage 영속/복원 (T2/T3).
   // 손상/부재 값은 기본 비율로 폴백한다(usePanelSettingsRatio 내부, AC-03 edge).
@@ -1553,21 +1578,6 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   /** 모든 미리보기는 스테이지 상자를 그대로 채운다 — 사이징 정본은 스테이지 한 곳이다. */
   const PREVIEW_CHILD_STYLE: React.CSSProperties = { width: '100%', height: '100%' };
 
-  // 미리보기 스테이지 — 패널을 대시보드에서의 실제 픽셀 크기로 렌더한 뒤 통째로
-  // 축소한다. 미리보기 크기에 맞춰 다시 레이아웃하면 반응형 재배치가 일어나
-  // 대시보드와 다른 화면이 되기 때문이다(previewStage.ts 주석 참조).
-  const previewStage = computePreviewStage({
-    w: effectiveSize?.w ?? 0,
-    h: effectiveSize?.h ?? 0,
-    cell: gridCell,
-    areaW: fitSize.w,
-    areaH: fitSize.h,
-    mode: previewFillMode,
-    zoom: previewZoom,
-  });
-  const previewBox =
-    previewStage !== null ? { w: previewStage.screenW, h: previewStage.screenH } : null;
-
   const previewSlot = (
     // fit 컨테이너: 남은 미리보기 영역을 세로로 가득(min-h-0 flex-1) 차지하고 자식을 양축
     // 가운데 정렬한다. ref 로 실측하여 fit 모드가 종횡비 보존 contain 을 결정론적으로 계산한다.
@@ -1578,7 +1588,13 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     <CanvasEditDockRegion enabled={panel.type === 'canvas'}>
     <div
       ref={setFitContainer}
-      className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden"
+      // 팬 표면 — 확대해 넘친 그림을 끌어 옮긴다(`previewPan.ts`). 조작 규칙 전부가 그
+      // 훅 안에 있으므로 여기서는 **펼치기만** 한다(위험 R5: 이 파일은 8천 줄이다).
+      {...previewPan.surfaceProps}
+      className={cn(
+        'relative flex min-h-0 flex-1 items-center justify-center overflow-hidden',
+        previewPan.cursorClass,
+      )}
     >
       {/* 실제 패널처럼 크기를 조절한다. 그리드(칼럼 수·셀·마진)와 가이드 라인 표시는
           현재 대시보드 설정을 그대로 쓴다. 레이아웃이 없는 패널(대시보드 미배치)은
@@ -1610,6 +1626,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
           cellH={previewStage.cellH}
           gapX={previewStage.gapX}
           gapY={previewStage.gapY}
+          // 격자는 패널이 **놓인 칸**을 그린다 — 패널을 끌어 옮기면 그 칸도 함께 간다.
+          // 따라가지 않으면 칸 경계가 패널 모서리에서 어긋나 격자가 거짓말을 한다.
+          offsetX={previewPan.offset.x}
+          offsetY={previewPan.offset.y}
         />
       )}
 
@@ -1628,7 +1648,15 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             ? {
                 width: `${previewStage.pxW}px`,
                 height: `${previewStage.pxH}px`,
-                transform: `scale(${previewStage.scaleX}, ${previewStage.scaleY})`,
+                // 평행이동이 배율 **바깥**이라 이동량은 화면 px 그대로다. 그리고 그것이
+                // 캔버스 포인터 환산에 보정을 하나도 요구하지 않는 이유다 —
+                // `getBoundingClientRect()` 의 left/top 이 이미 이 이동을 품고 있고
+                // width/height 는 평행이동으로 달라지지 않는다(`previewPan.ts` §좌표 보정).
+                transform: panTransform(
+                  previewPan.offset,
+                  previewStage.scaleX,
+                  previewStage.scaleY,
+                ),
                 transformOrigin: 'center',
               }
             : previewFillMode === 'fill'

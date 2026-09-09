@@ -56,11 +56,20 @@ import {
   Type,
 } from 'lucide-react';
 
+import { FieldHelp } from '@/components/property/FieldHelp';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
-import { type CanvasElementKind } from './canvasConfig';
-import { CANVAS_GRID_STEP_CHOICES, type AlignAxis, type AlignMode } from './canvasEditArrange';
+import { type CanvasElementKind, type CanvasSize } from './canvasConfig';
+import {
+  CANVAS_GRID_STEP_CHOICES,
+  CANVAS_GRID_STEP_MAX,
+  CANVAS_GRID_STEP_MIN,
+  clampGridStep,
+  gridDividesCanvas,
+  type AlignAxis,
+  type AlignMode,
+} from './canvasEditArrange';
 import { CanvasEditDockHostContext } from './canvasEditDockHost';
 
 // --- 겉모습 --------------------------------------------------------------
@@ -106,7 +115,7 @@ const DISABLED_CLASS = 'disabled:pointer-events-none disabled:opacity-40';
 /** 묶음 제목. 본문(12px)보다 한 눈금 작은 곁들이 글자다 — 주변 설정 절과 같은 눈금이다. */
 const SECTION_TITLE_CLASS = 'px-1 pb-1 text-[11px] font-medium text-(--color-text-muted)';
 
-/** 격자 간격 고르개. 줄 버튼과 같은 폭·같은 글자 크기라 한 묶음으로 읽힌다. */
+/** 격자 간격 칸. 줄 버튼과 같은 폭·같은 글자 크기라 한 묶음으로 읽힌다. */
 const SELECT_CLASS =
   'w-full rounded border border-(--color-border-default) bg-transparent px-2 py-1 text-xs ' +
   'tabular-nums text-(--color-text-secondary) focus:outline-none focus:ring-2 focus:ring-blue-300 ' +
@@ -276,6 +285,14 @@ export interface CanvasEditDockBodyProps {
   /** 격자 간격(정수 캔버스 단위). 그림·붙임·Shift 한 칸이 **같은 값 하나**를 본다. */
   gridStep: number;
   onGridStepChange: (next: number) => void;
+  /**
+   * 캔버스 좌표계 크기 — **자투리 고지에만** 쓴다.
+   *
+   * 간격이 이 두 축을 나누어떨어뜨리는지가 "마지막 칸이 잘리는가" 를 정하고, 그것을 화면이
+   * 미리 말하는 것이 자유 입력의 대가다(§격자 간격). 그리는 일에는 쓰지 않는다 — 그것은
+   * 여전히 표면의 몫이다.
+   */
+  canvas: CanvasSize;
   /** 맞출 상대가 있는가(2개 이상). */
   canAlign: boolean;
   /** 순서를 옮길 것이 있는가(1개 이상). */
@@ -300,6 +317,7 @@ export function CanvasEditDockBody({
   onSnapToGridChange,
   gridStep,
   onGridStepChange,
+  canvas,
   canAlign,
   canOrder,
   onAlign,
@@ -311,6 +329,11 @@ export function CanvasEditDockBody({
   const gridId = useId();
   const alignId = useId();
   const orderId = useId();
+  const suggestId = useId();
+  const partialId = useId();
+
+  /** 지금 간격이 캔버스 두 축을 나누어떨어뜨리지 못하는가 — 마지막 칸이 반 칸이 된다. */
+  const partialCell = !gridDividesCanvas(gridStep, canvas);
 
   return (
     <div
@@ -364,34 +387,69 @@ export function CanvasEditDockBody({
           <Grid3x3 className={ICON_CLASS} aria-hidden="true" />
           <span>{t('dashboard.canvas.edit.gridSnap')}</span>
         </button>
-        {/* 격자 간격 — 고른 값 하나가 **그려지는 격자 · 붙는 눈금 · Shift+방향키 한 칸**을
-            함께 정한다. 단위는 **캔버스 좌표 그대로**다: 500 폭 캔버스에 25 를 고르면 가로
+        {/* 격자 간격 — 적은 값 하나가 **그려지는 격자 · 붙는 눈금 · Shift+방향키 한 칸**을
+            함께 정한다. 단위는 **캔버스 좌표 그대로**다: 500 폭 캔버스에 25 를 적으면 가로
             스무 칸이며, 패널을 어떻게 늘여도 그 칸 수는 변하지 않는다(옛 백분율 간격은
             스테이지 종횡비에 따라 세로에 반 칸짜리 자투리를 남겼다).
 
-            자유 입력이 아니라 목록인 이유: 임의의 수를 받으면 캔버스 축을 나누어떨어지지
-            않는 간격(예: 7)이 들어와 마지막 칸이 잘리고, 그 잘린 칸에도 붙기 때문에 "왜
-            저기 붙지" 가 된다. 고를 수 있는 값은 `canvasEditArrange` 가 소유한다.
+            목록이 아니라 자유 입력인 이유(0.11.0): 목록 넷을 고른 근거는 "넷 다 기본
+            캔버스의 두 축을 나누어떨어뜨린다" 였는데, 그 성질은 **기본 캔버스에 한해서만**
+            참이다. 캔버스를 640 × 480 으로 잡는 순간 25 도 자투리를 내므로, 목록은 지키려던
+            것을 지키지 못한 채 고를 자유만 빼앗는다. 그래서 정수 하나를 받고, 넷은
+            `<datalist>` 제안으로 남긴다 — 빈 칸 앞에서 "몇을 적지" 를 묻지 않아도 된다.
+
+            나누어떨어지지 않는 값의 대가는 **숨기지 않고 말한다** — 옆의 `?` 가 그 일을 하며
+            (아래 `FieldHelp`), 그것이 자유를 연 대가로 이 컨트롤이 새로 지는 몫이다.
+
+            **지역 상태를 두지 않는다**(이 컴포넌트의 규율). 한 글자마다 죄되, 읽을 수 없는
+            입력(빈 칸 · 글자)에는 `clampGridStep` 이 옛 값을 그대로 돌려주므로 지우는 도중에
+            격자가 무너지지 않는다.
 
             격자가 꺼져 있으면 끈다 — 눌러도 화면이 그대로인 컨트롤은 고장으로 보인다
             (정렬 버튼이 같은 이유로 같은 일을 한다). */}
-        <select
-          data-testid="canvas-grid-step"
-          aria-label={t('dashboard.canvas.edit.gridStep')}
-          title={t('dashboard.canvas.edit.gridStep')}
-          disabled={!snapToGrid}
-          value={gridStep}
-          onChange={(event) => onGridStepChange(Number(event.target.value))}
-          className={SELECT_CLASS}
-        >
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            inputMode="numeric"
+            data-testid="canvas-grid-step"
+            aria-label={t('dashboard.canvas.edit.gridStep')}
+            title={t('dashboard.canvas.edit.gridStep')}
+            aria-describedby={partialCell ? partialId : undefined}
+            list={suggestId}
+            min={CANVAS_GRID_STEP_MIN}
+            max={CANVAS_GRID_STEP_MAX}
+            step={1}
+            disabled={!snapToGrid}
+            value={gridStep}
+            onChange={(event) => onGridStepChange(clampGridStep(event.target.value, gridStep))}
+            className={cn(SELECT_CLASS, 'flex-1')}
+          />
+          {/* 자투리 고지 — **나누어떨어지지 않을 때만** 뜬다. 늘 떠 있으면 경고가 배경이 되어
+              아무도 읽지 않고, 뜨고 지는 것 자체가 "지금 이 조합이 그렇다" 를 말한다. */}
+          {partialCell && (
+            <FieldHelp
+              // `replaceAll` 이어야 한다 — 문구는 간격을 두 번 말한다("{step} 로 나누어
+              // 떨어지지 않아… 그대로 {step} 단위로 동작합니다"). `replace` 는 첫 자리만
+              // 바꾸므로 뒤쪽에 `{step}` 이 벌거벗은 채 남는다.
+              text={t('dashboard.canvas.edit.gridStepPartial')
+                .replaceAll('{step}', String(gridStep))
+                .replaceAll('{width}', String(canvas.width))
+                .replaceAll('{height}', String(canvas.height))}
+              describedById={partialId}
+              testId="canvas-grid-step-partial"
+            />
+          )}
+        </div>
+        {/* 제안값 — 고를 수 있는 값의 전부가 아니라 **곁들이**다(`canvasEditArrange`). */}
+        <datalist id={suggestId} data-testid="canvas-grid-step-suggestions">
           {CANVAS_GRID_STEP_CHOICES.map((choice) => (
             // 단위 이름은 번역한다 — 벌거벗은 숫자만 보이면 그것이 백분율인지 좌표인지
-            // 알 수 없고, 좌표계가 바뀐 이번 변경에서 그 모호함이 바로 그 오해의 씨앗이다.
+            // 알 수 없고, 좌표계가 바뀐 그 변경에서 그 모호함이 바로 오해의 씨앗이었다.
             <option key={choice} value={choice}>
               {t('dashboard.canvas.edit.gridStepOption').replace('{step}', String(choice))}
             </option>
           ))}
-        </select>
+        </datalist>
       </section>
 
       <section role="group" aria-labelledby={alignId} className="flex flex-col">

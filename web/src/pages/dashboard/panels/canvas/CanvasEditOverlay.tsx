@@ -1100,6 +1100,9 @@ export default function CanvasEditOverlay({
             onSnapToGridChange={setSnapToGrid}
             gridStep={gridStep}
             onGridStepChange={setGridStep}
+            // 자투리 고지의 근거 — 간격이 이 두 축을 나누어떨어뜨리는가. 투영이 이미 들고
+            // 있는 그 크기이므로 새 측정원이 되지 않는다(위험 R1).
+            canvas={projection.canvas}
             canAlign={canAlign}
             canOrder={canOrder}
             onAlign={applyAlign}
