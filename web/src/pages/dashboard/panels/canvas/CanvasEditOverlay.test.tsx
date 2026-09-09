@@ -3693,3 +3693,299 @@ describe('표면 밖에서는 오늘의 값으로 떨어진다 (컨텍스트 폴
     expect(screen.queryByTestId('canvas-workspace-grid')).toBeNull();
   });
 });
+
+// --- 저술 여백이 포인터를 받는다 (SPEC-CANVAS-006 M7 · REQ-08) ---------------
+//
+// **이 절이 재는 것은 "닿음" 이다.** M6 이 비트맵과 표시 층을 작업 영역만큼 넓혀 저술
+// 여백의 요소가 **칠해지게** 되었으나, 포인터 처리자를 단 노드는 오버레이 루트 하나뿐이고
+// 그 루트는 `canvas-stage` 안의 `absolute inset-0` 이라 **닿는 면이 정확히 출력 영역**이었다.
+// 여백을 누르면 그 사건은 `canvas-workspace` 나 `<canvas>` 에 떨어지는데 둘 다 처리자를
+// 달지 않으므로 `handlePointerDown` 에 영영 닿지 않았다 — REQ-03 의 두 조항과 AC-02 가
+// 형상만 있고 성립하지 않았다.
+//
+// **그 결함이 전량 green 인 스위트를 통과했다**(시험 규율 D6). 이 파일의 모든 포인터
+// 시험이 처리자를 단 그 노드에 **직접** 쏘고(`fireEvent(getByTestId('canvas-edit-overlay'),
+// …)`), jsdom 은 레이아웃을 하지 않아 히트 테스트가 통째로 건너뛰어지기 때문이다. 루트에
+// 직접 쏜 시험은 **닿음에 대해 아무것도 말하지 않는다.**
+//
+// 그래서 주장을 둘로 갈라 잰다.
+//   ① **구조**(AC-08 (AO)) — 닿는 노드의 상자가 작업 영역과 같고, `pointer-events-none` 이
+//      **없으며**, 그 노드와 작업 영역 사이에 클리핑이 없다. "브라우저가 이 노드를 히트
+//      테스트로 고를 것인가" 는 jsdom 이 답할 수 없는 질문이므로, 그 답이 참일 **조건들**을
+//      대신 못박는다.
+//   ② **경로**(AC-08 (AP)) — **처리자를 달지 않은 노드**(닿는 층)에 쏜 사건이 버블링으로
+//      루트의 처리자에 닿는다. jsdom 에서도 버블링은 진짜다. 쏘는 자리를 `canvas-workspace`
+//      나 `<canvas>` 로 잡으면 그 둘은 오버레이의 **조상**이라 사건이 아래로 내려오지 않아
+//      결함이 없어도 실패한다.
+//
+// **고정 입력은 M6 절의 그것 그대로다**(outer 1749×796 · 캔버스 500×400 · 간격 25 →
+// 칸 37 · 출력 영역 740×592 · 원점 (504, 102) · 작업 영역 1749×796). 여기에 둘을 더한다.
+//
+//   - **포인터 축척 0.5**(AC-E3 계승 · 위험 R1). 오버레이 루트의 화면 상자를 370×296 으로
+//     심어 `rect.width ÷ stage.width = 0.5` 로 둔다. 축척이 1 이면 나눗셈이 항등이 되어
+//     "재는 상자를 작업 영역으로 넓혔다" 는 결함이 **보이지 않는다.** 재는 상자가 작업
+//     영역이 되면 축척(1749÷740)과 원점이 함께 틀리므로 이 절의 히트가 전부 빗나간다.
+//   - **완전히 출력 영역 밖에 있는 요소**(D2). 캔버스 좌표가 두 축 모두 음수라, 안쪽
+//     요소만으로는 잴 수 없는 것을 잰다.
+//
+// 투영 축척은 두 축 모두 740÷500 = 592÷400 = **1.48** 이다.
+
+/** 완전히 출력 영역 **밖**(두 축 모두 음수)에 있는 사각형 — px 로 -236.8..-88.8 × -118.4..-29.6. */
+const OUTSIDE_GEOMETRY: BoxGeometry = { x: -160, y: -80, w: 100, h: 60 };
+
+/** 오버레이 루트에 심을 화면 상자 — 스테이지의 **절반**이라 포인터 축척이 0.5 다. */
+const WS_POINTER_RECT = { width: WS_STAGE.width / 2, height: WS_STAGE.height / 2 };
+
+/** 캔버스 단위 → 오버레이 px(투영) → 화면 client px(축척 0.5). */
+function clientFromCanvas(x: number, y: number): { x: number; y: number } {
+  const px = { x: (x * WS_STAGE.width) / CANVAS.width, y: (y * WS_STAGE.height) / CANVAS.height };
+  return { x: px.x / 2, y: px.y / 2 };
+}
+
+/** 닿는 층. **루트가 아니다** — 이 절의 경로 시험이 성립하는 유일한 자리다. */
+function hitLayer(): HTMLElement {
+  return screen.getByTestId('canvas-workspace-hit');
+}
+
+/** 닿는 층에 이벤트를 쏜다. 돌려주는 이벤트로 소비 여부를 잰다. */
+function sendToHit(type: string, x: number, y: number, init: MouseEventInit = {}): Event {
+  return sendAt(hitLayer(), type, x, y, init);
+}
+
+describe('저술 여백 전체가 포인터를 받는다 (SPEC-CANVAS-006 M7 · REQ-08 · AC-08)', () => {
+  beforeEach(() => {
+    composedOuter = WS_OUTER;
+    vi.stubGlobal('ResizeObserver', ComposedResizeObserver as unknown as typeof ResizeObserver);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // --- ① 구조 (AC-08 (AO)) ------------------------------------------------
+
+  it('닿는 면의 상자가 **작업 영역**과 같다 — 출력 영역이 아니다 (AC-08 (AO))', () => {
+    renderWorkspace();
+
+    // 두 상자가 실제로 다름을 먼저 단언한다(D4). 같으면 이 시험이 아무것도 재지 않는다 —
+    // `inset-0` 짜리 층도 통과해 버린다.
+    expect(stageBoxSize()).toEqual(WS_STAGE);
+    expect(WS_OUTER).not.toEqual(WS_STAGE);
+
+    // 음수 인셋이 이 단언의 전부다. `left/top` 을 0 으로 바꾸면(= `inset-0`) 실패한다.
+    expect(styleBox('canvas-workspace-hit')).toEqual({
+      left: -WS_ORIGIN.x,
+      top: -WS_ORIGIN.y,
+      width: WS_OUTER.width,
+      height: WS_OUTER.height,
+    });
+    // 격자 상자와 **같은 상자**다 — 두 값을 각자 파생하면 어느 날 한쪽만 고쳐진다(위험 R1).
+    expect(styleBox('canvas-workspace-hit')).toEqual(styleBox('canvas-workspace-grid'));
+  });
+
+  it('닿는 면은 포인터를 **먹으라고** 있다 — 표시 층 셋과 반대다 (AC-08 (AO) · 위험 R16)', () => {
+    renderWorkspace();
+
+    const hit = hitLayer();
+    // 이 한 줄이 이 밀레스톤의 전부다. `pointer-events-none` 을 붙이면 여백이 다시 죽는다.
+    expect(hit.className).not.toContain('pointer-events-none');
+    // `touch-action` 은 **상속되지 않는 속성**이라 루트의 `touch-none` 이 여기로 내려오지
+    // 않는다. 빠뜨리면 터치에서만 여백의 드래그가 스크롤에 먹힌다.
+    expect(hit.className).toContain('touch-none');
+    expect(screen.getByTestId('canvas-edit-overlay').className).toContain('touch-none');
+  });
+
+  it('닿는 면은 **아무것도 그리지 않는다** — 배경도 테두리도 이름도 없다 (AC-08 (AO))', () => {
+    renderWorkspace();
+
+    const hit = hitLayer();
+    expect(hit.getAttribute('aria-hidden')).toBe('true');
+    expect(hit.getAttribute('aria-label')).toBeNull();
+    expect(hit.getAttribute('role')).toBeNull();
+    expect(hit.textContent).toBe('');
+    expect(hit.children.length).toBe(0);
+    // 그리는 속성이 하나라도 붙으면 이 층은 표시 층이 되고, 그러면 위험 R8 의 가드가
+    // 지키는 문장("그리는 층은 포인터를 먹지 않는다")과 정면으로 부딪친다.
+    expect(hit.style.backgroundColor).toBe('');
+    expect(hit.style.borderColor).toBe('');
+    expect(hit.style.boxShadow).toBe('');
+    expect(hit.className).not.toContain('border');
+    expect(hit.className).not.toContain('bg-');
+  });
+
+  it('표시 층 셋은 **여전히** 포인터를 먹지 않고, 닿는 면은 그 목록 밖이다 (위험 R8 가드 유지)', () => {
+    renderWorkspace();
+    fireEvent.click(gridToggle());
+
+    // 위험 R8 의 가드가 열거하는 그 세 이름 — 한 글자도 달라지지 않는다.
+    for (const id of ['canvas-region-scrim', 'canvas-region-bounds', 'canvas-workspace-grid']) {
+      expect(screen.getByTestId(id).className, id).toContain('pointer-events-none');
+    }
+    // 새 층을 그 목록에 더하면 가드가 곧 이 기능을 금지한다. 그래서 더하지 않는다.
+    expect(hitLayer().className).not.toContain('pointer-events-none');
+  });
+
+  it('닿는 면과 작업 영역 사이에 **클리핑이 없다** — 잘리는 자리는 표면 컨테이너 하나다 (AC-08 (AO))', () => {
+    renderWorkspace();
+
+    const workspace = screen.getByTestId('canvas-workspace');
+    const between: HTMLElement[] = [];
+    for (let node = hitLayer().parentElement; node !== null && node !== workspace; ) {
+      between.push(node);
+      node = node.parentElement;
+    }
+    // 오버레이 루트와 `canvas-stage` 를 실제로 지나갔는가 — 0개면 이 순회가 아무것도 재지 않는다.
+    expect(between.length).toBeGreaterThanOrEqual(2);
+    for (const node of between) {
+      expect(node.className, node.dataset.testid ?? node.tagName).not.toContain('overflow');
+      expect(node.style.overflow).toBe('');
+    }
+    // 잘리는 자리는 표면 컨테이너 하나이며, 그것이 **비트맵이 잘리는 그 자리**다.
+    expect(workspace.parentElement?.className).toContain('overflow-hidden');
+  });
+
+  it('닿는 면은 루트의 **첫 자식**이라 표시 층과 손잡이가 그 위에 얹힌다 (AC-08 (AQ))', () => {
+    const emit = renderWorkspace([rect('far', OUTSIDE_GEOMETRY)]);
+    stubOverlayRect(0, 0, WS_POINTER_RECT.width, WS_POINTER_RECT.height);
+    const center = clientFromCanvas(-110, -50);
+    sendToHit('pointerdown', center.x, center.y);
+    expect(selectionText()).toBe('far');
+    expect(emit).not.toHaveBeenCalled();
+
+    const root = screen.getByTestId('canvas-edit-overlay');
+    const order = [...root.children];
+    expect(root.firstElementChild).toBe(hitLayer());
+    // 뒤에 오는 형제가 위에 얹혀야 손잡이를 잡을 수 있다 — 닿는 면이 손잡이를 덮으면
+    // 크기 조절이 통째로 죽는다.
+    for (const later of [
+      screen.getByTestId('canvas-region-scrim'),
+      screen.getByTestId('canvas-region-bounds'),
+      screen.getByTestId('canvas-selection-far'),
+    ]) {
+      expect(order.indexOf(hitLayer())).toBeLessThan(order.indexOf(later));
+    }
+    expect(order.indexOf(hitLayer())).toBeLessThan(order.indexOf(handleEl('e')));
+  });
+
+  it('작업 영역을 끄면 닿는 면이 출력 영역과 겹친다 (D1 — 끈 갈래도 함께 잰다)', () => {
+    renderWorkspace([], false);
+
+    const stage = stageBoxSize();
+    expect(styleBox('canvas-workspace-hit')).toEqual({
+      left: 0,
+      top: 0,
+      width: stage.width,
+      height: stage.height,
+    });
+  });
+
+  it('편집이 꺼지면 닿는 면도 없다 — 오버레이 자체가 DOM 에 없다 (AC-06 유지)', () => {
+    render(<Harness enabled={false} elements={[]} onElementsChange={vi.fn()} />);
+
+    expect(screen.queryByTestId('canvas-workspace-hit')).toBeNull();
+  });
+
+  // --- ② 경로 (AC-08 (AP)) ------------------------------------------------
+
+  it('닿는 면에서 시작한 누름이 **버블링으로** 루트의 처리자에 닿아 밖의 요소가 골라진다 (AC-08 (AP))', () => {
+    renderWorkspace([rect('far', OUTSIDE_GEOMETRY)]);
+    stubOverlayRect(0, 0, WS_POINTER_RECT.width, WS_POINTER_RECT.height);
+
+    // 재려는 것이 성립하는 조건 셋을 먼저 못박는다.
+    // (1) 요소가 **완전히** 출력 영역 밖이다(D2) — 걸쳐 있으면 안쪽 히트로도 통과한다.
+    expect(OUTSIDE_GEOMETRY.x + OUTSIDE_GEOMETRY.w).toBeLessThan(0);
+    expect(OUTSIDE_GEOMETRY.y + OUTSIDE_GEOMETRY.h).toBeLessThan(0);
+    // (2) 포인터 축척이 **1 이 아니다**(AC-E3 계승) — 1 이면 재는 상자를 넓힌 결함이 보이지 않는다.
+    expect(WS_POINTER_RECT.width / WS_STAGE.width).toBe(0.5);
+    // (3) 그 요소가 작업 영역 **안**에는 있다 — 밖이면 닿는 면이 넓어져도 소용이 없다.
+    expect((OUTSIDE_GEOMETRY.x * WS_STAGE.width) / CANVAS.width).toBeGreaterThan(-WS_ORIGIN.x);
+
+    // 축척 0.5 를 **무시했을 때** 쓰게 되는 좌표(= 오버레이 px 를 그대로 client 로 쓴 값).
+    // 여기서 골라지면 이 시험은 축척에 대해 아무것도 재지 않는 것이다.
+    const naive = { x: -162.8, y: -74 };
+    expect(sendToHit('pointerdown', naive.x, naive.y).defaultPrevented).toBe(false);
+    expect(selectionText()).toBe('');
+
+    // 축척을 되돌린 진짜 좌표. 이 사건은 **처리자가 없는 노드**에서 시작한다.
+    const center = clientFromCanvas(-110, -50);
+    expect(center).toEqual({ x: naive.x / 2, y: naive.y / 2 });
+    const down = sendToHit('pointerdown', center.x, center.y);
+
+    expect(selectionText()).toBe('far');
+    // 히트가 있으면 오늘처럼 소비한다 — 밖을 위한 분기가 없다는 뜻이다.
+    expect(down.defaultPrevented).toBe(true);
+  });
+
+  it('밖의 요소를 닿는 면에서 잡아 끌면 좌표가 손을 따라오고 **clamp 되지 않는다** (AC-08 (AP))', async () => {
+    const emit = renderWorkspace([rect('far', OUTSIDE_GEOMETRY)]);
+    stubOverlayRect(0, 0, WS_POINTER_RECT.width, WS_POINTER_RECT.height);
+
+    const from = clientFromCanvas(-110, -50);
+    // client 로 +37 은 스테이지 px 로 +74, 캔버스 단위로 정확히 +50 이다(74 ÷ 1.48).
+    sendToHit('pointerdown', from.x, from.y);
+    send('pointermove', from.x + 37, from.y);
+    await nextFrame();
+    send('pointerup', from.x + 37, from.y);
+
+    const g = emittedGeometry(emit, 'far') as BoxGeometry;
+    expectBox(g, { x: -110, y: -80, w: 100, h: 60 });
+    // 여전히 밖이다 — 어딘가에서 죄었다면 이 단언이 실패한다(가정 A5 · A15).
+    expect(g.x + g.w).toBeLessThan(0);
+  });
+
+  it('밖의 **빈 자리** 누름은 선택만 비우고 이벤트를 소비하지 않는다 (REQ-03 셋째 조항 · AC-08 (AP))', () => {
+    renderWorkspace([rect('far', OUTSIDE_GEOMETRY)]);
+    stubOverlayRect(0, 0, WS_POINTER_RECT.width, WS_POINTER_RECT.height);
+
+    const center = clientFromCanvas(-110, -50);
+    sendToHit('pointerdown', center.x, center.y);
+    expect(selectionText()).toBe('far');
+
+    // 같은 저술 여백의 빈 자리(캔버스 -300, -40 — 위 요소의 왼쪽).
+    const empty = clientFromCanvas(-300, -40);
+    const down = sendToHit('pointerdown', empty.x, empty.y);
+
+    expect(selectionText()).toBe('');
+    // 소비하지 않아야 `previewPan` 이 그 몸짓을 받는다(`if (event.defaultPrevented) return;`).
+    // 출력 영역 **안**의 빈 자리와 같은 사건이라는 A8 · I8 의 진술이 여기서 처음으로 참이 된다.
+    expect(down.defaultPrevented).toBe(false);
+  });
+
+  // --- ③ 바뀌지 않은 것 (AC-08 (AQ)) ---------------------------------------
+
+  it('탭 정지점은 **여전히 루트**다 — 닿는 면은 초점을 받지 않는다 (AC-08 (AQ) · T15)', () => {
+    renderWorkspace();
+
+    const root = screen.getByTestId('canvas-edit-overlay');
+    expect(root.getAttribute('tabindex')).toBe('0');
+    expect(hitLayer().getAttribute('tabindex')).toBeNull();
+    // 초점을 받을 수 있는 자식이 늘지 않았다 — 닿는 면은 `<div>` 이고 이름도 없다.
+    expect(hitLayer().tagName).toBe('DIV');
+  });
+
+  it('손잡이는 닿는 면보다 **위**에 있어 크기 조절이 그대로 시작된다 (AC-08 (AQ))', async () => {
+    const emit = renderWorkspace([rect('far', OUTSIDE_GEOMETRY)]);
+    stubOverlayRect(0, 0, WS_POINTER_RECT.width, WS_POINTER_RECT.height);
+
+    const center = clientFromCanvas(-110, -50);
+    sendToHit('pointerdown', center.x, center.y);
+    expect(selectionText()).toBe('far');
+
+    // 손잡이는 오버레이 px 자리에 서고, 화면 좌표는 그 절반이다(축척 0.5).
+    const east = handleEl('e');
+    const at = {
+      x: Number.parseFloat(east.style.left) / 2,
+      y: Number.parseFloat(east.style.top) / 2,
+    };
+    const grab = sendAt(east, 'pointerdown', at.x, at.y);
+    // 손잡이가 사건을 끊는다 — 닿는 면이 손잡이를 덮었다면 여기서 몸통 이동이 시작된다.
+    expect(grab.defaultPrevented).toBe(true);
+    send('pointermove', at.x + 37, at.y);
+    await nextFrame();
+    send('pointerup', at.x + 37, at.y);
+
+    // 오른쪽 변만 +50 — 옮겨진 것이 아니라 **늘어났다**.
+    expectBox(emittedGeometry(emit, 'far'), { x: -160, y: -80, w: 150, h: 60 });
+  });
+});

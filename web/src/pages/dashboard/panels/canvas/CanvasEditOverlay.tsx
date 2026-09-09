@@ -118,8 +118,26 @@
 // 산다. 그 원점과 작업 영역 크기는 **표면이 지어 컨텍스트로 내려준 값**이며 여기서 다시
 // 파생하지 않는다(위험 R1 · 불변식 I10).
 //
+// **그림이 나간 만큼 손도 나간다**(SPEC-CANVAS-006 M7 · REQ-08). 위 표시 셋이 서면서
+// 저술 여백의 요소가 **칠해지게** 되었으나 그것만으로는 만질 수 없었다 — 포인터 처리자를
+// 단 노드는 이 루트 하나뿐이고 루트는 `canvas-stage` 안의 `absolute inset-0` 이라 **닿는
+// 면이 정확히 출력 영역**이었다. 여백을 누르면 그 사건은 `canvas-workspace` 나 `<canvas>`
+// 에 떨어지는데 둘 다 처리자를 달지 않으므로 `handlePointerDown` 에 영영 닿지 않았다.
+//
+// 그래서 **아무것도 그리지 않는 층** 하나(`canvas-workspace-hit`)를 루트의 첫 자식으로
+// 둔다. 격자 상자와 **같은 음수 인셋 · 같은 크기**라 닿는 면이 작업 영역만큼 넓어지되,
+// 처리자는 **달지 않는다** — 누름이 루트로 버블링하고 React 는 처리자가 달린 노드를
+// `currentTarget` 으로 주므로 **재는 노드가 여전히 루트**다. 그래서 `pointerFrameOf(rect,
+// stage)` 의 두 값이 여전히 같은 노드를 가리키고 포인터 산술이 한 줄도 바뀌지 않는다
+// (불변식 I18 · I4 · 가정 A16). 재는 면까지 함께 넓혔다면 `rect.width ÷ stage.width` 가
+// 축척과 원점을 **함께** 틀리게 했을 것이다.
+//
+// **이 층은 표시 층이 아니다.** 위험 R8 의 가드가 열거하는 세 이름(격자 · 흐림 · 경계)에
+// 이것을 더하지 않는다 — 더하면 그 가드가 곧 이 기능을 금지한다. 가드가 지키는 문장은
+// "**그리는** 층은 포인터를 먹지 않는다" 이고, 이 층은 그리지 않는다.
+//
 // @spec SPEC-CANVAS-002 REQ-01 / REQ-02 / REQ-03 / REQ-04 / REQ-05 / REQ-06 ·
-//       SPEC-CANVAS-006 REQ-02 / REQ-04
+//       SPEC-CANVAS-006 REQ-02 / REQ-04 / REQ-08
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -1109,6 +1127,38 @@ export default function CanvasEditOverlay({
       onPointerCancel={handlePointerCancel}
       onKeyDown={handleKeyDown}
     >
+      {/* **닿는 면**(REQ-08 · 불변식 I18). 그리지 않고 닿기만 하는 층이며, 그래서
+          `pointer-events-none` 이 **없는** 유일한 자식이다.
+
+          **루트의 첫 자식이어야 한다.** 뒤에 오는 형제(격자 · 흐림 · 경계 · 선택 윤곽선 ·
+          손잡이 단추)가 위에 얹혀야 손잡이를 잡을 수 있다 — 이 층이 손잡이를 덮으면 크기
+          조절이 통째로 죽는다.
+
+          **처리자를 달지 않는다.** 달면 `handlePointerDown` 의 `event.currentTarget` 이 이
+          상자가 되어 `pointerFrameOf(rect, stage)` 가 **틀린 축척과 틀린 원점**을 함께 얻는다
+          (가정 A16). 버블링만 태우면 재는 노드가 루트로 남는다.
+
+          **`touch-none` 을 제 몫으로 가져야 한다.** `touch-action` 은 상속되지 않는 속성이라
+          루트의 값이 여기로 내려오지 않는다 — 빠뜨리면 터치에서만 여백의 드래그가 스크롤에
+          먹힌다.
+
+          **이름을 갖지 않는다.** 장식조차 아닌 빈 상자이므로 `aria-hidden` 이다. 탭 정지점은
+          여전히 루트 하나뿐이다(T15 · REQ-01).
+
+          잘리는 자리는 표면 컨테이너의 `overflow-hidden` 하나이며, 그것이 **비트맵이 잘리는
+          바로 그 자리**다. 루트에도 `canvas-stage` 에도 `overflow` 가 없으므로 이 상자는
+          여백까지 실제로 뻗는다(격자 상자가 이미 같은 방식으로 뻗어 그려지고 있다). */}
+      <div
+        data-testid="canvas-workspace-hit"
+        aria-hidden="true"
+        className="absolute touch-none"
+        style={{
+          left: -workspaceOrigin.x,
+          top: -workspaceOrigin.y,
+          width: workspaceSize.width,
+          height: workspaceSize.height,
+        }}
+      />
       {/* 눈으로 보는 사람에게는 손잡이와 커서가 조작법을 알리지만, 스크린 리더에게는
           알릴 것이 없다 — 그래서 설명을 DOM 에 **항상** 두고 `aria-describedby` 로 잇는다
           (`FieldHelp.tsx` 가 세운 이 저장소의 관용구다). */}
