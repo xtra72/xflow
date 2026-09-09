@@ -101,8 +101,9 @@
 // 어휘가 하나로 유지되는 방식이 0.8.0 에서 달라졌다. 종전에는 `gridStep` 한 변수에서
 // `squareGridSteps` 가 축 쌍을 파생했고, 그리는 쪽·붙는 쪽·Shift 세 자리가 모두 그 파생을
 // 지나야 했다. 이제 붙임과 Shift 는 **그 정수를 그대로** 쓴다(캔버스 단위끼리라 환산할
-// 것이 없다). 백분율로 옮겨 적는 자리는 **그리는 쪽 하나뿐**이며, 그래서 셋이 갈라질 수
-// 있는 자리 자체가 사라졌다 — 환산이 없는 곳은 어긋날 수도 없다.
+// 것이 없다). 0.9.0 은 남은 하나(그리는 쪽)의 환산마저 걷어냈다 — 표면이 그리는 영역을
+// 그 정수의 배수로 맞춰 두고 칸을 px 로 건네므로, 이 층은 받은 값을 그대로 그린다. 셋이
+// 갈라질 수 있는 자리 자체가 사라졌다 — 환산이 없는 곳은 어긋날 수도 없다.
 //
 // @spec SPEC-CANVAS-002 REQ-01 / REQ-02 / REQ-03 / REQ-04 / REQ-05 / REQ-06
 
@@ -139,7 +140,6 @@ import {
   CANVAS_GRID_STEP_UNITS,
   alignDeltas,
   bringToFront,
-  gridPercents,
   sendToBack,
   snapDelta,
   type AlignAxis,
@@ -147,11 +147,13 @@ import {
 } from './canvasEditArrange';
 import { useCanvasEditSelection } from './canvasEditContext';
 import { useCanvasEditDockHost } from './canvasEditDockHost';
+import { useCanvasStageGrid } from './canvasStageGrid';
 import {
   projectBox,
   projectLine,
   projectPoint,
   resolveTextOrigin,
+  stageLattice,
   unprojectBox,
   unprojectPoint,
   type CanvasBox,
@@ -574,26 +576,37 @@ export default function CanvasEditOverlay({
 
   /**
    * 격자 간격(정수 캔버스 단위). **이 값 하나가 그려지는 격자 · 드래그 붙임 · Shift+방향키
-   * 한 칸을 함께 정한다.** 셋 중 둘(붙임 · Shift)은 이 정수를 **그대로** 쓰고, 남은
-   * 하나(그림)만 `gridPercents` 로 축마다의 백분율로 옮겨 적는다. 보이는 간격과 붙는
-   * 간격이 갈라지면 화면이 거짓말을 하며, 그 거짓말은 "붙긴 붙는데 선하고 안 맞는다"
-   * 로만 보고된다 — 환산이 한 곳뿐이면 갈라질 자리도 한 곳도 없다.
+   * 한 칸을 함께 정한다.** 셋 다 이 정수를 **그대로** 쓴다 — 붙임과 Shift 는 캔버스 단위
+   * 끼리라 환산할 것이 없고, 그리는 쪽은 표면이 이미 이 정수로 맞춰 둔 칸(px)을 받는다.
+   * 환산이 없는 곳은 어긋날 수도 없다.
+   *
+   * **주인은 표면이다**(`CanvasSurface` §스테이지 격자). 그리는 영역이 이 간격의 정수배로
+   * 맞춰지므로 값을 상자 짓는 쪽이 들어야 한다. 표면 밖(단위 시험)에서는 provider 가
+   * 없으므로 아래 지역 상태로 떨어진다 — `useCanvasEditSelection` 과 같은 규율이다.
    *
    * 고를 수 있는 값은 `canvasEditArrange` 가 소유한다(격자 어휘의 주인은 여전히 그 모듈
    * 하나다). 격자 토글과 같이 **저장하지 않는 표시 상태**다(가정 A4) — config 스키마를
-   * 넓히지 않으며, 이 값을 바꿔도 캔버스 props 는 그대로라 프레임을 예약하지 않는다(AC-E4).
+   * 넓히지 않는다.
    */
-  const [gridStep, setGridStep] = useState<number>(CANVAS_GRID_STEP_UNITS);
+  const stageGrid = useCanvasStageGrid();
+  const [localGridStep, setLocalGridStep] = useState<number>(CANVAS_GRID_STEP_UNITS);
+  const gridStep = stageGrid?.step ?? localGridStep;
+  const setGridStep = stageGrid?.setStep ?? setLocalGridStep;
 
   /**
-   * 격자를 **그리기 위한** 두 축의 백분율. 고른 정수 간격 하나를 캔버스 축 길이로 나눈
-   * 값이며, 그 환산은 `gridPercents` 한 곳에만 있다.
+   * 격자를 **그리기 위한** 한 칸의 CSS px.
+   *
+   * 표면이 그리는 영역을 이 칸의 정수배로 맞춰 두었으므로(위 `stageGrid`), 여기서 받는
+   * 값은 **정수**이고 선은 소수 자리에서 시작하지 않는다 — 사용자가 세 번 돌려보낸
+   * "격자가 일정하지 않음" 의 답이 그 한 사실이다. 표면이 없으면 같은 순수 함수로 직접
+   * 물어본다: 계산이 두 벌이 되지 않게 **함수는 하나**이고, 그 함수는 이미 맞춰진 영역을
+   * 다시 넣어도 같은 답을 낸다(멱등 — `stageLattice`).
    *
    * **이 값을 보는 곳은 `PanelEditGrid` 하나뿐이다.** 붙임(`snapDelta`)과 Shift+방향키는
-   * 백분율을 거치지 않고 `gridStep` 정수를 그대로 쓴다 — 셋이 갈라질 수 없는 이유가
-   * 그것이다. 축 쌍을 손으로 조립해 넘기는 자리도, 두 번째 환산도 없다.
+   * px 를 거치지 않고 `gridStep` 정수를 그대로 쓴다.
    */
-  const gridCell = gridPercents(gridStep, projection.canvas);
+  const gridCell =
+    stageGrid?.cell ?? stageLattice(projection.stage, projection.canvas, gridStep).cell;
 
   /**
    * 오버레이 루트. 핸들에서 시작한 드래그도 **루트의 상자**로 좌표를 옮기고 **루트에서**
@@ -661,8 +674,8 @@ export default function CanvasEditOverlay({
         const raw = { dx: pointer.x - originUnits.x, dy: pointer.y - originUnits.y };
         // 켜져 있을 때만 죈다. 붙임은 백분율 공간을 지나지 않으므로 `clampPercentOffset`
         // 의 ±40 함정이 닿을 자리가 아예 없다(위험 R6 · AC-E5).
-        // 간격은 **화면에 그려진 그 칸**이다 — 그리는 쪽은 같은 `gridStep` 을
-        // `gridPercents` 로 옮겨 적을 뿐이라 둘이 갈라질 수 없다.
+        // 간격은 **화면에 그려진 그 칸**이다 — 그리는 쪽도 같은 `gridStep` 에서 나온
+        // 칸을 그대로 받아 그리므로 둘이 갈라질 수 없다.
         const delta = snap ? snapDelta(raw, drag.anchor, step) : raw;
         let next: CanvasElement[] = [...els];
         for (const base of drag.bases) {
@@ -915,7 +928,7 @@ export default function CanvasEditOverlay({
 
     // 두 갈래 다 **캔버스 단위 정수**라 나눌 것도 환산할 것도 없다. 그래서 스테이지를
     // 아직 재지 못한 순간에도 뜻이 성립하며, 무엇보다 "한 격자 칸" 이 화면에 그려진 그
-    // 칸과 **정의상** 같다 — 그리는 쪽이 같은 `gridStep` 을 백분율로 옮겨 적을 뿐이다.
+    // 칸과 **정의상** 같다 — 그리는 쪽도 같은 `gridStep` 에서 나온 칸을 그린다.
     const amount = event.shiftKey ? gridStep : NUDGE_UNITS;
     const delta: CanvasDelta = { dx: step.x * amount, dy: step.y * amount };
 
@@ -1046,18 +1059,23 @@ export default function CanvasEditOverlay({
           28% 짜리 선은 칠해진 도형 위에서는 사실상 보이지 않는다 — 그래서 같은 컴포넌트에
           진하기 한 벌(`strong`)만 더 두고 여기서 그것을 고른다.
 
-          간격은 **`snapDelta` 가 쓰는 그 칸**이다. 두 축에 서로 다른 백분율이 가는 것은
-          `repeating-linear-gradient` 의 백분율이 제 축 길이에 대한 값이기 때문이며, 두 값
-          모두 **같은 정수 간격**을 캔버스 축 길이로 나눈 것이다(`gridPercents`). 그래서
-          칸 수는 스테이지가 아니라 캔버스가 정한다 — 500 폭에 25 간격이면 패널을 어떻게
-          늘여도 가로 스무 칸이고, **자투리 칸이 없다**(사용 시험: "격자가 일정하지 않음").
-          그리는 값과 붙는 값을 각자 정하는 자리는 없다: 붙임은 이 백분율을 아예 보지 않고
-          같은 정수를 그대로 쓴다. */}
+          간격은 **`snapDelta` 가 쓰는 그 칸**이며 단위는 백분율이 아니라 **px** 다. 두 축에
+          서로 다른 수가 가는 것은 캔버스와 스테이지의 종횡비가 다르면 한 칸의 화면 크기가
+          축마다 다르기 때문이고, 두 값 모두 **같은 정수 간격**에서 나온다. 백분율이 아닌
+          이유는 그것이 브라우저에서 소수 px 가 되어 선이 두 픽셀에 걸쳐 칠해지기 때문이다
+          (사용 시험: "격자가 일정하지 않음" 세 번째 회차 — `PanelEditGrid` §단위).
+          표면이 그리는 영역을 이 칸의 정수배로 맞춰 두므로 **자투리 칸도 없다**.
+          그리는 값과 붙는 값을 각자 정하는 자리는 없다: 붙임은 이 px 를 아예 보지 않고
+          같은 정수를 그대로 쓴다.
+
+          한 칸이 1px 도 되지 않으면 그리지 않는다. 1px 선에 1px 미만의 주기는 격자가
+          아니라 **꽉 찬 사각형**이며, 참조선이라고 내놓을 수 없는 그림이다. */}
       <PanelEditGrid
-        enabled={snapToGrid}
+        enabled={snapToGrid && gridCell.x >= 1 && gridCell.y >= 1}
         step={gridCell.x}
         stepY={gridCell.y}
         strength="strong"
+        unit="px"
       />
       {/*
           도형 팔레트를 비롯한 **편집 도구 한 벌은 이 층이 만들지만 이 층 안에 그려지지

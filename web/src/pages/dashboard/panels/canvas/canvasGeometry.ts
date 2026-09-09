@@ -18,6 +18,14 @@
 // 좌표를 캔버스 안으로 **clamp 하지 않는다** — 캔버스 밖으로 일부 걸치는 배치도 뜻이 있는
 // 저술이며(canvasConfig 의 기하 손상 정책과 같은 이유), 잘라내면 사용자 의도가 조용히 바뀐다.
 //
+// ## 그리는 영역은 격자 칸의 정수배다 (0.9.0)
+//
+// 투영의 분자인 스테이지가 **아무 값이나 될 수 있으면** 격자 한 칸은 소수 px 가 되고, 소수
+// 자리에서 시작하는 1px 선은 두 픽셀에 걸쳐 칠해져 선마다 굵기가 달라 보인다. 그래서 잰
+// 상자를 그대로 투영에 쓰지 않고 `stageLattice` 로 한 번 **칸에 맞춘 뒤** 그 결과를
+// 스테이지로 삼는다(아래 §그리는 영역의 격자 정렬). 투영 · 붙임 · 격자가 모두 같은 영역을
+// 쓰므로, 화면과 계산이 갈라질 자리는 여기서도 생기지 않는다.
+//
 // 백킹 버퍼 산술은 `HeatmapCanvas.tsx` 의 DPR 규율(표시 크기 × dpr 을 정수 device px 로
 // 반올림)에서 순수 부분만 뽑아낸 것이다.
 //
@@ -183,6 +191,105 @@ export function computeBackingSize(cssWidth: number, cssHeight: number, dpr: num
     width: devicePixels(cssWidth, scale),
     height: devicePixels(cssHeight, scale),
     scale,
+  };
+}
+
+// --- 그리는 영역의 격자 정렬 (SPEC-CANVAS-002 0.9.0) --------------------
+//
+// 격자선이 **온전한 픽셀**에 앉게 만드는 산술이 여기 있다. 뿌리는 이렇다: 한 칸의 화면
+// 크기는 `스테이지 / (캔버스 ÷ 간격)` 이라 대개 소수다. 1749px 스테이지 · 500단위 캔버스 ·
+// 25단위 격자면 한 칸이 **87.45px** 이고, 선은 0 · 87.45 · 174.90 · 262.35 … 에 선다.
+// 소수 자리에서 시작하는 1px 선은 **두 장치 픽셀에 나뉘어 칠해진다**(87.45 는 87 번 픽셀에
+// 55% · 88 번 픽셀에 45%). 그래서 선마다 진하기와 굵기가 달라 보이고, 그 들쭉날쭉함이
+// 사용자가 세 번 돌려보낸 "격자가 일정하지 않음" 의 정체다. 칸 수가 정수인지(0.8.0 이 고친
+// 것)와는 다른 층의 문제다 — 칸 수가 딱 20 칸이어도 각 칸이 87.45px 이면 그렇게 보인다.
+//
+// **그리는 주기만 정수로 반올림하면 안 된다.** 그러면 선은 87·k 에 서는데 붙임은 여전히
+// 87.45·k 에 떨어져, 오른쪽 끝에서 둘이 9px 어긋난다 — 이 기능에서 두 번 걷어낸 거짓말이
+// 모양만 바꿔 되돌아온다. 그래서 반올림하는 것은 주기가 아니라 **그리는 영역 자체**다:
+// 한 칸을 정수 px 로 내림한 뒤 그 정수배를 그리는 영역으로 삼고, 투영 · 붙임 · 격자가
+// **모두 그 영역**을 쓴다. 남는 자투리(한 칸 미만)는 바깥 상자 안의 여백이 된다.
+
+/** 한 칸의 CSS px(축마다). 맞출 수 있었으면 두 값 모두 정수다. */
+export interface StageCell {
+  x: number;
+  y: number;
+}
+
+/**
+ * 바깥 상자를 격자 칸에 맞춘 결과 한 벌.
+ *
+ * 셋을 함께 돌려주는 데 뜻이 있다. 영역 · 칸 · 자투리는 **한 나눗셈에서 함께 나오는 값**
+ * 이라, 따로 구하면 그 나눗셈이 두 벌이 되고 한쪽만 고쳐진 채 갈라진다(위험 R1 과 같은
+ * 부류다). 받는 쪽은 영역을 상자에, 칸을 격자에, 자투리를 자리에 그대로 쓰면 된다.
+ */
+export interface StageLattice {
+  /** 실제로 그리는 영역(CSS px). 바깥 상자 이하이며 `cell` 의 정수배다. */
+  stage: StageSize;
+  /** 한 칸의 CSS px. */
+  cell: StageCell;
+  /** 바깥 상자 안에서 그 영역이 앉는 자리(정수 CSS px). 자투리를 양쪽에 나눈 값이다. */
+  offset: StageCell;
+}
+
+/** 한 축의 정렬 결과. */
+interface AxisLattice {
+  used: number;
+  cell: number;
+  offset: number;
+}
+
+/**
+ * 한 축을 격자 칸에 맞춘다.
+ *
+ * 칸 하나의 '정확한' 크기는 `바깥 길이 × 간격 ÷ 캔버스 길이` 다. 그것을 **내림**해 정수
+ * px 를 얻고, 그 정수로 되돌린 축척(`cell / step`)을 캔버스 길이에 곱해 그리는 길이를
+ * 낸다. 내림이므로 결과는 언제나 바깥 길이 이하다 — 넘치면 마지막 칸이 상자 밖으로 나가
+ * 도형이 잘린다.
+ *
+ * 칸 수가 정수가 아닌 캔버스(예: 400 단위에 25 간격 → 16 칸, 그러나 160 단위에 25 간격
+ * → 6.4 칸)에서도 같은 산술이 옳다. 온전한 칸의 경계는 모두 정수 px 에 앉고, 나누어
+ * 떨어지지 않는 마지막 조각만 원래처럼 조각으로 남는다.
+ *
+ * **한 칸이 1px 도 되지 않으면 맞추지 않는다.** 그때 내림값은 0 이고, 0 을 곱하면 그리는
+ * 영역이 **통째로 사라진다** — 격자를 위해 그림을 지우는 셈이다. 그래서 그 경우에는 종전
+ * 그대로(바깥 상자 전체)를 쓰고 칸으로는 소수 그대로를 알린다. 받는 쪽은 1px 미만인 칸을
+ * 보고 격자를 그리지 않기로 정할 수 있다.
+ */
+function axisLattice(outerLen: number, canvasLen: number, step: number): AxisLattice {
+  const outer = positiveOrZero(outerLen);
+  const canvasExtent = positiveOrZero(canvasLen);
+  const measurable =
+    outer > 0 && canvasExtent > 0 && Number.isFinite(step) && step > 0;
+  const exact = measurable ? (outer * step) / canvasExtent : 0;
+  const cell = Math.floor(exact);
+  if (cell < 1) return { used: outer, cell: exact, offset: 0 };
+  // `Math.min` 은 부동소수 잔차 방어다 — 내림한 값이므로 수학적으로는 이미 outer 이하다.
+  const used = Math.min((cell * canvasExtent) / step, outer);
+  return { used, cell, offset: Math.floor((outer - used) / 2) };
+}
+
+/**
+ * 잰 바깥 상자를 **격자 칸의 정수배**로 맞춘다(사용 시험: "격자가 일정하지 않음").
+ *
+ * 부르는 쪽은 표면 하나다 — 그 표면이 돌려받은 `stage` 로 상자를 짓고, 그 상자 안에
+ * 캔버스와 오버레이를 함께 넣는다. 그래야 투영이 쓰는 스테이지와 오버레이가 제 상자로
+ * 재는 값이 **같은 상자**를 가리키고, 그 사이에 오프셋 보정이 낄 자리가 없다(위험 R1).
+ *
+ * 멱등이다: 이미 맞춰진 영역을 같은 간격으로 다시 넣으면 같은 영역이 나오고 자투리는 0 이
+ * 된다. 그래서 표면 밖(오버레이 단독 렌더)에서도 같은 함수로 칸을 물을 수 있다.
+ */
+export function stageLattice(
+  outer: StageSize,
+  canvas: CanvasSize,
+  step: number,
+): StageLattice {
+  const x = axisLattice(outer.width, canvas.width, step);
+  const y = axisLattice(outer.height, canvas.height, step);
+  return {
+    stage: { width: x.used, height: y.used },
+    cell: { x: x.cell, y: y.cell },
+    offset: { x: x.offset, y: y.offset },
   };
 }
 

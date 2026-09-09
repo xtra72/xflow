@@ -117,3 +117,34 @@ describe('세로 간격은 따로 받되 기본은 가로와 같다 (`stepY`)', 
     expect(image).toContain('transparent 1px 10%)');
   });
 });
+
+// --- 단위를 따로 받는다 (사용 시험: "격자가 일정하지 않음" 세 번째 회차) -----
+//
+// 백분율은 브라우저가 상자 폭에 곱하는 순간 소수 px 가 되고(1749px 에 5% = 87.45px),
+// 소수 자리에서 시작하는 1px 선은 두 장치 픽셀에 나뉘어 칠해져 선마다 굵기가 달라 보인다.
+// 캔버스는 그리는 영역을 칸의 정수배로 맞춰 두므로 칸을 px 로 곧장 말할 수 있다.
+//
+// 여기서 지킬 것은 위 §기본값 절과 같은 하나다: **넘기지 않으면 종전 그대로**여야 한다.
+
+describe('간격의 단위를 고를 수 있다 — 기본은 종전대로 % 다 (`unit`)', () => {
+  it('`px` 를 주면 두 축의 주기가 px 로 적힌다', () => {
+    render(<PanelEditGrid enabled step={87} stepY={49} unit="px" strength="strong" />);
+
+    const image = grid().style.backgroundImage;
+    expect(image).toContain('to right, rgba(148, 163, 184, 0.6) 0 1px, transparent 1px 87px');
+    expect(image).toContain('to bottom, rgba(148, 163, 184, 0.6) 0 1px, transparent 1px 49px');
+    // 백분율이 한 글자도 남으면 브라우저가 다시 곱해 소수를 만든다.
+    expect(image).not.toContain('%');
+  });
+
+  it('단위를 생략하는 것과 `%` 를 명시하는 것은 같은 그림이다 (다섯 패널의 길)', () => {
+    const { container: implicit } = render(<PanelEditGrid enabled step={10} stepY={20} />);
+    const implicitHtml = implicit.innerHTML;
+    cleanup();
+    const { container: explicit } = render(
+      <PanelEditGrid enabled step={10} stepY={20} unit="%" />,
+    );
+
+    expect(explicit.innerHTML).toBe(implicitHtml);
+  });
+});

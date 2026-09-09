@@ -19,6 +19,7 @@ import {
   projectLine,
   projectPoint,
   resolveTextOrigin,
+  stageLattice,
   toCanvasTextAlign,
   unprojectBox,
   unprojectPoint,
@@ -306,5 +307,158 @@ describe('labelAnchor', () => {
       style: {},
     };
     expect(labelAnchor(el, PROJ)).toEqual({ x: 400, y: 150 });
+  });
+});
+
+// --- 그리는 영역을 격자 칸에 맞춘다 (0.9.0 · 사용 시험 "격자가 일정하지 않음") -----
+//
+// 이 절이 지키는 성질은 하나다: **그려질 선이 온전한 픽셀에 앉는다.** 한 칸이 소수 px 이면
+// 1px 선이 두 장치 픽셀에 나뉘어 칠해져 선마다 굵기가 달라 보이고, 그것이 사용자가 세 번
+// 돌려보낸 그 그림이다. 앞선 두 회차가 고친 것(칸 수가 정수인가 · 두 축의 칸이 같은
+// 물리 크기인가)과는 **다른 층**이다 — 스무 칸이 딱 떨어져도 각 칸이 87.45px 이면 그렇다.
+//
+// **정사각 픽스처나 나누어떨어지는 픽스처로는 이 절이 실패할 수 없다.** 그래서 사용자가
+// 실제로 본 1749×796 을 쓴다: 500 단위 캔버스에 25 간격이면 한 칸이 87.45px 이라 옛 값이
+// 그대로 들어온다.
+//
+// 0.8.0 까지 `canvasEditArrange.test.ts` 가 `gridPercents` 로 지키던 두 성질(칸 수가
+// 정수다 · 스테이지를 늘여도 칸 수가 그대로다)도 여기로 옮겨 왔다 — 그 함수가 하던 일을
+// 이제 이 함수가 하기 때문이다.
+
+/** 사용자가 반 칸을 본 그 크기. 두 축 모두 기본 간격으로 나누어떨어지지 않는다. */
+const ODD_OUTER: StageSize = { width: 1749, height: 796 };
+
+/** 고를 수 있는 간격 넷 — 목록의 주인은 `canvasEditArrange` 지만 값은 여기서도 지나간다. */
+const STEPS = [10, 20, 25, 50] as const;
+
+/** 한 축에 그려질 선 자리들(0 부터 영역 끝 직전까지). */
+function lineStops(extent: number, cell: number): number[] {
+  const stops: number[] = [];
+  for (let x = 0; x < extent - 1e-9; x += cell) stops.push(x);
+  return stops;
+}
+
+describe('stageLattice — 그려질 선이 온전한 픽셀에 앉는다', () => {
+  it('나누어떨어지지 않는 상자(1749x796)에서도 한 칸이 정수 px 다', () => {
+    const lattice = stageLattice(ODD_OUTER, CANVAS, 25);
+    // 맞추기 전 한 칸은 1749/20 = 87.45 · 796/16 = 49.75 였다.
+    expect(lattice.cell).toEqual({ x: 87, y: 49 });
+    expect(lattice.stage).toEqual({ width: 87 * 20, height: 49 * 16 });
+  });
+
+  it('그려질 모든 선 자리가 정수이고 간격이 전부 같다', () => {
+    for (const step of STEPS) {
+      const lattice = stageLattice(ODD_OUTER, CANVAS, step);
+      for (const axis of ['x', 'y'] as const) {
+        const extent = axis === 'x' ? lattice.stage.width : lattice.stage.height;
+        const stops = lineStops(extent, lattice.cell[axis]);
+        expect(stops.length, `${step} 단위 ${axis} 선 개수`).toBeGreaterThan(1);
+        for (const stop of stops) {
+          expect(Number.isInteger(stop), `${step} 단위 ${axis} 선 ${stop}`).toBe(true);
+        }
+        const gaps = stops.slice(1).map((stop, i) => stop - stops[i]!);
+        expect(new Set(gaps).size, `${step} 단위 ${axis} 간격 종류`).toBe(1);
+      }
+    }
+  });
+
+  it('영역은 언제나 바깥 상자 이하다 — 마지막 칸이 상자 밖으로 나가지 않는다', () => {
+    for (const step of STEPS) {
+      const lattice = stageLattice(ODD_OUTER, CANVAS, step);
+      expect(lattice.stage.width).toBeLessThanOrEqual(ODD_OUTER.width);
+      expect(lattice.stage.height).toBeLessThanOrEqual(ODD_OUTER.height);
+    }
+  });
+
+  it('자투리는 양쪽에 나눈 **정수** 자리가 된다 (소수 자리면 안쪽 선이 다시 소수다)', () => {
+    const lattice = stageLattice(ODD_OUTER, CANVAS, 25);
+    expect(Number.isInteger(lattice.offset.x)).toBe(true);
+    expect(Number.isInteger(lattice.offset.y)).toBe(true);
+    expect(lattice.offset.x).toBe(Math.floor((1749 - 1740) / 2));
+    expect(lattice.offset.y).toBe(Math.floor((796 - 784) / 2));
+  });
+
+  it('멱등이다 — 이미 맞춘 영역을 다시 넣으면 그대로이고 자투리가 0 이다', () => {
+    // 표면 밖(오버레이 단독)에서 같은 함수로 칸을 물어볼 수 있는 근거다.
+    for (const step of STEPS) {
+      const once = stageLattice(ODD_OUTER, CANVAS, step);
+      const twice = stageLattice(once.stage, CANVAS, step);
+      expect(twice.stage, `${step} 단위`).toEqual(once.stage);
+      expect(twice.cell, `${step} 단위`).toEqual(once.cell);
+      expect(twice.offset, `${step} 단위`).toEqual({ x: 0, y: 0 });
+    }
+  });
+
+  it('칸 수는 캔버스 크기 ÷ 간격이다 — 스테이지를 보지 않는다', () => {
+    // 0.8.0 이 `gridPercents` 로 지키던 성질이다(칸 수의 주인은 캔버스다).
+    for (const outer of [ODD_OUTER, { width: 200, height: 100 }, { width: 1024, height: 768 }]) {
+      for (const step of STEPS) {
+        const lattice = stageLattice(outer, CANVAS, step);
+        expect(lattice.stage.width / lattice.cell.x, `${outer.width} / ${step}`).toBeCloseTo(
+          CANVAS.width / step,
+          9,
+        );
+        expect(lattice.stage.height / lattice.cell.y, `${outer.height} / ${step}`).toBeCloseTo(
+          CANVAS.height / step,
+          9,
+        );
+      }
+    }
+  });
+
+  it('나누어떨어지는 상자는 손대지 않는다 — 자투리도 없다', () => {
+    // 800 = 32 × 25칸, 400 = 25 × 16칸.
+    const lattice = stageLattice({ width: 800, height: 400 }, CANVAS, 25);
+    expect(lattice.stage).toEqual({ width: 800, height: 400 });
+    expect(lattice.offset).toEqual({ x: 0, y: 0 });
+  });
+
+  it('칸 수가 정수가 아닌 캔버스에서도 온전한 칸의 경계는 정수 px 다', () => {
+    // 160 단위 축에 25 간격이면 6.4 칸이다 — 마지막 조각은 원래 조각이고, 그것은
+    // 사용자가 고른 두 정수에서 곧바로 따라 나오는 결과다(자투리와 다른 종류의 일).
+    const lattice = stageLattice({ width: 100, height: 80 }, { width: 200, height: 160 }, 25);
+    expect(lattice.cell).toEqual({ x: 12, y: 12 });
+    expect(lattice.stage.width).toBe(96);
+    expect(lattice.stage.height).toBeCloseTo(76.8, 9);
+  });
+});
+
+describe('stageLattice — 퇴화 입력에서도 그림이 사라지지 않는다', () => {
+  it('한 칸이 1px 도 되지 않으면 맞추지 않는다 (0 을 곱하면 영역이 사라진다)', () => {
+    const lattice = stageLattice({ width: 10, height: 8 }, CANVAS, 25);
+    // 정확한 칸은 0.5 · 0.5 px 다 — 내림하면 0 이므로 종전 그대로를 쓴다.
+    expect(lattice.stage).toEqual({ width: 10, height: 8 });
+    expect(lattice.cell.x).toBeCloseTo(0.5, 9);
+    expect(lattice.offset).toEqual({ x: 0, y: 0 });
+  });
+
+  it('아직 재지 못한 상자(0)는 0 을 낸다 — NaN 이 아니다', () => {
+    const lattice = stageLattice({ width: 0, height: 0 }, CANVAS, 25);
+    expect(lattice.stage).toEqual({ width: 0, height: 0 });
+    expect(Number.isNaN(lattice.cell.x)).toBe(false);
+    expect(Number.isNaN(lattice.cell.y)).toBe(false);
+    expect(lattice.offset).toEqual({ x: 0, y: 0 });
+  });
+
+  it('간격이 0 이하·비유한이면 맞추지 않는다 (0 으로 나누지 않는다)', () => {
+    for (const step of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const lattice = stageLattice(ODD_OUTER, CANVAS, step);
+      expect(lattice.stage, `${step} 간격`).toEqual({ width: 1749, height: 796 });
+    }
+  });
+
+  it('캔버스 축이 0·비유한이면 맞추지 않는다', () => {
+    expect(stageLattice(ODD_OUTER, { width: 0, height: 400 }, 25).stage.width).toBe(1749);
+    expect(stageLattice(ODD_OUTER, { width: 500, height: Number.NaN }, 25).stage.height).toBe(796);
+  });
+
+  it('비유한 상자는 0 으로 떨어진다 — 어떤 값도 NaN 으로 새어 나가지 않는다', () => {
+    const lattice = stageLattice(
+      { width: Number.NaN, height: Number.POSITIVE_INFINITY },
+      CANVAS,
+      25,
+    );
+    expect(lattice.stage).toEqual({ width: 0, height: 0 });
+    expect(lattice.offset).toEqual({ x: 0, y: 0 });
   });
 });

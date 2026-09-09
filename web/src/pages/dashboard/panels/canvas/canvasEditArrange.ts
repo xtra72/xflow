@@ -47,10 +47,9 @@
 // ## 격자 어휘는 하나다 — 그리고 이제 자투리가 없다
 //
 // 격자 간격은 **정수 캔버스 단위** 하나(`gridStep`)다. 그 한 값이 셋을 함께 정한다:
-// 그려지는 격자(`gridPercents` 로 축마다 백분율 환산) · 드래그 붙임(`snapDelta`) ·
-// Shift+방향키 한 칸(호출부가 그 값을 그대로 더한다). 뒤의 둘은 **환산 없이 그 정수를
-// 그대로** 쓰므로 갈라질 여지가 아예 없고, 앞의 하나만 화면에 그리기 위해 백분율로
-// 옮겨 적는다.
+// 그려지는 격자 · 드래그 붙임(`snapDelta`) · Shift+방향키 한 칸(호출부가 그 값을 그대로
+// 더한다). 셋 다 **환산 없이 그 정수를** 쓴다 — 0.9.0 이 그리는 쪽의 백분율 환산마저
+// 걷어냈기 때문이다(아래 §격자를 화면에 그리는 간격). 환산이 없는 곳은 어긋날 수도 없다.
 //
 // 정규화 시절에는 이 자리에 `squareGridSteps` 가 있었다. 정사각 칸을 얻으려고 세로
 // 백분율을 **스테이지 종횡비**에서 파생했고, 그 값(예: 1749×796 스테이지에서 21.97%)은
@@ -70,7 +69,7 @@ import {
   type Box,
   type PanelElementBox,
 } from '../charts/panelEditAlign';
-import type { CanvasElement, CanvasSize } from './canvasConfig';
+import type { CanvasElement } from './canvasConfig';
 import type { CanvasBox, CanvasDelta, CanvasProjection, PxBox } from './canvasGeometry';
 
 // --- 타입 ---------------------------------------------------------------
@@ -140,39 +139,18 @@ export const CANVAS_GRID_STEP_UNITS = 25;
 export const CANVAS_GRID_STEP_CHOICES: readonly number[] = [10, 20, 25, 50];
 
 /**
- * 격자를 **화면에 그리기 위한** 두 축의 백분율.
+ * 격자를 **화면에 그리는** 간격은 이제 이 모듈이 내지 않는다 (0.9.0).
  *
- * `PanelEditGrid` 는 선을 `repeating-linear-gradient` 로 그리고 그 간격은 제 축 길이에
- * 대한 백분율로만 말할 수 있다. 그래서 단위 하나를 축마다의 백분율로 옮겨 적는데, 그
- * 환산의 분모가 **스테이지가 아니라 캔버스**라는 점이 이 함수의 전부다:
+ * 0.8.0 까지는 여기 `gridPercents` 가 있어 정수 간격 하나를 축마다의 백분율로 옮겨 적었다.
+ * 그 백분율은 브라우저가 상자 폭에 곱하는 순간 **소수 px** 가 되고(1749px 상자에 5% =
+ * 87.45px), 소수 자리에서 시작하는 1px 선은 두 장치 픽셀에 나뉘어 칠해져 선마다 굵기가
+ * 달라 보였다 — 사용자가 세 번째로 돌려보낸 "격자가 일정하지 않음" 이 그것이다.
  *
- *   - 분모가 캔버스이므로 백분율은 **패널 크기와 무관**하다. 패널을 늘여도 칸 수가 그대로다.
- *   - 간격이 캔버스 축을 나누어떨어지게 하면 백분율도 100 을 나누어떨어지게 한다.
- *     500 / 25 = 20 이고 100 / 5% = 20 이다 — 같은 사실을 두 번 말한 것뿐이다.
- *
- * 옛 `squareGridSteps` 는 세로 백분율을 **스테이지 종횡비**에서 파생했고, 그래서 칸 수가
- * 패널 크기에 따라 달라지며 대개 정수가 아니었다(반 칸 자투리의 출처다).
- *
- * 화면상 칸은 캔버스와 스테이지의 종횡비가 다르면 직사각형이 된다. 그것은 **일정한**
- * 직사각형이다 — 모든 칸이 같은 크기이고 자투리가 없다. 정사각형을 원하는 사용자에게는
- * 이제 답할 수단이 있다: 캔버스 크기를 패널 모양에 맞추면 된다.
- *
- * 잴 수 없는 값(비유한·비양수)에서는 간격을 **그대로** 돌려준다 — 0 으로 나눈 백분율은
- * 격자를 통째로 지운다.
+ * 고친 자리는 여기가 아니라 **그리는 영역**이다: 표면이 영역을 칸의 정수배로 맞추고
+ * (`canvasGeometry.stageLattice`) 그 정수 칸을 px 로 건넨다. 그래서 백분율로 옮겨 적는
+ * 단계가 통째로 사라졌고, 이 모듈에 남는 격자 어휘는 **정수 간격 하나**(`gridStep`)뿐이다
+ * — 붙임과 Shift 가 이미 그것을 그대로 쓰던 그 값이다.
  */
-export function gridPercents(step: number, canvas: CanvasSize): GridPercents {
-  if (!isFinite2(step, canvas.width, canvas.height)) return { x: step, y: step };
-  if (!(canvas.width > 0) || !(canvas.height > 0)) return { x: step, y: step };
-  return { x: (step / canvas.width) * 100, y: (step / canvas.height) * 100 };
-}
-
-/** 격자를 그릴 때 쓰는 두 축의 백분율 — **같은 단위 간격 하나**를 축마다 옮겨 적은 것이다. */
-export interface GridPercents {
-  /** 가로 간격 — 캔버스 **폭**에 대한 백분율. */
-  x: number;
-  /** 세로 간격 — 캔버스 **높이**에 대한 백분율. */
-  y: number;
-}
 
 // --- 순수 도우미 ---------------------------------------------------------
 
@@ -212,8 +190,8 @@ function snapAxis(delta: number, center: number, step: number): number {
  * 환산할 것이 없고, 환산하지 않으므로 `clampPercentOffset` 의 ±40 함정이 닿을 자리도
  * 없다(파일 머리말 §격자 붙임은 그 함수를 더 이상 부르지 않는다).
  *
- * `step` 은 **화면에 그려진 격자와 같은 값**이다 — 그리는 쪽은 이 정수를 `gridPercents`
- * 로 옮겨 적을 뿐이라 둘이 갈라질 자리가 없다.
+ * `step` 은 **화면에 그려진 격자와 같은 값**이다 — 그리는 쪽은 표면이 이 정수로 맞춰 둔
+ * 칸을 그대로 받아 그리므로 둘이 갈라질 자리가 없다.
  */
 export function snapDelta(
   delta: CanvasDelta,

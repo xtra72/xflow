@@ -23,13 +23,12 @@ import {
   CANVAS_GRID_STEP_UNITS,
   alignDeltas,
   bringToFront,
-  gridPercents,
   moveElementTo,
   sendToBack,
   snapDelta,
   type AlignTarget,
 } from './canvasEditArrange';
-import type { CanvasProjection, StageSize } from './canvasGeometry';
+import { stageLattice, type CanvasProjection, type StageSize } from './canvasGeometry';
 
 // --- 고정 입력 -----------------------------------------------------------
 
@@ -117,102 +116,39 @@ describe('원 함수를 부르는 자리는 이 모듈 하나뿐이다 (위험 R
   });
 });
 
-// --- 격자는 자투리를 남기지 않는다 (사용 시험: "격자가 일정하지 않음") ----
+// --- 격자 칸은 이 모듈이 내지 않는다 (0.9.0) ------------------------------
 //
-// 옛 모델에서 세로 백분율은 **스테이지 종횡비**에서 파생됐다(`squareGridSteps`). 그래서
-// 1749×796 스테이지에서 그 값이 21.97% 가 되어 마지막 줄이 반 칸으로 잘렸고, 칸 수가
-// 패널을 늘일 때마다 달라졌다. 이제 백분율의 분모는 **캔버스**이므로 칸 수가 스테이지와
-// 무관하다 — 아래 시험들이 그 두 가지(정수 칸 수 · 스테이지 독립)를 함께 못박는다.
+// 0.8.0 까지 여기 있던 두 절(§격자 칸 수는 정수다 · §칸 수는 스테이지 크기와 무관하다)은
+// `gridPercents` 를 시험했다. 그 함수는 0.9.0 에서 사라졌다 — 백분율은 브라우저가 상자 폭에
+// 곱하는 순간 소수 px 가 되고, 소수 자리에서 시작하는 1px 선은 두 픽셀에 나뉘어 칠해져
+// 선마다 굵기가 달라 보였기 때문이다(사용 시험 "격자가 일정하지 않음" 세 번째 회차).
+//
+// **두 절이 지키던 성질은 사라지지 않고 자리를 옮겼다**: 칸 수가 정수인가 · 스테이지를
+// 늘여도 그대로인가는 이제 `canvasGeometry.stageLattice` 의 성질이며 그쪽 시험이 지킨다
+// (§그리는 영역을 격자 칸에 맞춘다). 여기서는 이 모듈에 남은 격자 어휘 — **정수 간격
+// 하나** — 만 시험한다.
 
-/** 그 간격으로 한 축이 몇 칸인가. 백분율이 100 을 나누어떨어지게 하면 정수다. */
-function cellCount(percent: number): number {
-  return 100 / percent;
-}
-
-describe('격자 칸 수는 정수다 (기본 캔버스 · 고를 수 있는 모든 간격)', () => {
-  it('두 축 모두 나머지 없이 떨어진다', () => {
-    for (const step of CANVAS_GRID_STEP_CHOICES) {
-      const cell = gridPercents(step, CANVAS);
-      expect(Number.isInteger(cellCount(cell.x)), `${step} 단위 가로`).toBe(true);
-      expect(Number.isInteger(cellCount(cell.y)), `${step} 단위 세로`).toBe(true);
-    }
-  });
-
-  it('칸 수는 캔버스 크기 ÷ 간격 그대로다', () => {
-    for (const step of CANVAS_GRID_STEP_CHOICES) {
-      const cell = gridPercents(step, CANVAS);
-      expect(cellCount(cell.x)).toBeCloseTo(CANVAS.width / step, 9);
-      expect(cellCount(cell.y)).toBeCloseTo(CANVAS.height / step, 9);
-    }
-  });
-
-  it('기본 간격 25 는 20 x 16 칸이다', () => {
-    const cell = gridPercents(CANVAS_GRID_STEP_UNITS, CANVAS);
-    expect(cell).toEqual({ x: 5, y: 6.25 });
-    expect(cellCount(cell.x)).toBe(20);
-    expect(cellCount(cell.y)).toBe(16);
-  });
-
+describe('이 모듈이 아는 격자 어휘는 정수 간격 하나뿐이다 (0.9.0)', () => {
   it('고를 수 있는 간격은 모두 캔버스 두 축을 나누어떨어지게 한다', () => {
     for (const step of CANVAS_GRID_STEP_CHOICES) {
       expect(CANVAS.width % step, `${step} 단위 가로`).toBe(0);
       expect(CANVAS.height % step, `${step} 단위 세로`).toBe(0);
     }
   });
-});
 
-describe('칸 수는 스테이지 크기와 무관하다 (자투리의 출처가 사라졌다)', () => {
-  /**
-   * 정사각형이 **아닌** 스테이지들. 옛 결함은 스테이지와 캔버스의 종횡비 차이에서
-   * 살았으므로 정사각 픽스처로는 이 절의 시험이 실패할 수 없다. 1749x796 은 사용자가
-   * 실제로 반 칸을 본 그 크기다(4.55 줄).
-   */
-  const stages: StageSize[] = [
-    { width: 1749, height: 796 },
-    { width: 200, height: 100 },
-    { width: 300, height: 900 },
-    { width: 1024, height: 768 },
-  ];
-
-  it('어떤 스테이지에서도 두 축의 칸 수가 정수다', () => {
-    for (const stage of stages) {
-      for (const step of CANVAS_GRID_STEP_CHOICES) {
-        // 백분율은 스테이지를 보지 않는다 — 그것이 이 성질의 근거 전부다.
-        const cell = gridPercents(step, CANVAS);
-        const cols = cellCount(cell.x);
-        const rows = cellCount(cell.y);
-        expect(Number.isInteger(cols), `${stage.width}x${stage.height} / ${step}`).toBe(true);
-        expect(Number.isInteger(rows), `${stage.width}x${stage.height} / ${step}`).toBe(true);
-      }
-    }
+  it('기본 간격 25 는 기본 캔버스에서 20 x 16 칸이다', () => {
+    expect(CANVAS.width / CANVAS_GRID_STEP_UNITS).toBe(20);
+    expect(CANVAS.height / CANVAS_GRID_STEP_UNITS).toBe(16);
   });
 
-  it('모든 칸이 같은 크기다 — 마지막 칸이 반 칸으로 잘리지 않는다', () => {
-    for (const stage of stages) {
-      for (const step of CANVAS_GRID_STEP_CHOICES) {
-        const cell = gridPercents(step, CANVAS);
-        const colPx = (cell.x / 100) * stage.width;
-        const rowPx = (cell.y / 100) * stage.height;
-        // 마지막 칸까지 온전하려면 축 길이가 칸 크기의 정수배여야 한다.
-        expect(stage.width / colPx).toBeCloseTo(Math.round(stage.width / colPx), 9);
-        expect(stage.height / rowPx).toBeCloseTo(Math.round(stage.height / rowPx), 9);
-      }
-    }
-  });
-
-  it('패널을 늘여도 칸 수가 그대로다 (옛 모델에서는 달라졌다)', () => {
-    const small = gridPercents(25, CANVAS);
-    const large = gridPercents(25, CANVAS);
-    expect(small).toEqual(large);
-  });
-
-  it('캔버스를 바꾸면 칸 수가 달라진다 — 칸 수의 주인은 캔버스다', () => {
-    expect(gridPercents(25, { width: 1000, height: 400 })).toEqual({ x: 2.5, y: 6.25 });
-  });
-
-  it('잴 수 없는 캔버스에서는 간격을 그대로 돌려준다 (0 으로 나누지 않는다)', () => {
-    expect(gridPercents(25, { width: 0, height: 0 })).toEqual({ x: 25, y: 25 });
-    expect(gridPercents(25, { width: Number.NaN, height: 400 })).toEqual({ x: 25, y: 25 });
+  it('백분율 환산을 더 이상 내보내지 않는다 — 그리는 쪽이 px 를 그대로 받는다', () => {
+    // 이 모듈이 다시 백분율을 내기 시작하면 그리는 값과 붙는 값이 갈라질 자리가
+    // 되살아난다. 이름이 아니라 **코드**를 본다 — 위 머리말이 그 함수를 설명하고 있다.
+    const code = readFileSync(join(__dirname, 'canvasEditArrange.ts'), 'utf-8')
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join('\n');
+    expect(code).not.toMatch(/gridPercents/);
   });
 });
 
@@ -294,15 +230,23 @@ describe('붙는 눈금은 넘긴 간격을 따른다 (화면에 그린 간격�
     expect(snapDelta({ dx: 15, dy: 17 }, ANCHOR, -5)).toEqual({ dx: 15, dy: 17 });
   });
 
-  it('붙은 자리는 **그려진 눈금 위**다 — 그림과 붙임이 같은 정수를 본다', () => {
+  it('붙은 자리는 **그려진 선 위**다 — 그림과 붙임이 같은 정수를 본다', () => {
+    // 사용자가 반 칸을 본 그 크기를 쓴다. 붙임은 캔버스 단위에서만 일어나지만 사용자가
+    // 보는 것은 px 이므로, **투영한 뒤** 그려진 칸의 배수인지까지 본다 — 캔버스 단위에서만
+    // 확인하면 화면에서 어긋나는 결함이 그대로 통과한다.
+    const outer: StageSize = { width: 1749, height: 796 };
     for (const step of CANVAS_GRID_STEP_CHOICES) {
+      const lattice = stageLattice(outer, CANVAS, step);
       const snapped = snapDelta({ dx: 17, dy: 23 }, ANCHOR, step);
       const centerX = ANCHOR.x + ANCHOR.w / 2 + snapped.dx;
       const centerY = ANCHOR.y + ANCHOR.h / 2 + snapped.dy;
-      // 그려지는 선의 자리는 `gridPercents` 가 낸 백분율 × 캔버스 축 길이 = step 의 배수다.
-      const cell = gridPercents(step, CANVAS);
-      expect(centerX % ((cell.x / 100) * CANVAS.width)).toBeCloseTo(0, 9);
-      expect(centerY % ((cell.y / 100) * CANVAS.height)).toBeCloseTo(0, 9);
+      expect(centerX % step, `${step} 단위 가로`).toBe(0);
+      expect(centerY % step, `${step} 단위 세로`).toBe(0);
+      // 투영: 캔버스 단위 → px. 그려진 칸의 정수배 자리에 앉아야 선 위다.
+      const pxX = (centerX / CANVAS.width) * lattice.stage.width;
+      const pxY = (centerY / CANVAS.height) * lattice.stage.height;
+      expect(pxX % lattice.cell.x).toBeCloseTo(0, 9);
+      expect(pxY % lattice.cell.y).toBeCloseTo(0, 9);
     }
   });
 });

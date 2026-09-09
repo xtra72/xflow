@@ -19,8 +19,16 @@
 // 그대로 남아 있어야 하기 때문이다(AC-E4).
 //
 // **SPEC-CANVAS-002 가 이 컴포넌트에 더한 것은 선택 prop 하나뿐이다**(T3): 캔버스 위에
-// DOM 층을 얹는 `overlay` 렌더 prop. **넘기지 않으면 동작이 001 과 완전히 같다**(AC-E1) —
-// 추가 DOM 노드도, 추가 렌더도, 추가 프레임도 없다.
+// DOM 층을 얹는 `overlay` 렌더 prop. **넘기지 않으면 오버레이 때문에 생기는 것이 하나도
+// 없다**(AC-E1) — 추가 렌더도, 추가 프레임도, 오버레이가 만드는 DOM 노드도 없다.
+//
+// **0.9.0 이 더한 넷째 책임: 그리는 영역을 격자 칸에 맞춘다**(사용 시험 "격자가 일정하지
+// 않음" 의 세 번째 회차). 잰 상자를 그대로 투영에 쓰면 격자 한 칸이 소수 px 가 되고, 소수
+// 자리에서 시작하는 1px 선은 두 픽셀에 걸쳐 칠해져 선마다 굵기가 달라 보인다(자세한 산술은
+// `canvasGeometry` §그리는 영역의 격자 정렬). 그래서 잰 상자에서 한 칸 미만의 자투리를 뺀
+// **안쪽 상자**를 짓고, 캔버스와 오버레이를 그 안에 함께 넣는다. 투영·붙임·격자가 모두 그
+// 상자를 쓰므로 셋이 갈라질 자리가 없고, 오버레이가 제 상자로 재는 값과 `projection.stage`
+// 가 **같은 노드**라 그 사이에 보정 산술이 낄 자리도 없다.
 //
 // **포인터 통과 슬롯은 두지 않는다.** T3 은 설계를 그대로 옮겨 `onCanvasPointer*` 넷을
 // `<canvas>` 에 달아 두었으나, T5 가 오버레이를 지으면서 포인터를 **오버레이 루트**에서
@@ -42,12 +50,19 @@
 //
 // @spec SPEC-CANVAS-001 · SPEC-CANVAS-002 (T3 — 오버레이 슬롯)
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { documentVisibility, type VisibilitySource } from '../charts/visiblePolling';
 import type { CanvasElement, CanvasSize, TweenSpec } from './canvasConfig';
-import { computeBackingSize, type CanvasProjection, type StageSize } from './canvasGeometry';
+import { CANVAS_GRID_STEP_UNITS } from './canvasEditArrange';
+import {
+  computeBackingSize,
+  stageLattice,
+  type CanvasProjection,
+  type StageSize,
+} from './canvasGeometry';
 import type { ResolvedStyle } from './canvasRules';
+import { CanvasStageGridContext, type CanvasStageGrid } from './canvasStageGrid';
 import { beginTween, retargetTween, sampleTween, type TweenState } from './canvasTween';
 import { clearSurface, drawElements, type DrawContext2D } from './drawElement';
 
@@ -81,8 +96,13 @@ const DEFAULT_SCHEDULER: FrameScheduler = {
  */
 export interface CanvasOverlayContext {
   /**
-   * 프레임이 투영에 쓰는 **바로 그 한 벌** — 표면의 `ResizeObserver` 가 잰 스테이지 CSS px
-   * 크기와 config 가 정한 캔버스 단위 크기다(측정원이 하나다 — AC-E2).
+   * 프레임이 투영에 쓰는 **바로 그 한 벌** — 표면이 그리는 영역의 CSS px 크기와 config 가
+   * 정한 캔버스 단위 크기다(측정원이 하나다 — AC-E2).
+   *
+   * `stage` 는 `ResizeObserver` 가 잰 값을 격자 칸에 맞춘 값이다(`stageLattice`). 그 값은
+   * 표면이 **실제로 지은 상자**의 크기이기도 하다 — 캔버스와 이 오버레이가 그 상자 안에
+   * 함께 살므로, 오버레이가 제 `getBoundingClientRect()` 로 재는 상자와 여기 실린 크기가
+   * 같은 상자를 가리킨다(축척 보정 말고는 사이에 낄 산술이 없다 — 위험 R1).
    *
    * 둘을 묶어 넘기는 것에 뜻이 있다. 정수 좌표계에서 투영은 두 크기를 **모두** 요구하므로,
    * 하나만 넘기면 받는 쪽이 나머지 하나를 스스로 구하게 되고 그 자리가 곧 두 번째 출처다.
@@ -175,8 +195,48 @@ export default function CanvasSurface({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ctxRef = useRef<DrawContext2D | null>(null);
 
-  /** 표시 영역 CSS px 크기. ResizeObserver 가 갱신한다. */
-  const [display, setDisplay] = useState<StageSize>({ width: 0, height: 0 });
+  /** **바깥** 상자의 CSS px 크기. ResizeObserver 가 갱신한다(격자에 맞추기 전 값이다). */
+  const [outer, setOuter] = useState<StageSize>({ width: 0, height: 0 });
+
+  /**
+   * 그리는 영역을 맞출 격자 간격(정수 캔버스 단위).
+   *
+   * 상태의 주인이 표면인 근거는 `canvasStageGrid.ts` §왜 상태의 주인이 표면인가에 있다.
+   * 기본값은 격자 어휘의 주인(`canvasEditArrange`)이 가진 그 값이다 — 여기서 25 를 다시
+   * 적으면 같은 뜻의 수가 두 곳에 살게 되고, 한쪽만 바뀌는 날 화면과 붙임이 갈라진다.
+   * 편집 도크에서 간격을 고르면 오버레이가 위 컨텍스트로 이 상태를 갈고, 그리는 영역이
+   * 새 칸에 다시 맞춰진다(크기가 실제로 달라지므로 그때는 프레임이 한 장 필요하다 —
+   * 리사이즈와 같은 부류이며, 선택·호버·격자 토글은 여전히 0 건이다).
+   */
+  const [gridStep, setGridStep] = useState<number>(CANVAS_GRID_STEP_UNITS);
+
+  /**
+   * 바깥 상자를 격자 칸에 맞춘 결과. **투영·상자·격자가 함께 보는 단 한 벌**이다.
+   *
+   * 의존성을 객체가 아니라 네 수치로 적는 것에 뜻이 있다 — props 로 온 객체는 부모가
+   * 렌더할 때마다 새 신원일 수 있고, 그 신원이 여기 들어오면 렌더마다 새 격자가 나와
+   * 아래 예약 효과가 프레임을 계속 깨운다(AC-E4 가 금지한 바로 그것이다).
+   */
+  const lattice = useMemo(
+    () =>
+      stageLattice(
+        { width: outer.width, height: outer.height },
+        { width: canvas.width, height: canvas.height },
+        gridStep,
+      ),
+    [outer.width, outer.height, canvas.width, canvas.height, gridStep],
+  );
+  /** 실제로 그리는 영역. 이 아래에서 "스테이지" 는 언제나 이 값이다. */
+  const stage = lattice.stage;
+
+  /**
+   * 오버레이 슬롯 둘레에 펴는 격자 한 벌(`canvasStageGrid.ts`). 값이 같으면 신원도 같아야
+   * 헛 렌더가 없다.
+   */
+  const stageGrid = useMemo<CanvasStageGrid>(
+    () => ({ step: gridStep, setStep: setGridStep, cell: lattice.cell }),
+    [gridStep, lattice],
+  );
 
   /**
    * 프레임 콜백은 예약된 시점의 클로저를 들고 늦게 실행된다. 그때 옛 props 를 보면
@@ -189,7 +249,7 @@ export default function CanvasSurface({
     texts,
     panelTween,
     background,
-    display,
+    stage,
     scheduler,
   });
 
@@ -221,7 +281,7 @@ export default function CanvasSurface({
       texts,
       panelTween,
       background,
-      display,
+      stage,
       scheduler,
     };
   });
@@ -291,7 +351,7 @@ export default function CanvasSurface({
       if (ctx === null) return true;
 
       const {
-        display: size,
+        stage: size,
         background: bg,
         texts: labels,
         elements: els,
@@ -343,6 +403,9 @@ export default function CanvasSurface({
   }, [drawFrame, scheduleFrame]);
 
   // 표시 영역 추적(AC-E5). HeatmapCanvas 의 ResizeObserver 규율을 그대로 따른다.
+  //
+  // 재는 것은 **바깥** 상자다. 안쪽 상자(그리는 영역)는 이 값에서 파생되므로 관찰하면
+  // 제 꼬리를 물게 된다 — 파생된 크기를 다시 재어 다시 파생시키는 고리가 된다.
   useEffect(() => {
     const el = containerRef.current;
     if (el === null || typeof ResizeObserver === 'undefined') return;
@@ -351,7 +414,7 @@ export default function CanvasSurface({
         const width = Math.floor(entry.contentRect.width);
         const height = Math.floor(entry.contentRect.height);
         // 같은 크기면 상태를 갈지 않는다 — 새 객체를 넣으면 매 관찰마다 재렌더가 돈다.
-        setDisplay((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
+        setOuter((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
       }
     });
     observer.observe(el);
@@ -372,9 +435,12 @@ export default function CanvasSurface({
 
   // 데이터·크기·배경이 바뀌면 한 프레임을 요청한다. 바뀌지 않으면 아무것도 그리지 않아
   // 마지막 프레임이 그대로 남는다(AC-E4).
+  //
+  // 크기 축은 잰 값이 아니라 **맞춘 영역**(`lattice`)이다. 그래서 바깥 상자가 1px 흔들려도
+  // 그리는 영역이 같으면 프레임이 돌지 않는다 — 그릴 것이 정말로 달라졌을 때만 깨운다.
   useEffect(() => {
     scheduleFrame();
-  }, [elements, canvas, targetStyles, texts, panelTween, background, display, scheduleFrame]);
+  }, [elements, canvas, targetStyles, texts, panelTween, background, lattice, scheduleFrame]);
 
   // 언마운트 시 예약된 프레임 정리.
   useEffect(() => cancelFrame, [cancelFrame]);
@@ -384,25 +450,54 @@ export default function CanvasSurface({
       ref={containerRef}
       className={className === undefined ? 'relative min-h-0 w-full flex-1' : className}
     >
-      <canvas
-        ref={canvasRef}
-        data-testid="canvas-surface"
-        // 포인터 리스너를 달지 않는다 — 표면은 포인터로 아무것도 하지 않으며, 편집
-        // 포인터는 위에 얹히는 오버레이 층의 루트가 받는다(머리말 §포인터 통과 슬롯).
-        className="block h-full w-full"
-      />
       {/*
-        오버레이는 캔버스 **뒤(=위)** 에 형제로 놓인다. 컨테이너가 `relative` 이므로 층은
-        스스로 `absolute inset-0` 을 잡으면 된다. 미지정이면 옵셔널 호출이 인자 평가조차
-        건너뛰고 `undefined` 를 렌더하므로 DOM 에 아무것도 더해지지 않는다(AC-E1).
+        **그리는 영역은 진짜 DOM 상자다**(0.9.0). 잰 상자에서 격자 자투리를 뺀 크기를
+        여기서 한 번 짓고, 캔버스와 오버레이를 **그 안에** 함께 넣는다.
 
-        투영 한 벌은 프레임이 쓰는 그 값들을 그대로 넘긴다 — 오버레이용 두 번째 측정을
-        만들지 않기 위해서다(AC-E2). 폭은 직전 프레임의 장부다.
+        자투리를 산술로만 다루는 길(오버레이는 바깥 상자를 덮고 좌표에 오프셋을 더하는 길)
+        도 있었지만 그것은 축척 결함(AC-E9)과 같은 부류의 함정이다 — 오버레이는 포인터를
+        제 `getBoundingClientRect()` 로 받는데, 그 상자가 스테이지와 다른 상자가 되는 순간
+        모든 좌표에 조용한 오프셋이 실린다. 상자를 실제로 지어 두면 그 오프셋이 **존재할 수
+        없다**: `projection.stage` 와 오버레이의 제 상자가 같은 노드다.
+
+        자리는 자투리를 반씩 나눈 **정수** px 다. 소수 자리에 두면 안쪽의 모든 선이 다시
+        소수에서 시작해 이 변경이 하려던 일이 통째로 무산된다.
       */}
-      {overlay?.({
-        projection: { stage: display, canvas },
-        textWidths: textWidthsRef.current,
-      })}
+      <div
+        data-testid="canvas-stage"
+        className="absolute"
+        style={{
+          left: lattice.offset.x,
+          top: lattice.offset.y,
+          width: stage.width,
+          height: stage.height,
+        }}
+      >
+        <canvas
+          ref={canvasRef}
+          data-testid="canvas-surface"
+          // 포인터 리스너를 달지 않는다 — 표면은 포인터로 아무것도 하지 않으며, 편집
+          // 포인터는 위에 얹히는 오버레이 층의 루트가 받는다(머리말 §포인터 통과 슬롯).
+          className="block h-full w-full"
+        />
+        {/*
+          오버레이는 캔버스 **뒤(=위)** 에 형제로 놓인다. 상자가 `absolute` 라 스스로
+          위치 기준이므로 층은 `absolute inset-0` 하나로 캔버스와 같은 상자를 덮는다.
+          미지정이면 옵셔널 호출이 인자 평가조차 건너뛰고 `undefined` 를 렌더하므로
+          오버레이 때문에 생기는 DOM 노드는 하나도 없다(AC-E1).
+
+          투영 한 벌은 프레임이 쓰는 그 값들을 그대로 넘긴다 — 오버레이용 두 번째 측정을
+          만들지 않기 위해서다(AC-E2). 폭은 직전 프레임의 장부다. 격자 한 벌은 props 가
+          아니라 컨텍스트로 가는데, 사이에 있는 `CanvasPanel` 이 슬롯의 값 가운데 둘만
+          골라 넘기기 때문이다(`canvasStageGrid.ts` §왜 컨텍스트인가).
+        */}
+        <CanvasStageGridContext value={stageGrid}>
+          {overlay?.({
+            projection: { stage, canvas },
+            textWidths: textWidthsRef.current,
+          })}
+        </CanvasStageGridContext>
+      </div>
     </div>
   );
 }

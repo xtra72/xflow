@@ -73,7 +73,12 @@ class TriggeringResizeObserver {
     this.cb = cb;
   }
   observe() {
-    this.cb([{ contentRect: { width: 200, height: 100 } }]);
+    // 200x80 은 기본 격자 칸(기본 캔버스 500x400 에 25 단위)에 **이미 맞아 있는** 크기다:
+    // 가로 200×25/500 = 10px, 세로 80×25/400 = 5px 이라 두 축 모두 나머지가 0 이다.
+    // 표면은 그리는 영역을 그 칸의 정수배로 줄이므로(0.9.0 · `stageLattice`), 맞아 있지
+    // 않은 크기를 쓰면 이 파일의 좌표 기대값이 "줄인 만큼" 을 함께 지고 가게 된다 —
+    // 그 산술은 `canvasGeometry.test.ts` 와 `CanvasSurface.test.tsx` 가 따로 시험한다.
+    this.cb([{ contentRect: { width: 200, height: 80 } }]);
   }
   unobserve() {}
   disconnect() {}
@@ -848,11 +853,11 @@ describe('CanvasPanel — 드래그가 onConfigChange 로 흘러간다 (AC-03)',
     expect(onConfigChange).toHaveBeenCalledTimes(1);
     const patch = onConfigChange.mock.calls[0]![0] as { elements: Array<{ id: string; geometry: unknown }> };
     expect(Object.keys(patch)).toEqual(['elements']);
-    // 화면에서 (20,10)px 끌었다 — 스테이지 200x100 위의 그 길이는 기본 캔버스
-    // (500x400) 단위로 (50, 40) 이다. 자리는 캔버스 단위 정수로 저장된다.
+    // 화면에서 (20,10)px 끌었다 — 스테이지 200x80 위의 그 길이는 기본 캔버스
+    // (500x400) 단위로 (50, 50) 이다. 자리는 캔버스 단위 정수로 저장된다.
     expect(patch.elements.find((el) => el.id === 'a')!.geometry).toEqual({
       x: 100,
-      y: 80,
+      y: 90,
       w: 100,
       h: 80,
     });

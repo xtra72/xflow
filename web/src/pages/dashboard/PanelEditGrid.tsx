@@ -30,14 +30,23 @@
 //
 // 그래서 여기서도 컴포넌트를 쪼개지 않고 **세로 간격 하나를 더 받는다**(`strength` 와
 // 같은 방식이다). 생략하면 `step` 과 같은 값이므로 다섯 패널의 그림은 한 글자도 바뀌지
-// 않고, 캔버스만 "한 정수 간격에서 파생한 두 백분율"(`canvasEditArrange.gridPercents`)
-// 을 넘긴다. 두 축의 값을 **부르는 쪽이 한 계산에서** 만들어 오므로, 그리는 간격과 붙는
-// 간격이 갈라질 자리는 여기에도 생기지 않는다.
+// 않고, 캔버스만 두 값을 함께 넘긴다. 두 축의 값을 **부르는 쪽이 한 계산에서** 만들어
+// 오므로, 그리는 간격과 붙는 간격이 갈라질 자리는 여기에도 생기지 않는다.
 //
-// 캔버스에서 그 두 백분율의 분모는 **스테이지가 아니라 캔버스 크기**다. 그래서 칸 수가
-// 패널 크기와 무관하게 고정되고, 간격이 캔버스 축을 나누어떨어지게 하면 마지막 선이
-// 모서리에 앉는다 — 옛 방식(스테이지 종횡비에서 파생)이 남기던 반 칸짜리 자투리가
-// 여기서 사라진다(사용 시험: "격자가 일정하지 않음").
+// ## 단위를 따로 받는 이유 (`unit`)
+//
+// 백분율은 브라우저가 상자 폭에 곱하는 순간 **소수 px** 가 된다. 1749px 상자에 5% 면 한
+// 칸이 87.45px 이고, 선은 0 · 87.45 · 174.90 … 에 선다. 소수 자리에서 시작하는 1px 선은
+// 두 장치 픽셀에 나뉘어 칠해지므로 선마다 굵기와 진하기가 달라 보인다 — 사용자가 세 번째로
+// 돌려보낸 "격자가 일정하지 않음" 이 그것이다. 칸 수가 정수인가(위 절이 고친 것)와는 다른
+// 층의 문제이며, 스무 칸이 딱 떨어져도 각 칸이 87.45px 이면 그렇게 보인다.
+//
+// 캔버스는 그 소수를 **상자 쪽에서** 없앤다: 그리는 영역을 칸의 정수배로 맞춰 두고
+// (`canvasGeometry.stageLattice`), 여기에는 그 정수 칸을 **px 그대로** 넘긴다. 그래서
+// 브라우저가 다시 곱할 것이 없다. 기본값은 `'%'` 이므로 다섯 패널의 그림은 그대로다.
+//
+// 주기만 정수로 바꾸는 길은 택하지 않았다 — 그러면 그려진 선과 붙는 자리가 오른쪽 끝에서
+// 어긋나, 이 기능에서 두 번 걷어낸 거짓말이 모양만 바꿔 되돌아온다.
 //
 // @spec SPEC-CHART-004 §2.7 [U7] · SPEC-CANVAS-002 REQ-04
 
@@ -68,11 +77,23 @@ const PAINT: Record<PanelEditGridStrength, GridPaint> = {
   strong: { line: 'rgba(148, 163, 184, 0.6)', center: 'rgba(59, 130, 246, 0.9)' },
 };
 
+/**
+ * 간격의 단위.
+ *
+ * - `'%'` — 상자 **제 축 길이**에 대한 비율(기본). 다섯 패널이 쓰는 길이며, 요소의 자리도
+ *   같은 백분율이라 눈금과 격자선이 만난다.
+ * - `'px'` — 절대 CSS px. 캔버스만 쓴다. 캔버스는 그리는 영역을 **칸의 정수배**로 맞춰
+ *   두므로(`canvasGeometry.stageLattice`) 칸을 px 로 직접 말할 수 있고, 그래야 선이 소수
+ *   자리에서 시작하지 않는다 — 백분율은 브라우저가 상자 폭에 곱하는 순간 소수를 만든다.
+ */
+export type PanelEditGridUnit = '%' | 'px';
+
 export function PanelEditGrid({
   enabled,
   step = GRID_STEP_PERCENT,
   stepY = step,
   strength = 'subtle',
+  unit = '%',
 }: {
   enabled: boolean;
   /** 가로 격자 간격(%) — 상자 **폭**에 대한 값. 기본은 `panelEditAlign` 이 소유하는 10%. */
@@ -86,6 +107,11 @@ export function PanelEditGrid({
   stepY?: number;
   /** 진하기. 기본은 요소 뒤에 깔리는 패널용 `subtle` 이다. */
   strength?: PanelEditGridStrength;
+  /**
+   * 두 간격의 단위. 기본은 종전 그대로 `'%'` 이므로 다섯 패널의 그림은 한 글자도 바뀌지
+   * 않는다 — 넘기는 쪽이 캔버스뿐이다(위 `PanelEditGridUnit`).
+   */
+  unit?: PanelEditGridUnit;
 }): React.ReactElement | null {
   if (!enabled) return null;
   const paint = PAINT[strength];
@@ -96,8 +122,8 @@ export function PanelEditGrid({
       className="pointer-events-none absolute inset-0 z-0"
       style={{
         backgroundImage: [
-          `repeating-linear-gradient(to right, ${paint.line} 0 1px, transparent 1px ${step}%)`,
-          `repeating-linear-gradient(to bottom, ${paint.line} 0 1px, transparent 1px ${stepY}%)`,
+          `repeating-linear-gradient(to right, ${paint.line} 0 1px, transparent 1px ${step}${unit})`,
+          `repeating-linear-gradient(to bottom, ${paint.line} 0 1px, transparent 1px ${stepY}${unit})`,
         ].join(', '),
       }}
     >

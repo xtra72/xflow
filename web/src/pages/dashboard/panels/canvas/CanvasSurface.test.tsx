@@ -24,7 +24,7 @@ import CanvasSurface, {
 type RoCallback = (entries: Array<{ contentRect: { width: number; height: number } }>) => void;
 let roInstances: { cb: RoCallback }[] = [];
 let roDisconnects = 0;
-let currentSize = { width: 100, height: 80 };
+let currentSize = { width: 96, height: 64 };
 
 class TriggeringResizeObserver {
   cb: RoCallback;
@@ -167,10 +167,16 @@ function makeVisibility(initial = true) {
 // --- 고정 입력 -----------------------------------------------------------
 
 /**
- * 대표 캔버스(200x160) — 스테이지(100x80)의 두 배라 축척이 0.5 다.
+ * 대표 캔버스(200x160) — 스테이지(96x64)의 두 배 남짓이라 축척이 가로 0.48 · 세로 0.4 다.
  *
  * 1:1 로 두지 않는 것에 뜻이 있다: 축척이 1 이면 캔버스 크기를 아예 무시한 투영도 이
- * 파일의 기대값을 통과한다.
+ * 파일의 기대값을 통과한다. 두 축의 축척이 갈린 것도 같은 이유다 — 축을 뒤바꾼 계산이 드러난다.
+ *
+ * **잰 크기를 96x64 로 둔 것에도 뜻이 있다**(0.9.0). 표면은 그리는 영역을 격자 칸의
+ * 정수배로 맞추므로(`stageLattice`), 픽스처가 그 칸에 이미 맞아 있으면 아래 기대값들이
+ * "맞추기" 와 무관해진다 — 기본 간격 25 에서 가로 한 칸은 96×25/200 = 12px, 세로는
+ * 64×25/160 = 10px 이라 두 축 모두 나머지가 0 이다. 맞추는 산술 자체는 나누어떨어지지
+ * **않는** 크기로 따로 시험한다(§그리는 영역 · `canvasGeometry.test.ts`).
  */
 const CANVAS: CanvasSize = { width: 200, height: 160 };
 
@@ -183,7 +189,7 @@ const LINEAR_300 = { duration_ms: 300, easing: 'linear' } as const;
 beforeEach(() => {
   roInstances = [];
   roDisconnects = 0;
-  currentSize = { width: 100, height: 80 };
+  currentSize = { width: 96, height: 64 };
   ctxStub = makeCtxStub();
   vi.stubGlobal('ResizeObserver', TriggeringResizeObserver as unknown as typeof ResizeObserver);
   vi.stubGlobal('devicePixelRatio', 2);
@@ -214,10 +220,10 @@ describe('CanvasSurface — 백킹 버퍼와 첫 프레임 (AC-E5)', () => {
     clock.flush(0);
 
     const canvas = container.querySelector('canvas') as HTMLCanvasElement;
-    expect(canvas.width).toBe(200); // 100 × dpr 2
-    expect(canvas.height).toBe(160); // 80 × dpr 2
-    expect(canvas.style.width).toBe('100px');
-    expect(canvas.style.height).toBe('80px');
+    expect(canvas.width).toBe(192); // 96 × dpr 2
+    expect(canvas.height).toBe(128); // 64 × dpr 2
+    expect(canvas.style.width).toBe('96px');
+    expect(canvas.style.height).toBe('64px');
   });
 
   it('한 프레임은 전체를 지우고 DPR 배율을 건 뒤 요소를 다시 그린다', () => {
@@ -237,14 +243,14 @@ describe('CanvasSurface — 백킹 버퍼와 첫 프레임 (AC-E5)', () => {
 
     expect(ops()).toContain('clearRect');
     // 배경색이 있으면 지운 뒤 칠한다.
-    expect(ctxStub.calls.find((c) => c[0] === 'fillRect')?.slice(1)).toEqual([0, 0, 200, 160]);
+    expect(ctxStub.calls.find((c) => c[0] === 'fillRect')?.slice(1)).toEqual([0, 0, 192, 128]);
     // 배경을 그린 뒤 DPR 배율을 세운다 — 이후 좌표는 CSS px 다.
     expect(ctxStub.calls.filter((c) => c[0] === 'setTransform').map((c) => c.slice(1))).toEqual([
       [1, 0, 0, 1, 0, 0],
       [2, 0, 0, 2, 0, 0],
     ]);
-    // 캔버스 (0,0,200,160) = 캔버스 전체 → CSS px 전체 (0,0,100,80).
-    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 100, 80]);
+    // 캔버스 (0,0,200,160) = 캔버스 전체 → CSS px 전체 (0,0,96,64).
+    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 96, 64]);
   });
 
   it('리사이즈되면 백킹 버퍼를 재계산하고 같은 상대 위치로 다시 그린다', () => {
@@ -261,19 +267,20 @@ describe('CanvasSurface — 백킹 버퍼와 첫 프레임 (AC-E5)', () => {
     );
     clock.flush(0);
     const canvas = container.querySelector('canvas') as HTMLCanvasElement;
-    expect(canvas.width).toBe(200);
-    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([50, 40, 50, 40]);
+    expect(canvas.width).toBe(192);
+    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([48, 32, 48, 32]);
 
     ctxStub.calls.length = 0;
     act(() => {
-      roInstances[0]!.cb([{ contentRect: { width: 50, height: 40 } }]);
+      // 48x32 도 기본 간격의 칸에 맞아 있다(48×25/200 = 6 · 32×25/160 = 5).
+      roInstances[0]!.cb([{ contentRect: { width: 48, height: 32 } }]);
     });
     clock.flush(16);
 
-    expect(canvas.width).toBe(100); // 50 × dpr 2
-    expect(canvas.height).toBe(80);
+    expect(canvas.width).toBe(96); // 48 × dpr 2
+    expect(canvas.height).toBe(64);
     // 요소는 화면상 같은 상대 위치(우하 사분면)에 남는다.
-    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([25, 20, 25, 20]);
+    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([24, 16, 24, 16]);
   });
 
   it('표시 크기가 0 이면 그리지 않는다(아직 그릴 수 없음 — 루프도 깨우지 않는다)', () => {
@@ -310,8 +317,8 @@ describe('CanvasSurface — 백킹 버퍼와 첫 프레임 (AC-E5)', () => {
     );
     clock.flush(0);
     const canvas = container.querySelector('canvas') as HTMLCanvasElement;
-    expect(canvas.width).toBe(100);
-    expect(canvas.height).toBe(80);
+    expect(canvas.width).toBe(96);
+    expect(canvas.height).toBe(64);
   });
 
   it('2D context 를 얻지 못하면 조용히 그리지 않는다(렌더 예외 없음)', () => {
@@ -730,7 +737,7 @@ describe('CanvasSurface — 수명주기와 기본 주입값', () => {
 // 이쪽은 **"슬롯을 쓰지 않으면 아무 일도 없다"** 는 002 의 계약 하나를 검증한다.
 
 describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 001 과 동일 (AC-E1)', () => {
-  it('컨테이너에는 <canvas> 하나뿐이다(추가 DOM 노드가 생기지 않는다)', () => {
+  it('그리는 상자 안에는 <canvas> 하나뿐이다(오버레이가 만드는 노드가 없다)', () => {
     const clock = makeScheduler();
     const { container } = render(
       <CanvasSurface
@@ -744,9 +751,15 @@ describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 
     );
     clock.flush(0);
 
+    // 컨테이너 → 그리는 상자 → 캔버스. 가운데 상자는 0.9.0 이 격자 자투리를 실제
+    // DOM 으로 만든 것이며 **오버레이와 무관하게 언제나** 있다(슬롯을 써도 안 써도 같다).
+    // AC-E1 이 금지하는 것은 "오버레이 때문에 생기는 노드" 이고, 그것은 여전히 0 개다.
     const wrapper = container.firstElementChild as HTMLElement;
     expect(wrapper.children).toHaveLength(1);
-    expect(wrapper.children[0]!.tagName).toBe('CANVAS');
+    const box = screen.getByTestId('canvas-stage');
+    expect(wrapper.children[0]).toBe(box);
+    expect(box.children).toHaveLength(1);
+    expect(box.children[0]!.tagName).toBe('CANVAS');
   });
 
   it('한 프레임의 그리기 호출 순서와 인자가 001 과 같다', () => {
@@ -794,8 +807,8 @@ describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 
       'restore',
     ]);
     expect(ctxStub.calls.filter((c) => c[0] === 'fillText').map((c) => c.slice(1))).toEqual([
-      ['ab', 25, 20], // rect 중심 (25,20), align 미지정(left) → 원점 그대로.
-      ['cd', 50, 40], // 기준점 (50,40).
+      ['ab', 24, 16], // rect 중심 (24,16), align 미지정(left) → 원점 그대로.
+      ['cd', 48, 32], // 기준점 (48,32).
     ]);
   });
 
@@ -971,7 +984,7 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     };
   }
 
-  it('오버레이는 캔버스 뒤 형제로 컨테이너 안에 렌더된다', () => {
+  it('오버레이는 캔버스 뒤 형제로 **그리는 상자 안에** 렌더된다', () => {
     const clock = makeScheduler();
     const spy = makeOverlaySpy();
     const { container } = render(
@@ -987,10 +1000,16 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     );
     clock.flush(0);
 
+    // 같은 상자 안의 형제라는 사실이 이 시험의 전부다 — 오버레이가 제
+    // `getBoundingClientRect()` 로 재는 상자와 `projection.stage` 가 같은 노드가 되려면
+    // 둘이 **그리는 상자 안에** 함께 있어야 한다(0.9.0 · 위험 R1).
     const wrapper = container.firstElementChild as HTMLElement;
-    expect(wrapper.children).toHaveLength(2);
-    expect(wrapper.children[0]!.tagName).toBe('CANVAS');
-    expect(wrapper.children[1]).toBe(screen.getByTestId('canvas-overlay'));
+    expect(wrapper.children).toHaveLength(1);
+    const box = wrapper.children[0] as HTMLElement;
+    expect(box).toBe(screen.getByTestId('canvas-stage'));
+    expect(box.children).toHaveLength(2);
+    expect(box.children[0]!.tagName).toBe('CANVAS');
+    expect(box.children[1]).toBe(screen.getByTestId('canvas-overlay'));
   });
 
   it('오버레이가 받는 스테이지는 프레임이 투영에 쓰는 그 값이다(측정원이 하나다)', () => {
@@ -1012,7 +1031,7 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     // 캔버스 전체를 덮는 상자이므로 투영된 px 상자가 곧 스테이지 크기다.
     const projected = ctxStub.calls.find((c) => c[0] === 'rect')!.slice(1);
     expect(spy.last!.projection.stage).toEqual({ width: projected[2], height: projected[3] });
-    expect(spy.last!.projection.stage).toEqual({ width: 100, height: 80 });
+    expect(spy.last!.projection.stage).toEqual({ width: 96, height: 64 });
   });
 
   it('오버레이는 캔버스 단위 크기도 함께 받는다 — 투영에는 두 크기가 모두 필요하다', () => {
@@ -1050,14 +1069,14 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     };
     const { rerender } = render(<CanvasSurface canvas={CANVAS} {...props} />);
     clock.flush(0);
-    // 200x160 캔버스의 절반 → 스테이지(100x80)의 절반.
-    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 50, 40]);
+    // 200x160 캔버스의 절반 → 스테이지(96x64)의 절반.
+    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 48, 32]);
 
     ctxStub.calls.length = 0;
     rerender(<CanvasSurface canvas={{ width: 100, height: 80 }} {...props} />);
     clock.flush(16);
     // 같은 좌표가 이제 캔버스 전체다 → 스테이지 전체를 덮는다.
-    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 100, 80]);
+    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 96, 64]);
   });
 
   it('패널 크기가 바뀌면 오버레이의 스테이지도 같은 새 값으로 따라온다(AC-E2)', () => {
@@ -1075,16 +1094,16 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
       />,
     );
     clock.flush(0);
-    expect(spy.last!.projection.stage).toEqual({ width: 100, height: 80 });
+    expect(spy.last!.projection.stage).toEqual({ width: 96, height: 64 });
 
     ctxStub.calls.length = 0;
     act(() => {
-      roInstances[0]!.cb([{ contentRect: { width: 50, height: 40 } }]);
+      roInstances[0]!.cb([{ contentRect: { width: 48, height: 32 } }]);
     });
     clock.flush(16);
 
     const projected = ctxStub.calls.find((c) => c[0] === 'rect')!.slice(1);
-    expect(spy.last!.projection.stage).toEqual({ width: 50, height: 40 });
+    expect(spy.last!.projection.stage).toEqual({ width: 48, height: 32 });
     expect(spy.last!.projection.stage).toEqual({ width: projected[2], height: projected[3] });
   });
 
@@ -1193,5 +1212,122 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     expect(clock.requested).toBe(before);
     expect(clock.pending).toBe(0);
     expect(ctxStub.calls).toHaveLength(0);
+  });
+});
+
+// --- 그리는 영역은 격자 칸의 정수배다 (0.9.0 · 사용 시험 "격자가 일정하지 않음") ---
+//
+// 위 절들은 픽스처가 이미 칸에 맞아 있어 "맞추기" 를 재지 못한다(그것이 그 픽스처를 고른
+// 이유다 — 다른 계약을 재는 시험이 이 산술에 흔들리면 안 된다). 여기서는 반대로 **나누어
+// 떨어지지 않는** 크기를 넣어 맞추기 자체를 본다. 사용자가 실제로 본 1749×796 이다.
+//
+// 재는 것은 상자다: 표면이 자투리를 산술이 아니라 **진짜 DOM 상자**로 만들었는가.
+// 그것이 이 변경의 핵심 결정이다 — 상자를 지어 두면 오버레이가 제
+// `getBoundingClientRect()` 로 재는 상자와 `projection.stage` 가 같은 노드라, 그 사이에
+// 조용한 오프셋이 낄 자리가 **존재할 수 없다**(위험 R1 · AC-E9 와 같은 부류의 함정).
+
+/** 기본 캔버스(500x400) — 이 절만 쓴다. 25 단위 격자면 20 x 16 칸이다. */
+const WIDE_CANVAS: CanvasSize = { width: 500, height: 400 };
+
+function stageBox(): HTMLElement {
+  return screen.getByTestId('canvas-stage');
+}
+
+describe('CanvasSurface — 그리는 영역 (0.9.0)', () => {
+  function renderAt(width: number, height: number, overlay?: (ctx: CanvasOverlayContext) => React.ReactNode) {
+    currentSize = { width, height };
+    const clock = makeScheduler();
+    const view = render(
+      <CanvasSurface
+        canvas={WIDE_CANVAS}
+        elements={[rectEl('a', { geometry: { x: 0, y: 0, w: 500, h: 400 } })]}
+        targetStyles={{ a: { fill: '#ff0000' } }}
+        texts={{}}
+        scheduler={clock.scheduler}
+        visibilitySource={makeVisibility().source}
+        overlay={overlay}
+      />,
+    );
+    clock.flush(0);
+    return { clock, view };
+  }
+
+  it('나누어떨어지지 않는 상자(1749x796)를 칸의 정수배로 줄인다', () => {
+    renderAt(1749, 796);
+
+    // 맞추기 전 한 칸은 1749/20 = 87.45px 였다 — 그 소수가 선을 두 픽셀에 걸치게 했다.
+    expect(stageBox().style.width).toBe('1740px'); // 87 × 20칸
+    expect(stageBox().style.height).toBe('784px'); // 49 × 16칸
+  });
+
+  it('자투리는 양쪽에 나눈 **정수** 자리가 된다 — 소수면 안쪽 선이 다시 소수다', () => {
+    renderAt(1749, 796);
+
+    expect(stageBox().style.left).toBe('4px'); // (1749-1740)/2 내림
+    expect(stageBox().style.top).toBe('6px'); // (796-784)/2
+  });
+
+  it('캔버스와 오버레이가 **그 상자 안에** 함께 산다 (측정원이 하나다)', () => {
+    const seen: CanvasOverlayContext[] = [];
+    renderAt(1749, 796, (ctx) => {
+      seen.push(ctx);
+      return <div data-testid="canvas-overlay" />;
+    });
+    const spy = { last: seen.at(-1) };
+
+    const box = stageBox();
+    expect(box.contains(screen.getByTestId('canvas-surface'))).toBe(true);
+    expect(box.contains(screen.getByTestId('canvas-overlay'))).toBe(true);
+    // 오버레이가 받는 스테이지 = 그 상자의 크기. 둘이 다르면 포인터에 오프셋이 실린다.
+    expect(spy.last!.projection.stage).toEqual({ width: 1740, height: 784 });
+    expect(`${spy.last!.projection.stage.width}px`).toBe(box.style.width);
+    expect(`${spy.last!.projection.stage.height}px`).toBe(box.style.height);
+  });
+
+  it('캔버스도 그 크기로 잡힌다 — 그리는 좌표와 상자가 같은 영역이다', () => {
+    renderAt(1749, 796);
+
+    const canvas = screen.getByTestId('canvas-surface') as HTMLCanvasElement;
+    expect(canvas.style.width).toBe('1740px');
+    expect(canvas.style.height).toBe('784px');
+    // 캔버스 전체를 덮는 요소 → 맞춘 영역 전체를 덮는다.
+    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 1740, 784]);
+  });
+
+  it('바깥 상자가 한 칸 안에서 흔들려도 그리는 영역은 그대로다', () => {
+    // 1749 와 1750 은 같은 1740 이 되고, 796 과 799 는 같은 784 가 된다. 잰 값이 아니라
+    // **맞춘 영역**이 그림을 정하므로, 레이아웃이 1px 씩 흔들려도 도형이 움직이지 않는다.
+    const { clock } = renderAt(1749, 796);
+    ctxStub.calls.length = 0;
+
+    act(() => {
+      roInstances[0]!.cb([{ contentRect: { width: 1750, height: 799 } }]);
+    });
+    clock.flush(16);
+
+    expect(stageBox().style.width).toBe('1740px');
+    expect(stageBox().style.height).toBe('784px');
+    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 1740, 784]);
+  });
+
+  it('아주 작은 패널에서도 그림이 사라지지 않는다 (한 칸이 1px 미만)', () => {
+    // 한 칸이 0.5px 이라 내림하면 0 이다. 0 을 곱하면 영역이 통째로 사라지므로
+    // 그때는 맞추지 않고 종전 그대로 그린다.
+    renderAt(10, 8);
+
+    expect(stageBox().style.width).toBe('10px');
+    expect(stageBox().style.height).toBe('8px');
+    expect(stageBox().style.left).toBe('0px');
+    const rect = ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1);
+    expect(rect).toEqual([0, 0, 10, 8]);
+  });
+
+  it('아직 재지 못한 상자(0)에서는 그리지 않고 NaN 도 내지 않는다', () => {
+    const { clock } = renderAt(0, 0);
+
+    expect(stageBox().style.width).toBe('0px');
+    expect(stageBox().style.height).toBe('0px');
+    expect(ops()).not.toContain('clearRect');
+    expect(clock.pending).toBe(0);
   });
 });

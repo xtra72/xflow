@@ -16,7 +16,7 @@
 // 이동은 프레임당 한 번으로 모이므로 실제와 같은 시점을 보려면 프레임을 기다려야 한다.
 
 import { useState } from 'react';
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 // i18n 은 키를 그대로 돌려준다(I18nProvider 없이 렌더 가능 — CanvasPanel.test.tsx 선례).
@@ -27,6 +27,7 @@ vi.mock('@/lib/i18n', () => ({
 import type { BoxGeometry, CanvasElement, CanvasSize } from './canvasConfig';
 import { CanvasEditDockRegion } from './CanvasEditDock';
 import CanvasEditOverlay from './CanvasEditOverlay';
+import CanvasSurface from './CanvasSurface';
 import {
   CanvasEditSelectionContext,
   useCanvasEditSelectionState,
@@ -762,7 +763,6 @@ import type { LineGeometry, PointGeometry } from './canvasConfig';
 import {
   CANVAS_GRID_STEP_CHOICES,
   CANVAS_GRID_STEP_UNITS,
-  gridPercents,
 } from './canvasEditArrange';
 import {
   BOX_HANDLE_IDS,
@@ -1762,10 +1762,12 @@ describe('격자 간격 — 고른 값 하나가 그림과 붙임을 함께 정�
     fireEvent.click(gridToggle());
 
     expect(gridStepSelect().value).toBe(String(CANVAS_GRID_STEP_UNITS));
-    // 그려지는 값은 그 정수를 **캔버스 축 길이로 나눈** 백분율이다(환산은 한 곳뿐이다).
-    const cell = gridPercents(CANVAS_GRID_STEP_UNITS, CANVAS);
-    expect(gridImage()).toContain(`transparent 1px ${cell.x}%`);
-    expect(gridImage()).toContain(`transparent 1px ${cell.y}%`);
+    // 그려지는 값은 **px** 다(0.9.0). 백분율이면 브라우저가 상자 폭에 곱하는 순간
+    // 소수가 되어 선이 두 픽셀에 걸친다. 25 단위 → 가로 200×25/500 = 10px ·
+    // 세로 100×25/400 = 6.25 → 6px(내림).
+    expect(gridImage()).toContain('transparent 1px 10px');
+    expect(gridImage()).toContain('transparent 1px 6px');
+    expect(gridImage()).not.toContain('%');
   });
 
   it('고를 수 있는 값은 canvasEditArrange 가 소유한 목록 그대로다', () => {
@@ -1796,16 +1798,16 @@ describe('격자 간격 — 고른 값 하나가 그림과 붙임을 함께 정�
     render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={vi.fn()} />);
     fireEvent.click(gridToggle());
 
-    // 20 단위 → 가로 4% (500/20 = 25칸) · 세로 5% (400/20 = 20칸).
+    // 20 단위 → 가로 200×20/500 = 8px · 세로 100×20/400 = 5px.
     pickGridStep(20);
-    expect(gridImage()).toContain('transparent 1px 4%');
-    expect(gridImage()).toContain('transparent 1px 5%');
+    expect(gridImage()).toContain('transparent 1px 8px');
+    expect(gridImage()).toContain('transparent 1px 5px');
 
-    // 50 단위 → 가로 10% (10칸) · 세로 12.5% (8칸).
+    // 50 단위 → 가로 20px · 세로 12.5 → 12px(내림).
     pickGridStep(50);
-    expect(gridImage()).toContain('transparent 1px 10%');
-    expect(gridImage()).toContain('transparent 1px 12.5%');
-    expect(gridImage()).not.toContain('transparent 1px 4%');
+    expect(gridImage()).toContain('transparent 1px 20px');
+    expect(gridImage()).toContain('transparent 1px 12px');
+    expect(gridImage()).not.toContain('transparent 1px 8px');
   });
 
   it('간격을 바꾸면 **붙는 자리**도 함께 바뀐다 (CSS 만 바뀌고 붙임이 남으면 화면이 거짓말이다)', async () => {
@@ -1833,10 +1835,10 @@ describe('격자 간격 — 고른 값 하나가 그림과 붙임을 함께 정�
     const center = moved.x + moved.w / 2;
     // 20 단위 간격의 선은 0·20·40·… 에 있다. 그 위에 앉지 않으면 그림과 붙임이 갈라진 것이다.
     expect(center % 20).toBe(0);
-    // 그리고 그려진 백분율이 실제로 그 정수에서 파생된 값이다.
-    const drawn = gridPercents(20, CANVAS);
-    expect((drawn.x / 100) * CANVAS.width).toBe(20);
-    expect(gridImage()).toContain(`transparent 1px ${drawn.x}%`);
+    // 그리고 그려진 px 가 실제로 그 정수를 투영한 값이다: 20 단위 × (200/500) = 8px.
+    const projected = 20 * (STAGE.width / CANVAS.width);
+    expect(projected).toBe(8);
+    expect(gridImage()).toContain(`transparent 1px ${projected}px`);
   });
 
   it('간격을 바꿔도 상한은 여전히 무한대다 (위험 R6 은 간격마다 되살아날 수 있다)', async () => {
@@ -1865,7 +1867,14 @@ describe('격자 간격 — 고른 값 하나가 그림과 붙임을 함께 정�
     expect((emittedGeometry(emit, 'a') as BoxGeometry).x).toBe(25 + 20);
   });
 
-  it('간격을 바꿔도 프레임을 예약하지 않는다 — 표시 상태일 뿐이다 (AC-E4)', () => {
+  it('간격을 바꿔도 **이 층은** 캔버스 props 를 건드리지 않는다 (AC-E4)', () => {
+    // 이 층이 재는 것은 "오버레이가 스스로 루프를 깨우는가" 하나다 — 간격은 저장하지 않는
+    // 표시 상태이고, 이 층은 그것으로 캔버스 props 를 갈지 않는다.
+    //
+    // **표면과 함께 세우면 이야기가 하나 더 있다**(0.9.0): 그리는 영역이 간격의 정수배라
+    // 간격을 바꾸면 영역이 다시 맞춰지고, 그림이 실제로 달라지므로 프레임이 한 장 필요하다
+    // — 리사이즈와 같은 부류이며, 선택·호버·초점·격자 **토글**은 여전히 0 건이다. 그 사실은
+    // §격자 선이 온전한 픽셀에 앉는다 절이 표면과 함께 세워 따로 확인한다.
     render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={vi.fn()} />);
     fireEvent.click(gridToggle());
     const raf = vi.spyOn(globalThis, 'requestAnimationFrame');
@@ -1877,53 +1886,123 @@ describe('격자 간격 — 고른 값 하나가 그림과 붙임을 함께 정�
   });
 });
 
-// --- 격자 칸은 일정하다 (사용 시험: "격자가 일정하지 않음") -----------------
+// --- 격자 선이 온전한 픽셀에 앉는다 (사용 시험: "격자가 일정하지 않음") -------
 //
-// 옛 모델의 결함은 **세로 백분율을 스테이지 종횡비에서 파생**한 데 있었다. 정사각 칸을
-// 얻으려고 그렇게 했는데, 그 값은 대개 100 을 나누어떨어지지 않아 **마지막 줄이 반 칸**
-// 으로 잘렸다(1749×796 스테이지에서 21.97% = 4.55 줄). 칸 수가 패널 크기를 따라 달라지는
-// 것도 같은 뿌리다.
+// 사용자가 같은 자리를 세 번 돌려보냈고, 세 번째의 원인은 앞의 둘과 다른 층에 있었다.
+//   1회차: 두 축의 칸이 물리적으로 다른 크기였다(세로 백분율을 스테이지 종횡비에서 파생).
+//   2회차: 칸 수가 정수가 아니라 마지막 줄이 반 칸으로 잘렸다(정규화 좌표의 필연).
+//   3회차: 칸 수가 딱 20 칸이어도 **한 칸이 87.45px** 이라, 선이 두 장치 픽셀에 나뉘어
+//          칠해져 굵기와 진하기가 선마다 달라 보였다.
 //
-// 이제 백분율의 분모는 **캔버스**다. 그래서 이 절은 두 가지를 함께 본다:
-//   1) 그려진 칸 수가 두 축 모두 **정수**다(자투리가 없다).
-//   2) 스테이지를 바꿔도 그 칸 수가 **변하지 않는다**(칸 수의 주인은 캔버스다).
+// 그래서 이 절이 재는 것은 칸 수가 아니라 **그려진 선의 자리**다: 전부 정수인가, 간격이
+// 전부 같은가. 그리고 그 선 위에 붙임과 Shift 가 실제로 떨어지는가.
 //
-// **픽스처가 정사각형이면 이 절은 실패할 수 없다.** 옛 결함은 스테이지와 캔버스의 종횡비
-// 차이에서 살았으므로, 여기서는 스테이지를 800×400 으로 두고 캔버스(500×400)와 비를
-// 어긋나게 한다. `stubOverlayRect` 도 같은 치수로 심어 포인터 축척을 1 로 만든다.
+// **이 절만 표면과 오버레이를 함께 세운다.** 위 절들의 하네스는 스테이지를 손으로 넘기지만,
+// 선을 정수에 앉히는 일은 표면이 상자를 짓는 층에서 일어난다 — 오버레이만 세우면 그 층이
+// 통째로 빠져 결함이 그대로 통과한다(두 층이 각자 100% 여도 이음매는 덮이지 않는다).
+//
+// 고정 입력은 **나누어떨어지지 않는** 1749×796 이다. 500 단위 캔버스에 25 간격이면 한 칸이
+// 87.45px 이라 사용자가 본 그 값이 그대로 들어온다. 나누어떨어지는 픽스처로는 이 절이
+// 실패할 수 없다.
 
-/** 가로가 세로의 두 배인 스테이지. 캔버스(500×400)와 종횡비가 다르다. */
-const WIDE_STAGE: StageSize = { width: 800, height: 400 };
+/** 사용자가 반 칸을 본 그 크기. 두 축 모두 기본 간격으로 나누어떨어지지 않는다. */
+const ODD_OUTER: StageSize = { width: 1749, height: 796 };
 
-/** 그려진 격자의 두 축 백분율을 CSS 에서 그대로 읽는다. */
-function drawnSteps(): { x: number; y: number } {
+/** 나누어떨어지는 대조군 — 800×400 은 네 간격 모두에서 자투리가 0 이다. */
+const EVEN_OUTER: StageSize = { width: 800, height: 400 };
+
+let composedOuter: StageSize = ODD_OUTER;
+
+/** 관찰 즉시 현재 크기를 통보하는 ResizeObserver(HeatmapCanvas.test 선례). */
+class ComposedResizeObserver {
+  cb: (entries: Array<{ contentRect: { width: number; height: number } }>) => void;
+  constructor(cb: ComposedResizeObserver['cb']) {
+    this.cb = cb;
+  }
+  observe() {
+    this.cb([{ contentRect: { ...composedOuter } }]);
+  }
+  unobserve() {}
+  disconnect() {}
+}
+
+/**
+ * **진짜 표면 위에** 오버레이를 얹은 하네스. 이 절에서만 쓴다.
+ *
+ * 위 절들의 `Harness` 는 스테이지를 props 로 받는다 — 그것으로는 "표면이 그리는 영역을
+ * 칸에 맞추는가" 를 잴 수 없다. 여기서는 표면이 제 `ResizeObserver` 로 재고 제 상자를
+ * 짓게 두고, 오버레이는 그 상자 안에서 표면이 준 투영을 받는다(실제 배선 그대로다).
+ */
+function Composed({
+  elements,
+  onElementsChange,
+}: {
+  elements: readonly CanvasElement[];
+  onElementsChange: (next: CanvasElement[]) => void;
+}) {
+  const state = useCanvasEditSelectionState();
+  return (
+    <CanvasEditSelectionContext value={state}>
+      <div data-testid="parent" className="relative">
+        <span data-testid="selection">{[...state.selection].join(',')}</span>
+        <CanvasEditDockRegion enabled>
+          <CanvasSurface
+            elements={[...elements]}
+            canvas={CANVAS}
+            targetStyles={{}}
+            texts={{}}
+            overlay={({ projection, textWidths }) => (
+              <CanvasEditOverlay
+                enabled
+                elements={elements}
+                projection={projection}
+                textWidths={textWidths}
+                onElementsChange={onElementsChange}
+              />
+            )}
+          />
+        </CanvasEditDockRegion>
+      </div>
+    </CanvasEditSelectionContext>
+  );
+}
+
+/** 표면이 실제로 지은 그리는 상자. */
+function stageBoxSize(): { width: number; height: number } {
+  const box = screen.getByTestId('canvas-stage');
+  return { width: Number.parseFloat(box.style.width), height: Number.parseFloat(box.style.height) };
+}
+
+/** 그려진 격자의 두 축 주기(px)를 CSS 에서 그대로 읽는다. */
+function drawnCellPx(): { x: number; y: number } {
   const image = gridImage();
-  const right = /to right,.*?transparent 1px ([\d.]+)%\)/.exec(image);
-  const bottom = /to bottom,.*?transparent 1px ([\d.]+)%\)/.exec(image);
+  const right = /to right,.*?transparent 1px ([\d.]+)px\)/.exec(image);
+  const bottom = /to bottom,.*?transparent 1px ([\d.]+)px\)/.exec(image);
   expect(right, `가로 그라디언트를 읽지 못했다: ${image}`).not.toBeNull();
   expect(bottom, `세로 그라디언트를 읽지 못했다: ${image}`).not.toBeNull();
   return { x: Number(right![1]), y: Number(bottom![1]) };
 }
 
-/** 그려진 격자의 축별 칸 수. 정수가 아니면 마지막 칸이 잘린다는 뜻이다. */
+/** 그려진 격자의 축별 칸 수 — 그리는 영역 ÷ 주기다. */
 function drawnCellCount(): { x: number; y: number } {
-  const steps = drawnSteps();
-  return { x: 100 / steps.x, y: 100 / steps.y };
+  const cell = drawnCellPx();
+  const box = stageBoxSize();
+  return { x: box.width / cell.x, y: box.height / cell.y };
 }
 
-/** 그려진 칸 하나의 실제 크기(px). 축 길이를 칸 수로 나눈 값이다. */
-function drawnCellPx(stage: StageSize = WIDE_STAGE): { x: number; y: number } {
-  const count = drawnCellCount();
-  return { x: stage.width / count.x, y: stage.height / count.y };
+/** 한 축에 실제로 그려질 선 자리들(0 부터 영역 끝 직전까지). */
+function lineStops(extent: number, cell: number): number[] {
+  const stops: number[] = [];
+  for (let at = 0; at < extent - 1e-9; at += cell) stops.push(at);
+  return stops;
 }
 
-/** 800×400 스테이지에 사각형 하나를 세우고 격자를 켠다. */
-function renderWide(step?: number): ReturnType<typeof vi.fn> {
+/** 표면 위에 오버레이를 세우고 격자를 켠다. 포인터 축척은 1 이다(상자를 그대로 심는다). */
+function renderComposed(step?: number): ReturnType<typeof vi.fn> {
   const emit = vi.fn();
-  render(
-    <Harness elements={[rect('a', SNAP_GEOMETRY)]} stage={WIDE_STAGE} onElementsChange={emit} />,
-  );
-  stubOverlayRect(0, 0, WIDE_STAGE.width, WIDE_STAGE.height);
+  render(<Composed elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={emit} />);
+  const box = stageBoxSize();
+  stubOverlayRect(0, 0, box.width, box.height);
   fireEvent.click(gridToggle());
   if (step !== undefined) pickGridStep(step);
   return emit;
@@ -1935,11 +2014,58 @@ function centerUnits(emit: ReturnType<typeof vi.fn>): { x: number; y: number } {
   return { x: g.x + g.w / 2, y: g.y + g.h / 2 };
 }
 
-describe('격자 칸은 일정하다 (사용 시험: "격자가 일정하지 않음")', () => {
+describe('격자 선이 온전한 픽셀에 앉는다 (사용 시험: "격자가 일정하지 않음")', () => {
+  beforeEach(() => {
+    composedOuter = ODD_OUTER;
+    vi.stubGlobal('ResizeObserver', ComposedResizeObserver as unknown as typeof ResizeObserver);
+    // jsdom 은 2D context 를 주지 않는다. 표면은 null 을 받으면 조용히 그리지 않으며,
+    // 이 절이 재는 것은 칠해진 픽셀이 아니라 **상자와 CSS** 라 그것으로 충분하다.
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('사용자가 본 그 크기(1749×796)에서 한 칸이 정수 px 다', () => {
+    renderComposed();
+
+    // 맞추기 전 한 칸은 1749/20 = 87.45px · 796/16 = 49.75px 였다.
+    expect(drawnCellPx()).toEqual({ x: 87, y: 49 });
+    expect(stageBoxSize()).toEqual({ width: 87 * 20, height: 49 * 16 });
+  });
+
+  it('그려질 모든 선 자리가 정수이고 간격이 전부 같다 — 어느 간격을 골라도', () => {
+    for (const step of CANVAS_GRID_STEP_CHOICES) {
+      cleanup();
+      renderComposed(step);
+      const cell = drawnCellPx();
+      const box = stageBoxSize();
+
+      for (const axis of ['x', 'y'] as const) {
+        const extent = axis === 'x' ? box.width : box.height;
+        const stops = lineStops(extent, cell[axis]);
+        expect(stops.length, `${step} 단위 ${axis} 선 개수`).toBeGreaterThan(1);
+        for (const stop of stops) {
+          // 소수 자리에서 시작하는 1px 선은 두 장치 픽셀에 나뉘어 칠해진다.
+          expect(Number.isInteger(stop), `${step} 단위 ${axis} 선 ${stop}`).toBe(true);
+        }
+        const gaps = stops.slice(1).map((stop, i) => stop - stops[i]!);
+        expect(new Set(gaps).size, `${step} 단위 ${axis} 간격 종류`).toBe(1);
+      }
+    }
+  });
+
+  it('격자를 px 로 그린다 — 백분율은 브라우저가 다시 곱해 소수를 만든다', () => {
+    renderComposed();
+
+    expect(gridImage()).not.toContain('%');
+  });
+
   it('그려진 칸 수가 두 축 모두 정수다 — 반 칸짜리 자투리가 없다', () => {
     for (const step of CANVAS_GRID_STEP_CHOICES) {
       cleanup();
-      renderWide(step);
+      renderComposed(step);
       const count = drawnCellCount();
       expect(Number.isInteger(count.x), `${step} 단위 가로 칸 수 ${count.x}`).toBe(true);
       expect(Number.isInteger(count.y), `${step} 단위 세로 칸 수 ${count.y}`).toBe(true);
@@ -1949,48 +2075,41 @@ describe('격자 칸은 일정하다 (사용 시험: "격자가 일정하지 않
   it('칸 수는 **캔버스 크기 ÷ 간격**이다 — 스테이지를 보지 않는다', () => {
     for (const step of CANVAS_GRID_STEP_CHOICES) {
       cleanup();
-      renderWide(step);
+      renderComposed(step);
       expect(drawnCellCount()).toEqual({ x: CANVAS.width / step, y: CANVAS.height / step });
     }
   });
 
   it('스테이지가 달라져도 같은 칸 수를 그린다 (옛 모델에서는 달라졌다)', () => {
-    // 옛 파생(스테이지 종횡비)에서는 이 두 값이 서로 달랐고, 그 차이가 곧 자투리였다.
-    renderWide();
-    const wide = drawnSteps();
+    renderComposed();
+    const odd = drawnCellCount();
     cleanup();
 
-    render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={vi.fn()} />);
-    fireEvent.click(gridToggle());
-    const narrow = drawnSteps();
+    composedOuter = EVEN_OUTER;
+    renderComposed();
 
-    expect(wide).toEqual(narrow);
+    expect(drawnCellCount()).toEqual(odd);
+    // 다만 한 칸의 **px** 는 다르다 — 같은 칸 수를 다른 크기의 상자에 그렸기 때문이다.
+    expect(drawnCellPx()).toEqual({ x: 40, y: 25 });
   });
 
-  it('사용자가 반 칸을 본 그 크기에서도 칸 수가 정수다 (1749×796)', () => {
-    // 옛 방식은 이 스테이지에서 세로 21.97% = 4.55 줄을 냈다. 그 0.55 가 잘린 칸이다.
-    render(
-      <Harness
-        elements={[rect('a', SNAP_GEOMETRY)]}
-        stage={{ width: 1749, height: 796 }}
-        onElementsChange={vi.fn()}
-      />,
-    );
-    fireEvent.click(gridToggle());
+  it('나누어떨어지는 상자는 줄이지 않는다 — 자투리가 없으면 손대지 않는다', () => {
+    composedOuter = EVEN_OUTER;
+    renderComposed();
 
-    const count = drawnCellCount();
-    expect(count).toEqual({ x: 20, y: 16 });
+    expect(stageBoxSize()).toEqual({ width: 800, height: 400 });
   });
 
   it('모든 칸이 같은 크기다 — 마지막 칸도 온전하다', () => {
     for (const step of CANVAS_GRID_STEP_CHOICES) {
       cleanup();
-      renderWide(step);
+      renderComposed(step);
       const cell = drawnCellPx();
       const count = drawnCellCount();
+      const box = stageBoxSize();
       // 축 길이가 칸 크기의 정수배다 = 마지막 칸이 잘리지 않는다.
-      expect(cell.x * count.x).toBeCloseTo(WIDE_STAGE.width, 6);
-      expect(cell.y * count.y).toBeCloseTo(WIDE_STAGE.height, 6);
+      expect(cell.x * count.x).toBeCloseTo(box.width, 6);
+      expect(cell.y * count.y).toBeCloseTo(box.height, 6);
     }
   });
 
@@ -1999,26 +2118,59 @@ describe('격자 칸은 일정하다 (사용 시험: "격자가 일정하지 않
     // 지나는 것이 중요하다 — 한 값에서만 맞는 파생은 파생이 아니라 우연이다.
     for (const step of CANVAS_GRID_STEP_CHOICES) {
       cleanup();
-      const emit = renderWide(step);
+      const emit = renderComposed(step);
+      const cell = drawnCellPx();
+      const box = stageBoxSize();
 
-      // 상자 안(20,15)을 잡아 대각선으로 끈다 — 두 축이 함께 걸린다.
-      send('pointerdown', 60, 60);
-      send('pointermove', 130, 110);
+      // 상자 안을 잡아 대각선으로 끈다 — 두 축이 함께 걸린다.
+      send('pointerdown', 120, 120);
+      send('pointermove', 260, 220);
       await nextFrame();
 
       const center = centerUnits(emit);
       expect(center.x % step, `${step} 단위 가로`).toBe(0);
       expect(center.y % step, `${step} 단위 세로`).toBe(0);
+      // 그리고 그 자리를 화면으로 투영하면 **그려진 선 자리와 같은 px** 다. 캔버스 단위
+      // 에서만 확인하면 화면에서 어긋나는 결함이 그대로 통과한다.
+      const pxX = (center.x / CANVAS.width) * box.width;
+      const pxY = (center.y / CANVAS.height) * box.height;
+      expect(pxX, `${step} 단위 가로 px`).toBeCloseTo(Math.round(pxX / cell.x) * cell.x, 9);
+      expect(pxY, `${step} 단위 세로 px`).toBeCloseTo(Math.round(pxY / cell.y) * cell.y, 9);
+      expect(Number.isInteger(Math.round(pxX)), `${step} 단위 가로 정수`).toBe(true);
     }
   });
 
+  it('간격을 바꾸면 그리는 영역이 **새 칸에 다시 맞춰진다** (선을 정수에 앉히려면 그래야 한다)', () => {
+    // 이것이 "간격은 표시 상태일 뿐" 에 0.9.0 이 더한 단서다. 영역이 간격의 정수배여야
+    // 선이 정수에 앉으므로, 간격을 바꾸면 영역도 바뀐다 — 리사이즈와 같은 부류의 변화이며
+    // 그림이 실제로 달라지는 유일한 격자 조작이다(토글은 여전히 아무것도 바꾸지 않는다).
+    renderComposed();
+    expect(stageBoxSize()).toEqual({ width: 1740, height: 784 }); // 87×20 · 49×16
+
+    pickGridStep(10);
+
+    // 1749 ÷ 50칸 = 34.98 → 34px, 796 ÷ 40칸 = 19.9 → 19px.
+    expect(stageBoxSize()).toEqual({ width: 34 * 50, height: 19 * 40 });
+    expect(drawnCellPx()).toEqual({ x: 34, y: 19 });
+  });
+
+  it('한 칸이 1px 도 안 되면 격자를 아예 그리지 않는다 (선이 아니라 꽉 찬 사각형이 된다)', () => {
+    // 10px 짜리 상자에 20 칸이면 한 칸이 0.5px 이다. 1px 선에 0.5px 주기는 격자가 아니라
+    // 통짜 사각형이며, 참조선이라고 내놓을 수 없는 그림이다. 그림은 그대로 남는다.
+    composedOuter = { width: 10, height: 8 };
+    renderComposed();
+
+    expect(screen.queryByTestId('panel-edit-grid')).toBeNull();
+    expect(stageBoxSize()).toEqual({ width: 10, height: 8 });
+  });
+
   it('Shift+방향키가 **그려진 칸 하나**만큼 옮긴다', () => {
-    const emit = renderWide();
+    const emit = renderComposed();
 
     // 눌러서 고른 뒤 손을 뗀다(놓기가 "제자리 확정" 쓰기를 한 번 낸다). 하네스는 통보를
     // 되먹이지 않으므로 **매 키의 기준은 언제나 초기 기하**다.
-    send('pointerdown', 60, 60);
-    send('pointerup', 60, 60);
+    send('pointerdown', 120, 120);
+    send('pointerup', 120, 120);
     emit.mockClear();
 
     sendKey('ArrowRight', { shiftKey: true });
