@@ -21,8 +21,13 @@
 //      않아 라벨이 그려지지 않았다(도형 라벨은 `fill` 로 폴백하지 않는다 — 폴백하면 라벨이
 //      제 도형과 같은 색이 되므로 그 거절은 옳다). 그래서 이제 이 파일은 "추가 버튼을
 //      눌렀다" 뿐 아니라 **"문구를 타이핑했다"** 도 렌더 층까지 끌고 간다.
-//   6. 한 요소의 세부 여섯 줄은 **접힌다.** 순번 · 요약 · 순서 · 삭제만 늘 보인다 —
-//      종류는 저술이므로 머리줄이 아니라 도형 묶음의 첫 칸에 선다.
+//   6. 한 요소의 세부는 **접힌다.** 순번 · 요약 · 순서 · 삭제만 늘 보인다 — 종류는
+//      저술이므로 머리줄이 아니라 스타일 탭의 첫 칸에 선다.
+//   7. 펼친 몸통은 **탭 넷**(스타일 · 텍스트 · 배치 · 데이터)으로 갈리고, 열린 탭의 칸만
+//      DOM 에 선다. 그래서 이 파일의 시험 대부분은 무엇을 재는지에 따라 탭을 먼저 연다
+//      (`setup(..., { tab })` · `openTab`). 탭은 **재배치일 뿐**이라 저술 계약은 그대로이며,
+//      그 사실 자체도 시험한다: 탭을 오간 편집이 누적되는가, 열린 탭이 config 에 실리지
+//      않는가.
 //
 // i18n 은 `CanvasRuleTableEditor.test.tsx` 선례대로 키 통과 스텁으로 갈아끼운다. 그래서
 // 개별 컨트롤은 aria-label 이 아니라 `data-testid` 로 집는다(스텁 t 는 `{index}` 를
@@ -131,15 +136,35 @@ function expandAllRows(): void {
   }
 }
 
+/** 요소 카드의 탭 넷. 화면 차례 그대로다. */
+type TabName = 'style' | 'text' | 'arrange' | 'data';
+
+/**
+ * 탭 하나를 연다.
+ *
+ * 탭 상태는 **편집기 하나에 하나**(요소마다가 아니다)이므로, 어느 카드의 탭을 눌러도
+ * 펼쳐진 카드가 모두 그 탭으로 따라온다 — 그래서 인자에 순번이 없다. 기본 탭은
+ * `style` 이라 스타일 칸을 보는 시험은 이 함수를 부르지 않는다.
+ */
+function openTab(tab: TabName, idx = 0): void {
+  fireEvent.click(screen.getByTestId(`canvas-element-tab-${tab}-${idx}`));
+}
+
 /**
  * 편집기를 그리고 onConfigChange 스파이를 돌려준다.
  *
  * 기본으로 모든 줄을 펼친다. 접힘 그 자체를 보는 시험만 `{ expand: false }` 로 끈다.
+ * `{ tab }` 은 펼친 뒤 그 탭을 연다 — 카드가 넷으로 갈린 뒤로 "무엇을 보고 있는가" 는
+ * 시험의 관심사가 아니라 **전제**이므로, 본문마다 클릭을 흩뿌리지 않고 여기서 받는다.
  */
-function setup(config: Record<string, unknown>, opts: { expand?: boolean } = {}) {
+function setup(
+  config: Record<string, unknown>,
+  opts: { expand?: boolean; tab?: TabName } = {},
+) {
   const onConfigChange = vi.fn();
   render(<CanvasElementsEditor config={config} onConfigChange={onConfigChange} />);
   if (opts.expand !== false) expandAllRows();
+  if (opts.tab !== undefined) openTab(opts.tab);
   return onConfigChange;
 }
 
@@ -166,7 +191,10 @@ function lastPatch(spy: ReturnType<typeof vi.fn>): Record<string, unknown> {
  * 되돌아오지 않으면 매 편집이 **원본에서** 다시 계산되고, 그러면 연속 편집 중 마지막
  * 하나만 패치에 남는다 — 앞선 편집이 왕복 단언을 통과한 적이 없게 된다.
  */
-function setupStateful(initial: Record<string, unknown>): { config: Record<string, unknown> } {
+function setupStateful(
+  initial: Record<string, unknown>,
+  opts: { tab?: TabName } = {},
+): { config: Record<string, unknown> } {
   const live = { config: initial };
   function Harness() {
     const [config, setConfig] = useState(initial);
@@ -180,6 +208,7 @@ function setupStateful(initial: Record<string, unknown>): { config: Record<strin
   }
   render(<Harness />);
   expandAllRows();
+  if (opts.tab !== undefined) openTab(opts.tab);
   return live;
 }
 
@@ -332,7 +361,7 @@ describe('CanvasElementsEditor — 요소 목록', () => {
 
 describe('CanvasElementsEditor — 종류별 기하 칸', () => {
   it('rect · ellipse 는 x · y · w · h 를 낸다', () => {
-    setup(cfg([rect(), rect({ id: 'e1', kind: 'ellipse' })]));
+    setup(cfg([rect(), rect({ id: 'e1', kind: 'ellipse' })]), { tab: 'arrange' });
     for (const axis of ['x', 'y', 'w', 'h']) {
       expect(screen.getByTestId(`canvas-element-geo-${axis}-0`)).toBeTruthy();
       expect(screen.getByTestId(`canvas-element-geo-${axis}-1`)).toBeTruthy();
@@ -342,7 +371,7 @@ describe('CanvasElementsEditor — 종류별 기하 칸', () => {
   });
 
   it('line 은 두 끝점만 낸다', () => {
-    setup(cfg([{ id: 'l1', kind: 'line', geometry: { x1: 0, y1: 40, x2: 500, y2: 360 }, style: {} }]));
+    setup(cfg([{ id: 'l1', kind: 'line', geometry: { x1: 0, y1: 40, x2: 500, y2: 360 }, style: {} }]), { tab: 'arrange' });
     for (const axis of ['x1', 'y1', 'x2', 'y2']) {
       expect(screen.getByTestId(`canvas-element-geo-${axis}-0`)).toBeTruthy();
     }
@@ -351,7 +380,7 @@ describe('CanvasElementsEditor — 종류별 기하 칸', () => {
   });
 
   it('text 는 기준점만 낸다', () => {
-    setup(cfg([{ id: 't1', kind: 'text', geometry: { x: 200, y: 240 }, style: {}, text: 'hi' }]));
+    setup(cfg([{ id: 't1', kind: 'text', geometry: { x: 200, y: 240 }, style: {}, text: 'hi' }]), { tab: 'arrange' });
     expect(screen.getByTestId('canvas-element-geo-x-0')).toBeTruthy();
     expect(screen.getByTestId('canvas-element-geo-y-0')).toBeTruthy();
     expect(screen.queryByTestId('canvas-element-geo-w-0')).toBeNull();
@@ -359,7 +388,7 @@ describe('CanvasElementsEditor — 종류별 기하 칸', () => {
   });
 
   it('기하 칸은 캔버스 밖의 값도 그대로 받는다 — 걸치는 배치도 뜻이 있다', () => {
-    const spy = setup(cfg([rect()]));
+    const spy = setup(cfg([rect()]), { tab: 'arrange' });
     fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '-250' } });
     expect(lastElements(spy)[0]!.geometry).toEqual({ x: -250, y: 80, w: 150, h: 160 });
 
@@ -368,7 +397,7 @@ describe('CanvasElementsEditor — 종류별 기하 칸', () => {
   });
 
   it('빈 기하 칸은 0 으로 떨어진다 — NaN 이 들어가면 요소가 통째로 사라진다', () => {
-    const spy = setup(cfg([rect()]));
+    const spy = setup(cfg([rect()]), { tab: 'arrange' });
     fireEvent.change(testid('canvas-element-geo-y-0'), { target: { value: '' } });
     expect(lastElements(spy)[0]!.geometry).toEqual({ x: 50, y: 0, w: 150, h: 160 });
   });
@@ -379,6 +408,7 @@ describe('CanvasElementsEditor — 종류별 기하 칸', () => {
         { id: 'l1', kind: 'line', geometry: { x1: 0, y1: 0, x2: 500, y2: 400 }, style: {} },
         { id: 't1', kind: 'text', geometry: { x: 250, y: 200 }, style: {} },
       ]),
+    { tab: 'arrange' },
     );
     fireEvent.change(testid('canvas-element-geo-x2-0'), { target: { value: '375' } });
     expect(lastElements(spy)[0]!.geometry).toEqual({ x1: 0, y1: 0, x2: 375, y2: 400 });
@@ -396,14 +426,14 @@ describe('CanvasElementsEditor — 종류별 기하 칸', () => {
 
 describe('CanvasElementsEditor — 기하 칸은 정수 칸이다', () => {
   it('위치·크기 칸의 step 이 1 이다 — 화살표 한 번이 곧 한 단위다', () => {
-    setup(cfg([rect()]));
+    setup(cfg([rect()]), { tab: 'arrange' });
     for (const axis of ['x', 'y', 'w', 'h']) {
       expect(testid(`canvas-element-geo-${axis}-0`).getAttribute('step')).toBe('1');
     }
   });
 
   it('소수를 적으면 반올림해 저술한다 — 파서가 어차피 반올림하므로 여기서 먼저 맞춘다', () => {
-    const spy = setup(cfg([rect()]));
+    const spy = setup(cfg([rect()]), { tab: 'arrange' });
     fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '10.4' } });
     expect(lastElements(spy)[0]!.geometry).toEqual({ x: 10, y: 80, w: 150, h: 160 });
 
@@ -412,7 +442,7 @@ describe('CanvasElementsEditor — 기하 칸은 정수 칸이다', () => {
   });
 
   it('편집기가 내보낸 기하는 파서를 지나도 그대로다(왕복 안정성)', () => {
-    const spy = setup(cfg([rect()]));
+    const spy = setup(cfg([rect()]), { tab: 'arrange' });
     fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '10.4' } });
     const written = lastElements(spy)[0]!.geometry;
     const reparsed = parseCanvasConfig(cfg(lastElements(spy))).elements[0]!.geometry;
@@ -420,7 +450,7 @@ describe('CanvasElementsEditor — 기하 칸은 정수 칸이다', () => {
   });
 
   it('크기 칸만 하한을 갖는다 — 위치는 음수도 캔버스 밖도 합법이다', () => {
-    setup(cfg([rect()]));
+    setup(cfg([rect()]), { tab: 'arrange' });
     expect(testid('canvas-element-geo-w-0').getAttribute('min')).toBe('1');
     expect(testid('canvas-element-geo-h-0').getAttribute('min')).toBe('1');
     // 없는 하한을 적어 두면 그 자리가 곧 사용자 의도를 자르는 자리가 된다.
@@ -432,7 +462,7 @@ describe('CanvasElementsEditor — 기하 칸은 정수 칸이다', () => {
     // 0 을 그대로 쓰면 파서가 퇴화로 보고 씨앗 기하로 되살려, 칸을 비우는 순간 요소가
     // 화면 반대편으로 순간이동한다. 그 되살림은 옛 config 를 위한 것이지 이 조작을 위한
     // 것이 아니다.
-    const spy = setup(cfg([rect()]));
+    const spy = setup(cfg([rect()]), { tab: 'arrange' });
     fireEvent.change(testid('canvas-element-geo-w-0'), { target: { value: '' } });
     expect(lastElements(spy)[0]!.geometry).toEqual({ x: 50, y: 80, w: 1, h: 160 });
 
@@ -446,6 +476,7 @@ describe('CanvasElementsEditor — 기하 칸은 정수 칸이다', () => {
   it('선의 끝점 칸도 정수 칸이다', () => {
     const spy = setup(
       cfg([{ id: 'l1', kind: 'line', geometry: { x1: 0, y1: 0, x2: 500, y2: 400 }, style: {} }]),
+    { tab: 'arrange' },
     );
     for (const axis of ['x1', 'y1', 'x2', 'y2']) {
       expect(testid(`canvas-element-geo-${axis}-0`).getAttribute('step')).toBe('1');
@@ -676,7 +707,7 @@ describe('CanvasElementsEditor — 종류 변경', () => {
 
 describe('CanvasElementsEditor — 바인딩 선택', () => {
   it('store 소스의 시리즈를 동일성 키 공간으로 낸다', () => {
-    setup(cfg([rect()]));
+    setup(cfg([rect()]), { tab: 'data' });
     const select = testid('canvas-element-binding-0') as HTMLSelectElement;
     const values = Array.from(select.options).map((o) => o.value);
     expect(values).toEqual(['', TEMP_ID, HUM_ID]);
@@ -685,13 +716,13 @@ describe('CanvasElementsEditor — 바인딩 선택', () => {
   });
 
   it('시리즈를 고르면 동일성 키로 바인딩하고 집계는 last 다', () => {
-    const spy = setup(cfg([rect()]));
+    const spy = setup(cfg([rect()]), { tab: 'data' });
     fireEvent.change(testid('canvas-element-binding-0'), { target: { value: HUM_ID } });
     expect(lastElements(spy)[0]!.binding).toEqual({ series: HUM_ID, agg: 'last' });
   });
 
   it('"바인딩 없음"을 고르면 binding 키 자체가 사라진다 — 정적 도형은 합법이다', () => {
-    const spy = setup(cfg([rect({ binding: { series: TEMP_ID, agg: 'last' } })]));
+    const spy = setup(cfg([rect({ binding: { series: TEMP_ID, agg: 'last' } })]), { tab: 'data' });
     fireEvent.change(testid('canvas-element-binding-0'), { target: { value: '' } });
     const el = lastElements(spy)[0]!;
     expect(el.binding).toBeUndefined();
@@ -699,7 +730,7 @@ describe('CanvasElementsEditor — 바인딩 선택', () => {
   });
 
   it('바인딩이 없으면 규칙 표를 읽기 전용으로 잠근다', () => {
-    setup(cfg([rect(), rect({ id: 'b', binding: { series: TEMP_ID, agg: 'last' } })]));
+    setup(cfg([rect(), rect({ id: 'b', binding: { series: TEMP_ID, agg: 'last' } })]), { tab: 'data' });
     // disabled 는 규칙 표의 안내 문구와 "규칙 추가" 버튼 상태로 드러난다.
     const hints = screen.getAllByTestId('canvas-rule-disabled-hint');
     expect(hints).toHaveLength(1);
@@ -716,6 +747,7 @@ describe('CanvasElementsEditor — 바인딩 선택', () => {
           rules: [{ op: 'gt', value: 1, patch: {} }],
         }),
       ]),
+    { tab: 'data' },
     );
     fireEvent.click(testid('canvas-rule-delete-0'));
     const el = lastElements(spy)[0]!;
@@ -724,7 +756,7 @@ describe('CanvasElementsEditor — 바인딩 선택', () => {
   });
 
   it('소스에 없는 저장된 바인딩은 선택지로 되살려 조용히 잃지 않는다', () => {
-    setup(cfg([rect({ binding: { series: 'ghost key ', agg: 'last' } })]));
+    setup(cfg([rect({ binding: { series: 'ghost key ', agg: 'last' } })]), { tab: 'data' });
     const select = testid('canvas-element-binding-0') as HTMLSelectElement;
     expect(select.value).toBe('ghost key ');
     expect(Array.from(select.options).map((o) => o.value)).toContain('ghost key ');
@@ -742,7 +774,9 @@ describe('CanvasElementsEditor — 바인딩 선택', () => {
         interval_ms: 100,
       },
       elements: [rect()],
-    });
+    },
+    { tab: 'data' },
+  );
     const values = Array.from((testid('canvas-element-binding-0') as HTMLSelectElement).options).map(
       (o) => o.value,
     );
@@ -761,7 +795,9 @@ describe('CanvasElementsEditor — 바인딩 선택', () => {
         interval_ms: 100,
       },
       elements: [rect()],
-    });
+    },
+    { tab: 'data' },
+  );
     const values = Array.from((testid('canvas-element-binding-0') as HTMLSelectElement).options).map(
       (o) => o.value,
     );
@@ -771,7 +807,7 @@ describe('CanvasElementsEditor — 바인딩 선택', () => {
 
   it('소스가 없거나 data_source 가 없으면 "바인딩 없음" 하나만 낸다', () => {
     // data_source 미지정은 store 로 읽는다(기존 패널 config 하위호환 규약).
-    setup({ elements: [rect()] });
+    setup({ elements: [rect()] }, { tab: 'data' });
     const values = Array.from((testid('canvas-element-binding-0') as HTMLSelectElement).options).map(
       (o) => o.value,
     );
@@ -779,20 +815,23 @@ describe('CanvasElementsEditor — 바인딩 선택', () => {
   });
 
   it('tsdb · sysmetrics 소스 블록이 비어 있어도 빈 목록으로 견딘다', () => {
-    setup({ data_source: 'tsdb', elements: [rect()] });
+    setup({ data_source: 'tsdb', elements: [rect()] }, { tab: 'data' });
     expect((testid('canvas-element-binding-0') as HTMLSelectElement).options).toHaveLength(1);
 
     cleanup();
-    setup({ data_source: 'sysmetrics', elements: [rect()] });
+    setup({ data_source: 'sysmetrics', elements: [rect()] }, { tab: 'data' });
     expect((testid('canvas-element-binding-0') as HTMLSelectElement).options).toHaveLength(1);
   });
 
   it('field 없는 store 시리즈도 동일성 키를 만든다 — 빈 metric 자리가 남는다', () => {
-    setup({
-      data_source: 'store',
-      store_source: { agent_name: 'a', series: [{ key: 'k' }], time_window_ms: 1, interval_ms: 1 },
-      elements: [rect()],
-    });
+    setup(
+      {
+        data_source: 'store',
+        store_source: { agent_name: 'a', series: [{ key: 'k' }], time_window_ms: 1, interval_ms: 1 },
+        elements: [rect()],
+      },
+      { tab: 'data' },
+    );
     const values = Array.from((testid('canvas-element-binding-0') as HTMLSelectElement).options).map(
       (o) => o.value,
     );
@@ -813,7 +852,9 @@ describe('CanvasElementsEditor — 바인딩 선택', () => {
         interval_ms: 1,
       },
       elements: [rect()],
-    });
+    },
+    { tab: 'data' },
+  );
     const values = Array.from((testid('canvas-element-binding-0') as HTMLSelectElement).options).map(
       (o) => o.value,
     );
@@ -829,7 +870,7 @@ describe('CanvasElementsEditor — 바인딩 선택', () => {
 
 describe('바인딩 선택지가 비면 데이터 소스로 안내한다', () => {
   it('시리즈가 하나도 없으면 안내가 뜬다', () => {
-    setup({ data_source: 'store', elements: [rect()] });
+    setup({ data_source: 'store', elements: [rect()] }, { tab: 'data' });
 
     expect(testid('canvas-element-binding-hint-0').textContent).toBe(
       'dashboard.canvas.elements.bindingNoSeries',
@@ -837,16 +878,16 @@ describe('바인딩 선택지가 비면 데이터 소스로 안내한다', () =>
   });
 
   it('tsdb · sysmetrics 소스가 비어 있을 때도 같은 안내가 뜬다', () => {
-    setup({ data_source: 'tsdb', elements: [rect()] });
+    setup({ data_source: 'tsdb', elements: [rect()] }, { tab: 'data' });
     expect(screen.getByTestId('canvas-element-binding-hint-0')).toBeTruthy();
 
     cleanup();
-    setup({ data_source: 'sysmetrics', elements: [rect()] });
+    setup({ data_source: 'sysmetrics', elements: [rect()] }, { tab: 'data' });
     expect(screen.getByTestId('canvas-element-binding-hint-0')).toBeTruthy();
   });
 
   it('시리즈가 있으면 안내는 나오지 않는다 — 고를 것이 있는데 하는 잔소리는 잡음이다', () => {
-    setup(cfg([rect()]));
+    setup(cfg([rect()]), { tab: 'data' });
 
     expect(screen.queryByTestId('canvas-element-binding-hint-0')).toBeNull();
   });
@@ -857,7 +898,9 @@ describe('바인딩 선택지가 비면 데이터 소스로 안내한다', () =>
     setup({
       data_source: 'store',
       elements: [rect({ binding: { series: 'temp value room=A', agg: 'last' } })],
-    });
+    },
+    { tab: 'data' },
+  );
 
     expect(screen.queryByTestId('canvas-element-binding-hint-0')).toBeNull();
   });
@@ -875,6 +918,8 @@ describe('CanvasElementsEditor — 빈 칸은 부재다', () => {
     fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '' } });
     expect(lastElements(spy)[0]!.style).toEqual({ strokeWidth: 3, fontSize: 20 });
 
+    // 글자 크기는 텍스트 탭이다 — 같은 `style` 키를 두 탭이 나눠 저술한다.
+    openTab('text');
     fireEvent.change(testid('canvas-element-font-size-0'), { target: { value: '' } });
     expect(lastElements(spy)[0]!.style).toEqual({ strokeWidth: 3, opacity: 0.5 });
   });
@@ -891,12 +936,17 @@ describe('CanvasElementsEditor — 빈 칸은 부재다', () => {
     fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '-1' } });
     expect(lastElements(spy)[0]!.style.opacity).toBe(0);
 
+    openTab('text');
     fireEvent.change(testid('canvas-element-font-size-0'), { target: { value: '18' } });
     expect(lastElements(spy)[0]!.style.fontSize).toBe(18);
   });
 
   it('열거형 스타일 칸의 "미지정"은 키를 지우고, 값을 고르면 키가 생긴다', () => {
-    const spy = setup(cfg([rect({ style: { fontWeight: 'bold', align: 'center', visible: false } })]));
+    // 굵기·정렬은 텍스트 탭, 표시 여부는 스타일 탭이다. 둘을 오가며 재는 것이 곧 "탭을
+    // 갈아도 저술이 끊기지 않는다" 를 함께 재는 자리가 된다.
+    const spy = setup(cfg([rect({ style: { fontWeight: 'bold', align: 'center', visible: false } })]), {
+      tab: 'text',
+    });
 
     fireEvent.change(testid('canvas-element-font-weight-0'), { target: { value: '' } });
     expect(lastElements(spy)[0]!.style).toEqual({ align: 'center', visible: false });
@@ -904,18 +954,21 @@ describe('CanvasElementsEditor — 빈 칸은 부재다', () => {
     fireEvent.change(testid('canvas-element-align-0'), { target: { value: 'right' } });
     expect(lastElements(spy)[0]!.style.align).toBe('right');
 
+    openTab('style');
     fireEvent.change(testid('canvas-element-visible-0'), { target: { value: 'show' } });
     expect(lastElements(spy)[0]!.style.visible).toBe(true);
 
     fireEvent.change(testid('canvas-element-visible-0'), { target: { value: '' } });
     expect(lastElements(spy)[0]!.style).toEqual({ fontWeight: 'bold', align: 'center' });
 
+    openTab('text');
     fireEvent.change(testid('canvas-element-font-weight-0'), { target: { value: 'normal' } });
     expect(lastElements(spy)[0]!.style.fontWeight).toBe('normal');
 
     fireEvent.change(testid('canvas-element-align-0'), { target: { value: '' } });
     expect(lastElements(spy)[0]!.style).toEqual({ fontWeight: 'bold', visible: false });
 
+    openTab('style');
     fireEvent.change(testid('canvas-element-visible-0'), { target: { value: 'hide' } });
     expect(lastElements(spy)[0]!.style.visible).toBe(false);
   });
@@ -927,10 +980,12 @@ describe('CanvasElementsEditor — 빈 칸은 부재다', () => {
   });
 
   it('문구 · 단위에 값을 넣으면 그대로 실린다', () => {
-    const spy = setup(cfg([rect()]));
+    const spy = setup(cfg([rect()]), { tab: 'text' });
     fireEvent.change(testid('canvas-element-text-0'), { target: { value: '{name}: {value}' } });
     expect(lastElements(spy)[0]!.text).toBe('{name}: {value}');
 
+    // 단위는 값을 어떻게 읽는가의 일부라 데이터 탭의 숫자 스위치 옆에 있다.
+    openTab('data');
     fireEvent.change(testid('canvas-element-unit-0'), { target: { value: 'kW' } });
     expect(lastElements(spy)[0]!.unit).toBe('kW');
   });
@@ -948,6 +1003,7 @@ describe('CanvasElementsEditor — 빈 칸은 부재다', () => {
     fireEvent.click(screen.getByLabelText('#ef4444'));
     expect(lastElements(spy)[0]!.style).toEqual({ stroke: '#ef4444' });
 
+    openTab('text');
     fireEvent.click(testid('canvas-element-text-color-0'));
     fireEvent.click(screen.getByLabelText('#10b981'));
     expect(lastElements(spy)[0]!.style).toEqual({ textColor: '#10b981' });
@@ -961,20 +1017,21 @@ describe('CanvasElementsEditor — 빈 칸은 부재다', () => {
   });
 
   it('문구 · 단위를 비우면 그 키가 사라진다(공백만 있는 값도 같다)', () => {
-    const spy = setup(cfg([rect({ text: 'x', unit: '°C' })]));
+    const spy = setup(cfg([rect({ text: 'x', unit: '°C' })]), { tab: 'text' });
 
     fireEvent.change(testid('canvas-element-text-0'), { target: { value: '' } });
     let el = lastElements(spy)[0]!;
     expect('text' in el).toBe(false);
     expect(el.unit).toBe('°C');
 
+    openTab('data');
     fireEvent.change(testid('canvas-element-unit-0'), { target: { value: '   ' } });
     el = lastElements(spy)[0]!;
     expect('unit' in el).toBe(false);
   });
 
   it('소수 자리는 비음수 정수로 죄고, 비우면 키가 사라진다', () => {
-    const spy = setup(cfg([rect({ decimals: 2 })]));
+    const spy = setup(cfg([rect({ decimals: 2 })]), { tab: 'data' });
 
     fireEvent.change(testid('canvas-element-decimals-0'), { target: { value: '3.7' } });
     expect(lastElements(spy)[0]!.decimals).toBe(3);
@@ -987,7 +1044,7 @@ describe('CanvasElementsEditor — 빈 칸은 부재다', () => {
   });
 
   it('문구 토큰 3종을 요소마다 제목 뒤 ? 도움말에 담아 명세를 찾지 않아도 되게 한다', () => {
-    setup(cfg([rect()]));
+    setup(cfg([rect()]), { tab: 'text' });
     expect(testid('canvas-element-token-help-0').textContent).toBe(
       'dashboard.canvas.elements.tokenHelp',
     );
@@ -998,31 +1055,31 @@ describe('CanvasElementsEditor — 빈 칸은 부재다', () => {
 
 describe('CanvasElementsEditor — 트윈', () => {
   it('요소 트윈 지속 시간을 넣으면 이징과 함께 덮어쓰기가 생긴다', () => {
-    const spy = setup(cfg([rect()]));
+    const spy = setup(cfg([rect()]), { tab: 'data' });
     fireEvent.change(testid('canvas-element-tween-duration-0'), { target: { value: '500' } });
     expect(lastElements(spy)[0]!.tween).toEqual({ duration_ms: 500, easing: 'ease-out' });
   });
 
   it('요소 트윈 이징만 바꾸면 기존 지속 시간을 지킨다', () => {
-    const spy = setup(cfg([rect({ tween: { duration_ms: 300, easing: 'linear' } })]));
+    const spy = setup(cfg([rect({ tween: { duration_ms: 300, easing: 'linear' } })]), { tab: 'data' });
     fireEvent.change(testid('canvas-element-tween-easing-0'), { target: { value: 'ease-in' } });
     expect(lastElements(spy)[0]!.tween).toEqual({ duration_ms: 300, easing: 'ease-in' });
   });
 
   it('지속 시간을 비우면 덮어쓰기 자체가 사라진다(= 패널 기본 사용)', () => {
-    const spy = setup(cfg([rect({ tween: { duration_ms: 300, easing: 'linear' } })]));
+    const spy = setup(cfg([rect({ tween: { duration_ms: 300, easing: 'linear' } })]), { tab: 'data' });
     fireEvent.change(testid('canvas-element-tween-duration-0'), { target: { value: '' } });
     expect('tween' in lastElements(spy)[0]!).toBe(false);
   });
 
   it('덮어쓰기가 없는 요소의 이징만 건드리면 아무 트윈도 생기지 않는다', () => {
-    const spy = setup(cfg([rect()]));
+    const spy = setup(cfg([rect()]), { tab: 'data' });
     fireEvent.change(testid('canvas-element-tween-easing-0'), { target: { value: 'ease-in' } });
     expect('tween' in lastElements(spy)[0]!).toBe(false);
   });
 
   it('음수 지속 시간은 0(즉시 전환)으로 죈다', () => {
-    const spy = setup(cfg([rect()]));
+    const spy = setup(cfg([rect()]), { tab: 'data' });
     fireEvent.change(testid('canvas-element-tween-duration-0'), { target: { value: '-100' } });
     expect(lastElements(spy)[0]!.tween).toEqual({ duration_ms: 0, easing: 'ease-out' });
   });
@@ -1050,7 +1107,7 @@ describe('CanvasElementsEditor — 트윈', () => {
   // 그래서 설명이 화면에 상주해야 한다(AC-E16) — 줄로 깔지 않고 제목 뒤 `?` 에 담되,
   // 설명 자체는 sr-only 로 항상 DOM 에 있어 스크린리더가 읽는다(`FieldHelp`).
   it('요소 전환 효과 제목의 ? 가 무엇이 바뀌는지와 0 의 뜻을 말한다 (AC-E16)', () => {
-    setup(cfg([rect()]));
+    setup(cfg([rect()]), { tab: 'data' });
     expect(testid('canvas-element-tween-hint-0').textContent).toBe(
       'dashboard.canvas.elements.tweenHint',
     );
@@ -1116,8 +1173,12 @@ describe('CanvasElementsEditor — parseCanvasConfig 왕복', () => {
     );
 
     // 픽스처를 그대로 파싱하면 파서만 검사한다 — 실제로 편집해 편집기가 만든 배열을 본다.
+    // 셋이 서로 다른 탭에 있으므로 이 왕복은 **탭을 오간 편집이 누적되는가**도 함께 잰다.
+    openTab('arrange');
     fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '75' } });
+    openTab('data');
     fireEvent.change(testid('canvas-element-unit-0'), { target: { value: 'kPa' } });
+    openTab('text');
     fireEvent.change(testid('canvas-element-align-2'), { target: { value: 'right' } });
     expectRoundTrip(live.config);
   });
@@ -1127,10 +1188,13 @@ describe('CanvasElementsEditor — parseCanvasConfig 왕복', () => {
 
     fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '9' } });
     fireEvent.change(testid('canvas-element-stroke-width-0'), { target: { value: '-3' } });
+    openTab('text');
     fireEvent.change(testid('canvas-element-font-size-0'), { target: { value: '-8' } });
+    openTab('data');
     fireEvent.change(testid('canvas-element-decimals-0'), { target: { value: '2.9' } });
-    fireEvent.change(testid('canvas-element-geo-w-0'), { target: { value: '3.5' } });
     fireEvent.change(testid('canvas-element-tween-duration-0'), { target: { value: '-40' } });
+    openTab('arrange');
+    fireEvent.change(testid('canvas-element-geo-w-0'), { target: { value: '3.5' } });
 
     // 편집이 실제로 누적됐는지 먼저 확인한다 — 하나만 남았다면 아래 왕복 단언은 허수다.
     const el = (live.config.elements as CanvasElement[])[0]!;
@@ -1173,7 +1237,9 @@ describe('CanvasElementsEditor — parseCanvasConfig 왕복', () => {
     const live = setupStateful(cfg([rect({ binding: { series: TEMP_ID, agg: 'last' } })]));
 
     fireEvent.change(testid('canvas-element-kind-0'), { target: { value: 'text' } });
+    openTab('text');
     fireEvent.change(testid('canvas-element-text-0'), { target: { value: '{name} {value}{unit}' } });
+    openTab('data');
     fireEvent.click(testid('canvas-rule-add'));
     fireEvent.change(testid('canvas-rule-op-0'), { target: { value: 'between' } });
     fireEvent.change(testid('canvas-rule-value-high-0'), { target: { value: '42' } });
@@ -1287,7 +1353,7 @@ function typedLabel(
   text: string,
   style?: CanvasElement['style'],
 ): CanvasElement {
-  const spy = setup(cfg([shapeEl(kind, style)]));
+  const spy = setup(cfg([shapeEl(kind, style)]), { tab: 'text' });
   fireEvent.change(testid('canvas-element-text-0'), { target: { value: text } });
   const el = lastElements(spy)[0]!;
   cleanup();
@@ -1390,7 +1456,7 @@ describe('CanvasElementsEditor — 만든 요소는 실제로 칠해진다', () 
   });
 
   it('문구를 지워도 그때 심긴 색은 남는다 — 다시 적을 때 색을 잃지 않는다', () => {
-    const live = setupStateful(cfg([shapeEl('rect')]));
+    const live = setupStateful(cfg([shapeEl('rect')]), { tab: 'text' });
     fireEvent.change(testid('canvas-element-text-0'), { target: { value: '{value}' } });
     fireEvent.change(testid('canvas-element-text-0'), { target: { value: '' } });
 
@@ -1400,9 +1466,9 @@ describe('CanvasElementsEditor — 만든 요소는 실제로 칠해진다', () 
   });
 
   it("kind:'text' 는 종전 그대로다 — 문구 요소는 textColor ?? fill 로 칠해진다", () => {
-    const spy = setup(
-      cfg([{ id: 't1', kind: 'text', geometry: { x: 250, y: 200 }, style: {} }]),
-    );
+    const spy = setup(cfg([{ id: 't1', kind: 'text', geometry: { x: 250, y: 200 }, style: {} }]), {
+      tab: 'text',
+    });
     fireEvent.change(testid('canvas-element-text-0'), { target: { value: '{value}' } });
 
     const el = lastElements(spy)[0]!;
@@ -1507,13 +1573,18 @@ describe('CanvasElementsEditor — 요소 줄 접기', () => {
 
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
 
+    // 펼침의 자취는 **탭 줄**이다. 어느 탭이 열려 있든 몸통이 있으면 탭 줄이 있고,
+    // 없으면 없다 — 칸 하나를 자취로 삼으면 그 칸이 다른 탭으로 옮겨 가는 날 이 시험은
+    // 접힘이 깨진 것처럼 거짓말을 한다.
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByTestId('canvas-element-geo-x-0')).toBeTruthy();
+    expect(screen.getByTestId('canvas-element-tabs-0')).toBeTruthy();
+    expect(screen.getByTestId('canvas-element-kind-0')).toBeTruthy();
 
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByTestId('canvas-element-geo-x-0')).toBeNull();
+    expect(screen.queryByTestId('canvas-element-tabs-0')).toBeNull();
+    expect(screen.queryByTestId('canvas-element-kind-0')).toBeNull();
   });
 
   it('접힌 줄에서도 순번 · 순서 이동 · 삭제는 그대로 닿는다', () => {
@@ -1543,8 +1614,8 @@ describe('CanvasElementsEditor — 요소 줄 접기', () => {
 
     expect(testid('canvas-element-toggle-0').getAttribute('aria-expanded')).toBe('false');
     expect(testid('canvas-element-toggle-1').getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByTestId('canvas-element-geo-x-1')).toBeTruthy();
-    expect(screen.queryByTestId('canvas-element-geo-x-0')).toBeNull();
+    expect(screen.getByTestId('canvas-element-tabs-1')).toBeTruthy();
+    expect(screen.queryByTestId('canvas-element-tabs-0')).toBeNull();
   });
 
   it('펼침은 순번이 아니라 요소를 따라간다 — 순서를 바꿔도 열린 줄은 그 요소다', () => {
@@ -1779,13 +1850,19 @@ function SelectionSpyHarness({
   );
 }
 
-/** 요소 하나를 캔버스에서 골라 둔 상태로 편집기를 그린다(그 행은 자동으로 펼쳐진다). */
-function setupPicked(elements: CanvasElement[], pick: string) {
+/**
+ * 요소 하나를 캔버스에서 골라 둔 상태로 편집기를 그린다(그 행은 자동으로 펼쳐진다).
+ *
+ * 이 절이 재는 것은 좌표 칸이 **선택에 밀려나지 않는가** 이므로, 골라 둔 채로 그 칸이
+ * 사는 배치 탭을 연다. 탭을 여는 것은 시험의 주제가 아니라 전제다.
+ */
+function setupPicked(elements: CanvasElement[], pick: string, tab: TabName = 'arrange') {
   const onConfigChange = vi.fn();
   render(
     <SelectionSpyHarness config={cfg(elements)} onConfigChange={onConfigChange} pick={pick} />,
   );
   fireEvent.click(testid('pick'));
+  openTab(tab);
   return onConfigChange;
 }
 
@@ -1816,6 +1893,7 @@ describe('CanvasElementsEditor — 캔버스 선택이 수치 입력을 밀어�
       expect((testid(`canvas-element-geo-${axis}-0`) as HTMLInputElement).disabled).toBe(false);
     }
     // 문구의 포인터 수단은 글자 크기 핸들 하나뿐이므로 그 등가물이 특히 남아 있어야 한다.
+    openTab('text');
     expect((testid('canvas-element-font-size-0') as HTMLInputElement).disabled).toBe(false);
   });
 
@@ -1849,8 +1927,16 @@ describe('순서 이동 규칙은 한 곳에만 있다 (REQ-04)', () => {
     // 들여왔는지만 보면 인라인으로 되돌리고 import 를 남겨 두는 형태를 놓칠 것 같지만,
     // 그때는 쓰이지 않는 import 가 되어 eslint(`no-unused-vars`, error)가 잡는다 —
     // 둘이 짝을 이뤄야 이 가드가 실제로 문을 막는다.
+    //
+    // 배치 탭이 맨 앞/맨 뒤 보내기를 함께 내면서 들여오는 이름이 셋이 됐다. 셋 다 같은
+    // 모듈에서 오고, 그 모듈 안에서 `bringToFront`·`sendToBack` 은 `moveElementTo` 로
+    // 지어져 있다 — 그래서 네 동작이 지나는 규칙은 여전히 하나다.
     const source = readFileSync(join(__dirname, 'CanvasElementsEditor.tsx'), 'utf-8');
-    expect(source).toMatch(/import \{ moveElementTo \} from '\.\/canvasEditArrange'/);
+    expect(source).toMatch(
+      /import \{ bringToFront, moveElementTo, sendToBack \} from '\.\/canvasEditArrange'/,
+    );
+    // 배열을 여기서 직접 자르지 않는다 — 두 번째 정렬 규칙이 생기는 자리가 그것이다.
+    expect(source).not.toMatch(/\.splice\(/);
   });
 });
 
@@ -1868,7 +1954,13 @@ function liveValue(options: CanvasSeriesOption[]): CanvasLiveSeriesValue {
   return { options, publish: () => {} };
 }
 
-/** 라이브 채널을 물린 채 편집기를 그리고 모든 줄을 펼친다. */
+/**
+ * 라이브 채널을 물린 채 편집기를 그리고 모든 줄을 펼친 뒤 **데이터 탭을 연다**.
+ *
+ * 이 절이 재는 것은 전부 바인딩 드롭다운이고 그것은 데이터 탭에 있다. 여기서 탭을 열지
+ * 않으면 "안내가 뜨지 않는다" 류의 부재 단언이 **탭이 닫혀 있어서** 통과한다 — 참인 이유가
+ * 재려던 것과 다른 통과는 통과가 아니다.
+ */
 function setupWithLive(
   config: Record<string, unknown>,
   options: CanvasSeriesOption[],
@@ -1880,6 +1972,7 @@ function setupWithLive(
     </CanvasLiveSeriesContext>,
   );
   expandAllRows();
+  openTab('data');
   return onConfigChange;
 }
 
@@ -1926,7 +2019,7 @@ describe('CanvasElementsEditor — 살아 있는 시리즈가 config 추측을 �
   });
 
   it('provider 가 아예 없어도 config 목록으로 동작한다 (편집기 단독 렌더)', () => {
-    setup(cfg([rect()]));
+    setup(cfg([rect()]), { tab: 'data' });
 
     expect(bindingValues()).toEqual(['', TEMP_ID, HUM_ID]);
   });
@@ -2106,6 +2199,9 @@ describe('CanvasElementsEditor — 역방향 배선에 진동이 없다', () => 
 // 종류별 비대칭**이다 — line 과 text 에는 크기 묶음이 없어야 하고(없는 것을 만들어
 // 보이면 사용자는 그 칸을 찾다 못 찾는다), `fill` 은 그 종류에서 실제로 칠하는 자리에
 // 서야 한다.
+//
+// 그 비대칭은 탭으로 갈린 뒤에도 그대로다 — 옮긴 것은 묶음이 서는 **자리**이지 어느
+// 종류가 어느 묶음을 갖는가가 아니다. 그래서 아래 시험들은 해당 탭을 열고 같은 것을 잰다.
 
 /** 이 행에 그려진 묶음 testid 들. */
 function hasGroup(name: string, idx = 0): boolean {
@@ -2114,7 +2210,7 @@ function hasGroup(name: string, idx = 0): boolean {
 
 describe('CanvasElementsEditor — 위치와 크기를 가른다', () => {
   it('rect 는 위치(x·y)와 크기(w·h) 두 묶음을 낸다', () => {
-    setup(cfg([rect()]));
+    setup(cfg([rect()]), { tab: 'arrange' });
 
     expect(hasGroup('position')).toBe(true);
     expect(hasGroup('size')).toBe(true);
@@ -2130,14 +2226,16 @@ describe('CanvasElementsEditor — 위치와 크기를 가른다', () => {
   });
 
   it('ellipse 도 같은 두 묶음이다', () => {
-    setup(cfg([rect({ id: 'e', kind: 'ellipse' })]));
+    setup(cfg([rect({ id: 'e', kind: 'ellipse' })]), { tab: 'arrange' });
 
     expect(hasGroup('position')).toBe(true);
     expect(hasGroup('size')).toBe(true);
   });
 
   it('line 은 두 끝점뿐이며 **크기 묶음을 만들지 않는다**', () => {
-    setup(cfg([{ id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 500, y2: 400 }, style: {} }]));
+    setup(cfg([{ id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 500, y2: 400 }, style: {} }]), {
+      tab: 'arrange',
+    });
 
     expect(hasGroup('position')).toBe(true);
     expect(hasGroup('size')).toBe(false);
@@ -2152,16 +2250,20 @@ describe('CanvasElementsEditor — 위치와 크기를 가른다', () => {
   });
 
   it('text 는 기준점뿐이며 크기 묶음이 없다 — 그 크기는 글자 크기다', () => {
-    setup(cfg([{ id: 't', kind: 'text', geometry: { x: 250, y: 200 }, style: {} }]));
+    setup(cfg([{ id: 't', kind: 'text', geometry: { x: 250, y: 200 }, style: {} }]), {
+      tab: 'arrange',
+    });
 
     expect(hasGroup('position')).toBe(true);
     expect(hasGroup('size')).toBe(false);
-    // 글자 크기는 문구 스타일 묶음에 **한 자리에만** 있다.
+    // 글자 크기는 텍스트 탭에 **한 자리에만** 있다 — 배치 탭에서는 찾을 수 없다.
+    expect(screen.queryByTestId('canvas-element-font-size-0')).toBeNull();
+    openTab('text');
     expect(screen.getByTestId('canvas-element-font-size-0')).toBeTruthy();
   });
 
   it('0..1 이라는 사실은 위치 묶음 제목 뒤 ? 가 계속 말한다', () => {
-    setup(cfg([rect()]));
+    setup(cfg([rect()]), { tab: 'arrange' });
 
     expect(testid('canvas-element-coord-help-0').textContent).toBe(
       'dashboard.canvas.elements.coordHint',
@@ -2171,7 +2273,7 @@ describe('CanvasElementsEditor — 위치와 크기를 가른다', () => {
   // 설명을 `?` 뒤로 옮겼다고 **접근성이 내려가면 안 된다**: 설명은 sr-only 로 DOM 에
   // 상주하고(위 검사), 눈으로 보려면 키보드로 닿는 button 을 눌러 연다.
   it('좌표 설명의 ? 는 위치 묶음 안에 있고 눌러야 눈에 보인다', () => {
-    setup(cfg([rect()]));
+    setup(cfg([rect()]), { tab: 'arrange' });
 
     const group = testid('canvas-element-position-0');
     expect(group.contains(testid('canvas-element-coord-help-0'))).toBe(true);
@@ -2191,7 +2293,7 @@ describe('CanvasElementsEditor — 위치와 크기를 가른다', () => {
   });
 
   it('가른 것은 표현뿐이다 — 좌표는 종전대로 죄이지 않고 그대로 저술된다', () => {
-    const spy = setup(cfg([rect()]));
+    const spy = setup(cfg([rect()]), { tab: 'arrange' });
 
     fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '-250' } });
     expect(lastElements(spy)[0]!.geometry).toEqual({ x: -250, y: 80, w: 150, h: 160 });
@@ -2206,39 +2308,51 @@ describe('CanvasElementsEditor — 위치와 크기를 가른다', () => {
 });
 
 describe('CanvasElementsEditor — 도형 스타일과 문구 스타일을 가른다', () => {
-  it('도형에서는 채움·선이 도형 스타일에, 글자색·글자 크기·굵기·정렬이 문구 스타일에 선다', () => {
+  it('도형에서는 채움·선이 스타일 탭에, 글자색·글자 크기·굵기·정렬이 텍스트 탭에 선다', () => {
+    // 가름은 이제 **탭**이다. 그래서 "다른 묶음에 없다" 를 재던 자리가 "다른 탭을 열면
+    // 아예 없다" 가 된다 — 열린 탭 하나만 그리므로 그것이 같은 말의 더 강한 형태다.
     setup(cfg([rect()]));
 
     const shape = testid('canvas-element-shape-style-0');
-    const text = testid('canvas-element-text-style-0');
-
     for (const id of ['fill', 'stroke', 'stroke-width', 'opacity', 'visible']) {
       expect(shape.contains(testid(`canvas-element-${id}-0`))).toBe(true);
-      expect(text.contains(testid(`canvas-element-${id}-0`))).toBe(false);
     }
     for (const id of ['text-color', 'font-size', 'font-weight', 'align']) {
+      expect(screen.queryByTestId(`canvas-element-${id}-0`)).toBeNull();
+    }
+
+    openTab('text');
+    const text = testid('canvas-element-text-style-0');
+    for (const id of ['text-color', 'font-size', 'font-weight', 'align']) {
       expect(text.contains(testid(`canvas-element-${id}-0`))).toBe(true);
-      expect(shape.contains(testid(`canvas-element-${id}-0`))).toBe(false);
+    }
+    for (const id of ['fill', 'stroke', 'stroke-width', 'opacity', 'visible']) {
+      expect(screen.queryByTestId(`canvas-element-${id}-0`)).toBeNull();
     }
   });
 
-  it('도형에서는 라벨이 글자색만 쓴다는 사실을 문구 스타일 제목 뒤 ? 가 말한다 (자동으로 심긴 색이 결함으로 읽히지 않게)', () => {
-    setup(cfg([rect()]));
+  it('도형에서는 라벨이 글자색만 쓴다는 사실을 텍스트 탭 제목 뒤 ? 가 말한다 (자동으로 심긴 색이 결함으로 읽히지 않게)', () => {
+    setup(cfg([rect()]), { tab: 'text' });
 
     expect(testid('canvas-element-text-style-help-0').textContent).toBe(
       'dashboard.canvas.elements.textStyleHintShape',
     );
   });
 
-  it('문구 요소에서는 채움색이 **문구 스타일 쪽**으로 옮겨 간다 (textColor ?? fill)', () => {
+  it('문구 요소에서는 채움색이 **텍스트 탭 쪽**으로 옮겨 간다 (textColor ?? fill)', () => {
     // 렌더 층은 `kind:'text'` 를 `textColor ?? fill` 로 칠한다(`drawElement`). 칠할 도형이
-    // 없는 요소의 채움색을 "도형 스타일" 이라 부르면 화면이 거짓말을 한다.
+    // 없는 요소의 채움색을 "도형" 이라 부르면 화면이 거짓말을 한다.
     setup(cfg([{ id: 't', kind: 'text', geometry: { x: 0, y: 0 }, style: {} }]));
 
-    const shape = testid('canvas-element-shape-style-0');
+    // 스타일 탭에는 채움색이 없다 — 칠할 도형이 없기 때문이다.
+    expect(testid('canvas-element-shape-style-0').contains(testid('canvas-element-stroke-0'))).toBe(
+      true,
+    );
+    expect(screen.queryByTestId('canvas-element-fill-0')).toBeNull();
+
+    openTab('text');
     const text = testid('canvas-element-text-style-0');
     expect(text.contains(testid('canvas-element-fill-0'))).toBe(true);
-    expect(shape.contains(testid('canvas-element-fill-0'))).toBe(false);
     // 글자색 바로 옆이다 — 그 둘이 한 값을 두고 폴백 관계이기 때문이다.
     expect(text.contains(testid('canvas-element-text-color-0'))).toBe(true);
     expect(testid('canvas-element-text-style-help-0').textContent).toBe(
@@ -2246,8 +2360,10 @@ describe('CanvasElementsEditor — 도형 스타일과 문구 스타일을 가�
     );
   });
 
-  it('가른 것은 표현뿐이다 — 어느 묶음에 서든 같은 style 키로 저술된다', () => {
-    const spy = setup(cfg([{ id: 't', kind: 'text', geometry: { x: 0, y: 0 }, style: {} }]));
+  it('가른 것은 표현뿐이다 — 어느 탭에 서든 같은 style 키로 저술된다', () => {
+    const spy = setup(cfg([{ id: 't', kind: 'text', geometry: { x: 0, y: 0 }, style: {} }]), {
+      tab: 'text',
+    });
 
     fireEvent.change(testid('canvas-element-font-size-0'), { target: { value: '18' } });
     expect(lastElements(spy)[0]!.style.fontSize).toBe(18);
@@ -2255,6 +2371,7 @@ describe('CanvasElementsEditor — 도형 스타일과 문구 스타일을 가�
     fireEvent.change(testid('canvas-element-align-0'), { target: { value: 'center' } });
     expect(lastElements(spy)[0]!.style.align).toBe('center');
 
+    openTab('style');
     fireEvent.change(testid('canvas-element-visible-0'), { target: { value: 'hide' } });
     expect(lastElements(spy)[0]!.style.visible).toBe(false);
   });
@@ -2283,15 +2400,28 @@ describe('캔버스 편집기의 글자 크기는 주변 설정 화면을 따른
   });
 });
 
-// --- 요소 카드의 묶음 배치 (SPEC-CANVAS-002 · AC-E17) ----------------------
+// --- 요소 카드의 묶음 배치 (SPEC-CANVAS-002 · AC-E17 · AC-E21) --------------
 //
 // 사용 시험이 돌려보낸 것은 결함이 아니라 **카드가 읽히지 않는다** 였다. 칸들이 제목과
 // 한 줄에 섞여 흐르니 어디까지가 한 묶음인지 눈으로 끊기지 않았다. 그래서 이 절이 재는
 // 것은 값이 아니라 **구조** 다: 묶음이 어떤 차례로 서는가, 제목이 제 줄에 서는가,
 // 종류마다 어느 묶음이 없는가.
+//
+// 일곱을 한 두루마리로 쌓던 것을 **탭 넷**으로 갈랐다. 그래서 차례를 재는 자리도 넷이
+// 된다 — 각 탭이 제 묶음만 내는가, 그리고 그 안의 차례가 뜻대로인가. 묶음의 종류별
+// 비대칭(line·text 에 크기 묶음이 없다)은 배치 탭 안으로 옮겨 갔을 뿐 그대로다.
 
 /** 카드에 설 수 있는 묶음 이름 — 화면에 서는 차례 그대로다. */
-const GROUP_NAMES = ['position', 'size', 'shape-style', 'text-style', 'data', 'tween', 'rules'];
+const GROUP_NAMES = [
+  'zorder',
+  'size',
+  'position',
+  'shape-style',
+  'text-style',
+  'data',
+  'tween',
+  'rules',
+];
 
 /** 색 스와치 칸 이름(도형 축 · 텍스트 축 양쪽에 나뉘어 선다). */
 const SWATCH_NAMES = ['fill', 'stroke', 'text-color'];
@@ -2315,58 +2445,50 @@ function swatchOrder(group: string, idx = 0): string[] {
   return testIdsIn(testid(`canvas-element-${group}-${idx}`), SWATCH_NAMES, idx);
 }
 
-describe('CanvasElementsEditor — 요소 카드는 묶음 일곱을 정해진 차례로 쌓는다', () => {
-  it('rect 는 위치 · 크기 · 도형 · 텍스트 · 데이터 · 전환 효과 · 규칙 차례다', () => {
+describe('CanvasElementsEditor — 요소 카드는 묶음을 탭 넷에 나눠 담는다', () => {
+  it('rect 의 네 탭은 각각 제 묶음만 낸다', () => {
     setup(cfg([rect()]));
 
-    expect(groupOrder()).toEqual([
-      'position',
-      'size',
-      'shape-style',
-      'text-style',
-      'data',
-      'tween',
-      'rules',
-    ]);
+    // 스타일 탭 — 도형 하나.
+    expect(groupOrder()).toEqual(['shape-style']);
+
+    openTab('text');
+    expect(groupOrder()).toEqual(['text-style']);
+
+    // 배치 탭 — 순서 → 크기 → 위치. 얼마만큼인지를 정하고 나서 어디인지를 정한다.
+    openTab('arrange');
+    expect(groupOrder()).toEqual(['zorder', 'size', 'position']);
+
+    // 데이터 탭 — 바인딩(숫자 스위치 포함) → 전환 효과 → 규칙.
+    openTab('data');
+    expect(groupOrder()).toEqual(['data', 'tween', 'rules']);
   });
 
-  it('ellipse 도 같은 일곱이다', () => {
+  it('ellipse 도 같은 넷이다', () => {
     setup(cfg([rect({ id: 'e', kind: 'ellipse' })]));
-    expect(groupOrder()).toEqual([
-      'position',
-      'size',
-      'shape-style',
-      'text-style',
-      'data',
-      'tween',
-      'rules',
-    ]);
+    expect(groupOrder()).toEqual(['shape-style']);
+    openTab('arrange');
+    expect(groupOrder()).toEqual(['zorder', 'size', 'position']);
+    openTab('data');
+    expect(groupOrder()).toEqual(['data', 'tween', 'rules']);
   });
 
-  it('line 은 크기 묶음이 빠진 여섯이다 — 길이는 끝점에서 따라 나오는 값이다', () => {
-    setup(cfg([{ id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 500, y2: 400 }, style: {} }]));
+  it('line 의 배치 탭에는 크기 묶음이 없다 — 길이는 끝점에서 따라 나오는 값이다', () => {
+    setup(cfg([{ id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 500, y2: 400 }, style: {} }]), {
+      tab: 'arrange',
+    });
 
-    expect(groupOrder()).toEqual([
-      'position',
-      'shape-style',
-      'text-style',
-      'data',
-      'tween',
-      'rules',
-    ]);
+    expect(groupOrder()).toEqual(['zorder', 'position']);
   });
 
-  it('text 도 크기 묶음이 없다 — 그 크기는 텍스트 묶음의 글자 크기다', () => {
-    setup(cfg([{ id: 't', kind: 'text', geometry: { x: 250, y: 200 }, style: {} }]));
+  it('text 의 배치 탭에도 크기 묶음이 없다 — 그 크기는 텍스트 탭의 글자 크기다', () => {
+    setup(cfg([{ id: 't', kind: 'text', geometry: { x: 250, y: 200 }, style: {} }]), {
+      tab: 'arrange',
+    });
 
-    expect(groupOrder()).toEqual([
-      'position',
-      'shape-style',
-      'text-style',
-      'data',
-      'tween',
-      'rules',
-    ]);
+    expect(groupOrder()).toEqual(['zorder', 'position']);
+
+    openTab('text');
     expect(
       testid('canvas-element-text-style-0').contains(testid('canvas-element-font-size-0')),
     ).toBe(true);
@@ -2377,9 +2499,20 @@ describe('CanvasElementsEditor — 요소 카드는 묶음 일곱을 정해진 �
     // 묶음의 제목과 나란히 서고 화면은 "크기 · [W] [H] [테두리]" 처럼 읽힌다. 그래서
     // 재는 것은 글자가 아니라 **줄이 둘로 갈렸는가** 다: 제목 줄과 칸 줄이 서로 다른
     // 상자이고, 제목 줄에는 칸이 하나도 없으며, 칸은 전부 두 번째 줄에 있다.
+    // 탭마다 열어 그 탭의 묶음을 잰다. 순서 묶음(zorder)은 칸이 아니라 단추를 이므로
+    // 아래 "칸 줄에 input/select 가 있다" 단언의 대상이 아니다 — 그 묶음의 두 줄 형상은
+    // 바로 아래 시험이 따로 잰다.
     setup(cfg([rect()]));
+    const perTab: [TabName, string[]][] = [
+      ['style', ['shape-style']],
+      ['text', ['text-style']],
+      ['arrange', ['size', 'position']],
+      ['data', ['data', 'tween']],
+    ];
 
-    for (const group of ['position', 'size', 'shape-style', 'text-style', 'data', 'tween']) {
+    for (const [tab, groups] of perTab) {
+      openTab(tab);
+      for (const group of groups) {
       const box = testid(`canvas-element-${group}-0`);
       const rows = [...box.children];
       expect(rows).toHaveLength(2);
@@ -2393,45 +2526,66 @@ describe('CanvasElementsEditor — 요소 카드는 묶음 일곱을 정해진 �
       expect(box.querySelectorAll('input,select')).toHaveLength(
         fields.querySelectorAll('input,select').length,
       );
+      }
     }
   });
 
-  it('세부는 여전히 접힌다 — 늘어난 묶음이 머리줄까지 밀어내지 않는다', () => {
+  it('순서 묶음도 같은 두 줄이다 — 제목 줄에는 단추가 하나도 없다', () => {
+    setup(cfg([rect({ id: 'a' }), rect({ id: 'b' })]), { tab: 'arrange' });
+
+    const box = testid('canvas-element-zorder-0');
+    const rows = [...box.children];
+    expect(rows).toHaveLength(2);
+
+    const [heading, fields] = rows as [Element, Element];
+    expect(heading.textContent).toBe('dashboard.canvas.elements.zorderLabel');
+    expect(heading.querySelectorAll('button')).toHaveLength(0);
+    expect(fields.querySelectorAll('button')).toHaveLength(4);
+  });
+
+  it('세부는 여전히 접힌다 — 탭 줄까지 함께 접힌다', () => {
     setup(cfg([rect()]), { expand: false });
 
     expect(groupOrder()).toEqual([]);
     expect(testid('canvas-element-order-0').textContent).toBe('1');
-    // 머리줄에 남는 저술 도구는 없다. 종류는 도형 묶음 안에 있으므로 함께 접힌다.
+    // 머리줄에 남는 저술 도구는 없다. 종류는 스타일 탭 안에 있으므로 함께 접힌다.
     expect(screen.getByTestId('canvas-element-toggle-0')).toBeTruthy();
     expect(screen.queryByTestId('canvas-element-kind-0')).toBeNull();
+    // 탭 줄도 몸통이다 — 접힌 카드에 탭만 남으면 누를 것이 있는 접힌 카드가 된다.
+    expect(screen.queryByTestId('canvas-element-tabs-0')).toBeNull();
   });
 });
 
 describe('CanvasElementsEditor — 색 스와치는 종류를 따라 자리를 옮긴다', () => {
-  it('도형에서는 도형 묶음에 테두리 · 채우기 둘, 텍스트 묶음에 글자색 하나다', () => {
+  it('도형에서는 스타일 탭에 채우기 · 테두리 둘, 텍스트 탭에 글자색 하나다', () => {
     setup(cfg([rect()]));
 
-    // 차례도 뜻이다 — 바깥(테두리)에서 안(채우기)으로 읽는다.
-    expect(swatchOrder('shape-style')).toEqual(['stroke', 'fill']);
+    // 차례도 뜻이다 — 참고 화면의 차례를 따라 **채우기 다음 테두리**이며, 테두리 두께는
+    // 제 색 바로 뒤에 붙는다(한 가지를 두 자리에서 만지지 않는다).
+    expect(swatchOrder('shape-style')).toEqual(['fill', 'stroke']);
+
+    openTab('text');
     expect(swatchOrder('text-style')).toEqual(['text-color']);
   });
 
   it('선도 같다 — 채우기는 선 자체에 뜻이 없어도 규칙 패치가 쓸 수 있는 축이다', () => {
     setup(cfg([{ id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 500, y2: 400 }, style: {} }]));
-    expect(swatchOrder('shape-style')).toEqual(['stroke', 'fill']);
+    expect(swatchOrder('shape-style')).toEqual(['fill', 'stroke']);
   });
 
   it("kind:'text' 에서는 채우기가 글자색 옆으로 간다 (textColor ?? fill)", () => {
     setup(cfg([{ id: 't', kind: 'text', geometry: { x: 0, y: 0 }, style: {} }]));
 
     expect(swatchOrder('shape-style')).toEqual(['stroke']);
+
+    openTab('text');
     expect(swatchOrder('text-style')).toEqual(['text-color', 'fill']);
   });
 });
 
 describe('CanvasElementsEditor — 종류는 머리줄이 아니라 도형 묶음의 첫 칸이다', () => {
   /** 도형 묶음의 칸 이름들 — 화면 차례를 재기 위한 목록이다. */
-  const SHAPE_FIELD_NAMES = ['kind', 'stroke-width', 'opacity', 'stroke', 'fill', 'visible'];
+  const SHAPE_FIELD_NAMES = ['kind', 'fill', 'stroke', 'stroke-width', 'opacity', 'visible'];
 
   it('종류 선택기는 도형 묶음 안에 서고 머리줄에는 없다', () => {
     setup(cfg([rect()]));
@@ -2446,17 +2600,18 @@ describe('CanvasElementsEditor — 종류는 머리줄이 아니라 도형 묶�
     expect(header.contains(testid('canvas-element-kind-0'))).toBe(false);
   });
 
-  it('도형 묶음의 차례는 종류 · 두께 · 투명 · 테두리 · 채우기 · 표시 여부다', () => {
-    // 차례가 곧 뜻이다: 무엇으로 그릴지(종류)를 먼저 정하고, 어떻게 그릴지(두께·투명·색)를
-    // 정한 다음, 그릴지 말지(표시 여부)를 끝에서 정한다.
+  it('스타일 탭의 차례는 종류 · 채우기 · 테두리 · 두께 · 투명 · 표시 여부다', () => {
+    // 차례가 곧 뜻이다: 무엇으로 그릴지(종류)를 먼저 정하고, 어떻게 그릴지(채우기·테두리·
+    // 두께·투명)를 정한 다음, 그릴지 말지(표시 여부)를 끝에서 정한다. 가운데 넷의 차례는
+    // 참고 화면을 따르며, 두께가 제 색 바로 뒤에 오는 것이 요점이다.
     setup(cfg([rect()]));
 
     expect(testIdsIn(testid('canvas-element-shape-style-0'), SHAPE_FIELD_NAMES)).toEqual([
       'kind',
+      'fill',
+      'stroke',
       'stroke-width',
       'opacity',
-      'stroke',
-      'fill',
       'visible',
     ]);
   });
@@ -2466,9 +2621,9 @@ describe('CanvasElementsEditor — 종류는 머리줄이 아니라 도형 묶�
 
     expect(testIdsIn(testid('canvas-element-shape-style-0'), SHAPE_FIELD_NAMES)).toEqual([
       'kind',
+      'stroke',
       'stroke-width',
       'opacity',
-      'stroke',
       'visible',
     ]);
   });
@@ -2507,16 +2662,254 @@ describe('CanvasElementsEditor — 종류는 머리줄이 아니라 도형 묶�
   });
 });
 
+// --- 요소 카드의 탭 (SPEC-CANVAS-002 · AC-E21) -----------------------------
+//
+// 탭은 **재배치**다. 그래서 이 절이 재는 것은 새 능력이 아니라 셋이다:
+//   1. 열린 탭의 칸만 서고 다른 탭의 칸은 DOM 에 아예 없다(감춘 것이 아니라 그리지 않는다).
+//   2. 탭을 갈아도 저술한 값이 살아 있다 — 제어 컴포넌트가 config 를 다시 읽어 그리므로,
+//      갈아 낀 뒤 값이 비면 그것은 곧 저술이 config 에 닿지 않았다는 뜻이다.
+//   3. 어느 탭이 열려 있는지는 **config 에 적히지 않는다**(펼침 여부와 같은 부류의 보기
+//      상태다). 한 사람이 연 탭이 대시보드를 함께 보는 모두의 저장된 값이 되면 안 된다.
+
+/** 단추 하나가 막혀 있는가. */
+function tabDisabled(suffix: string): boolean {
+  return (testid(`canvas-element-${suffix}`) as HTMLButtonElement).disabled;
+}
+
+/** 탭 단추 하나. */
+function tabBtn(tab: TabName, idx = 0): HTMLButtonElement {
+  return testid(`canvas-element-tab-${tab}-${idx}`) as HTMLButtonElement;
+}
+
+describe('CanvasElementsEditor — 요소 카드의 탭', () => {
+  it('열린 탭의 칸만 서고 다른 탭의 칸은 DOM 에 없다', () => {
+    setup(cfg([rect()]));
+
+    // 스타일 탭(기본)
+    expect(screen.getByTestId('canvas-element-kind-0')).toBeTruthy();
+    for (const id of ['text-0', 'geo-x-0', 'binding-0']) {
+      expect(screen.queryByTestId(`canvas-element-${id}`)).toBeNull();
+    }
+
+    openTab('text');
+    expect(screen.getByTestId('canvas-element-text-0')).toBeTruthy();
+    for (const id of ['kind-0', 'geo-x-0', 'binding-0']) {
+      expect(screen.queryByTestId(`canvas-element-${id}`)).toBeNull();
+    }
+
+    openTab('arrange');
+    expect(screen.getByTestId('canvas-element-geo-x-0')).toBeTruthy();
+    for (const id of ['kind-0', 'text-0', 'binding-0']) {
+      expect(screen.queryByTestId(`canvas-element-${id}`)).toBeNull();
+    }
+
+    openTab('data');
+    expect(screen.getByTestId('canvas-element-binding-0')).toBeTruthy();
+    for (const id of ['kind-0', 'text-0', 'geo-x-0']) {
+      expect(screen.queryByTestId(`canvas-element-${id}`)).toBeNull();
+    }
+  });
+
+  it('탭을 갈아 끼워도 저술한 값이 그대로 보인다', () => {
+    // 제어 컴포넌트의 회귀가 여기서 드러난다: 값이 config 로 올라가지 않았다면 탭을 떠났다
+    // 돌아온 순간 칸이 원래 값으로 되돌아간다.
+    setupStateful(cfg([rect()]));
+
+    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '0.25' } });
+    openTab('text');
+    fireEvent.change(testid('canvas-element-font-size-0'), { target: { value: '19' } });
+    openTab('arrange');
+    fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '123' } });
+
+    openTab('style');
+    expect((testid('canvas-element-opacity-0') as HTMLInputElement).value).toBe('0.25');
+    openTab('text');
+    expect((testid('canvas-element-font-size-0') as HTMLInputElement).value).toBe('19');
+    openTab('arrange');
+    expect((testid('canvas-element-geo-x-0') as HTMLInputElement).value).toBe('123');
+  });
+
+  it('열린 탭은 요소마다가 아니라 편집기 하나에 하나다 (공유)', () => {
+    // 좌표를 줄줄이 손보려고 요소를 옮겨 다닐 때 카드마다 다른 탭이 열려 있으면 매번 같은
+    // 탭을 다시 골라야 한다. 하나로 두면 "배치를 보고 있다" 가 요소를 건너가도 유지된다.
+    setup(cfg([rect({ id: 'a' }), rect({ id: 'b' })]));
+
+    openTab('arrange', 1);
+
+    expect(screen.getByTestId('canvas-element-geo-x-0')).toBeTruthy();
+    expect(screen.getByTestId('canvas-element-geo-x-1')).toBeTruthy();
+    expect(tabBtn('arrange', 0).getAttribute('aria-selected')).toBe('true');
+    expect(tabBtn('arrange', 1).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('어느 탭을 열었는지는 config 에 적히지 않는다', () => {
+    const spy = setup(cfg([rect()]));
+
+    openTab('arrange');
+    openTab('data');
+    openTab('text');
+
+    // 탭만 눌렀을 때는 패치 자체가 나가지 않는다.
+    expect(spy).not.toHaveBeenCalled();
+
+    // 저술이 일어난 뒤에도 패치에는 요소 배열뿐이다 — 탭 이름이 실려 나갈 자리가 없다.
+    fireEvent.change(testid('canvas-element-text-0'), { target: { value: 'hi' } });
+    const patch = lastPatch(spy);
+    expect(Object.keys(patch)).toEqual(['elements']);
+    expect(JSON.stringify(patch)).not.toContain('tab');
+    expect(lastElements(spy)[0]!.text).toBe('hi');
+  });
+
+  it('진짜 탭이다 — 역할 · 선택 표시 · 판 연결이 갖춰져 있다', () => {
+    setup(cfg([rect()]));
+
+    const list = testid('canvas-element-tabs-0');
+    expect(list.getAttribute('role')).toBe('tablist');
+    expect(list.getAttribute('aria-label')).toBe('dashboard.canvas.elements.tabsAria');
+
+    const panel = testid('canvas-element-tabpanel-0');
+    expect(panel.getAttribute('role')).toBe('tabpanel');
+
+    for (const tab of ['style', 'text', 'arrange', 'data'] as const) {
+      const btn = tabBtn(tab);
+      expect(btn.getAttribute('role')).toBe('tab');
+      // 판을 가리키는 손가락이 있어야 스크린리더가 탭과 내용을 잇는다.
+      expect(btn.getAttribute('aria-controls')).toBe(panel.id);
+      expect(btn.getAttribute('aria-selected')).toBe(tab === 'style' ? 'true' : 'false');
+      // roving tabindex — 탭 줄 전체가 하나의 정지점이고 내부 이동은 화살표가 맡는다.
+      expect(btn.tabIndex).toBe(tab === 'style' ? 0 : -1);
+    }
+    // 열린 탭이 판의 이름표다.
+    expect(panel.getAttribute('aria-labelledby')).toBe(tabBtn('style').id);
+  });
+
+  it('좌우 화살표로 옮겨 다니고 양끝에서 순환한다 — 초점도 함께 간다', () => {
+    setup(cfg([rect()]));
+
+    tabBtn('style').focus();
+    fireEvent.keyDown(tabBtn('style'), { key: 'ArrowRight' });
+    expect(tabBtn('text').getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(tabBtn('text'));
+    expect(screen.getByTestId('canvas-element-text-0')).toBeTruthy();
+
+    fireEvent.keyDown(tabBtn('text'), { key: 'ArrowRight' });
+    fireEvent.keyDown(tabBtn('arrange'), { key: 'ArrowRight' });
+    expect(tabBtn('data').getAttribute('aria-selected')).toBe('true');
+
+    // 끝에서 한 번 더 — 처음으로 돌아온다(WAI-ARIA tabs 패턴).
+    fireEvent.keyDown(tabBtn('data'), { key: 'ArrowRight' });
+    expect(tabBtn('style').getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(tabBtn('style'));
+
+    // 왼쪽도 같다 — 처음에서 왼쪽이면 끝으로 감긴다.
+    fireEvent.keyDown(tabBtn('style'), { key: 'ArrowLeft' });
+    expect(tabBtn('data').getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(tabBtn('data'));
+  });
+
+  it('다른 키는 탭을 옮기지 않는다 — 위/아래는 이 줄의 것이 아니다', () => {
+    setup(cfg([rect()]));
+
+    fireEvent.keyDown(tabBtn('style'), { key: 'ArrowDown' });
+    fireEvent.keyDown(tabBtn('style'), { key: 'Enter' });
+
+    expect(tabBtn('style').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('초점 테두리가 보인다 — 화살표가 어디에 닿았는지 알 수 있는 유일한 표시다', () => {
+    setup(cfg([rect()]));
+    expect(tabBtn('arrange').className).toMatch(/focus-visible:ring/);
+  });
+});
+
+// --- 배치 탭의 순서(z-order) 네 동작 (SPEC-CANVAS-002 · AC-E21) -------------
+//
+// 넷은 새 기능이 아니라 **이미 있던 동작의 노출**이다: 규칙은 여전히
+// `canvasEditArrange.moveElementTo` 하나이고, 맨 앞/맨 뒤는 그 함수로 지어진
+// `bringToFront`/`sendToBack` 이다(같은 모듈 §z-order). 그래서 여기서 재는 것은 네 단추가
+// **같은 규칙을 지나 같은 결과에 닿는가** 이며, 머리줄의 위/아래 이동과 결과가 갈릴 수
+// 없다는 사실을 마지막 시험이 못박는다.
+
+describe('CanvasElementsEditor — 배치 탭의 순서 네 동작', () => {
+  const three = () => cfg([rect({ id: 'a' }), rect({ id: 'b' }), rect({ id: 'c' })]);
+
+  it('맨 앞으로 보내면 배열 끝(= 맨 위)으로 간다', () => {
+    const spy = setup(three(), { tab: 'arrange' });
+    fireEvent.click(testid('canvas-element-zorder-front-0'));
+    expect(lastElements(spy).map((e) => e.id)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('맨 뒤로 보내면 배열 앞(= 맨 아래)으로 간다', () => {
+    const spy = setup(three(), { tab: 'arrange' });
+    fireEvent.click(testid('canvas-element-zorder-back-2'));
+    expect(lastElements(spy).map((e) => e.id)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('한 칸 앞으로 · 한 칸 뒤로는 이웃과 자리를 바꾼다', () => {
+    const spy = setup(three(), { tab: 'arrange' });
+
+    fireEvent.click(testid('canvas-element-zorder-forward-0'));
+    expect(lastElements(spy).map((e) => e.id)).toEqual(['b', 'a', 'c']);
+
+    fireEvent.click(testid('canvas-element-zorder-backward-2'));
+    expect(lastElements(spy).map((e) => e.id)).toEqual(['a', 'c', 'b']);
+  });
+
+  it('갈 곳이 없는 단추는 막힌다 — 눌러도 아무 일도 없는 단추를 남기지 않는다', () => {
+    setup(three(), { tab: 'arrange' });
+
+    // 맨 아래 요소: 뒤로 갈 곳이 없다.
+    expect(tabDisabled('zorder-back-0')).toBe(true);
+    expect(tabDisabled('zorder-backward-0')).toBe(true);
+    expect(tabDisabled('zorder-front-0')).toBe(false);
+    expect(tabDisabled('zorder-forward-0')).toBe(false);
+
+    // 맨 위 요소: 앞으로 갈 곳이 없다.
+    expect(tabDisabled('zorder-front-2')).toBe(true);
+    expect(tabDisabled('zorder-forward-2')).toBe(true);
+    expect(tabDisabled('zorder-back-2')).toBe(false);
+    expect(tabDisabled('zorder-backward-2')).toBe(false);
+  });
+
+  it('머리줄의 위/아래 이동과 같은 결과에 닿는다 — 규칙이 하나이기 때문이다', () => {
+    // 두 입구가 있는 것은 뜻이 있다: 머리줄의 둘은 **접힌 채로** 목록을 훑으며 쓰는 것이고,
+    // 배치 탭의 넷은 카드를 펼쳐 한 요소를 다루는 동안의 온전한 벌이다. 두 입구가 같은
+    // 함수를 지나므로 어느 쪽으로 눌렀는지에 따라 결과가 달라질 수 없다.
+    const viaTab = setup(three(), { tab: 'arrange' });
+    fireEvent.click(testid('canvas-element-zorder-forward-0'));
+    const byTab = lastElements(viaTab).map((e) => e.id);
+
+    cleanup();
+
+    const viaHeader = setup(three(), { expand: false });
+    fireEvent.click(testid('canvas-element-move-down-0'));
+    expect(lastElements(viaHeader).map((e) => e.id)).toEqual(byTab);
+  });
+
+  it('순서를 바꿔도 그 요소의 카드는 펼친 채로 남는다 — 방금 누른 단추가 손 밑에서 사라지지 않는다', () => {
+    // 펼침은 순번이 아니라 요소 id 를 따라간다. 순서 조작이 카드를 접으면 연달아 누르는
+    // 동안 단추가 다른 요소의 것으로 바뀐다.
+    setupStateful(three(), { tab: 'arrange' });
+
+    fireEvent.click(testid('canvas-element-zorder-front-0'));
+
+    // a 가 끝으로 갔다 — 그 자리(순번 3)의 카드가 여전히 펼쳐져 있어야 한다.
+    expect(testid('canvas-element-2').getAttribute('data-element-id')).toBe('a');
+    expect(testid('canvas-element-toggle-2').getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByTestId('canvas-element-zorder-front-2')).toBeTruthy();
+  });
+});
+
 // --- 숫자 스위치 (SPEC-CANVAS-002 · AC-E17) -------------------------------
 
 describe('CanvasElementsEditor — 숫자 스위치', () => {
   it('기본은 켜짐이다 — config 에 키가 없는 기존 요소도 숫자로 읽는다', () => {
-    setup(cfg([rect()]));
+    setup(cfg([rect()]), { tab: 'data' });
     expect((testid('canvas-element-numeric-0') as HTMLInputElement).checked).toBe(true);
   });
 
   it('끄면 numeric:false 가 실린다', () => {
-    const spy = setup(cfg([rect()]));
+    const spy = setup(cfg([rect()]), { tab: 'data' });
 
     fireEvent.click(testid('canvas-element-numeric-0'));
 
@@ -2524,7 +2917,7 @@ describe('CanvasElementsEditor — 숫자 스위치', () => {
   });
 
   it('다시 켜면 **키 자체가 사라진다** — 기본값은 부재로 적는다(규율 1)', () => {
-    const live = setupStateful(cfg([rect({ numeric: false } as Partial<CanvasElement>)]));
+    const live = setupStateful(cfg([rect({ numeric: false } as Partial<CanvasElement>)]), { tab: 'data' });
     expect((testid('canvas-element-numeric-0') as HTMLInputElement).checked).toBe(false);
 
     fireEvent.click(testid('canvas-element-numeric-0'));
@@ -2534,7 +2927,7 @@ describe('CanvasElementsEditor — 숫자 스위치', () => {
   });
 
   it('켜져 있으면 소수 자리 · 단위 칸이 함께 선다', () => {
-    setup(cfg([rect()]));
+    setup(cfg([rect()]), { tab: 'data' });
 
     expect(screen.getByTestId('canvas-element-numeric-fields-0')).toBeTruthy();
     expect(screen.getByTestId('canvas-element-decimals-0')).toBeTruthy();
@@ -2542,7 +2935,7 @@ describe('CanvasElementsEditor — 숫자 스위치', () => {
   });
 
   it('끄면 그 두 칸이 사라진다 — 만져도 아무 일도 없는 칸을 남기지 않는다', () => {
-    setup(cfg([rect({ numeric: false, decimals: 2, unit: '℃' } as Partial<CanvasElement>)]));
+    setup(cfg([rect({ numeric: false, decimals: 2, unit: '℃' } as Partial<CanvasElement>)]), { tab: 'data' });
 
     expect(screen.queryByTestId('canvas-element-numeric-fields-0')).toBeNull();
     expect(screen.queryByTestId('canvas-element-decimals-0')).toBeNull();
@@ -2552,6 +2945,7 @@ describe('CanvasElementsEditor — 숫자 스위치', () => {
   it('감춘다고 값을 지우지는 않는다 — 다시 켜면 적어 둔 소수 자리 · 단위가 그대로다', () => {
     const live = setupStateful(
       cfg([rect({ numeric: false, decimals: 2, unit: '℃' } as Partial<CanvasElement>)]),
+    { tab: 'data' },
     );
 
     fireEvent.click(testid('canvas-element-numeric-0'));
@@ -2563,19 +2957,27 @@ describe('CanvasElementsEditor — 숫자 스위치', () => {
     expect(el.unit).toBe('℃');
   });
 
-  it('스위치와 그 설명은 텍스트 묶음 안에 선다 — 값을 어떻게 읽는가는 텍스트의 일이다', () => {
-    setup(cfg([rect()]));
+  it('스위치와 그 설명은 데이터 탭의 바인딩 묶음 안에 선다 — 값을 어떻게 읽는가는 무엇을 읽는가와 한 결정이다', () => {
+    // 한때 텍스트 묶음에 있었다. 그때의 근거("읽은 값이 글자가 된다")보다 지금의 근거가
+    // 가깝다 — 이 스위치가 정하는 것은 글자의 모양이 아니라 **판독값을 어떤 값으로 읽을
+    // 것인가**이고, 그 값을 어디서 받는지를 정하는 칸이 바로 위에 있다.
+    setup(cfg([rect()]), { tab: 'data' });
 
-    const group = testid('canvas-element-text-style-0');
+    const group = testid('canvas-element-data-0');
+    expect(group.contains(testid('canvas-element-binding-0'))).toBe(true);
     expect(group.contains(testid('canvas-element-numeric-0'))).toBe(true);
     expect(group.contains(testid('canvas-element-numeric-fields-0'))).toBe(true);
     expect(testid('canvas-element-numeric-help-0').textContent).toBe(
       'dashboard.canvas.elements.numericHint',
     );
+
+    // 텍스트 탭에는 없다 — 같은 스위치가 두 자리에 서면 어느 쪽이 진짜인지 알 수 없다.
+    openTab('text');
+    expect(screen.queryByTestId('canvas-element-numeric-0')).toBeNull();
   });
 
   it('요소마다 따로다 — 한 줄을 꺼도 옆 줄은 켜진 채다', () => {
-    const spy = setup(cfg([rect({ id: 'a' }), rect({ id: 'b' })]));
+    const spy = setup(cfg([rect({ id: 'a' }), rect({ id: 'b' })]), { tab: 'data' });
 
     fireEvent.click(testid('canvas-element-numeric-1'));
 
@@ -2585,7 +2987,7 @@ describe('CanvasElementsEditor — 숫자 스위치', () => {
   });
 
   it('왕복에서 그대로다 — 끈 요소를 파서로 다시 읽어도 같은 것이 나온다', () => {
-    const live = setupStateful(cfg([rect({ text: '{value}', unit: '℃' } as Partial<CanvasElement>)]));
+    const live = setupStateful(cfg([rect({ text: '{value}', unit: '℃' } as Partial<CanvasElement>)]), { tab: 'data' });
 
     fireEvent.click(testid('canvas-element-numeric-0'));
 
@@ -2597,14 +2999,14 @@ describe('CanvasElementsEditor — 숫자 스위치', () => {
 
 describe('CanvasElementsEditor — 숫자를 끄면 규칙 표가 그 사실을 말한다', () => {
   it('켜져 있을 때는 잔소리하지 않는다', () => {
-    setup(cfg([rect()]));
+    setup(cfg([rect()]), { tab: 'data' });
     expect(screen.queryByTestId('canvas-element-rules-nonnumeric-help-0')).toBeNull();
   });
 
   it('끄면 규칙 묶음 제목 뒤 ? 가 왜 비교 행이 일치하지 않는지 말한다', () => {
     // 값이 오고 있는데도 스칼라 행이 전부 빗나가는 상태는 사용자에게 **고장으로 보인다**.
     // 화면이 스스로 이유를 말하지 않으면 그 다음 보고서는 "규칙이 안 먹는다" 가 된다.
-    setup(cfg([rect({ numeric: false } as Partial<CanvasElement>)]));
+    setup(cfg([rect({ numeric: false } as Partial<CanvasElement>)]), { tab: 'data' });
 
     const help = testid('canvas-element-rules-nonnumeric-help-0');
     expect(help.textContent).toBe('dashboard.canvas.elements.rulesNonNumericHint');
@@ -2612,7 +3014,7 @@ describe('CanvasElementsEditor — 숫자를 끄면 규칙 표가 그 사실을 
   });
 
   it('그 설명은 줄로 깔지 않고 눌러야 보인다 — 이 화면 전체의 규칙이다', () => {
-    setup(cfg([rect({ numeric: false } as Partial<CanvasElement>)]));
+    setup(cfg([rect({ numeric: false } as Partial<CanvasElement>)]), { tab: 'data' });
 
     const heading = testid('canvas-element-rules-0').firstElementChild!;
     const button = heading.querySelector('button[aria-expanded]');

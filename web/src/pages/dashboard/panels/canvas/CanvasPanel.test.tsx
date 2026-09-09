@@ -1093,12 +1093,19 @@ function BindingHost({ clock }: { clock: ReturnType<typeof makeScheduler> }) {
   );
 }
 
-/** 숙주를 렌더하고 첫 행을 펼친다(세부는 기본이 접힘이다). */
+/**
+ * 숙주를 렌더하고 첫 행을 펼친 뒤 **데이터 탭을 연다**.
+ *
+ * 세부는 기본이 접힘이고, 펼친 카드는 탭 넷으로 갈려 열린 탭 하나만 그린다. 이 절이 재는
+ * 것은 전부 바인딩 드롭다운이며 그것은 데이터 탭에 있다 — 열지 않으면 "안내가 뜨지
+ * 않는다" 류의 부재 단언이 탭이 닫혀 있어서 통과한다.
+ */
 function renderBindingHost() {
   const clock = makeScheduler();
   const view = render(<BindingHost clock={clock} />);
   for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
   fireEvent.click(screen.getByTestId('canvas-element-toggle-0'));
+  fireEvent.click(screen.getByTestId('canvas-element-tab-data-0'));
   return { ...view, clock };
 }
 
@@ -1170,6 +1177,7 @@ describe('CanvasPanel ↔ CanvasElementsEditor — 고른 시리즈가 값을 �
     render(<Aligned />);
     for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
     fireEvent.click(screen.getByTestId('canvas-element-toggle-0'));
+    fireEvent.click(screen.getByTestId('canvas-element-tab-data-0'));
 
     expect(bindingValues()).toEqual(['', CONFIG_DERIVED_KEY]);
 
@@ -1222,6 +1230,7 @@ describe('CanvasPanel ↔ CanvasElementsEditor — 고른 시리즈가 값을 �
     render(<Bare />);
     for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
     fireEvent.click(screen.getByTestId('canvas-element-toggle-0'));
+    fireEvent.click(screen.getByTestId('canvas-element-tab-data-0'));
 
     expect(bindingValues()).toEqual(['']);
     expect(screen.getByTestId('canvas-element-binding-hint-0')).toBeTruthy();
