@@ -18,6 +18,7 @@ import CanvasSurface, {
   type CanvasOverlayContext,
   type FrameScheduler,
 } from './CanvasSurface';
+import { useCanvasStageGrid, type CanvasStageGrid } from './canvasStageGrid';
 
 // --- ResizeObserver 오버라이드(HeatmapCanvas.test 선례) -------------------
 
@@ -1802,5 +1803,124 @@ describe('CanvasSurface — 작업 영역과 출력 영역 (SPEC-CANVAS-006 M2)'
       [-8, -4, 8, 8],
       [36, 28, 8, 8],
     ]);
+  });
+});
+
+// --- 격자 컨텍스트가 원점과 작업 영역을 나른다 (SPEC-CANVAS-006 M3) ---
+//
+// M2 가 상자 둘을 **DOM 으로** 지었다면, M3 은 그 두 상자에서 나온 값 둘(`origin` · `box`)을
+// **오버레이가 쓸 수 있게** 아래로 내린다. 재는 것은 그 통로 하나다 — 격자를 실제로
+// 옮기는 것은 M5·M6 의 몫이고 이 절은 값이 닿는가만 본다.
+//
+// **이 절은 표면과 진짜 컨텍스트 소비자를 함께 세운다**(0.4.0 결함 E 가 세운 이음매 규율).
+// 표면이 무엇을 실었는지만 보면(예: `stageGrid` 를 직접 만들어 단언) 컨텍스트가 실제로
+// 오버레이 자리에 닿는지는 통째로 빠지고, 컨텍스트를 소비자 쪽에서만 보면 표면이 무엇을
+// 실었는지가 빠진다. 그래서 소비자는 **진짜 훅**(`useCanvasStageGrid`)을 부르고, 그 값을
+// 표면이 실제로 지은 **DOM 상자**와 맞대어 본다.
+//
+// 고정 입력은 위 M2 절과 같은 1749×796 × 500×400 이며, 그 이유도 같다. 이 절이 특히
+// 기대는 함정 둘을 다시 적는다.
+//   - **`workspace={false}` 에서는 `box === stage` 이고 `origin === (0,0)` 이다.** 그러므로
+//     끈 갈래에서만 재는 시험은 두 값을 **혼동한 구현도 통과시킨다**(`box` 자리에 `stage`
+//     를 실어도, `origin` 을 아예 싣지 않아도 같은 값이 나온다). 이 절의 본 시험은 반드시
+//     **켠 갈래**에서 돈다(D1 · D4).
+//   - 켠 갈래의 원점 **(504, 102) 는 칸 37 의 배수가 아니다**(504 = 37×13 + 23,
+//     102 = 37×2 + 28). 배수인 조합에서는 "작업 영역의 왼쪽 위" 와 "출력 영역의 원점" 이
+//     같은 자리라, 격자를 어디에 앉히든 시험이 실패할 수 없다(D3).
+
+describe('CanvasSurface — 격자 컨텍스트의 원점과 작업 영역 (SPEC-CANVAS-006 M3)', () => {
+  /** 표면이 편 격자 한 벌을 **진짜 훅으로** 받아 기록하는 소비자. */
+  function renderWithConsumer(opts: { workspace: boolean; width?: number; height?: number }) {
+    currentSize = { width: opts.width ?? 1749, height: opts.height ?? 796 };
+    const clock = makeScheduler();
+    const seen: (CanvasStageGrid | null)[] = [];
+
+    function GridProbe() {
+      seen.push(useCanvasStageGrid());
+      return <div data-testid="canvas-overlay" />;
+    }
+
+    const view = render(
+      <CanvasSurface
+        canvas={WIDE_CANVAS}
+        elements={[rectEl('a', { geometry: { x: -100, y: -50, w: 100, h: 100 } })]}
+        targetStyles={{ a: { fill: '#ff0000' } }}
+        texts={{}}
+        scheduler={clock.scheduler}
+        visibilitySource={makeVisibility().source}
+        workspace={opts.workspace}
+        overlay={() => <GridProbe />}
+      />,
+    );
+    clock.flush(0);
+    return { clock, view, grid: () => seen.at(-1)! };
+  }
+
+  it('켠 갈래: 원점과 작업 영역이 표면이 지은 두 상자와 **같은 값**으로 내려온다', () => {
+    const { grid } = renderWithConsumer({ workspace: true });
+
+    // 먼저 두 상자가 **실제로 다름**을 못박는다(D4). 같으면 아래 단언 전부가 뜻을 잃는다.
+    expect(areaBox().style.width).not.toBe(stageBox().style.width);
+    expect(stageBox().style.left).not.toBe('0px');
+
+    const g = grid();
+    expect(g).not.toBeNull();
+    // 원점 = 출력 영역 상자가 앉은 자리. 오버레이가 다시 파생하지 않고 이 값을 쓴다.
+    expect(g.origin).toEqual({ x: 504, y: 102 });
+    expect(g.origin.x).toBe(px(stageBox().style.left));
+    expect(g.origin.y).toBe(px(stageBox().style.top));
+    // 작업 영역 = 격자가 덮어야 할 상자. 잰 바깥 상자 전부다.
+    expect(g.box).toEqual({ width: 1749, height: 796 });
+    expect(g.box.width).toBe(px(areaBox().style.width));
+    expect(g.box.height).toBe(px(areaBox().style.height));
+    // 종전 세 칸도 그대로다 — 칸은 두 축이 같은 정수다(축척이 하나다).
+    expect(g.cell).toEqual({ x: 37, y: 37 });
+    expect(g.step).toBe(25);
+    expect(typeof g.setStep).toBe('function');
+  });
+
+  it('켠 갈래의 원점은 한 칸의 배수가 **아니다** — 격자 위상 시험이 실패할 수 있는 조합이다', () => {
+    // D3: 이 수가 배수가 되는 순간 M5·M6 의 위상 시험은 원점을 무시한 구현도 통과시킨다.
+    // 그래서 그 시험이 서기 **전에** 이 조합을 여기서 못박는다.
+    const { grid } = renderWithConsumer({ workspace: true });
+
+    const g = grid();
+    expect(g.origin.x % g.cell.x).toBe(23); // 504 = 37×13 + 23
+    expect(g.origin.y % g.cell.y).toBe(28); // 102 = 37×2 + 28
+    expect(g.origin.x % g.cell.x).not.toBe(0);
+    expect(g.origin.y % g.cell.y).not.toBe(0);
+  });
+
+  it('켠 갈래: 작업 영역이 출력 영역보다 **넓다** — 두 칸을 맞바꾼 구현이 여기서 걸린다', () => {
+    // `box` 자리에 `stage` 를 실은 구현은 끈 갈래에서 두 값이 같아 통과하지만 여기서 걸린다.
+    const { grid } = renderWithConsumer({ workspace: true });
+
+    const g = grid();
+    expect(g.box.width).toBeGreaterThan(px(stageBox().style.width));
+    expect(g.box.height).toBeGreaterThan(px(stageBox().style.height));
+  });
+
+  it('끈 갈래: 원점이 (0,0) 이고 작업 영역이 출력 영역과 같다 — 006 이전과 같은 값이다', () => {
+    // D1: 끈 갈래도 따로 잰다. 여기서만 재면 위 세 시험이 못 잡는 혼동이 남지만,
+    // 여기를 빼면 무동작 갈래가 한 번도 돌지 않는다. 둘 다 있어야 갈래 둘이 덮인다.
+    const { grid } = renderWithConsumer({ workspace: false });
+
+    const g = grid();
+    expect(g.origin).toEqual({ x: 0, y: 0 });
+    expect(g.box).toEqual({ width: 980, height: 784 });
+    expect(g.box.width).toBe(px(stageBox().style.width));
+    expect(g.box.height).toBe(px(stageBox().style.height));
+    expect(g.cell).toEqual({ x: 49, y: 49 });
+  });
+
+  it('퇴화: 아직 재지 못한 상자(0)에서도 두 칸이 NaN 없이 0 으로 내려온다', () => {
+    const { grid } = renderWithConsumer({ workspace: true, width: 0, height: 0 });
+
+    const g = grid();
+    expect(g.origin).toEqual({ x: 0, y: 0 });
+    expect(g.box).toEqual({ width: 0, height: 0 });
+    for (const value of [g.origin.x, g.origin.y, g.box.width, g.box.height]) {
+      expect(Number.isFinite(value)).toBe(true);
+    }
   });
 });

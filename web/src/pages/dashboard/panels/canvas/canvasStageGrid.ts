@@ -28,7 +28,7 @@
 
 import { createContext, useContext } from 'react';
 
-import type { StageCell } from './canvasGeometry';
+import type { StageCell, StageSize } from './canvasGeometry';
 
 /** 표면이 그리는 영역을 맞춘 격자 한 벌. */
 export interface CanvasStageGrid {
@@ -38,6 +38,29 @@ export interface CanvasStageGrid {
   setStep: (step: number) => void;
   /** 한 칸의 CSS px — 표면이 영역을 맞출 때 쓴 **그 값 그대로**다(다시 나누지 않는다). */
   cell: StageCell;
+  /**
+   * **패널 출력 영역이 작업 영역 안에서 앉는 정수 px 자리** = 캔버스 좌표 `(0,0)` 의 자리
+   * (SPEC-CANVAS-006 M3).
+   *
+   * 격자가 이 값에 앉아야 하는 이유가 이 칸이 존재하는 이유 전부다. 붙임(`snapDelta`)은
+   * 캔버스 단위로 `k × step` 에 죄므로 그 자리는 화면에서 `origin + k × cell` 이다. 격자를
+   * **작업 영역**의 왼쪽 위에 앉히면 선은 `0 + k × cell` 에 서고, 둘이 만나려면 `origin` 이
+   * `cell` 의 배수여야 하는데 그럴 이유가 없다 — 여백이 한 칸의 배수가 아닌 순간 **그린
+   * 선과 붙은 자리가 갈라진다**. 이 저장소가 세 번(0.8.0 · 0.9.0 · 0.10.0) 걷어낸 그
+   * 거짓말이 모양만 바꿔 돌아오는 자리이며, 그래서 자리를 오버레이가 다시 파생하지 않고
+   * **상자를 지은 쪽이 내려보낸다**(위험 R1 · R3).
+   *
+   * 편집이 꺼져 있으면 `(0,0)` 이다 — 두 상자가 겹쳐 오늘과 같은 그림이 된다.
+   */
+  origin: StageCell;
+  /**
+   * **작업 영역(캔버스 비트맵이 덮는 상자)의 CSS px 크기**(SPEC-CANVAS-006 M3).
+   *
+   * 격자는 출력 영역이 아니라 이 상자 전체에 그려진다 — 저술 여백에도 칸이 보여야 밖에
+   * 놓은 요소가 어디에 붙는지 눈으로 읽힌다(REQ-04). 위 `origin` 과 짝이며, 편집이 꺼져
+   * 있으면 출력 영역과 같은 크기다.
+   */
+  box: StageSize;
 }
 
 export const CanvasStageGridContext = createContext<CanvasStageGrid | null>(null);
@@ -46,7 +69,9 @@ export const CanvasStageGridContext = createContext<CanvasStageGrid | null>(null
  * 표면이 편 격자 한 벌. **표면 밖에서는 `null` 이다.**
  *
  * `null` 을 숨기지 않는 것에 뜻이 있다 — 표면이 없으면 맞출 영역도 없으므로, 받는 쪽이
- * 그 사실을 알고 제 값으로 폴백해야 한다.
+ * 그 사실을 알고 제 값으로 폴백해야 한다. 006 이 더한 두 칸의 폴백도 같은 규율을 따른다:
+ * 표면이 없으면 작업 영역도 없으므로 `origin = {0,0}` · `box = projection.stage` 로
+ * 떨어진다 — 그것이 곧 "상자가 하나뿐이던 시절" 의 값이며 006 이전과 같다.
  */
 export function useCanvasStageGrid(): CanvasStageGrid | null {
   return useContext(CanvasStageGridContext);

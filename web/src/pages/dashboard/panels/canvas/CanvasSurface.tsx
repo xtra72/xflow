@@ -288,9 +288,21 @@ export default function CanvasSurface({
   /**
    * 오버레이 슬롯 둘레에 펴는 격자 한 벌(`canvasStageGrid.ts`). 값이 같으면 신원도 같아야
    * 헛 렌더가 없다.
+   *
+   * 006 이 `origin` 과 `box` 를 함께 싣는다. 격자는 **작업 영역 전체**(`box`)에 그려지되
+   * 선은 **출력 영역의 원점**(`origin`)에서 시작해야 하는데(REQ-04 · 위험 R3), 둘 다 상자를
+   * 지으며 이미 손에 든 값이다. 내려보내지 않으면 오버레이가 같은 상자를 **다시 파생**하게
+   * 되고 그것이 곧 두 번째 측정원이다(위험 R1 · 불변식 I10). 이 컨텍스트가 존재하는 이유
+   * ("상자를 짓는 쪽이 필요한 것을 아래로 내린다")에 그대로 들어맞는 값 둘이다.
    */
   const stageGrid = useMemo<CanvasStageGrid>(
-    () => ({ step: gridStep, setStep: setGridStep, cell: geometry.cell }),
+    () => ({
+      step: gridStep,
+      setStep: setGridStep,
+      cell: geometry.cell,
+      origin: geometry.origin,
+      box: geometry.box,
+    }),
     [gridStep, geometry],
   );
 
