@@ -48,7 +48,33 @@
 // 주기만 정수로 바꾸는 길은 택하지 않았다 — 그러면 그려진 선과 붙는 자리가 오른쪽 끝에서
 // 어긋나, 이 기능에서 두 번 걷어낸 거짓말이 모양만 바꿔 되돌아온다.
 //
-// @spec SPEC-CHART-004 §2.7 [U7] · SPEC-CANVAS-002 REQ-04
+// ## 원점을 따로 받는 이유 (`offsetX`/`offsetY`)
+//
+// 그라디언트는 **제 상자의 왼쪽 위**에서 시작한다. 캔버스가 격자를 패널 출력 영역보다 넓은
+// **작업 영역**에 펴게 되면서(SPEC-CANVAS-006) 그 시작점이 더는 옳지 않다: 붙임(`snapDelta`)
+// 은 캔버스 단위로 `k × 간격` 에 죄므로 그 자리는 화면에서 **출력 영역의 원점 + k × 칸**
+// 인데, 격자를 작업 영역의 왼쪽 위에 앉히면 선은 `0 + k × 칸` 에 선다. 둘이 만나려면 저술
+// 여백이 한 칸의 배수여야 하는데 그럴 이유가 없다 — **여백이 배수가 아닌 순간 그린 선과
+// 붙은 자리가 갈라진다.** 이 저장소가 세 번 걷어낸 그 거짓말이다.
+//
+// 그래서 시작점을 받는다. 기본값 0 이 곧 종전 동작이므로 다섯 패널은 넘기지 않는다.
+//
+// ## px 칸에서 타일을 한 칸으로 못 박는 이유 (`background-size`)
+//
+// `background-image` 는 크기를 지정하지 않으면 **상자만 한 이미지**가 되고, 그 이미지가
+// 상자 폭마다 한 번씩 되풀이된다. 상자가 칸의 정수배이면(0.9.0 이 그리는 영역에 세운 성질)
+// 되풀이되는 자리에서도 위상이 이어져 이음매가 보이지 않는다. 그런데 006 의 작업 영역은
+// **잰 상자 그대로**라 칸의 배수가 아니고, 게다가 원점 이동이 그 이음매를 상자 **안으로**
+// 끌어들인다 — 그러면 저술 여백의 선이 통째로 어긋나, 위 절이 없애려던 바로 그 어긋남이
+// 다른 문으로 되돌아온다.
+//
+// px 는 **절대 주기**라 이미지를 한 칸으로 잘라도 그림이 같다(오늘의 캔버스 상자는 칸의
+// 정수배라 두 그림이 실제로 같다). 그래서 px 칸에서는 타일을 한 칸으로 못 박아 **상자
+// 크기가 위상을 흔들 수 없게** 한다. 백분율은 제 축 길이에 대한 값이라 같은 짓을 할 수
+// 없고(한 칸짜리 타일 안에서 그 칸의 10% 는 상자의 1% 다), 그래서 다섯 패널의 길에는 이
+// 줄이 아예 없다.
+//
+// @spec SPEC-CHART-004 §2.7 [U7] · SPEC-CANVAS-002 REQ-04 · SPEC-CANVAS-006 REQ-04
 
 import { GRID_STEP_PERCENT } from './panels/charts/panelEditAlign';
 
@@ -94,6 +120,8 @@ export function PanelEditGrid({
   stepY = step,
   strength = 'subtle',
   unit = '%',
+  offsetX = 0,
+  offsetY = 0,
 }: {
   enabled: boolean;
   /** 가로 격자 간격(%) — 상자 **폭**에 대한 값. 기본은 `panelEditAlign` 이 소유하는 10%. */
@@ -112,6 +140,14 @@ export function PanelEditGrid({
    * 않는다 — 넘기는 쪽이 캔버스뿐이다(위 `PanelEditGridUnit`).
    */
   unit?: PanelEditGridUnit;
+  /**
+   * 격자선이 시작하는 가로 자리. 기본 0 이 종전 동작이므로 다섯 패널의 그림은 한 글자도
+   * 바뀌지 않는다 — 넘기는 쪽은 캔버스뿐이며, 그 값은 **패널 출력 영역의 원점**이다
+   * (위 머리말 §원점).
+   */
+  offsetX?: number;
+  /** 격자선이 시작하는 세로 자리. 기본 0. */
+  offsetY?: number;
 }): React.ReactElement | null {
   if (!enabled) return null;
   const paint = PAINT[strength];
@@ -125,6 +161,10 @@ export function PanelEditGrid({
           `repeating-linear-gradient(to right, ${paint.line} 0 1px, transparent 1px ${step}${unit})`,
           `repeating-linear-gradient(to bottom, ${paint.line} 0 1px, transparent 1px ${stepY}${unit})`,
         ].join(', '),
+        // 0 이면 `0% 0%` — CSS 초기값 그대로다(다섯 패널 무변경).
+        backgroundPosition: `${offsetX}${unit} ${offsetY}${unit}`,
+        // px 칸에서만 타일을 한 칸으로 못 박는다(위 머리말 §px 칸).
+        ...(unit === 'px' ? { backgroundSize: `${step}px ${stepY}px` } : null),
       }}
     >
       {/* 중심 `+` — 가로/세로 짧은 선 두 개. 오프셋 0 이 곧 이 교점이므로,

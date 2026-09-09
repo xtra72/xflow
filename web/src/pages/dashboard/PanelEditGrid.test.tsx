@@ -43,6 +43,18 @@ describe('기본값은 종전 그림 그대로다 (다섯 패널이 함께 쓴�
     expect(center().style.backgroundColor).toBe(LEGACY_CENTER);
   });
 
+  it('원점 이동을 넘기지 않으면 배경 자리가 CSS 초기값 그대로다', () => {
+    render(<PanelEditGrid enabled />);
+
+    // `0% 0%` 는 `background-position` 의 초기값이다 — 다섯 패널의 그림이 한 픽셀도
+    // 달라지지 않는다는 사실을 **문자열 그대로** 못 박는다. 기본값을 0 이 아닌 값으로
+    // 바꾸면 이 줄이 먼저 운다(그 순간 "다섯 패널이 함께 바뀐다" 를 읽게 된다).
+    expect(grid().style.backgroundPosition).toBe('0% 0%');
+    // 백분율 칸에서는 타일 크기를 지정하지 않는다 — 지정하면 주기가 제 축 길이의 비율의
+    // 비율이 되어 다섯 패널의 칸이 통째로 작아진다.
+    expect(grid().style.backgroundSize).toBe('');
+  });
+
   it('`strength` 를 명시하지 않은 것과 `subtle` 은 같은 그림이다', () => {
     const { container: implicit } = render(<PanelEditGrid enabled />);
     const implicitHtml = implicit.innerHTML;
@@ -146,5 +158,84 @@ describe('간격의 단위를 고를 수 있다 — 기본은 종전대로 % 다
     );
 
     expect(explicit.innerHTML).toBe(implicitHtml);
+  });
+});
+
+// --- 원점을 따로 받는다 (SPEC-CANVAS-006 M5) --------------------------------
+//
+// 캔버스가 격자를 **작업 영역 전체**에 그리되 선은 **패널 출력 영역의 원점**에서 시작해야
+// 한다(SPEC-CANVAS-006 REQ-04 · 위험 R3). 격자 상자의 왼쪽 위에서 시작하면 저술 여백이 한
+// 칸의 배수가 아닌 순간 **그린 선과 붙은 자리가 갈라진다** — 이 저장소가 세 번 걷어낸 그
+// 거짓말이다.
+//
+// `strength` · `stepY` · `unit` 과 같은 방식으로 넓힌다: **기본값이 종전 동작**이므로
+// 다섯 패널은 넘기지 않고, 그 사실은 위 §기본값 절이 문자열 그대로 못 박는다.
+
+describe('원점 이동을 따로 받되 기본은 0 이다 (`offsetX`/`offsetY`)', () => {
+  it('px 단위에서 넘긴 원점이 그대로 배경 자리가 된다', () => {
+    // 캔버스가 실제로 넘기는 조합이다 — 1749×796 상자에서 칸 37 · 원점 (504, 102).
+    // 504 % 37 = 23 이라 원점은 칸의 **배수가 아니다**: 배수인 조합에서는 격자를 작업
+    // 영역의 왼쪽 위에 앉혀도 같은 자리가 되어 이 시험이 실패할 수 없다.
+    render(
+      <PanelEditGrid
+        enabled
+        step={37}
+        stepY={37}
+        unit="px"
+        strength="strong"
+        offsetX={504}
+        offsetY={102}
+      />,
+    );
+
+    expect(grid().style.backgroundPosition).toBe('504px 102px');
+  });
+
+  it('원점을 옮겨도 선 색과 주기는 그대로다 (서로를 밀어내지 않는다)', () => {
+    render(
+      <PanelEditGrid enabled step={37} stepY={49} unit="px" offsetX={504} offsetY={102} />,
+    );
+
+    const image = grid().style.backgroundImage;
+    expect(image).toContain(`to right, ${LEGACY_LINE} 0 1px, transparent 1px 37px`);
+    expect(image).toContain(`to bottom, ${LEGACY_LINE} 0 1px, transparent 1px 49px`);
+  });
+
+  it('원점을 생략하는 것과 0 을 명시하는 것은 같은 그림이다 (다섯 패널의 길)', () => {
+    const { container: implicit } = render(<PanelEditGrid enabled step={10} stepY={20} />);
+    const implicitHtml = implicit.innerHTML;
+    cleanup();
+    const { container: explicit } = render(
+      <PanelEditGrid enabled step={10} stepY={20} offsetX={0} offsetY={0} />,
+    );
+
+    expect(explicit.innerHTML).toBe(implicitHtml);
+  });
+});
+
+// --- px 주기는 한 칸짜리 타일로 그린다 (SPEC-CANVAS-006 M5) ------------------
+//
+// `background-image` 는 크기를 지정하지 않으면 **상자만 한 이미지**가 되어 상자 폭마다
+// 한 번씩 되풀이된다. 상자가 칸의 정수배이면(0.9.0 이 그리는 영역에 세운 그 성질) 이음매가
+// 보이지 않지만, 006 이 격자를 **작업 영역**(잰 상자 그대로 — 칸의 배수가 아니다)에 펴는
+// 순간 그 전제가 깨진다: 이미지가 되풀이되는 자리에서 위상이 끊겨 저술 여백의 선이 통째로
+// 어긋난다. 원점을 옮기면 그 이음매가 상자 안으로 들어오므로 **원점 이동과 짝지어** 이
+// 성질이 필요해진다.
+//
+// px 는 **절대 주기**라 이미지를 한 칸으로 잘라도 그림이 같다 — 그래서 px 칸에서는 타일을
+// 한 칸으로 못 박아 상자 크기가 위상을 흔들 수 없게 한다. 백분율은 제 축 길이에 대한 값이라
+// 같은 짓을 할 수 없고, 그래서 다섯 패널의 길에는 이 줄이 아예 없다.
+
+describe('px 칸은 한 칸짜리 타일이다 — 상자 크기가 위상을 흔들지 못한다', () => {
+  it('px 단위면 타일 크기가 두 축의 칸 그대로다', () => {
+    render(<PanelEditGrid enabled step={37} stepY={49} unit="px" strength="strong" />);
+
+    expect(grid().style.backgroundSize).toBe('37px 49px');
+  });
+
+  it('백분율 단위면 타일 크기를 지정하지 않는다 (다섯 패널 무변경)', () => {
+    render(<PanelEditGrid enabled step={10} stepY={20} />);
+
+    expect(grid().style.backgroundSize).toBe('');
   });
 });
