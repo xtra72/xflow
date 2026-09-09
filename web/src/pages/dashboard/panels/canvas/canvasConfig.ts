@@ -155,9 +155,21 @@ export interface CanvasElementBase {
   style: ElementStyle;
   /** 기본 문구 템플릿. kind:'text' 는 필수이나 파서는 결측을 탈락 사유로 보지 않는다. */
   text?: string;
-  /** `{value}` 치환 시 소수 자리. 미지정이면 `DEFAULT_DECIMALS`. */
+  /**
+   * 바인딩 판독값을 **숫자로 읽을 것인가**.
+   *
+   * `true`(또는 **부재**)면 판독값을 숫자로 보고 `decimals` 자리로 반올림한 뒤 `{unit}` 을
+   * 붙인다 — 001 이래의 유일한 동작이다. `false` 면 받은 값을 **문자열 그대로** 내보낸다:
+   * 반올림도 단위도 걸리지 않으므로 `decimals` · `unit` 은 그 상태에서 뜻이 없다.
+   *
+   * **부재가 곧 숫자다.** 그래서 이 필드가 없는 기존 config 는 한 픽셀도 달라지지 않는다.
+   * 그 규칙은 아래 `isNumericElement` 한 곳에만 적혀 있어야 한다 — 소비 측이 저마다
+   * `!el.numeric` 처럼 참 판정을 하면 부재가 조용히 "숫자 아님" 으로 뒤집힌다.
+   */
+  numeric?: boolean;
+  /** `{value}` 치환 시 소수 자리. `numeric: false` 에서는 쓰이지 않는다. 미지정이면 `DEFAULT_DECIMALS`. */
   decimals?: number;
-  /** `{unit}` 치환 값. */
+  /** `{unit}` 치환 값. `numeric: false` 에서는 쓰이지 않는다. */
   unit?: string;
   /** 없으면 정적 도형(규칙 평가 대상이 아니다). */
   binding?: ElementBinding;
@@ -417,6 +429,10 @@ function parseElement(raw: unknown): CanvasElement | null {
 
   const decimals =
     isFiniteNumber(e.decimals) && e.decimals >= 0 ? Math.trunc(e.decimals) : undefined;
+  // 불리언이 아닌 값(문자열 "false" · 0 · null …)은 **부재로 떨어뜨린다** — 손상 입력을
+  // 임의로 참·거짓으로 읽으면 기존 대시보드의 표기가 조용히 뒤집힌다. 부재 = 숫자이므로
+  // 그 폴백은 언제나 종전 동작이다.
+  const numeric = typeof e.numeric === 'boolean' ? e.numeric : undefined;
   const unit = optionalString(e.unit);
   const binding = parseBinding(e.binding);
   const rules = parseRules(e.rules);
@@ -427,6 +443,7 @@ function parseElement(raw: unknown): CanvasElement | null {
     style: parseStyle(e.style),
     // 문구는 빈 문자열도 뜻이 있다(라벨 없음) — 길이 검사 없이 문자열이면 보존한다.
     ...(typeof e.text === 'string' ? { text: e.text } : {}),
+    ...(numeric !== undefined ? { numeric } : {}),
     ...(decimals !== undefined ? { decimals } : {}),
     ...(unit !== undefined ? { unit } : {}),
     ...(binding !== undefined ? { binding } : {}),
@@ -463,6 +480,18 @@ function parseElements(raw: unknown): CanvasElement[] {
     out.push(el);
   }
   return out;
+}
+
+/**
+ * 이 요소가 판독값을 **숫자로 읽는가**(`CanvasElementBase.numeric` 의 유일한 해석기).
+ *
+ * `false` 일 때만 거짓이다 — **부재는 숫자**다. 이 한 줄이 "이 필드가 없는 기존 config 가
+ * 종전과 똑같이 그려진다" 는 보증의 전부이며, 그래서 참 판정(`!!el.numeric`)이 아니라
+ * **거짓 동일성 판정**(`!== false`)으로 적는다. 소비 측(패널·편집기·문구 치환)이 저마다
+ * 판정을 적으면 그중 하나가 참 판정으로 적히는 순간 부재가 조용히 뒤집힌다.
+ */
+export function isNumericElement(el: Pick<CanvasElementBase, 'numeric'>): boolean {
+  return el.numeric !== false;
 }
 
 /** 데이터 소스 종류. 미인정 값은 미지정으로 떨어뜨린다(소스 판정 계약이 idle 로 방어). */

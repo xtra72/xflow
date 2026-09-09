@@ -229,3 +229,101 @@ describe('renderTextTemplate — 호출 간 상태 누수', () => {
     expect(first).toBe('a:1x');
   });
 });
+
+// --- numeric: false — 받은 값을 글자 그대로 (SPEC-CANVAS-002 · AC-E17) ------
+//
+// 숫자 경로가 `toFixed` 로 서식하는 자리를 **원본 통과**로 바꾸는 갈래다. 이 갈래의
+// 요점은 숫자 고정 입력으로는 재지지 않는다는 것이다 — `23.456` 을 넣으면 켠 상태와
+// 끈 상태의 차이가 반올림 여부로만 나타나 "문자열이 살아 온다" 는 성질은 검사되지
+// 않는다. 그래서 아래 시험의 값은 **애초에 숫자가 아닌** `"ON"` 이다.
+
+describe('renderTextTemplate — numeric:false 는 원본을 그대로 낸다', () => {
+  it('숫자가 아닌 판독값("ON")이 {value} 에 그대로 닿는다', () => {
+    expect(
+      renderTextTemplate('{value}', { numeric: false, raw: 'ON', value: null, decimals: 2 }),
+    ).toBe('ON');
+  });
+
+  it('그 상태에서 소수 자리는 걸리지 않는다 — 숫자여도 서식하지 않는다', () => {
+    expect(renderTextTemplate('{value}', { numeric: false, raw: 23.456, decimals: 1 })).toBe(
+      '23.456',
+    );
+  });
+
+  it('단위도 붙지 않는다 — "ON℃" 같은 없는 말이 서지 않는다', () => {
+    expect(
+      renderTextTemplate('{value}{unit}', { numeric: false, raw: 'ON', unit: '℃' }),
+    ).toBe('ON');
+  });
+
+  it('{name} 과 미지 토큰의 규칙은 그대로다 — 바뀌는 것은 값 축뿐이다', () => {
+    expect(
+      renderTextTemplate('{name}: {value} {foo}', { numeric: false, raw: 'ON', name: '펌프' }),
+    ).toBe('펌프: ON {foo}');
+  });
+
+  it('불리언 판독값은 true/false 로 글자화된다', () => {
+    expect(renderTextTemplate('{value}', { numeric: false, raw: true })).toBe('true');
+    expect(renderTextTemplate('{value}', { numeric: false, raw: false })).toBe('false');
+  });
+
+  it('빈 문자열 판독값은 결측이 아니다 — 받은 값이 비어 있는 것이다', () => {
+    expect(renderTextTemplate('[{value}]', { numeric: false, raw: '' })).toBe('[]');
+  });
+
+  it.each([null, undefined])('값이 없으면(%p) 결측 표기로 간다', (raw) => {
+    expect(renderTextTemplate('{value}', { numeric: false, raw })).toBe(DEFAULT_MISSING_MARKER);
+  });
+
+  it.each([NaN, Infinity, -Infinity])(
+    '비유한 숫자(%p)는 결측이다 — 스위치를 오갈 때 화면이 "NaN" 과 - 사이를 오가지 않는다',
+    (raw) => {
+      expect(renderTextTemplate('{value}', { numeric: false, raw })).toBe(DEFAULT_MISSING_MARKER);
+    },
+  );
+
+  it.each([{}, [], () => 0])('글자로 뜻이 없는 값(%p)은 결측이다', (raw) => {
+    expect(renderTextTemplate('{value}', { numeric: false, raw: corrupt(raw) })).toBe(
+      DEFAULT_MISSING_MARKER,
+    );
+  });
+
+  it('사용자 결측 표기를 그대로 존중한다', () => {
+    expect(renderTextTemplate('{value}', { numeric: false, raw: null, missing: '없음' })).toBe(
+      '없음',
+    );
+  });
+
+  it('원본에 $& 가 있어도 치환 시퀀스가 발동하지 않는다', () => {
+    expect(renderTextTemplate('{value}', { numeric: false, raw: "$& $' $1" })).toBe("$& $' $1");
+  });
+
+  it('원본이 토큰 모양이어도 다시 치환하지 않는다(단일 패스)', () => {
+    expect(renderTextTemplate('{value}', { numeric: false, raw: '{name}', name: '펌프' })).toBe(
+      '{name}',
+    );
+  });
+});
+
+describe('renderTextTemplate — numeric 부재는 숫자다(하위 호환 가드)', () => {
+  // config 에 이 필드가 없던 시절의 호출은 `numeric` 을 넘기지 않는다. 그 호출이
+  // 종전과 **한 글자도 다르지 않아야** 기존 대시보드가 그대로 그려진다.
+  it.each([undefined, true])('numeric %p 는 숫자 경로다 — raw 가 있어도 무시된다', (numeric) => {
+    expect(
+      renderTextTemplate('{value}{unit}', {
+        numeric,
+        value: 23.456,
+        raw: 'ON',
+        decimals: 1,
+        unit: '℃',
+      }),
+    ).toBe('23.5℃');
+  });
+
+  it('numeric 을 아예 넘기지 않은 결과가 numeric:true 와 같다', () => {
+    const ctx = { value: 7, decimals: 2, unit: 'kW', name: 'a' };
+    expect(renderTextTemplate('{name} {value}{unit}', ctx)).toBe(
+      renderTextTemplate('{name} {value}{unit}', { ...ctx, numeric: true }),
+    );
+  });
+});

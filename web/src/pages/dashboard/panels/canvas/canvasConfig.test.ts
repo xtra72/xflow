@@ -22,6 +22,7 @@ import {
   type LineGeometry,
   type PointGeometry,
   type CanvasElement,
+  isNumericElement,
 } from './canvasConfig';
 
 /** 최소 유효 요소를 만든다(테스트 잡음 축소). */
@@ -528,5 +529,68 @@ describe('parseCanvasConfig — 도형 종류별 왕복', () => {
     expect(cfg.elements.map((e) => e.kind)).toEqual(['rect', 'ellipse', 'line', 'text']);
     expect(cfg.elements[0]).not.toHaveProperty('zIndex');
     expect(parseCanvasConfig(cfg)).toEqual(cfg);
+  });
+});
+
+// --- 숫자 스위치 (SPEC-CANVAS-002 · AC-E17) -------------------------------
+//
+// 이 필드의 무게는 스키마가 아니라 **부재의 뜻**에 있다. 001·002 를 거쳐 저장된 모든
+// config 에는 이 키가 없고, 그 전부가 종전과 똑같이 그려져야 한다. 그래서 "부재 = 숫자"
+// 를 파서 축(키가 생기지 않는다)과 판정 축(`isNumericElement`) 양쪽에서 못박는다.
+
+describe('parseCanvasConfig — numeric(숫자로 읽기)', () => {
+  it('부재면 키를 만들지 않는다 — 기존 config 가 한 글자도 넓어지지 않는다', () => {
+    const el = firstElement({ elements: [rawRect()] });
+    expect(el).not.toHaveProperty('numeric');
+    expect(el.numeric).toBeUndefined();
+  });
+
+  it.each([true, false])('불리언(%p)은 그대로 보존한다', (numeric) => {
+    expect(firstElement({ elements: [rawRect({ numeric })] }).numeric).toBe(numeric);
+  });
+
+  it.each(['false', 'true', 0, 1, null, {}, []])(
+    '불리언이 아닌 값(%p)은 부재로 떨어뜨린다 — 손상 입력이 표기를 뒤집지 않는다',
+    (numeric) => {
+      const el = firstElement({ elements: [rawRect({ numeric })] });
+      expect(el).not.toHaveProperty('numeric');
+    },
+  );
+
+  it('numeric 은 decimals · unit 과 독립으로 실린다(끈 상태에서도 값이 지워지지 않는다)', () => {
+    const el = firstElement({ elements: [rawRect({ numeric: false, decimals: 2, unit: '℃' })] });
+    expect(el.numeric).toBe(false);
+    expect(el.decimals).toBe(2);
+    expect(el.unit).toBe('℃');
+  });
+
+  it('왕복에서 그대로다 — 파싱한 것을 다시 파싱해도 같은 것이 나온다', () => {
+    const cfg = parseCanvasConfig({
+      elements: [
+        rawRect({ id: 'on', numeric: true, decimals: 1, unit: 'kW' }),
+        rawRect({ id: 'off', numeric: false, text: '{value}', binding: { series: 's', agg: 'last' } }),
+        rawRect({ id: 'absent' }),
+      ],
+    });
+    expect(parseCanvasConfig(cfg)).toEqual(cfg);
+    expect(cfg.elements.map((e) => e.numeric)).toEqual([true, false, undefined]);
+  });
+});
+
+describe('isNumericElement — 부재가 곧 숫자다', () => {
+  it.each([
+    [{}, true],
+    [{ numeric: true }, true],
+    [{ numeric: undefined }, true],
+    [{ numeric: false }, false],
+  ] as const)('%p → %p', (el, expected) => {
+    expect(isNumericElement(el)).toBe(expected);
+  });
+
+  // 참 판정(`!!el.numeric`)으로 적으면 부재가 거짓이 되어 기존 대시보드가 통째로
+  // 문자열 표기로 뒤집힌다. 이 시험이 그 오작성을 잡는 자리다.
+  it('부재와 false 는 다르다 — 부재만 숫자다', () => {
+    expect(isNumericElement({})).toBe(true);
+    expect(isNumericElement({ numeric: false })).toBe(false);
   });
 });

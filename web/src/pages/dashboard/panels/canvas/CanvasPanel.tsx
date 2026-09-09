@@ -41,7 +41,7 @@ import { usePanelSeriesData } from '../charts/usePanelSeriesData';
 import type { VisibilitySource } from '../charts/visiblePolling';
 import { usePanelEditMode } from '../PanelEditToggle';
 import type { CanvasElement } from './canvasConfig';
-import { parseCanvasConfig } from './canvasConfig';
+import { isNumericElement, parseCanvasConfig } from './canvasConfig';
 import {
   useCanvasLiveSeriesPublisher,
   type CanvasSeriesOption,
@@ -96,6 +96,14 @@ export interface CanvasPanelProps {
 interface SeriesReading {
   /** 최신 유한값. 결측(시리즈 없음·값 없음·비유한)이면 null. */
   value: number | null;
+  /**
+   * 최신 판독값 **원본**. 숫자 축을 지나지 않았으므로 `"ON"` 같은 문자열도 살아 있다.
+   *
+   * `value` 옆에 나란히 두는 것이 요점이다. 요소가 `numeric: false` 로 저술되면 화면에
+   * 나가야 하는 것은 숫자로 읽어 낸 것이 아니라 **받은 그대로**인데, `latestFiniteValue`
+   * 는 비숫자를 걸러 내므로 그 값은 이 자리가 없으면 판독 단계에서 이미 사라진다.
+   */
+  raw: unknown;
   /** 시리즈 표시명. `{name}` 치환 값. */
   name: string;
 }
@@ -129,6 +137,25 @@ function latestFiniteValue(entries: ChartEntry[] | undefined): number | null {
 }
 
 /**
+ * 타임라인에서 **마지막으로 값이 있던 칸**을 서식 없이 그대로 뽑는다.
+ *
+ * 위 `latestFiniteValue` 와 훑는 방향·건너뛰는 이유(빈 버킷)는 같고, **거르는 기준만**
+ * 다르다: 여기서는 숫자인지 묻지 않는다. `numeric: false` 로 저술된 요소가 화면에 내보내야
+ * 하는 것이 정확히 이 값이며, 숫자 판정을 여기서 한 번 더 하면 `"ON"` 은 이 함수를 지나는
+ * 순간 사라져 `{value}` 에 닿을 길이 없어진다.
+ *
+ * `null` · `undefined` 만 "값 없음" 으로 건너뛴다 — 훅이 빈 버킷을 담는 형태가 그 둘이다.
+ */
+function latestRawValue(entries: ChartEntry[] | undefined): unknown {
+  if (!entries) return null;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const v = entries[i]!.value;
+    if (v !== null && v !== undefined) return v;
+  }
+  return null;
+}
+
+/**
  * 조회 결과(**표시 이름** 공간)를 바인딩이 쓰는 **동일성 키** 공간으로 옮긴다.
  *
  * 훅은 시리즈를 표시 이름(alias)으로 키잉하는데, 바인딩은 시리즈 동일성 키로 참조한다
@@ -153,7 +180,8 @@ function resolveSeriesReadings(
     const id = ref ? storeSeriesId(ref.key, ref.field ?? '', ref.tags ?? {}) : name;
     // 첫 컬럼이 이긴다 — 같은 동일성 키가 두 번 나오면 뒤 컬럼은 같은 시리즈의 중복이다.
     if (readings.has(id)) return;
-    readings.set(id, { value: latestFiniteValue(seriesEntries.get(name)), name });
+    const entries = seriesEntries.get(name);
+    readings.set(id, { value: latestFiniteValue(entries), raw: latestRawValue(entries), name });
   });
 
   return readings;
@@ -181,7 +209,12 @@ function buildCanvasFrame(
 
   for (const el of elements) {
     const reading = el.binding ? readings.get(el.binding.series) : undefined;
-    const value = reading?.value ?? null;
+    const numeric = isNumericElement(el);
+    // 숫자로 읽지 않는 요소에는 **비교할 수가 없다**. 그래서 규칙 평가에 넘기는 값은
+    // `null` 이며, 그 결과 `nodata` 행만 일치할 수 있다(스칼라 연산자는 값이 있어야 성립한다
+    // — `canvasRules.matchesRule`). 조용히 그렇게 되면 사용자는 "규칙이 고장났다" 로 읽으므로,
+    // 편집기가 규칙 표 제목 뒤 `?` 로 그 사실을 말한다(`rulesNonNumericHint`).
+    const value = numeric ? (reading?.value ?? null) : null;
     const style = el.binding
       ? evaluateRules(value, el.rules, el.style)
       : { ...el.style };
@@ -193,6 +226,8 @@ function buildCanvasFrame(
         ? undefined
         : renderTextTemplate(template, {
             value,
+            raw: reading?.raw,
+            numeric,
             name: reading?.name,
             unit: el.unit,
             decimals: el.decimals,

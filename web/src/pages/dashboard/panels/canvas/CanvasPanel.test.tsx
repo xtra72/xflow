@@ -1251,3 +1251,167 @@ describe('CanvasPanel ↔ CanvasElementsEditor — 고른 시리즈가 값을 �
     expect(editorRenders).toBe(afterFirstPublish + 1);
   });
 });
+
+// --- 숫자 스위치 (SPEC-CANVAS-002 · AC-E17) -------------------------------
+//
+// 값이 화면까지 오는 **전체 길**을 건너는 시험이다. 단위 시험(`canvasText.test.ts`)은
+// 치환기 하나만 보고, 파서 시험은 키 하나만 본다 — 그 사이에 `latestFiniteValue` 가
+// 있고, 그 함수는 숫자가 아닌 판독값을 **버린다**. 그래서 "끄면 문자열이 나온다" 는
+// 오직 이 자리에서만 거짓이 될 수 있었다.
+//
+// 고정 입력의 값이 `"ON"` 인 것이 이 시험의 전부다. 숫자 고정 입력(`23.456`)으로는
+// 켠 상태와 끈 상태의 차이가 반올림 여부로만 나타나, 판독 단계에서 값이 사라지는
+// 결함을 그대로 통과시킨다.
+
+/** 원시 판독값 타임라인 — 숫자가 아닌 값도 그대로 담는다(ChartEntry.value 는 unknown 이다). */
+function rawReading(...values: unknown[]): ChartEntry[] {
+  return values.map((value, i) => ({ timestamp: i + 1, value }));
+}
+
+/** 텍스트 요소 하나. `numeric` 을 부재로 두면 종전 config 와 같은 형상이다. */
+function labelElement(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'lbl',
+    kind: 'text',
+    geometry: { x: 0.5, y: 0.5 },
+    style: { textColor: '#000000' },
+    text: '{value}{unit}',
+    decimals: 1,
+    unit: '℃',
+    binding: { series: sid('pump.state'), agg: 'last' },
+    ...over,
+  };
+}
+
+describe('CanvasPanel — 숫자를 끄면 받은 값이 글자 그대로 나온다', () => {
+  it('숫자가 아닌 판독값 "ON" 이 {value} 까지 살아 온다', () => {
+    setSeries({ pump: rawReading('ON') });
+    renderPanel(makeConfig([labelElement({ numeric: false })], ['pump.state']));
+
+    expect(drawnTexts()).toContain('ON');
+  });
+
+  it('그때 소수 자리도 단위도 걸리지 않는다', () => {
+    setSeries({ pump: rawReading('23.456') });
+    renderPanel(
+      makeConfig([labelElement({ numeric: false, decimals: 1, unit: '℃' })], ['pump.state']),
+    );
+
+    // 문자열이므로 반올림되지 않고, 단위도 붙지 않는다.
+    expect(drawnTexts()).toContain('23.456');
+    expect(drawnTexts()).not.toContain('23.5℃');
+  });
+
+  it('같은 판독값이 숫자를 켠 채로는 결측 표기로 남는다 — 스위치가 그 차이의 전부다', () => {
+    setSeries({ pump: rawReading('ON') });
+    renderPanel(makeConfig([labelElement()], ['pump.state']));
+
+    // 숫자 경로는 비숫자를 버린다(`latestFiniteValue`). 종전 동작이며 바뀌지 않았다.
+    expect(drawnTexts()).toContain('-℃');
+    expect(drawnTexts()).not.toContain('ON');
+  });
+
+  it('숫자를 끈 요소도 값이 없으면 결측 표기다', () => {
+    setSeries({ pump: rawReading(null) });
+    renderPanel(makeConfig([labelElement({ numeric: false })], ['pump.state']));
+
+    expect(drawnTexts()).toContain('-');
+  });
+
+  it('한 캔버스 안에서 요소마다 다르게 읽는다 — 스위치는 요소 축이다', () => {
+    setSeries({ pump: rawReading('ON') });
+    renderPanel(
+      makeConfig(
+        [
+          labelElement({ id: 'raw', numeric: false, text: 'A{value}' }),
+          labelElement({ id: 'num', text: 'B{value}' }),
+        ],
+        ['pump.state'],
+      ),
+    );
+
+    expect(drawnTexts()).toContain('AON');
+    expect(drawnTexts()).toContain('B-');
+  });
+});
+
+describe('CanvasPanel — numeric 부재는 숫자다 (하위 호환 가드)', () => {
+  // 이 파일의 나머지 시험 전부가 이 필드 없이 쓰였고 전량 green 이라는 사실이 이미
+  // 하위 호환의 몸통이다. 아래는 그 성질을 **한 자리에서 못박아** 두는 자물쇠다 —
+  // 판정을 참 판정(`!!el.numeric`)으로 잘못 적으면 부재가 거짓이 되어 기존 대시보드가
+  // 통째로 문자열 표기로 뒤집히는데, 그 회귀는 다른 어떤 시험도 이름으로 부르지 않는다.
+  it('키가 없는 요소는 종전대로 숫자로 서식된다(반올림 + 단위)', () => {
+    setSeries({ pump: rawReading(23.456) });
+    const { config } = renderPanel(makeConfig([labelElement()], ['pump.state']));
+
+    expect(drawnTexts()).toContain('23.5℃');
+    // 고정 입력에 그 키가 실제로 없다 — "부재" 를 재고 있음을 스스로 확인한다.
+    expect((config.elements as Record<string, unknown>[])[0]).not.toHaveProperty('numeric');
+  });
+
+  it('numeric:true 를 명시한 결과와 한 글자도 다르지 않다', () => {
+    setSeries({ pump: rawReading(23.456) });
+    renderPanel(makeConfig([labelElement({ id: 'absent', text: '{value}{unit}' })], ['pump.state']));
+    const withoutFlag = drawnTexts();
+
+    cleanup();
+    ctxStub = makeCtxStub();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+      ctxStub as unknown as CanvasRenderingContext2D,
+    );
+    setSeries({ pump: rawReading(23.456) });
+    renderPanel(
+      makeConfig([labelElement({ id: 'explicit', numeric: true, text: '{value}{unit}' })], ['pump.state']),
+    );
+
+    expect(drawnTexts()).toEqual(withoutFlag);
+  });
+});
+
+describe('CanvasPanel — 숫자를 끄면 규칙은 "값 없음" 행만 남는다', () => {
+  /** 규칙 두 줄을 단 사각형 — 비교 행 하나와 결측 행 하나. */
+  function ruledRect(over: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: 'box',
+      kind: 'rect',
+      geometry: { x: 0, y: 0, w: 1, h: 1 },
+      style: { fill: '#888888' },
+      binding: { series: sid('pump.state'), agg: 'last' },
+      rules: [
+        { op: 'gt', value: 10, patch: { fill: '#ff0000' } },
+        { op: 'nodata', value: 0, patch: { fill: '#0000ff' } },
+      ],
+      ...over,
+    };
+  }
+
+  it('숫자를 켠 채로는 비교 행이 이긴다(종전 동작)', () => {
+    setSeries({ pump: rawReading(50) });
+    renderPanel(makeConfig([ruledRect()], ['pump.state']));
+
+    expect(shapeFills()).toContain('#ff0000');
+  });
+
+  it('숫자를 끄면 비교 행은 일치하지 않고 결측 행이 남는다', () => {
+    // 값은 여전히 오고 있다(50). 끈 것은 "숫자로 읽는다" 이지 "데이터가 없다" 가 아니다 —
+    // 그럼에도 비교할 수가 없으므로 스칼라 행은 전부 빗나간다. 이 결과가 조용하면 사용자는
+    // 고장으로 읽으므로, 편집기가 규칙 표 제목 뒤 `?` 로 이유를 말한다.
+    setSeries({ pump: rawReading(50) });
+    renderPanel(makeConfig([ruledRect({ numeric: false })], ['pump.state']));
+
+    expect(shapeFills()).not.toContain('#ff0000');
+    expect(shapeFills()).toContain('#0000ff');
+  });
+
+  it('결측 행조차 없으면 기본 스타일 그대로다 — 요소가 사라지지 않는다', () => {
+    setSeries({ pump: rawReading('ON') });
+    renderPanel(
+      makeConfig(
+        [ruledRect({ numeric: false, rules: [{ op: 'gt', value: 10, patch: { fill: '#ff0000' } }] })],
+        ['pump.state'],
+      ),
+    );
+
+    expect(shapeFills()).toContain('#888888');
+  });
+});

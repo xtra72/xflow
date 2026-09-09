@@ -21,7 +21,8 @@
 //      않아 라벨이 그려지지 않았다(도형 라벨은 `fill` 로 폴백하지 않는다 — 폴백하면 라벨이
 //      제 도형과 같은 색이 되므로 그 거절은 옳다). 그래서 이제 이 파일은 "추가 버튼을
 //      눌렀다" 뿐 아니라 **"문구를 타이핑했다"** 도 렌더 층까지 끌고 간다.
-//   6. 한 요소의 세부 여섯 줄은 **접힌다.** 순번 · 종류 · 순서 · 삭제만 늘 보인다.
+//   6. 한 요소의 세부 여섯 줄은 **접힌다.** 순번 · 요약 · 순서 · 삭제만 늘 보인다 —
+//      종류는 저술이므로 머리줄이 아니라 도형 묶음의 첫 칸에 선다.
 //
 // i18n 은 `CanvasRuleTableEditor.test.tsx` 선례대로 키 통과 스텁으로 갈아끼운다. 그래서
 // 개별 컨트롤은 aria-label 이 아니라 `data-testid` 로 집는다(스텁 t 는 `{index}` 를
@@ -1305,14 +1306,14 @@ describe('CanvasElementsEditor — 요소 줄 접기', () => {
     expect(screen.queryByTestId('canvas-element-geo-x-0')).toBeNull();
   });
 
-  it('접힌 줄에서도 순번 · 종류 · 순서 이동 · 삭제는 그대로 닿는다', () => {
+  it('접힌 줄에서도 순번 · 순서 이동 · 삭제는 그대로 닿는다', () => {
+    // 머리줄에 남는 것은 **펼치지 않고도 되어야 하는 일** 뿐이다: 훑기(순번·요약) ·
+    // 순서 조작 · 삭제. 종류는 그 목록에 없다 — 저술이므로 몸통(도형 묶음)에서 한다.
     const spy = setup(cfg([rect({ id: 'a' }), rect({ id: 'b' })]), { expand: false });
 
     expect(testid('canvas-element-order-0').textContent).toBe('1');
     expect((testid('canvas-element-move-down-0') as HTMLButtonElement).disabled).toBe(false);
-
-    fireEvent.change(testid('canvas-element-kind-0'), { target: { value: 'ellipse' } });
-    expect(lastElements(spy)[0]!.kind).toBe('ellipse');
+    expect(screen.queryByTestId('canvas-element-kind-0')).toBeNull();
 
     fireEvent.click(testid('canvas-element-move-down-0'));
     expect(lastElements(spy).map((e) => e.id)).toEqual(['b', 'a']);
@@ -2069,5 +2070,348 @@ describe('캔버스 편집기의 글자 크기는 주변 설정 화면을 따른
       const source = readFileSync(join(__dirname, file), 'utf-8');
       expect(source).toMatch(/const INPUT_CLASS =[\s\S]*?text-xs/);
     }
+  });
+});
+
+// --- 요소 카드의 묶음 배치 (SPEC-CANVAS-002 · AC-E17) ----------------------
+//
+// 사용 시험이 돌려보낸 것은 결함이 아니라 **카드가 읽히지 않는다** 였다. 칸들이 제목과
+// 한 줄에 섞여 흐르니 어디까지가 한 묶음인지 눈으로 끊기지 않았다. 그래서 이 절이 재는
+// 것은 값이 아니라 **구조** 다: 묶음이 어떤 차례로 서는가, 제목이 제 줄에 서는가,
+// 종류마다 어느 묶음이 없는가.
+
+/** 카드에 설 수 있는 묶음 이름 — 화면에 서는 차례 그대로다. */
+const GROUP_NAMES = ['position', 'size', 'shape-style', 'text-style', 'data', 'tween', 'rules'];
+
+/** 색 스와치 칸 이름(도형 축 · 텍스트 축 양쪽에 나뉘어 선다). */
+const SWATCH_NAMES = ['fill', 'stroke', 'text-color'];
+
+/** 어떤 상자 안에 있는 testid 를 **DOM 차례대로** 뽑는다. */
+function testIdsIn(root: HTMLElement, names: readonly string[], idx = 0): string[] {
+  const wanted = new Set(names.map((n) => `canvas-element-${n}-${idx}`));
+  return [...root.querySelectorAll('[data-testid]')]
+    .map((n) => n.getAttribute('data-testid') ?? '')
+    .filter((id) => wanted.has(id))
+    .map((id) => id.slice('canvas-element-'.length, id.length - `-${idx}`.length));
+}
+
+/** 한 요소 카드에 선 묶음들을 화면 차례대로 낸다. */
+function groupOrder(idx = 0): string[] {
+  return testIdsIn(testid(`canvas-element-${idx}`), GROUP_NAMES, idx);
+}
+
+/** 한 묶음 안의 색 스와치를 화면 차례대로 낸다. */
+function swatchOrder(group: string, idx = 0): string[] {
+  return testIdsIn(testid(`canvas-element-${group}-${idx}`), SWATCH_NAMES, idx);
+}
+
+describe('CanvasElementsEditor — 요소 카드는 묶음 일곱을 정해진 차례로 쌓는다', () => {
+  it('rect 는 위치 · 크기 · 도형 · 텍스트 · 데이터 · 전환 효과 · 규칙 차례다', () => {
+    setup(cfg([rect()]));
+
+    expect(groupOrder()).toEqual([
+      'position',
+      'size',
+      'shape-style',
+      'text-style',
+      'data',
+      'tween',
+      'rules',
+    ]);
+  });
+
+  it('ellipse 도 같은 일곱이다', () => {
+    setup(cfg([rect({ id: 'e', kind: 'ellipse' })]));
+    expect(groupOrder()).toEqual([
+      'position',
+      'size',
+      'shape-style',
+      'text-style',
+      'data',
+      'tween',
+      'rules',
+    ]);
+  });
+
+  it('line 은 크기 묶음이 빠진 여섯이다 — 길이는 끝점에서 따라 나오는 값이다', () => {
+    setup(cfg([{ id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 1, y2: 1 }, style: {} }]));
+
+    expect(groupOrder()).toEqual([
+      'position',
+      'shape-style',
+      'text-style',
+      'data',
+      'tween',
+      'rules',
+    ]);
+  });
+
+  it('text 도 크기 묶음이 없다 — 그 크기는 텍스트 묶음의 글자 크기다', () => {
+    setup(cfg([{ id: 't', kind: 'text', geometry: { x: 0.5, y: 0.5 }, style: {} }]));
+
+    expect(groupOrder()).toEqual([
+      'position',
+      'shape-style',
+      'text-style',
+      'data',
+      'tween',
+      'rules',
+    ]);
+    expect(
+      testid('canvas-element-text-style-0').contains(testid('canvas-element-font-size-0')),
+    ).toBe(true);
+  });
+
+  it('묶음 제목은 **제 줄**에 서고 칸은 그 아래 줄에 선다', () => {
+    // 제목과 칸이 한 흐름에 섞여 있으면, 칸이 넘쳐 다음 줄로 내려간 순간 그 칸은 아래
+    // 묶음의 제목과 나란히 서고 화면은 "크기 · [W] [H] [테두리]" 처럼 읽힌다. 그래서
+    // 재는 것은 글자가 아니라 **줄이 둘로 갈렸는가** 다: 제목 줄과 칸 줄이 서로 다른
+    // 상자이고, 제목 줄에는 칸이 하나도 없으며, 칸은 전부 두 번째 줄에 있다.
+    setup(cfg([rect()]));
+
+    for (const group of ['position', 'size', 'shape-style', 'text-style', 'data', 'tween']) {
+      const box = testid(`canvas-element-${group}-0`);
+      const rows = [...box.children];
+      expect(rows).toHaveLength(2);
+
+      const [heading, fields] = rows as [Element, Element];
+      // 제목 줄: 글자와 (있다면) `?` 단추뿐 — 저술하는 칸은 하나도 없다.
+      expect(heading.textContent).not.toBe('');
+      expect(heading.querySelectorAll('input,select')).toHaveLength(0);
+      // 칸 줄: 이 묶음의 칸이 **전부** 여기 있다.
+      expect(fields.querySelectorAll('input,select').length).toBeGreaterThan(0);
+      expect(box.querySelectorAll('input,select')).toHaveLength(
+        fields.querySelectorAll('input,select').length,
+      );
+    }
+  });
+
+  it('세부는 여전히 접힌다 — 늘어난 묶음이 머리줄까지 밀어내지 않는다', () => {
+    setup(cfg([rect()]), { expand: false });
+
+    expect(groupOrder()).toEqual([]);
+    expect(testid('canvas-element-order-0').textContent).toBe('1');
+    // 머리줄에 남는 저술 도구는 없다. 종류는 도형 묶음 안에 있으므로 함께 접힌다.
+    expect(screen.getByTestId('canvas-element-toggle-0')).toBeTruthy();
+    expect(screen.queryByTestId('canvas-element-kind-0')).toBeNull();
+  });
+});
+
+describe('CanvasElementsEditor — 색 스와치는 종류를 따라 자리를 옮긴다', () => {
+  it('도형에서는 도형 묶음에 테두리 · 채우기 둘, 텍스트 묶음에 글자색 하나다', () => {
+    setup(cfg([rect()]));
+
+    // 차례도 뜻이다 — 바깥(테두리)에서 안(채우기)으로 읽는다.
+    expect(swatchOrder('shape-style')).toEqual(['stroke', 'fill']);
+    expect(swatchOrder('text-style')).toEqual(['text-color']);
+  });
+
+  it('선도 같다 — 채우기는 선 자체에 뜻이 없어도 규칙 패치가 쓸 수 있는 축이다', () => {
+    setup(cfg([{ id: 'l', kind: 'line', geometry: { x1: 0, y1: 0, x2: 1, y2: 1 }, style: {} }]));
+    expect(swatchOrder('shape-style')).toEqual(['stroke', 'fill']);
+  });
+
+  it("kind:'text' 에서는 채우기가 글자색 옆으로 간다 (textColor ?? fill)", () => {
+    setup(cfg([{ id: 't', kind: 'text', geometry: { x: 0, y: 0 }, style: {} }]));
+
+    expect(swatchOrder('shape-style')).toEqual(['stroke']);
+    expect(swatchOrder('text-style')).toEqual(['text-color', 'fill']);
+  });
+});
+
+describe('CanvasElementsEditor — 종류는 머리줄이 아니라 도형 묶음의 첫 칸이다', () => {
+  /** 도형 묶음의 칸 이름들 — 화면 차례를 재기 위한 목록이다. */
+  const SHAPE_FIELD_NAMES = ['kind', 'stroke-width', 'opacity', 'stroke', 'fill', 'visible'];
+
+  it('종류 선택기는 도형 묶음 안에 서고 머리줄에는 없다', () => {
+    setup(cfg([rect()]));
+
+    const shape = testid('canvas-element-shape-style-0');
+    expect(shape.contains(testid('canvas-element-kind-0'))).toBe(true);
+
+    // 머리줄은 요소 카드의 첫 자식이다. 종류가 거기 남아 있으면 접힌 줄에서도 저술이
+    // 가능해지고, "접으면 세부가 사라진다" 는 규율이 종류 하나에서만 깨진다.
+    const header = testid('canvas-element-0').firstElementChild as HTMLElement;
+    expect(header.contains(testid('canvas-element-toggle-0'))).toBe(true);
+    expect(header.contains(testid('canvas-element-kind-0'))).toBe(false);
+  });
+
+  it('도형 묶음의 차례는 종류 · 두께 · 투명 · 테두리 · 채우기 · 표시 여부다', () => {
+    // 차례가 곧 뜻이다: 무엇으로 그릴지(종류)를 먼저 정하고, 어떻게 그릴지(두께·투명·색)를
+    // 정한 다음, 그릴지 말지(표시 여부)를 끝에서 정한다.
+    setup(cfg([rect()]));
+
+    expect(testIdsIn(testid('canvas-element-shape-style-0'), SHAPE_FIELD_NAMES)).toEqual([
+      'kind',
+      'stroke-width',
+      'opacity',
+      'stroke',
+      'fill',
+      'visible',
+    ]);
+  });
+
+  it("kind:'text' 에서도 종류가 앞, 표시 여부가 뒤다 — 빠지는 것은 채우기뿐이다", () => {
+    setup(cfg([{ id: 't', kind: 'text', geometry: { x: 0, y: 0 }, style: {} }]));
+
+    expect(testIdsIn(testid('canvas-element-shape-style-0'), SHAPE_FIELD_NAMES)).toEqual([
+      'kind',
+      'stroke-width',
+      'opacity',
+      'stroke',
+      'visible',
+    ]);
+  });
+
+  it('머리줄은 순번 · 요약 토글 · 순서 이동 · 삭제를 그대로 지닌다', () => {
+    setup(cfg([rect({ id: 'a' }), rect({ id: 'b' })]));
+
+    const header = testid('canvas-element-0').firstElementChild as HTMLElement;
+    for (const id of ['order', 'toggle', 'move-up', 'move-down', 'delete']) {
+      expect(header.contains(testid(`canvas-element-${id}-0`))).toBe(true);
+    }
+  });
+
+  it('새 자리에서 종류를 바꿔도 기하는 전과 같이 새 형상으로 다시 쓰인다', () => {
+    // 자리만 옮겼다 — 부르는 함수(`withKind`)는 그대로다. 옮기다 `onChange` 를 다시
+    // 적으면 기하 이관이 조용히 빠질 수 있으므로, 이음매를 여기서 한 번 더 건넌다.
+    const spy = setup(cfg([rect()]));
+
+    fireEvent.change(testid('canvas-element-kind-0'), { target: { value: 'line' } });
+    expect(lastElements(spy)[0]!.kind).toBe('line');
+    expect(lastElements(spy)[0]!.geometry).toEqual({ x1: 0.1, y1: 0.2, x2: 0.9, y2: 0.5 });
+  });
+
+  it('종류를 바꾼 뒤에도 그 줄은 펼친 채로 남는다 — 바꾼 칸이 손 밑에서 사라지면 안 된다', () => {
+    // 종류가 몸통 안으로 들어온 뒤 새로 생긴 위험이다: 종류를 바꾸면 요소가 갈아끼워지는데
+    // 펼침이 순번을 따라간다면 그 순간 줄이 접혀 방금 쓴 칸이 손 밑에서 사라진다.
+    // 펼침은 요소 id 를 따라가므로(위 `toggleExpanded`) 그렇지 않다.
+    setupStateful(cfg([rect()]));
+
+    fireEvent.change(testid('canvas-element-kind-0'), { target: { value: 'ellipse' } });
+
+    expect(testid('canvas-element-toggle-0').getAttribute('aria-expanded')).toBe('true');
+    expect(testid('canvas-element-shape-style-0').contains(testid('canvas-element-kind-0'))).toBe(
+      true,
+    );
+  });
+});
+
+// --- 숫자 스위치 (SPEC-CANVAS-002 · AC-E17) -------------------------------
+
+describe('CanvasElementsEditor — 숫자 스위치', () => {
+  it('기본은 켜짐이다 — config 에 키가 없는 기존 요소도 숫자로 읽는다', () => {
+    setup(cfg([rect()]));
+    expect((testid('canvas-element-numeric-0') as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('끄면 numeric:false 가 실린다', () => {
+    const spy = setup(cfg([rect()]));
+
+    fireEvent.click(testid('canvas-element-numeric-0'));
+
+    expect(lastElements(spy)[0]!.numeric).toBe(false);
+  });
+
+  it('다시 켜면 **키 자체가 사라진다** — 기본값은 부재로 적는다(규율 1)', () => {
+    const live = setupStateful(cfg([rect({ numeric: false } as Partial<CanvasElement>)]));
+    expect((testid('canvas-element-numeric-0') as HTMLInputElement).checked).toBe(false);
+
+    fireEvent.click(testid('canvas-element-numeric-0'));
+
+    const el = (live.config.elements as CanvasElement[])[0]!;
+    expect(el).not.toHaveProperty('numeric');
+  });
+
+  it('켜져 있으면 소수 자리 · 단위 칸이 함께 선다', () => {
+    setup(cfg([rect()]));
+
+    expect(screen.getByTestId('canvas-element-numeric-fields-0')).toBeTruthy();
+    expect(screen.getByTestId('canvas-element-decimals-0')).toBeTruthy();
+    expect(screen.getByTestId('canvas-element-unit-0')).toBeTruthy();
+  });
+
+  it('끄면 그 두 칸이 사라진다 — 만져도 아무 일도 없는 칸을 남기지 않는다', () => {
+    setup(cfg([rect({ numeric: false, decimals: 2, unit: '℃' } as Partial<CanvasElement>)]));
+
+    expect(screen.queryByTestId('canvas-element-numeric-fields-0')).toBeNull();
+    expect(screen.queryByTestId('canvas-element-decimals-0')).toBeNull();
+    expect(screen.queryByTestId('canvas-element-unit-0')).toBeNull();
+  });
+
+  it('감춘다고 값을 지우지는 않는다 — 다시 켜면 적어 둔 소수 자리 · 단위가 그대로다', () => {
+    const live = setupStateful(
+      cfg([rect({ numeric: false, decimals: 2, unit: '℃' } as Partial<CanvasElement>)]),
+    );
+
+    fireEvent.click(testid('canvas-element-numeric-0'));
+
+    expect((testid('canvas-element-decimals-0') as HTMLInputElement).value).toBe('2');
+    expect((testid('canvas-element-unit-0') as HTMLInputElement).value).toBe('℃');
+    const el = (live.config.elements as CanvasElement[])[0]!;
+    expect(el.decimals).toBe(2);
+    expect(el.unit).toBe('℃');
+  });
+
+  it('스위치와 그 설명은 텍스트 묶음 안에 선다 — 값을 어떻게 읽는가는 텍스트의 일이다', () => {
+    setup(cfg([rect()]));
+
+    const group = testid('canvas-element-text-style-0');
+    expect(group.contains(testid('canvas-element-numeric-0'))).toBe(true);
+    expect(group.contains(testid('canvas-element-numeric-fields-0'))).toBe(true);
+    expect(testid('canvas-element-numeric-help-0').textContent).toBe(
+      'dashboard.canvas.elements.numericHint',
+    );
+  });
+
+  it('요소마다 따로다 — 한 줄을 꺼도 옆 줄은 켜진 채다', () => {
+    const spy = setup(cfg([rect({ id: 'a' }), rect({ id: 'b' })]));
+
+    fireEvent.click(testid('canvas-element-numeric-1'));
+
+    const els = lastElements(spy);
+    expect(els[0]).not.toHaveProperty('numeric');
+    expect(els[1]!.numeric).toBe(false);
+  });
+
+  it('왕복에서 그대로다 — 끈 요소를 파서로 다시 읽어도 같은 것이 나온다', () => {
+    const live = setupStateful(cfg([rect({ text: '{value}', unit: '℃' } as Partial<CanvasElement>)]));
+
+    fireEvent.click(testid('canvas-element-numeric-0'));
+
+    const parsed = parseCanvasConfig(live.config);
+    expect(parsed.elements[0]!.numeric).toBe(false);
+    expect(parseCanvasConfig(parsed)).toEqual(parsed);
+  });
+});
+
+describe('CanvasElementsEditor — 숫자를 끄면 규칙 표가 그 사실을 말한다', () => {
+  it('켜져 있을 때는 잔소리하지 않는다', () => {
+    setup(cfg([rect()]));
+    expect(screen.queryByTestId('canvas-element-rules-nonnumeric-help-0')).toBeNull();
+  });
+
+  it('끄면 규칙 묶음 제목 뒤 ? 가 왜 비교 행이 일치하지 않는지 말한다', () => {
+    // 값이 오고 있는데도 스칼라 행이 전부 빗나가는 상태는 사용자에게 **고장으로 보인다**.
+    // 화면이 스스로 이유를 말하지 않으면 그 다음 보고서는 "규칙이 안 먹는다" 가 된다.
+    setup(cfg([rect({ numeric: false } as Partial<CanvasElement>)]));
+
+    const help = testid('canvas-element-rules-nonnumeric-help-0');
+    expect(help.textContent).toBe('dashboard.canvas.elements.rulesNonNumericHint');
+    expect(testid('canvas-element-rules-0').contains(help)).toBe(true);
+  });
+
+  it('그 설명은 줄로 깔지 않고 눌러야 보인다 — 이 화면 전체의 규칙이다', () => {
+    setup(cfg([rect({ numeric: false } as Partial<CanvasElement>)]));
+
+    const heading = testid('canvas-element-rules-0').firstElementChild!;
+    const button = heading.querySelector('button[aria-expanded]');
+    expect(button).toBeTruthy();
+    expect(button!.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(button!);
+    expect(screen.getByRole('tooltip').textContent).toBe(
+      'dashboard.canvas.elements.rulesNonNumericHint',
+    );
   });
 });

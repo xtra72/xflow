@@ -32,6 +32,21 @@ export const MAX_DECIMALS = 20;
 export interface TextTemplateContext {
   /** 바인딩 시리즈의 최신값. 결측(null/undefined/NaN/Infinity)이면 `missing` 으로 간다. */
   value?: number | null;
+  /**
+   * **서식하지 않은 원본 판독값**. `numeric: false` 일 때만 읽는다.
+   *
+   * `value` 와 따로 두는 이유는 타입이 아니라 **책임**이다. `value` 는 "숫자로 읽어 낸 것"
+   * 이고 여기 오는 것은 "받은 것 그대로" 다 — `"ON"` 처럼 애초에 숫자가 아닌 판독값은
+   * 숫자 축을 지나는 동안 이미 사라지므로, 그 값이 화면까지 살아 오려면 별도의 자리가
+   * 있어야 한다.
+   */
+  raw?: unknown;
+  /**
+   * `{value}` 를 숫자로 서식할 것인가. **미지정 = true**(`canvasConfig.isNumericElement`
+   * 와 같은 규칙 — 부재가 곧 숫자다). `false` 면 `raw` 를 그대로 쓰고 `decimals` · `unit`
+   * 은 걸리지 않는다.
+   */
+  numeric?: boolean;
   /** 시리즈 표시명. `{name}` 치환 값. */
   name?: string;
   /** 요소의 단위. `{unit}` 치환 값. */
@@ -88,6 +103,26 @@ function formatValue(value: unknown, decimals: number, missing: string): string 
   return value.toFixed(decimals);
 }
 
+/**
+ * `numeric: false` 에서 `{value}` 자리에 들어갈 문자열 — **받은 값 그대로**다.
+ *
+ * 서식이 없으므로 `decimals` 도 `toFixed` 도 지나지 않는다. 통과시키는 것은 화면에 글자로
+ * 뜻이 있는 원시형 셋(문자열 · 숫자 · 불리언)뿐이며, 그 밖(객체 · 배열 · 함수)은 결측으로
+ * 접는다 — `String({})` 은 `"[object Object]"` 를 화면에 찍고, 그것은 값이 아니라 잡음이다.
+ *
+ * 빈 문자열은 통과시킨다. "빈 값을 받았다" 와 "값이 없다" 는 다르고, 전자는 사용자가
+ * 저술한 결측 표기가 아니라 실제 판독값이다.
+ *
+ * 비유한 숫자(NaN · Infinity)는 결측이다 — 숫자 경로가 같은 판정을 하므로(위 `formatValue`)
+ * 스위치를 끄고 켜는 동안 화면이 `"NaN"` 과 `-` 사이를 오가지 않는다.
+ */
+function rawText(raw: unknown, missing: string): string {
+  if (typeof raw === 'string') return raw;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? String(raw) : missing;
+  if (typeof raw === 'boolean') return String(raw);
+  return missing;
+}
+
 // --- 공개 API ------------------------------------------------------------
 
 /**
@@ -95,6 +130,8 @@ function formatValue(value: unknown, decimals: number, missing: string): string 
  *
  * 계약:
  * - **단순 치환**이다. 식 평가가 아니며 동적 코드 생성을 하지 않는다.
+ * - **`numeric: false` 는 값 축만 바꾼다**. `{value}` 가 `raw` 를 그대로 받고 `{unit}` 이
+ *   비며, `{name}` 과 미지 토큰의 규칙은 그대로다.
  * - **미지 토큰은 원문 유지**다(`{foo}` → `{foo}`).
  * - **단일 패스**다. 치환 결과에 다시 토큰 모양이 들어 있어도(예: `name` 이
  *   `"{value}"` 인 경우) 재귀 확장하지 않는다 — `replace` 는 치환 결과를 다시
@@ -110,11 +147,19 @@ export function renderTextTemplate(template: string, ctx: TextTemplateContext = 
   // 방어: config 왕복에서 숫자·null·객체가 올 수 있다. 그릴 것이 없다는 뜻이므로 빈 문구다.
   if (typeof template !== 'string') return '';
 
+  // 부재 = 숫자. `canvasConfig.isNumericElement` 와 **같은 규칙**을 적는다 — 이 모듈은
+  // config 타입에 의존하지 않으므로(순수 문자열 치환기다) 함수를 부르지 않고 규칙만 같이 둔다.
+  const numeric = ctx.numeric !== false;
   const decimals = resolveDecimals(ctx.decimals);
   const missing = resolveMissing(ctx.missing);
-  const valueText = formatValue(ctx.value, decimals, missing);
+  const valueText = numeric
+    ? formatValue(ctx.value, decimals, missing)
+    : rawText(ctx.raw, missing);
   const nameText = asText(ctx.name);
-  const unitText = asText(ctx.unit);
+  // 숫자로 읽지 않을 때 단위는 **붙지 않는다**. 단위는 수치에 붙는 꼬리표이고, 문자열
+  // 판독값(`"ON"`)에 붙이면 `"ON℃"` 같은 없는 말이 화면에 선다 — 편집기가 그 상태에서
+  // 단위 칸을 감추는 것과 같은 판단이며, 그래서 감춘 칸에 남아 있던 옛 값도 새어 나오지 않는다.
+  const unitText = numeric ? asText(ctx.unit) : '';
 
   return template.replace(tokenPattern(), (_match, token: string) => {
     switch (token) {
