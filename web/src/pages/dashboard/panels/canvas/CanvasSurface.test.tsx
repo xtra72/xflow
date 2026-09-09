@@ -167,21 +167,22 @@ function makeVisibility(initial = true) {
 // --- 고정 입력 -----------------------------------------------------------
 
 /**
- * 대표 캔버스(200x160) — 스테이지(96x64)의 두 배 남짓이라 축척이 가로 0.48 · 세로 0.4 다.
+ * 대표 캔버스(240x160) — 스테이지(96x64)의 두 배 반이라 축척이 두 축 모두 0.4 다.
  *
  * 1:1 로 두지 않는 것에 뜻이 있다: 축척이 1 이면 캔버스 크기를 아예 무시한 투영도 이
- * 파일의 기대값을 통과한다. 두 축의 축척이 갈린 것도 같은 이유다 — 축을 뒤바꾼 계산이 드러난다.
+ * 파일의 기대값을 통과한다. 대신 **두 축의 값이 서로 다르다**(240 ≠ 160, 96 ≠ 64) —
+ * 축을 뒤바꾼 계산은 거기서 드러난다.
  *
- * **잰 크기를 96x64 로 둔 것에도 뜻이 있다**(0.9.0). 표면은 그리는 영역을 격자 칸의
- * 정수배로 맞추므로(`stageLattice`), 픽스처가 그 칸에 이미 맞아 있으면 아래 기대값들이
- * "맞추기" 와 무관해진다 — 기본 간격 25 에서 가로 한 칸은 96×25/200 = 12px, 세로는
- * 64×25/160 = 10px 이라 두 축 모두 나머지가 0 이다. 맞추는 산술 자체는 나누어떨어지지
- * **않는** 크기로 따로 시험한다(§그리는 영역 · `canvasGeometry.test.ts`).
+ * **두 비율이 같은 것에 뜻이 있다**(0.10.0). 표면은 축척 하나로 그리는 영역을 맞추므로
+ * (`stageLattice`), 비율이 다르면 한 축에 여백이 생겨 아래 기대값들이 전부 그 여백 계산을
+ * 안고 가게 된다. 240:160 과 96:64 는 둘 다 3:2 라 여백이 0 이고, 기본 간격 25 에서 한
+ * 칸은 96×25/240 = 64×25/160 = 10px 로 두 축이 같은 정수다. 비율이 다를 때의 여백과
+ * 맞추는 산술 자체는 따로 시험한다(§그리는 영역 · `canvasGeometry.test.ts`).
  */
-const CANVAS: CanvasSize = { width: 200, height: 160 };
+const CANVAS: CanvasSize = { width: 240, height: 160 };
 
 function rectEl(id: string, over: Partial<RectElement> = {}): RectElement {
-  return { id, kind: 'rect', geometry: { x: 0, y: 0, w: 200, h: 160 }, style: {}, ...over };
+  return { id, kind: 'rect', geometry: { x: 0, y: 0, w: 240, h: 160 }, style: {}, ...over };
 }
 
 const LINEAR_300 = { duration_ms: 300, easing: 'linear' } as const;
@@ -249,7 +250,7 @@ describe('CanvasSurface — 백킹 버퍼와 첫 프레임 (AC-E5)', () => {
       [1, 0, 0, 1, 0, 0],
       [2, 0, 0, 2, 0, 0],
     ]);
-    // 캔버스 (0,0,200,160) = 캔버스 전체 → CSS px 전체 (0,0,96,64).
+    // 캔버스 (0,0,240,160) = 캔버스 전체 → CSS px 전체 (0,0,96,64).
     expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 96, 64]);
   });
 
@@ -258,7 +259,7 @@ describe('CanvasSurface — 백킹 버퍼와 첫 프레임 (AC-E5)', () => {
     const { container } = render(
       <CanvasSurface
         canvas={CANVAS}
-        elements={[rectEl('a', { geometry: { x: 100, y: 80, w: 100, h: 80 } })]}
+        elements={[rectEl('a', { geometry: { x: 120, y: 80, w: 120, h: 80 } })]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
         scheduler={clock.scheduler}
@@ -272,7 +273,7 @@ describe('CanvasSurface — 백킹 버퍼와 첫 프레임 (AC-E5)', () => {
 
     ctxStub.calls.length = 0;
     act(() => {
-      // 48x32 도 기본 간격의 칸에 맞아 있다(48×25/200 = 6 · 32×25/160 = 5).
+      // 48x32 도 같은 3:2 라 여백이 없다(48×25/240 = 32×25/160 = 5px 칸).
       roInstances[0]!.cb([{ contentRect: { width: 48, height: 32 } }]);
     });
     clock.flush(16);
@@ -768,8 +769,8 @@ describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 
       <CanvasSurface
         canvas={CANVAS}
         elements={[
-          rectEl('r', { geometry: { x: 0, y: 0, w: 100, h: 80 } }),
-          { id: 't', kind: 'text', geometry: { x: 100, y: 80 }, style: {} },
+          rectEl('r', { geometry: { x: 0, y: 0, w: 120, h: 80 } }),
+          { id: 't', kind: 'text', geometry: { x: 120, y: 80 }, style: {} },
         ]}
         targetStyles={{
           r: { fill: '#ff0000', textColor: '#ffffff' },
@@ -1018,7 +1019,7 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     render(
       <CanvasSurface
         canvas={CANVAS}
-        elements={[rectEl('a', { geometry: { x: 0, y: 0, w: 200, h: 160 } })]}
+        elements={[rectEl('a', { geometry: { x: 0, y: 0, w: 240, h: 160 } })]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
         scheduler={clock.scheduler}
@@ -1061,7 +1062,7 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     // props 축이라는 뜻이다(선택·호버 같은 편집 상태와 다른 부류다).
     const clock = makeScheduler();
     const props = {
-      elements: [rectEl('a', { geometry: { x: 0, y: 0, w: 100, h: 80 } })],
+      elements: [rectEl('a', { geometry: { x: 0, y: 0, w: 120, h: 80 } })],
       targetStyles: { a: { fill: '#ff0000' } },
       texts: {},
       scheduler: clock.scheduler,
@@ -1069,11 +1070,11 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     };
     const { rerender } = render(<CanvasSurface canvas={CANVAS} {...props} />);
     clock.flush(0);
-    // 200x160 캔버스의 절반 → 스테이지(96x64)의 절반.
+    // 240x160 캔버스의 절반 → 스테이지(96x64)의 절반.
     expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 48, 32]);
 
     ctxStub.calls.length = 0;
-    rerender(<CanvasSurface canvas={{ width: 100, height: 80 }} {...props} />);
+    rerender(<CanvasSurface canvas={{ width: 120, height: 80 }} {...props} />);
     clock.flush(16);
     // 같은 좌표가 이제 캔버스 전체다 → 스테이지 전체를 덮는다.
     expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 96, 64]);
@@ -1085,7 +1086,7 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     render(
       <CanvasSurface
         canvas={CANVAS}
-        elements={[rectEl('a', { geometry: { x: 0, y: 0, w: 200, h: 160 } })]}
+        elements={[rectEl('a', { geometry: { x: 0, y: 0, w: 240, h: 160 } })]}
         targetStyles={{ a: { fill: '#ff0000' } }}
         texts={{}}
         scheduler={clock.scheduler}
@@ -1255,15 +1256,27 @@ describe('CanvasSurface — 그리는 영역 (0.9.0)', () => {
   it('나누어떨어지지 않는 상자(1749x796)를 칸의 정수배로 줄인다', () => {
     renderAt(1749, 796);
 
-    // 맞추기 전 한 칸은 1749/20 = 87.45px 였다 — 그 소수가 선을 두 픽셀에 걸치게 했다.
-    expect(stageBox().style.width).toBe('1740px'); // 87 × 20칸
-    expect(stageBox().style.height).toBe('784px'); // 49 × 16칸
+    // '정확한' 칸은 가로 87.45 · 세로 49.75px 였다. 축척이 하나이므로 작은 쪽을 내림한
+    // 49px 를 두 축에 함께 쓴다 — 20칸 × 16칸.
+    expect(stageBox().style.width).toBe('980px');
+    expect(stageBox().style.height).toBe('784px');
+  });
+
+  it('그 상자에서 한 칸이 **정사각형**이다 — 도형이 일그러지지 않는 근거다', () => {
+    renderAt(1749, 796);
+
+    // 상자 크기 ÷ 칸 수. 두 값이 같아야 캔버스 단위의 정사각형이 화면에서도 정사각형이다.
+    const width = Number.parseFloat(stageBox().style.width);
+    const height = Number.parseFloat(stageBox().style.height);
+    expect(width / (WIDE_CANVAS.width / 25)).toBe(height / (WIDE_CANVAS.height / 25));
   });
 
   it('자투리는 양쪽에 나눈 **정수** 자리가 된다 — 소수면 안쪽 선이 다시 소수다', () => {
     renderAt(1749, 796);
 
-    expect(stageBox().style.left).toBe('4px'); // (1749-1740)/2 내림
+    // 비율이 다르므로 여백은 가로에 몰린다((1749-980)/2 내림). 그 여백은 캔버스 크기를
+    // 패널 비율에 맞추면 사라진다(`fitCanvasSizeToStage` · `CanvasPanel` 자동 맞춤).
+    expect(stageBox().style.left).toBe('384px');
     expect(stageBox().style.top).toBe('6px'); // (796-784)/2
   });
 
@@ -1279,7 +1292,7 @@ describe('CanvasSurface — 그리는 영역 (0.9.0)', () => {
     expect(box.contains(screen.getByTestId('canvas-surface'))).toBe(true);
     expect(box.contains(screen.getByTestId('canvas-overlay'))).toBe(true);
     // 오버레이가 받는 스테이지 = 그 상자의 크기. 둘이 다르면 포인터에 오프셋이 실린다.
-    expect(spy.last!.projection.stage).toEqual({ width: 1740, height: 784 });
+    expect(spy.last!.projection.stage).toEqual({ width: 980, height: 784 });
     expect(`${spy.last!.projection.stage.width}px`).toBe(box.style.width);
     expect(`${spy.last!.projection.stage.height}px`).toBe(box.style.height);
   });
@@ -1288,14 +1301,14 @@ describe('CanvasSurface — 그리는 영역 (0.9.0)', () => {
     renderAt(1749, 796);
 
     const canvas = screen.getByTestId('canvas-surface') as HTMLCanvasElement;
-    expect(canvas.style.width).toBe('1740px');
+    expect(canvas.style.width).toBe('980px');
     expect(canvas.style.height).toBe('784px');
     // 캔버스 전체를 덮는 요소 → 맞춘 영역 전체를 덮는다.
-    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 1740, 784]);
+    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 980, 784]);
   });
 
   it('바깥 상자가 한 칸 안에서 흔들려도 그리는 영역은 그대로다', () => {
-    // 1749 와 1750 은 같은 1740 이 되고, 796 과 799 는 같은 784 가 된다. 잰 값이 아니라
+    // 796 과 799 는 같은 49px 칸을 고르므로 영역은 둘 다 980×784 다. 잰 값이 아니라
     // **맞춘 영역**이 그림을 정하므로, 레이아웃이 1px 씩 흔들려도 도형이 움직이지 않는다.
     const { clock } = renderAt(1749, 796);
     ctxStub.calls.length = 0;
@@ -1305,9 +1318,9 @@ describe('CanvasSurface — 그리는 영역 (0.9.0)', () => {
     });
     clock.flush(16);
 
-    expect(stageBox().style.width).toBe('1740px');
+    expect(stageBox().style.width).toBe('980px');
     expect(stageBox().style.height).toBe('784px');
-    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 1740, 784]);
+    expect(ctxStub.calls.find((c) => c[0] === 'rect')?.slice(1)).toEqual([0, 0, 980, 784]);
   });
 
   it('아주 작은 패널에서도 그림이 사라지지 않는다 (한 칸이 1px 미만)', () => {
@@ -1329,5 +1342,82 @@ describe('CanvasSurface — 그리는 영역 (0.9.0)', () => {
     expect(stageBox().style.height).toBe('0px');
     expect(ops()).not.toContain('clearRect');
     expect(clock.pending).toBe(0);
+  });
+});
+
+// --- 잰 바깥 상자를 밖으로 알린다 (0.10.0) -------------------------------
+//
+// 편집기의 "패널 비율에 맞춤" 이 이 값을 쓴다. 알리는 것이 **바깥** 상자인 것이 요점이다 —
+// 맞춘 영역(`projection.stage`)은 이미 캔버스 비율이라 그것에 맞추면 언제나 무동작이고,
+// 여백을 없애려면 여백을 만든 그 상자를 봐야 한다.
+
+describe('CanvasSurface — 잰 상자 알림 (0.10.0)', () => {
+  function renderMeasured(width: number, height: number) {
+    currentSize = { width, height };
+    const clock = makeScheduler();
+    const onStageMeasured = vi.fn();
+    render(
+      <CanvasSurface
+        canvas={WIDE_CANVAS}
+        elements={[rectEl('a', { geometry: { x: 0, y: 0, w: 500, h: 400 } })]}
+        targetStyles={{ a: { fill: '#ff0000' } }}
+        texts={{}}
+        scheduler={clock.scheduler}
+        visibilitySource={makeVisibility().source}
+        onStageMeasured={onStageMeasured}
+      />,
+    );
+    clock.flush(0);
+    return { clock, onStageMeasured };
+  }
+
+  it('알리는 값은 **잰 바깥 상자**다 — 맞춘 영역이 아니다', () => {
+    const { onStageMeasured } = renderMeasured(1749, 796);
+
+    // 맞춘 영역은 980×784 다. 그 값을 알리면 받는 쪽이 제 꼬리를 물게 된다.
+    expect(onStageMeasured).toHaveBeenLastCalledWith({ width: 1749, height: 796 });
+    expect(screen.getByTestId('canvas-stage').style.width).toBe('980px');
+  });
+
+  it('크기가 바뀌면 새 값으로 다시 알린다', () => {
+    const { clock, onStageMeasured } = renderMeasured(1749, 796);
+
+    act(() => {
+      roInstances[0]!.cb([{ contentRect: { width: 800, height: 600 } }]);
+    });
+    clock.flush(16);
+
+    expect(onStageMeasured).toHaveBeenLastCalledWith({ width: 800, height: 600 });
+  });
+
+  it('이 알림은 프레임을 예약하지 않는다 — 유휴 정지가 그대로다 (AC-E4)', () => {
+    const { clock, onStageMeasured } = renderMeasured(1749, 796);
+    // 첫 프레임 뒤 유휴에 들었다. 마운트 때는 아직 재기 전인 0 과 잰 값이 차례로 나가므로
+    // (아래 §첫 통보) 여기서부터의 증가만 센다.
+    expect(clock.pending).toBe(0);
+    const before = clock.requested;
+    const notified = onStageMeasured.mock.calls.length;
+
+    // 같은 크기를 다시 통보한다 — 상태가 갈리지 않으므로 알림도 프레임도 없다.
+    act(() => {
+      roInstances[0]!.cb([{ contentRect: { width: 1749, height: 796 } }]);
+    });
+
+    expect(clock.requested).toBe(before);
+    expect(clock.pending).toBe(0);
+    expect(onStageMeasured.mock.calls.length).toBe(notified);
+  });
+
+  it('아직 재지 못한 상자(0)도 그대로 알린다 — 판단은 받는 쪽의 몫이다', () => {
+    const { onStageMeasured } = renderMeasured(0, 0);
+    expect(onStageMeasured).toHaveBeenLastCalledWith({ width: 0, height: 0 });
+  });
+
+  it('첫 통보는 **재기 전의 0** 이다 — 받는 쪽은 그것을 보고 아무것도 하지 않는다', () => {
+    // `ResizeObserver` 가 처음 부르기 전 상태가 0 이며, 그 값도 숨기지 않고 알린다.
+    // 숨기면 받는 쪽이 "아직 모른다" 와 "0 이다" 를 구분할 수 없다.
+    const { onStageMeasured } = renderMeasured(1749, 796);
+    expect(onStageMeasured.mock.calls[0]![0]).toEqual({ width: 0, height: 0 });
+    expect(onStageMeasured).toHaveBeenLastCalledWith({ width: 1749, height: 796 });
   });
 });

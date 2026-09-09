@@ -53,6 +53,7 @@ import {
   type BoxGeometry,
   type CanvasElement,
   type CanvasElementKind,
+  type CanvasSize,
   type ElementAlign,
   type ElementFontWeight,
   type ElementStyle,
@@ -70,6 +71,8 @@ import {
   type CanvasSeriesOption,
 } from './canvasEditContext';
 import { withElementText } from './canvasElementFactory';
+import { fitCanvasSizeToStage } from './canvasGeometry';
+import { useCanvasStageAspect } from './canvasStageAspect';
 import CanvasRuleTableEditor from './CanvasRuleTableEditor';
 
 // --- 상수 ---------------------------------------------------------------
@@ -593,6 +596,24 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
   const liveSeriesOptions = useCanvasLiveSeries();
   const seriesOptions = liveSeriesOptions.length > 0 ? liveSeriesOptions : configSeriesOptions;
 
+  // --- 0.10.0: 패널 비율에 맞춘 캔버스 크기 ---
+  //
+  // 패널 비율을 아는 것은 `ResizeObserver` 를 든 표면뿐이고 이 편집기는 다이얼로그의 다른
+  // 자리에 있으므로, 살아 있는 패널이 내놓은 값을 그대로 받는다(`canvasStageAspect`).
+  // 여기서 저장된 캔버스 비율로 패널 크기를 **역산**하면 그 추측이 곧 두 번째 출처가 되고,
+  // 두 값이 갈라지는 날 "맞췄는데 여백이 남는다" 가 된다(위험 R1 과 같은 부류다).
+  //
+  // `null` 은 "맞출 것이 없다" 는 뜻이며 두 경우를 함께 덮는다: 곁에 미리보기가 없어
+  // 아직 아무도 재지 않았거나(provider 없음 — 편집기 단독 렌더), 이미 맞아 있어
+  // `fitCanvasSizeToStage` 가 받은 객체를 그대로 돌려준 경우다. 어느 쪽이든 누를 이유가
+  // 없으므로 단추는 같은 조건으로 잠긴다.
+  const stageOuter = useCanvasStageAspect();
+  const fittedCanvas = useMemo<CanvasSize | null>(() => {
+    if (stageOuter === null) return null;
+    const next = fitCanvasSizeToStage(cfg.canvas, stageOuter);
+    return next === cfg.canvas ? null : next;
+  }, [cfg.canvas, stageOuter]);
+
   /** **사용자가 손으로** 펼쳐 둔 요소의 id 집합. 기본은 전부 접힘이다. */
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -746,6 +767,38 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
           ariaLabel={t('dashboard.canvas.elements.panelHeightAria')}
           testId="canvas-panel-height"
         />
+        {/* 패널 비율에 맞춤 — **사용자가 눌렀을 때만** 크기를 고친다(0.10.0).
+            자동으로 다시 맞추지 않는 이유는 `CanvasPanel` §자동 맞춤은 한 번뿐이다에
+            있다: 저장된 요소 좌표는 절대 캔버스 단위라, 높이가 바뀌면 사용자가 놓아 둔
+            자리의 뜻이 조용히 달라진다. 그래서 되돌릴 수 없는 그 변화는 손으로만 일어난다.
+            바뀔 값을 `title` 에 적어 두므로 누르기 전에 결과를 알 수 있다. */}
+        <button
+          type="button"
+          onClick={() => {
+            if (fittedCanvas === null) return;
+            onConfigChange({ canvas: fittedCanvas });
+          }}
+          disabled={fittedCanvas === null}
+          aria-label={t('dashboard.canvas.elements.panelSizeFitAria')}
+          // 바뀔 값은 로케일 문장 **밖에서** 붙인다. 자리표시자로 끼워 넣으면 번역이
+          // 그 표시자를 잃는 날 수치가 조용히 사라지고, 사용자는 무엇이 바뀌는지 모른 채
+          // 되돌릴 수 없는 단추를 누르게 된다.
+          title={
+            fittedCanvas === null
+              ? t('dashboard.canvas.elements.panelSizeFitNone')
+              : `${t('dashboard.canvas.elements.panelSizeFitTitle')}: ` +
+                `${cfg.canvas.width}×${cfg.canvas.height} → ` +
+                `${fittedCanvas.width}×${fittedCanvas.height}`
+          }
+          data-testid="canvas-panel-size-fit"
+          className={cn(
+            'shrink-0 rounded border border-(--color-border-default) px-2 py-1 text-xs',
+            'text-(--color-text-secondary) hover:bg-(--color-bg-hover)',
+            'disabled:cursor-not-allowed disabled:opacity-50',
+          )}
+        >
+          {t('dashboard.canvas.elements.panelSizeFit')}
+        </button>
       </div>
 
       {/* 패널 축 — 배경색과 기본 트윈. 요소가 덮어쓸 수 있는 값들이다. */}

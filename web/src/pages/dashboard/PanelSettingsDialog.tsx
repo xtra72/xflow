@@ -246,6 +246,10 @@ import {
   useCanvasEditSelectionState,
   useCanvasLiveSeriesState,
 } from './panels/canvas/canvasEditContext';
+import {
+  CanvasStageAspectContext,
+  useCanvasStageAspectState,
+} from './panels/canvas/canvasStageAspect';
 import BarChartPanel from './panels/charts/BarChartPanel';
 import LineChartPanel from './panels/charts/LineChartPanel';
 import PieChartPanel from './panels/charts/PieChartPanel';
@@ -900,6 +904,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // 내놓고 목록 편집기의 바인딩 드롭다운이 그것을 그대로 쓴다 — 두 곳이 각자 키를
   // 추측하다 갈라진 자리를 없앤다. 여기도 감싸기 한 줄뿐이다(§위험 R4).
   const canvasLiveSeries = useCanvasLiveSeriesState();
+  // 그리고 미리보기가 **잰 바깥 상자**를 목록 편집기로 흘려보낸다. 편집기의 "패널 비율에
+  // 맞춤" 이 그 값을 쓴다 — 편집기가 패널 크기를 추측하면 그 추측이 두 번째 출처가 된다.
+  // 여기도 감싸기 한 줄뿐이다(§위험 R4).
+  const canvasStageAspect = useCanvasStageAspectState();
 
   if (!panel) return null;
 
@@ -1353,10 +1361,12 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               <CollapsibleSection title={t('dashboard.settings.canvas')} defaultOpen={true}>
                 <CanvasLiveSeriesContext value={canvasLiveSeries}>
                   <CanvasEditSelectionContext value={canvasSelection}>
-                    <CanvasElementsEditor
-                      config={panel.config ?? {}}
-                      onConfigChange={(c) => handleConfigChange(c)}
-                    />
+                    <CanvasStageAspectContext value={canvasStageAspect}>
+                      <CanvasElementsEditor
+                        config={panel.config ?? {}}
+                        onConfigChange={(c) => handleConfigChange(c)}
+                      />
+                    </CanvasStageAspectContext>
                   </CanvasEditSelectionContext>
                 </CanvasLiveSeriesContext>
               </CollapsibleSection>
@@ -1894,13 +1904,15 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               >
                 <CanvasLiveSeriesContext value={canvasLiveSeries}>
                   <CanvasEditSelectionContext value={canvasSelection}>
-                    <CanvasPanel
-                      panelId={panel.id}
-                      title={panel.title}
-                      config={panel.config}
-                      onConfigChange={(c) => handleConfigChange(c)}
-                      forceEdit
-                    />
+                    <CanvasStageAspectContext value={canvasStageAspect}>
+                      <CanvasPanel
+                        panelId={panel.id}
+                        title={panel.title}
+                        config={panel.config}
+                        onConfigChange={(c) => handleConfigChange(c)}
+                        forceEdit
+                      />
+                    </CanvasStageAspectContext>
                   </CanvasEditSelectionContext>
                 </CanvasLiveSeriesContext>
               </div>

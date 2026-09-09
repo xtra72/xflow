@@ -47,7 +47,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { Profiler, useState } from 'react';
+import { Profiler, useEffect, useState } from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
@@ -72,6 +72,10 @@ import {
   type CanvasLiveSeriesValue,
   type CanvasSeriesOption,
 } from './canvasEditContext';
+import {
+  CanvasStageAspectContext,
+  useCanvasStageAspectState,
+} from './canvasStageAspect';
 
 afterEach(cleanup);
 
@@ -490,6 +494,76 @@ describe('CanvasElementsEditor — 캔버스 크기 (모든 좌표의 분모)', 
 
     fireEvent.change(testid('canvas-panel-width'), { target: { value: '' } });
     expect(spy).toHaveBeenLastCalledWith({ canvas: { width: 1, height: 400 } });
+  });
+
+  // --- 패널 비율에 맞춤 (0.10.0) ---
+  //
+  // 축척이 하나가 된 뒤로 캔버스 비율과 패널 비율이 다르면 한 축에 여백이 남는다. 그것을
+  // 없애는 단추가 이 두 칸 옆에 선다. **자동이 아니라 손으로** 누르는 것이 요점이다 —
+  // 저장된 요소 좌표는 절대 캔버스 단위라, 높이가 바뀌면 사용자가 놓아 둔 자리의 뜻이
+  // 달라지기 때문이다(`CanvasPanel` 시험 §조용한 이동 금지).
+
+  /** 살아 있는 패널이 잰 상자를 내놓은 상태로 편집기를 세운다. */
+  function setupWithStage(
+    config: Record<string, unknown>,
+    outer: { width: number; height: number },
+  ): ReturnType<typeof vi.fn> {
+    const onConfigChange = vi.fn();
+    function Harness() {
+      const state = useCanvasStageAspectState();
+      // 패널이 하는 일과 같다: 잰 상자를 채널에 내놓는다.
+      useEffect(() => state.publish(outer), [state]);
+      return (
+        <CanvasStageAspectContext value={state}>
+          <CanvasElementsEditor config={config} onConfigChange={onConfigChange} />
+        </CanvasStageAspectContext>
+      );
+    }
+    render(<Harness />);
+    return onConfigChange;
+  }
+
+  it('누르면 폭은 그대로 두고 높이를 패널 비율로 다시 계산한다', () => {
+    // 사용자가 본 그 패널(1749×796)이다. round(500 × 796 / 1749) = 228.
+    const spy = setupWithStage(cfg([rect()]), { width: 1749, height: 796 });
+    fireEvent.click(testid('canvas-panel-size-fit'));
+
+    expect(spy).toHaveBeenLastCalledWith({ canvas: { width: 500, height: 228 } });
+    // 요소 좌표는 함께 가지 않는다 — 이 단추는 종이 모양만 바꾼다.
+    expect(Object.keys(spy.mock.calls.at(-1)![0] as object)).toEqual(['canvas']);
+  });
+
+  it('무엇이 바뀔지 **누르기 전에** 적혀 있다', () => {
+    setupWithStage(cfg([rect()]), { width: 1749, height: 796 });
+    const title = testid('canvas-panel-size-fit').getAttribute('title') ?? '';
+    expect(title).toContain('500×400');
+    expect(title).toContain('500×228');
+  });
+
+  it('패널 비율을 아직 모르면 잠긴다 (곁에 미리보기가 없는 자리)', () => {
+    setup(cfg([rect()]));
+    expect((testid('canvas-panel-size-fit') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('이미 맞아 있으면 잠긴다 — 눌러도 화면이 그대로인 단추는 고장으로 보인다', () => {
+    // 1000×800 은 500×400 과 같은 5:4 다.
+    setupWithStage(cfg([rect()]), { width: 1000, height: 800 });
+    expect((testid('canvas-panel-size-fit') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('잴 수 없는 상자에는 잠긴다 (0 · 비유한 — NaN 을 저장하지 않는다)', () => {
+    for (const outer of [
+      { width: 0, height: 0 },
+      { width: 1749, height: 0 },
+      { width: Number.NaN, height: 796 },
+    ]) {
+      cleanup();
+      setupWithStage(cfg([rect()]), outer);
+      expect(
+        (testid('canvas-panel-size-fit') as HTMLButtonElement).disabled,
+        `${outer.width}x${outer.height}`,
+      ).toBe(true);
+    }
   });
 
   it('크기를 바꿔도 **요소 좌표는 건드리지 않는다**', () => {

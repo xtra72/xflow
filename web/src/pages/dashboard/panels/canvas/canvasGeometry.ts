@@ -35,6 +35,7 @@
 //
 // @spec SPEC-CANVAS-001
 
+import { MAX_CANVAS_DIMENSION, MIN_CANVAS_DIMENSION } from './canvasConfig';
 import type {
   BoxGeometry,
   CanvasElement,
@@ -209,8 +210,33 @@ export function computeBackingSize(cssWidth: number, cssHeight: number, dpr: num
 // 모양만 바꿔 되돌아온다. 그래서 반올림하는 것은 주기가 아니라 **그리는 영역 자체**다:
 // 한 칸을 정수 px 로 내림한 뒤 그 정수배를 그리는 영역으로 삼고, 투영 · 붙임 · 격자가
 // **모두 그 영역**을 쓴다. 남는 자투리(한 칸 미만)는 바깥 상자 안의 여백이 된다.
+//
+// ## 축척은 두 축이 **하나**다 (0.10.0)
+//
+// 위 산술을 축마다 따로 돌리면 칸은 정수가 되지만 **두 축의 정수가 다르다**. 1749×796
+// 패널에 500×400 캔버스면 가로 87px · 세로 49px 이고, 그때 한 칸은 정사각형이 아니라
+// 87×49 직사각형이다. 같은 일그러짐이 도형에도 그대로 걸린다 — 캔버스 단위로 정사각형인
+// 사각형이 화면에서는 가로로 늘어난 직사각형이 되고, 원은 납작한 타원이 된다. 축척이
+// 둘이면 "캔버스 단위" 라는 말이 축마다 다른 뜻을 갖는 셈이다.
+//
+// 그래서 축척을 **하나**로 둔다: 두 축의 '정확한' 칸 크기 가운데 **작은 쪽**을 골라 그
+// 하나를 두 축에 함께 쓴다. 작은 쪽인 이유는 넘치지 않기 위해서다 — 큰 쪽을 고르면 그
+// 축에서 그리는 영역이 바깥 상자를 넘어 도형이 잘린다. 정수화(내림)는 고른 **뒤** 한 번만
+// 하므로 온전한 픽셀 성질은 그대로 남고, 두 축이 같은 정수를 쓰므로 칸은 정사각형이다.
+//
+// 남는 자투리는 **한 축에 몰린다**(위 예에서 가로로 769px). 그 여백은 정직한 신호다:
+// 캔버스 크기와 패널 모양이 다르다는 사실이 눈에 보이는 것이며, 사용자는 캔버스 크기를
+// 패널 비율에 맞춰(`fitCanvasSizeToStage`) 그 여백을 없앨 수 있다. 여백을 없애자고 축척을
+// 둘로 되돌리면 도형이 다시 일그러진다 — 조용한 왜곡보다 보이는 여백이 낫다.
 
-/** 한 칸의 CSS px(축마다). 맞출 수 있었으면 두 값 모두 정수다. */
+/**
+ * 한 칸의 CSS px(축마다).
+ *
+ * 축척이 하나가 된 0.10.0 이후 두 값은 **언제나 같다**. 그럼에도 축마다의 자리를 남겨
+ * 두는 것은 `PanelEditGrid` 가 두 축의 간격을 따로 받기 때문이다(그 컴포넌트는 다섯 패널과
+ * 공유하며 그쪽은 축마다 다른 백분율을 쓴다). 받는 쪽의 형상을 바꾸지 않으므로 이 파일의
+ * 변경이 그 컴포넌트로 번지지 않는다.
+ */
 export interface StageCell {
   x: number;
   y: number;
@@ -232,41 +258,24 @@ export interface StageLattice {
   offset: StageCell;
 }
 
-/** 한 축의 정렬 결과. */
-interface AxisLattice {
-  used: number;
-  cell: number;
-  offset: number;
-}
-
 /**
- * 한 축을 격자 칸에 맞춘다.
+ * 두 축에 함께 쓸 **정확한**(정수화 이전) 칸 크기. 맞출 수 없으면 `null`.
  *
- * 칸 하나의 '정확한' 크기는 `바깥 길이 × 간격 ÷ 캔버스 길이` 다. 그것을 **내림**해 정수
- * px 를 얻고, 그 정수로 되돌린 축척(`cell / step`)을 캔버스 길이에 곱해 그리는 길이를
- * 낸다. 내림이므로 결과는 언제나 바깥 길이 이하다 — 넘치면 마지막 칸이 상자 밖으로 나가
- * 도형이 잘린다.
+ * 한 축의 '정확한' 칸 크기는 `바깥 길이 × 간격 ÷ 캔버스 길이` 다. 두 축이 그 값을 따로
+ * 가지면 축척이 둘이 되어 칸도 도형도 일그러지므로(머리말 §축척은 두 축이 하나다),
+ * **작은 쪽 하나**를 골라 돌려준다. 작은 쪽이라야 두 축 모두 바깥 상자를 넘지 않는다.
  *
- * 칸 수가 정수가 아닌 캔버스(예: 400 단위에 25 간격 → 16 칸, 그러나 160 단위에 25 간격
- * → 6.4 칸)에서도 같은 산술이 옳다. 온전한 칸의 경계는 모두 정수 px 에 앉고, 나누어
- * 떨어지지 않는 마지막 조각만 원래처럼 조각으로 남는다.
- *
- * **한 칸이 1px 도 되지 않으면 맞추지 않는다.** 그때 내림값은 0 이고, 0 을 곱하면 그리는
- * 영역이 **통째로 사라진다** — 격자를 위해 그림을 지우는 셈이다. 그래서 그 경우에는 종전
- * 그대로(바깥 상자 전체)를 쓰고 칸으로는 소수 그대로를 알린다. 받는 쪽은 1px 미만인 칸을
- * 보고 격자를 그리지 않기로 정할 수 있다.
+ * `null` 은 "맞출 근거가 없다" 는 뜻이다 — 아직 재지 못한 상자(0·비유한), 0 축 캔버스,
+ * 0 이하·비유한 간격이 그렇다. 그때 부르는 쪽은 잰 상자를 그대로 쓴다.
  */
-function axisLattice(outerLen: number, canvasLen: number, step: number): AxisLattice {
-  const outer = positiveOrZero(outerLen);
-  const canvasExtent = positiveOrZero(canvasLen);
-  const measurable =
-    outer > 0 && canvasExtent > 0 && Number.isFinite(step) && step > 0;
-  const exact = measurable ? (outer * step) / canvasExtent : 0;
-  const cell = Math.floor(exact);
-  if (cell < 1) return { used: outer, cell: exact, offset: 0 };
-  // `Math.min` 은 부동소수 잔차 방어다 — 내림한 값이므로 수학적으로는 이미 outer 이하다.
-  const used = Math.min((cell * canvasExtent) / step, outer);
-  return { used, cell, offset: Math.floor((outer - used) / 2) };
+function uniformCell(outer: StageSize, canvas: CanvasSize, step: number): number | null {
+  const outerW = positiveOrZero(outer.width);
+  const outerH = positiveOrZero(outer.height);
+  const canvasW = positiveOrZero(canvas.width);
+  const canvasH = positiveOrZero(canvas.height);
+  if (!Number.isFinite(step) || step <= 0) return null;
+  if (outerW === 0 || outerH === 0 || canvasW === 0 || canvasH === 0) return null;
+  return Math.min((outerW * step) / canvasW, (outerH * step) / canvasH);
 }
 
 /**
@@ -276,21 +285,78 @@ function axisLattice(outerLen: number, canvasLen: number, step: number): AxisLat
  * 캔버스와 오버레이를 함께 넣는다. 그래야 투영이 쓰는 스테이지와 오버레이가 제 상자로
  * 재는 값이 **같은 상자**를 가리키고, 그 사이에 오프셋 보정이 낄 자리가 없다(위험 R1).
  *
+ * 결과의 성질 셋:
+ *   1. **칸은 정사각형이다** — 두 축이 같은 축척 하나를 쓴다(머리말 §축척은 두 축이 하나다).
+ *      그래서 캔버스 단위의 정사각형은 화면에서도 정사각형이고, 원은 원으로 남는다.
+ *   2. **칸은 정수 px 다** — 고른 축척을 내림한다. 그래야 선이 두 장치 픽셀에 걸치지 않는다.
+ *   3. **영역은 그 칸의 정수배이고 자리는 정수다** — 자투리는 상자 안 여백이 된다.
+ *
+ * **한 칸이 1px 도 되지 않으면 정수화하지 않는다.** 내림값 0 을 곱하면 그리는 영역이
+ * 통째로 사라진다 — 격자를 위해 그림을 지우는 셈이다. 그때는 소수 축척을 그대로 쓴다:
+ * 온전한 픽셀 성질은 포기하지만(1px 미만 칸에서는 애초에 뜻이 없다) 축척은 여전히 하나라
+ * 도형은 일그러지지 않고, 영역도 사라지지 않는다. 받는 쪽은 1px 미만인 칸을 보고 격자를
+ * 그리지 않기로 정할 수 있다.
+ *
  * 멱등이다: 이미 맞춰진 영역을 같은 간격으로 다시 넣으면 같은 영역이 나오고 자투리는 0 이
- * 된다. 그래서 표면 밖(오버레이 단독 렌더)에서도 같은 함수로 칸을 물을 수 있다.
+ * 된다(맞춘 영역은 정확히 캔버스 비율이므로 두 축의 '정확한' 칸이 같아진다). 그래서 표면
+ * 밖(오버레이 단독 렌더)에서도 같은 함수로 칸을 물을 수 있다.
  */
 export function stageLattice(
   outer: StageSize,
   canvas: CanvasSize,
   step: number,
 ): StageLattice {
-  const x = axisLattice(outer.width, canvas.width, step);
-  const y = axisLattice(outer.height, canvas.height, step);
+  const outerW = positiveOrZero(outer.width);
+  const outerH = positiveOrZero(outer.height);
+  const exact = uniformCell(outer, canvas, step);
+  if (exact === null) {
+    return { stage: { width: outerW, height: outerH }, cell: { x: 0, y: 0 }, offset: { x: 0, y: 0 } };
+  }
+  const cell = exact >= 1 ? Math.floor(exact) : exact;
+  const scale = cell / step;
+  // `Math.min` 은 부동소수 잔차 방어다 — 내림한 값이므로 수학적으로는 이미 outer 이하다.
+  const width = Math.min(positiveOrZero(canvas.width) * scale, outerW);
+  const height = Math.min(positiveOrZero(canvas.height) * scale, outerH);
   return {
-    stage: { width: x.used, height: y.used },
-    cell: { x: x.cell, y: y.cell },
-    offset: { x: x.offset, y: y.offset },
+    stage: { width, height },
+    cell: { x: cell, y: cell },
+    offset: { x: Math.floor((outerW - width) / 2), y: Math.floor((outerH - height) / 2) },
   };
+}
+
+// --- 캔버스 크기를 패널 비율에 맞춘다 (0.10.0) --------------------------
+//
+// 축척이 하나가 되면 캔버스 비율과 패널 비율이 다를 때 한 축에 여백이 남는다. 그 여백을
+// 없애는 정직한 길은 **캔버스 크기 자체를 패널 비율에 맞추는 것**이다 — 축척을 둘로
+// 되돌려 도형을 일그러뜨리는 대신, 종이의 모양을 방의 모양에 맞춘다.
+//
+// **폭을 고정하고 높이를 유도한다.** 두 축 가운데 하나를 붙들어야 하는데, 폭이 자연스러운
+// 기준인 이유는 격자 간격 선택지가 이미 폭 기준으로 잡혀 있고(500 은 고를 수 있는 모든
+// 간격으로 나누어떨어진다) 사용자가 "가로 몇 칸" 으로 판을 상상하기 때문이다.
+//
+// **이 함수는 저장하지 않는다.** 순수 계산이며, 언제 부를지는 부르는 쪽의 몫이다. 그
+// 구분에 뜻이 있다 — 리사이즈마다 자동으로 부르면 저장된 요소 좌표의 뜻이 조용히 바뀐다
+// (`CanvasPanel` §자동 맞춤은 한 번뿐이다).
+
+/**
+ * 캔버스 크기를 스테이지(패널) 비율에 맞춘다 — **폭은 그대로, 높이만** 유도한다.
+ *
+ * 잴 수 없는 스테이지(0·비유한 축)나 이미 맞아 있는 크기에는 **받은 객체를 그대로**
+ * 돌려준다. 참조가 같다는 사실이 곧 "바꿀 것이 없다" 는 신호이므로, 부르는 쪽은 그
+ * 비교 하나로 쓸모없는 저장을 건너뛸 수 있다(자동 맞춤이 리사이즈마다 config 를 쓰지
+ * 않는 근거의 절반이 이 한 줄이다).
+ *
+ * 유도한 높이는 캔버스 축이 허용하는 범위로 죈다 — 파서가 죄는 그 범위와 같아야 저장
+ * 왕복에 값이 바뀌지 않는다.
+ */
+export function fitCanvasSizeToStage(canvas: CanvasSize, stage: StageSize): CanvasSize {
+  const stageW = positiveOrZero(stage.width);
+  const stageH = positiveOrZero(stage.height);
+  const width = positiveOrZero(canvas.width);
+  if (stageW === 0 || stageH === 0 || width === 0) return canvas;
+  const raw = Math.round((width * stageH) / stageW);
+  const height = Math.min(Math.max(raw, MIN_CANVAS_DIMENSION), MAX_CANVAS_DIMENSION);
+  return height === canvas.height ? canvas : { width: canvas.width, height };
 }
 
 // --- 투영 ---------------------------------------------------------------

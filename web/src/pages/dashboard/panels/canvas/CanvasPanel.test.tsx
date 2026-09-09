@@ -67,18 +67,28 @@ import type { FrameScheduler } from './CanvasSurface';
 
 type RoCallback = (entries: Array<{ contentRect: { width: number; height: number } }>) => void;
 
+/**
+ * 지금 통보할 바깥 상자. 대부분의 시험은 기본값을 쓰고, 리사이즈를 다루는 시험만 이 값을
+ * 갈거나 아래 `panelObservers` 로 새 크기를 직접 통보한다.
+ */
+let panelOuter = { width: 200, height: 160 };
+/** 살아 있는 관찰자들 — 리사이즈를 시험이 직접 일으킬 통로다. */
+let panelObservers: TriggeringResizeObserver[] = [];
+
 class TriggeringResizeObserver {
   cb: RoCallback;
   constructor(cb: RoCallback) {
     this.cb = cb;
+    panelObservers.push(this);
   }
   observe() {
-    // 200x80 은 기본 격자 칸(기본 캔버스 500x400 에 25 단위)에 **이미 맞아 있는** 크기다:
-    // 가로 200×25/500 = 10px, 세로 80×25/400 = 5px 이라 두 축 모두 나머지가 0 이다.
-    // 표면은 그리는 영역을 그 칸의 정수배로 줄이므로(0.9.0 · `stageLattice`), 맞아 있지
-    // 않은 크기를 쓰면 이 파일의 좌표 기대값이 "줄인 만큼" 을 함께 지고 가게 된다 —
-    // 그 산술은 `canvasGeometry.test.ts` 와 `CanvasSurface.test.tsx` 가 따로 시험한다.
-    this.cb([{ contentRect: { width: 200, height: 80 } }]);
+    // 200x160 은 기본 캔버스(500x400)와 **같은 5:4** 이고 기본 격자 칸(25 단위)에도 이미
+    // 맞아 있다: 200×25/500 = 160×25/400 = 10px 이라 두 축 모두 나머지가 0 이다. 표면은
+    // 축척 하나로 그리는 영역을 그 칸의 정수배로 줄이므로(0.10.0 · `stageLattice`), 비율이
+    // 어긋나거나 칸에 맞지 않는 크기를 쓰면 이 파일의 좌표 기대값이 "줄인 만큼" 을 함께
+    // 지고 가게 된다 — 그 산술은 `canvasGeometry.test.ts` 와 `CanvasSurface.test.tsx` 가
+    // 따로 시험한다. 두 축의 축척은 0.4 로 같고, 그래서 화면 px 는 두 축 모두 2.5 단위다.
+    this.cb([{ contentRect: { ...panelOuter } }]);
   }
   unobserve() {}
   disconnect() {}
@@ -255,6 +265,8 @@ function renderPanel(config: Record<string, unknown>, title?: string) {
 
 beforeEach(() => {
   storeMock.current = idleResult();
+  panelOuter = { width: 200, height: 160 };
+  panelObservers = [];
   ctxStub = makeCtxStub();
   vi.stubGlobal('ResizeObserver', TriggeringResizeObserver as unknown as typeof ResizeObserver);
   vi.stubGlobal('devicePixelRatio', 1);
@@ -846,15 +858,15 @@ describe('CanvasPanel — 드래그가 onConfigChange 로 흘러간다 (AC-03)',
     const onConfigChange = vi.fn();
     renderEditablePanel([EDIT_RECT], { onConfigChange, forceEdit: true });
 
-    sendToOverlay('pointerdown', 30, 15);
-    sendToOverlay('pointermove', 50, 25);
+    sendToOverlay('pointerdown', 30, 30);
+    sendToOverlay('pointermove', 50, 50);
     await nextBrowserFrame();
 
     expect(onConfigChange).toHaveBeenCalledTimes(1);
     const patch = onConfigChange.mock.calls[0]![0] as { elements: Array<{ id: string; geometry: unknown }> };
     expect(Object.keys(patch)).toEqual(['elements']);
-    // 화면에서 (20,10)px 끌었다 — 스테이지 200x80 위의 그 길이는 기본 캔버스
-    // (500x400) 단위로 (50, 50) 이다. 자리는 캔버스 단위 정수로 저장된다.
+    // 화면에서 (20,20)px 끌었다 — 스테이지 200x160 위의 그 길이는 기본 캔버스
+    // (500x400) 단위로 (50, 50) 이다(두 축이 같은 축척 0.4 다). 자리는 정수로 저장된다.
     expect(patch.elements.find((el) => el.id === 'a')!.geometry).toEqual({
       x: 100,
       y: 90,
@@ -869,8 +881,8 @@ describe('CanvasPanel — 드래그가 onConfigChange 로 흘러간다 (AC-03)',
 
     // 오버레이가 아예 없으므로 누름은 캔버스로 가고 아무 일도 일어나지 않는다.
     expect(screen.queryByTestId('canvas-edit-overlay')).toBeNull();
-    fireEvent(screen.getByTestId('canvas-surface'), panelPointer('pointerdown', 30, 15));
-    fireEvent(screen.getByTestId('canvas-surface'), panelPointer('pointermove', 50, 25));
+    fireEvent(screen.getByTestId('canvas-surface'), panelPointer('pointerdown', 30, 30));
+    fireEvent(screen.getByTestId('canvas-surface'), panelPointer('pointermove', 50, 50));
     await nextBrowserFrame();
 
     expect(onConfigChange).not.toHaveBeenCalled();
@@ -888,12 +900,12 @@ describe('CanvasPanel — 편집기가 유휴 정지를 깨지 않는다 (AC-E4)
     const before = clock.requested;
 
     // 고르고, 다른 요소로 옮기고, 핸들 자리를 지나간다(호버).
-    sendToOverlay('pointerdown', 30, 15);
-    sendToOverlay('pointerup', 30, 15);
-    sendToOverlay('pointerdown', 110, 55);
-    sendToOverlay('pointerup', 110, 55);
-    sendToOverlay('pointermove', 120, 60);
-    sendToOverlay('pointermove', 40, 20);
+    sendToOverlay('pointerdown', 30, 30);
+    sendToOverlay('pointerup', 30, 30);
+    sendToOverlay('pointerdown', 110, 110);
+    sendToOverlay('pointerup', 110, 110);
+    sendToOverlay('pointermove', 120, 120);
+    sendToOverlay('pointermove', 40, 40);
 
     expect(screen.getByTestId('canvas-selection-b')).toBeTruthy();
     expect(clock.requested).toBe(before);
@@ -906,8 +918,8 @@ describe('CanvasPanel — 편집기가 유휴 정지를 깨지 않는다 (AC-E4)
     for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
     const before = clock.requested;
 
-    sendToOverlay('pointerdown', 30, 15);
-    sendToOverlay('pointermove', 50, 25);
+    sendToOverlay('pointerdown', 30, 30);
+    sendToOverlay('pointermove', 50, 50);
     // 쓰기가 config 를 갈면 `elements` 참조가 바뀐다 — 001 과 **같은** 깨우기 경로다.
     await nextBrowserFrame();
 
@@ -935,8 +947,8 @@ describe('CanvasPanel — 편집 표면 조작 전량이 유휴 정지를 지킨
     expect(clock.pending).toBe(0);
 
     // 고르기까지가 전제다(핸들은 하나만 골랐을 때 뜬다).
-    sendToOverlay('pointerdown', 30, 15);
-    sendToOverlay('pointerup', 30, 15);
+    sendToOverlay('pointerdown', 30, 30);
+    sendToOverlay('pointerup', 30, 30);
     expect(screen.getByTestId('canvas-selection-a')).toBeTruthy();
     const before = clock.requested;
 
@@ -962,8 +974,8 @@ describe('CanvasPanel — 편집 표면 조작 전량이 유휴 정지를 지킨
     for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
 
     // 고르고 손을 뗀다 — 놓기 자체가 제자리 확정 쓰기를 한 번 내므로 그 프레임까지 민다.
-    sendToOverlay('pointerdown', 30, 15);
-    sendToOverlay('pointerup', 30, 15);
+    sendToOverlay('pointerdown', 30, 30);
+    sendToOverlay('pointerup', 30, 30);
     for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
     const before = clock.requested;
 
@@ -1425,5 +1437,144 @@ describe('CanvasPanel — 숫자를 끄면 규칙은 "값 없음" 행만 남는�
     );
 
     expect(shapeFills()).toContain('#888888');
+  });
+});
+
+// --- 캔버스 크기를 패널 비율에 맞춘다 (0.10.0) --------------------------
+//
+// 이 절이 지키는 성질은 **둘이고 서로 반대 방향**이다.
+//   1) 아무것도 놓이지 않은 새 패널에서는 **한 번** 자동으로 맞춘다.
+//   2) 그 뒤로는 패널 크기가 아무리 바뀌어도 **저장된 캔버스 크기를 건드리지 않는다.**
+//
+// 2번이 이 기능의 함정이자 이 절의 무게중심이다. 저장된 요소 좌표는 절대 캔버스 단위라,
+// 캔버스 높이가 바뀌면 사용자가 y=200 에 둔 도형이 가리키는 자리가 조용히 달라진다. 여백
+// 몇 픽셀은 눈에 보이고 고칠 수 있지만, 옮겨간 좌표는 그렇지 않다.
+
+/** 캔버스 크기 패치만 골라낸다(다른 패치와 섞이지 않게 한다). */
+function canvasPatches(spy: ReturnType<typeof vi.fn>): Array<{ width: number; height: number }> {
+  return spy.mock.calls
+    .map((c) => (c[0] as { canvas?: { width: number; height: number } }).canvas)
+    .filter((c): c is { width: number; height: number } => c !== undefined);
+}
+
+/** 패널 크기를 바꾼다(레이아웃 변경 — 대시보드에서 패널을 늘이는 일). */
+function resizePanelTo(width: number, height: number): void {
+  panelOuter = { width, height };
+  act(() => {
+    for (const ro of panelObservers) ro.cb([{ contentRect: { width, height } }]);
+  });
+}
+
+describe('CanvasPanel — 캔버스 크기 자동 맞춤은 한 번뿐이다 (0.10.0)', () => {
+  it('요소가 없는 새 패널은 패널 비율로 **한 번** 맞춘다', () => {
+    const onConfigChange = vi.fn();
+    panelOuter = { width: 1749, height: 796 };
+    renderEditablePanel([], { onConfigChange, forceEdit: true });
+
+    // 폭 500 을 붙들고 높이만 유도한다: round(500 × 796 / 1749) = 228.
+    expect(canvasPatches(onConfigChange)).toEqual([{ width: 500, height: 228 }]);
+  });
+
+  it('한 번 맞춘 뒤에는 리사이즈가 몇 번 와도 **다시 맞추지 않는다**', () => {
+    const onConfigChange = vi.fn();
+    panelOuter = { width: 1749, height: 796 };
+    renderEditablePanel([], { onConfigChange, forceEdit: true });
+    expect(canvasPatches(onConfigChange)).toHaveLength(1);
+
+    resizePanelTo(900, 900);
+    resizePanelTo(400, 1200);
+
+    // 하네스는 통보를 되먹이지 않으므로 config 는 여전히 기본 크기다 — 그럼에도 다시
+    // 맞추지 않는다. 즉 멈춤은 "값이 바뀌었으니까" 가 아니라 **한 번 했으니까**다.
+    expect(canvasPatches(onConfigChange)).toHaveLength(1);
+  });
+
+  it('요소가 하나라도 있으면 자동으로 맞추지 않는다 (옮겨갈 좌표가 있다)', () => {
+    const onConfigChange = vi.fn();
+    panelOuter = { width: 1749, height: 796 };
+    renderEditablePanel([EDIT_RECT], { onConfigChange, forceEdit: true });
+
+    expect(canvasPatches(onConfigChange)).toEqual([]);
+  });
+
+  it('사용자가 정한 크기에는 손대지 않는다 (기본값일 때만 맞춘다)', () => {
+    const onConfigChange = vi.fn();
+    panelOuter = { width: 1749, height: 796 };
+    const clock = makeScheduler();
+    render(
+      <CanvasPanel
+        panelId="p1"
+        config={makeConfig([], ['tank.level'], { canvas: { width: 300, height: 300 } })}
+        onConfigChange={onConfigChange}
+        forceEdit
+        scheduler={clock.scheduler}
+        visibilitySource={ALWAYS_VISIBLE}
+      />,
+    );
+
+    expect(canvasPatches(onConfigChange)).toEqual([]);
+  });
+
+  it('편집 중이 아니면 맞추지 않는다 — 보기만 하는 패널은 config 를 쓰지 않는다', () => {
+    const onConfigChange = vi.fn();
+    panelOuter = { width: 1749, height: 796 };
+    renderEditablePanel([], { onConfigChange });
+
+    expect(canvasPatches(onConfigChange)).toEqual([]);
+  });
+
+  it('아직 재지 못한 상자(0)에서는 맞추지 않고 NaN 도 내지 않는다', () => {
+    const onConfigChange = vi.fn();
+    panelOuter = { width: 0, height: 0 };
+    renderEditablePanel([], { onConfigChange, forceEdit: true });
+
+    expect(canvasPatches(onConfigChange)).toEqual([]);
+  });
+});
+
+describe('CanvasPanel — 리사이즈는 저장된 좌표의 뜻을 바꾸지 않는다 (0.10.0 · 조용한 이동 금지)', () => {
+  it('패널을 늘여도 저장된 캔버스 크기가 그대로다', () => {
+    const onConfigChange = vi.fn();
+    // 요소가 있으므로 자동 맞춤은 애초에 돌지 않는다. 그 위에서 리사이즈를 여러 번 준다.
+    renderEditablePanel([EDIT_RECT], { onConfigChange, forceEdit: true });
+
+    resizePanelTo(1749, 796);
+    resizePanelTo(600, 1200);
+    resizePanelTo(320, 240);
+
+    expect(canvasPatches(onConfigChange)).toEqual([]);
+  });
+
+  it('그래서 요소가 **캔버스 안 같은 자리**에 남는다 (자리의 뜻이 달라지지 않는다)', () => {
+    const { clock } = renderEditablePanel([EDIT_RECT], {
+      onConfigChange: vi.fn(),
+      forceEdit: true,
+    });
+
+    /** 지금 그려진 사각형을 그리는 영역에 대한 비율로 읽는다. */
+    const drawnFraction = (): { x: number; y: number } => {
+      const box = screen.getByTestId('canvas-stage');
+      const rect = ctxStub.calls.filter((c) => c[0] === 'rect').at(-1)!.slice(1) as number[];
+      return {
+        x: rect[0]! / Number.parseFloat(box.style.width),
+        y: rect[1]! / Number.parseFloat(box.style.height),
+      };
+    };
+
+    const before = drawnFraction();
+    // EDIT_RECT 는 (50,40) 이고 캔버스는 500x400 이므로 비율은 (0.1, 0.1) 이다.
+    expect(before.x).toBeCloseTo(0.1, 9);
+    expect(before.y).toBeCloseTo(0.1, 9);
+
+    ctxStub.calls.length = 0;
+    resizePanelTo(1749, 796);
+    // 크기가 달라졌으므로 프레임이 한 장 필요하다(리사이즈는 그림이 실제로 달라지는 축이다).
+    clock.flush(16);
+
+    // 크기가 달라졌으니 px 는 달라지지만 **비율은 그대로**다. 리사이즈가 저장된 크기를
+    // 다시 맞췄다면 여기서 비율이 어긋난다 — 그것이 조용한 좌표 이동의 관측 가능한 얼굴이다.
+    const after = drawnFraction();
+    expect(after.x).toBeCloseTo(before.x, 9);
+    expect(after.y).toBeCloseTo(before.y, 9);
   });
 });

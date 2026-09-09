@@ -40,13 +40,15 @@ import { storeSeriesId } from '../charts/chartChannelTypes';
 import { usePanelSeriesData } from '../charts/usePanelSeriesData';
 import type { VisibilitySource } from '../charts/visiblePolling';
 import { usePanelEditMode } from '../PanelEditToggle';
-import type { CanvasElement } from './canvasConfig';
-import { isNumericElement, parseCanvasConfig } from './canvasConfig';
+import type { CanvasElement, CanvasSize } from './canvasConfig';
+import { DEFAULT_CANVAS_SIZE, isNumericElement, parseCanvasConfig } from './canvasConfig';
 import {
   useCanvasLiveSeriesPublisher,
   type CanvasSeriesOption,
 } from './canvasEditContext';
 import CanvasEditOverlay from './CanvasEditOverlay';
+import { fitCanvasSizeToStage, type StageSize } from './canvasGeometry';
+import { useCanvasStageAspectPublisher } from './canvasStageAspect';
 import { evaluateRules, type ResolvedStyle } from './canvasRules';
 import { renderTextTemplate } from './canvasText';
 import CanvasSurface, {
@@ -335,6 +337,63 @@ export default function CanvasPanel({
     [onConfigChange],
   );
 
+  // --- 0.10.0 T-fit: 캔버스 크기를 패널 비율에 **한 번만** 맞춘다 ---
+  //
+  // ## 왜 한 번뿐인가 (이것이 이 절의 전부다)
+  //
+  // 저장된 요소 좌표는 **절대 캔버스 단위**다. 캔버스 높이가 400 에서 228 로 바뀌면 사용자가
+  // y=200 에 둔 도형은 "판의 절반" 이 아니라 "판의 88%" 를 뜻하게 된다. 즉 리사이즈마다
+  // 자동으로 다시 맞추면 **패널 크기를 바꿀 때마다 사용자가 놓아 둔 자리가 조용히 옮겨간다.**
+  // 그 어긋남은 되돌릴 방법이 없고, 여백 몇 픽셀보다 훨씬 나쁘다.
+  //
+  // 그래서 자동 맞춤은 **건드릴 것이 없을 때** 한 번만 한다. 조건 넷을 모두 만족해야 한다:
+  //   1. 쓸 곳이 있다(`onConfigChange`) — 없으면 저장할 데가 없다.
+  //   2. **편집 중이다** — 보기만 하는 대시보드가 config 를 고쳐 쓰는 일은 없어야 한다.
+  //   3. **요소가 하나도 없다** — 옮겨갈 좌표가 존재하지 않는다. 이것이 "건드릴 것이 없다"
+  //      의 정확한 뜻이다.
+  //   4. 저장된 크기가 **기본값 그대로**다 — 사용자가 한 번이라도 정한 값은 남의 것이다.
+  //
+  // 4번이 곧 멈춤 조건이기도 하다: 한 번 맞추면 크기가 기본값이 아니게 되므로 그 뒤로는
+  // 리사이즈가 몇 번 오든 이 효과가 아무것도 하지 않는다. 여백이 다시 생기면 사용자가
+  // 설정의 **패널 비율에 맞춤** 단추로 직접 맞춘다 — 보이는 여백은 정직하고 고칠 수 있지만,
+  // 조용히 옮겨간 좌표는 그렇지 않다.
+  const autoFitDone = useRef(false);
+  const handleStageMeasured = useCallback(
+    (outer: StageSize) => {
+      if (onConfigChange === undefined || !edit.active) return;
+      if (autoFitDone.current) return;
+      if (cfg.elements.length > 0) return;
+      const stored: CanvasSize = cfg.canvas;
+      if (
+        stored.width !== DEFAULT_CANVAS_SIZE.width ||
+        stored.height !== DEFAULT_CANVAS_SIZE.height
+      ) {
+        return;
+      }
+      const fitted = fitCanvasSizeToStage(stored, outer);
+      // 같은 참조 = 바꿀 것이 없다(잴 수 없는 상자이거나 이미 맞아 있다).
+      if (fitted === stored) return;
+      autoFitDone.current = true;
+      onConfigChange({ canvas: fitted });
+    },
+    [onConfigChange, edit.active, cfg.elements, cfg.canvas],
+  );
+
+  /**
+   * 잰 바깥 상자를 편집기로 흘려보낸다(`canvasStageAspect`). provider 가 없으면(대시보드에
+   * 놓인 패널) 무동작이며 참조도 고정이라 아무 효과도 다시 돌지 않는다.
+   */
+  const publishStageAspect = useCanvasStageAspectPublisher();
+
+  /** 표면이 크기를 잴 때마다 부르는 하나의 통로 — 발행과 자동 맞춤이 같은 값을 본다. */
+  const handleStage = useCallback(
+    (outer: StageSize) => {
+      publishStageAspect(outer);
+      handleStageMeasured(outer);
+    },
+    [publishStageAspect, handleStageMeasured],
+  );
+
   /**
    * 표면의 오버레이 슬롯. 투영 한 벌(스테이지 px + 캔버스 단위 크기)과 실측 글자 폭은
    * **표면이 든 것을 그대로** 받아 넘긴다(측정원이 하나다 — AC-E2).
@@ -403,6 +462,7 @@ export default function CanvasPanel({
         visibilitySource={visibilitySource}
         scheduler={scheduler}
         overlay={renderOverlay}
+        onStageMeasured={handleStage}
       />
 
       {/* 배치 편집 토글. `canEdit && dashboardEditMode && !forced` 일 때만 나온다. */}

@@ -148,6 +148,18 @@ export interface CanvasSurfaceProps {
    * 캔버스에 칠하지 않으므로 이 층이 무엇을 그리든 rAF 루프를 깨우지 않는다(REQ-05).
    */
   overlay?: (ctx: CanvasOverlayContext) => ReactNode;
+  /**
+   * 잰 **바깥** 상자를 알린다(0.10.0). 크기가 실제로 달라진 뒤 효과에서만 부르며, 렌더
+   * 중에는 부르지 않는다 — 렌더 단계에서 남의 상태를 갈면 React 가 그 렌더를 버린다.
+   *
+   * 알리는 것이 `stage`(맞춘 영역)가 아니라 **바깥** 상자인 것에 뜻이 있다. 맞춘 영역은
+   * 이미 캔버스 비율이므로 그것으로는 "캔버스 비율과 패널 비율이 얼마나 다른가" 를 알 수
+   * 없다 — 여백을 없애려는 쪽(`canvasStageAspect`)이 봐야 하는 것은 여백을 만든 그 상자다.
+   *
+   * 미지정이면 이 효과는 아무것도 하지 않는다. 프레임을 예약하지 않으므로 유휴 정지에
+   * 영향이 없다(REQ-05 · AC-E4).
+   */
+  onStageMeasured?: (outer: StageSize) => void;
 }
 
 // --- 스타일 비교 ---------------------------------------------------------
@@ -190,6 +202,7 @@ export default function CanvasSurface({
   scheduler = DEFAULT_SCHEDULER,
   className,
   overlay,
+  onStageMeasured,
 }: CanvasSurfaceProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -441,6 +454,15 @@ export default function CanvasSurface({
   useEffect(() => {
     scheduleFrame();
   }, [elements, canvas, targetStyles, texts, panelTween, background, lattice, scheduleFrame]);
+
+  // 잰 바깥 상자를 밖으로 알린다(0.10.0). **프레임을 예약하지 않는다** — 이 효과가 하는
+  // 일은 통보 하나뿐이고, 어느 그리기 경로의 의존성에도 들어가지 않는다(AC-E4).
+  //
+  // 알리는 축이 `outer` 인 것은 위 prop 주석의 이유 그대로다. 크기가 실제로 달라졌을 때만
+  // 도는데, `setOuter` 가 같은 값이면 상태를 갈지 않기 때문이다(위 ResizeObserver 효과).
+  useEffect(() => {
+    onStageMeasured?.({ width: outer.width, height: outer.height });
+  }, [onStageMeasured, outer.width, outer.height]);
 
   // 언마운트 시 예약된 프레임 정리.
   useEffect(() => cancelFrame, [cancelFrame]);
