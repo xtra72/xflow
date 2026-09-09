@@ -264,7 +264,11 @@ export function CanvasEditDockRegion({
 // --- 도구 --------------------------------------------------------------
 
 export interface CanvasEditDockBodyProps {
-  /** 도형을 놓는다 — 목록 편집기의 추가 버튼과 **같은 생성 경로**여야 한다(가정 A7). */
+  /**
+   * 도형을 놓는다 — **요소를 만드는 유일한 입구**다. 목록 편집기 하단에도 종류별 추가
+   * 버튼이 있었으나, 같은 함수(`canvasElementFactory.appendElement`)를 부르는 입구가 둘일
+   * 이유가 없어 그쪽을 걷었다. 생성 경로 자체는 그대로다(가정 A7).
+   */
   onPlace: (kind: CanvasElementKind) => void;
   /** 격자 표시·붙임(하나의 토글이 둘을 함께 켠다 — T12). */
   snapToGrid: boolean;

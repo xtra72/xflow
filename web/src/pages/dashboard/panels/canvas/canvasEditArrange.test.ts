@@ -22,6 +22,7 @@ import {
   moveElementTo,
   sendToBack,
   snapDelta,
+  squareGridSteps,
   type AlignTarget,
 } from './canvasEditArrange';
 import type { StageSize } from './canvasGeometry';
@@ -88,6 +89,79 @@ describe('원 함수를 부르는 자리는 이 모듈 하나뿐이다 (위험 R
   });
 });
 
+// --- 정사각 칸 (사용 시험: "격자가 일정하지 않음") -------------------------
+//
+// 백분율은 언제나 **제 축 길이에 대한** 값이라, 두 축에 같은 10% 를 주면 정사각형이 아닌
+// 스테이지에서 칸이 직사각형이 된다. 그래서 여기서 쓰는 픽스처는 **정사각형이 아니어야
+// 한다** — 800×400 이면 옛 방식이 80×40 px 을 내고 새 방식이 80×80 px 을 낸다. 정사각
+// 픽스처(예: 400×400)로는 두 방식이 같은 값을 내므로 이 시험이 실패할 수 없다.
+
+/** 가로가 세로의 두 배인 스테이지. 정사각 픽스처로는 이 절의 시험이 성립하지 않는다. */
+const WIDE_STAGE: StageSize = { width: 800, height: 400 };
+
+/** 한 축의 백분율이 실제로 몇 px 인가. */
+function cellPx(percent: number, axisLength: number): number {
+  return (percent / 100) * axisLength;
+}
+
+describe('격자 칸은 정사각형이다 (사용 시험: "격자가 일정하지 않음")', () => {
+  it('가로세로 비가 다른 스테이지에서도 두 축의 칸이 **같은 px** 이다', () => {
+    for (const step of CANVAS_GRID_STEP_CHOICES) {
+      const cell = squareGridSteps(step, WIDE_STAGE);
+      expect(cellPx(cell.x, WIDE_STAGE.width), `${step}%`).toBeCloseTo(
+        cellPx(cell.y, WIDE_STAGE.height),
+        6,
+      );
+    }
+  });
+
+  it('기준 축은 **폭**이다 — 고른 값이 가로에서 그대로 뜻을 갖는다', () => {
+    // "10% = 가로 10칸" 이라는 화면의 말이 남아야 하고, 그래야 목록의 5·10·20 이
+    // 100 을 나누어떨어지게 뽑힌 근거도 남는다.
+    expect(squareGridSteps(10, WIDE_STAGE)).toEqual({ x: 10, y: 20 });
+    expect(squareGridSteps(20, WIDE_STAGE)).toEqual({ x: 20, y: 40 });
+    expect(squareGridSteps(5, WIDE_STAGE)).toEqual({ x: 5, y: 10 });
+  });
+
+  it('세로로 긴 스테이지에서는 세로 백분율이 작아진다 (비의 방향을 뒤집지 않는다)', () => {
+    expect(squareGridSteps(10, { width: 400, height: 800 })).toEqual({ x: 10, y: 5 });
+  });
+
+  it('정사각 스테이지에서는 두 축이 같은 값이다 (종전과 같은 그림)', () => {
+    expect(squareGridSteps(10, { width: 400, height: 400 })).toEqual({ x: 10, y: 10 });
+  });
+
+  it('소수 넷째 자리에서 턴다 — 그리는 쪽과 붙는 쪽이 같은 수를 본다', () => {
+    // 나누어떨어지지 않는 비에서도 두 자리가 **한 함수**를 지나므로 값이 갈리지 않는다.
+    const cell = squareGridSteps(10, { width: 300, height: 173 });
+    expect(cell.y).toBe(17.3410);
+  });
+
+  it('잴 수 없는 스테이지에서는 두 축에 같은 값을 준다 (종전 동작)', () => {
+    // 이 경로의 값이 쓰이는 곳은 Shift+방향키 한 칸뿐이며, 거기서는 "축 길이의 step%" 가
+    // 여전히 뜻이 성립한다(붙임 자체는 손대지 않는 경로로 빠진다).
+    expect(squareGridSteps(10, { width: 0, height: 0 })).toEqual({ x: 10, y: 10 });
+    expect(squareGridSteps(10, { width: 200, height: 0 })).toEqual({ x: 10, y: 10 });
+    expect(squareGridSteps(10, { width: Number.NaN, height: 100 })).toEqual({ x: 10, y: 10 });
+  });
+
+  it('붙는 자리도 그 정사각 칸을 따른다 — 파생이 한 함수를 지나기 때문이다', () => {
+    // 800×400 · 간격 10% → 칸은 80px. 중심이 (100,100) px 인 상자를 살짝 끈다.
+    const anchor = { x: 60, y: 80, w: 80, h: 40 };
+    const cell = squareGridSteps(10, WIDE_STAGE);
+    const px = cellPx(cell.x, WIDE_STAGE.width);
+    expect(px).toBe(80);
+
+    const snapped = snapDelta({ dx: 0.03, dy: 0.06 }, anchor, WIDE_STAGE);
+    const centerX = anchor.x + anchor.w / 2 + snapped.dx * WIDE_STAGE.width;
+    const centerY = anchor.y + anchor.h / 2 + snapped.dy * WIDE_STAGE.height;
+
+    // 100 + 24 = 124 → 80 의 배수 중 가장 가까운 것은 160. 100 + 24 = 124 → 160.
+    expect(centerX % px).toBeCloseTo(0, 6);
+    expect(centerY % px).toBeCloseTo(0, 6);
+  });
+});
+
 // --- 격자 붙임 (T12 · AC-E5) ----------------------------------------------
 
 describe('격자 붙임은 요소의 **중심**을 격자에 맞춘다 (AC-E5)', () => {
@@ -102,14 +176,16 @@ describe('격자 붙임은 요소의 **중심**을 격자에 맞춘다 (AC-E5)',
   });
 
   it('두 축이 저마다의 스테이지 길이로 죄인다 (축을 뒤바꾸지 않는다)', () => {
-    // y 는 스테이지가 100px 이라 격자 한 칸이 10px 이다. 중심 20% + 7% = 27% → 30%.
-    const snapped = snapDelta({ dx: 0, dy: 0.07 }, ANCHOR, STAGE);
-    expect(snapped.dy).toBeCloseTo(0.1, 9);
+    // 칸은 정사각이므로 두 축 모두 20px 이다(폭 200 의 10%). y 는 스테이지가 100px 이라
+    // 그 20px 이 20% 다 — 중심 20px + 12px = 32px → 40px 로 붙는다 → 이동량 20px = 0.2.
+    const snapped = snapDelta({ dx: 0, dy: 0.12 }, ANCHOR, STAGE);
+    expect(snapped.dy).toBeCloseTo(0.2, 9);
     expect(snapped.dx).toBeCloseTo(0, 9);
   });
 
   it('이미 눈금 위면 이동량이 그대로다', () => {
-    expect(snapDelta({ dx: 0.1, dy: 0.1 }, ANCHOR, STAGE)).toEqual({ dx: 0.1, dy: 0.1 });
+    // x 는 40px + 20px = 60px, y 는 20px + 20px = 40px — 둘 다 20px 칸의 배수다.
+    expect(snapDelta({ dx: 0.1, dy: 0.2 }, ANCHOR, STAGE)).toEqual({ dx: 0.1, dy: 0.2 });
   });
 
   it('**스테이지의 40% 를 넘어가도 붙잡히지 않는다** — 상한을 무한대로 넘긴다 (위험 R6)', () => {
@@ -118,9 +194,10 @@ describe('격자 붙임은 요소의 **중심**을 격자에 맞춘다 (AC-E5)',
   });
 
   it('스테이지를 통째로 벗어나는 이동량도 그대로 살아 나온다', () => {
-    const snapped = snapDelta({ dx: 1.3, dy: 0.9 }, ANCHOR, STAGE);
+    // y 는 칸이 20px(= 20%) 이므로 중심 20px + 100px = 120px 이 그대로 눈금 위다.
+    const snapped = snapDelta({ dx: 1.3, dy: 1.0 }, ANCHOR, STAGE);
     expect(snapped.dx).toBeCloseTo(1.3, 9);
-    expect(snapped.dy).toBeCloseTo(0.9, 9);
+    expect(snapped.dy).toBeCloseTo(1.0, 9);
   });
 
   it('음의 방향도 마찬가지다 (상한은 양쪽에 없다)', () => {
@@ -156,11 +233,19 @@ describe('붙는 눈금은 넘긴 간격을 따른다 (화면에 그린 간격�
     expect(implicit).toEqual(explicit);
   });
 
-  it('두 축이 같은 간격을 쓴다 (한 축만 바뀌면 격자가 직사각형이 된다)', () => {
-    // y 는 스테이지가 100px 이라 20% 가 20px 이다. 중심 20% + 7% = 27% → 20% 로 되돌아간다.
-    const snapped = snapDelta({ dx: 0.0625, dy: 0.07 }, ANCHOR, STAGE, 20);
-    expect(snapped.dx).toBeCloseTo(0, 9);
-    expect(snapped.dy).toBeCloseTo(0, 9);
+  it('두 축은 같은 **px 칸**을 쓴다 — 그래서 백분율은 서로 다르다', () => {
+    // 간격 20% 는 폭 200px 의 20% = 40px 칸이다. 세로도 같은 40px 이며, 그것이 높이
+    // 100px 에 대해서는 40% 다. 두 축에 같은 20% 를 주던 시절에는 칸이 40×20 px 이었다.
+    //
+    // x: 중심 40px + 50px = 90px → 80px 로 붙는다 → 이동량 40px = 0.2.
+    // y: 중심 20px + 50px = 70px → 80px 로 붙는다 → 이동량 60px = 0.6.
+    const snapped = snapDelta({ dx: 0.25, dy: 0.5 }, ANCHOR, STAGE, 20);
+
+    const centerX = ANCHOR.x + ANCHOR.w / 2 + snapped.dx * STAGE.width;
+    const centerY = ANCHOR.y + ANCHOR.h / 2 + snapped.dy * STAGE.height;
+    // 붙은 중심이 두 축 모두 **같은 40px 칸**의 배수 위에 앉는다.
+    expect(centerX).toBeCloseTo(80, 6);
+    expect(centerY).toBeCloseTo(80, 6);
   });
 
   it('**간격을 바꿔도 상한은 여전히 무한대다** — 위험 R6 은 간격마다 되살아날 수 있다', () => {

@@ -1185,7 +1185,7 @@
       },
       "elements": {
         "orderHint": "Elements lower in the list are drawn on top. Moving up/down is the draw order.",
-        "empty": "No elements yet. Pick a kind below to start.",
+        "empty": "No elements yet. Pick a shape from the palette on the left to start.",
         "kindRect": "Rectangle",
         "kindEllipse": "Ellipse",
         "kindLine": "Line",

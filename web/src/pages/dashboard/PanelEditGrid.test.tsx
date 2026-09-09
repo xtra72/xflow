@@ -73,13 +73,47 @@ describe('진하기 한 벌을 더 둔다 — 컴포넌트를 쪼개지 않는�
 });
 
 describe('간격은 그린 선 자리에 그대로 나타난다', () => {
-  it('넘긴 간격이 두 축 모두에 쓰인다', () => {
+  it('간격 하나만 넘기면 두 축 모두에 쓰인다 (종전 그대로다)', () => {
     render(<PanelEditGrid enabled step={20} />);
 
     const image = grid().style.backgroundImage;
     expect(image).toContain('transparent 1px 20%');
-    // 가로·세로 두 그라디언트가 같은 간격을 쓴다 — 한 축만 바뀌면 격자가 직사각형이 된다.
+    // 세로를 따로 주지 않으면 가로 값을 그대로 쓴다 — 다섯 패널이 지나는 그 길이다.
     expect(image.match(/transparent 1px 20%/g)).toHaveLength(2);
     expect(image).not.toContain('10%');
+  });
+});
+
+// --- 세로 간격을 따로 받는다 (사용 시험: "격자가 일정하지 않음") -------------
+//
+// 백분율은 제 축 길이에 대한 값이라, 두 축에 같은 수를 주면 정사각형이 아닌 상자에서 칸이
+// 직사각형이 된다. 그것을 바꾸려는 부르는 쪽(캔버스)만 두 값을 넘기고, 나머지 다섯 패널은
+// 종전 그대로여야 한다 — 그 "종전 그대로" 는 위 §기본값 절이 글자 그대로 못 박는다.
+
+describe('세로 간격은 따로 받되 기본은 가로와 같다 (`stepY`)', () => {
+  it('세로 간격을 주면 아래 방향 그라디언트만 그 값을 쓴다', () => {
+    render(<PanelEditGrid enabled step={10} stepY={20} />);
+
+    const image = grid().style.backgroundImage;
+    expect(image).toContain('to right, rgba(148, 163, 184, 0.28) 0 1px, transparent 1px 10%');
+    expect(image).toContain('to bottom, rgba(148, 163, 184, 0.28) 0 1px, transparent 1px 20%');
+  });
+
+  it('세로를 가로와 같은 값으로 주는 것과 생략하는 것은 같은 그림이다', () => {
+    const { container: implicit } = render(<PanelEditGrid enabled step={20} />);
+    const implicitHtml = implicit.innerHTML;
+    cleanup();
+    const { container: explicit } = render(<PanelEditGrid enabled step={20} stepY={20} />);
+
+    expect(explicit.innerHTML).toBe(implicitHtml);
+  });
+
+  it('진하기와 함께 넘겨도 서로를 밀어내지 않는다', () => {
+    render(<PanelEditGrid enabled step={5} stepY={10} strength="strong" />);
+
+    const image = grid().style.backgroundImage;
+    expect(image).toContain('rgba(148, 163, 184, 0.6)');
+    expect(image).toContain('transparent 1px 5%)');
+    expect(image).toContain('transparent 1px 10%)');
   });
 });

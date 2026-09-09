@@ -24,7 +24,7 @@
 // @spec SPEC-CANVAS-001
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, ChevronUp, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronUp, Trash2 } from 'lucide-react';
 
 import { FieldHelp } from '@/components/property/FieldHelp';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
@@ -65,7 +65,7 @@ import {
   useCanvasLiveSeries,
   type CanvasSeriesOption,
 } from './canvasEditContext';
-import { appendElement, withElementText } from './canvasElementFactory';
+import { withElementText } from './canvasElementFactory';
 import CanvasRuleTableEditor from './CanvasRuleTableEditor';
 
 // --- 상수 ---------------------------------------------------------------
@@ -466,8 +466,12 @@ function FieldGroup({
  * 캔버스 요소 목록 편집기.
  *
  * 저술 값에 대해서는 제어 컴포넌트다 — 값 상태를 들지 않고 매 편집마다 config 패치를
- * 올린다. 추가할 종류만은 상태가 필요해 보이지만, 그것도 두지 않는다: 종류 선택 상자를
- * 각 종류마다 하나씩 두는 대신 "종류별 추가 버튼" 으로 두면 상태 없이도 같은 일이 된다.
+ * 올린다.
+ *
+ * **요소를 만드는 자리는 여기가 아니다.** 도형은 미리보기 왼쪽 도크의 팔레트
+ * (`CanvasEditDock`)에서 놓는다 — 한때 이 목록 하단에도 종류별 추가 버튼 한 줄이
+ * 있었지만, 팔레트가 이름과 누를 면적을 갖춘 뒤로는 같은 함수를 부르는 입구가 둘일
+ * 이유가 없었다. 이 편집기는 **이미 있는 요소를 수치로 고치는 자리**다.
  *
  * 예외는 **펼침 여부** 하나다. 이것은 저술이 아니라 보기 상태라 config 에 넣지 않는다 —
  * 넣으면 한 사람이 줄을 접은 것이 대시보드를 함께 보는 모두의 저장된 값이 된다. 그래서
@@ -569,19 +573,6 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
 
   const replaceAt = (idx: number, el: CanvasElement): void => {
     emit(elements.map((e, i) => (i === idx ? el : e)));
-  };
-
-  /**
-   * 새 요소는 **펼친 채로** 붙는다. 추가는 되먹임이 필요한 동작이라(눌렀는데 아무 일도
-   * 없어 보이면 사용자는 다시 누른다) 갓 만든 것만은 열어 둔다 — 목록이 조용히 길어지는
-   * 대신 방금 만든 것이 화면에서 스스로를 소개한다.
-   */
-  const addElement = (kind: CanvasElementKind): void => {
-    // 캔버스 팔레트가 부르는 것과 **같은 함수**다(T9 · 가정 A7) — 씨앗 기하·계단 오프셋·
-    // id 규칙이 어디서 더하든 같다.
-    const { next, created } = appendElement(elements, kind);
-    setExpandedIds((prev) => new Set(prev).add(created.id));
-    emit(next);
   };
 
   const removeAt = (idx: number): void => emit(elements.filter((_, i) => i !== idx));
@@ -1256,22 +1247,12 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
         </div>
       )}
 
-      {/* 추가 — 종류마다 버튼 하나. 선택 상자 + 추가 버튼으로 두면 "무엇을 추가할지" 가
-          컴포넌트 상태가 되는데, 그 상태는 저장되지도 쓰이지도 않는다. */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Plus className="h-3 w-3 text-blue-500" />
-        {ELEMENT_KINDS.map((k) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => addElement(k)}
-            className="rounded border border-(--color-border-default) px-1.5 py-0.5 text-xs font-medium text-blue-500 hover:text-blue-600"
-            data-testid={`canvas-element-add-${k}`}
-          >
-            {t(KIND_LABEL_KEY[k])}
-          </button>
-        ))}
-      </div>
+      {/* 여기에 종류별 추가 버튼 한 줄이 있었다. 도형 팔레트가 미리보기 왼쪽 도크로
+          옮겨 오면서(`CanvasEditDock`) 같은 화면에 **같은 일을 하는 입구가 둘**이 되었고,
+          둘 중 하나는 이름도 아이콘도 더 큰 자리를 가진 쪽이다. 두 입구가 정확히 같은
+          함수(`appendElement`)를 부르는 한 남은 것은 중복뿐이라 걷어낸다.
+
+          생성 경로 자체는 그대로다 — 도크가 그 함수를 부른다. */}
     </div>
   );
 }

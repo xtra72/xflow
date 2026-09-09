@@ -746,7 +746,11 @@ import koMessages from '@/lib/i18n/ko.json';
 import enMessages from '@/lib/i18n/en.json';
 
 import type { LineGeometry, PointGeometry } from './canvasConfig';
-import { CANVAS_GRID_STEP_CHOICES, CANVAS_GRID_STEP_PERCENT } from './canvasEditArrange';
+import {
+  CANVAS_GRID_STEP_CHOICES,
+  CANVAS_GRID_STEP_PERCENT,
+  squareGridSteps,
+} from './canvasEditArrange';
 import {
   BOX_HANDLE_IDS,
   CANVAS_FONT_SIZE_MAX,
@@ -1626,12 +1630,15 @@ describe('격자 붙임 — 토글 하나가 표시와 붙임을 함께 켠다 (
     stubOverlayRect();
     fireEvent.click(gridToggle());
 
-    // 세로 7px = 7% → 중심 20% + 7% = 27% → 30%.
+    // 칸은 정사각이라 세로도 20px 이다(폭 200 의 10%). 중심 20px + 12px = 32px → 40px.
     send('pointerdown', 20, 20);
-    send('pointermove', 20, 27);
+    send('pointermove', 20, 32);
     await nextFrame();
 
-    expect((emittedGeometry(emit, 'a') as BoxGeometry).y).toBeCloseTo(0.2, 9);
+    const moved = emittedGeometry(emit, 'a') as BoxGeometry;
+    expect(moved.y).toBeCloseTo(0.3, 9);
+    // 중심이 실제로 20px 칸의 배수(40px) 위에 앉았다 — 가로 칸과 같은 px 다.
+    expect((moved.y + moved.h / 2) * 100).toBeCloseTo(40, 6);
   });
 
   it('**스테이지의 40% 를 한참 넘겨도 계속 간다** — 상한이 새어 들어오면 0.4 에서 멈춘다 (위험 R6 · AC-E5)', async () => {
@@ -1837,6 +1844,129 @@ describe('격자 간격 — 고른 값 하나가 그림과 붙임을 함께 정�
     pickGridStep(5);
 
     expect(raf).not.toHaveBeenCalled();
+  });
+});
+
+// --- 격자 칸은 정사각형이다 (사용 시험: "격자가 일정하지 않음") -------------
+//
+// 그라디언트의 백분율은 **제 축 길이에 대한** 값이다. 그래서 두 축에 같은 10% 를 주면
+// 800×400 패널에서 칸이 80×40 px 이 된다 — 화면에서 본 그대로 직사각형이다.
+//
+// **픽스처가 정사각형이면 이 절은 실패할 수 없다.** 400×400 에서는 옛 방식과 새 방식이
+// 같은 값을 낸다. 그래서 여기서만 스테이지를 800×400 으로 두고, `stubOverlayRect` 도 같은
+// 치수로 심는다(포인터 좌표가 스테이지 공간으로 되돌아오는 그 비를 1 로 만든다).
+//
+// 그리고 **그린 것과 붙는 것을 함께** 본다. 정사각 칸을 그리면서 옛 백분율로 붙으면
+// 화면이 거짓말을 하는데, 그 거짓말은 CSS 만 보는 시험도 좌표만 보는 시험도 보지 못한다.
+
+/** 가로가 세로의 두 배인 스테이지. 정사각 픽스처로는 이 절의 시험이 성립하지 않는다. */
+const WIDE_STAGE: StageSize = { width: 800, height: 400 };
+
+/** 그려진 격자의 두 축 백분율을 CSS 에서 그대로 읽는다. */
+function drawnSteps(): { x: number; y: number } {
+  const image = gridImage();
+  const right = /to right,.*?transparent 1px ([\d.]+)%\)/.exec(image);
+  const bottom = /to bottom,.*?transparent 1px ([\d.]+)%\)/.exec(image);
+  expect(right, `가로 그라디언트를 읽지 못했다: ${image}`).not.toBeNull();
+  expect(bottom, `세로 그라디언트를 읽지 못했다: ${image}`).not.toBeNull();
+  return { x: Number(right![1]), y: Number(bottom![1]) };
+}
+
+/** 그려진 칸 하나의 실제 크기(px). 두 축이 같아야 칸이 정사각형이다. */
+function drawnCellPx(): { x: number; y: number } {
+  const steps = drawnSteps();
+  return {
+    x: (steps.x / 100) * WIDE_STAGE.width,
+    y: (steps.y / 100) * WIDE_STAGE.height,
+  };
+}
+
+/** 800×400 스테이지에 사각형 하나를 세우고 격자를 켠다. px 상자는 (40,40,160,80) 이다. */
+function renderWide(step?: number): ReturnType<typeof vi.fn> {
+  const emit = vi.fn();
+  render(
+    <Harness elements={[rect('a', SNAP_GEOMETRY)]} stage={WIDE_STAGE} onElementsChange={emit} />,
+  );
+  stubOverlayRect(0, 0, WIDE_STAGE.width, WIDE_STAGE.height);
+  fireEvent.click(gridToggle());
+  if (step !== undefined) pickGridStep(step);
+  return emit;
+}
+
+/** 지금 통보된 사각형의 중심(스테이지 로컬 px). */
+function centerPx(emit: ReturnType<typeof vi.fn>): { x: number; y: number } {
+  const g = emittedGeometry(emit, 'a') as BoxGeometry;
+  return {
+    x: (g.x + g.w / 2) * WIDE_STAGE.width,
+    y: (g.y + g.h / 2) * WIDE_STAGE.height,
+  };
+}
+
+describe('격자 칸은 정사각형이다 (사용 시험: "격자가 일정하지 않음")', () => {
+  it('가로세로 비가 다른 패널에서도 그려진 칸의 두 변이 **같은 px** 이다', () => {
+    for (const step of CANVAS_GRID_STEP_CHOICES) {
+      cleanup();
+      renderWide(step);
+      const cell = drawnCellPx();
+      expect(cell.x, `${step}% 에서 칸이 직사각형이다`).toBeCloseTo(cell.y, 6);
+    }
+  });
+
+  it('두 축의 **백분율**은 서로 다르다 — 그것이 정사각형이 되는 방식이다', () => {
+    renderWide();
+    // 800×400 이면 세로 백분율이 두 배다. 같은 수를 두 축에 쓰던 것이 결함이었다.
+    expect(drawnSteps()).toEqual({ x: 10, y: 20 });
+  });
+
+  it('붙는 자리가 **그려진 칸**의 배수다 — 간격을 바꿔도 그렇다', async () => {
+    // 그림과 붙임이 갈라지면 "붙긴 붙는데 선하고 안 맞는다" 가 된다. 간격을 여러 개
+    // 지나는 것이 중요하다 — 한 값에서만 맞는 파생은 파생이 아니라 우연이다.
+    for (const step of CANVAS_GRID_STEP_CHOICES) {
+      cleanup();
+      const emit = renderWide(step);
+      const cell = drawnCellPx();
+
+      // 상자 안(120,80)을 잡아 대각선으로 끈다 — 두 축이 함께 걸린다.
+      send('pointerdown', 120, 80);
+      send('pointermove', 170, 130);
+      await nextFrame();
+
+      const center = centerPx(emit);
+      expect(center.x % cell.x, `${step}% 가로`).toBeCloseTo(0, 6);
+      expect(center.y % cell.y, `${step}% 세로`).toBeCloseTo(0, 6);
+    }
+  });
+
+  it('붙은 뒤 두 축이 같은 눈금 값을 가리킨다 (축을 뒤바꾸지 않는다)', async () => {
+    const emit = renderWide();
+    const cell = drawnCellPx();
+
+    send('pointerdown', 120, 80);
+    send('pointermove', 170, 130);
+    await nextFrame();
+
+    // 칸 80px · 중심 (120,80) → (170,130) → 가장 가까운 눈금은 두 축 모두 160px 이다.
+    expect(cell.x).toBe(80);
+    const center = centerPx(emit);
+    expect(center.x).toBeCloseTo(160, 6);
+    expect(center.y).toBeCloseTo(160, 6);
+  });
+
+  it('Shift+방향키가 **그려진 칸 하나**만큼 옮긴다 (두 축이 같은 px 다)', () => {
+    const emit = renderWide();
+    const cell = drawnCellPx();
+
+    // 눌러서 고른 뒤 손을 뗀다(놓기가 "제자리 확정" 쓰기를 한 번 낸다). 하네스는 통보를
+    // 되먹이지 않으므로 **매 키의 기준은 언제나 초기 기하**이며, 그 중심이 (120,80) 이다.
+    send('pointerdown', 120, 80);
+    send('pointerup', 120, 80);
+    emit.mockClear();
+
+    sendKey('ArrowRight', { shiftKey: true });
+    expect(centerPx(emit).x - 120).toBeCloseTo(cell.x, 6);
+
+    sendKey('ArrowDown', { shiftKey: true });
+    expect(centerPx(emit).y - 80).toBeCloseTo(cell.y, 6);
   });
 });
 
@@ -2321,15 +2451,18 @@ describe('방향키가 고른 것을 옮긴다 (AC-08)', () => {
     expectBox(emittedGeometry(emit, 'a'), { x: 0.2, y: 0.2 - 1 / 100, w: 0.4, h: 0.4 });
   });
 
-  it('Shift 는 한 격자 칸을 옮긴다 — 간격은 canvasEditArrange 가 내보내는 그 값이다', () => {
+  it('Shift 는 한 격자 칸을 옮긴다 — 칸은 정사각이라 축마다 분수가 다르다', () => {
     const emit = renderPickedBox();
-    const cell = CANVAS_GRID_STEP_PERCENT / 100;
+    // 200×100 스테이지에서 10% 칸은 20px 이다. 가로로는 스테이지의 0.1, 세로로는 0.2 —
+    // **같은 px** 를 두 축의 분수로 옮기면 두 수가 갈린다.
+    const cell = squareGridSteps(CANVAS_GRID_STEP_PERCENT, STAGE);
+    expect((cell.x / 100) * STAGE.width).toBeCloseTo((cell.y / 100) * STAGE.height, 6);
 
     sendKey('ArrowRight', { shiftKey: true });
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2 + cell, y: 0.2, w: 0.4, h: 0.4 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 0.2 + cell.x / 100, y: 0.2, w: 0.4, h: 0.4 });
 
     sendKey('ArrowUp', { shiftKey: true });
-    expectBox(emittedGeometry(emit, 'a'), { x: 0.2, y: 0.2 - cell, w: 0.4, h: 0.4 });
+    expectBox(emittedGeometry(emit, 'a'), { x: 0.2, y: 0.2 - cell.y / 100, w: 0.4, h: 0.4 });
   });
 
   it('크기는 건드리지 않는다 — 방향키는 이동이지 크기 조절이 아니다', () => {
@@ -2418,9 +2551,10 @@ describe('방향키가 고른 것을 옮긴다 (AC-08)', () => {
 
     sendKey('ArrowDown', { shiftKey: true });
 
+    const cell = squareGridSteps(CANVAS_GRID_STEP_PERCENT, STAGE);
     const g = emittedGeometry(emit, 't') as PointGeometry;
     expect(g.x).toBeCloseTo(0.5, 10);
-    expect(g.y).toBeCloseTo(0.5 + CANVAS_GRID_STEP_PERCENT / 100, 10);
+    expect(g.y).toBeCloseTo(0.5 + cell.y / 100, 10);
   });
 
   it('쓰기는 기하 통로를 지나 스타일·문구를 보존한다 (REQ-06)', () => {

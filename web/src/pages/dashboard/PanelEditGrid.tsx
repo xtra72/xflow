@@ -17,6 +17,22 @@
 // 둘이 되는 비용이 색 한 벌을 고르는 비용보다 크다. 그래서 **진하기만 한 벌 더** 둔다.
 // 기본값(`subtle`)은 종전 값 그대로이므로 부르던 자리들의 그림은 한 픽셀도 바뀌지 않는다.
 //
+// ## 세로 간격을 따로 받는 이유 (`stepY`)
+//
+// 그라디언트의 백분율은 **제 축 길이에 대한** 값이다 — `to right` 의 10% 는 폭의 10%,
+// `to bottom` 의 10% 는 높이의 10% 다. 그래서 두 축에 같은 백분율을 주면 정사각형이
+// 아닌 상자에서는 칸이 직사각형이 된다(800×400 이면 80×40 px).
+//
+// 그것은 **원래 쓰던 다섯 패널에서는 옳다.** 그쪽 요소의 자리는 축마다의 백분율 오프셋
+// 이라 격자도 같은 축을 그려야 오프셋 눈금과 격자선이 만난다. 그러나 캔버스는 그림을
+// 그리는 자리라 사용자가 **정사각 칸**을 기대한다.
+//
+// 그래서 여기서도 컴포넌트를 쪼개지 않고 **세로 간격 하나를 더 받는다**(`strength` 와
+// 같은 방식이다). 생략하면 `step` 과 같은 값이므로 다섯 패널의 그림은 한 글자도 바뀌지
+// 않고, 캔버스만 "한 물리 칸에서 파생한 두 백분율"(`canvasEditArrange.squareGridSteps`)
+// 을 넘겨 정사각 칸을 얻는다. 두 축의 값을 **부르는 쪽이 한 계산에서** 만들어 오므로,
+// 그리는 간격과 붙는 간격이 갈라질 자리는 여기에도 생기지 않는다.
+//
 // @spec SPEC-CHART-004 §2.7 [U7] · SPEC-CANVAS-002 REQ-04
 
 import { GRID_STEP_PERCENT } from './panels/charts/panelEditAlign';
@@ -49,11 +65,19 @@ const PAINT: Record<PanelEditGridStrength, GridPaint> = {
 export function PanelEditGrid({
   enabled,
   step = GRID_STEP_PERCENT,
+  stepY = step,
   strength = 'subtle',
 }: {
   enabled: boolean;
-  /** 격자 간격(%). 기본은 `panelEditAlign` 이 소유하는 10%. */
+  /** 가로 격자 간격(%) — 상자 **폭**에 대한 값. 기본은 `panelEditAlign` 이 소유하는 10%. */
   step?: number;
+  /**
+   * 세로 격자 간격(%) — 상자 **높이**에 대한 값. 생략하면 `step` 과 같다.
+   *
+   * 같은 값을 두 축에 주면 정사각형이 아닌 상자에서 칸이 직사각형이 된다. 그것을 바꾸려는
+   * 부르는 쪽(캔버스)만 두 값을 함께 넘긴다(위 머리말 §세로 간격).
+   */
+  stepY?: number;
   /** 진하기. 기본은 요소 뒤에 깔리는 패널용 `subtle` 이다. */
   strength?: PanelEditGridStrength;
 }): React.ReactElement | null {
@@ -67,7 +91,7 @@ export function PanelEditGrid({
       style={{
         backgroundImage: [
           `repeating-linear-gradient(to right, ${paint.line} 0 1px, transparent 1px ${step}%)`,
-          `repeating-linear-gradient(to bottom, ${paint.line} 0 1px, transparent 1px ${step}%)`,
+          `repeating-linear-gradient(to bottom, ${paint.line} 0 1px, transparent 1px ${stepY}%)`,
         ].join(', '),
       }}
     >

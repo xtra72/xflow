@@ -43,6 +43,15 @@
 // `snapDelta` 의 `step` 인자 하나가 붙임을 정하고, 호출부는 **그 값을 격자 표시에도 그대로**
 // 넘긴다. 보이는 간격과 붙는 간격이 갈라지면 화면이 거짓말을 한다.
 //
+// ## 칸은 정사각형이다 — 그래서 축마다 백분율이 다르다
+//
+// 백분율은 언제나 제 축 길이에 대한 값이라, 두 축에 같은 10% 를 주면 800×400 스테이지에서
+// 칸이 80×40 px 이 된다. 캔버스는 그림을 그리는 자리이므로 칸이 정사각이어야 한다. 그래서
+// `squareGridSteps` 가 고른 값 하나(폭 기준)에서 **한 물리 칸**을 정하고 그것을 두 축의
+// 백분율로 옮겨 적는다. 그리는 쪽(`PanelEditGrid` 의 `step`/`stepY`) · 붙는 쪽(`snapDelta`)
+// · Shift+방향키 한 칸이 **모두 그 함수 하나를 지나므로**, 백분율이 둘이 되어도 칸은
+// 여전히 하나다.
+//
 // ## z-order — 두 번째 규칙을 만들지 않는다
 //
 // 001 의 z-order 수단은 **배열 순서 하나뿐**이다(뒤 = 위). 목록 편집기의 위/아래 이동
@@ -121,6 +130,66 @@ export const CANVAS_GRID_STEP_PERCENT = GRID_STEP_PERCENT;
  */
 export const CANVAS_GRID_STEP_CHOICES: readonly number[] = [5, 10, 20];
 
+/**
+ * 두 축의 격자 간격(%) — **같은 물리 칸 하나**를 축마다의 백분율로 옮겨 적은 것이다.
+ *
+ * 백분율이 두 개인 것이 칸이 두 종류라는 뜻은 아니다. 칸은 하나(px)이고, 그것을 그리는
+ * 자리(`repeating-linear-gradient`)와 붙이는 자리(`snapOffsetToGrid`)가 **둘 다 제 축
+ * 길이에 대한 백분율**로만 말할 수 있어서 두 번 옮겨 적을 뿐이다.
+ */
+export interface GridSteps {
+  /** 가로 간격 — 스테이지 **폭**에 대한 백분율. 고른 값 그대로다. */
+  x: number;
+  /** 세로 간격 — 스테이지 **높이**에 대한 백분율. 같은 px 칸이 되도록 다시 잰 값이다. */
+  y: number;
+}
+
+/**
+ * 고른 간격 하나에서 **정사각 칸**의 두 축 백분율을 만든다.
+ *
+ * ## 왜 필요한가
+ *
+ * 백분율은 언제나 **제 축 길이에 대한** 값이다. 그래서 두 축에 같은 10% 를 주면
+ * 800×400 스테이지에서 칸이 80×40 px 이 된다 — 눈에 보이는 그대로 직사각형이다.
+ * 통계·바·파이·게이지·선에서는 그것이 옳다(그 패널의 요소 자리가 축마다의 백분율
+ * 오프셋이므로 격자도 같은 축을 그려야 눈금과 선이 만난다). **캔버스는 그림을 그리는
+ * 자리이고, 그리는 사람은 정사각 칸을 기대한다.**
+ *
+ * ## 기준 축이 폭인 이유
+ *
+ * 칸 하나의 크기를 정하려면 어느 축을 그대로 두고 어느 축을 따라가게 할지 골라야 한다.
+ * 여기서는 **폭**을 그대로 둔다.
+ *
+ *   1. `step` 의 뜻이 보존된다. 고르는 값 5·10·20 은 "100 을 나누어떨어지게 해서 마지막
+ *      선이 모서리에 앉는다" 는 근거로 뽑혔고(`CANVAS_GRID_STEP_CHOICES`), 그 성질은
+ *      기준 축에서만 성립한다. 폭을 기준으로 두면 "10% = 가로 10칸" 이라는 화면의 말이
+ *      그대로 남는다.
+ *   2. **지나치게 촘촘해지지 않는다.** 대시보드 패널은 대개 세로보다 가로가 길다. 높이를
+ *      기준으로 삼으면 그 패널에서 가로 칸 수가 비율만큼 늘어 선이 뭉개지고, 그것은
+ *      `GRID_STEP_PERCENT` 주석이 10 을 고르며 피한 바로 그 상태다. 반대로 폭을 기준으로
+ *      두면 세로 칸이 성겨질 뿐이며, 성긴 격자는 붙을 자리가 줄 뿐 참조선 구실은 남는다.
+ *      실패의 대가가 한쪽으로 크게 기운다.
+ *
+ * 대가는 명확하다: 세로 백분율은 100 을 나누어떨어지지 않을 수 있어 **마지막 가로선이
+ * 아래 모서리에 앉지 않는다**. 그것을 감수하는 것이 위 두 이유이며, 어느 축을 고르든
+ * 종횡비가 정수가 아닌 한 한쪽은 반드시 자투리를 갖는다.
+ *
+ * ## 잴 수 없는 스테이지
+ *
+ * 축 길이를 모르면 두 축에 **같은 값**을 돌려준다 — 종전 동작이며, 그때는 붙임 자체가
+ * 손대지 않는 경로(`snapAxis`)로 빠지므로 값이 쓰이는 곳은 Shift+방향키 한 칸뿐이다.
+ * 거기서는 "한 칸 = 축 길이의 `step`%" 가 여전히 뜻이 성립한다.
+ *
+ * 소수 넷째 자리에서 턴다. `snapOffsetToGrid` 가 결과 좌표에 대해 하는 것과 같은 규율이고
+ * (화면 해상도보다 훨씬 곱다), **그리는 쪽과 붙는 쪽이 이 함수 하나를 지나므로** 턴 값도
+ * 둘에 똑같이 간다 — 한쪽만 턴 값을 쓰면 그 차이가 곧 화면의 거짓말이 된다.
+ */
+export function squareGridSteps(step: number, stage: StageSize): GridSteps {
+  if (!isFinite2(step, stage.width, stage.height)) return { x: step, y: step };
+  if (!(stage.width > 0) || !(stage.height > 0)) return { x: step, y: step };
+  return { x: step, y: Math.round(((step * stage.width) / stage.height) * 1e4) / 1e4 };
+}
+
 // --- 순수 도우미 ---------------------------------------------------------
 
 /** 유한한 수만 통과시킨다. 포인터 좌표는 NaN/Infinity 가 될 수 있다(§품질 게이트 Secured). */
@@ -170,6 +239,12 @@ function snapAxis(
  * `step` 은 **화면에 그려진 격자와 같은 값이어야 한다.** 보이는 간격과 붙는 간격이
  * 갈라지면 화면이 거짓말을 한다 — 그래서 호출부는 격자에 넘기는 그 값을 여기에도
  * 넘긴다(둘을 각자 정하는 자리를 만들지 않는다).
+ *
+ * **두 축은 같은 백분율을 쓰지 않는다.** `squareGridSteps` 가 고른 값 하나에서 정사각
+ * 칸의 두 축 백분율을 만들고, 이 함수는 그것을 **여기서 다시 파생한다** — 축 쌍을 인자로
+ * 받지 않는 것이 요점이다. 받으면 부르는 쪽이 그 쌍을 스스로 조립할 수 있고, 그 조립이
+ * 곧 그림과 어긋날 수 있는 두 번째 자리가 된다. 같은 `step`·같은 `stage` 를 주면 그리는
+ * 쪽과 이 자리가 **정의상** 같은 두 수를 본다.
  */
 export function snapDelta(
   delta: NormalizedDelta,
@@ -177,9 +252,10 @@ export function snapDelta(
   stage: StageSize,
   step: number = CANVAS_GRID_STEP_PERCENT,
 ): NormalizedDelta {
+  const cell = squareGridSteps(step, stage);
   return {
-    dx: snapAxis(delta.dx, anchor.x, anchor.w, stage.width, step),
-    dy: snapAxis(delta.dy, anchor.y, anchor.h, stage.height, step),
+    dx: snapAxis(delta.dx, anchor.x, anchor.w, stage.width, cell.x),
+    dy: snapAxis(delta.dy, anchor.y, anchor.h, stage.height, cell.y),
   };
 }
 

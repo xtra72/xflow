@@ -1,7 +1,10 @@
 // 캔버스 요소 목록 편집기 테스트 (SPEC-CANVAS-001 T8).
 //
 // 이 편집기가 지는 약속은 넷이고, 테스트의 무게중심도 거기에 둔다.
-//   1. 목록 조작(추가·삭제·순서)이 배열 순서 = z-order 를 그대로 바꾼다.
+//   1. 목록 조작(삭제·순서)이 배열 순서 = z-order 를 그대로 바꾼다. **추가는 이제 이
+//      편집기의 일이 아니다** — 도형을 만드는 자리는 미리보기 왼쪽 도크의 팔레트 하나이며,
+//      그래서 여기서 만드는 경로를 지나야 하는 시험(씨앗 기하 · 계단 오프셋 · 렌더 이음매)
+//      은 그 팔레트를 눌러 같은 상태에 닿는다(`setupPalette`).
 //   2. 기하 칸이 **종류가 요구하는 축만** 낸다(rect/ellipse 는 x·y·w·h, line 은 두 끝점,
 //      text 는 기준점).
 //   3. 종류를 바꿔도 스타일·문구·바인딩·규칙이 살아남고 기하만 새 형상으로 옮겨진다.
@@ -11,7 +14,8 @@
 //      이것은 편집기↔렌더 이음매를 지킨다. 두 층이 각자 옳으면서 사이가 빈 적이 있다:
 //      편집기는 `style: {}` 로 만들었고 렌더 층은 색 없는 요소를 (의도대로) 건너뛰어,
 //      "사각형" 을 눌러도 캔버스가 빈 채였다. 어느 쪽 단위 테스트도 이를 볼 수 없었으므로
-//      이 파일에서 `drawElement` 를 직접 불러 이음매를 건넌다.
+//      이 파일에서 `drawElement` 를 직접 불러 이음매를 건넌다. 만드는 자리가 도크로 옮겨
+//      간 뒤에도 **건너는 이음매는 같다** — 누르는 버튼만 팔레트로 바뀐다.
 //      **같은 이음매가 두 번 비었다.** 두 번째는 요소를 만드는 경로가 아니라 **문구를
 //      적는** 경로였다: 도형의 문구 칸에 `{value}` 를 적어도 아무도 `textColor` 를 심지
 //      않아 라벨이 그려지지 않았다(도형 라벨은 `fill` 로 폴백하지 않는다 — 폴백하면 라벨이
@@ -58,6 +62,7 @@ import { renderTextTemplate } from './canvasText';
 import { drawElements, type DrawContext2D } from './drawElement';
 import { SEED_COLOR, SEED_STROKE_WIDTH, SEED_TEXT_COLOR } from './canvasElementFactory';
 import CanvasEditOverlay from './CanvasEditOverlay';
+import { CanvasEditDockRegion } from './CanvasEditDock';
 import CanvasElementsEditor from './CanvasElementsEditor';
 import {
   CanvasEditSelectionContext,
@@ -173,6 +178,60 @@ function setupStateful(initial: Record<string, unknown>): { config: Record<strin
   return live;
 }
 
+// --- 만드는 자리는 도크 팔레트다 -----------------------------------------
+//
+// 목록 하단의 종류별 추가 버튼은 걷어냈다(도크 팔레트와 **같은 함수**를 부르는 입구가
+// 둘일 이유가 없다). 그래서 "만드는 경로를 지나야만 닿는 상태" 를 재는 시험들 — 씨앗
+// 기하·계단 오프셋·편집기↔렌더 이음매 — 은 지우는 대신 **남은 입구로 옮겨** 같은 상태에
+// 닿는다. 지우면 그 상태를 아무도 보지 않게 되는데, 결함이 살던 곳이 바로 거기다.
+
+/** 팔레트 시험이 쓰는 스테이지. 칠하기 시험과 같은 치수라 좌표가 정수 px 로 떨어진다. */
+const PALETTE_STAGE: StageSize = { width: 200, height: 100 };
+
+/**
+ * 도크 팔레트(+ 선택사항으로 목록 편집기)를 세우고 **살아 있는 요소 배열**을 돌려준다.
+ *
+ * 오버레이가 도구를 만들지만 그리는 자리는 도크이므로 `CanvasEditDockRegion` 이 함께
+ * 있어야 팔레트가 DOM 에 나온다(설정 미리보기와 같은 형상이다).
+ */
+function setupPalette(
+  initial: readonly CanvasElement[] = [],
+  opts: { withList?: boolean } = {},
+): { elements: CanvasElement[] } {
+  const live = { elements: [...initial] };
+  function Harness() {
+    const [elements, setElements] = useState<CanvasElement[]>([...initial]);
+    live.elements = elements;
+    const state = useCanvasEditSelectionState();
+    return (
+      <CanvasEditSelectionContext value={state}>
+        <CanvasEditDockRegion enabled>
+          <CanvasEditOverlay
+            enabled
+            elements={elements}
+            stage={PALETTE_STAGE}
+            textWidths={{}}
+            onElementsChange={setElements}
+          />
+        </CanvasEditDockRegion>
+        {opts.withList === true && (
+          <CanvasElementsEditor
+            config={cfg(elements)}
+            onConfigChange={(patch) => setElements(patch.elements as CanvasElement[])}
+          />
+        )}
+      </CanvasEditSelectionContext>
+    );
+  }
+  render(<Harness />);
+  return live;
+}
+
+/** 팔레트에서 도형 하나를 놓는다. */
+function place(kind: CanvasElementKind): void {
+  fireEvent.click(screen.getByTestId(`canvas-palette-add-${kind}`));
+}
+
 // --- 목록 조작 -----------------------------------------------------------
 
 describe('CanvasElementsEditor — 요소 목록', () => {
@@ -195,38 +254,46 @@ describe('CanvasElementsEditor — 요소 목록', () => {
     expect(screen.getByText('dashboard.canvas.elements.orderHint')).toBeTruthy();
   });
 
-  it('종류별 추가 버튼이 그 종류의 기본 기하를 가진 요소를 끝에 붙인다', () => {
-    const spy = setup(cfg([]));
+  it('목록에는 종류별 추가 버튼이 없다 — 만드는 자리는 도크 팔레트 하나다', () => {
+    // 같은 함수를 부르는 입구가 둘이면 화면에 같은 일을 하는 자리가 둘이 된다.
+    // 팔레트가 이름과 누를 면적을 갖춘 뒤로는 이 줄이 남을 이유가 없었다.
+    setup(cfg([rect()]), { expand: false });
+    for (const kind of ['rect', 'ellipse', 'line', 'text']) {
+      expect(screen.queryByTestId(`canvas-element-add-${kind}`)).toBeNull();
+    }
+  });
 
-    fireEvent.click(testid('canvas-element-add-rect'));
-    let next = lastElements(spy);
-    expect(next).toHaveLength(1);
-    expect(next[0]!.kind).toBe('rect');
-    expect(next[0]!.geometry).toEqual({ x: 0.1, y: 0.1, w: 0.2, h: 0.2 });
-    expect(next[0]!.id).toBe('el-1');
+  it('그 팔레트는 종류의 기본 기하를 가진 요소를 끝에 붙인다 (걷어낸 줄이 하던 일)', () => {
+    // 걷어낸 것은 **입구**이지 경로가 아니다. 같은 `appendElement` 를 지나므로 씨앗
+    // 기하·id 규칙도 그대로여야 한다 — 그 사실을 남은 입구에서 다시 잰다.
+    const live = setupPalette();
 
-    cleanup();
-    const spy2 = setup(cfg([]));
-    fireEvent.click(testid('canvas-element-add-line'));
-    next = lastElements(spy2);
-    expect(next[0]!.kind).toBe('line');
-    expect(next[0]!.geometry).toEqual({ x1: 0.1, y1: 0.5, x2: 0.9, y2: 0.5 });
-
-    cleanup();
-    const spy3 = setup(cfg([]));
-    fireEvent.click(testid('canvas-element-add-text'));
-    expect(lastElements(spy3)[0]!.geometry).toEqual({ x: 0.5, y: 0.5 });
+    place('rect');
+    expect(live.elements).toHaveLength(1);
+    expect(live.elements[0]!.kind).toBe('rect');
+    expect(live.elements[0]!.geometry).toEqual({ x: 0.1, y: 0.1, w: 0.2, h: 0.2 });
+    expect(live.elements[0]!.id).toBe('el-1');
 
     cleanup();
-    const spy4 = setup(cfg([]));
-    fireEvent.click(testid('canvas-element-add-ellipse'));
-    expect(lastElements(spy4)[0]!.kind).toBe('ellipse');
+    const line = setupPalette();
+    place('line');
+    expect(line.elements[0]!.geometry).toEqual({ x1: 0.1, y1: 0.5, x2: 0.9, y2: 0.5 });
+
+    cleanup();
+    const text = setupPalette();
+    place('text');
+    expect(text.elements[0]!.geometry).toEqual({ x: 0.5, y: 0.5 });
+
+    cleanup();
+    const ellipse = setupPalette();
+    place('ellipse');
+    expect(ellipse.elements[0]!.kind).toBe('ellipse');
   });
 
   it('신규 id 는 이미 쓰인 id 를 피해 결정적으로 붙는다', () => {
-    const spy = setup(cfg([rect({ id: 'el-1' }), rect({ id: 'el-2' })]));
-    fireEvent.click(testid('canvas-element-add-rect'));
-    expect(lastElements(spy)[2]!.id).toBe('el-3');
+    const live = setupPalette([rect({ id: 'el-1' }), rect({ id: 'el-2' })]);
+    place('rect');
+    expect(live.elements[2]!.id).toBe('el-3');
   });
 
   it('요소를 지우면 그 요소만 빠진다', () => {
@@ -884,20 +951,22 @@ describe('CanvasElementsEditor — parseCanvasConfig 왕복', () => {
     expect(parsed.background).toBe('#0a0a0a');
   });
 
-  it('신규 요소를 종류마다 하나씩 쌓아도 왕복에서 그대로다', () => {
-    const live = setupStateful(cfg([]));
-    fireEvent.click(testid('canvas-element-add-rect'));
-    fireEvent.click(testid('canvas-element-add-ellipse'));
-    fireEvent.click(testid('canvas-element-add-line'));
-    fireEvent.click(testid('canvas-element-add-text'));
+  it('팔레트로 종류마다 하나씩 쌓은 뒤 목록에서 고쳐도 왕복에서 그대로다', () => {
+    // 만드는 자리가 옮겨 갔어도 재는 것은 같다: **만들어진 것이 이 편집기를 지나
+    // 파서까지 온전히 돌아오는가.** 그래서 팔레트로 쌓고 목록으로 고친 뒤 왕복한다.
+    const live = setupPalette([], { withList: true });
+    place('rect');
+    place('ellipse');
+    place('line');
+    place('text');
 
-    expect((live.config.elements as CanvasElement[]).map((e) => e.kind)).toEqual([
-      'rect',
-      'ellipse',
-      'line',
-      'text',
-    ]);
-    expectRoundTrip(live.config);
+    expect(live.elements.map((e) => e.kind)).toEqual(['rect', 'ellipse', 'line', 'text']);
+
+    expandAllRows();
+    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '0.5' } });
+
+    expect(live.elements[0]!.style.opacity).toBe(0.5);
+    expectRoundTrip(cfg(live.elements));
   });
 
   it('종류를 바꾸고 규칙까지 붙인 요소도 왕복에서 그대로다', () => {
@@ -968,11 +1037,17 @@ function makePaintRecorder(): PaintRecorder {
 /** 200×100 스테이지(`drawElement.test.ts` 와 같은 치수 — 정규화 좌표가 정수 px 로 떨어진다). */
 const STAGE: StageSize = { width: 200, height: 100 };
 
-/** 추가 버튼을 눌러 **편집기가 실제로 만든** 요소를 꺼낸다. */
+/**
+ * 팔레트를 눌러 **화면이 실제로 만든** 요소를 꺼낸다.
+ *
+ * 목록 하단의 추가 버튼을 걷어낸 뒤 남은 유일한 입구다. 이음매를 건너는 이 시험들에서
+ * 중요한 것은 "어느 버튼을 눌렀는가" 가 아니라 **사용자가 화면에서 만든 그 값**이 렌더
+ * 층까지 살아 가는가이므로, 눌리는 버튼만 바꾸고 재는 것은 그대로 둔다.
+ */
 function addedElement(kind: CanvasElementKind): CanvasElement {
-  const spy = setup(cfg([]));
-  fireEvent.click(testid(`canvas-element-add-${kind}`));
-  const el = lastElements(spy)[0]!;
+  const live = setupPalette();
+  place(kind);
+  const el = live.elements[0]!;
   cleanup();
   return el;
 }
@@ -1142,12 +1217,12 @@ describe('CanvasElementsEditor — 신규 요소는 겹치지 않는다', () => 
   }
 
   it('같은 종류를 세 번 더하면 세 자리가 모두 다르다', () => {
-    const live = setupStateful(cfg([]));
-    fireEvent.click(testid('canvas-element-add-rect'));
-    fireEvent.click(testid('canvas-element-add-rect'));
-    fireEvent.click(testid('canvas-element-add-rect'));
+    const live = setupPalette();
+    place('rect');
+    place('rect');
+    place('rect');
 
-    const geos = (live.config.elements as CanvasElement[]).map((e) => JSON.stringify(e.geometry));
+    const geos = live.elements.map((e) => JSON.stringify(e.geometry));
     expect(new Set(geos).size).toBe(3);
     expect(geos[0]).toBe(JSON.stringify({ x: 0.1, y: 0.1, w: 0.2, h: 0.2 }));
     expect(geos[1]).toBe(JSON.stringify({ x: 0.15, y: 0.15, w: 0.2, h: 0.2 }));
@@ -1155,13 +1230,13 @@ describe('CanvasElementsEditor — 신규 요소는 겹치지 않는다', () => 
   });
 
   it('선과 문구는 여유가 있는 세로 축으로만 내려온다', () => {
-    const live = setupStateful(cfg([]));
-    fireEvent.click(testid('canvas-element-add-line'));
-    fireEvent.click(testid('canvas-element-add-line'));
-    fireEvent.click(testid('canvas-element-add-text'));
-    fireEvent.click(testid('canvas-element-add-text'));
+    const live = setupPalette();
+    place('line');
+    place('line');
+    place('text');
+    place('text');
 
-    const els = live.config.elements as CanvasElement[];
+    const els = live.elements;
     // 가로는 이미 스테이지를 가로지르므로 건드리지 않는다.
     expect(els[0]!.geometry).toEqual({ x1: 0.1, y1: 0.5, x2: 0.9, y2: 0.5 });
     expect(els[1]!.geometry).toEqual({ x1: 0.1, y1: 0.55, x2: 0.9, y2: 0.55 });
@@ -1171,10 +1246,10 @@ describe('CanvasElementsEditor — 신규 요소는 겹치지 않는다', () => 
   });
 
   it('계단은 되감긴다 — 아홉 번을 더해도 스테이지 밖으로 행진하지 않는다', () => {
-    const live = setupStateful(cfg([]));
-    for (let i = 0; i < 9; i++) fireEvent.click(testid('canvas-element-add-rect'));
+    const live = setupPalette();
+    for (let i = 0; i < 9; i++) place('rect');
 
-    const els = live.config.elements as CanvasElement[];
+    const els = live.elements;
     expect(els).toHaveLength(9);
     for (const el of els) {
       expect(onStage(el.geometry as unknown as Record<string, number>)).toBe(true);
@@ -1184,24 +1259,21 @@ describe('CanvasElementsEditor — 신규 요소는 겹치지 않는다', () => 
   });
 
   it('계단이 붙어도 좌표에 부동소수 찌꺼기가 남지 않는다', () => {
-    const live = setupStateful(cfg([]));
-    for (let i = 0; i < 4; i++) fireEvent.click(testid('canvas-element-add-rect'));
+    const live = setupPalette();
+    for (let i = 0; i < 4; i++) place('rect');
 
     // 0.1 + 0.15 를 그대로 두면 0.25000000000000006 이 숫자 칸에 그대로 뜬다.
-    const shown = (live.config.elements as CanvasElement[]).map(
-      (e) => (e.geometry as { x: number }).x,
-    );
+    const shown = live.elements.map((e) => (e.geometry as { x: number }).x);
     expect(shown).toEqual([0.1, 0.15, 0.2, 0.25]);
   });
 
   it('기존 요소의 좌표는 건드리지 않는다 — 스테이지 밖 저술은 합법이다', () => {
-    const live = setupStateful(
-      cfg([{ id: 'far', kind: 'rect', geometry: { x: -0.5, y: 2, w: 3, h: 4 }, style: {} }]),
-    );
-    fireEvent.click(testid('canvas-element-add-rect'));
+    const live = setupPalette([
+      { id: 'far', kind: 'rect', geometry: { x: -0.5, y: 2, w: 3, h: 4 }, style: {} },
+    ]);
+    place('rect');
 
-    const els = live.config.elements as CanvasElement[];
-    expect(els[0]!.geometry).toEqual({ x: -0.5, y: 2, w: 3, h: 4 });
+    expect(live.elements[0]!.geometry).toEqual({ x: -0.5, y: 2, w: 3, h: 4 });
   });
 });
 
@@ -1249,13 +1321,14 @@ describe('CanvasElementsEditor — 요소 줄 접기', () => {
     expect(lastElements(spy).map((e) => e.id)).toEqual(['a']);
   });
 
-  it('갓 더한 요소는 펼쳐진 채로 붙는다 — 눌렀는데 아무 일도 없어 보이면 안 된다', () => {
-    setupStateful(cfg([rect({ id: 'old' })]));
-    // 하네스가 기존 줄을 펼쳤으므로 먼저 되접어 새 줄만 남긴다.
-    fireEvent.click(testid('canvas-element-toggle-0'));
+  it('갓 놓은 요소의 줄은 펼쳐진 채로 붙는다 — 눌렀는데 아무 일도 없어 보이면 안 된다', () => {
+    // 되먹임의 출처가 바뀌었다. 목록이 스스로 펼치던 자리를 걷어냈고, 지금은 팔레트가
+    // **놓은 것을 고르며**(T9) 그 선택이 행을 펼친다(T10). 재는 것은 그대로다 —
+    // 방금 만든 것이 화면에서 스스로를 소개하는가.
+    setupPalette([rect({ id: 'old' })], { withList: true });
     expect(testid('canvas-element-toggle-0').getAttribute('aria-expanded')).toBe('false');
 
-    fireEvent.click(testid('canvas-element-add-rect'));
+    place('rect');
 
     expect(testid('canvas-element-toggle-0').getAttribute('aria-expanded')).toBe('false');
     expect(testid('canvas-element-toggle-1').getAttribute('aria-expanded')).toBe('true');
@@ -1453,11 +1526,11 @@ describe('CanvasElementsEditor — 캔버스 선택이 목록을 조종한다 (A
     expect(isRowOpen(0)).toBe(true);
   });
 
-  it('목록 하단의 추가 버튼 4개는 그대로 남는다 — 팔레트가 대체하지 않는다', () => {
-    // 포인터를 쓰지 않는 경로이자 이미 테스트에 묶인 표면이다(REQ-01 · AC-05).
+  it('캔버스 선택이 있어도 목록에 추가 버튼이 되살아나지 않는다', () => {
+    // 만드는 자리는 도크 팔레트 하나다. 선택 provider 가 있든 없든 그 사실은 같다.
     setup(cfg([]), { expand: false });
     for (const kind of ['rect', 'ellipse', 'line', 'text']) {
-      expect(screen.getByTestId(`canvas-element-add-${kind}`)).toBeTruthy();
+      expect(screen.queryByTestId(`canvas-element-add-${kind}`)).toBeNull();
     }
   });
 });
@@ -1545,12 +1618,9 @@ describe('CanvasElementsEditor — 캔버스 선택이 수치 입력을 밀어�
     expect(lastElements(spy)[0]!.geometry).toEqual({ x: -0.5, y: 0.2, w: 0.3, h: 0.4 });
   });
 
-  it('추가·순서·삭제도 캔버스 선택과 무관하게 목록에 그대로 남는다', () => {
+  it('순서·삭제도 캔버스 선택과 무관하게 목록에 그대로 남는다', () => {
     setupPicked([rect({ id: 'a' }), rect({ id: 'b' })], 'a');
 
-    for (const kind of ['rect', 'ellipse', 'line', 'text']) {
-      expect((testid(`canvas-element-add-${kind}`) as HTMLButtonElement).disabled).toBe(false);
-    }
     // 첫 행의 아래로 이동과 삭제는 언제나 쓸 수 있다(위로 이동만 양 끝에서 잠긴다).
     expect((testid('canvas-element-move-down-0') as HTMLButtonElement).disabled).toBe(false);
     expect((testid('canvas-element-delete-0') as HTMLButtonElement).disabled).toBe(false);

@@ -142,10 +142,13 @@ describe('PanelSettingsDialog — 캔버스 미리보기와 목록 편집기가 
     expect([0, 1, 2].map(isRowOpen)).toEqual([false, false, true]);
   });
 
-  it('목록 하단의 추가 버튼은 그대로 남는다 — 팔레트가 대체하지 않는다 (REQ-01)', () => {
+  it('목록 하단의 추가 버튼은 사라졌다 — 도형을 만드는 자리는 팔레트 하나다', () => {
+    // 팔레트가 도크로 옮겨 이름과 누를 면적을 갖춘 뒤로, 같은 함수를 부르는 입구가
+    // 한 화면에 둘일 이유가 없어졌다. 위 시험들이 그 하나가 실제로 만드는 것을 잰다.
     renderDialog();
     for (const kind of ['rect', 'ellipse', 'line', 'text']) {
-      expect(screen.getByTestId(`canvas-element-add-${kind}`)).toBeTruthy();
+      expect(screen.queryByTestId(`canvas-element-add-${kind}`)).toBeNull();
+      expect(screen.getByTestId(`canvas-palette-add-${kind}`)).toBeTruthy();
     }
   });
 });
