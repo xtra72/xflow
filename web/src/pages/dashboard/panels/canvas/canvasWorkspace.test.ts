@@ -20,6 +20,9 @@
 // 작업 영역의 왼쪽 위에 앉힌 결함과 출력 영역의 원점에 앉힌 옳은 구현이 **같은 자리**를
 // 내므로 그 시험이 실패할 수 없다.
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, it, expect } from 'vitest';
 
 import {
@@ -27,8 +30,18 @@ import {
   MIN_CANVAS_DIMENSION,
   type CanvasSize,
 } from './canvasConfig';
+import { CANVAS_GRID_STEP_CHOICES } from './canvasEditArrange';
 import { stageLattice, type StageSize } from './canvasGeometry';
-import { PANEL_REGION_FIT_RATIO, derivedCanvasSize, workspaceBox } from './canvasWorkspace';
+import {
+  DEFAULT_WORKSPACE_ZOOM,
+  MAX_WORKSPACE_ZOOM,
+  MIN_WORKSPACE_ZOOM,
+  WORKSPACE_ZOOM_CHOICES,
+  clampWorkspaceZoom,
+  derivedCanvasSize,
+  workspaceBox,
+  workspaceZoomPercent,
+} from './canvasWorkspace';
 
 const OUTER: StageSize = { width: 1749, height: 796 };
 const CANVAS: CanvasSize = { width: 500, height: 400 };
@@ -134,8 +147,19 @@ describe('canvasWorkspace — 편집이 켜진 갈래는 상자를 둘로 짓는
 
 describe('canvasWorkspace — 축소는 두 축에 같은 비율이다 (가정 A5 · REQ-01)', () => {
   it('비율은 **이름 있는 상수 하나**이며 절대 px 여백이 아니다', () => {
-    expect(PANEL_REGION_FIT_RATIO).toBeGreaterThan(0);
-    expect(PANEL_REGION_FIT_RATIO).toBeLessThan(1);
+    // 0.6.0 개명: 옛 이름 → `DEFAULT_WORKSPACE_ZOOM`. 단언은 이름만 갈릴 뿐 한 글자도
+    // 약해지지 않는다(plan.md §M12 가 여는 0.6.0 예외 하나).
+    expect(DEFAULT_WORKSPACE_ZOOM).toBeGreaterThan(0);
+    expect(DEFAULT_WORKSPACE_ZOOM).toBeLessThan(1);
+  });
+
+  it('그 상수는 이제 범위 안의 **기본값**이다 — 하한 이상 상한 이하다 (REQ-09)', () => {
+    expect(DEFAULT_WORKSPACE_ZOOM).toBeGreaterThanOrEqual(MIN_WORKSPACE_ZOOM);
+    expect(DEFAULT_WORKSPACE_ZOOM).toBeLessThanOrEqual(MAX_WORKSPACE_ZOOM);
+    expect(MIN_WORKSPACE_ZOOM).toBeGreaterThan(0);
+    // **상한이 1 을 넘지 않는다.** 넘으면 출력 영역이 잰 상자를 넘어 일부가 화면 밖으로
+    // 나가는데 그것을 가져올 팬이 없다(불변식 I22 · §기각한 안 — 캔버스 안의 시야 근거 1).
+    expect(MAX_WORKSPACE_ZOOM).toBe(1);
   });
 
   it('바깥 상자를 두 배로 키우면 출력 영역도 (칸 내림 오차 안에서) 같은 비율로 자란다', () => {
@@ -150,8 +174,8 @@ describe('canvasWorkspace — 축소는 두 축에 같은 비율이다 (가정 A
   it('줄인 상자의 종횡비가 바깥 상자와 같다 — 맞춤 계산이 006 전후로 같은 값을 낸다', () => {
     const ws = workspaceBox(OUTER, CANVAS, STEP, true);
     const reduced = {
-      width: Math.floor(OUTER.width * PANEL_REGION_FIT_RATIO),
-      height: Math.floor(OUTER.height * PANEL_REGION_FIT_RATIO),
+      width: Math.floor(OUTER.width * DEFAULT_WORKSPACE_ZOOM),
+      height: Math.floor(OUTER.height * DEFAULT_WORKSPACE_ZOOM),
     };
 
     // 맞춤(`fitCanvasSizeToStage`)은 **바깥** 상자를 쓰지만, 줄인 상자로 계산해도 같은
@@ -236,8 +260,8 @@ describe('canvasWorkspace — 크기 유도는 항등이다 (REQ-07 · I19 · D7
     // 사용자가 화면을 보고 정확히 그것을 잡아냈다(위험 R21).
     expect(derivedCanvasSize(CANVAS, OUTER)).toEqual({ width: 1749, height: 796 });
     expect(derivedCanvasSize(CANVAS, OUTER)).not.toEqual({
-      width: Math.floor(OUTER.width * PANEL_REGION_FIT_RATIO),
-      height: Math.floor(OUTER.height * PANEL_REGION_FIT_RATIO),
+      width: Math.floor(OUTER.width * DEFAULT_WORKSPACE_ZOOM),
+      height: Math.floor(OUTER.height * DEFAULT_WORKSPACE_ZOOM),
     });
   });
 
@@ -308,11 +332,289 @@ describe('canvasWorkspace — 크기 유도는 항등이다 (REQ-07 · I19 · D7
     }
   });
 
+  it('서명이 `(canvas, outer)` **글자 그대로**다 — 기본값 붙은 셋째 인자도 여기서 걸린다', () => {
+    // **`Function.length` 만으로는 이 가드가 절반이다.** 그 값은 기본값이 붙기 **전**의
+    // 인자 수만 세므로, `zoom: number = 1` 처럼 기본값을 단 셋째 인자는 `.length` 를 여전히
+    // 2 로 남긴다 — 그리고 그것이 배율을 들이는 **가장 자연스러운 형상**이다(바로 위
+    // `workspaceBox` 가 정확히 그 모양으로 배율을 받는다). M9 에서 그 구멍을 실제 변이로
+    // 확인했다: 기본값 없는 셋째 인자는 아래 `.length` 가 잡았지만 기본값 붙은 셋째 인자는
+    // **한 건도 울리지 않았다.**
+    //
+    // 그래서 형상을 **글자로** 지킨다. 이 가드는 이름이 아니라 서명을 보므로 상수 개명에도
+    // 죽지 않는다(위험 R23).
+    const source = readFileSync(join(__dirname, 'canvasWorkspace.ts'), 'utf-8');
+    const start = source.indexOf('export function derivedCanvasSize');
+    expect(start).toBeGreaterThan(0);
+    const body = source.slice(start, source.indexOf('\n}', start));
+
+    expect(body).toContain(
+      'export function derivedCanvasSize(canvas: CanvasSize, outer: StageSize): CanvasSize {',
+    );
+    // 그리고 **본문에 어떤 축척을 곱하는 자리도 없다** — 0.4.0 의 폐기된 규칙은 곱셈
+    // 하나였고, 인자를 늘리지 않고 상수를 곱해도 같은 부활이다(위험 R21).
+    const code = body
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n');
+    expect(code).not.toContain('*');
+  });
+
   it('인자가 `(canvas, outer)` **둘뿐**이다 — 이것이 폐기된 규칙의 형상 가드다 (I20 · R22)', () => {
-    // 0.6.0 이 `PANEL_REGION_FIT_RATIO` 를 개명하면 이름 기반 grep 가드는 조용히 무장
-    // 해제된다(위험 R23). 그래서 가드를 **형상**으로 옮겨 적는다: 셋째 인자(격자 간격 ·
-    // 보기 배율)가 나타나는 순간 저장되지 않는 표시 상태가 저장되는 값을 고치게 되고,
-    // 그것이 곧 I20 의 위반이다.
+    // 0.6.0 이 상수를 개명했고(옛 이름 → `DEFAULT_WORKSPACE_ZOOM`) 그 순간 이름 기반
+    // grep 가드는 조용히 무장 해제되었다(위험 R23). 그래서 가드가 **형상**으로 옮겨 와
+    // 여기 서 있다: 셋째 인자(격자 간격 · 보기 배율)가 나타나는 순간 저장되지 않는 표시
+    // 상태가 저장되는 값을 고치게 되고, 그것이 곧 I20 의 위반이다. 이 가드는 개명에
+    // 죽지 않았다 — 그 사실이 M9 에서 실제로 확인된 자리다.
     expect(derivedCanvasSize.length).toBe(2);
+  });
+});
+
+// --- 보기 배율 (SPEC-CANVAS-006 M9 · REQ-09 · AC-09) ---------------------
+//
+// 이 절의 고정 입력은 위 상자 시험과 **다르다**. 배율의 수를 재려면 M8 이 만든 고정점
+// (`canvas === outer`)에 서야 하기 때문이다 — 편집을 켠 실제 경로에서는 첫 측정이 캔버스를
+// 잰 상자로 덮으므로, `canvas ≠ outer` 인 짝으로 적어 둔 수는 실제와 다른 세계의 수다(D7).
+// 그래서 여기서는 **캔버스 = 잰 상자 = 1749 × 796** 을 쓴다.
+//
+// 그 짝에서 나오는 수를 미리 적어 둔다(시험이 이 수를 그대로 단언한다).
+//   - z = 0.25(하한) → 줄인 상자 437×199 · 칸 6 · 축척 0.24 · 영역 419.76×191.04 · 원점 (664, 302)
+//   - z = 0.50       → 줄인 상자 874×398 · 칸 12 · 축척 0.48 · 영역 839.52×382.08 · 원점 (454, 206)
+//   - z = 0.75(기본) → 줄인 상자 1311×597 · 칸 18 · 축척 0.72 · 영역 1259.28×573.12 · 원점 (244, 111)
+//   - z = 1.00(상한) → 칸 25 · 축척 **정확히 1** · 영역 1749×796 · 원점 (0, 0)
+//
+// **D8 이 요구하는 것이 이 표의 존재 이유다.** 기본 배율만 재는 시험은 배율 인자를 통째로
+// 무시하는 구현에서도 초록이고, 기본값과 **같은 칸**을 내는 배율(아래 §양자화의 그 넷)을
+// 고른 시험도 마찬가지다. 그래서 기본값이 아니면서 **칸 · 축척 · 원점 셋이 모두 다른**
+// `z = 0.50` 을 쓴다.
+
+/** 배율 시험의 고정점 짝 — 캔버스가 잰 상자 그 자체다(M8 뒤의 실제 세계). */
+const FIXED_CANVAS: CanvasSize = { width: 1749, height: 796 };
+
+describe('canvasWorkspace — 기본 배율에서는 0.5.0 과 한 픽셀도 다르지 않다 (AC-09 (AR))', () => {
+  it('배율을 넘기지 않으면 상자 넷이 기본값의 그 수 그대로다', () => {
+    const ws = workspaceBox(OUTER, FIXED_CANVAS, STEP, true);
+
+    expect(ws.cell).toEqual({ x: 18, y: 18 });
+    expect(ws.cell.x / STEP).toBe(0.72);
+    expect(ws.stage).toEqual({ width: 1259.28, height: 573.12 });
+    expect(ws.origin).toEqual({ x: 244, y: 111 });
+    expect(ws.box).toEqual({ width: 1749, height: 796 });
+  });
+
+  it('기본 배율을 **명시해도** 같은 값이다 — 덧붙임의 기본값이 종전 동작이라는 뜻이다', () => {
+    expect(workspaceBox(OUTER, FIXED_CANVAS, STEP, true, DEFAULT_WORKSPACE_ZOOM)).toEqual(
+      workspaceBox(OUTER, FIXED_CANVAS, STEP, true),
+    );
+  });
+
+  it('꺼진 갈래는 배율을 **보지 않는다** — 편집이 꺼진 자리에는 시야를 고를 사람이 없다', () => {
+    // 배율이 꺼진 갈래로 새면 대시보드의 그림이 저장되지 않는 표시 상태에 매인다(REQ-05).
+    const base = workspaceBox(OUTER, CANVAS, STEP, false);
+    for (const z of [MIN_WORKSPACE_ZOOM, 0.5, MAX_WORKSPACE_ZOOM]) {
+      expect(workspaceBox(OUTER, CANVAS, STEP, false, z)).toEqual(base);
+    }
+  });
+});
+
+describe('canvasWorkspace — 배율이 실제로 시야를 바꾼다 (AC-09 (AS) · D8)', () => {
+  it('`z = 0.50` 은 칸 · 축척 · 원점 셋이 **모두** 기본값과 다르다', () => {
+    const base = workspaceBox(OUTER, FIXED_CANVAS, STEP, true);
+    const ws = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, 0.5);
+
+    expect(ws.cell).toEqual({ x: 12, y: 12 });
+    expect(ws.cell.x / STEP).toBe(0.48);
+    expect(ws.stage).toEqual({ width: 839.52, height: 382.08 });
+    expect(ws.origin).toEqual({ x: 454, y: 206 });
+    // 셋이 **모두** 달라야 이 시험이 배선을 재는 것이 된다(D8 — 0.73 같은 값은 같은
+    // 칸을 내므로 배선이 끊겨 있어도 초록이다).
+    expect(ws.cell.x).not.toBe(base.cell.x);
+    expect(ws.stage.width).not.toBe(base.stage.width);
+    expect(ws.origin.x).not.toBe(base.origin.x);
+  });
+
+  it('저술 여백이 넓어졌다 — 캔버스 단위 작업 영역이 기본값보다 크다', () => {
+    const units = (z: number) => {
+      const ws = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, z);
+      const scale = ws.cell.x / STEP;
+      return Math.round(ws.box.width / scale);
+    };
+
+    // 기본값 약 2429 → 0.50 에서 약 3644 (spec.md §상자 산술의 표 그대로).
+    expect(units(DEFAULT_WORKSPACE_ZOOM)).toBe(2429);
+    expect(units(0.5)).toBe(3644);
+  });
+
+  it('`z = 1.00` 에서 축척이 **정확히 1** 이고 여백이 0 이다 — 불변식 I21 의 **명시된 예외**다', () => {
+    // I21 이 금지하는 것은 **기본 배율에서** 축척 1 을 단언하는 것이다. 배율을 1.00 으로
+    // **명시한** 이 자리에서 축척 1 은 산술이 실제로 그러하며, 0.5.0 이 "보기에서만
+    // 관측된다" 고 적은 등식(출력 영역 = 캔버스 = 패널 몸통)을 편집기를 떠나지 않고
+    // 눈으로 확인하는 자리다.
+    const ws = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, MAX_WORKSPACE_ZOOM);
+
+    expect(ws.cell).toEqual({ x: STEP, y: STEP });
+    expect(ws.cell.x / STEP).toBe(1);
+    expect(ws.stage).toEqual({ width: 1749, height: 796 });
+    expect(ws.stage).toEqual(FIXED_CANVAS);
+    expect(ws.stage).toEqual(ws.box);
+    expect(ws.origin).toEqual({ x: 0, y: 0 });
+  });
+
+  it('하한 `z = 0.25` 에서도 그리는 영역이 사라지지 않고 격자가 살아 있다', () => {
+    const ws = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, MIN_WORKSPACE_ZOOM);
+
+    expect(ws.cell).toEqual({ x: 6, y: 6 });
+    expect(ws.cell.x).toBeGreaterThanOrEqual(1);
+    expect(ws.stage).toEqual({ width: 419.76, height: 191.04 });
+    expect(ws.origin).toEqual({ x: 664, y: 302 });
+    expect(ws.stage.width).toBeGreaterThan(0);
+    expect(ws.stage.height).toBeGreaterThan(0);
+  });
+
+  it('어떤 배율에서도 축척은 **하나**이고 `origin` 과 `cell` 은 **정수**다 (I5 · I6)', () => {
+    for (const z of [MIN_WORKSPACE_ZOOM, 0.4, 0.5, DEFAULT_WORKSPACE_ZOOM, 0.9, MAX_WORKSPACE_ZOOM]) {
+      const ws = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, z);
+      expect(ws.cell.x, `z=${z}`).toBe(ws.cell.y);
+      expect(Number.isInteger(ws.cell.x), `z=${z}`).toBe(true);
+      expect(Number.isInteger(ws.origin.x), `z=${z}`).toBe(true);
+      expect(Number.isInteger(ws.origin.y), `z=${z}`).toBe(true);
+      // 레터박스 0 — 출력 영역이 잰 상자와 닮았다.
+      expect(ws.stage.width / ws.box.width, `z=${z}`).toBeCloseTo(
+        ws.stage.height / ws.box.height,
+        12,
+      );
+    }
+  });
+});
+
+describe('canvasWorkspace — 배율은 담기는 값만 취한다 (AC-09 (AT) · 불변식 I22)', () => {
+  it('범위 안의 어떤 배율에서도 `stage ≤ box === outer` 이고 `origin ≥ 0` 이다', () => {
+    // **이 시험이 상한의 가드다.** `MAX_WORKSPACE_ZOOM` 을 1 보다 크게 하면 줄인 상자가
+    // 잰 상자를 넘어 `origin` 이 음수가 되고 여기서 걸린다 — 그때 출력 영역 일부가
+    // 컨테이너의 `overflow-hidden` 에 잘리는데 그것을 가져올 팬이 없다(가정 A8).
+    for (const z of [MIN_WORKSPACE_ZOOM, 0.33, 0.5, DEFAULT_WORKSPACE_ZOOM, MAX_WORKSPACE_ZOOM]) {
+      const ws = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, z);
+      expect(ws.box, `z=${z}`).toEqual({ width: OUTER.width, height: OUTER.height });
+      expect(ws.stage.width, `z=${z}`).toBeLessThanOrEqual(ws.box.width);
+      expect(ws.stage.height, `z=${z}`).toBeLessThanOrEqual(ws.box.height);
+      expect(ws.origin.x, `z=${z}`).toBeGreaterThanOrEqual(0);
+      expect(ws.origin.y, `z=${z}`).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('제안값 넷이 모두 범위 안이고 하한 · 기본값 · 상한을 포함한다', () => {
+    for (const choice of WORKSPACE_ZOOM_CHOICES) {
+      expect(choice).toBeGreaterThanOrEqual(MIN_WORKSPACE_ZOOM);
+      expect(choice).toBeLessThanOrEqual(MAX_WORKSPACE_ZOOM);
+    }
+    expect(WORKSPACE_ZOOM_CHOICES).toContain(MIN_WORKSPACE_ZOOM);
+    expect(WORKSPACE_ZOOM_CHOICES).toContain(DEFAULT_WORKSPACE_ZOOM);
+    expect(WORKSPACE_ZOOM_CHOICES).toContain(MAX_WORKSPACE_ZOOM);
+  });
+});
+
+describe('canvasWorkspace — 격자 간격이 배율을 양자화한다 (가정 A20 · 위험 R24)', () => {
+  it('이웃한 네 배율이 **같은 그림**을 낸다 — 숨기지 않고 수로 적는다', () => {
+    // 실현 가능한 축척은 사실상 `1/step` 눈금이라 이웃한 백분율이 같은 칸을 낸다. 그
+    // `floor` 는 걷어내지 않는다 — 사용자가 세 번 되돌려보낸 "격자가 일정하지 않음" 을
+    // 막고 있는 것이 그 한 줄이다(불변식 I5). 화면은 이 대가를 상시 도움말로 말한다.
+    //
+    // **spec.md 가정 A20 이 적은 넷(0.72·0.73·0.74·0.75)은 이 고정 입력에서 틀렸다.**
+    // A20 은 `cell ≈ floor(z × step)` 로 어림했으나 실제로는 `reduced = floor(outer × z)`
+    // 가 축마다 최대 1px 을 먼저 잃으므로 축척이 그 어림값보다 조금 낮다. `z = 0.72` 는
+    // 경계에 정확히 앉아 아래로 떨어진다 — 아래 시험이 그 사실을 수로 못박는다.
+    const base = workspaceBox(OUTER, FIXED_CANVAS, STEP, true);
+    for (const z of [0.73, 0.74, 0.75, 0.76]) {
+      expect(workspaceBox(OUTER, FIXED_CANVAS, STEP, true, z), `z=${z}`).toEqual(base);
+    }
+  });
+
+  it('`z = 0.72` 는 그 넷에 들지 않는다 — 칸이 17 이라 A20 의 어림이 여기서 깨진다', () => {
+    const ws = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, 0.72);
+
+    expect(ws.cell).toEqual({ x: 17, y: 17 });
+    expect(ws.cell.x).not.toBe(18);
+  });
+
+  it('눈금을 넘어서면 그림이 실제로 달라진다 — 양자화는 먹통이 아니라 눈금이다', () => {
+    const base = workspaceBox(OUTER, FIXED_CANVAS, STEP, true);
+    const beyond = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, 0.77);
+
+    expect(beyond.cell).toEqual({ x: 19, y: 19 });
+    expect(beyond.cell.x).not.toBe(base.cell.x);
+  });
+
+  it('하한에서도 도크가 제안하는 네 간격은 칸을 살려 둔다 — 하한을 그렇게 골랐다', () => {
+    // 근거를 수로 적는다: 간격 10 · 20 · 25 · 50 에서 칸이 각각 2 · 4 · 6 · 12 다.
+    const cells = CANVAS_GRID_STEP_CHOICES.map(
+      (step) => workspaceBox(OUTER, FIXED_CANVAS, step, true, MIN_WORKSPACE_ZOOM).cell.x,
+    );
+    expect(cells).toEqual([2, 4, 6, 12]);
+    for (const cell of cells) expect(cell).toBeGreaterThanOrEqual(1);
+  });
+
+  it('**"격자는 언제나 그려진다" 를 주장하지 않는다** — 아주 작은 간격에서는 범위 안에서도 꺼진다', () => {
+    // spec.md 가정 A20 은 하한의 근거를 "`step ≥ 4` 인 모든 간격에서 `cell ≥ 1`" 로 적었는데,
+    // 그 경계는 이 고정 입력에서 **아슬아슬하게 거짓**이다 — `reduced` 의 `floor` 가 먼저
+    // 1px 을 잃으므로 `step = 4` · `z = 0.25` 에서 칸이 0.9994 로 1 에 미치지 못한다.
+    // 실제로 지켜지는 것은 **도크가 제안하는 네 간격**이며(위 시험), 그 위의 값에서도
+    // 여유가 있다. 이 갈래의 주인은 배율이 아니라 `stageLattice` 와 오버레이의 `cell ≥ 1`
+    // 게이트이고, 그때도 그림은 사라지지 않는다.
+    const ws = workspaceBox(OUTER, FIXED_CANVAS, 4, true, MIN_WORKSPACE_ZOOM);
+
+    expect(ws.cell.x).toBeLessThan(1);
+    expect(ws.cell.x).toBeGreaterThan(0);
+    expect(ws.stage.width).toBeGreaterThan(0);
+    expect(ws.origin.x).toBeGreaterThanOrEqual(0);
+    expect(Number.isInteger(ws.origin.x)).toBe(true);
+  });
+});
+
+describe('canvasWorkspace — 백분율과 분수가 만나는 자리 (AC-09 (AT) · 불변식 I4)', () => {
+  it('백분율 정수를 분수로 옮기고 범위로 죈다', () => {
+    expect(clampWorkspaceZoom(50, DEFAULT_WORKSPACE_ZOOM)).toBe(0.5);
+    expect(clampWorkspaceZoom('75', DEFAULT_WORKSPACE_ZOOM)).toBe(0.75);
+    expect(clampWorkspaceZoom(100, DEFAULT_WORKSPACE_ZOOM)).toBe(MAX_WORKSPACE_ZOOM);
+    // 범위 밖은 죈다 — 확대는 없고(상한 1.00), 격자를 죽이는 쪽으로도 내려가지 않는다.
+    expect(clampWorkspaceZoom(400, DEFAULT_WORKSPACE_ZOOM)).toBe(MAX_WORKSPACE_ZOOM);
+    expect(clampWorkspaceZoom(1, DEFAULT_WORKSPACE_ZOOM)).toBe(MIN_WORKSPACE_ZOOM);
+    expect(clampWorkspaceZoom(-30, DEFAULT_WORKSPACE_ZOOM)).toBe(MIN_WORKSPACE_ZOOM);
+  });
+
+  it('읽을 수 없는 입력에는 **지금 값을 그대로** 돌려준다 — 한 글자를 지우는 동안 무너지지 않는다', () => {
+    for (const bad of ['', '   ', 'abc', '7%', Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(clampWorkspaceZoom(bad, 0.5), String(bad)).toBe(0.5);
+    }
+  });
+
+  it('**적힌 값을 실현 가능한 축척으로 되죄지 않는다** — 간격이 배율을 조용히 고치지 못한다', () => {
+    // 되죄면 격자 간격이 배율을 고치게 되고, 그것은 I20 이 유도에 대해 금지한 결합의
+    // 거울상이다(위험 R24). 73% 는 간격 25 에서 기본값과 같은 그림을 내지만 **값 자체는
+    // 73% 로 남는다** — 화면이 74 나 72 로 고쳐 적지 않는다.
+    expect(clampWorkspaceZoom(73, DEFAULT_WORKSPACE_ZOOM)).toBe(0.73);
+  });
+
+  it('분수를 백분율 정수로 되옮기는 자리도 이 모듈 하나다', () => {
+    expect(workspaceZoomPercent(DEFAULT_WORKSPACE_ZOOM)).toBe(75);
+    expect(workspaceZoomPercent(MIN_WORKSPACE_ZOOM)).toBe(25);
+    expect(workspaceZoomPercent(MAX_WORKSPACE_ZOOM)).toBe(100);
+    // 왕복이 제안값 넷에서 항등이다 — 화면이 적은 값을 되읽어도 값이 흔들리지 않는다.
+    for (const choice of WORKSPACE_ZOOM_CHOICES) {
+      expect(clampWorkspaceZoom(workspaceZoomPercent(choice), DEFAULT_WORKSPACE_ZOOM)).toBe(choice);
+    }
+  });
+});
+
+describe('canvasWorkspace — 배율은 크기 유도에 닿지 않는다 (AC-09 (AU) · I20 · R22)', () => {
+  it('배율을 아무 값으로 바꿔도 유도한 캔버스 크기가 한 글자도 달라지지 않는다', () => {
+    // 형상 자체로 성립한다 — `derivedCanvasSize` 는 배율을 **인자로도 받지 않는다**.
+    // 그럼에도 이 자리를 재는 것은, 배선이 언젠가 배율을 유도로 흘려보내려 할 때
+    // 그 시도가 어디서 걸려야 하는지를 이름으로 적어 두기 위해서다.
+    for (const z of [MIN_WORKSPACE_ZOOM, 0.5, DEFAULT_WORKSPACE_ZOOM, MAX_WORKSPACE_ZOOM]) {
+      const ws = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, z);
+      expect(derivedCanvasSize(CANVAS, { width: ws.box.width, height: ws.box.height })).toEqual({
+        width: 1749,
+        height: 796,
+      });
+    }
   });
 });

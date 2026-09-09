@@ -50,9 +50,17 @@
 // ## 형제 하나 — 크기 유도 (M8 · REQ-07)
 //
 // `derivedCanvasSize(canvas, outer)` 는 편집 중 캔버스 크기를 잰 상자에서 유도한다. 그
-// 유도는 **항등**이라 `PANEL_REGION_FIT_RATIO` 를 쓰지 않으며, 그래서 축소 상자 식의
-// 소유자는 위 `workspaceBox` 의 편집 갈래 **하나뿐**이다 — 같은 상자를 두 곳에서 파생할
-// 자리가 형상 자체로 없다(위험 R1 · R4 가 이 자리에서 닫힌다).
+// 유도는 **항등**이라 어떤 축척도 곱하지 않으며, 그래서 축소 상자 식의 소유자는 위
+// `workspaceBox` 의 편집 갈래 **하나뿐**이다 — 같은 상자를 두 곳에서 파생할 자리가 형상
+// 자체로 없다(위험 R1 · R4 가 이 자리에서 닫힌다).
+//
+// ## 보기 배율 (M9 · REQ-09)
+//
+// 배율은 **새 기구가 아니라 이미 있는 산술의 입력**이다. `workspaceBox` 의 편집 갈래에서
+// `reduced` 를 내는 **그 한 줄**에만 들어가고, 축척은 여전히 `stageLattice` 가 한 번만
+// 내려 만드는 그 하나다. 그 좁음이 곧 안전이며, 넓어지려는 변경(배율이 `derivedCanvasSize`
+// 로 · 배율이 `stageLattice` 안으로 · 배율에 몸짓이)은 전부 이 SPEC 이 이미 기각한 것들과
+// 만난다.
 //
 // @spec SPEC-CANVAS-006
 
@@ -64,16 +72,86 @@ import {
 import { stageLattice, type StageCell, type StageSize } from './canvasGeometry';
 
 /**
- * 출력 영역이 잰 바깥 상자에서 차지하는 **선형** 비율.
+ * 편집기가 작업 영역을 보여 주는 **기본** 축척 — 보기 배율의 기본값(REQ-09 · 0.6.0).
  *
- * 곱으로 보면 출력 영역은 상자 넓이의 56%(0.75²)를 차지하므로 여전히 화면의 주인이고,
- * 각 변에는 출력 영역 제 길이의 약 1/6 에 해당하는 저술 여백이 생긴다.
+ * ## 왜 이름이 바뀌었는가 (`PANEL_REGION_FIT_RATIO` 은퇴)
  *
- * **이름 하나로 모아 두는 것이 요점이다**(위험 R10). 축소가 부담스럽다는 것이 드러나면
- * 한 줄 수정이 되어야 한다 — 그리고 더 크게 보는 길은 이미 화면에 있다(미리보기 확대와
- * 이동). 캔버스 안에 두 번째 확대·이동 기구를 만들지 않는다(가정 A8).
+ * 0.5.0 이 이 상수의 **뜻**을 한 번 옮겼다: "출력 영역이 잰 상자에서 차지하는 비율" 에서
+ * **"편집기가 작업 영역을 보여 주는 축척"** 으로. 그때는 값이 하나뿐이라 옛 이름이
+ * **부정확할** 뿐이었다. 0.6.0 에서 그 값이 범위 안의 여럿 가운데 **기본 하나**가 되므로
+ * 옛 이름은 부정확한 정도를 넘어 **거짓**이 된다 — 맞추는(fit) 일이 없고 고정된
+ * 비율(ratio)도 아니다. 한 이름에 세 뜻이 쌓이면 다음 사람은 문서를 읽어야만 코드를 읽을
+ * 수 있게 되므로 개명한다.
+ *
+ * 개명이 지는 대가는 **R21 의 이름 기반 가드가 조용히 무장 해제되는 것**이었다(위험 R23).
+ * 그 가드는 같은 회차에 **형상 가드**로 옮겨 갔다 — 아래 `derivedCanvasSize` §인자가 둘인
+ * 것이 가드다.
+ *
+ * 기본값 `0.75` 는 **0.5.0 까지의 그 값 그대로**다. 배율을 넘기지 않은 모든 호출이 종전과
+ * 한 픽셀도 다르지 않은 이유가 이 한 줄이다(AC-09 (AR)).
  */
-export const PANEL_REGION_FIT_RATIO = 0.75;
+export const DEFAULT_WORKSPACE_ZOOM = 0.75;
+
+/**
+ * 보기 배율의 **하한**.
+ *
+ * 근거는 격자다. 실현 가능한 축척은 `floor(z × step) ÷ step` 이라 `z × step < 1` 이면
+ * 한 칸이 1px 도 되지 않고, 그때 오버레이의 `gridCell.x >= 1` 게이트가 격자를 끈다.
+ * `z ≥ 0.25` 는 도크가 제안하는 네 간격(10 · 20 · 25 · 50)에서 칸을 살려 두는 값이다.
+ *
+ * **"격자는 언제나 그려진다" 를 주장하지 않는다** — 아주 작은 간격에서는 범위 안에서도
+ * 꺼지며, 그것은 배율이 만든 새 부류가 아니다(M8 뒤에는 기본 배율에서도 `step = 1` 이면
+ * 이미 꺼진다). 가정 A20.
+ */
+export const MIN_WORKSPACE_ZOOM = 0.25;
+
+/**
+ * 보기 배율의 **상한**. **확대는 없다** — 이 값이 1 을 넘으면 안 된다(불변식 I22).
+ *
+ * `z ≤ 1` 이면 `reduced ≤ outer` 이고 `stage ≤ reduced ≤ outer` 이므로 `origin ≥ 0` 이며
+ * 출력 영역이 작업 영역 **안**에 있다. `z > 1` 이면 셋이 한꺼번에 깨져 출력 영역 일부가
+ * 컨테이너의 `overflow-hidden` 에 잘리는데, **잘린 자리를 가져올 팬이 없다** — 팬에는 이미
+ * 주인이 있다(`previewPan`, 가정 A8). 그래서 상한이 곧 "캔버스 안에 시야를 만들지 않는다"
+ * 는 기각을 범위로 번역한 것이다.
+ */
+export const MAX_WORKSPACE_ZOOM = 1;
+
+/**
+ * 화면이 곁들이는 제안 배율 넷(분수). **고를 수 있는 값의 전부가 아니다** — 자유 입력이고
+ * 이 넷은 빈 칸 앞에서 "몇을 적지" 를 묻지 않게 하는 곁들이다(격자 간격이 세운 선례 그대로).
+ *
+ * 하한 · 절반 · 기본값 · 상한이다.
+ */
+export const WORKSPACE_ZOOM_CHOICES: readonly number[] = [0.25, 0.5, 0.75, 1];
+
+/** 빈 칸과 글자를 NaN 으로 접는다(`canvasEditArrange.readNumber` 와 같은 규율). */
+function readNumber(raw: string): number {
+  return raw.trim() === '' ? Number.NaN : Number(raw);
+}
+
+/**
+ * **백분율과 분수가 만나는 자리다.** 화면은 백분율 정수로만 말하고 산술은 분수로만 말하는데,
+ * 그 둘이 만나는 곳을 이 모듈 밖으로 새게 두지 않는다(`stagePoint` 가 좌표 공간에 대해
+ * 그러한 것과 같은 규율 — 불변식 I4). 쓰는 쪽이 이 함수, 읽는 쪽이 아래
+ * `workspaceZoomPercent` 이며, 도크에는 `100` 이라는 수가 한 번도 나오지 않는다.
+ *
+ * 읽을 수 없는 입력(빈 칸 · 글자 · NaN)에는 **`fallback` 을 그대로** 돌려준다 — 한 글자를
+ * 지우는 동안 화면이 무너지지 않아야 한다(`clampGridStep` 의 계약 그대로).
+ *
+ * **적힌 값을 실현 가능한 축척으로 되죄지 않는다.** 되죄면 격자 간격이 배율을 조용히
+ * 고치게 되고, 그것은 불변식 I20 이 유도에 대해 금지한 결합의 거울상이다(위험 R24).
+ * 여기서 하는 일은 **범위 죔 하나**뿐이다.
+ */
+export function clampWorkspaceZoom(percent: string | number, fallback: number): number {
+  const raw = typeof percent === 'string' ? readNumber(percent) : percent;
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.min(MAX_WORKSPACE_ZOOM, Math.max(MIN_WORKSPACE_ZOOM, raw / 100));
+}
+
+/** 분수를 화면이 쓰는 백분율 정수로 옮긴다. 위 함수의 반대 방향이며 짝은 이 둘뿐이다. */
+export function workspaceZoomPercent(zoom: number): number {
+  return Math.round(zoom * 100);
+}
 
 /**
  * 한 벌의 상자 넷.
@@ -105,21 +183,40 @@ function positiveOrZero(v: number): number {
  *
  * `workspace === false`(대시보드 · 편집 꺼짐)에서는 `stageLattice` 결과를 그대로 옮겨
  * 담는다: `box === stage` 이고 `origin === {0,0}` 이므로 **오늘과 값이 완전히 같다**.
+ * 그 갈래는 배율을 **보지 않는다** — 배율은 편집기의 시야이고, 편집이 꺼진 자리에는 시야를
+ * 고를 사람이 없다(REQ-05 · 가정 A3).
  *
- * `workspace === true`(편집 중)에서는 잰 상자를 `PANEL_REGION_FIT_RATIO` 로 줄인 상자에
+ * `workspace === true`(편집 중)에서는 잰 상자를 **보기 배율** `zoom` 으로 줄인 상자에
  * 격자를 맞추고, 그 결과를 잰 상자 **가운데**에 앉힌다. 가운데 정렬은 저술 여백을 사방에
  * 고르게 남길 뿐 아니라 `PanelEditGrid` 의 중심 표식(`+`)이 **출력 영역의 중심**을
  * 가리키게 하는 근거이기도 하다 — 자리 계산을 바꾸면 그 표식이 조용히 다른 뜻이 된다.
  *
+ * ## 배율이 들어가는 자리는 `reduced` 한 줄뿐이다 (REQ-09 · M9)
+ *
+ * 기본값이 종전 동작이므로 배율을 넘기지 않은 호출은 0.5.0 과 **한 픽셀도 다르지 않다**.
+ * `box` 는 배율과 무관하게 여전히 `outer` 이고(그래서 작업 영역이 잰 상자를 넘는 일이
+ * 없다 — 불변식 I22), `origin` 은 여전히 `floor` 라 정수이며, 축척은 여전히 `stageLattice`
+ * 가 한 번만 내려 만든 그 하나다. **배율은 새 축척을 만들지 않는다 — 이미 있는 축척의
+ * 입력을 바꿀 뿐이다.**
+ *
+ * **배율은 요청이고 축척은 결과이며 둘은 같지 않다**(가정 A20). `stageLattice` 가 칸을
+ * 정수 px 로 한 번 내리므로 실현 가능한 축척은 사실상 `1/step` 눈금이고, 이웃한 백분율이
+ * **같은 그림**을 낼 수 있다. 그 `floor` 는 걷어내지 않는다 — 사용자가 세 번 되돌려보낸
+ * "격자가 일정하지 않음" 을 막고 있는 것이 그 한 줄이다(불변식 I5). 대가는 숨기지 않고
+ * 화면의 상시 도움말이 말한다(위험 R24).
+ *
  * 퇴화 처리는 새로 만들지 않는다. `stageLattice` 가 이미 소유한다(잰 상자 0 → 결과 0,
  * 한 칸이 1px 미만 → 정수화하지 않고 소수 축척 하나를 그대로 쓴다). 006 이 그 위에 더한
- * 것은 `floor` 넷뿐이며 그 넷은 NaN 을 만들지 않는다.
+ * 것은 `floor` 넷뿐이며 그 넷은 NaN 을 만들지 않는다. 범위 죔은 여기가 아니라
+ * `clampWorkspaceZoom` 이 진다 — 죈 값만 이 자리에 들어오고, 그 아래는 종전의 퇴화 처리가
+ * 그대로 받친다.
  */
 export function workspaceBox(
   outer: StageSize,
   canvas: CanvasSize,
   step: number,
   workspace: boolean,
+  zoom: number = DEFAULT_WORKSPACE_ZOOM,
 ): CanvasWorkspaceBox {
   const outerW = positiveOrZero(outer.width);
   const outerH = positiveOrZero(outer.height);
@@ -137,8 +234,8 @@ export function workspaceBox(
 
   const lat = stageLattice(
     {
-      width: Math.floor(outerW * PANEL_REGION_FIT_RATIO),
-      height: Math.floor(outerH * PANEL_REGION_FIT_RATIO),
+      width: Math.floor(outerW * zoom),
+      height: Math.floor(outerH * zoom),
     },
     canvas,
     step,
@@ -193,7 +290,7 @@ function clampDimension(v: number): number {
  *
  * ## 인자가 둘인 것이 가드다 (불변식 I20 · 위험 R21 · R22)
  *
- * 0.4.0 의 폐기된 규칙은 `floor(outer × PANEL_REGION_FIT_RATIO)` 였고, 그 규칙에서는
+ * 0.4.0 의 폐기된 규칙은 `floor(outer × 축척)` 이었고, 그 규칙에서는
  * 캔버스가 영원히 패널의 R 배라 REQ-07 이 제 이름("캔버스 크기 = 패널 크기")을 지킬 수
  * 없었다. 그 부활을 막는 가드는 이제 **이름이 아니라 형상**이다:
  *
@@ -205,7 +302,7 @@ function clampDimension(v: number): number {
  *
  * ## 축척 1 은 여기서 나오지 않는다
  *
- * 편집 중 투영 축척은 `cell ÷ step` 이고 `PANEL_REGION_FIT_RATIO` **이하**다 — 작업 영역
+ * 편집 중 투영 축척은 `cell ÷ step` 이고 **보기 배율 이하**다 — 작업 영역
  * 전체가 잰 상자에 담기느라 화면이 물러나 있기 때문이며, 그 물러남이 곧 저술 여백이다.
  * 축척 1 은 **편집이 꺼진 채 저술 크기의 패널에 놓였을 때**의 성질이다(불변식 I21).
  */

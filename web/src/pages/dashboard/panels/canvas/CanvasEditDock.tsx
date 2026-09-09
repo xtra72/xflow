@@ -71,6 +71,13 @@ import {
   type AlignMode,
 } from './canvasEditArrange';
 import { CanvasEditDockHostContext } from './canvasEditDockHost';
+import {
+  MAX_WORKSPACE_ZOOM,
+  MIN_WORKSPACE_ZOOM,
+  WORKSPACE_ZOOM_CHOICES,
+  clampWorkspaceZoom,
+  workspaceZoomPercent,
+} from './canvasWorkspace';
 
 // --- 겉모습 --------------------------------------------------------------
 
@@ -286,6 +293,15 @@ export interface CanvasEditDockBodyProps {
   gridStep: number;
   onGridStepChange: (next: number) => void;
   /**
+   * 보기 배율(**분수**) — 편집기가 작업 영역을 보여 주는 축척(SPEC-CANVAS-006 REQ-09).
+   *
+   * 이 컴포넌트는 분수를 받아 백분율 정수로 **보이기만** 하고, 되돌려 줄 때 다시 분수로
+   * 옮긴다. 그 두 번의 환산은 전부 `canvasWorkspace` 의 두 함수가 지므로 이 파일에는
+   * `100` 이라는 수가 한 번도 나오지 않는다(불변식 I4 와 같은 규율).
+   */
+  zoom: number;
+  onZoomChange: (next: number) => void;
+  /**
    * 캔버스 좌표계 크기 — **자투리 고지에만** 쓴다.
    *
    * 간격이 이 두 축을 나누어떨어뜨리는지가 "마지막 칸이 잘리는가" 를 정하고, 그것을 화면이
@@ -317,6 +333,8 @@ export function CanvasEditDockBody({
   onSnapToGridChange,
   gridStep,
   onGridStepChange,
+  zoom,
+  onZoomChange,
   canvas,
   canAlign,
   canOrder,
@@ -325,6 +343,9 @@ export function CanvasEditDockBody({
 }: CanvasEditDockBodyProps): React.ReactElement {
   const { t } = useTranslation();
   // 한 화면에 캔버스 설정이 둘 이상 뜰 수 있으므로 고정 id 를 쓸 수 없다.
+  const viewId = useId();
+  const zoomSuggestId = useId();
+  const zoomHintId = useId();
   const shapesId = useId();
   const gridId = useId();
   const alignId = useId();
@@ -346,6 +367,72 @@ export function CanvasEditDockBody({
       // 버튼을 눌렀는데 그 뒤에 있는 도형이 함께 골라지고 이동 드래그까지 시작된다.
       onPointerDown={(event) => event.stopPropagation()}
     >
+      {/* 보기 — **도크의 맨 앞**이다. 배율은 "보이지 않을 때 손이 가는" 컨트롤이라, 스크롤
+          해야 찾을 수 있으면 바로 그 순간에 실패한다. 격자 묶음에 넣지 않는 이유는 그
+          묶음의 간격 칸이 붙임 토글에 매여 있기 때문이다(`disabled={!snapToGrid}`) —
+          배율은 붙임과 아무 상관이 없으므로 끌 수 있는 토글 아래에 그 토글을 따르지 않는
+          칸을 두면 화면이 거짓말을 한다. 대가는 도형 넷이 두 줄만큼 아래로 밀리는 것이고,
+          그 값이 56px 정도이며 대개는 스크롤이 아예 생기지 않는다(REQ-09). */}
+      <section role="group" aria-labelledby={viewId} className="flex flex-col gap-1">
+        <p id={viewId} className={SECTION_TITLE_CLASS}>
+          {t('dashboard.canvas.edit.dockView')}
+        </p>
+        {/* 백분율 정수 자유 입력 — 격자 간격 칸의 형상을 **그대로** 따른다.
+
+            목록(콤보 상자)이 아닌 이유는 간격이 0.11.0 에서 이미 걸어 본 길이다: "쓸모
+            있는 값" 은 패널 크기와 그림에 따라 달라 목록이 알 수 없고, 그래서 목록은
+            지키지 못할 약속을 하면서 고를 자유만 빼앗는다. 슬라이더도 기각한다 — 그것은
+            **연속 응답을 약속하는 겉모습**인데 격자가 그것을 `1/step` 눈금으로 자르므로,
+            끄는 동안 여러 구간에서 화면이 멈춘 것처럼 보인다(위험 R24).
+
+            **붙임 토글에 매이지 않는다** — 격자를 꺼도 시야는 바꿀 수 있다. 그래서 이
+            칸에는 `disabled` 가 없고, 그것이 이 묶음이 격자 묶음과 갈라선 이유다. */}
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            inputMode="numeric"
+            data-testid="canvas-workspace-zoom"
+            aria-label={t('dashboard.canvas.edit.workspaceZoom')}
+            title={t('dashboard.canvas.edit.workspaceZoom')}
+            // 상시 도움말이므로 이 연결도 상시다 — 조건부 고지는 간격 25 에서 사실상 늘
+            // 뜨는 경고가 되어 위험 R18 이 이름 붙인 실패를 되풀이한다.
+            aria-describedby={zoomHintId}
+            list={zoomSuggestId}
+            min={workspaceZoomPercent(MIN_WORKSPACE_ZOOM)}
+            max={workspaceZoomPercent(MAX_WORKSPACE_ZOOM)}
+            step={1}
+            value={workspaceZoomPercent(zoom)}
+            // **지역 상태를 두지 않는다**(이 컴포넌트의 규율). 한 글자마다 죄되, 읽을 수
+            // 없는 입력(빈 칸 · 글자)에는 `clampWorkspaceZoom` 이 지금 값을 그대로
+            // 돌려주므로 지우는 도중에 화면이 무너지지 않는다.
+            onChange={(event) => onZoomChange(clampWorkspaceZoom(event.target.value, zoom))}
+            className={cn(SELECT_CLASS, 'flex-1')}
+          />
+          {/* 상시 도움말 — 셋을 말한다: 편집 중 시야만 바꾼다 · 캔버스 크기도 요소 좌표도
+              바꾸지 않는다 · **격자 간격이 배율을 눈금으로 나눈다**(가정 A20). 실제 축척을
+              두 번째 수로 내지는 않는다 — 같은 것을 두 수로 말하면 어느 쪽이 참인지 화면이
+              답하지 못한다. 도움말이 관계를 말하고 그림이 결과를 말한다. */}
+          <FieldHelp
+            text={t('dashboard.canvas.edit.workspaceZoomHint')}
+            describedById={zoomHintId}
+            testId="canvas-workspace-zoom-hint"
+          />
+        </div>
+        {/* 제안값 — 고를 수 있는 값의 전부가 아니라 **곁들이**다(격자 간격과 같은 규율). */}
+        <datalist id={zoomSuggestId} data-testid="canvas-workspace-zoom-suggestions">
+          {WORKSPACE_ZOOM_CHOICES.map((choice) => (
+            // 옵션 글자도 번역한다 — 벌거벗은 숫자는 그것이 백분율인지 캔버스 단위인지
+            // 말하지 않으며, 바로 한 줄 아래 칸이 캔버스 단위를 받는다.
+            <option key={choice} value={workspaceZoomPercent(choice)}>
+              {t('dashboard.canvas.edit.workspaceZoomOption').replace(
+                '{percent}',
+                String(workspaceZoomPercent(choice)),
+              )}
+            </option>
+          ))}
+        </datalist>
+      </section>
+
       <section role="group" aria-labelledby={shapesId} className="flex flex-col gap-0.5">
         <p id={shapesId} className={SECTION_TITLE_CLASS}>
           {t('dashboard.canvas.edit.dockShapes')}

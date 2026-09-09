@@ -19,6 +19,7 @@ import CanvasSurface, {
   type FrameScheduler,
 } from './CanvasSurface';
 import { useCanvasStageGrid, type CanvasStageGrid } from './canvasStageGrid';
+import { DEFAULT_WORKSPACE_ZOOM } from './canvasWorkspace';
 
 // --- ResizeObserver 오버라이드(HeatmapCanvas.test 선례) -------------------
 
@@ -1922,5 +1923,53 @@ describe('CanvasSurface — 격자 컨텍스트의 원점과 작업 영역 (SPEC
     for (const value of [g.origin.x, g.origin.y, g.box.width, g.box.height]) {
       expect(Number.isFinite(value)).toBe(true);
     }
+  });
+
+  // --- 보기 배율 (SPEC-CANVAS-006 M9 · REQ-09) ---------------------------
+  //
+  // 상태의 주인이 표면이라는 것은 **컨텍스트에 실려 내려오는가**로만 확인된다. 오버레이가
+  // 제 상태로 들고 있으면 상자를 짓는 쪽이 남의 상태를 되물어야 하고, 그 되묻는 자리가 곧
+  // 두 번째 출처다(위험 R1 · 불변식 I10).
+
+  it('배율이 격자 한 벌에 실려 내려온다 — 주인은 상자를 짓는 쪽이다', () => {
+    const { grid } = renderWithConsumer({ workspace: true });
+
+    const g = grid();
+    expect(g.zoom).toBe(DEFAULT_WORKSPACE_ZOOM);
+    expect(typeof g.setZoom).toBe('function');
+    // `step`/`setStep` 과 **같은 짝**이다 — 두 값이 같은 자리에 함께 산다.
+    expect(typeof g.setStep).toBe('function');
+  });
+
+  it('배율을 바꾸면 상자가 다시 지어지고 프레임이 **한 장** 예약된다 (AC-E4 · AC-09 (AS))', () => {
+    // 그리는 상자가 실제로 달라지므로 한 장이 필요하다. 중요한 것은 그것이 **종전의 props
+    // 변경 경로**(`geometry` 의존성) 그대로이지 새 깨우기 경로가 아니라는 것이다 —
+    // 격자 간격 변경과 같은 부류다.
+    const { clock, grid } = renderWithConsumer({ workspace: true });
+    expect(clock.pending).toBe(0); // 유휴에 들었음을 **먼저** 단언한다
+    const before = clock.requested;
+    // 기본 배율(0.75)의 상자를 먼저 못박는다 — 바뀌지 않으면 이 시험은 틀린 이유로 통과한다.
+    expect(stageBox().style.width).toBe('740px');
+    expect(stageBox().style.left).toBe('504px');
+
+    act(() => {
+      grid().setZoom(0.5);
+    });
+
+    expect(clock.requested).toBe(before + 1);
+    clock.flush(16);
+    expect(clock.pending).toBe(0);
+
+    // 칸 · 상자 · 원점 셋이 **모두** 달라졌다(시험 규율 D8 — 셋 다 달라야 배선을 잰다).
+    const g = grid();
+    expect(g.zoom).toBe(0.5);
+    expect(g.cell).toEqual({ x: 24, y: 24 });
+    expect(g.origin).toEqual({ x: 634, y: 206 });
+    expect(stageBox().style.width).toBe('480px');
+    expect(stageBox().style.height).toBe('384px');
+    expect(stageBox().style.left).toBe('634px');
+    // 작업 영역은 그대로 잰 상자 전부다 — 배율은 그 상자를 넘지 않는다(불변식 I22).
+    expect(g.box).toEqual({ width: 1749, height: 796 });
+    expect(areaBox().style.width).toBe('1749px');
   });
 });

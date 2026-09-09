@@ -86,7 +86,7 @@ import {
 import type { ResolvedStyle } from './canvasRules';
 import { CanvasStageGridContext, type CanvasStageGrid } from './canvasStageGrid';
 import { beginTween, retargetTween, sampleTween, type TweenState } from './canvasTween';
-import { workspaceBox } from './canvasWorkspace';
+import { DEFAULT_WORKSPACE_ZOOM, workspaceBox } from './canvasWorkspace';
 import { clearSurface, drawElements, type DrawContext2D } from './drawElement';
 
 // --- 주입 지점 -----------------------------------------------------------
@@ -262,6 +262,21 @@ export default function CanvasSurface({
   const [gridStep, setGridStep] = useState<number>(CANVAS_GRID_STEP_UNITS);
 
   /**
+   * 보기 배율(분수) — 편집기가 작업 영역을 보여 주는 축척(SPEC-CANVAS-006 M9 · REQ-09).
+   *
+   * 주인이 표면인 근거는 위 `gridStep` 과 **한 글자도 다르지 않다**: 이 값이 그리는 상자를
+   * 정하고 그 상자는 표면의 것이다. 저장하지 않는 표시 상태라는 것도 같다(가정 A21) —
+   * 저장하면 config 스키마가 넓어지고, 한 사람의 시야 취향이 그 대시보드를 보는 모든
+   * 사람에게 실려 간다. 범위는 **표면 하나·마운트 하나**이므로 두 캔버스 패널이 서로 다른
+   * 배율을 가질 수 있고, 다이얼로그를 닫으면 기본값으로 돌아간다.
+   *
+   * 배율을 바꾸면 그리는 상자가 실제로 달라지므로 프레임이 **한 장** 필요하다 — 아래
+   * `geometry` 의 의존성을 지나는 **종전의 props 변경 경로 그대로**이며(격자 간격 변경과
+   * 같은 부류) 새 깨우기 경로가 아니다(REQ-05 · AC-E4).
+   */
+  const [zoom, setZoom] = useState<number>(DEFAULT_WORKSPACE_ZOOM);
+
+  /**
    * 바깥 상자에서 파생한 상자 한 벌(`canvasWorkspace.workspaceBox`). **투영·상자·격자가
    * 함께 보는 단 한 벌**이다.
    *
@@ -276,8 +291,9 @@ export default function CanvasSurface({
         { width: canvas.width, height: canvas.height },
         gridStep,
         workspace,
+        zoom,
       ),
-    [outer.width, outer.height, canvas.width, canvas.height, gridStep, workspace],
+    [outer.width, outer.height, canvas.width, canvas.height, gridStep, workspace, zoom],
   );
   /**
    * **패널 출력 영역**. 이 아래에서 "스테이지" 는 언제나 이 값이며, 그 뜻은 006 전후로
@@ -299,11 +315,13 @@ export default function CanvasSurface({
     () => ({
       step: gridStep,
       setStep: setGridStep,
+      zoom,
+      setZoom,
       cell: geometry.cell,
       origin: geometry.origin,
       box: geometry.box,
     }),
-    [gridStep, geometry],
+    [gridStep, zoom, geometry],
   );
 
   /**

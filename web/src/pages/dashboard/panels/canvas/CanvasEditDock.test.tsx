@@ -88,6 +88,15 @@ function dockSource(): string {
   return readFileSync(join(__dirname, 'CanvasEditDock.tsx'), 'utf-8');
 }
 
+/** 오버레이의 소스. "몸짓이 붙지 않았다" 는 주장은 렌더로 잴 수 없어 이것을 훑는다. */
+function overlaySource(): string {
+  return readFileSync(join(__dirname, 'CanvasEditOverlay.tsx'), 'utf-8');
+}
+
+function zoomInput(): HTMLInputElement {
+  return screen.getByTestId('canvas-workspace-zoom') as HTMLInputElement;
+}
+
 describe('도크는 패널 설정에서만 뜬다', () => {
   it('자리를 내면 도구가 그 자리에 그려진다', () => {
     render(<Harness initial={[]} />);
@@ -256,5 +265,190 @@ describe('격자 · 정렬 · 순서도 같은 자리로 옮겨 왔다', () => {
 
     fireEvent.click(screen.getByTestId('canvas-order-back'));
     expect(liveElements().map((e) => e.id)).toEqual(['el-3', 'el-1', 'el-2']);
+  });
+});
+
+// --- 보기 배율 (SPEC-CANVAS-006 M9 · REQ-09 · AC-09 (AV)) ----------------
+//
+// 이 절이 재는 것은 **자리와 형상**이다. 값의 산술은 `canvasWorkspace.test.ts` 가 지고,
+// 여기서는 그 산술에 닿는 길이 화면에 옳게 나 있는가를 잰다.
+
+describe('보기 묶음은 도크의 맨 앞에 서고 이름을 갖는다 (AC-09 (AV))', () => {
+  it('첫 묶음이 보기이고 `role="group"` · `aria-labelledby` 로 이름을 갖는다', () => {
+    // 맨 앞인 것에 뜻이 있다 — 배율은 **보이지 않을 때 손이 가는** 컨트롤이라, 스크롤해야
+    // 찾을 수 있으면 바로 그 순간에 실패한다.
+    render(<Harness initial={[]} />);
+
+    const sections = [...screen.getByTestId('canvas-dock-panel').querySelectorAll('section')];
+    expect(sections.length).toBeGreaterThan(1);
+    const [first, second] = sections as [HTMLElement, HTMLElement];
+    expect(first.contains(zoomInput())).toBe(true);
+    expect(first.getAttribute('role')).toBe('group');
+    const labelledBy = first.getAttribute('aria-labelledby');
+    expect(labelledBy).not.toBeNull();
+    expect(document.getElementById(labelledBy!)?.textContent).toBe(
+      'dashboard.canvas.edit.dockView',
+    );
+    // 도형 묶음은 그 **뒤**다 — 두 줄만큼 밀리는 것이 이 자리의 대가다.
+    expect(second.contains(screen.getByTestId('canvas-palette-add-rect'))).toBe(true);
+  });
+
+  it('백분율 정수 입력이고 `aria-label` 과 `title` 이 같은 키에서 나온다', () => {
+    render(<Harness initial={[]} />);
+    const input = zoomInput();
+
+    expect(input.type).toBe('number');
+    expect(input.getAttribute('inputmode')).toBe('numeric');
+    expect(input.getAttribute('aria-label')).toBe('dashboard.canvas.edit.workspaceZoom');
+    expect(input.getAttribute('title')).toBe('dashboard.canvas.edit.workspaceZoom');
+    expect(input.getAttribute('min')).toBe('25');
+    expect(input.getAttribute('max')).toBe('100');
+    expect(input.getAttribute('step')).toBe('1');
+    // 기본값은 화면이 오늘 보여 주는 그 배율이다.
+    expect(input.value).toBe('75');
+  });
+
+  it('제안 넷이 `<datalist>` 로 곁들여지고 옵션 글자가 번역된다', () => {
+    render(<Harness initial={[]} />);
+
+    const list = screen.getByTestId('canvas-workspace-zoom-suggestions');
+    expect(zoomInput().getAttribute('list')).toBe(list.id);
+    const options = [...list.querySelectorAll('option')];
+    expect(options.map((o) => o.value)).toEqual(['25', '50', '75', '100']);
+    // 벌거벗은 숫자는 그것이 백분율인지 캔버스 단위인지 말하지 않는다 — 바로 아래 칸이
+    // 캔버스 단위를 받으므로 그 모호함이 실제 오해가 된다.
+    for (const option of options) {
+      expect(option.textContent).toContain('dashboard.canvas.edit.workspaceZoomOption');
+    }
+  });
+
+  it('도움말이 **상시**이고 `aria-describedby` 로 이어져 있다', () => {
+    // 조건부 고지는 기각했다 — 간격 25 에서 백분율 넷 가운데 셋이 깎이므로 사실상 상시
+    // 뜨는 경고가 되고, 그것은 위험 R18 이 이미 이름을 붙인 실패다.
+    render(<Harness initial={[]} />);
+
+    const help = screen.getByTestId('canvas-workspace-zoom-hint');
+    expect(help).toBeTruthy();
+    const describedBy = zoomInput().getAttribute('aria-describedby');
+    expect(describedBy).not.toBeNull();
+    expect(help.textContent).toContain('dashboard.canvas.edit.workspaceZoomHint');
+
+    // 격자를 켜고 끄고 간격을 바꿔도 사라지지 않는다 — 조건부가 아니라는 뜻이다.
+    fireEvent.click(screen.getByTestId('canvas-grid-toggle'));
+    fireEvent.change(screen.getByTestId('canvas-grid-step'), { target: { value: '50' } });
+    expect(screen.getByTestId('canvas-workspace-zoom-hint')).toBeTruthy();
+  });
+
+  it('배율 칸은 붙임 토글에 **매여 있지 않다** — 그래서 격자 묶음이 아니라 제 묶음에 산다', () => {
+    render(<Harness initial={[]} />);
+
+    // 격자가 꺼진 채로도 살아 있다. 간격 칸은 그 반대다(끌 수 있는 토글에 매여 있다).
+    expect(zoomInput().disabled).toBe(false);
+    expect((screen.getByTestId('canvas-grid-step') as HTMLInputElement).disabled).toBe(true);
+  });
+});
+
+describe('배율 칸이 실제로 값을 간다 (AC-09 (AS) · (AT))', () => {
+  it('적은 백분율이 그대로 반영된다 — 되죄지 않는다', () => {
+    render(<Harness initial={[]} />);
+
+    fireEvent.change(zoomInput(), { target: { value: '50' } });
+    expect(zoomInput().value).toBe('50');
+    // 73% 는 간격 25 에서 기본값과 같은 그림을 내지만 **값 자체는 73 으로 남는다** —
+    // 간격이 배율을 조용히 고치면 그것이 곧 I20 이 금지한 결합의 거울상이다(위험 R24).
+    fireEvent.change(zoomInput(), { target: { value: '73' } });
+    expect(zoomInput().value).toBe('73');
+  });
+
+  it('범위 밖은 죄이고, 읽을 수 없는 입력에는 지금 값이 그대로 남는다', () => {
+    render(<Harness initial={[]} />);
+
+    fireEvent.change(zoomInput(), { target: { value: '400' } });
+    expect(zoomInput().value).toBe('100'); // 확대는 없다(불변식 I22)
+    fireEvent.change(zoomInput(), { target: { value: '1' } });
+    expect(zoomInput().value).toBe('25');
+    fireEvent.change(zoomInput(), { target: { value: '' } });
+    expect(zoomInput().value).toBe('25'); // 한 글자를 지우는 동안 화면이 무너지지 않는다
+  });
+
+  it('배율을 바꿔도 요소가 한 글자도 바뀌지 않는다 — 바뀌는 것은 시야뿐이다 (AC-09 (AS))', () => {
+    render(<Harness initial={[rect('el-1')]} />);
+    const before = screen.getByTestId('dump').textContent;
+
+    fireEvent.change(zoomInput(), { target: { value: '50' } });
+
+    expect(screen.getByTestId('dump').textContent).toBe(before);
+  });
+
+  it('다시 마운트하면 기본값으로 돌아간다 — 저장하지 않는다는 결정의 관측 가능한 얼굴이다', () => {
+    // 돌아가는 값이 오늘 사용자가 보던 그 화면(75%)이라 초기화가 잃음이 아니라 되돌아옴
+    // 으로 읽힌다(가정 A21). 그리고 범위가 마운트 하나이므로 두 캔버스 패널이 서로 다른
+    // 배율을 가질 수 있다.
+    render(<Harness initial={[]} />);
+    fireEvent.change(zoomInput(), { target: { value: '50' } });
+    expect(zoomInput().value).toBe('50');
+
+    cleanup();
+    render(<Harness initial={[]} />);
+
+    expect(zoomInput().value).toBe('75');
+  });
+
+  it('간격을 바꿔도 배율이 한 글자도 바뀌지 않는다 (AC-09 (AU))', () => {
+    render(<Harness initial={[]} />);
+    fireEvent.change(zoomInput(), { target: { value: '50' } });
+
+    fireEvent.click(screen.getByTestId('canvas-grid-toggle'));
+    fireEvent.change(screen.getByTestId('canvas-grid-step'), { target: { value: '7' } });
+
+    expect(zoomInput().value).toBe('50');
+  });
+});
+
+describe('배율은 몸짓을 하나도 가져가지 않는다 (AC-09 (AV))', () => {
+  it('도크에도 오버레이에도 휠 처리자가 없다', () => {
+    // Ctrl/⌘+휠은 이 화면에서 이미 미리보기 확대의 것이고(`handlePreviewWheel`), 방향키는
+    // 오버레이 안에서 이미 둘로 갈려 있다(선택 있음 → 요소 이동 / 없음 → 화면 이동).
+    // 셋째 주인이 낄 자리가 없다.
+    expect(dockSource()).not.toMatch(/onWheel|deltaY/);
+    expect(overlaySource()).not.toMatch(/onWheel|deltaY/);
+  });
+
+  it('배율을 바꾸는 길은 그 칸 하나뿐이다 — 단축키가 붙지 않았다', () => {
+    // 오버레이에서 배율 setter 가 나타나는 자리는 **정확히 둘**이다: 선언 한 줄과 도크로
+    // 넘기는 prop 한 줄. 셋째가 생기면(키 처리자 · 휠 · 드래그) 그것이 곧 몸짓을 하나
+    // 가져간 것이고 여기서 걸린다.
+    const source = overlaySource();
+    expect(source.match(/setWorkspaceZoom/g)?.length).toBe(2);
+    // 그리고 키 처리자 **본문 안**에는 그 이름이 없다 — 방향키는 이미 둘로 갈려 있다.
+    // 자르는 끝을 함수의 닫는 줄로 잡는다: 파일 끝까지 자르면 아래 JSX 의 prop 한 줄이
+    // 딸려 들어와 이 단언이 늘 실패한다(자를 자리를 틀리면 시험이 제 이름과 다른 것을 잰다).
+    const start = source.indexOf('const handleKeyDown');
+    expect(start).toBeGreaterThan(0);
+    const end = source.indexOf('\n  };', start);
+    expect(end).toBeGreaterThan(start);
+    expect(source.slice(start, end)).not.toMatch(/setWorkspaceZoom|onZoomChange/);
+  });
+
+  it('백분율 환산이 도크에 없다 — 단위를 넘는 자리는 `canvasWorkspace` 하나다', () => {
+    // `100` 이 도크에 나타나면 환산이 두 자리로 갈라진 것이다(불변식 I4 와 같은 규율).
+    expect(dockSource()).toMatch(/workspaceZoomPercent/);
+    expect(dockSource()).not.toMatch(/\* 100|\/ 100/);
+  });
+});
+
+describe('대시보드에 놓인 패널에는 배율 컨트롤이 없다 (AC-09 (AV))', () => {
+  it('도크 자체가 없기 때문이며, 배율이 만든 비대칭이 **아니다**', () => {
+    // 같은 자리에 팔레트도 · 격자 토글도 · 간격도 · 정렬도 · 순서도 없다. 그 사실을 함께
+    // 단언해 다음 사람이 이것을 배율의 결함으로 읽지 않게 한다
+    // (spec.md §대시보드에서 편집하는 사람은 어떻게 되는가).
+    render(<Harness initial={[rect('el-1')]} docked={false} />);
+
+    expect(screen.queryByTestId('canvas-workspace-zoom')).toBeNull();
+    expect(screen.queryByTestId('canvas-workspace-zoom-hint')).toBeNull();
+    expect(screen.queryByTestId('canvas-grid-toggle')).toBeNull();
+    expect(screen.queryByTestId('canvas-grid-step')).toBeNull();
+    expect(screen.queryByTestId('canvas-align-left')).toBeNull();
+    expect(screen.queryByTestId('canvas-order-front')).toBeNull();
   });
 });

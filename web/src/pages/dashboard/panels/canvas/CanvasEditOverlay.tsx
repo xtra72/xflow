@@ -180,6 +180,7 @@ import {
 import { useCanvasEditSelection } from './canvasEditContext';
 import { useCanvasEditDockHost } from './canvasEditDockHost';
 import { useCanvasStageGrid } from './canvasStageGrid';
+import { DEFAULT_WORKSPACE_ZOOM } from './canvasWorkspace';
 import {
   projectBox,
   projectLine,
@@ -660,6 +661,22 @@ export default function CanvasEditOverlay({
   const [localGridStep, setLocalGridStep] = useState<number>(CANVAS_GRID_STEP_UNITS);
   const gridStep = stageGrid?.step ?? localGridStep;
   const setGridStep = stageGrid?.setStep ?? setLocalGridStep;
+
+  /**
+   * **보기 배율**(분수) — 편집기가 작업 영역을 보여 주는 축척(SPEC-CANVAS-006 M9 · REQ-09).
+   *
+   * 주인도 폴백도 위 `gridStep` 과 **같은 자리·같은 규율**이다: 상태는 표면이 들고
+   * (상자를 짓는 쪽이 배율을 들어야 오버레이가 같은 상자를 다시 파생하지 않는다 —
+   * 불변식 I10), 표면 밖(오버레이만 세운 단위 시험)에서는 지역 상태로 떨어진다.
+   *
+   * 이 층은 배율을 **읽어 도크로 넘기기만 한다** — 그리는 층도 포인터 경로도 배율을 보지
+   * 않는다. 그리고 배율에는 **몸짓이 하나도 붙지 않는다**: Ctrl/⌘+휠은 이 화면에서 이미
+   * 미리보기 확대의 것이고, 방향키는 이 층 안에서 이미 둘로 갈려 있다(선택 있음 → 요소
+   * 이동 / 없음 → 화면 이동). 셋째 주인이 낄 자리가 없다.
+   */
+  const [localZoom, setLocalZoom] = useState<number>(DEFAULT_WORKSPACE_ZOOM);
+  const workspaceZoom = stageGrid?.zoom ?? localZoom;
+  const setWorkspaceZoom = stageGrid?.setZoom ?? setLocalZoom;
 
   /**
    * 격자를 **그리기 위한** 한 칸의 CSS px.
@@ -1265,6 +1282,8 @@ export default function CanvasEditOverlay({
             onSnapToGridChange={setSnapToGrid}
             gridStep={gridStep}
             onGridStepChange={setGridStep}
+            zoom={workspaceZoom}
+            onZoomChange={setWorkspaceZoom}
             // 자투리 고지의 근거 — 간격이 이 두 축을 나누어떨어뜨리는가. 투영이 이미 들고
             // 있는 그 크기이므로 새 측정원이 되지 않는다(위험 R1).
             canvas={projection.canvas}

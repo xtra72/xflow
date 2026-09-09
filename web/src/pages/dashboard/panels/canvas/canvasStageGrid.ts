@@ -36,6 +36,22 @@ export interface CanvasStageGrid {
   step: number;
   /** 간격을 바꾼다. 표면은 그리는 영역을 새 칸에 다시 맞춘다. */
   setStep: (step: number) => void;
+  /**
+   * **보기 배율**(분수). 편집기가 작업 영역을 보여 주는 축척이며 화면은 이것을 백분율
+   * 정수로 말한다(SPEC-CANVAS-006 M9 · REQ-09).
+   *
+   * `step`/`setStep` 과 **같은 짝이고 같은 근거**다 — 배율은 그리는 상자를 정하고 그 상자는
+   * 표면의 것이므로, 상태를 상자 짓는 쪽이 들어야 한다. 오버레이가 들고 있으면 상자를
+   * 짓는 쪽이 남의 상태를 되물어야 하고 그 되묻는 자리가 곧 두 번째 출처다(위험 R1 ·
+   * 불변식 I10).
+   *
+   * **저장되지 않는다**(가정 A21). 격자 간격과 같은 자리·같은 규율이며, 다이얼로그를 닫으면
+   * 기본값으로 돌아간다 — 돌아가는 값이 오늘 사용자가 보던 그 화면이라 잃음이 아니라
+   * 되돌아옴이다.
+   */
+  zoom: number;
+  /** 배율을 바꾼다. 표면은 그 배율로 줄인 상자에 격자를 다시 맞춘다. */
+  setZoom: (zoom: number) => void;
   /** 한 칸의 CSS px — 표면이 영역을 맞출 때 쓴 **그 값 그대로**다(다시 나누지 않는다). */
   cell: StageCell;
   /**
@@ -71,7 +87,8 @@ export const CanvasStageGridContext = createContext<CanvasStageGrid | null>(null
  * `null` 을 숨기지 않는 것에 뜻이 있다 — 표면이 없으면 맞출 영역도 없으므로, 받는 쪽이
  * 그 사실을 알고 제 값으로 폴백해야 한다. 006 이 더한 두 칸의 폴백도 같은 규율을 따른다:
  * 표면이 없으면 작업 영역도 없으므로 `origin = {0,0}` · `box = projection.stage` 로
- * 떨어진다 — 그것이 곧 "상자가 하나뿐이던 시절" 의 값이며 006 이전과 같다.
+ * 떨어진다 — 그것이 곧 "상자가 하나뿐이던 시절" 의 값이며 006 이전과 같다. 배율도 같다:
+ * 표면이 없으면 지역 상태로 떨어지고 기본값은 `DEFAULT_WORKSPACE_ZOOM` 이다.
  */
 export function useCanvasStageGrid(): CanvasStageGrid | null {
   return useContext(CanvasStageGridContext);

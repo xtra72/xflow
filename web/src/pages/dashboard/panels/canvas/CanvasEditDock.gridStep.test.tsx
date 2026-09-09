@@ -11,7 +11,7 @@
 // 그래서 이 파일의 `t` 는 **ko.json 의 진짜 문구**를 돌려준다. 문구가 자리표시자를 잃으면
 // (번역을 손보다 지우는 일이 실제로 일어난다) 이 시험이 곧바로 무너진다.
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -100,7 +100,16 @@ describe('자투리 고지는 어떤 두 정수가 그 결과를 냈는지 적�
     setStep('7');
 
     // 이 저장소의 관용구: 눈으로 보는 사람에게는 단추 하나, 보조기기에게는 sr-only 설명.
-    const help = screen.getByRole('button', { name: ko.property.fieldHelp.viewDescription });
+    //
+    // **찾는 자리를 이 고지로 좁힌다**(SPEC-CANVAS-006 M9). 0.6.0 이 도크 맨 앞에 **상시**
+    // 도움말 하나를 세웠으므로 "도크에 `?` 가 하나뿐" 이라는 전제가 더는 참이 아니다 —
+    // 그 전제는 이 시험이 재려던 것이 아니라 도크가 그때 그랬을 뿐이다. 단언의 뜻은 한
+    // 글자도 바뀌지 않는다: **이 고지**가 `?` 뒤에 살고, 눌러야 열리고, 열면 그 두 정수를
+    // 말한다.
+    const help = within(screen.getByTestId('canvas-grid-step-partial').parentElement!).getByRole(
+      'button',
+      { name: ko.property.fieldHelp.viewDescription },
+    );
     expect(help).toBeTruthy();
     expect(screen.queryByRole('tooltip')).toBeNull();
 
@@ -113,8 +122,12 @@ describe('자투리 고지는 어떤 두 정수가 그 결과를 냈는지 적�
     setStep('50');
 
     expect(screen.queryByTestId('canvas-grid-step-partial')).toBeNull();
+    // 같은 이유로 자리를 **격자 묶음 안**으로 좁힌다(위 주석). 보기 묶음의 상시 도움말은
+    // 다른 묶음의 것이고, 여기서 없어야 하는 것은 **격자 간격 칸 옆의** `?` 다.
+    const gridSection = screen.getByTestId('canvas-grid-step').closest('section');
+    expect(gridSection).not.toBeNull();
     expect(
-      screen.queryByRole('button', { name: ko.property.fieldHelp.viewDescription }),
+      within(gridSection!).queryByRole('button', { name: ko.property.fieldHelp.viewDescription }),
     ).toBeNull();
   });
 
@@ -136,6 +149,62 @@ describe('두 언어 모두 자리표시자를 갖는다 (한쪽만 고치면 �
       expect(template).toContain('{step}');
       expect(template).toContain('{width}');
       expect(template).toContain('{height}');
+    }
+  });
+});
+
+// --- 보기 배율 문구 (SPEC-CANVAS-006 M9 · AC-09 (AV)) --------------------
+
+describe('배율 제안 글자가 실제 번역 문구로 채워진다', () => {
+  it('옵션이 벌거벗은 숫자가 아니다 — 치환자가 남지 않고 백분율임이 글자로 읽힌다', () => {
+    // 바로 한 줄 아래 칸이 **캔버스 단위**를 받으므로, 이 목록이 벌거벗은 숫자만 보이면
+    // 그것이 백분율인지 좌표인지 알 수 없다. 키를 그대로 돌려주는 대체 아래에서는 이
+    // 실패가 드러나지 않아 파일을 나눠 진짜 문구로 잰다.
+    renderDock();
+
+    const options = [
+      ...screen.getByTestId('canvas-workspace-zoom-suggestions').querySelectorAll('option'),
+    ];
+    expect(options.map((o) => o.value)).toEqual(['25', '50', '75', '100']);
+    for (const option of options) {
+      const text = option.textContent ?? '';
+      expect(text).not.toContain('{percent}');
+      expect(text).toContain(option.value);
+      // 숫자만 있는 것이 아니다 — 단위가 글자로 붙어 있다.
+      expect(text.replace(/[0-9]/g, '').trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it('상시 도움말이 진짜 문구로 뜨고 치환자가 남지 않는다', () => {
+    renderDock();
+
+    const hint = screen.getByTestId('canvas-workspace-zoom-hint');
+    expect(hint.textContent ?? '').not.toMatch(/\{[a-z]+\}/i);
+    expect((hint.textContent ?? '').length).toBeGreaterThan(0);
+  });
+});
+
+describe('두 언어 모두 배율 문구를 갖는다 (키 이름에 점이 없다)', () => {
+  it('ko · en 에 넷이 모두 있고 옵션 문구에 {percent} 가 있다', () => {
+    for (const messages of [ko, en]) {
+      const edit = messages.dashboard.canvas.edit;
+      expect(edit.dockView.length).toBeGreaterThan(0);
+      expect(edit.workspaceZoom.length).toBeGreaterThan(0);
+      expect(edit.workspaceZoomOption).toContain('{percent}');
+      expect(edit.workspaceZoomHint.length).toBeGreaterThan(0);
+    }
+    // 두 언어가 실제로 다른 문구다 — 한쪽을 복사해 두면 번역이 없는 것과 같다.
+    expect(ko.dashboard.canvas.edit.dockView).not.toBe(en.dashboard.canvas.edit.dockView);
+    expect(ko.dashboard.canvas.edit.workspaceZoomHint).not.toBe(
+      en.dashboard.canvas.edit.workspaceZoomHint,
+    );
+  });
+
+  it('키 이름 안에 점이 없다 (프로젝트 규약)', () => {
+    for (const messages of [ko, en]) {
+      for (const key of Object.keys(messages.dashboard.canvas.edit)) {
+        expect(key).not.toContain('.');
+      }
     }
   });
 });
