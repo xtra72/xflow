@@ -463,6 +463,15 @@ export default function CanvasPanel({
         scheduler={scheduler}
         overlay={renderOverlay}
         onStageMeasured={handleStage}
+        // 작업 영역은 **편집 게이팅에 얹힌다**(SPEC-CANVAS-006 M4). 새 토글을 두지 않는
+        // 것에 뜻이 있다 — 세 겹 게이팅이 이미 "지금 편집 중인가" 를 소유하므로, 넷째
+        // 개념이 생기면 사용자가 패널마다 다른 규칙을 배운다. 그리고 이 한 게이트가
+        // 뒤에 설 항상 맞춤(M7)과 **같은 게이트**여야 표시 없이 맞춤만 도는 상태가 형상
+        // 자체로 존재하지 않는다(불변식 I15 · 위험 R13).
+        //
+        // 꺼져 있으면 `workspaceBox` 가 `stageLattice` 결과를 그대로 옮겨 담아 상자 둘이
+        // 겹치므로 대시보드의 그림은 한 픽셀도 달라지지 않는다(REQ-05 · AC-06).
+        workspace={edit.active}
       />
 
       {/* 배치 편집 토글. `canEdit && dashboardEditMode && !forced` 일 때만 나온다. */}

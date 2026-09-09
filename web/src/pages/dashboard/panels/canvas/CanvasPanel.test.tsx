@@ -858,15 +858,22 @@ describe('CanvasPanel — 드래그가 onConfigChange 로 흘러간다 (AC-03)',
     const onConfigChange = vi.fn();
     renderEditablePanel([EDIT_RECT], { onConfigChange, forceEdit: true });
 
-    sendToOverlay('pointerdown', 30, 30);
-    sendToOverlay('pointermove', 50, 50);
+    sendToOverlay('pointerdown', 21, 21);
+    sendToOverlay('pointermove', 35, 35);
     await nextBrowserFrame();
 
     expect(onConfigChange).toHaveBeenCalledTimes(1);
     const patch = onConfigChange.mock.calls[0]![0] as { elements: Array<{ id: string; geometry: unknown }> };
     expect(Object.keys(patch)).toEqual(['elements']);
-    // 화면에서 (20,20)px 끌었다 — 스테이지 200x160 위의 그 길이는 기본 캔버스
-    // (500x400) 단위로 (50, 50) 이다(두 축이 같은 축척 0.4 다). 자리는 정수로 저장된다.
+    // 화면에서 (14,14)px 끌었다 — **편집 중** 스테이지 140x112 위의 그 길이는 기본 캔버스
+    // (500x400) 단위로 (50, 50) 이다(두 축이 같은 축척 0.28 다). 자리는 정수로 저장된다.
+    //
+    // 006 M4 가 편집 중에 작업 영역을 켜면서 출력 영역이 200x160 에서 140x112 로 줄었다
+    // (`workspace={edit.active}`). 그래서 **같은 캔버스 자리**를 가리키는 화면 px 가
+    // 0.7 배로 옮겨 갔을 뿐이며(30→21 · 50→35), 이 시험이 지키는 단언 — 끈 결과가
+    // `elements` 패치 하나로 나가고, 그 값이 정수이며, 두 축이 **같은 양**만큼 움직인다 —
+    // 은 한 글자도 달라지지 않았다. 축척이 바뀌는 것 자체는 REQ-03 이 명시한 성질이다
+    // ("바뀌는 것은 투영 축척뿐이고 좌표는 그대로다").
     expect(patch.elements.find((el) => el.id === 'a')!.geometry).toEqual({
       x: 100,
       y: 90,
@@ -881,8 +888,8 @@ describe('CanvasPanel — 드래그가 onConfigChange 로 흘러간다 (AC-03)',
 
     // 오버레이가 아예 없으므로 누름은 캔버스로 가고 아무 일도 일어나지 않는다.
     expect(screen.queryByTestId('canvas-edit-overlay')).toBeNull();
-    fireEvent(screen.getByTestId('canvas-surface'), panelPointer('pointerdown', 30, 30));
-    fireEvent(screen.getByTestId('canvas-surface'), panelPointer('pointermove', 50, 50));
+    fireEvent(screen.getByTestId('canvas-surface'), panelPointer('pointerdown', 21, 21));
+    fireEvent(screen.getByTestId('canvas-surface'), panelPointer('pointermove', 35, 35));
     await nextBrowserFrame();
 
     expect(onConfigChange).not.toHaveBeenCalled();
@@ -900,12 +907,18 @@ describe('CanvasPanel — 편집기가 유휴 정지를 깨지 않는다 (AC-E4)
     const before = clock.requested;
 
     // 고르고, 다른 요소로 옮기고, 핸들 자리를 지나간다(호버).
-    sendToOverlay('pointerdown', 30, 30);
-    sendToOverlay('pointerup', 30, 30);
-    sendToOverlay('pointerdown', 110, 110);
-    sendToOverlay('pointerup', 110, 110);
-    sendToOverlay('pointermove', 120, 120);
-    sendToOverlay('pointermove', 40, 40);
+    //
+    // 006 M4 가 편집 중 출력 영역을 200x160 → 140x112 로 줄였으므로(`workspace={edit.active}`),
+    // **같은 캔버스 자리**를 가리키는 화면 px 를 0.7 배로 옮겼다(30→21 · 110→77 · 120→84 ·
+    // 40→28). 겨냥하는 대상은 그대로다: 21px 는 요소 a 의 몸통, 77px 는 요소 b 의 몸통,
+    // 84px 는 아무것도 없는 자리, 28px 는 다시 a 의 몸통이다. 이 시험이 지키는 단언
+    // (선택도 호버도 프레임을 **0 건** 요청한다)은 화면 자리와 무관하다.
+    sendToOverlay('pointerdown', 21, 21);
+    sendToOverlay('pointerup', 21, 21);
+    sendToOverlay('pointerdown', 77, 77);
+    sendToOverlay('pointerup', 77, 77);
+    sendToOverlay('pointermove', 84, 84);
+    sendToOverlay('pointermove', 28, 28);
 
     expect(screen.getByTestId('canvas-selection-b')).toBeTruthy();
     expect(clock.requested).toBe(before);
@@ -1585,5 +1598,102 @@ describe('CanvasPanel — 리사이즈는 저장된 좌표의 뜻을 바꾸지 �
     const after = drawnFraction();
     expect(after.x).toBeCloseTo(before.x, 9);
     expect(after.y).toBeCloseTo(before.y, 9);
+  });
+});
+
+// --- 작업 영역은 편집 게이팅에 얹힌다 (SPEC-CANVAS-006 M4) ---
+//
+// M2·M3 이 표면에 `workspace` 축을 세웠고, 여기서 그 축이 **패널의 편집 게이트에** 묶인다.
+// 재는 것은 배선 하나다: `workspace` 가 정말 `edit.active` 를 나르는가, 그리고 편집이
+// 꺼진 자리에서는 006 이전과 값이 같은가.
+//
+// 고정 입력은 **1749 × 796** 이다. 이 파일의 기본 상자 200×160 은 캔버스(500×400)와 비율이
+// 같고 칸에도 이미 맞아 있어 **작업 영역이 켜졌는지 꺼졌는지 구별이 흐리다**(꺼진 갈래에서
+// 자투리가 0 이라 두 상자가 같은 자리에서 시작한다). 1749×796 은 정사각형도 아니고
+// (0.8.0 (O)) 캔버스 비율 5:4 와도 다르며(0.10.0 (V)) 칸으로 나누어떨어지지도 않아
+// (0.9.0 (R)) 두 갈래가 서로 다른 수를 낸다:
+//   - 꺼짐 → 상자 하나뿐인 것과 같다: 영역 980×784 · 자리 (384, 6) · 원점 (0,0).
+//   - 켜짐 → 작업 영역 1749×796 · 출력 영역 740×592 · 원점 (504, 102).
+//
+// 요소를 하나 두는 것에도 뜻이 있다 — 요소가 0개면 자동 맞춤이 돌아 `canvas` 가 바뀌고,
+// 그러면 이 절이 재려는 상자 수가 그 맞춤의 결과를 함께 지고 간다(그 게이트는 M7 의 몫이며
+// 이 밀레스톤은 한 줄도 건드리지 않는다).
+
+describe('CanvasPanel — 작업 영역은 편집 게이팅에 얹힌다 (SPEC-CANVAS-006 M4)', () => {
+  /** `'384px'` → `384`. */
+  const px = (v: string): number => Number.parseFloat(v);
+  const workspaceBoxEl = () => screen.getByTestId('canvas-workspace');
+  const stageBoxEl = () => screen.getByTestId('canvas-stage');
+
+  it('편집이 켜지면 표면이 상자를 둘로 짓는다 — `workspace` 가 `edit.active` 를 나른다', () => {
+    panelOuter = { width: 1749, height: 796 };
+    renderEditablePanel([EDIT_RECT], { onConfigChange: vi.fn(), forceEdit: true });
+
+    // 편집이 정말 켜져 있다(꺼진 채로 잰 "작업 영역 시험" 은 틀린 이유로 통과한다).
+    expect(screen.getByTestId('canvas-edit-overlay')).toBeTruthy();
+
+    // 작업 영역은 잰 상자 전부다.
+    expect(workspaceBoxEl().style.width).toBe('1749px');
+    expect(workspaceBoxEl().style.height).toBe('796px');
+    expect(workspaceBoxEl().style.left).toBe('0px');
+    expect(workspaceBoxEl().style.top).toBe('0px');
+    // 출력 영역은 그 안에 가운데로 앉고, 두 상자는 **실제로 다르다**.
+    expect(stageBoxEl().style.width).toBe('740px');
+    expect(stageBoxEl().style.height).toBe('592px');
+    expect(stageBoxEl().style.left).toBe('504px');
+    expect(stageBoxEl().style.top).toBe('102px');
+    expect(px(stageBoxEl().style.width)).toBeLessThan(px(workspaceBoxEl().style.width));
+  });
+
+  it('편집이 꺼지면 두 상자가 겹친다 — 대시보드의 그림이 006 이전과 같다', () => {
+    panelOuter = { width: 1749, height: 796 };
+    renderEditablePanel([EDIT_RECT], { onConfigChange: vi.fn() });
+
+    // 편집이 정말 꺼져 있다.
+    expect(screen.queryByTestId('canvas-edit-overlay')).toBeNull();
+
+    // 006 이전의 그 상자 하나와 크기·자리가 같고, 출력 영역이 그 왼쪽 위에 겹친다.
+    expect(workspaceBoxEl().style.width).toBe('980px');
+    expect(workspaceBoxEl().style.height).toBe('784px');
+    expect(workspaceBoxEl().style.left).toBe('384px');
+    expect(workspaceBoxEl().style.top).toBe('6px');
+    expect(stageBoxEl().style.width).toBe(workspaceBoxEl().style.width);
+    expect(stageBoxEl().style.height).toBe(workspaceBoxEl().style.height);
+    expect(stageBoxEl().style.left).toBe('0px');
+    expect(stageBoxEl().style.top).toBe('0px');
+  });
+
+  it('작업 영역과 편집 층은 **같은 게이트**를 지난다 — 넷째 토글이 없다', () => {
+    // 형상으로 재는 단언이다: 편집 층이 있는 상태에서만 두 상자가 갈리고, 없는 상태에서는
+    // 갈리지 않는다. 작업 영역에 제 토글을 따로 두는 구현은 이 짝을 깨뜨린다.
+    panelOuter = { width: 1749, height: 796 };
+
+    const split = (): boolean =>
+      workspaceBoxEl().style.width !== stageBoxEl().style.width ||
+      stageBoxEl().style.left !== '0px';
+
+    renderEditablePanel([EDIT_RECT], { onConfigChange: vi.fn(), forceEdit: true });
+    expect(screen.queryByTestId('canvas-edit-overlay')).not.toBeNull();
+    expect(split()).toBe(true);
+
+    cleanup();
+
+    renderEditablePanel([EDIT_RECT], { onConfigChange: vi.fn() });
+    expect(screen.queryByTestId('canvas-edit-overlay')).toBeNull();
+    expect(split()).toBe(false);
+  });
+
+  it('패널은 표면에 `className` 을 넘기지 않는다 — `overflow-hidden` 이 살아 있다', () => {
+    // 표면의 `overflow-hidden` 은 **기본 `className` 에만** 있고, `className` 을 넘기면
+    // 통째로 갈린다(종전 동작이며 표면 시험이 그 형상을 이미 못박고 있다). 그래서 이 한
+    // 줄이 없으면, 패널에 `className` 을 넘기는 날 출력 영역 밖 손잡이의 클리핑 보장이
+    // **조용히** 사라진다 — 어느 표면 시험도 그것을 잡지 못한다(패널이 무엇을 넘기는지는
+    // 표면의 관심 밖이다).
+    panelOuter = { width: 1749, height: 796 };
+    renderEditablePanel([EDIT_RECT], { onConfigChange: vi.fn(), forceEdit: true });
+
+    const surfaceRoot = workspaceBoxEl().parentElement as HTMLElement;
+    expect(surfaceRoot.className.split(/\s+/)).toContain('overflow-hidden');
+    expect(surfaceRoot.className.split(/\s+/)).toContain('relative');
   });
 });
