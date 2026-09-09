@@ -752,15 +752,24 @@ describe('CanvasSurface — 무동작 보장: 오버레이 슬롯 미사용 시 
     );
     clock.flush(0);
 
-    // 컨테이너 → 그리는 상자 → 캔버스. 가운데 상자는 0.9.0 이 격자 자투리를 실제
-    // DOM 으로 만든 것이며 **오버레이와 무관하게 언제나** 있다(슬롯을 써도 안 써도 같다).
-    // AC-E1 이 금지하는 것은 "오버레이 때문에 생기는 노드" 이고, 그것은 여전히 0 개다.
+    // 컨테이너 → **작업 영역** → 캔버스 + **출력 영역**. 006 이 상자를 하나 더 지었으므로
+    // 캔버스를 담은 상자는 이제 `canvas-workspace` 다(006 이전에는 `canvas-stage` 였다).
+    // 상자 둘 다 0.9.0/006 이 자투리와 저술 여백을 실제 DOM 으로 만든 것이며 **오버레이와
+    // 무관하게 언제나** 있다(슬롯을 써도 안 써도 같다). 그래서 이 시험이 재는 것은 상자의
+    // 수가 아니라 **오버레이 때문에 생기는 노드의 수**이고, 그것은 006 이후에도 0 개다.
     const wrapper = container.firstElementChild as HTMLElement;
     expect(wrapper.children).toHaveLength(1);
+    const area = screen.getByTestId('canvas-workspace');
+    expect(wrapper.children[0]).toBe(area);
+    // 작업 영역이 드는 것은 캔버스와 출력 영역 **둘뿐**이다 — 셋째가 생기면 여기서 걸린다.
+    expect(area.children).toHaveLength(2);
+    expect(area.children[0]!.tagName).toBe('CANVAS');
     const box = screen.getByTestId('canvas-stage');
-    expect(wrapper.children[0]).toBe(box);
-    expect(box.children).toHaveLength(1);
-    expect(box.children[0]!.tagName).toBe('CANVAS');
+    expect(area.children[1]).toBe(box);
+    // 그리고 출력 영역은 **비어 있다** — 슬롯을 쓰지 않으면 옵셔널 호출이 인자 평가조차
+    // 건너뛰므로 오버레이가 만드는 노드가 하나도 없다. 이 한 줄이 AC-E1 의 무동작 보장이다.
+    expect(box.children).toHaveLength(0);
+    expect(screen.queryByTestId('canvas-overlay')).toBeNull();
   });
 
   it('한 프레임의 그리기 호출 순서와 인자가 001 과 같다', () => {
@@ -985,7 +994,7 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     };
   }
 
-  it('오버레이는 캔버스 뒤 형제로 **그리는 상자 안에** 렌더된다', () => {
+  it('오버레이는 캔버스 **뒤(=위)** 에 칠해지고 출력 영역 상자 안에 산다', () => {
     const clock = makeScheduler();
     const spy = makeOverlaySpy();
     const { container } = render(
@@ -1001,16 +1010,38 @@ describe('CanvasSurface — 오버레이 슬롯 (SPEC-CANVAS-002)', () => {
     );
     clock.flush(0);
 
-    // 같은 상자 안의 형제라는 사실이 이 시험의 전부다 — 오버레이가 제
-    // `getBoundingClientRect()` 로 재는 상자와 `projection.stage` 가 같은 노드가 되려면
-    // 둘이 **그리는 상자 안에** 함께 있어야 한다(0.9.0 · 위험 R1).
+    // 006 이전에는 "캔버스의 **뒤 형제**" 라는 모양이 곧 이 성질이었다. 006 이 캔버스를
+    // 작업 영역으로 올리면서 둘은 더 이상 형제가 아니지만, 이 시험이 지키던 것은 배치가
+    // 아니라 **칠하는 순서**(오버레이가 캔버스 위에 온다)와 **오버레이가 사는 상자**다.
+    // 그래서 모양이 아니라 성질을 단언한다 — 006 이후 그 성질은 형제 순서가 아니라 중첩을
+    // 통해 성립한다: 작업 영역 안에서 `canvas-stage` 가 `<canvas>` **뒤에** 오고 오버레이는
+    // 그 안에 산다.
     const wrapper = container.firstElementChild as HTMLElement;
     expect(wrapper.children).toHaveLength(1);
-    const box = wrapper.children[0] as HTMLElement;
-    expect(box).toBe(screen.getByTestId('canvas-stage'));
-    expect(box.children).toHaveLength(2);
-    expect(box.children[0]!.tagName).toBe('CANVAS');
-    expect(box.children[1]).toBe(screen.getByTestId('canvas-overlay'));
+    const area = wrapper.children[0] as HTMLElement;
+    expect(area).toBe(screen.getByTestId('canvas-workspace'));
+
+    const surface = screen.getByTestId('canvas-surface');
+    const box = screen.getByTestId('canvas-stage');
+    const overlayNode = screen.getByTestId('canvas-overlay');
+
+    // 캔버스는 작업 영역이 직접 들고, 오버레이는 **출력 영역** 안에 산다 — 오버레이가 제
+    // `getBoundingClientRect()` 로 재는 상자와 `projection.stage` 가 같은 노드가 되려면
+    // 오버레이가 바로 그 상자 안에 있어야 한다(0.9.0 · 위험 R1).
+    expect(area.children).toHaveLength(2);
+    expect(area.children[0]).toBe(surface);
+    expect(area.children[1]).toBe(box);
+    expect(box.children).toHaveLength(1);
+    expect(box.children[0]).toBe(overlayNode);
+    // 캔버스는 그 상자 **밖**이다 — 안에 있으면 006 이 하려던 일(그림이 출력 영역 밖으로
+    // 나간다)이 통째로 사라진다.
+    expect(box.contains(surface)).toBe(false);
+
+    // **칠하는 순서**: 문서 순서로 오버레이가 캔버스보다 뒤다. 두 층은 같은 쌓임 맥락 안의
+    // 흐름 위에 있으므로 뒤에 오는 쪽이 위에 칠해진다. 서로를 품지 않는 두 노드이므로
+    // 반환값은 마스크가 아니라 `FOLLOWING` 하나다 — 순서가 뒤집히면 `PRECEDING`(2) 이
+    // 나와 여기서 걸린다.
+    expect(surface.compareDocumentPosition(overlayNode)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it('오버레이가 받는 스테이지는 프레임이 투영에 쓰는 그 값이다(측정원이 하나다)', () => {
@@ -1234,6 +1265,16 @@ function stageBox(): HTMLElement {
   return screen.getByTestId('canvas-stage');
 }
 
+/** 작업 영역 상자(006 M2). 편집이 꺼져 있으면 출력 영역과 크기·자리가 같다. */
+function areaBox(): HTMLElement {
+  return screen.getByTestId('canvas-workspace');
+}
+
+/** `'384px'` → `384`. 두 상자의 자리를 더해 **화면상 자리**를 구할 때 쓴다. */
+function px(value: string): number {
+  return Number.parseFloat(value);
+}
+
 describe('CanvasSurface — 그리는 영역 (0.9.0)', () => {
   function renderAt(width: number, height: number, overlay?: (ctx: CanvasOverlayContext) => React.ReactNode) {
     currentSize = { width, height };
@@ -1276,8 +1317,22 @@ describe('CanvasSurface — 그리는 영역 (0.9.0)', () => {
 
     // 비율이 다르므로 여백은 가로에 몰린다((1749-980)/2 내림). 그 여백은 캔버스 크기를
     // 패널 비율에 맞추면 사라진다(`fitCanvasSizeToStage` · `CanvasPanel` 자동 맞춤).
-    expect(stageBox().style.left).toBe('384px');
-    expect(stageBox().style.top).toBe('6px'); // (796-784)/2
+    //
+    // 006 은 이 **자리를 바깥쪽 상자로 올렸을 뿐** 수를 바꾸지 않았다 — 편집이 꺼진 갈래에서
+    // 작업 영역은 0.9.0 의 그 안쪽 상자와 크기·자리가 그대로 같다(`workspaceBox` 무동작 갈래).
+    expect(areaBox().style.left).toBe('384px');
+    expect(areaBox().style.top).toBe('6px'); // (796-784)/2
+
+    // 그리고 읽는 사람이 실제로 신경 쓰는 성질은 이것이다 — **출력 영역의 화면상 자리가
+    // 상자를 하나 더 지었어도 옮겨지지 않았다.** 중첩된 자리는 두 상자의 합이고, 무동작
+    // 갈래에서 원점이 (0,0) 이므로 합은 006 이전의 그 값 그대로여야 한다. 중첩이 스테이지를
+    // 화면에서 한 픽셀이라도 밀면 여기서 걸린다.
+    expect(px(areaBox().style.left) + px(stageBox().style.left)).toBe(384);
+    expect(px(areaBox().style.top) + px(stageBox().style.top)).toBe(6);
+    // 두 자리 모두 **정수** CSS px 다 — 소수면 안쪽 선이 다시 소수에서 시작한다.
+    for (const value of [areaBox().style.left, areaBox().style.top, stageBox().style.left, stageBox().style.top]) {
+      expect(Number.isInteger(px(value))).toBe(true);
+    }
   });
 
   it('캔버스와 오버레이가 **그 상자 안에** 함께 산다 (측정원이 하나다)', () => {
@@ -1288,9 +1343,18 @@ describe('CanvasSurface — 그리는 영역 (0.9.0)', () => {
     });
     const spy = { last: seen.at(-1) };
 
+    // 006 이 캔버스를 작업 영역으로 올렸으므로 "같은 상자 안" 은 이제 **작업 영역**이다.
+    // 그러나 이 시험의 알맹이는 배치가 아니라 **측정원이 하나**라는 성질이고, 그것은 아래
+    // 마지막 세 줄이 통째로 진다 — 오버레이가 사는 상자의 style 크기가 곧 `projection.stage`
+    // 다. 둘이 갈라지는 순간 포인터에 조용한 오프셋이 실린다(위험 R1).
+    const area = areaBox();
+    expect(area.contains(screen.getByTestId('canvas-surface'))).toBe(true);
+    expect(area.contains(screen.getByTestId('canvas-overlay'))).toBe(true);
+
     const box = stageBox();
-    expect(box.contains(screen.getByTestId('canvas-surface'))).toBe(true);
+    // 오버레이가 사는 상자는 **출력 영역**이다(캔버스는 그 바깥이다).
     expect(box.contains(screen.getByTestId('canvas-overlay'))).toBe(true);
+    expect(box.contains(screen.getByTestId('canvas-surface'))).toBe(false);
     // 오버레이가 받는 스테이지 = 그 상자의 크기. 둘이 다르면 포인터에 오프셋이 실린다.
     expect(spy.last!.projection.stage).toEqual({ width: 980, height: 784 });
     expect(`${spy.last!.projection.stage.width}px`).toBe(box.style.width);
@@ -1419,5 +1483,324 @@ describe('CanvasSurface — 잰 상자 알림 (0.10.0)', () => {
     const { onStageMeasured } = renderMeasured(1749, 796);
     expect(onStageMeasured.mock.calls[0]![0]).toEqual({ width: 0, height: 0 });
     expect(onStageMeasured).toHaveBeenLastCalledWith({ width: 1749, height: 796 });
+  });
+});
+
+// --- 작업 영역과 출력 영역 (SPEC-CANVAS-006 M2) --------------------------
+//
+// 006 이 표면에 더한 다섯째 책임 하나만 잰다: **상자를 둘로 짓고, 비트맵을 바깥쪽 상자에
+// 올리고, 캔버스 좌표 원점을 이미 있던 `setTransform` 한 줄에 싣는다.** 격자 위상(M3) ·
+// 경계와 흐림(M4~) 은 이 절의 몫이 아니다.
+//
+// 고정 입력을 여기 한 번 적고 이유를 함께 남긴다 — acceptance.md §시험 규율의 다섯 함정과
+// 006 이 더한 넷을 이 절이 정면으로 받는다.
+//   - 바깥 상자 **1749 × 796** — 정사각형이 아니고(0.8.0 (O)), 캔버스 비율 5:4 와도 다르며
+//     (0.10.0 (V)), 칸으로 나누어떨어지지도 않는다(0.9.0 (R)). 사용자가 반 칸을 실제로 본
+//     그 상자다. 정사각형이나 비율이 같은 상자를 넣으면 여백이 0 이라 원점이 (0,0) 이 되고,
+//     그러면 **원점 이동이 아예 없는 코드도 이 절 전부를 통과한다.**
+//   - 캔버스 **500 × 400**, 간격 **25**.
+//   - 그 조합에서 나오는 수: 꺼짐 → 영역 980×784 · 자리 (384, 6) · 칸 49.
+//     켜짐 → 줄인 상자 1311×597 · 영역 740×592 · 원점 (504, 102) · 칸 37.
+//   - **원점 (504, 102) 는 칸 37 의 배수가 아니다**(504 = 37×13 + 23, 102 = 37×2 + 28). D3 이
+//     요구하는 조합이 이것이며, 그 사실을 아래에서 수로 단언해 다음 사람이 축소 비율을
+//     편한 값으로 갈아 끼우면 곧바로 걸리게 한다.
+//   - 요소 셋은 **안에 하나 · 완전히 밖에 하나(음수 좌표) · 경계에 걸친 하나**다(D2).
+//     전부 안에 있는 고정 입력은 원점 이동이 없어도 통과한다.
+//   - 축척은 두 갈래 모두 1 이 아니다(꺼짐 1.96 · 켜짐 1.48). 축척 1 이면 나눗셈이 항등이라
+//     투영을 아예 하지 않는 코드도 통과한다(0.2.0 결함 B).
+//   - **꺼진 갈래를 따로 잰다**(D1). 켠 시험만 두면 무동작 갈래가 한 번도 돌지 않고,
+//     기본값이 `true` 로 뒤집혀도 아무도 모른다.
+
+describe('CanvasSurface — 작업 영역과 출력 영역 (SPEC-CANVAS-006 M2)', () => {
+  /** 안에 하나 · 완전히 밖에 하나(음수 좌표) · 경계에 걸친 하나 (D2). */
+  const OUTSIDE_ELEMENTS = [
+    rectEl('in', { geometry: { x: 100, y: 100, w: 100, h: 100 } }),
+    rectEl('out', { geometry: { x: -100, y: -50, w: 100, h: 100 } }),
+    rectEl('edge', { geometry: { x: 450, y: 350, w: 100, h: 100 } }),
+  ];
+  /** 신원이 고정된 props — 재렌더에서 그대로 다시 쓴다(아래 `element` 주석 참고). */
+  const TARGET_STYLES = {
+    in: { fill: '#ff0000' },
+    out: { fill: '#00ff00' },
+    edge: { fill: '#0000ff' },
+  };
+  const NO_TEXTS = {};
+
+  function renderSurface(opts: {
+    workspace: boolean;
+    width?: number;
+    height?: number;
+  }) {
+    currentSize = { width: opts.width ?? 1749, height: opts.height ?? 796 };
+    const clock = makeScheduler();
+    const seen: CanvasOverlayContext[] = [];
+    const visibility = makeVisibility().source;
+    const overlay = (ctx: CanvasOverlayContext) => {
+      seen.push(ctx);
+      return <div data-testid="canvas-overlay" />;
+    };
+    // 요소를 함수로 짓는 것에 뜻이 있다 — 아래 토글 시험이 **`workspace` 하나만** 바꾼
+    // 재렌더를 하려면 나머지 props 가 신원까지 그대로여야 한다. 객체 리터럴을 재렌더에서
+    // 다시 쓰면 `targetStyles` 의 새 신원이 프레임을 부르고, 그러면 그 시험은 토글이 아니라
+    // **리터럴이 부른 프레임**을 세면서 초록이 된다(틀린 이유로 통과하는 초록).
+    const element = (workspace: boolean) => (
+      <CanvasSurface
+        canvas={WIDE_CANVAS}
+        elements={OUTSIDE_ELEMENTS}
+        targetStyles={TARGET_STYLES}
+        texts={NO_TEXTS}
+        scheduler={clock.scheduler}
+        visibilitySource={visibility}
+        workspace={workspace}
+        overlay={overlay}
+      />
+    );
+    const view = render(element(opts.workspace));
+    clock.flush(0);
+    return {
+      clock,
+      view,
+      seen,
+      last: () => seen.at(-1)!,
+      /** `workspace` **하나만** 뒤집어 다시 렌더한다(나머지는 신원까지 동일하다). */
+      toggleWorkspace(next: boolean) {
+        act(() => {
+          view.rerender(element(next));
+        });
+      },
+    };
+  }
+
+  /** 이 프레임이 그린 rect 들의 인자(스테이지 px). 순서는 요소 순서다. */
+  function rects(): unknown[][] {
+    return ctxStub.calls.filter((c) => c[0] === 'rect').map((c) => c.slice(1));
+  }
+  /** 이 프레임이 세운 좌표계들. 첫째는 `clearSurface` 의 항등 되돌림이다. */
+  function transforms(): unknown[][] {
+    return ctxStub.calls.filter((c) => c[0] === 'setTransform').map((c) => c.slice(1));
+  }
+  function surfaceEl(): HTMLCanvasElement {
+    return screen.getByTestId('canvas-surface') as HTMLCanvasElement;
+  }
+
+  it('꺼진 갈래(기본값)에서는 두 상자가 겹치고 원점이 (0,0) 이다 — 픽셀이 006 이전과 같다', () => {
+    // D1: 이 시험이 없으면 무동작 갈래가 한 번도 돌지 않는다. 006 은 갈래를 `workspaceBox`
+    // **한 함수** 안에 두었으므로(AC-E1) 여기서 재는 것은 그 갈래가 정말 오늘과 같은가다.
+    renderSurface({ workspace: false });
+
+    // 상자가 하나 늘었지만 크기·자리가 겹쳐 화면은 그대로다.
+    expect(areaBox().style.width).toBe('980px');
+    expect(areaBox().style.height).toBe('784px');
+    expect(stageBox().style.width).toBe(areaBox().style.width);
+    expect(stageBox().style.height).toBe(areaBox().style.height);
+    // 원점 (0,0) — 출력 영역이 작업 영역의 왼쪽 위에 딱 겹친다.
+    expect(stageBox().style.left).toBe('0px');
+    expect(stageBox().style.top).toBe('0px');
+    // 자투리 자리는 006 이전 그대로 (384, 6) 이고, 이제 바깥쪽 상자가 그것을 진다.
+    expect(areaBox().style.left).toBe('384px');
+    expect(areaBox().style.top).toBe('6px');
+
+    // 평행이동 두 인자가 **0** 이다 — 원점이 (0,0) 이므로 좌표계가 006 이전과 같다.
+    expect(transforms()).toEqual([
+      [1, 0, 0, 1, 0, 0],
+      [2, 0, 0, 2, 0, 0],
+    ]);
+    // 비트맵도 CSS 크기도 006 이전의 그 값이다(dpr 2).
+    expect(surfaceEl().style.width).toBe('980px');
+    expect(surfaceEl().style.height).toBe('784px');
+    expect(surfaceEl().width).toBe(1960);
+    expect(surfaceEl().height).toBe(1568);
+    // 축척 980/500 = 1.96 (1 이 아니다). 그림도 006 이전과 한 픽셀도 다르지 않다.
+    expect(rects()).toEqual([
+      [196, 196, 196, 196],
+      [-196, -98, 196, 196],
+      [882, 686, 196, 196],
+    ]);
+  });
+
+  it('켠 갈래는 상자를 둘로 짓는다 — 작업 영역은 잰 상자 전부, 출력 영역은 그 안 가운데다', () => {
+    renderSurface({ workspace: true });
+
+    // D4 를 **먼저** 단언한다: 두 상자가 실제로 다르지 않으면 006 이 하는 일이 사라지고
+    // 아래 나머지가 전부 우연히 통과한다(축소 비율 1.0 이 감추는 그 형상이다).
+    expect(areaBox().style.width).not.toBe(stageBox().style.width);
+    expect(areaBox().style.height).not.toBe(stageBox().style.height);
+
+    // 작업 영역 = 잰 바깥 상자 전부, 자리는 (0,0).
+    expect(areaBox().style.width).toBe('1749px');
+    expect(areaBox().style.height).toBe('796px');
+    expect(areaBox().style.left).toBe('0px');
+    expect(areaBox().style.top).toBe('0px');
+
+    // 출력 영역 = 줄인 상자(1311×597)에 격자를 맞춘 740×592 가 가운데에 선다.
+    expect(stageBox().style.width).toBe('740px');
+    expect(stageBox().style.height).toBe('592px');
+    expect(stageBox().style.left).toBe('504px');
+    expect(stageBox().style.top).toBe('102px');
+
+    // 원점이 **정수** CSS px 다 — 소수면 안쪽의 모든 선이 다시 소수에서 시작한다.
+    expect(Number.isInteger(px(stageBox().style.left))).toBe(true);
+    expect(Number.isInteger(px(stageBox().style.top))).toBe(true);
+    // 그리고 사방 여백이 축마다 1px 이내로 고르다(내림 때문에 0 이 아니라 한 단위 이내다).
+    expect(Math.abs(1749 - 740 - 2 * 504)).toBeLessThanOrEqual(1);
+    expect(Math.abs(796 - 592 - 2 * 102)).toBeLessThanOrEqual(1);
+
+    // 축척은 **하나**다 — 출력 영역의 종횡비가 캔버스와 같아야 도형이 일그러지지 않는다.
+    const cell = 740 / (WIDE_CANVAS.width / 25);
+    expect(cell).toBe(592 / (WIDE_CANVAS.height / 25));
+    expect(cell).toBe(37);
+    // D3: 그 원점은 한 칸의 **배수가 아니다**. 배수인 고정 입력에서는 격자를 작업 영역의
+    // 왼쪽 위에 앉힌 결함과 출력 영역의 원점에 앉힌 옳은 구현이 같은 자리를 낸다.
+    expect(px(stageBox().style.left) % cell).toBe(23);
+    expect(px(stageBox().style.top) % cell).toBe(28);
+  });
+
+  it('출력 영역의 크기가 곧 `projection.stage` 다 — 두 상자가 **다를 때에도** 그렇다', () => {
+    // 꺼진 갈래에서는 작업 영역과 출력 영역이 같은 값이라, 표면이 실수로 작업 영역을
+    // 넘겨도 이 단언이 통과한다(두 값이 우연히 같아지는 형상 — 0.3.0 결함 D 의 규율).
+    // 그래서 이 게이트는 **켠 갈래**에서 돌린다.
+    const { last } = renderSurface({ workspace: true });
+
+    expect(last().projection.stage).toEqual({ width: 740, height: 592 });
+    expect(`${last().projection.stage.width}px`).toBe(stageBox().style.width);
+    expect(`${last().projection.stage.height}px`).toBe(stageBox().style.height);
+    // 작업 영역이 아니다 — 넘겼다면 오버레이가 제 상자로 재는 값과 갈라져 포인터에
+    // 조용한 오프셋이 실린다(위험 R1).
+    expect(`${last().projection.stage.width}px`).not.toBe(areaBox().style.width);
+    // 투영 한 벌은 여전히 두 칸이며 원점을 싣지 않는다(AC-01).
+    expect(Object.keys(last().projection).sort()).toEqual(['canvas', 'stage']);
+    expect(last().projection.canvas).toEqual(WIDE_CANVAS);
+    // 오버레이는 **출력 영역** 안에 산다(캔버스는 그 바깥이다).
+    expect(stageBox().contains(screen.getByTestId('canvas-overlay'))).toBe(true);
+    expect(stageBox().contains(surfaceEl())).toBe(false);
+    expect(areaBox().contains(surfaceEl())).toBe(true);
+  });
+
+  it('비트맵은 출력 영역이 아니라 **작업 영역**을 덮는다 (`computeBackingSize` 가 받는 상자)', () => {
+    // dpr 을 정수 2 가 아니라 **1.5** 로 둔다 — 정수 dpr 은 반올림 자리를 감춘다.
+    vi.stubGlobal('devicePixelRatio', 1.5);
+    renderSurface({ workspace: true });
+
+    // CSS 크기가 작업 영역이다. 출력 영역(740×592)이면 그 밖의 그림이 통째로 잘린다.
+    expect(surfaceEl().style.width).toBe('1749px');
+    expect(surfaceEl().style.height).toBe('796px');
+    expect(surfaceEl().style.width).not.toBe(stageBox().style.width);
+    expect(surfaceEl().style.height).not.toBe(stageBox().style.height);
+    // 백킹 버퍼도 작업 영역 × dpr 이다(1749×1.5 = 2623.5 → 2624 · 796×1.5 = 1194).
+    expect(surfaceEl().width).toBe(2624);
+    expect(surfaceEl().height).toBe(1194);
+    // 지우는 것도 작업 영역 전체다 — 출력 영역만 지우면 밖의 지난 프레임이 남는다.
+    expect(ctxStub.calls.find((c) => c[0] === 'clearRect')?.slice(1)).toEqual([0, 0, 2624, 1194]);
+  });
+
+  it('원점은 이미 있던 `setTransform` **그 한 줄**에 실린다 — 좌표계를 새로 건너지 않는다', () => {
+    renderSurface({ workspace: true });
+
+    // 한 프레임의 좌표계는 둘뿐이다: `clearSurface` 가 소유한 항등 되돌림과, 그리기 좌표계
+    // **하나**. 006 은 둘째의 마지막 두 인자(평행이동)에 원점을 실을 뿐 셋째를 만들지
+    // 않는다 — 셋째가 생기면 그것이 곧 새로운 좌표계 건넘이고, 보정 산술이 낄 자리다.
+    expect(transforms()).toEqual([
+      [1, 0, 0, 1, 0, 0],
+      [2, 0, 0, 2, 504 * 2, 102 * 2],
+    ]);
+    expect(transforms()).toHaveLength(2);
+  });
+
+  it('출력 영역 **밖**의 요소가 비트맵 **안**으로 들어와 그려진다 (D2)', () => {
+    renderSurface({ workspace: true });
+
+    // 투영은 한 글자도 바뀌지 않았다 — 밖의 요소는 여전히 **음수** 스테이지 px 다.
+    // (여기서 값이 양수로 접혀 있으면 누군가 투영에 원점을 더한 것이고, 그것이 곧 두 번
+    //  세는 결함이다.)
+    expect(rects()).toEqual([
+      [148, 148, 148, 148],
+      [-148, -74, 148, 148],
+      [666, 518, 148, 148],
+    ]);
+
+    // 그 음수를 비트맵 안으로 들이는 것은 좌표계의 평행이동이다. 두 층(투영 · 좌표계)을
+    // **함께** 세워야 이음매가 덮인다(0.4.0 결함 E — 한 층만 본 시험은 통과한다).
+    const [, draw] = transforms();
+    const [scale, , , , tx, ty] = draw as number[];
+    const outside = rects()[1] as number[];
+    // 밖의 요소가 장치 픽셀에서 실제로 비트맵 안에 떨어진다.
+    expect(outside[0]! * scale! + tx!).toBe(712); // -148×2 + 1008
+    expect(outside[1]! * scale! + ty!).toBe(56); // -74×2 + 204
+    expect(outside[0]! * scale! + tx!).toBeGreaterThanOrEqual(0);
+    expect(outside[1]! * scale! + ty!).toBeGreaterThanOrEqual(0);
+    // 경계에 걸친 요소는 출력 영역을 **넘어서지만** 비트맵 안에 남는다.
+    const edge = rects()[2] as number[];
+    expect(edge[0]! + edge[2]!).toBeGreaterThan(740);
+    expect((edge[0]! + edge[2]!) * scale! + tx!).toBeLessThanOrEqual(surfaceEl().width);
+  });
+
+  it('편집 토글은 프레임을 **한 장** 예약하고 다시 유휴로 돌아간다 (AC-E4)', () => {
+    // 그리는 상자가 실제로 바뀌므로 한 장이 필요하다. 중요한 것은 그것이 **종전의 props
+    // 변경 경로**(`geometry` 의존성) 그대로이지 새 깨우기 경로가 아니라는 것이다.
+    //
+    // 재렌더에서 바뀌는 것은 `workspace` **하나뿐**이고 나머지 props 는 신원까지 그대로다
+    // (`renderSurface.toggleWorkspace`). 리터럴을 다시 쓰면 `targetStyles` 의 새 신원이
+    // 프레임을 부르고, 그러면 이 시험은 토글이 아니라 그 리터럴을 세면서 초록이 된다.
+    const { clock, toggleWorkspace } = renderSurface({ workspace: false });
+    expect(clock.pending).toBe(0); // 유휴에 들었음을 **먼저** 단언한다(꺼져 있어서 통과하는 초록 방지)
+    const before = clock.requested;
+
+    toggleWorkspace(true);
+
+    expect(clock.requested).toBe(before + 1);
+    clock.flush(16);
+    // 진행 중 트윈이 없으므로 그 한 장 뒤에 루프는 다시 유휴다.
+    expect(clock.pending).toBe(0);
+    // 그리고 상자는 정말로 바뀌었다 — 바뀌지 않았다면 이 시험은 틀린 이유로 통과한 것이다.
+    expect(stageBox().style.width).toBe('740px');
+  });
+
+  it('`overflow-hidden` 이 컨테이너에 있다 — DOM 손잡이가 비트맵과 같은 자리에서 잘린다', () => {
+    const { view } = renderSurface({ workspace: true });
+
+    const wrapper = view.container.firstElementChild as HTMLElement;
+    expect(wrapper.className.split(/\s+/)).toContain('overflow-hidden');
+    // 두 상자가 `absolute` 로 앉을 기준이 되는 `relative` 도 함께 있어야 한다.
+    expect(wrapper.className.split(/\s+/)).toContain('relative');
+  });
+
+  it('퇴화: 아직 재지 못한 상자(0)는 켠 갈래에서도 그리지 않고 NaN 도 내지 않는다', () => {
+    const { clock } = renderSurface({ workspace: true, width: 0, height: 0 });
+
+    expect(areaBox().style.width).toBe('0px');
+    expect(areaBox().style.height).toBe('0px');
+    expect(stageBox().style.width).toBe('0px');
+    expect(stageBox().style.height).toBe('0px');
+    expect(stageBox().style.left).toBe('0px');
+    expect(stageBox().style.top).toBe('0px');
+    expect(ops()).not.toContain('clearRect');
+    expect(clock.pending).toBe(0);
+  });
+
+  it('퇴화: 극단적으로 납작한 상자에서도 축척은 하나이고 출력 영역이 작업 영역을 넘지 않는다', () => {
+    // 2000×50 → 줄인 상자 1500×37 → 한 칸 2px → 출력 영역 40×32, 원점 (980, 9).
+    // 한 칸이 1px 미만이 아니므로 정수화가 살아 있고, 그래도 상자가 뒤집히지 않는다.
+    renderSurface({ workspace: true, width: 2000, height: 50 });
+
+    expect(areaBox().style.width).toBe('2000px');
+    expect(areaBox().style.height).toBe('50px');
+    expect(stageBox().style.width).toBe('40px');
+    expect(stageBox().style.height).toBe('32px');
+    expect(stageBox().style.left).toBe('980px');
+    expect(stageBox().style.top).toBe('9px');
+    // 줄이는 방향이 뒤집히지 않는다.
+    expect(px(stageBox().style.width)).toBeLessThanOrEqual(px(areaBox().style.width));
+    expect(px(stageBox().style.height)).toBeLessThanOrEqual(px(areaBox().style.height));
+    // 축척이 하나다 — 칸이 두 축 모두 2px 다.
+    expect(40 / (WIDE_CANVAS.width / 25)).toBe(32 / (WIDE_CANVAS.height / 25));
+    // NaN 이 상자에도 좌표계에도 번지지 않는다.
+    for (const value of transforms().flat()) {
+      expect(Number.isFinite(value as number)).toBe(true);
+    }
+    expect(rects()).toEqual([
+      [8, 8, 8, 8],
+      [-8, -4, 8, 8],
+      [36, 28, 8, 8],
+    ]);
   });
 });

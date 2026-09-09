@@ -30,6 +30,29 @@
 // 상자를 쓰므로 셋이 갈라질 자리가 없고, 오버레이가 제 상자로 재는 값과 `projection.stage`
 // 가 **같은 노드**라 그 사이에 보정 산술이 낄 자리도 없다.
 //
+// **006 이 더한 다섯째 책임: 상자를 둘로 짓는다**(SPEC-CANVAS-006 M2). 0.9.0 의 안쪽 상자
+// 하나가 저술 공간이자 출력 공간이었으므로, 캔버스 밖에 놓인 요소는 저장은 되지만 화면에서
+// 사라졌다(비트맵이 제 상자 밖의 그리기를 버린다). 006 은 편집 중일 때 **작업 영역**
+// (`canvas-workspace` — 잰 상자 전부)과 그 안의 **패널 출력 영역**(`canvas-stage` — 오늘의
+// 그 상자)을 따로 짓고, `<canvas>` 를 바깥쪽인 작업 영역에 올린다. 그것이 이 SPEC 의 유일한
+// 구조 변경이며, 출력 영역 밖의 그림이 비트맵 안으로 들어오는 이유 전부다.
+//
+// 지켜 낸 것이 결정적이다. **오버레이는 여전히 `canvas-stage` 안에 살고 `projection.stage`
+// 는 여전히 그 상자의 크기다** — 오버레이가 제 `getBoundingClientRect()` 로 재는 상자와
+// 투영이 쓰는 크기가 **같은 노드**라는 성질이 그대로이므로, 둘 사이에 보정 산술이 낄 자리가
+// 006 이후에도 존재하지 않는다(위험 R1). 그래서 히트 테스트 · 핸들 좌표 · 정렬 · 붙임 ·
+// 포인터 환산이 한 줄도 바뀌지 않았다.
+//
+// 비트맵의 원점 이동은 **이미 있던 한 줄**이 진다: `drawFrame` 은 DPR 배율을 세우려고
+// `ctx.setTransform(scale,0,0,scale,0,0)` 을 이미 부르고 있었고, 006 은 그 마지막 두 인자
+// (평행이동)에 출력 영역의 px 자리를 실을 뿐이다. `drawElement.ts` 도 `DrawContext2D` 도
+// 한 글자도 바뀌지 않는다.
+//
+// **`workspace` 를 넘기지 않으면 002 와 동작이 완전히 같다**(AC-E1). 그때 `workspaceBox` 는
+// `stageLattice` 결과를 그대로 옮겨 담아 작업 영역과 출력 영역이 겹치고 원점이 (0,0) 이므로
+// 평행이동도 0 이다. 상자를 **조건부로 없애지 않는** 것에 뜻이 있다 — 갈래가 둘이면 편집
+// 토글마다 DOM 이 갈아엎히고, 그때 `<canvas>` 가 다시 만들어져 마지막 프레임이 사라진다.
+//
 // **포인터 통과 슬롯은 두지 않는다.** T3 은 설계를 그대로 옮겨 `onCanvasPointer*` 넷을
 // `<canvas>` 에 달아 두었으나, T5 가 오버레이를 지으면서 포인터를 **오버레이 루트**에서
 // 받기로 결론이 났다 — 초점을 받는 핸들(T8)과 팔레트(T9)가 어차피 그 층 안의 진짜 DOM
@@ -48,7 +71,7 @@
 // 효과의 의존성에도 들어가지 않고, 실측 폭 장부도 state 가 아니라 ref 라 재렌더를 낳지
 // 않는다(REQ-05 · AC-E4).
 //
-// @spec SPEC-CANVAS-001 · SPEC-CANVAS-002 (T3 — 오버레이 슬롯)
+// @spec SPEC-CANVAS-001 · SPEC-CANVAS-002 (T3 — 오버레이 슬롯) · SPEC-CANVAS-006 (M2 — 두 상자)
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
@@ -57,13 +80,13 @@ import type { CanvasElement, CanvasSize, TweenSpec } from './canvasConfig';
 import { CANVAS_GRID_STEP_UNITS } from './canvasEditArrange';
 import {
   computeBackingSize,
-  stageLattice,
   type CanvasProjection,
   type StageSize,
 } from './canvasGeometry';
 import type { ResolvedStyle } from './canvasRules';
 import { CanvasStageGridContext, type CanvasStageGrid } from './canvasStageGrid';
 import { beginTween, retargetTween, sampleTween, type TweenState } from './canvasTween';
+import { workspaceBox } from './canvasWorkspace';
 import { clearSurface, drawElements, type DrawContext2D } from './drawElement';
 
 // --- 주입 지점 -----------------------------------------------------------
@@ -160,6 +183,20 @@ export interface CanvasSurfaceProps {
    * 영향이 없다(REQ-05 · AC-E4).
    */
   onStageMeasured?: (outer: StageSize) => void;
+  /**
+   * 편집 중인가 — 캔버스 비트맵이 패널 출력 영역보다 **넓은 작업 영역**을 덮는가
+   * (SPEC-CANVAS-006 M2).
+   *
+   * **기본값 `false` 는 002 와 완전히 동일한 동작이다**(AC-E1). 그때 작업 영역과 출력
+   * 영역이 겹치고 캔버스 좌표 원점이 (0,0) 이라 `setTransform` 의 평행이동 두 인자가 0 이며,
+   * 그리는 결과 · 프레임 예약 횟수 · 트윈 동작이 종전과 같다.
+   *
+   * 작업 영역 전용 토글을 만들지 않고 편집 게이팅에 얹는 것에 뜻이 있다 — 세 겹 게이팅이
+   * 이미 "지금 편집 중인가" 를 소유하고, 넷째 개념이 생기면 사용자가 패널마다 다른 규칙을
+   * 배운다. 이 값이 바뀌면 **그리는 상자가 실제로 달라지므로** 프레임이 한 장 필요한데,
+   * 그것은 새 깨우기 경로가 아니라 종전의 props 변경 경로 그대로다(REQ-05 · AC-E4).
+   */
+  workspace?: boolean;
 }
 
 // --- 스타일 비교 ---------------------------------------------------------
@@ -203,6 +240,7 @@ export default function CanvasSurface({
   className,
   overlay,
   onStageMeasured,
+  workspace = false,
 }: CanvasSurfaceProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -224,31 +262,36 @@ export default function CanvasSurface({
   const [gridStep, setGridStep] = useState<number>(CANVAS_GRID_STEP_UNITS);
 
   /**
-   * 바깥 상자를 격자 칸에 맞춘 결과. **투영·상자·격자가 함께 보는 단 한 벌**이다.
+   * 바깥 상자에서 파생한 상자 한 벌(`canvasWorkspace.workspaceBox`). **투영·상자·격자가
+   * 함께 보는 단 한 벌**이다.
    *
-   * 의존성을 객체가 아니라 네 수치로 적는 것에 뜻이 있다 — props 로 온 객체는 부모가
-   * 렌더할 때마다 새 신원일 수 있고, 그 신원이 여기 들어오면 렌더마다 새 격자가 나와
+   * 의존성을 객체가 아니라 다섯 수치로 적는 것에 뜻이 있다 — props 로 온 객체는 부모가
+   * 렌더할 때마다 새 신원일 수 있고, 그 신원이 여기 들어오면 렌더마다 새 상자가 나와
    * 아래 예약 효과가 프레임을 계속 깨운다(AC-E4 가 금지한 바로 그것이다).
    */
-  const lattice = useMemo(
+  const geometry = useMemo(
     () =>
-      stageLattice(
+      workspaceBox(
         { width: outer.width, height: outer.height },
         { width: canvas.width, height: canvas.height },
         gridStep,
+        workspace,
       ),
-    [outer.width, outer.height, canvas.width, canvas.height, gridStep],
+    [outer.width, outer.height, canvas.width, canvas.height, gridStep, workspace],
   );
-  /** 실제로 그리는 영역. 이 아래에서 "스테이지" 는 언제나 이 값이다. */
-  const stage = lattice.stage;
+  /**
+   * **패널 출력 영역**. 이 아래에서 "스테이지" 는 언제나 이 값이며, 그 뜻은 006 전후로
+   * 한 글자도 바뀌지 않았다 — 대시보드에서 실제로 보이게 될 그 사각형이다.
+   */
+  const stage = geometry.stage;
 
   /**
    * 오버레이 슬롯 둘레에 펴는 격자 한 벌(`canvasStageGrid.ts`). 값이 같으면 신원도 같아야
    * 헛 렌더가 없다.
    */
   const stageGrid = useMemo<CanvasStageGrid>(
-    () => ({ step: gridStep, setStep: setGridStep, cell: lattice.cell }),
-    [gridStep, lattice],
+    () => ({ step: gridStep, setStep: setGridStep, cell: geometry.cell }),
+    [gridStep, geometry],
   );
 
   /**
@@ -263,6 +306,8 @@ export default function CanvasSurface({
     panelTween,
     background,
     stage,
+    box: geometry.box,
+    origin: geometry.origin,
     scheduler,
   });
 
@@ -295,6 +340,8 @@ export default function CanvasSurface({
       panelTween,
       background,
       stage,
+      box: geometry.box,
+      origin: geometry.origin,
       scheduler,
     };
   });
@@ -365,6 +412,8 @@ export default function CanvasSurface({
 
       const {
         stage: size,
+        box: area,
+        origin,
         background: bg,
         texts: labels,
         elements: els,
@@ -372,20 +421,35 @@ export default function CanvasSurface({
       } = latest.current;
       const dpr =
         typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
-      const backing = computeBackingSize(size.width, size.height, dpr);
+      // 비트맵이 덮는 것은 **작업 영역**이다(006). 편집이 꺼져 있으면 작업 영역과 출력
+      // 영역이 겹치므로 이 값은 종전과 같다. 메모리 비용도 사실상 그대로다 — 늘어나는
+      // 것은 0.9.0 이 여백으로 내주던 자투리 몫뿐이다.
+      const backing = computeBackingSize(area.width, area.height, dpr);
       if (backing.width === 0 || backing.height === 0) return true;
 
       // 백킹 버퍼는 값이 바뀔 때만 쓴다 — canvas.width 대입은 표면을 지우는 부수효과가 있다.
       if (surface.width !== backing.width) surface.width = backing.width;
       if (surface.height !== backing.height) surface.height = backing.height;
-      surface.style.width = `${size.width}px`;
-      surface.style.height = `${size.height}px`;
+      surface.style.width = `${area.width}px`;
+      surface.style.height = `${area.height}px`;
 
       const { styles, allDone } = advance(nowMs);
 
       clearSurface(ctx, backing, bg);
       // 이후 그리기는 CSS px 좌표계에서 이뤄진다(캔버스 좌표 ÷ 캔버스 크기 × 표시 크기).
-      ctx.setTransform(backing.scale, 0, 0, backing.scale, 0, 0);
+      //
+      // 마지막 두 인자가 평행이동이며, 006 은 거기에 **출력 영역의 자리**를 싣는다. 그래서
+      // 캔버스 좌표 (0,0) 이 작업 영역 안의 `origin` 에 떨어지고, 음수 좌표의 요소가 비트맵
+      // 안으로 들어와 실제로 그려진다. `drawElements` 에는 오늘 그대로 `{ stage, canvas }` 를
+      // 넘기므로 `drawElement.ts` 와 `DrawContext2D` 는 한 글자도 바뀌지 않는다.
+      ctx.setTransform(
+        backing.scale,
+        0,
+        0,
+        backing.scale,
+        origin.x * backing.scale,
+        origin.y * backing.scale,
+      );
       // 반환값은 이 프레임이 잰 글자 폭이다 — 재는 곳이 늘어난 것이 아니라, 원래 재던
       // 값을 오버레이 쪽으로 흘려보낼 뿐이다(측정은 여전히 프레임당 1회).
       textWidthsRef.current = drawElements(ctx, els, styles, labels, { stage: size, canvas: units });
@@ -449,11 +513,13 @@ export default function CanvasSurface({
   // 데이터·크기·배경이 바뀌면 한 프레임을 요청한다. 바뀌지 않으면 아무것도 그리지 않아
   // 마지막 프레임이 그대로 남는다(AC-E4).
   //
-  // 크기 축은 잰 값이 아니라 **맞춘 영역**(`lattice`)이다. 그래서 바깥 상자가 1px 흔들려도
-  // 그리는 영역이 같으면 프레임이 돌지 않는다 — 그릴 것이 정말로 달라졌을 때만 깨운다.
+  // 크기 축은 잰 값이 아니라 **파생한 상자 한 벌**(`geometry`)이다. 그래서 바깥 상자가 1px
+  // 흔들려도 그리는 영역이 같으면 프레임이 돌지 않는다 — 그릴 것이 정말로 달라졌을 때만
+  // 깨운다. 006 이 그 자리를 `lattice` 에서 `geometry` 로 갈아 끼웠을 뿐 경로는 그대로이며,
+  // 편집 토글이 프레임을 한 장 부르는 것도 이 **종전의 props 변경 경로**다(AC-E4).
   useEffect(() => {
     scheduleFrame();
-  }, [elements, canvas, targetStyles, texts, panelTween, background, lattice, scheduleFrame]);
+  }, [elements, canvas, targetStyles, texts, panelTween, background, geometry, scheduleFrame]);
 
   // 잰 바깥 상자를 밖으로 알린다(0.10.0). **프레임을 예약하지 않는다** — 이 효과가 하는
   // 일은 통보 하나뿐이고, 어느 그리기 경로의 의존성에도 들어가지 않는다(AC-E4).
@@ -470,55 +536,75 @@ export default function CanvasSurface({
   return (
     <div
       ref={containerRef}
-      className={className === undefined ? 'relative min-h-0 w-full flex-1' : className}
+      // `overflow-hidden` 은 006 이 더한다. 그러면 출력 영역 밖 요소의 **DOM 손잡이**가
+      // 비트맵의 클리핑과 **같은 자리**에서 잘린다. 편집이 꺼져 있으면 선택도 손잡이도 없고
+      // 작업 영역이 잰 상자를 넘지도 않으므로 이 한 줄로 달라지는 것은 없다.
+      className={
+        className === undefined ? 'relative min-h-0 w-full flex-1 overflow-hidden' : className
+      }
     >
       {/*
-        **그리는 영역은 진짜 DOM 상자다**(0.9.0). 잰 상자에서 격자 자투리를 뺀 크기를
-        여기서 한 번 짓고, 캔버스와 오버레이를 **그 안에** 함께 넣는다.
+        **상자 둘 다 진짜 DOM 상자다**(0.9.0 이 세우고 006 이 하나를 더했다). 자투리든
+        저술 여백이든 산술로만 다루는 길(한 상자가 바깥을 덮고 좌표에 오프셋을 더하는 길)도
+        있었지만 그것은 축척 결함(AC-E9)과 같은 부류의 함정이다 — 오버레이는 포인터를 제
+        `getBoundingClientRect()` 로 받는데, 그 상자가 스테이지와 다른 상자가 되는 순간 모든
+        좌표에 조용한 오프셋이 실린다. 상자를 실제로 지어 두면 그 오프셋이 **존재할 수 없다**.
 
-        자투리를 산술로만 다루는 길(오버레이는 바깥 상자를 덮고 좌표에 오프셋을 더하는 길)
-        도 있었지만 그것은 축척 결함(AC-E9)과 같은 부류의 함정이다 — 오버레이는 포인터를
-        제 `getBoundingClientRect()` 로 받는데, 그 상자가 스테이지와 다른 상자가 되는 순간
-        모든 좌표에 조용한 오프셋이 실린다. 상자를 실제로 지어 두면 그 오프셋이 **존재할 수
-        없다**: `projection.stage` 와 오버레이의 제 상자가 같은 노드다.
-
-        자리는 자투리를 반씩 나눈 **정수** px 다. 소수 자리에 두면 안쪽의 모든 선이 다시
-        소수에서 시작해 이 변경이 하려던 일이 통째로 무산된다.
+        바깥쪽 `canvas-workspace` 는 **작업 영역**이다. 편집 중에는 잰 상자 전부이고, 편집이
+        꺼져 있으면 0.9.0 의 그 안쪽 상자와 크기·자리가 같다(그때 아래 `canvas-stage` 가
+        (0,0) 에 겹쳐 오늘과 같은 그림이 된다). 두 자리 모두 **정수** px 다 — 소수 자리에
+        두면 안쪽의 모든 선이 다시 소수에서 시작해 이 변경이 하려던 일이 통째로 무산된다.
       */}
       <div
-        data-testid="canvas-stage"
+        data-testid="canvas-workspace"
         className="absolute"
         style={{
-          left: lattice.offset.x,
-          top: lattice.offset.y,
-          width: stage.width,
-          height: stage.height,
+          left: geometry.offset.x,
+          top: geometry.offset.y,
+          width: geometry.box.width,
+          height: geometry.box.height,
         }}
       >
         <canvas
           ref={canvasRef}
           data-testid="canvas-surface"
+          // 캔버스는 **작업 영역**을 덮는다(006). 그래야 출력 영역 밖의 그림이 비트맵 안에
+          // 들어와 실제로 그려진다.
+          //
           // 포인터 리스너를 달지 않는다 — 표면은 포인터로 아무것도 하지 않으며, 편집
-          // 포인터는 위에 얹히는 오버레이 층의 루트가 받는다(머리말 §포인터 통과 슬롯).
+          // 포인터는 아래 오버레이 층의 루트가 받는다(머리말 §포인터 통과 슬롯).
           className="block h-full w-full"
         />
         {/*
-          오버레이는 캔버스 **뒤(=위)** 에 형제로 놓인다. 상자가 `absolute` 라 스스로
-          위치 기준이므로 층은 `absolute inset-0` 하나로 캔버스와 같은 상자를 덮는다.
-          미지정이면 옵셔널 호출이 인자 평가조차 건너뛰고 `undefined` 를 렌더하므로
-          오버레이 때문에 생기는 DOM 노드는 하나도 없다(AC-E1).
+          안쪽 `canvas-stage` 는 **패널 출력 영역**이며 0.9.0 의 그 상자 그대로다. 오버레이는
+          여전히 이 안에 `absolute inset-0` 로 살고 `projection.stage` 는 여전히 이 상자의
+          크기이므로, 둘이 **같은 노드**라는 성질이 006 이후에도 그대로다(위험 R1).
+
+          미지정이면 옵셔널 호출이 인자 평가조차 건너뛰고 `undefined` 를 렌더하므로 오버레이
+          때문에 생기는 DOM 노드는 하나도 없다(AC-E1).
 
           투영 한 벌은 프레임이 쓰는 그 값들을 그대로 넘긴다 — 오버레이용 두 번째 측정을
           만들지 않기 위해서다(AC-E2). 폭은 직전 프레임의 장부다. 격자 한 벌은 props 가
           아니라 컨텍스트로 가는데, 사이에 있는 `CanvasPanel` 이 슬롯의 값 가운데 둘만
           골라 넘기기 때문이다(`canvasStageGrid.ts` §왜 컨텍스트인가).
         */}
-        <CanvasStageGridContext value={stageGrid}>
-          {overlay?.({
-            projection: { stage, canvas },
-            textWidths: textWidthsRef.current,
-          })}
-        </CanvasStageGridContext>
+        <div
+          data-testid="canvas-stage"
+          className="absolute"
+          style={{
+            left: geometry.origin.x,
+            top: geometry.origin.y,
+            width: stage.width,
+            height: stage.height,
+          }}
+        >
+          <CanvasStageGridContext value={stageGrid}>
+            {overlay?.({
+              projection: { stage, canvas },
+              textWidths: textWidthsRef.current,
+            })}
+          </CanvasStageGridContext>
+        </div>
       </div>
     </div>
   );
