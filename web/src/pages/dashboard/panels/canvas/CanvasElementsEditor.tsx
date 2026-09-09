@@ -25,7 +25,12 @@
 //      끊기기 때문이며, 이는 히트맵이 센서 좌표를 `storeSeriesId` 로 재키잉한 것과 같은
 //      판단이다(`sensorIdentity.ts`).
 //
-// @spec SPEC-CANVAS-001
+// **SPEC-CANVAS-006 M8 이 캔버스 크기 묶음을 읽기 전용으로 바꿨다**(REQ-07): 폭·높이
+// 수치 칸 둘과 "패널 비율에 맞춤" 단추를 걷어내고 그 자리에 읽기 전용 표시와 규칙 한
+// 줄을 세운다. 편집 중에는 두 축이 모두 잰 패널 상자에서 유도되므로 적을 수 있는 칸도
+// 누를 수 있는 단추도 남지 않는다 — 화면이 지키지 못할 약속을 하지 않는다는 규율이다.
+//
+// @spec SPEC-CANVAS-001 · SPEC-CANVAS-006 (M8 — 캔버스 크기 읽기 전용)
 
 import {
   useEffect,
@@ -63,15 +68,12 @@ import {
   DEFAULT_BOX_GEOMETRY,
   DEFAULT_LINE_GEOMETRY,
   DEFAULT_TWEEN_EASING,
-  MAX_CANVAS_DIMENSION,
-  MIN_CANVAS_DIMENSION,
   MIN_ELEMENT_EXTENT,
   isNumericElement,
   parseCanvasConfig,
   type BoxGeometry,
   type CanvasElement,
   type CanvasElementKind,
-  type CanvasSize,
   type ElementAlign,
   type ElementFontWeight,
   type ElementStyle,
@@ -89,8 +91,6 @@ import {
   type CanvasSeriesOption,
 } from './canvasEditContext';
 import { withElementText } from './canvasElementFactory';
-import { fitCanvasSizeToStage } from './canvasGeometry';
-import { useCanvasStageAspect } from './canvasStageAspect';
 import CanvasRuleTableEditor from './CanvasRuleTableEditor';
 
 // --- 상수 ---------------------------------------------------------------
@@ -403,16 +403,6 @@ function parseExtent(raw: string): number {
   return Math.max(MIN_ELEMENT_EXTENT, parseCoordinate(raw));
 }
 
-/**
- * 캔버스 한 축 크기의 입력 파싱. 비운 칸은 **부재가 아니라 최소값**이다 — 캔버스 크기에는
- * "지정 안 함" 이 없고(투영이 언제나 요구한다), 0 축은 모든 요소를 화면에서 지운다.
- */
-function parseCanvasDimension(raw: string): number {
-  const n = Math.round(Number(raw.trim()));
-  if (!Number.isFinite(n)) return MIN_CANVAS_DIMENSION;
-  return Math.min(Math.max(n, MIN_CANVAS_DIMENSION), MAX_CANVAS_DIMENSION);
-}
-
 /** 옵셔널 수치 입력 파싱. **빈 칸은 부재**이며 0 이 아니다. */
 function parseOptionalNumber(raw: string): number | undefined {
   const v = raw.trim();
@@ -534,44 +524,6 @@ function GeometryInput({
         aria-label={ariaLabel}
         data-testid={testId}
         className={cn(INPUT_CLASS, 'w-full text-center tabular-nums')}
-      />
-    </label>
-  );
-}
-
-/**
- * 캔버스 한 축 크기의 입력 칸.
- *
- * `GeometryInput` 과 나란한 모양이되 **부재가 없다**(위 `parseCanvasDimension`). 요소의
- * 좌표는 비워 둘 수 있는 값이 아니고 캔버스 크기는 더더욱 그렇다 — 이 두 정수가 모든
- * 좌표의 분모이므로, 값이 없는 순간 그릴 수 있는 것이 하나도 없다.
- */
-function CanvasSizeInput({
-  axis,
-  value,
-  onChange,
-  ariaLabel,
-  testId,
-}: {
-  axis: string;
-  value: number;
-  onChange: (next: number) => void;
-  ariaLabel: string;
-  testId: string;
-}) {
-  return (
-    <label className="flex items-center gap-1">
-      <span className="shrink-0 text-[11px] text-(--color-text-muted)">{axis}</span>
-      <input
-        type="number"
-        step={1}
-        min={MIN_CANVAS_DIMENSION}
-        max={MAX_CANVAS_DIMENSION}
-        value={value}
-        onChange={(e) => onChange(parseCanvasDimension(e.target.value))}
-        aria-label={ariaLabel}
-        data-testid={testId}
-        className={cn(INPUT_CLASS, 'w-16 text-center tabular-nums')}
       />
     </label>
   );
@@ -735,24 +687,6 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
   const liveSeriesOptions = useCanvasLiveSeries();
   const seriesOptions = liveSeriesOptions.length > 0 ? liveSeriesOptions : configSeriesOptions;
 
-  // --- 0.10.0: 패널 비율에 맞춘 캔버스 크기 ---
-  //
-  // 패널 비율을 아는 것은 `ResizeObserver` 를 든 표면뿐이고 이 편집기는 다이얼로그의 다른
-  // 자리에 있으므로, 살아 있는 패널이 내놓은 값을 그대로 받는다(`canvasStageAspect`).
-  // 여기서 저장된 캔버스 비율로 패널 크기를 **역산**하면 그 추측이 곧 두 번째 출처가 되고,
-  // 두 값이 갈라지는 날 "맞췄는데 여백이 남는다" 가 된다(위험 R1 과 같은 부류다).
-  //
-  // `null` 은 "맞출 것이 없다" 는 뜻이며 두 경우를 함께 덮는다: 곁에 미리보기가 없어
-  // 아직 아무도 재지 않았거나(provider 없음 — 편집기 단독 렌더), 이미 맞아 있어
-  // `fitCanvasSizeToStage` 가 받은 객체를 그대로 돌려준 경우다. 어느 쪽이든 누를 이유가
-  // 없으므로 단추는 같은 조건으로 잠긴다.
-  const stageOuter = useCanvasStageAspect();
-  const fittedCanvas = useMemo<CanvasSize | null>(() => {
-    if (stageOuter === null) return null;
-    const next = fitCanvasSizeToStage(cfg.canvas, stageOuter);
-    return next === cfg.canvas ? null : next;
-  }, [cfg.canvas, stageOuter]);
-
   /** **사용자가 손으로** 펼쳐 둔 요소의 id 집합. 기본은 전부 접힘이다. */
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -915,66 +849,44 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
 
   return (
     <div className="space-y-3" data-testid="canvas-elements-editor">
-      {/* 캔버스 크기 — **모든 좌표의 분모**다. 그래서 배경색·트윈보다 먼저 온다: 요소를
-          놓기 전에 종이 크기를 정하는 것이 순서이고, 이 값이 격자 칸 수와 수치 칸의
-          범위를 함께 정한다.
+      {/* 캔버스 크기 — **모든 좌표의 분모**다. 그래서 배경색·트윈보다 먼저 온다: 이 값이
+          격자 칸 수와 요소 수치 칸의 범위를 함께 정하므로, 요소를 읽기 전에 종이 크기를
+          아는 것이 순서다.
 
           요소 좌표를 함께 늘이지 않는다. 늘이면 정수 좌표에 반올림 오차가 쌓여 사용자가
           손으로 맞춰 둔 자리가 크기를 바꿀 때마다 조금씩 어긋나고, 그 어긋남은 되돌릴 수
           없다. 대신 캔버스가 넓어지면 요소가 상대적으로 작아 보인다 — 종이를 키운 것이지
-          그림을 키운 것이 아니라는 뜻이며, 그것이 이 칸의 정직한 동작이다. */}
+          그림을 키운 것이 아니라는 뜻이며, **크기 유도가 그 규율을 그대로 물려받는다**
+          (SPEC-CANVAS-006 REQ-07 — 유도가 바꾸는 것은 `canvas` 두 정수뿐이다). */}
       <div className="flex flex-wrap items-center gap-2">
         <span className={GROUP_LABEL_CLASS}>{t('dashboard.canvas.elements.panelSize')}</span>
         <FieldHelp
           text={t('dashboard.canvas.elements.panelSizeHint')}
           testId="canvas-panel-size-hint"
         />
-        <CanvasSizeInput
-          axis="W"
-          value={cfg.canvas.width}
-          onChange={(w) => onConfigChange({ canvas: { ...cfg.canvas, width: w } })}
-          ariaLabel={t('dashboard.canvas.elements.panelWidthAria')}
-          testId="canvas-panel-width"
-        />
-        <CanvasSizeInput
-          axis="H"
-          value={cfg.canvas.height}
-          onChange={(h) => onConfigChange({ canvas: { ...cfg.canvas, height: h } })}
-          ariaLabel={t('dashboard.canvas.elements.panelHeightAria')}
-          testId="canvas-panel-height"
-        />
-        {/* 패널 비율에 맞춤 — **사용자가 눌렀을 때만** 크기를 고친다(0.10.0).
-            자동으로 다시 맞추지 않는 이유는 `CanvasPanel` §자동 맞춤은 한 번뿐이다에
-            있다: 저장된 요소 좌표는 절대 캔버스 단위라, 높이가 바뀌면 사용자가 놓아 둔
-            자리의 뜻이 조용히 달라진다. 그래서 되돌릴 수 없는 그 변화는 손으로만 일어난다.
-            바뀔 값을 `title` 에 적어 두므로 누르기 전에 결과를 알 수 있다. */}
-        <button
-          type="button"
-          onClick={() => {
-            if (fittedCanvas === null) return;
-            onConfigChange({ canvas: fittedCanvas });
-          }}
-          disabled={fittedCanvas === null}
-          aria-label={t('dashboard.canvas.elements.panelSizeFitAria')}
-          // 바뀔 값은 로케일 문장 **밖에서** 붙인다. 자리표시자로 끼워 넣으면 번역이
-          // 그 표시자를 잃는 날 수치가 조용히 사라지고, 사용자는 무엇이 바뀌는지 모른 채
-          // 되돌릴 수 없는 단추를 누르게 된다.
-          title={
-            fittedCanvas === null
-              ? t('dashboard.canvas.elements.panelSizeFitNone')
-              : `${t('dashboard.canvas.elements.panelSizeFitTitle')}: ` +
-                `${cfg.canvas.width}×${cfg.canvas.height} → ` +
-                `${fittedCanvas.width}×${fittedCanvas.height}`
-          }
-          data-testid="canvas-panel-size-fit"
-          className={cn(
-            'shrink-0 rounded border border-(--color-border-default) px-2 py-1 text-xs',
-            'text-(--color-text-secondary) hover:bg-(--color-bg-hover)',
-            'disabled:cursor-not-allowed disabled:opacity-50',
-          )}
+        {/* **읽기 전용 표시**다(SPEC-CANVAS-006 M8 · REQ-07).
+
+            수치 입력 칸 둘과 "패널 비율에 맞춤" 단추가 여기 있었고, 셋 다 걷어냈다. 편집
+            중에는 캔버스 크기가 **두 축 모두** 잰 패널 상자에서 유도되므로(항등이다),
+            적는 즉시 다음 측정에 덮이는 칸과 언제나 잠긴 단추만 남는다. 이 저장소는 화면이
+            지키지 못할 약속을 금지한다 — 잠근 채 남기는 것이 바로 그 규율이 금지하는
+            형상이다.
+
+            **수를 지우지는 않는다.** 그 수가 이제 저술 중인 패널의 px 크기 그 자체라
+            (보기 자리에서 축척이 정확히 1 이다) 화면에서 가장 쓸모 있는 값이 되었고,
+            지우면 "지금 한 단위가 무엇인가" 를 말하는 자리가 사라진다. */}
+        <span
+          data-testid="canvas-panel-size-value"
+          className="shrink-0 text-xs tabular-nums text-(--color-text-primary)"
         >
-          {t('dashboard.canvas.elements.panelSizeFit')}
-        </button>
+          {cfg.canvas.width} × {cfg.canvas.height}
+        </span>
+        <span
+          data-testid="canvas-panel-size-derived"
+          className="min-w-0 text-[11px] text-(--color-text-muted)"
+        >
+          {t('dashboard.canvas.elements.panelSizeDerived')}
+        </span>
       </div>
 
       {/* 패널 축 — 배경색과 기본 트윈. 요소가 덮어쓸 수 있는 값들이다. */}

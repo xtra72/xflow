@@ -47,9 +47,20 @@
 // 그 갈래를 부르는 쪽에 두면(`if (편집) 이 상자 else 저 상자`) 둘이 각자 자라고 어느 날
 // 한쪽만 고쳐진다. 그래서 한 함수가 두 경우를 모두 든다.
 //
+// ## 형제 하나 — 크기 유도 (M8 · REQ-07)
+//
+// `derivedCanvasSize(canvas, outer)` 는 편집 중 캔버스 크기를 잰 상자에서 유도한다. 그
+// 유도는 **항등**이라 `PANEL_REGION_FIT_RATIO` 를 쓰지 않으며, 그래서 축소 상자 식의
+// 소유자는 위 `workspaceBox` 의 편집 갈래 **하나뿐**이다 — 같은 상자를 두 곳에서 파생할
+// 자리가 형상 자체로 없다(위험 R1 · R4 가 이 자리에서 닫힌다).
+//
 // @spec SPEC-CANVAS-006
 
-import type { CanvasSize } from './canvasConfig';
+import {
+  MAX_CANVAS_DIMENSION,
+  MIN_CANVAS_DIMENSION,
+  type CanvasSize,
+} from './canvasConfig';
 import { stageLattice, type StageCell, type StageSize } from './canvasGeometry';
 
 /**
@@ -142,4 +153,68 @@ export function workspaceBox(
     },
     cell: lat.cell,
   };
+}
+
+// --- 크기 유도 (SPEC-CANVAS-006 M8 · REQ-07) -----------------------------
+
+/**
+ * 잰 한 축을 파서가 죄는 범위로 옮긴다. 범위 밖(아직 재지 못한 축)은 **0** 이며, 그 0 은
+ * "1 로 올려라" 가 아니라 **"손대지 말라"** 는 신호다 — 아래 `derivedCanvasSize` 가 그것을
+ * 받아 저장값을 그대로 돌려준다.
+ *
+ * `Math.floor` 는 방어적 정수화 한 겹이다. 표면이 이미 `Math.floor(contentRect)` 로
+ * 정수를 넘기지만, 이 함수는 그 사실을 전제하지 않는다 — 소수 캔버스는 파서 왕복에서
+ * 반올림되어 저장 왕복이 값을 바꾼다.
+ */
+function clampDimension(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  const n = Math.floor(v);
+  if (n < MIN_CANVAS_DIMENSION) return 0;
+  return Math.min(n, MAX_CANVAS_DIMENSION);
+}
+
+/**
+ * 편집 중 캔버스 크기를 잰 바깥 상자에서 유도한다 — **항등이다**(REQ-07 · 0.5.0).
+ *
+ * ```
+ * derivedCanvasSize(canvas, outer) = outer      // MIN..MAX 로 죈다. 어떤 축척도 곱하지 않는다
+ * ```
+ *
+ * ## `canvas` 인자는 계산에 쓰이지 않는다 — 되돌려주기 위해서만 있다
+ *
+ * 이 함수는 `fitCanvasSizeToStage` 의 계약을 **그대로 물려받는다**: 바꿀 것이 없거나
+ * 잴 수 없으면 **받은 그 객체를** 돌려준다. 부르는 쪽의 참조 비교(`derived === stored`)가
+ * 곧 쓰기 억제의 전부이며, 새 비교를 만들지 않는다 — 파서가 매 렌더 새 객체를 내므로
+ * 값 비교로는 억제되지 않는다.
+ *
+ * 그래서 `canvas` 를 **인자로 받는 것은 정상이고 값을 읽는 것은 위반**이다(불변식 I19).
+ * 저장값이 계산의 입력이 되면 쓰기가 다음 유도의 입력이 되어, 리사이즈 한 번이 최대 세
+ * 번의 연쇄 쓰기가 되고 "많아야 한 건"(AC-07 (AL))이 깨진다.
+ *
+ * ## 인자가 둘인 것이 가드다 (불변식 I20 · 위험 R21 · R22)
+ *
+ * 0.4.0 의 폐기된 규칙은 `floor(outer × PANEL_REGION_FIT_RATIO)` 였고, 그 규칙에서는
+ * 캔버스가 영원히 패널의 R 배라 REQ-07 이 제 이름("캔버스 크기 = 패널 크기")을 지킬 수
+ * 없었다. 그 부활을 막는 가드는 이제 **이름이 아니라 형상**이다:
+ *
+ * > 이 함수의 인자는 `(canvas, outer)` **둘뿐**이다. 셋째 인자(격자 간격 · 보기 배율)가
+ * > 나타나거나 본문에 어떤 축척을 곱하는 자리가 생기면, 그것이 곧 폐기된 규칙의 부활이다.
+ *
+ * 형상 가드는 상수를 개명해도 죽지 않는다 — 이름 기반 grep 가드가 개명 한 번에 조용히
+ * 무장 해제되는 것과 갈리는 자리다(위험 R23).
+ *
+ * ## 축척 1 은 여기서 나오지 않는다
+ *
+ * 편집 중 투영 축척은 `cell ÷ step` 이고 `PANEL_REGION_FIT_RATIO` **이하**다 — 작업 영역
+ * 전체가 잰 상자에 담기느라 화면이 물러나 있기 때문이며, 그 물러남이 곧 저술 여백이다.
+ * 축척 1 은 **편집이 꺼진 채 저술 크기의 패널에 놓였을 때**의 성질이다(불변식 I21).
+ */
+export function derivedCanvasSize(canvas: CanvasSize, outer: StageSize): CanvasSize {
+  const width = clampDimension(outer.width);
+  const height = clampDimension(outer.height);
+  // "모르면 근사한다" 가 아니라 **"모르면 손대지 않는다"** — 0 은 파서가 죄는 범위 밖이라
+  // 저장 왕복에 값이 달라진다.
+  if (width === 0 || height === 0) return canvas;
+  if (width === canvas.width && height === canvas.height) return canvas;
+  return { width, height };
 }

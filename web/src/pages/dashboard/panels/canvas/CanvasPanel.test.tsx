@@ -730,10 +730,30 @@ describe('CanvasPanel — 정적 요소와 값 방어', () => {
 // 덮는 인수 기준: AC-03(드래그가 config 로 흘러간다), AC-07(세 겹 게이팅),
 // AC-E4(선택·호버는 프레임을 0 건 요청한다 — 001 의 유휴 정지 보존).
 
+/**
+ * **고정점** 고정 입력 — `canvas === outer`(acceptance.md §시험 규율 D7).
+ *
+ * 편집을 켠 시험은 이 짝을 써야 한다. M8 이 편집 중 캔버스 크기를 잰 상자 **그 자체**로
+ * 유도하므로(항등이다), 고정점이 아닌 짝으로 편집을 켜면 시험이 적어 둔 캔버스가
+ * **첫 측정에서 덮이고** 그 뒤의 좌표 기대값이 전부 다른 캔버스 위에서 계산된다 —
+ * 초록인데 제 이름과 다른 것을 재는 시험이 된다.
+ *
+ * 그리고 이 함정은 피할 수 없다: `usePanelEditMode` 의 `canEdit` 가 곧 `onConfigChange`
+ * 존재이므로 **"편집은 켜되 쓰지는 않는" 형상이 존재하지 않는다.**
+ */
+function fixedPointCanvas(): { width: number; height: number } {
+  return { ...panelOuter };
+}
+
 /** 편집 배선을 켠 채 패널을 렌더한다. 프레임은 더 예약할 것이 없을 때까지 밀어 둔다. */
 function renderEditablePanel(
   elements: unknown[],
-  opts: { onConfigChange?: (patch: Record<string, unknown>) => void; forceEdit?: boolean } = {},
+  opts: {
+    onConfigChange?: (patch: Record<string, unknown>) => void;
+    forceEdit?: boolean;
+    /** 저술된 캔버스 크기. 편집을 켜는 시험은 **고정점**을 넘긴다(D7). */
+    canvas?: { width: number; height: number };
+  } = {},
 ) {
   const clock = makeScheduler();
   const view = render(
@@ -742,7 +762,11 @@ function renderEditablePanel(
     <CanvasEditDockRegion enabled>
       <CanvasPanel
         panelId="p1"
-        config={makeConfig(elements)}
+        config={makeConfig(
+          elements,
+          undefined,
+          opts.canvas === undefined ? {} : { canvas: opts.canvas },
+        )}
         onConfigChange={opts.onConfigChange}
         forceEdit={opts.forceEdit}
         scheduler={clock.scheduler}
@@ -795,7 +819,11 @@ const EDIT_RECT = {
 
 /** config 를 실제로 갱신하는 숙주 — 드래그의 깨우기 경로를 끝까지 잇는다. */
 function StatefulHost({ clock }: { clock: ReturnType<typeof makeScheduler> }) {
-  const [cfg, setCfg] = useState<Record<string, unknown>>(() => makeConfig([EDIT_RECT]));
+  // 편집을 켜는 숙주이므로 **고정점**을 쓴다(D7) — 그러지 않으면 첫 측정이 캔버스를
+  // 덮어 아래 시험들의 화면 px 가 다른 캔버스 위에서 계산된다.
+  const [cfg, setCfg] = useState<Record<string, unknown>>(() =>
+    makeConfig([EDIT_RECT], undefined, { canvas: fixedPointCanvas() }),
+  );
   return (
     <CanvasEditDockRegion enabled>
       <CanvasPanel
@@ -846,7 +874,11 @@ describe('CanvasPanel — 편집 게이팅 세 겹 (AC-07)', () => {
   });
 
   it('forceEdit 자리(설정 미리보기)는 항상 편집이며 토글을 감춘다', () => {
-    renderEditablePanel([EDIT_RECT], { onConfigChange: vi.fn(), forceEdit: true });
+    renderEditablePanel([EDIT_RECT], {
+      onConfigChange: vi.fn(),
+      forceEdit: true,
+      canvas: fixedPointCanvas(),
+    });
 
     expect(screen.getByTestId('canvas-edit-overlay')).toBeTruthy();
     expect(screen.queryByTestId('canvas-edit-toggle')).toBeNull();
@@ -856,24 +888,29 @@ describe('CanvasPanel — 편집 게이팅 세 겹 (AC-07)', () => {
 describe('CanvasPanel — 드래그가 onConfigChange 로 흘러간다 (AC-03)', () => {
   it('요소를 끌면 elements 패치가 나간다 (001 이 받아만 두었던 자리다)', async () => {
     const onConfigChange = vi.fn();
-    renderEditablePanel([EDIT_RECT], { onConfigChange, forceEdit: true });
+    renderEditablePanel([EDIT_RECT], {
+      onConfigChange,
+      forceEdit: true,
+      canvas: fixedPointCanvas(),
+    });
 
-    sendToOverlay('pointerdown', 21, 21);
-    sendToOverlay('pointermove', 35, 35);
+    sendToOverlay('pointerdown', 40, 40);
+    sendToOverlay('pointermove', 76, 76);
     await nextBrowserFrame();
 
     expect(onConfigChange).toHaveBeenCalledTimes(1);
     const patch = onConfigChange.mock.calls[0]![0] as { elements: Array<{ id: string; geometry: unknown }> };
     expect(Object.keys(patch)).toEqual(['elements']);
-    // 화면에서 (14,14)px 끌었다 — **편집 중** 스테이지 140x112 위의 그 길이는 기본 캔버스
-    // (500x400) 단위로 (50, 50) 이다(두 축이 같은 축척 0.28 다). 자리는 정수로 저장된다.
+    // 화면에서 (36,36)px 끌었다 — **편집 중** 스테이지 144×115.2 위의 그 길이는 캔버스
+    // (200×160) 단위로 (50, 50) 이다(두 축이 같은 축척 0.72 다). 자리는 정수로 저장된다.
     //
-    // 006 M4 가 편집 중에 작업 영역을 켜면서 출력 영역이 200x160 에서 140x112 로 줄었다
-    // (`workspace={edit.active}`). 그래서 **같은 캔버스 자리**를 가리키는 화면 px 가
-    // 0.7 배로 옮겨 갔을 뿐이며(30→21 · 50→35), 이 시험이 지키는 단언 — 끈 결과가
-    // `elements` 패치 하나로 나가고, 그 값이 정수이며, 두 축이 **같은 양**만큼 움직인다 —
-    // 은 한 글자도 달라지지 않았다. 축척이 바뀌는 것 자체는 REQ-03 이 명시한 성질이다
-    // ("바뀌는 것은 투영 축척뿐이고 좌표는 그대로다").
+    // 006 M8 이 편집 중 캔버스 크기를 잰 상자 그 자체로 유도하므로, 이 시험은 **고정점**
+    // 고정 입력(`canvas === outer === 200×160`)을 쓴다(D7). 그러지 않으면 첫 측정이
+    // 캔버스를 덮어 아래 기대값이 시험이 적어 둔 것과 **다른 캔버스** 위에서 계산된다.
+    // 화면 px 는 그 축척(0.72)을 따라 옮겨 갔을 뿐이며(21→40 · 35→76), 이 시험이 지키는
+    // 단언 — 끈 결과가 `elements` 패치 하나로 나가고, 그 값이 정수이며, 두 축이 **같은
+    // 양**만큼 움직인다 — 은 한 글자도 달라지지 않았다. 축척이 바뀌는 것 자체는 REQ-03 이
+    // 명시한 성질이다("바뀌는 것은 투영 축척뿐이고 좌표는 그대로다").
     expect(patch.elements.find((el) => el.id === 'a')!.geometry).toEqual({
       x: 100,
       y: 90,
@@ -900,7 +937,7 @@ describe('CanvasPanel — 편집기가 유휴 정지를 깨지 않는다 (AC-E4)
   it('선택과 호버는 프레임을 단 한 건도 요청하지 않는다', () => {
     const { clock } = renderEditablePanel(
       [EDIT_RECT, { ...EDIT_RECT, id: 'b', geometry: { x: 250, y: 200, w: 100, h: 80 } }],
-      { onConfigChange: vi.fn(), forceEdit: true },
+      { onConfigChange: vi.fn(), forceEdit: true, canvas: fixedPointCanvas() },
     );
     // 유휴에 들었다 — 여기서부터의 요청은 전부 편집기 탓이다.
     expect(clock.pending).toBe(0);
@@ -908,17 +945,17 @@ describe('CanvasPanel — 편집기가 유휴 정지를 깨지 않는다 (AC-E4)
 
     // 고르고, 다른 요소로 옮기고, 핸들 자리를 지나간다(호버).
     //
-    // 006 M4 가 편집 중 출력 영역을 200x160 → 140x112 로 줄였으므로(`workspace={edit.active}`),
-    // **같은 캔버스 자리**를 가리키는 화면 px 를 0.7 배로 옮겼다(30→21 · 110→77 · 120→84 ·
-    // 40→28). 겨냥하는 대상은 그대로다: 21px 는 요소 a 의 몸통, 77px 는 요소 b 의 몸통,
-    // 84px 는 아무것도 없는 자리, 28px 는 다시 a 의 몸통이다. 이 시험이 지키는 단언
-    // (선택도 호버도 프레임을 **0 건** 요청한다)은 화면 자리와 무관하다.
-    sendToOverlay('pointerdown', 21, 21);
-    sendToOverlay('pointerup', 21, 21);
-    sendToOverlay('pointerdown', 77, 77);
-    sendToOverlay('pointerup', 77, 77);
-    sendToOverlay('pointermove', 84, 84);
-    sendToOverlay('pointermove', 28, 28);
+    // 고정점 고정 입력(`canvas === outer === 200×160`, 축척 0.72)에서 겨냥하는 대상은
+    // 그대로다: (40,40) 은 요소 a 의 몸통(px 36..108 × 28.8..86.4), (200,160) 은 요소 b 의
+    // 몸통(px 180..252 × 144..201.6 — 출력 영역 **밖**의 저술 여백이다), (150,120) 은
+    // 아무것도 없는 자리, (50,50) 은 다시 a 의 몸통이다. 이 시험이 지키는 단언(선택도
+    // 호버도 프레임을 **0 건** 요청한다)은 화면 자리와 무관하다.
+    sendToOverlay('pointerdown', 40, 40);
+    sendToOverlay('pointerup', 40, 40);
+    sendToOverlay('pointerdown', 200, 160);
+    sendToOverlay('pointerup', 200, 160);
+    sendToOverlay('pointermove', 150, 120);
+    sendToOverlay('pointermove', 50, 50);
 
     expect(screen.getByTestId('canvas-selection-b')).toBeTruthy();
     expect(clock.requested).toBe(before);
@@ -931,8 +968,8 @@ describe('CanvasPanel — 편집기가 유휴 정지를 깨지 않는다 (AC-E4)
     for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
     const before = clock.requested;
 
-    sendToOverlay('pointerdown', 30, 30);
-    sendToOverlay('pointermove', 50, 50);
+    sendToOverlay('pointerdown', 40, 40);
+    sendToOverlay('pointermove', 76, 76);
     // 쓰기가 config 를 갈면 `elements` 참조가 바뀐다 — 001 과 **같은** 깨우기 경로다.
     await nextBrowserFrame();
 
@@ -956,12 +993,13 @@ describe('CanvasPanel — 편집 표면 조작 전량이 유휴 정지를 지킨
     const { clock } = renderEditablePanel([EDIT_RECT], {
       onConfigChange: vi.fn(),
       forceEdit: true,
+      canvas: fixedPointCanvas(),
     });
     expect(clock.pending).toBe(0);
 
     // 고르기까지가 전제다(핸들은 하나만 골랐을 때 뜬다).
-    sendToOverlay('pointerdown', 30, 30);
-    sendToOverlay('pointerup', 30, 30);
+    sendToOverlay('pointerdown', 40, 40);
+    sendToOverlay('pointerup', 40, 40);
     expect(screen.getByTestId('canvas-selection-a')).toBeTruthy();
     const before = clock.requested;
 
@@ -987,8 +1025,8 @@ describe('CanvasPanel — 편집 표면 조작 전량이 유휴 정지를 지킨
     for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
 
     // 고르고 손을 뗀다 — 놓기 자체가 제자리 확정 쓰기를 한 번 내므로 그 프레임까지 민다.
-    sendToOverlay('pointerdown', 30, 30);
-    sendToOverlay('pointerup', 30, 30);
+    sendToOverlay('pointerdown', 40, 40);
+    sendToOverlay('pointerup', 40, 40);
     for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
     const before = clock.requested;
 
@@ -1013,7 +1051,11 @@ describe('CanvasPanel — 편집 표면 조작 전량이 유휴 정지를 지킨
 
 describe('CanvasPanel — 요소가 0개여도 팔레트로 첫 도형을 놓을 수 있다 (AC-E9)', () => {
   it('요소 0개 + 편집에서 팔레트 버튼 4개가 모두 떠 있고 안내도 함께 보인다', () => {
-    renderEditablePanel([], { onConfigChange: vi.fn(), forceEdit: true });
+    renderEditablePanel([], {
+      onConfigChange: vi.fn(),
+      forceEdit: true,
+      canvas: fixedPointCanvas(),
+    });
 
     expect(screen.getByTestId('canvas-empty')).toBeTruthy();
     for (const kind of ['rect', 'ellipse', 'line', 'text']) {
@@ -1023,7 +1065,11 @@ describe('CanvasPanel — 요소가 0개여도 팔레트로 첫 도형을 놓을
 
   it('요소 0개에서 팔레트를 누르면 첫 요소가 config 로 흘러간다', () => {
     const onConfigChange = vi.fn();
-    renderEditablePanel([], { onConfigChange, forceEdit: true });
+    renderEditablePanel([], {
+      onConfigChange,
+      forceEdit: true,
+      canvas: fixedPointCanvas(),
+    });
 
     fireEvent.click(screen.getByTestId('canvas-palette-add-rect'));
 
@@ -1049,9 +1095,16 @@ describe('CanvasPanel — 요소가 0개여도 팔레트로 첫 도형을 놓을
 /** 참조 하나가 컬럼 셋으로 펼쳐지는 조회 결과(태그 팬아웃). 이름은 훅이 정한 표기다. */
 const FANOUT_COLUMNS = ['temp · value{room=A}', 'temp · value{room=B}', 'temp · value{room=C}'];
 
-/** 그 팬아웃을 낳는 config — store 참조는 **하나**뿐이다(태그 필터 한 줄). */
+/**
+ * 그 팬아웃을 낳는 config — store 참조는 **하나**뿐이다(태그 필터 한 줄).
+ *
+ * 이 숙주들은 전부 편집을 켠 채(`forceEdit`) 패치를 되먹이므로 **고정점**을 쓴다(D7) —
+ * 그러지 않으면 첫 측정이 캔버스를 잰 상자로 덮어, 시험이 적어 둔 500×400 위에서
+ * 계산한 척하는 초록이 된다.
+ */
 function fanoutConfig(elements: unknown[]): Record<string, unknown> {
   return {
+    canvas: { ...panelOuter },
     data_source: 'store',
     store_source: {
       agent_name: 'a',
@@ -1225,7 +1278,7 @@ describe('CanvasPanel ↔ CanvasElementsEditor — 고른 시리즈가 값을 �
     const clock = makeScheduler();
     function Bare() {
       const liveSeries = useCanvasLiveSeriesState();
-      const cfg = { data_source: 'store', elements: [VALUE_LABEL] };
+      const cfg = { canvas: { ...panelOuter }, data_source: 'store', elements: [VALUE_LABEL] };
       return (
         <CanvasLiveSeriesContext value={liveSeries}>
           <CanvasPanel
@@ -1462,15 +1515,28 @@ describe('CanvasPanel — 숫자를 끄면 규칙은 "값 없음" 행만 남는�
   });
 });
 
-// --- 캔버스 크기를 패널 비율에 맞춘다 (0.10.0) --------------------------
+// --- 캔버스 크기는 편집 중 패널 크기다 (SPEC-CANVAS-006 M8 · REQ-07) ------
 //
-// 이 절이 지키는 성질은 **둘이고 서로 반대 방향**이다.
-//   1) 아무것도 놓이지 않은 새 패널에서는 **한 번** 자동으로 맞춘다.
-//   2) 그 뒤로는 패널 크기가 아무리 바뀌어도 **저장된 캔버스 크기를 건드리지 않는다.**
+// **0.10.0 의 규칙이 여기서 뒤집힌다.** 그때 이 자리가 지키던 성질은 둘이고 서로 반대
+// 방향이었다: (1) 아무것도 놓이지 않은 새 패널에서만 **한 번** 맞춘다, (2) 그 뒤로는
+// 패널 크기가 아무리 바뀌어도 저장된 캔버스 크기를 건드리지 않는다. 그 제한의 근거는
+// 하나뿐이었다 — 저장된 요소 좌표는 절대 캔버스 단위라, 캔버스가 바뀌면 사용자가 y=200 에
+// 둔 도형이 가리키는 자리가 **조용히** 달라진다.
 //
-// 2번이 이 기능의 함정이자 이 절의 무게중심이다. 저장된 요소 좌표는 절대 캔버스 단위라,
-// 캔버스 높이가 바뀌면 사용자가 y=200 에 둔 도형이 가리키는 자리가 조용히 달라진다. 여백
-// 몇 픽셀은 눈에 보이고 고칠 수 있지만, 옮겨간 좌표는 그렇지 않다.
+// **006 이 그 침묵을 없앴다.** M2 가 출력 영역 밖의 그림을 살렸고, M6 이 어디까지 패널에
+// 나오는지를 경계와 흐림으로 그렸으며, M7 이 그 바깥에서 시작한 누름을 편집 처리자에
+// 닿게 했다. 그래서 뜻이 달라진 요소는 사각형 안에 남거나 **눈에 보이게** 밖으로 나가고,
+// 나가도 **끌어서 되돌릴 수 있다**. 위험했던 것은 움직임이 아니라 침묵이었고, 침묵이
+// 사라졌으므로 이 유도가 상시가 된다(REQ-07 · 불변식 I15).
+//
+// 이 절이 지는 성질은 셋으로 갈린다(acceptance.md AC-07).
+//   (AK) **표시와 유도가 한 게이트를 지난다** — 순서를 일정이 아니라 형상으로 지킨다.
+//   (AL) **상자가 바뀌면 크기가 따라온다** — 두 축 모두, 출처를 묻지 않는다.
+//   (AM) **쓰지 않아야 할 때는 쓰지 않는다** — 이 절에서 가장 무거운 갈래다.
+//
+// 그리고 이 절은 **걷어낸 "패널 비율에 맞춤" 단추의 단언 둘을 물려받는다**(AC-07 (AN)):
+// `canvas` 패치 하나만 낼 것 · 요소 좌표를 함께 옮기지 않을 것. 셋째였던 **"폭 불변"**
+// 은 옮겨 오지 않고 **폐기된다** — 두 축이 모두 유도되므로 그 단언은 이제 거짓이다.
 
 /** 캔버스 크기 패치만 골라낸다(다른 패치와 섞이지 않게 한다). */
 function canvasPatches(spy: ReturnType<typeof vi.fn>): Array<{ width: number; height: number }> {
@@ -1487,62 +1553,210 @@ function resizePanelTo(width: number, height: number): void {
   });
 }
 
-describe('CanvasPanel — 캔버스 크기 자동 맞춤은 한 번뿐이다 (0.10.0)', () => {
-  it('요소가 없는 새 패널은 패널 비율로 **한 번** 맞춘다', () => {
-    const onConfigChange = vi.fn();
-    panelOuter = { width: 1749, height: 796 };
-    renderEditablePanel([], { onConfigChange, forceEdit: true });
+/**
+ * 패치를 **실제로 되먹이는** 숙주. 유도의 수렴을 재려면 이것이 있어야 한다.
+ *
+ * 패치를 삼키는 `vi.fn()` 숙주에서는 config 가 영영 그대로라, "두 번째 측정이 아무것도
+ * 쓰지 않는다" 를 잴 수 없다 — 유도가 저장값을 되먹는 구현조차 통과한다.
+ */
+function StatefulSizeHost({
+  clock,
+  elements = [],
+  canvas,
+  onPatch,
+}: {
+  clock: ReturnType<typeof makeScheduler>;
+  elements?: unknown[];
+  canvas?: { width: number; height: number };
+  onPatch: (patch: Record<string, unknown>) => void;
+}) {
+  const [cfg, setCfg] = useState<Record<string, unknown>>(() =>
+    makeConfig(elements, undefined, canvas === undefined ? {} : { canvas }),
+  );
+  return (
+    <CanvasEditDockRegion enabled>
+      <CanvasPanel
+        panelId="p1"
+        config={cfg}
+        onConfigChange={(patch) => {
+          onPatch(patch);
+          setCfg((prev) => ({ ...prev, ...patch }));
+        }}
+        forceEdit
+        scheduler={clock.scheduler}
+        visibilitySource={ALWAYS_VISIBLE}
+      />
+    </CanvasEditDockRegion>
+  );
+}
 
-    // 폭 500 을 붙들고 높이만 유도한다: round(500 × 796 / 1749) = 228.
-    expect(canvasPatches(onConfigChange)).toEqual([{ width: 500, height: 228 }]);
-  });
+function renderStatefulSize(opts: {
+  elements?: unknown[];
+  canvas?: { width: number; height: number };
+}) {
+  const spy = vi.fn();
+  const clock = makeScheduler();
+  const view = render(<StatefulSizeHost clock={clock} onPatch={spy} {...opts} />);
+  for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
+  return { ...view, clock, spy };
+}
 
-  it('한 번 맞춘 뒤에는 리사이즈가 몇 번 와도 **다시 맞추지 않는다**', () => {
-    const onConfigChange = vi.fn();
-    panelOuter = { width: 1749, height: 796 };
-    renderEditablePanel([], { onConfigChange, forceEdit: true });
-    expect(canvasPatches(onConfigChange)).toHaveLength(1);
-
-    resizePanelTo(900, 900);
-    resizePanelTo(400, 1200);
-
-    // 하네스는 통보를 되먹이지 않으므로 config 는 여전히 기본 크기다 — 그럼에도 다시
-    // 맞추지 않는다. 즉 멈춤은 "값이 바뀌었으니까" 가 아니라 **한 번 했으니까**다.
-    expect(canvasPatches(onConfigChange)).toHaveLength(1);
-  });
-
-  it('요소가 하나라도 있으면 자동으로 맞추지 않는다 (옮겨갈 좌표가 있다)', () => {
+describe('CanvasPanel — 표시와 유도가 한 게이트를 지난다 (AC-07 (AK) · I15 · R13)', () => {
+  it('유도가 실제로 도는 상태에서는 **출력 영역 경계가 DOM 에 있다**', () => {
+    // 형상을 재는 단언이다. 유도와 표시를 다른 게이트로 가르는 구현은 이 짝을 깨뜨리고,
+    // 그때 되살아나는 것이 0.10.0 이 경고한 그 회귀다 — 크기가 바뀌어 모든 요소의 뜻이
+    // 달라지는데 화면에 아무 단서가 없는 상태.
     const onConfigChange = vi.fn();
     panelOuter = { width: 1749, height: 796 };
     renderEditablePanel([EDIT_RECT], { onConfigChange, forceEdit: true });
 
-    expect(canvasPatches(onConfigChange)).toEqual([]);
+    // 유도가 정말 돌았다(꺼진 채로 잰 "유도 시험" 은 틀린 이유로 통과한다).
+    expect(canvasPatches(onConfigChange)).toEqual([{ width: 1749, height: 796 }]);
+    // 그 상태에서 경계와 흐림이 함께 서 있다.
+    expect(screen.getByTestId('canvas-region-bounds')).toBeTruthy();
+    expect(screen.getByTestId('canvas-region-scrim')).toBeTruthy();
   });
 
-  it('사용자가 정한 크기에는 손대지 않는다 (기본값일 때만 맞춘다)', () => {
+  it('경계가 없는 상태에서는 상자를 아무리 흔들어도 패치가 **0 건**이다', () => {
     const onConfigChange = vi.fn();
     panelOuter = { width: 1749, height: 796 };
-    const clock = makeScheduler();
-    render(
-      <CanvasPanel
-        panelId="p1"
-        config={makeConfig([], ['tank.level'], { canvas: { width: 300, height: 300 } })}
-        onConfigChange={onConfigChange}
-        forceEdit
-        scheduler={clock.scheduler}
-        visibilitySource={ALWAYS_VISIBLE}
-      />,
-    );
+    renderEditablePanel([EDIT_RECT], { onConfigChange });
+
+    expect(screen.queryByTestId('canvas-region-bounds')).toBeNull();
+    resizePanelTo(900, 900);
+    resizePanelTo(400, 1200);
 
     expect(canvasPatches(onConfigChange)).toEqual([]);
   });
+});
 
+describe('CanvasPanel — 상자가 바뀌면 크기가 따라온다 (AC-07 (AL) · REQ-07)', () => {
+  it('두 축이 모두 잰 바깥 상자 **그 자체**로 쓰인다 — 어떤 축척도 곱하지 않는다', () => {
+    // 고정 입력은 **고정점이 아닌** 짝이어야 한다(D7) — 이미 맞아 있으면 유도가 무동작이라
+    // 이 시험이 실패할 수 없다. 저장된 캔버스는 기본값 500×400 이고 상자는 1749×796 이다.
+    //
+    // 0.4.0 의 폐기된 규칙(`floor(outer × 0.75)`)이 되살아나면 여기서 1311×597 이 나온다.
+    // 그 규칙에서는 캔버스가 영원히 패널의 0.75 배라 REQ-07 이 제 이름("캔버스 크기 =
+    // 패널 크기")을 지킬 수 없었고, 사용자가 화면을 보고 정확히 그것을 잡아냈다(위험 R21).
+    const onConfigChange = vi.fn();
+    panelOuter = { width: 1749, height: 796 };
+    renderEditablePanel([], { onConfigChange, forceEdit: true });
+
+    expect(canvasPatches(onConfigChange)).toEqual([{ width: 1749, height: 796 }]);
+  });
+
+  it('요소가 있어도 유도가 돌고, **요소 좌표는 함께 가지 않는다** (걷어낸 단추의 단언)', () => {
+    // 0.10.0 은 "요소가 하나라도 있으면 맞추지 않는다" 로 막았고, 그 근거("뜻이 조용히
+    // 달라진다")가 006 에서 사라졌다. 대신 살아남는 것이 이 단언이다 — 종이를 고친 것이지
+    // 그림을 고친 것이 아니다.
+    const onConfigChange = vi.fn();
+    panelOuter = { width: 1749, height: 796 };
+    renderEditablePanel([EDIT_RECT], { onConfigChange, forceEdit: true });
+
+    expect(canvasPatches(onConfigChange)).toEqual([{ width: 1749, height: 796 }]);
+    // 패치에 `elements` 가 실려 있으면 요소 좌표를 함께 옮긴 것이다.
+    for (const call of onConfigChange.mock.calls) {
+      expect(Object.keys(call[0] as object)).toEqual(['canvas']);
+    }
+  });
+
+  it('트리거의 **출처를 묻지 않는다** — 타일 드래그든 창 크기 변경이든 같은 규칙이다', () => {
+    const { spy } = renderStatefulSize({ elements: [EDIT_RECT] });
+
+    // 첫 측정(200×160) 뒤 이어지는 리사이즈 둘. 어느 것이 무엇 때문인지 묻지 않는다.
+    expect(canvasPatches(spy)).toEqual([{ width: 200, height: 160 }]);
+    resizePanelTo(1749, 796);
+    resizePanelTo(600, 1200);
+
+    expect(canvasPatches(spy)).toEqual([
+      { width: 200, height: 160 },
+      { width: 1749, height: 796 },
+      { width: 600, height: 1200 },
+    ]);
+  });
+
+  it('리사이즈 한 번은 많아야 **한 건**이고, 같은 상자를 다시 재면 **0 건**이다 (I19)', () => {
+    // 유도가 저장값을 입력으로 먹으면 리사이즈 한 번이 최대 세 번의 연쇄 쓰기가 된다
+    // (spec.md §기각한 안 — 출력 영역을 그대로 받아 적는다). 되먹이는 숙주라야 그 고리가
+    // 실제로 돌 수 있고, 그래서 이 시험은 `vi.fn()` 이 아니라 `StatefulSizeHost` 를 쓴다.
+    const { spy } = renderStatefulSize({ elements: [EDIT_RECT] });
+    expect(canvasPatches(spy)).toHaveLength(1);
+
+    resizePanelTo(1749, 796);
+    expect(canvasPatches(spy)).toHaveLength(2);
+
+    // 같은 상자를 다시 통보한다 — 유도가 잰 상자만의 함수라 같은 값이 나오고, 받은 객체를
+    // 그대로 돌려주므로 부르는 쪽의 참조 비교가 쓰기를 삼킨다.
+    resizePanelTo(1749, 796);
+    resizePanelTo(1749, 796);
+    expect(canvasPatches(spy)).toHaveLength(2);
+  });
+
+  it('상자가 **1px** 만 바뀌어도 유도값이 1px 바뀌어 쓰기가 한 건 난다 (항등의 대가)', () => {
+    // 0.4.0 까지는 `floor(outer × 0.75)` 가 일부 1px 변화를 삼켰다. 그 흡수는 **보장이
+    // 아니었고**, 0.5.0 은 흡수를 아예 포기하는 대신 **상한**(측정당 많아야 한 건)만 지킨다.
+    const { spy } = renderStatefulSize({ elements: [EDIT_RECT] });
+    const before = canvasPatches(spy).length;
+
+    resizePanelTo(201, 160);
+
+    expect(canvasPatches(spy)).toHaveLength(before + 1);
+    expect(canvasPatches(spy).at(-1)).toEqual({ width: 201, height: 160 });
+  });
+
+  it('저장된 `canvas` 를 아무 값으로 놓아도 유도값이 같다 — 저장값은 입력이 아니다 (I19)', () => {
+    // 이 단언이 실패하면 "출력 영역을 그대로 받아 적는" 기각된 안으로 되돌아간 것이다
+    // (위험 R20). 저장값이 계산에 들어가면 두 짝이 서로 다른 유도값을 낸다.
+    panelOuter = { width: 1749, height: 796 };
+    for (const stored of [
+      { width: 333, height: 222 },
+      { width: 1, height: 1 },
+      { width: 99999, height: 3 },
+    ]) {
+      cleanup();
+      const onConfigChange = vi.fn();
+      renderEditablePanel([EDIT_RECT], { onConfigChange, forceEdit: true, canvas: stored });
+      expect(canvasPatches(onConfigChange), `${stored.width}x${stored.height}`).toEqual([
+        { width: 1749, height: 796 },
+      ]);
+    }
+  });
+
+  it('격자 간격을 바꿔도 캔버스 크기가 **한 글자도** 바뀌지 않는다 (I20 · R20)', () => {
+    // `gridStep` 은 표면이 `useState` 로 든 **저장되지 않는 표시 상태**다. 그것이 유도의
+    // 입력이 되면 저장되지 않는 값이 저장되는 값을 고치게 되고, 같은 패널을 다른 간격으로
+    // 연 두 사람이 캔버스 크기를 두고 다툰다.
+    //
+    // 되먹이는 숙주라야 이 가드가 문다: 유도가 `floor(outer ÷ step) × step` 이었다면
+    // 수렴값이 1725×775 이고 간격을 10 으로 바꾸는 순간 1740×790 으로 다시 쓰인다.
+    const { spy } = renderStatefulSize({ elements: [EDIT_RECT], canvas: { width: 500, height: 400 } });
+    resizePanelTo(1749, 796);
+    const before = canvasPatches(spy).length;
+
+    fireEvent.change(screen.getByTestId('canvas-grid-step'), { target: { value: '10' } });
+
+    expect(canvasPatches(spy)).toHaveLength(before);
+  });
+});
+
+describe('CanvasPanel — 쓰지 않아야 할 때는 쓰지 않는다 (AC-07 (AM) · 위험 R15 · D5)', () => {
   it('편집 중이 아니면 맞추지 않는다 — 보기만 하는 패널은 config 를 쓰지 않는다', () => {
     const onConfigChange = vi.fn();
     panelOuter = { width: 1749, height: 796 };
     renderEditablePanel([], { onConfigChange });
 
     expect(canvasPatches(onConfigChange)).toEqual([]);
+  });
+
+  it('쓸 곳이 없으면(`onConfigChange` 부재) 상자가 아무리 바뀌어도 쓰지 않는다', () => {
+    // 두 게이트가 하나로 겹친다(`canEdit` 가 곧 `onConfigChange` 존재). 그럼에도 둘 다
+    // 잰다 — 한쪽 형상이 바뀌는 날 다른 쪽이 남아 있어야 한다.
+    panelOuter = { width: 1749, height: 796 };
+    renderEditablePanel([], { forceEdit: true });
+
+    expect(screen.queryByTestId('canvas-edit-overlay')).toBeNull();
+    // 여기서 예외가 나지 않는다는 사실 자체가 단언이다(쓸 곳이 없는 경로가 살아 있다).
+    resizePanelTo(900, 900);
   });
 
   it('아직 재지 못한 상자(0)에서는 맞추지 않고 NaN 도 내지 않는다', () => {
@@ -1552,52 +1766,43 @@ describe('CanvasPanel — 캔버스 크기 자동 맞춤은 한 번뿐이다 (0.
 
     expect(canvasPatches(onConfigChange)).toEqual([]);
   });
+
+  it('유도한 축이 1 미만이면 저장값을 그대로 둔다 — "모르면 손대지 않는다"', () => {
+    const onConfigChange = vi.fn();
+    panelOuter = { width: 1749, height: 0 };
+    renderEditablePanel([], { onConfigChange, forceEdit: true });
+
+    expect(canvasPatches(onConfigChange)).toEqual([]);
+  });
 });
 
-describe('CanvasPanel — 리사이즈는 저장된 좌표의 뜻을 바꾸지 않는다 (0.10.0 · 조용한 이동 금지)', () => {
-  it('패널을 늘여도 저장된 캔버스 크기가 그대로다', () => {
-    const onConfigChange = vi.fn();
-    // 요소가 있으므로 자동 맞춤은 애초에 돌지 않는다. 그 위에서 리사이즈를 여러 번 준다.
-    renderEditablePanel([EDIT_RECT], { onConfigChange, forceEdit: true });
+describe('CanvasPanel — 리사이즈는 종이만 고치고 그림은 고치지 않는다 (AC-07 (AL) · AC-E20 (X))', () => {
+  it('패널을 여러 번 늘여도 **요소 좌표는 한 글자도 바뀌지 않는다**', () => {
+    // 0.10.0 은 이 자리에서 "저장된 캔버스 크기가 그대로다" 를 단언했다. 006 이 그 문장을
+    // 뒤집었으므로(캔버스는 이제 상자를 따라간다), 살아남는 성질은 **요소 좌표 불변**이다 —
+    // 그리고 그것이 이 유도를 안전하게 만드는 조건 그 자체다.
+    const { spy } = renderStatefulSize({ elements: [EDIT_RECT] });
 
     resizePanelTo(1749, 796);
     resizePanelTo(600, 1200);
     resizePanelTo(320, 240);
 
-    expect(canvasPatches(onConfigChange)).toEqual([]);
+    expect(canvasPatches(spy).length).toBeGreaterThan(0);
+    for (const call of spy.mock.calls) {
+      expect(Object.keys(call[0] as object)).toEqual(['canvas']);
+    }
   });
 
-  it('그래서 요소가 **캔버스 안 같은 자리**에 남는다 (자리의 뜻이 달라지지 않는다)', () => {
-    const { clock } = renderEditablePanel([EDIT_RECT], {
-      onConfigChange: vi.fn(),
-      forceEdit: true,
-    });
-
-    /** 지금 그려진 사각형을 그리는 영역에 대한 비율로 읽는다. */
-    const drawnFraction = (): { x: number; y: number } => {
-      const box = screen.getByTestId('canvas-stage');
-      const rect = ctxStub.calls.filter((c) => c[0] === 'rect').at(-1)!.slice(1) as number[];
-      return {
-        x: rect[0]! / Number.parseFloat(box.style.width),
-        y: rect[1]! / Number.parseFloat(box.style.height),
-      };
-    };
-
-    const before = drawnFraction();
-    // EDIT_RECT 는 (50,40) 이고 캔버스는 500x400 이므로 비율은 (0.1, 0.1) 이다.
-    expect(before.x).toBeCloseTo(0.1, 9);
-    expect(before.y).toBeCloseTo(0.1, 9);
-
-    ctxStub.calls.length = 0;
+  it('그래서 그림이 **캔버스에 대해** 작아진다 — 그 대가를 수로 적어 둔다 (위험 R19)', () => {
+    // 요소 좌표가 그대로인 채 캔버스만 커지므로, 옛 그림이 차지하는 몫이 줄어든다.
+    // 사용자는 이 대가를 이미 받아들였고(spec.md §옛 패널을 편집으로 열면 무엇이 보이는가),
+    // 여기서는 그것이 **조용하지 않다**는 것만 못박는다: 유도가 돈 그 상태에 경계가 있다.
+    const { spy } = renderStatefulSize({ elements: [EDIT_RECT], canvas: { width: 500, height: 400 } });
     resizePanelTo(1749, 796);
-    // 크기가 달라졌으므로 프레임이 한 장 필요하다(리사이즈는 그림이 실제로 달라지는 축이다).
-    clock.flush(16);
 
-    // 크기가 달라졌으니 px 는 달라지지만 **비율은 그대로**다. 리사이즈가 저장된 크기를
-    // 다시 맞췄다면 여기서 비율이 어긋난다 — 그것이 조용한 좌표 이동의 관측 가능한 얼굴이다.
-    const after = drawnFraction();
-    expect(after.x).toBeCloseTo(before.x, 9);
-    expect(after.y).toBeCloseTo(before.y, 9);
+    expect(canvasPatches(spy).at(-1)).toEqual({ width: 1749, height: 796 });
+    // 500 ÷ 1749 = 28.6% · 400 ÷ 796 = 50.3% (spec.md 가 적은 그 수다).
+    expect(screen.getByTestId('canvas-region-bounds')).toBeTruthy();
   });
 });
 
@@ -1607,17 +1812,27 @@ describe('CanvasPanel — 리사이즈는 저장된 좌표의 뜻을 바꾸지 �
 // 재는 것은 배선 하나다: `workspace` 가 정말 `edit.active` 를 나르는가, 그리고 편집이
 // 꺼진 자리에서는 006 이전과 값이 같은가.
 //
-// 고정 입력은 **1749 × 796** 이다. 이 파일의 기본 상자 200×160 은 캔버스(500×400)와 비율이
-// 같고 칸에도 이미 맞아 있어 **작업 영역이 켜졌는지 꺼졌는지 구별이 흐리다**(꺼진 갈래에서
-// 자투리가 0 이라 두 상자가 같은 자리에서 시작한다). 1749×796 은 정사각형도 아니고
-// (0.8.0 (O)) 캔버스 비율 5:4 와도 다르며(0.10.0 (V)) 칸으로 나누어떨어지지도 않아
-// (0.9.0 (R)) 두 갈래가 서로 다른 수를 낸다:
-//   - 꺼짐 → 상자 하나뿐인 것과 같다: 영역 980×784 · 자리 (384, 6) · 원점 (0,0).
-//   - 켜짐 → 작업 영역 1749×796 · 출력 영역 740×592 · 원점 (504, 102).
+// 고정 입력은 **1749 × 796** 이다. 이 파일의 기본 상자 200×160 은 **작업 영역이 켜졌는지
+// 꺼졌는지 구별이 흐리다**(꺼진 갈래에서 자투리가 0 이라 두 상자가 같은 자리에서 시작한다).
+// 1749×796 은 정사각형도 아니고(0.8.0 (O)) 칸으로 나누어떨어지지도 않아(0.9.0 (R)) 두
+// 갈래가 서로 다른 수를 낸다.
 //
-// 요소를 하나 두는 것에도 뜻이 있다 — 요소가 0개면 자동 맞춤이 돌아 `canvas` 가 바뀌고,
-// 그러면 이 절이 재려는 상자 수가 그 맞춤의 결과를 함께 지고 간다(그 게이트는 M7 의 몫이며
-// 이 밀레스톤은 한 줄도 건드리지 않는다).
+// **M8 이 두 갈래의 고정 입력을 갈랐다.** 편집을 켠 시험은 이제 **고정점**을 써야 한다
+// (D7 — `canvas === outer === 1749×796`). 유도가 항등이라 편집을 켜는 순간 캔버스가 잰
+// 상자로 덮이므로, 고정점이 아닌 짝을 쓰면 이 절이 재는 상자 수가 그 유도의 결과를 함께
+// 지고 간다. 편집을 **끈** 시험은 종전 그대로 캔버스 500×400 을 쓴다 — 그 갈래에서는
+// 캔버스가 상자에서 유도되지 않으므로 "캔버스와 비율이 다른 상자"(0.10.0 (V))가 여전히
+// 만들어지고, 그 규율의 자리가 바로 여기다.
+//   - 꺼짐(캔버스 500×400) → 상자 하나뿐인 것과 같다: 영역 980×784 · 자리 (384, 6) · 원점 (0,0).
+//   - 켜짐(캔버스 1749×796, 고정점) → 작업 영역 1749×796 · 축소 상자 1311×597 · 칸 18 ·
+//     축척 **0.72** · 출력 영역 **1259.28 × 573.12** · 원점 **(244, 111)**.
+//
+// 원점 (244, 111) 은 칸 18 의 배수가 **아니고**(244 % 18 = 10, 111 % 18 = 3) 격자 상자
+// 폭·높이도 칸의 배수가 **아니다**(1749 % 18 = 3, 796 % 18 = 4) — D3 과 위험 R17 의 시험
+// 조건을 유도 뒤에도 그대로 만족한다.
+//
+// 요소를 하나 두는 것에도 뜻이 있다 — 요소가 0개면 빈 상태 안내가 겹쳐 서고, 이 절이
+// 재려는 것은 그 안내가 아니라 상자 둘이다.
 
 describe('CanvasPanel — 작업 영역은 편집 게이팅에 얹힌다 (SPEC-CANVAS-006 M4)', () => {
   /** `'384px'` → `384`. */
@@ -1627,10 +1842,18 @@ describe('CanvasPanel — 작업 영역은 편집 게이팅에 얹힌다 (SPEC-C
 
   it('편집이 켜지면 표면이 상자를 둘로 짓는다 — `workspace` 가 `edit.active` 를 나른다', () => {
     panelOuter = { width: 1749, height: 796 };
-    renderEditablePanel([EDIT_RECT], { onConfigChange: vi.fn(), forceEdit: true });
+    const onConfigChange = vi.fn();
+    renderEditablePanel([EDIT_RECT], {
+      onConfigChange,
+      forceEdit: true,
+      canvas: fixedPointCanvas(),
+    });
 
     // 편집이 정말 켜져 있다(꺼진 채로 잰 "작업 영역 시험" 은 틀린 이유로 통과한다).
     expect(screen.getByTestId('canvas-edit-overlay')).toBeTruthy();
+    // 그리고 이 짝이 정말 **고정점**이다 — 첫 측정에 `canvas` 패치가 0 건이어야 아래 수가
+    // 시험이 적어 둔 그 캔버스 위에서 계산된 값이다(D7).
+    expect(canvasPatches(onConfigChange)).toEqual([]);
 
     // 작업 영역은 잰 상자 전부다.
     expect(workspaceBoxEl().style.width).toBe('1749px');
@@ -1638,10 +1861,10 @@ describe('CanvasPanel — 작업 영역은 편집 게이팅에 얹힌다 (SPEC-C
     expect(workspaceBoxEl().style.left).toBe('0px');
     expect(workspaceBoxEl().style.top).toBe('0px');
     // 출력 영역은 그 안에 가운데로 앉고, 두 상자는 **실제로 다르다**.
-    expect(stageBoxEl().style.width).toBe('740px');
-    expect(stageBoxEl().style.height).toBe('592px');
-    expect(stageBoxEl().style.left).toBe('504px');
-    expect(stageBoxEl().style.top).toBe('102px');
+    expect(stageBoxEl().style.width).toBe('1259.28px');
+    expect(stageBoxEl().style.height).toBe('573.12px');
+    expect(stageBoxEl().style.left).toBe('244px');
+    expect(stageBoxEl().style.top).toBe('111px');
     expect(px(stageBoxEl().style.width)).toBeLessThan(px(workspaceBoxEl().style.width));
   });
 
@@ -1672,7 +1895,11 @@ describe('CanvasPanel — 작업 영역은 편집 게이팅에 얹힌다 (SPEC-C
       workspaceBoxEl().style.width !== stageBoxEl().style.width ||
       stageBoxEl().style.left !== '0px';
 
-    renderEditablePanel([EDIT_RECT], { onConfigChange: vi.fn(), forceEdit: true });
+    renderEditablePanel([EDIT_RECT], {
+      onConfigChange: vi.fn(),
+      forceEdit: true,
+      canvas: fixedPointCanvas(),
+    });
     expect(screen.queryByTestId('canvas-edit-overlay')).not.toBeNull();
     expect(split()).toBe(true);
 
@@ -1690,7 +1917,11 @@ describe('CanvasPanel — 작업 영역은 편집 게이팅에 얹힌다 (SPEC-C
     // **조용히** 사라진다 — 어느 표면 시험도 그것을 잡지 못한다(패널이 무엇을 넘기는지는
     // 표면의 관심 밖이다).
     panelOuter = { width: 1749, height: 796 };
-    renderEditablePanel([EDIT_RECT], { onConfigChange: vi.fn(), forceEdit: true });
+    renderEditablePanel([EDIT_RECT], {
+      onConfigChange: vi.fn(),
+      forceEdit: true,
+      canvas: fixedPointCanvas(),
+    });
 
     const surfaceRoot = workspaceBoxEl().parentElement as HTMLElement;
     expect(surfaceRoot.className.split(/\s+/)).toContain('overflow-hidden');

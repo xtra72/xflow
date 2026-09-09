@@ -52,7 +52,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { Profiler, useEffect, useState } from 'react';
+import { Profiler, useState } from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
@@ -77,10 +77,6 @@ import {
   type CanvasLiveSeriesValue,
   type CanvasSeriesOption,
 } from './canvasEditContext';
-import {
-  CanvasStageAspectContext,
-  useCanvasStageAspectState,
-} from './canvasStageAspect';
 
 afterEach(cleanup);
 
@@ -489,120 +485,54 @@ describe('CanvasElementsEditor — 기하 칸은 정수 칸이다', () => {
 });
 
 describe('CanvasElementsEditor — 캔버스 크기 (모든 좌표의 분모)', () => {
-  it('두 칸이 파싱된 크기를 보인다', () => {
+  // --- SPEC-CANVAS-006 M8: 칸도 단추도 걷어냈다 (REQ-07 · AC-07 (AN)) ---
+  //
+  // 이 자리에 있던 것 셋을 걷어냈다: 폭·높이 **수치 입력 칸 둘**과 "패널 비율에 맞춤"
+  // **단추 하나**. 편집 중에는 캔버스 크기가 두 축 모두 잰 패널 상자에서 유도되므로
+  // (항등이다 — `derivedCanvasSize`), 칸은 적는 즉시 다음 측정에 덮이고 단추는 언제나
+  // 잠긴다. 이 저장소는 화면이 지키지 못할 약속을 금지하며, **잠근 채 남기는 것**이
+  // 바로 그 규율이 금지하는 형상이다(AC-E23 서문).
+  //
+  // **걷어낸 시험이 지키던 단언은 사라지지 않고 옮겨 갔다.** 어디로 갔는지 이름으로 적는다.
+  //   - 단추 쪽 **`canvas` 패치 하나** · **요소 좌표 불변** → `CanvasPanel.test.tsx`
+  //     §상자가 바뀌면 크기가 따라온다(AC-07 (AL)).
+  //   - 칸 쪽 **정수화 · 0/빈 칸 방어 · MIN/MAX 죔** → 읽는 쪽은 `canvasConfig.test.ts`
+  //     §parseCanvasSize 가 이미 지고 있고, 쓰는 쪽은 `canvasWorkspace.test.ts`
+  //     §크기 유도는 항등이다 가 새로 진다.
+  //
+  // **한 단언만은 옮겨 가지 않고 폐기된다: 0.2.0 이 단추에 걸었던 "폭 불변".** 두 축이
+  // 모두 유도되므로 그 문장은 이제 거짓이며, 폐기했다는 사실을 이 줄이 기록한다.
+
+  it('읽기 전용 표시가 파싱된 크기를 보인다 — 수는 지우지 않는다', () => {
+    // 그 수는 이제 저술 중인 패널의 px 크기 그 자체다(보기 자리에서 축척이 정확히 1 이다).
+    // 지우면 "지금 한 단위가 무엇인가" 를 말하는 자리가 화면에서 사라진다.
     setup(cfg([rect()]));
-    expect((testid('canvas-panel-width') as HTMLInputElement).value).toBe('500');
-    expect((testid('canvas-panel-height') as HTMLInputElement).value).toBe('400');
+    expect(testid('canvas-panel-size-value').textContent).toBe('500 × 400');
   });
 
   it('크기가 없는 config(001 · 002 가 쓴 전부)도 기본값을 보인다', () => {
     setup({ ...cfg([rect()]) });
-    expect((testid('canvas-panel-width') as HTMLInputElement).value).toBe('500');
+    expect(testid('canvas-panel-size-value').textContent).toBe('500 × 400');
   });
 
-  it('정수 칸이다 — 좌표계와 같은 단위를 쓴다', () => {
+  it('수치 입력 칸도 맞춤 단추도 **없다** — 지키지 못할 약속을 남기지 않는다', () => {
     setup(cfg([rect()]));
-    expect(testid('canvas-panel-width').getAttribute('step')).toBe('1');
-    expect(testid('canvas-panel-height').getAttribute('step')).toBe('1');
-  });
 
-  it('바꾸면 canvas 패치가 나가고 다른 축은 그대로 실려 간다', () => {
-    const spy = setup(cfg([rect()]));
-    fireEvent.change(testid('canvas-panel-width'), { target: { value: '800' } });
-    expect(spy).toHaveBeenLastCalledWith({ canvas: { width: 800, height: 400 } });
-
-    fireEvent.change(testid('canvas-panel-height'), { target: { value: '600' } });
-    expect(spy).toHaveBeenLastCalledWith({ canvas: { width: 500, height: 600 } });
-  });
-
-  it('소수는 반올림하고 0 이하는 최소값으로 올린다 — 0 축은 모든 요소를 지운다', () => {
-    const spy = setup(cfg([rect()]));
-    fireEvent.change(testid('canvas-panel-width'), { target: { value: '640.4' } });
-    expect(spy).toHaveBeenLastCalledWith({ canvas: { width: 640, height: 400 } });
-
-    fireEvent.change(testid('canvas-panel-width'), { target: { value: '0' } });
-    expect(spy).toHaveBeenLastCalledWith({ canvas: { width: 1, height: 400 } });
-
-    fireEvent.change(testid('canvas-panel-width'), { target: { value: '' } });
-    expect(spy).toHaveBeenLastCalledWith({ canvas: { width: 1, height: 400 } });
-  });
-
-  // --- 패널 비율에 맞춤 (0.10.0) ---
-  //
-  // 축척이 하나가 된 뒤로 캔버스 비율과 패널 비율이 다르면 한 축에 여백이 남는다. 그것을
-  // 없애는 단추가 이 두 칸 옆에 선다. **자동이 아니라 손으로** 누르는 것이 요점이다 —
-  // 저장된 요소 좌표는 절대 캔버스 단위라, 높이가 바뀌면 사용자가 놓아 둔 자리의 뜻이
-  // 달라지기 때문이다(`CanvasPanel` 시험 §조용한 이동 금지).
-
-  /** 살아 있는 패널이 잰 상자를 내놓은 상태로 편집기를 세운다. */
-  function setupWithStage(
-    config: Record<string, unknown>,
-    outer: { width: number; height: number },
-  ): ReturnType<typeof vi.fn> {
-    const onConfigChange = vi.fn();
-    function Harness() {
-      const state = useCanvasStageAspectState();
-      // 패널이 하는 일과 같다: 잰 상자를 채널에 내놓는다.
-      useEffect(() => state.publish(outer), [state]);
-      return (
-        <CanvasStageAspectContext value={state}>
-          <CanvasElementsEditor config={config} onConfigChange={onConfigChange} />
-        </CanvasStageAspectContext>
-      );
+    for (const target of ['canvas-panel-width', 'canvas-panel-height', 'canvas-panel-size-fit']) {
+      expect(screen.queryByTestId(target), target).toBeNull();
     }
-    render(<Harness />);
-    return onConfigChange;
-  }
-
-  it('누르면 폭은 그대로 두고 높이를 패널 비율로 다시 계산한다', () => {
-    // 사용자가 본 그 패널(1749×796)이다. round(500 × 796 / 1749) = 228.
-    const spy = setupWithStage(cfg([rect()]), { width: 1749, height: 796 });
-    fireEvent.click(testid('canvas-panel-size-fit'));
-
-    expect(spy).toHaveBeenLastCalledWith({ canvas: { width: 500, height: 228 } });
-    // 요소 좌표는 함께 가지 않는다 — 이 단추는 종이 모양만 바꾼다.
-    expect(Object.keys(spy.mock.calls.at(-1)![0] as object)).toEqual(['canvas']);
+    // 잠근 채 남기는 것도 금지다 — 위 단언이 `disabled` 를 보는 것이 아니라 **부재**를
+    // 보는 이유가 그것이다.
   });
 
-  it('무엇이 바뀔지 **누르기 전에** 적혀 있다', () => {
-    setupWithStage(cfg([rect()]), { width: 1749, height: 796 });
-    const title = testid('canvas-panel-size-fit').getAttribute('title') ?? '';
-    expect(title).toContain('500×400');
-    expect(title).toContain('500×228');
-  });
-
-  it('패널 비율을 아직 모르면 잠긴다 (곁에 미리보기가 없는 자리)', () => {
+  it('한 줄이 그 값의 규칙을 말한다 — 왜 손댈 수 없는지 화면이 답한다', () => {
+    // 문구는 "편집 중에는 **패널 크기**를 따라갑니다" 다. 0.4.0 이 적었던 "패널 **출력
+    // 영역** 크기" 는 틀렸다 — 유도값은 출력 영역이 아니라 패널 몸통이고, 출력 영역은
+    // 그것을 축척 R 로 물러나 그린 사각형이다.
     setup(cfg([rect()]));
-    expect((testid('canvas-panel-size-fit') as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it('이미 맞아 있으면 잠긴다 — 눌러도 화면이 그대로인 단추는 고장으로 보인다', () => {
-    // 1000×800 은 500×400 과 같은 5:4 다.
-    setupWithStage(cfg([rect()]), { width: 1000, height: 800 });
-    expect((testid('canvas-panel-size-fit') as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it('잴 수 없는 상자에는 잠긴다 (0 · 비유한 — NaN 을 저장하지 않는다)', () => {
-    for (const outer of [
-      { width: 0, height: 0 },
-      { width: 1749, height: 0 },
-      { width: Number.NaN, height: 796 },
-    ]) {
-      cleanup();
-      setupWithStage(cfg([rect()]), outer);
-      expect(
-        (testid('canvas-panel-size-fit') as HTMLButtonElement).disabled,
-        `${outer.width}x${outer.height}`,
-      ).toBe(true);
-    }
-  });
-
-  it('크기를 바꿔도 **요소 좌표는 건드리지 않는다**', () => {
-    // 함께 늘이면 정수 좌표에 반올림 오차가 쌓여 손으로 맞춰 둔 자리가 크기를 바꿀 때마다
-    // 조금씩 어긋난다. 종이를 키운 것이지 그림을 키운 것이 아니다.
-    const spy = setup(cfg([rect()]));
-    fireEvent.change(testid('canvas-panel-width'), { target: { value: '1000' } });
-    expect(Object.keys(spy.mock.calls.at(-1)![0] as object)).toEqual(['canvas']);
+    expect(testid('canvas-panel-size-derived').textContent).toBe(
+      'dashboard.canvas.elements.panelSizeDerived',
+    );
   });
 
   it('설명은 제목 뒤 `?` 에 있다 — 줄로 깔지 않는다', () => {

@@ -27,7 +27,12 @@
 // 받아만 두었던 `onConfigChange` 를 **실제로 쓴다**. 등록 6지점은 건드리지 않는다 —
 // 001 이 그 콜백을 미리 흘려 둔 덕분에 그럴 필요가 없다(REQ-05 금지 조항).
 //
-// @spec SPEC-CANVAS-001 · SPEC-CANVAS-002 (T6 — 편집 배선)
+// **SPEC-CANVAS-006 이 이 파일에 더한 것은 둘이다**: 표면에 `workspace={edit.active}` 를
+// 넘기는 한 줄(M4)과, 편집 중 캔버스 크기를 잰 패널 상자에서 유도하는 게이트(M8 ·
+// REQ-07). 둘은 **같은 게이트**를 지나며, 그 공유가 곧 이 회차의 안전 논거다 —
+// 표시 없이 유도만 도는 상태가 형상 자체로 존재하지 않는다(불변식 I15).
+//
+// @spec SPEC-CANVAS-001 · SPEC-CANVAS-002 (T6 — 편집 배선) · SPEC-CANVAS-006 (M4 · M8)
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Shapes } from 'lucide-react';
@@ -41,13 +46,14 @@ import { usePanelSeriesData } from '../charts/usePanelSeriesData';
 import type { VisibilitySource } from '../charts/visiblePolling';
 import { usePanelEditMode } from '../PanelEditToggle';
 import type { CanvasElement, CanvasSize } from './canvasConfig';
-import { DEFAULT_CANVAS_SIZE, isNumericElement, parseCanvasConfig } from './canvasConfig';
+import { isNumericElement, parseCanvasConfig } from './canvasConfig';
 import {
   useCanvasLiveSeriesPublisher,
   type CanvasSeriesOption,
 } from './canvasEditContext';
 import CanvasEditOverlay from './CanvasEditOverlay';
-import { fitCanvasSizeToStage, type StageSize } from './canvasGeometry';
+import { type StageSize } from './canvasGeometry';
+import { derivedCanvasSize } from './canvasWorkspace';
 import { useCanvasStageAspectPublisher } from './canvasStageAspect';
 import { evaluateRules, type ResolvedStyle } from './canvasRules';
 import { renderTextTemplate } from './canvasText';
@@ -337,46 +343,50 @@ export default function CanvasPanel({
     [onConfigChange],
   );
 
-  // --- 0.10.0 T-fit: 캔버스 크기를 패널 비율에 **한 번만** 맞춘다 ---
+  // --- SPEC-CANVAS-006 M8: 캔버스 크기는 편집 중 **패널 크기**다 (REQ-07) ---
   //
-  // ## 왜 한 번뿐인가 (이것이 이 절의 전부다)
+  // ## 게이트가 둘로 줄었다 — 그리고 그 둘은 사실 하나다
   //
-  // 저장된 요소 좌표는 **절대 캔버스 단위**다. 캔버스 높이가 400 에서 228 로 바뀌면 사용자가
-  // y=200 에 둔 도형은 "판의 절반" 이 아니라 "판의 88%" 를 뜻하게 된다. 즉 리사이즈마다
-  // 자동으로 다시 맞추면 **패널 크기를 바꿀 때마다 사용자가 놓아 둔 자리가 조용히 옮겨간다.**
-  // 그 어긋남은 되돌릴 방법이 없고, 여백 몇 픽셀보다 훨씬 나쁘다.
+  // 0.10.0 은 이 맞춤을 조건 넷과 한 번 표식(`autoFitDone`)으로 막았다. 그 근거는 하나뿐
+  // 이었다: 저장된 요소 좌표는 **절대 캔버스 단위**라, 캔버스가 바뀌면 사용자가 놓아 둔
+  // 자리의 뜻이 **조용히** 달라지고 그 어긋남은 되돌릴 수 없다. 위험했던 것은 좌표가
+  // 움직인다는 사실이 아니라 그것이 **조용하다**는 사실이었다.
   //
-  // 그래서 자동 맞춤은 **건드릴 것이 없을 때** 한 번만 한다. 조건 넷을 모두 만족해야 한다:
+  // **006 이 그 침묵을 없앴다.** 출력 영역이 더 넓은 작업 영역 안에 그려진 사각형이 되면
+  // (M6), 뜻이 달라진 요소는 그 사각형 안에 남거나 **눈에 보이게** 밖으로 나가고, 밖으로
+  // 나가도 사라지지 않으며(M2), **끌어서 되돌릴 수 있다**(M7). 그래서 조건 넷 가운데 셋이
+  // 근거를 잃었다: "요소가 없다" · "크기가 기본값이다" · "한 번만".
+  //
+  // 남는 것은 둘이고, 정찰이 확인한 대로 그 둘은 하나로 겹친다 — `usePanelEditMode` 가
+  // `active = canEdit && (editing || forced)` 이고 `canEdit = onConfigChange !== undefined`
+  // 이므로 **편집이 켜졌다는 것은 곧 쓸 곳이 있다는 뜻**이다. 그럼에도 둘 다 적는다(한쪽
+  // 형상이 바뀌는 날 다른 쪽이 남아 있어야 한다).
+  //
   //   1. 쓸 곳이 있다(`onConfigChange`) — 없으면 저장할 데가 없다.
-  //   2. **편집 중이다** — 보기만 하는 대시보드가 config 를 고쳐 쓰는 일은 없어야 한다.
-  //   3. **요소가 하나도 없다** — 옮겨갈 좌표가 존재하지 않는다. 이것이 "건드릴 것이 없다"
-  //      의 정확한 뜻이다.
-  //   4. 저장된 크기가 **기본값 그대로**다 — 사용자가 한 번이라도 정한 값은 남의 것이다.
+  //   2. **편집 중이다**(`edit.active`) — 보기만 하는 사용자가 대시보드를 고쳐 쓰는 일은
+  //      없어야 한다. 그리고 이 게이트는 **작업 영역·출력 영역 표시를 켜는 바로 그
+  //      게이트**다(`workspace={edit.active}` 한 줄 아래). 둘이 같은 하나이므로 "표시 없이
+  //      유도만 도는" 상태가 **형상 자체로 존재하지 않는다**(불변식 I15 · 위험 R13).
   //
-  // 4번이 곧 멈춤 조건이기도 하다: 한 번 맞추면 크기가 기본값이 아니게 되므로 그 뒤로는
-  // 리사이즈가 몇 번 오든 이 효과가 아무것도 하지 않는다. 여백이 다시 생기면 사용자가
-  // 설정의 **패널 비율에 맞춤** 단추로 직접 맞춘다 — 보이는 여백은 정직하고 고칠 수 있지만,
-  // 조용히 옮겨간 좌표는 그렇지 않다.
-  const autoFitDone = useRef(false);
+  // ## 무진동은 "다시 돌지 않는다" 가 아니라 "다시 돌아도 같은 값" 이다
+  //
+  // 이 콜백의 신원은 `cfg.canvas` 에 매여 있으므로, 쓰기가 config 를 갈면 표면의 통보
+  // 효과가 **같은 `outer` 로 다시 돈다**. 그때 진동을 막는 것은 유도가 **잰 상자만의
+  // 함수**(항등)라는 사실이다 — 같은 상자에 두 번 물으면 같은 수가 나오고, 그러면
+  // `derivedCanvasSize` 가 **받은 객체를 그대로** 돌려주어 아래 참조 비교가 쓰기를 삼킨다
+  // (불변식 I19 · 가정 A17). **저장된 크기를 유도의 입력으로 되먹이지 말 것** — 그 순간
+  // 쓰기가 다음 유도의 입력이 되어 리사이즈 한 번이 연쇄 쓰기가 된다.
   const handleStageMeasured = useCallback(
     (outer: StageSize) => {
       if (onConfigChange === undefined || !edit.active) return;
-      if (autoFitDone.current) return;
-      if (cfg.elements.length > 0) return;
       const stored: CanvasSize = cfg.canvas;
-      if (
-        stored.width !== DEFAULT_CANVAS_SIZE.width ||
-        stored.height !== DEFAULT_CANVAS_SIZE.height
-      ) {
-        return;
-      }
-      const fitted = fitCanvasSizeToStage(stored, outer);
-      // 같은 참조 = 바꿀 것이 없다(잴 수 없는 상자이거나 이미 맞아 있다).
-      if (fitted === stored) return;
-      autoFitDone.current = true;
-      onConfigChange({ canvas: fitted });
+      const derived = derivedCanvasSize(stored, outer);
+      // 같은 참조 = 바꿀 것이 없다(잴 수 없는 상자이거나 이미 맞아 있다). **새 비교를
+      // 만들지 않는다** — 파서가 매 렌더 새 객체를 내므로 값 비교로는 억제되지 않는다.
+      if (derived === stored) return;
+      onConfigChange({ canvas: derived });
     },
-    [onConfigChange, edit.active, cfg.elements, cfg.canvas],
+    [onConfigChange, edit.active, cfg.canvas],
   );
 
   /**

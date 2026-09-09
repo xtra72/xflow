@@ -22,9 +22,13 @@
 
 import { describe, it, expect } from 'vitest';
 
-import type { CanvasSize } from './canvasConfig';
+import {
+  MAX_CANVAS_DIMENSION,
+  MIN_CANVAS_DIMENSION,
+  type CanvasSize,
+} from './canvasConfig';
 import { stageLattice, type StageSize } from './canvasGeometry';
-import { PANEL_REGION_FIT_RATIO, workspaceBox } from './canvasWorkspace';
+import { PANEL_REGION_FIT_RATIO, derivedCanvasSize, workspaceBox } from './canvasWorkspace';
 
 const OUTER: StageSize = { width: 1749, height: 796 };
 const CANVAS: CanvasSize = { width: 500, height: 400 };
@@ -211,5 +215,104 @@ describe('canvasWorkspace — 퇴화한 크기에서도 NaN 도 예외도 없다
     expect(ws.stage.height).toBeLessThanOrEqual(ws.box.height);
     expect(ws.origin.x).toBeGreaterThanOrEqual(0);
     expect(ws.origin.y).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// --- 크기 유도 (SPEC-CANVAS-006 M8 · REQ-07 · AC-07) ---------------------
+//
+// 이 절이 지는 성질은 여섯이고(plan.md §M8 (a)), 그 위에 **형상 가드 하나**가 선다.
+// 여섯은 전부 "유도는 잰 상자만의 함수다"(불변식 I19)와 "유도는 어떤 표시 상태도 보지
+// 않는다"(I20)의 관측 가능한 얼굴이다.
+//
+// 그리고 이 절은 **걷어낸 화면의 단언을 물려받는다**(acceptance.md AC-07 (AN)). 폭·높이
+// 수치 칸이 지키던 셋 — 정수화 · 0/빈 칸 방어 · MIN/MAX 죔 — 가운데 **읽는 쪽**은
+// `canvasConfig.test.ts` 의 `parseCanvasSize` 시험이 이미 지고 있고, **쓰는 쪽**을 여기서
+// 진다. 칸이 사라졌다고 그 사실들까지 사라지면 회귀 가드가 조용히 하나 줄어든다.
+
+describe('canvasWorkspace — 크기 유도는 항등이다 (REQ-07 · I19 · D7)', () => {
+  it('유도값이 잰 바깥 상자 **그 자체**다 — 어떤 축척도 곱하지 않는다', () => {
+    // 0.4.0 의 폐기된 규칙(`floor(outer × R)`)이 되살아나면 여기서 1311×597 이 나온다.
+    // 그 규칙에서는 캔버스가 영원히 패널의 R 배라 REQ-07 이 제 이름을 지킬 수 없었고,
+    // 사용자가 화면을 보고 정확히 그것을 잡아냈다(위험 R21).
+    expect(derivedCanvasSize(CANVAS, OUTER)).toEqual({ width: 1749, height: 796 });
+    expect(derivedCanvasSize(CANVAS, OUTER)).not.toEqual({
+      width: Math.floor(OUTER.width * PANEL_REGION_FIT_RATIO),
+      height: Math.floor(OUTER.height * PANEL_REGION_FIT_RATIO),
+    });
+  });
+
+  it('두 축이 정수이고 파서가 죄는 범위 안이다 — 저장 왕복에 값이 달라지지 않는다', () => {
+    // 걷어낸 폭·높이 칸이 `parseCanvasDimension` 으로 지키던 성질을 쓰는 쪽에서 잇는다.
+    const derived = derivedCanvasSize(CANVAS, { width: 640.4, height: 480.6 });
+
+    expect(Number.isInteger(derived.width)).toBe(true);
+    expect(Number.isInteger(derived.height)).toBe(true);
+    expect(derived.width).toBeGreaterThanOrEqual(MIN_CANVAS_DIMENSION);
+    expect(derived.height).toBeGreaterThanOrEqual(MIN_CANVAS_DIMENSION);
+    // 소수를 그대로 실어 보내면 파서가 반올림해 왕복이 값을 바꾼다.
+    expect(derived).toEqual({ width: 640, height: 480 });
+  });
+
+  it('상한을 넘는 상자는 상한으로 죈다 — 그때도 값이 진동하지 않는다', () => {
+    const huge = { width: 1e9, height: 1e9 };
+    const derived = derivedCanvasSize(CANVAS, huge);
+
+    expect(derived).toEqual({ width: MAX_CANVAS_DIMENSION, height: MAX_CANVAS_DIMENSION });
+    // 죈 값을 다시 저장값으로 놓고 같은 상자를 물으면 **같은 참조**가 돌아온다 —
+    // 죔에 걸려도 두 번째 쓰기가 없다(가정 A18 의 셋째 조건).
+    expect(derivedCanvasSize(derived, huge)).toBe(derived);
+  });
+
+  it('아직 재지 못한 축(0 · 음수 · 비유한)에는 **받은 객체를 그대로** 돌려준다', () => {
+    // "모르면 근사한다" 가 아니라 "모르면 손대지 않는다" — 0 은 파서 범위 밖이라
+    // 저장 왕복에 값이 달라진다. 그리고 이 갈래가 **같은 참조**여야 부르는 쪽의
+    // 참조 비교가 쓰기를 삼킨다.
+    for (const outer of [
+      { width: 0, height: 0 },
+      { width: 1749, height: 0 },
+      { width: 0.4, height: 796 },
+      { width: Number.NaN, height: 796 },
+      { width: 1749, height: -5 },
+    ]) {
+      expect(derivedCanvasSize(CANVAS, outer), `${outer.width}x${outer.height}`).toBe(CANVAS);
+    }
+  });
+
+  it('이미 맞아 있으면 **받은 객체를 그대로** 돌려준다 — 새 비교를 만들지 않는다', () => {
+    // `fitCanvasSizeToStage` 의 계약을 그대로 물려받는다. 파서가 매 렌더 새 객체를 내므로
+    // 값 비교로는 쓰기가 억제되지 않는다 — 참조 비교여야 한다.
+    const fixed = { width: 1749, height: 796 };
+
+    expect(derivedCanvasSize(fixed, OUTER)).toBe(fixed);
+  });
+
+  it('같은 상자를 두 번 물으면 같은 값이다 — 유도가 제 결과를 되먹지 않는다 (I19)', () => {
+    const first = derivedCanvasSize(CANVAS, OUTER);
+    // 첫 결과를 저장값으로 되먹인다(실제 경로가 하는 일 그대로다).
+    const second = derivedCanvasSize(first, OUTER);
+
+    expect(second).toBe(first);
+  });
+
+  it('저장된 `canvas` 를 아무 값으로 바꿔도 결과가 같다 — 저장값은 입력이 아니다 (I19)', () => {
+    // 이 단언이 실패하면 "출력 영역을 그대로 받아 적는" 기각된 안으로 되돌아간 것이며,
+    // 그때 리사이즈 한 번이 최대 세 번의 연쇄 쓰기가 된다(위험 R20 · AC-07 (AL)).
+    const stored = [
+      { width: 500, height: 400 },
+      { width: 1, height: 1 },
+      { width: 99999, height: 3 },
+    ];
+
+    for (const canvas of stored) {
+      expect(derivedCanvasSize(canvas, OUTER)).toEqual({ width: 1749, height: 796 });
+    }
+  });
+
+  it('인자가 `(canvas, outer)` **둘뿐**이다 — 이것이 폐기된 규칙의 형상 가드다 (I20 · R22)', () => {
+    // 0.6.0 이 `PANEL_REGION_FIT_RATIO` 를 개명하면 이름 기반 grep 가드는 조용히 무장
+    // 해제된다(위험 R23). 그래서 가드를 **형상**으로 옮겨 적는다: 셋째 인자(격자 간격 ·
+    // 보기 배율)가 나타나는 순간 저장되지 않는 표시 상태가 저장되는 값을 고치게 되고,
+    // 그것이 곧 I20 의 위반이다.
+    expect(derivedCanvasSize.length).toBe(2);
   });
 });
