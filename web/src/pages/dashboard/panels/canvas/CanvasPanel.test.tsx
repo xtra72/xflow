@@ -52,6 +52,7 @@ vi.mock('@/lib/i18n', () => ({
 }));
 
 import { storeSeriesId } from '../charts/chartChannelTypes';
+import { CanvasEditDockRegion } from './CanvasEditDock';
 import CanvasPanel from './CanvasPanel';
 import CanvasElementsEditor from './CanvasElementsEditor';
 import {
@@ -719,14 +720,18 @@ function renderEditablePanel(
 ) {
   const clock = makeScheduler();
   const view = render(
-    <CanvasPanel
-      panelId="p1"
-      config={makeConfig(elements)}
-      onConfigChange={opts.onConfigChange}
-      forceEdit={opts.forceEdit}
-      scheduler={clock.scheduler}
-      visibilitySource={ALWAYS_VISIBLE}
-    />,
+    // 편집 도구(팔레트·격자·정렬·순서)는 패널 **밖**의 도크 자리에만 그려진다. 설정
+    // 미리보기가 그 자리를 내므로, 도구를 보는 시험은 같은 형상을 흉내 낸다.
+    <CanvasEditDockRegion enabled>
+      <CanvasPanel
+        panelId="p1"
+        config={makeConfig(elements)}
+        onConfigChange={opts.onConfigChange}
+        forceEdit={opts.forceEdit}
+        scheduler={clock.scheduler}
+        visibilitySource={ALWAYS_VISIBLE}
+      />
+    </CanvasEditDockRegion>,
   );
   // 표면이 유휴에 들 때까지 민다 — 유휴가 아닌 상태에서 프레임을 세면 무엇을 세는지 흐려진다.
   for (let i = 0; i < 5 && clock.pending > 0; i++) clock.flush(i * 16);
@@ -770,14 +775,16 @@ const EDIT_RECT = {
 function StatefulHost({ clock }: { clock: ReturnType<typeof makeScheduler> }) {
   const [cfg, setCfg] = useState<Record<string, unknown>>(() => makeConfig([EDIT_RECT]));
   return (
-    <CanvasPanel
-      panelId="p1"
-      config={cfg}
-      onConfigChange={(patch) => setCfg((prev) => ({ ...prev, ...patch }))}
-      forceEdit
-      scheduler={clock.scheduler}
-      visibilitySource={ALWAYS_VISIBLE}
-    />
+    <CanvasEditDockRegion enabled>
+      <CanvasPanel
+        panelId="p1"
+        config={cfg}
+        onConfigChange={(patch) => setCfg((prev) => ({ ...prev, ...patch }))}
+        forceEdit
+        scheduler={clock.scheduler}
+        visibilitySource={ALWAYS_VISIBLE}
+      />
+    </CanvasEditDockRegion>
   );
 }
 

@@ -1152,6 +1152,10 @@
         "paletteEllipse": "Place ellipse",
         "paletteLine": "Place line",
         "paletteText": "Place text",
+        "shapeRect": "Rectangle",
+        "shapeEllipse": "Ellipse",
+        "shapeLine": "Line",
+        "shapeText": "Text",
         "handleNw": "Resize from top-left corner",
         "handleN": "Resize from top edge",
         "handleNe": "Resize from top-right corner",
@@ -1173,7 +1177,11 @@
         "alignBottom": "Align bottom",
         "bringToFront": "Bring to front",
         "sendToBack": "Send to back",
-        "keyboardHint": "Arrow keys nudge the selected shapes by 1px; Shift+arrow moves them one grid cell"
+        "keyboardHint": "Arrow keys nudge the selected shapes by 1px; Shift+arrow moves them one grid cell",
+        "dockShapes": "Shapes",
+        "dockGrid": "Grid",
+        "dockAlign": "Align",
+        "dockOrder": "Order"
       },
       "elements": {
         "orderHint": "Elements lower in the list are drawn on top. Moving up/down is the draw order.",

@@ -64,12 +64,19 @@
 // 둘이 모순되지 않는다. px 로 둘 수 없는 이유는 저장 좌표가 정규화이기 때문이다.
 //
 // **도형 팔레트는 새 컨트롤이 아니다**(T9 · 가정 A7). 목록 편집기 하단의 추가 버튼과
-// **같은 생성 경로**(`canvasElementFactory.appendElement`)를 부르는 한 벌을 스테이지 위로
-// 옮겨 놓은 것이며, 그 버튼들을 **대체하지 않는다** — 둘 다 남는다(REQ-01). 팔레트가
+// **같은 생성 경로**(`canvasElementFactory.appendElement`)를 부르는 한 벌이며, 그 버튼들을
+// **대체하지 않는다** — 둘 다 남는다(REQ-01). 팔레트가
 // 추가로 하는 일은 **만든 것을 고르는 것** 하나뿐이고, 그래서 사용자의 바로 다음 몸짓이
 // 배치 드래그가 된다. 이것이 끌어다 놓기 대신 **눌러서 놓기**를 고른 이유다 — 끌어다
 // 놓기는 드래그 고스트·드롭 좌표·취소 경로가 필요한 두 번째 드래그 기구인데, 그것이 주는
 // 이득을 눌러서 놓기가 이미 준다.
+//
+// **다만 그 한 벌이 그려지는 자리는 스테이지가 아니다.** 처음에는 스테이지 왼쪽 위에 뜨는
+// 아이콘 띠였는데, 그 자리는 그림을 가리고 스테이지 폭에 갇혀 이름을 달 수 없었다(사용
+// 시험: "도형 팔레트 크기가 너무 작음"). 도구를 쓰는 곳은 패널 설정뿐이므로 미리보기
+// **옆**의 제 영역으로 옮겼고(`CanvasEditDock`), 이 층은 그 자리를 컨텍스트로 받아
+// 포털로 그린다. 만드는 쪽은 그대로 여기다 — 격자·정렬·순서가 스테이지 크기·선택·요소를
+// 모두 봐야 하기 때문이다.
 //
 // **드래그가 유일한 수단이 되지 않게 한다**(T15 · REQ-01 · REQ-05 · 위험 R10). 이 층은
 // 포인터 조작의 키보드 등가물을 셋으로 갚는다.
@@ -95,28 +102,14 @@
 // @spec SPEC-CANVAS-002 REQ-01 / REQ-02 / REQ-03 / REQ-04 / REQ-05 / REQ-06
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-
-import {
-  AlignHorizontalJustifyCenter,
-  AlignHorizontalJustifyEnd,
-  AlignHorizontalJustifyStart,
-  AlignVerticalJustifyCenter,
-  AlignVerticalJustifyEnd,
-  AlignVerticalJustifyStart,
-  BringToFront,
-  Circle,
-  Grid3x3,
-  Minus,
-  SendToBack,
-  Square,
-  Type,
-} from 'lucide-react';
+import { createPortal } from 'react-dom';
 
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
 import { PanelEditGrid } from '../../PanelEditGrid';
 import { EMPTY_SELECTION, nextSelection } from '../charts/panelEditSelection';
+import { CanvasEditDockBody } from './CanvasEditDock';
 import {
   DEFAULT_FONT_SIZE,
   type BoxGeometry,
@@ -139,7 +132,6 @@ import {
   type NormalizedDelta,
 } from './canvasEditGeometry';
 import {
-  CANVAS_GRID_STEP_CHOICES,
   CANVAS_GRID_STEP_PERCENT,
   alignDeltas,
   bringToFront,
@@ -149,6 +141,7 @@ import {
   type AlignMode,
 } from './canvasEditArrange';
 import { useCanvasEditSelection } from './canvasEditContext';
+import { useCanvasEditDockHost } from './canvasEditDockHost';
 import {
   projectBox,
   projectLine,
@@ -329,65 +322,9 @@ const HANDLE_CURSOR: Record<CanvasHandleId, string> = {
  * 자리는 `left`/`top` 에 **투영된 핸들 점 그대로**를 두고 변환으로 중심을 맞춘다. 반 칸을
  * 미리 빼서 넣으면 그 산술이 곧 두 번째 투영이 되어 AC-E2 가 지키려는 성질이 깨진다.
  */
-/**
- * 팔레트가 내는 도형 4종. **목록 편집기의 나열 순서와 같다** — 같은 것을 두 자리에서
- * 다른 순서로 내면 사용자가 두 목록을 따로 외워야 한다.
- */
-const PALETTE_KINDS: readonly CanvasElementKind[] = ['rect', 'ellipse', 'line', 'text'];
-
-/**
- * 팔레트 버튼의 `aria-label` i18n 키. **키 이름 안에 점을 넣지 않는다**(프로젝트 규약).
- *
- * 버튼이 아이콘뿐이므로 라벨이 곧 이름이다 — 칠한 손잡이가 아니라 진짜 `<button>` 이라서
- * 이 한 줄로 스크린 리더·키보드 도달이 함께 따라온다(REQ-01 · 위험 R10).
- */
-const PALETTE_ARIA_KEYS: Record<CanvasElementKind, string> = {
-  rect: 'dashboard.canvas.edit.paletteRect',
-  ellipse: 'dashboard.canvas.edit.paletteEllipse',
-  line: 'dashboard.canvas.edit.paletteLine',
-  text: 'dashboard.canvas.edit.paletteText',
-};
-
-/** 팔레트 버튼의 아이콘. 목록 편집기는 글자 라벨을 쓰지만 스테이지 위에는 자리가 없다. */
-const PALETTE_ICONS: Record<CanvasElementKind, typeof Square> = {
-  rect: Square,
-  ellipse: Circle,
-  line: Minus,
-  text: Type,
-};
-
-/**
- * 팔레트 버튼 겉모습. 손잡이(`HANDLE_CLASS`)와 **일부러 다르게** 둔다 — 손잡이는 골라 둔
- * 도형에 붙는 조작점이고 팔레트는 스테이지에 떠 있는 도구라, 같은 모양이면 사용자가 팔레트
- * 칩을 끌어 보게 된다(팔레트는 눌러서 놓기다).
- */
-const PALETTE_BUTTON_CLASS =
-  'rounded p-1 text-(--color-text-secondary) hover:bg-(--color-bg-elevated) hover:text-blue-500 ' +
-  'focus:outline-none focus:ring-2 focus:ring-blue-300';
-
 const HANDLE_CLASS =
   'pointer-events-auto absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-sm ' +
   'border border-white bg-blue-500 shadow focus:outline-none focus:ring-2 focus:ring-blue-300';
-
-/**
- * 쓸 수 없는 팔레트 버튼(정렬은 2개 이상, z-order 는 1개 이상 골라야 한다).
- *
- * `pointer-events-none` 을 함께 두는 것에 뜻이 있다 — 없으면 흐려진 버튼 위에서 호버
- * 겉모습이 여전히 살아나 "누를 수 있다" 고 말한다.
- */
-const PALETTE_DISABLED_CLASS = 'disabled:pointer-events-none disabled:opacity-40';
-
-/**
- * 격자 간격 고르개. 팔레트의 다른 칸들이 아이콘 버튼이라 높이를 그쪽에 맞춘다 —
- * 띠 안에서 한 칸만 키가 다르면 그 칸이 남의 것처럼 보인다.
- */
-const PALETTE_SELECT_CLASS =
-  'rounded bg-transparent px-0.5 py-1 text-[11px] leading-none text-(--color-text-secondary) ' +
-  'tabular-nums hover:text-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-300 ' +
-  'disabled:pointer-events-none disabled:opacity-40';
-
-/** 팔레트 안의 갈래 구분선. 도형·격자·정렬·순서는 성격이 다른 네 무리다. */
-const PALETTE_DIVIDER_CLASS = 'mx-0.5 h-4 w-px bg-(--color-border-default)';
 
 /**
  * 방향키 한 번의 **미세 이동**(CSS px). 화면 양이지 정규화 양이 아니다 — 집기 여유
@@ -420,67 +357,6 @@ const ARROW_STEPS: Record<string, { x: -1 | 0 | 1; y: -1 | 0 | 1 }> = {
 const NUDGE_KEY_SHORTCUTS =
   'ArrowUp ArrowDown ArrowLeft ArrowRight ' +
   'Shift+ArrowUp Shift+ArrowDown Shift+ArrowLeft Shift+ArrowRight';
-
-/** 정렬 버튼 하나 — 축·방식·아이콘·라벨 키가 한 자리에 산다. */
-interface AlignControl {
-  id: string;
-  axis: AlignAxis;
-  mode: AlignMode;
-  icon: typeof Square;
-  ariaKey: string;
-}
-
-/**
- * 정렬 버튼 6개 — 가로 3(왼쪽·가운데·오른쪽) · 세로 3(위·가운데·아래).
- *
- * 축 이름은 `panelEditAlign` 의 어휘를 **그대로** 쓴다(`horizontal` = 가로 변을 맞춘다).
- * 여기서 이름을 바꾸면 같은 것을 두 파일이 다른 말로 부르게 되고, 그 어긋남은 축을
- * 뒤바꾼 계산으로 나타나 화면에서만 드러난다.
- */
-const ALIGN_CONTROLS: readonly AlignControl[] = [
-  {
-    id: 'left',
-    axis: 'horizontal',
-    mode: 'start',
-    icon: AlignHorizontalJustifyStart,
-    ariaKey: 'dashboard.canvas.edit.alignLeft',
-  },
-  {
-    id: 'center-x',
-    axis: 'horizontal',
-    mode: 'center',
-    icon: AlignHorizontalJustifyCenter,
-    ariaKey: 'dashboard.canvas.edit.alignCenterX',
-  },
-  {
-    id: 'right',
-    axis: 'horizontal',
-    mode: 'end',
-    icon: AlignHorizontalJustifyEnd,
-    ariaKey: 'dashboard.canvas.edit.alignRight',
-  },
-  {
-    id: 'top',
-    axis: 'vertical',
-    mode: 'start',
-    icon: AlignVerticalJustifyStart,
-    ariaKey: 'dashboard.canvas.edit.alignTop',
-  },
-  {
-    id: 'center-y',
-    axis: 'vertical',
-    mode: 'center',
-    icon: AlignVerticalJustifyCenter,
-    ariaKey: 'dashboard.canvas.edit.alignCenterY',
-  },
-  {
-    id: 'bottom',
-    axis: 'vertical',
-    mode: 'end',
-    icon: AlignVerticalJustifyEnd,
-    ariaKey: 'dashboard.canvas.edit.alignBottom',
-  },
-];
 
 // --- 순수 도우미 ---------------------------------------------------------
 
@@ -655,6 +531,11 @@ export default function CanvasEditOverlay({
   const { t } = useTranslation();
   // provider 가 없으면 로컬 선택이다 — 대시보드에 놓인 패널에는 목록 편집기가 없다.
   const { selection, setSelection } = useCanvasEditSelection();
+  /**
+   * 편집 도구를 그릴 자리(패널 밖). `null` 이면 도크가 없다는 뜻이고, 그때 도구는
+   * **아무 데도 그려지지 않는다** — 대시보드에 놓인 패널이 그 경우다.
+   */
+  const dockHost = useCanvasEditDockHost();
 
   /**
    * 키보드 설명문의 id. 한 화면에 캔버스 패널이 둘 이상 뜰 수 있으므로 고정 문자열을
@@ -1142,112 +1023,36 @@ export default function CanvasEditOverlay({
           간격(`step`)은 **`snapDelta` 에 넘기는 그 값**이다. 그리는 값과 붙는 값을 각자
           정하는 자리를 만들지 않는다. */}
       <PanelEditGrid enabled={snapToGrid} step={gridStep} strength="strong" />
-      {/* 도형 팔레트 — 스테이지 모서리에 떠 있는 작은 띠(spec.md §도형 팔레트).
-          루트는 `pointer-events-none` 이 아니라 포인터를 받는 층이므로, 팔레트 위의 누름이
-          아래 캔버스의 히트 테스트까지 흘러가지 않도록 **여기서 끊는다** — 끊지 않으면
-          버튼을 눌렀는데 그 뒤에 있는 도형이 함께 골라지고 이동 드래그까지 시작된다
-          (손잡이가 같은 이유로 같은 일을 한다). */}
-      <div
-        data-testid="canvas-palette"
-        role="group"
-        aria-label={t('dashboard.canvas.edit.paletteAria')}
-        className="pointer-events-auto absolute left-1 top-1 flex max-w-[calc(100%-0.5rem)] flex-wrap items-center gap-0.5 rounded-md border border-(--color-border-default) bg-(--color-bg-surface)/90 p-0.5 shadow"
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        {PALETTE_KINDS.map((kind) => {
-          const Icon = PALETTE_ICONS[kind];
-          return (
-            <button
-              key={kind}
-              type="button"
-              data-testid={`canvas-palette-add-${kind}`}
-              aria-label={t(PALETTE_ARIA_KEYS[kind])}
-              title={t(PALETTE_ARIA_KEYS[kind])}
-              className={PALETTE_BUTTON_CLASS}
-              onClick={() => placeFromPalette(kind)}
-            >
-              <Icon className="h-3.5 w-3.5" />
-            </button>
-          );
-        })}
-        <span className={PALETTE_DIVIDER_CLASS} aria-hidden="true" />
-        {/* 격자 붙임 — 표시와 붙임을 함께 켜는 **하나의** 토글이다(T12). 눌린 상태를
-            `aria-pressed` 로 알린다 — 겉모습만으로는 스크린 리더가 읽을 것이 없다. */}
-        <button
-          type="button"
-          data-testid="canvas-grid-toggle"
-          aria-label={t('dashboard.canvas.edit.gridSnap')}
-          aria-pressed={snapToGrid}
-          title={t('dashboard.canvas.edit.gridSnap')}
-          className={cn(PALETTE_BUTTON_CLASS, snapToGrid && 'bg-(--color-bg-elevated) text-blue-500')}
-          onClick={() => setSnapToGrid((on) => !on)}
-        >
-          <Grid3x3 className="h-3.5 w-3.5" />
-        </button>
-        {/* 격자 간격 — 고른 값 하나가 **그려지는 격자와 붙는 눈금을 함께** 정한다.
-            자유 입력이 아니라 목록인 이유: 임의의 수를 받으면 100 을 나누어떨어지지 않는
-            간격(예: 7%)이 들어와 마지막 칸이 잘리고, 그 잘린 칸에도 붙기 때문에 "왜 저기
-            붙지" 가 된다. 고를 수 있는 값은 `canvasEditArrange` 가 소유한다.
+      {/*
+          도형 팔레트를 비롯한 **편집 도구 한 벌은 이 층이 만들지만 이 층 안에 그려지지
+          않는다**(사용 시험: "도형 팔레트 크기가 너무 작음"). 스테이지 위에 떠 있던 띠는
+          그림을 가리고 스테이지 폭에 갇혀 이름을 달 수 없었다. 도구를 쓰는 곳은 패널
+          설정뿐이므로, 미리보기 **옆**의 제 영역(`CanvasEditDockRegion`)으로 옮겨 이름과
+          누를 면적을 되찾는다.
 
-            격자가 꺼져 있으면 끈다 — 눌러도 화면이 그대로인 컨트롤은 고장으로 보인다
-            (정렬 버튼이 같은 이유로 같은 일을 한다). */}
-        <select
-          data-testid="canvas-grid-step"
-          aria-label={t('dashboard.canvas.edit.gridStep')}
-          title={t('dashboard.canvas.edit.gridStep')}
-          disabled={!snapToGrid}
-          value={gridStep}
-          onChange={(event) => setGridStep(Number(event.target.value))}
-          className={PALETTE_SELECT_CLASS}
-        >
-          {CANVAS_GRID_STEP_CHOICES.map((choice) => (
-            // 눈금 이름은 숫자와 `%` 뿐이라 번역할 것이 없다.
-            <option key={choice} value={choice}>{`${choice}%`}</option>
-          ))}
-        </select>
-        <span className={PALETTE_DIVIDER_CLASS} aria-hidden="true" />
-        {ALIGN_CONTROLS.map((control) => {
-          const Icon = control.icon;
-          return (
-            <button
-              key={control.id}
-              type="button"
-              data-testid={`canvas-align-${control.id}`}
-              aria-label={t(control.ariaKey)}
-              title={t(control.ariaKey)}
-              // 둘 미만이면 끈다 — 눌러도 아무 일이 없는 버튼은 사용자에게 고장으로 보인다.
-              disabled={!canAlign}
-              className={cn(PALETTE_BUTTON_CLASS, PALETTE_DISABLED_CLASS)}
-              onClick={() => applyAlign(control.axis, control.mode)}
-            >
-              <Icon className="h-3.5 w-3.5" />
-            </button>
-          );
-        })}
-        <span className={PALETTE_DIVIDER_CLASS} aria-hidden="true" />
-        <button
-          type="button"
-          data-testid="canvas-order-front"
-          aria-label={t('dashboard.canvas.edit.bringToFront')}
-          title={t('dashboard.canvas.edit.bringToFront')}
-          disabled={!canOrder}
-          className={cn(PALETTE_BUTTON_CLASS, PALETTE_DISABLED_CLASS)}
-          onClick={() => applyZOrder(true)}
-        >
-          <BringToFront className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          data-testid="canvas-order-back"
-          aria-label={t('dashboard.canvas.edit.sendToBack')}
-          title={t('dashboard.canvas.edit.sendToBack')}
-          disabled={!canOrder}
-          className={cn(PALETTE_BUTTON_CLASS, PALETTE_DISABLED_CLASS)}
-          onClick={() => applyZOrder(false)}
-        >
-          <SendToBack className="h-3.5 w-3.5" />
-        </button>
-      </div>
+          왜 포털인가: 격자·정렬·순서는 스테이지 크기·선택·요소 배열을 모두 봐야 하고 그
+          값들은 전부 이 층 안에 있다. 상태를 다이얼로그로 올리면 스테이지를 잴 때마다·
+          요소가 끌릴 때마다 설정 화면이 통째로 다시 그려진다. 그래서 **자리만 받아**
+          그곳에 그린다 — React 트리 상으로는 여전히 이 층의 자식이라 선택 컨텍스트도
+          이벤트 전파도 종전과 같다(도구가 누름을 스스로 끊는 이유가 그것이다).
+
+          자리가 없으면(대시보드에 놓인 패널) **아무 데도 그리지 않는다.** 도구가 스테이지
+          위로 되돌아올 길을 남기지 않는 것이 "설정에서만 쓴다" 는 결정이다. */}
+      {dockHost !== null &&
+        createPortal(
+          <CanvasEditDockBody
+            onPlace={placeFromPalette}
+            snapToGrid={snapToGrid}
+            onSnapToGridChange={setSnapToGrid}
+            gridStep={gridStep}
+            onGridStepChange={setGridStep}
+            canAlign={canAlign}
+            canOrder={canOrder}
+            onAlign={applyAlign}
+            onOrder={applyZOrder}
+          />,
+          dockHost,
+        )}
       {elements.map((el) => {
         if (!selection.has(el.id)) return null;
         const box = outlineBox(el, stage, textWidths);

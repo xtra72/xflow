@@ -237,6 +237,7 @@ import {
 import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/HeatmapCanvas';
 // 히트맵 프리뷰(설정 다이얼로그 내 실제 패널 렌더 — MODBUS 프리뷰 선례와 동일 방식).
 import HeatmapPanel from './panels/heatmap/HeatmapPanel';
+import { CanvasEditDockRegion } from './panels/canvas/CanvasEditDock';
 import CanvasPanel from './panels/canvas/CanvasPanel';
 import CanvasElementsEditor from './panels/canvas/CanvasElementsEditor';
 import {
@@ -1562,6 +1563,9 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     // 가운데 정렬한다. ref 로 실측하여 fit 모드가 종횡비 보존 contain 을 결정론적으로 계산한다.
     // 크롬 옵션은 draft config 로 전파해 타이틀 바 토글이 미리보기에 즉시 반영되게 한다.
     <PanelChromeProvider config={panel.config}>
+    {/* 캔버스 편집 도구는 축소되는 미리보기 **바깥**에 선다 — 패널 안에 두면 패널 자신의
+        레이아웃이 달라져 미리보기가 대시보드와 다른 화면이 된다(§미리보기). */}
+    <CanvasEditDockRegion enabled={panel.type === 'canvas'}>
     <div
       ref={setFitContainer}
       className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden"
@@ -1903,6 +1907,7 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             )}
       </div>
     </div>
+    </CanvasEditDockRegion>
     </PanelChromeProvider>
   );
   const dataSourceSlot = dataSourceBelowPreview ? (

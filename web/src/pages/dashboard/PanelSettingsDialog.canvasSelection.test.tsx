@@ -94,13 +94,25 @@ describe('PanelSettingsDialog — 캔버스 미리보기와 목록 편집기가 
     expect(screen.getByTestId('canvas-elements-editor')).toBeTruthy();
   });
 
-  it('미리보기는 forced 로 항상 편집이라 팔레트가 뜨고 토글 버튼은 감춰진다 (AC-07)', () => {
+  it('미리보기는 forced 로 항상 편집이라 도크가 뜨고 토글 버튼은 감춰진다 (AC-07)', () => {
     renderDialog();
-    // 대시보드 편집모드는 꺼져 있는데도 팔레트가 있다 — `forceEdit` 가 세 겹 게이팅의
+    // 대시보드 편집모드는 꺼져 있는데도 도구가 있다 — `forceEdit` 가 세 겹 게이팅의
     // 셋째 겹이기 때문이다.
-    expect(screen.getByTestId('canvas-palette')).toBeTruthy();
+    expect(screen.getByTestId('canvas-dock-panel')).toBeTruthy();
     // `forced` 인 자리에서는 배치 편집 토글을 내지 않는다.
     expect(screen.queryByTestId('canvas-edit-toggle')).toBeNull();
+  });
+
+  it('도구는 축소되는 미리보기 **바깥**에 선다 — 미리보기가 대시보드와 같아야 한다', () => {
+    // 도크를 패널 안에 두면 패널 자신의 레이아웃이 달라져 미리보기가 대시보드와 다른
+    // 화면이 되고, 캔버스 스테이지도 도크 폭만큼 좁아진다.
+    renderDialog();
+    const stage = screen.getByTestId('preview-stage');
+    const dock = screen.getByTestId('canvas-dock');
+    expect(stage.contains(dock)).toBe(false);
+    expect(dock.contains(screen.getByTestId('canvas-dock-panel'))).toBe(true);
+    // 스테이지 위에 떠 있던 띠는 남아 있지 않다.
+    expect(screen.queryByTestId('canvas-palette')).toBeNull();
   });
 
   it('미리보기 팔레트로 놓은 요소가 목록에 나타나고 **그 행이 펼쳐진다**', () => {

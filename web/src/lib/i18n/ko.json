@@ -1152,6 +1152,10 @@
         "paletteEllipse": "타원 놓기",
         "paletteLine": "선 놓기",
         "paletteText": "텍스트 놓기",
+        "shapeRect": "사각형",
+        "shapeEllipse": "타원",
+        "shapeLine": "선",
+        "shapeText": "텍스트",
         "handleNw": "왼쪽 위 모서리 크기 조절",
         "handleN": "위쪽 변 크기 조절",
         "handleNe": "오른쪽 위 모서리 크기 조절",
@@ -1173,7 +1177,11 @@
         "alignBottom": "아래 맞춤",
         "bringToFront": "맨 앞으로 보내기",
         "sendToBack": "맨 뒤로 보내기",
-        "keyboardHint": "방향키로 고른 도형을 1px 씩 옮기고, Shift+방향키로 한 격자 칸씩 옮깁니다"
+        "keyboardHint": "방향키로 고른 도형을 1px 씩 옮기고, Shift+방향키로 한 격자 칸씩 옮깁니다",
+        "dockShapes": "도형",
+        "dockGrid": "격자",
+        "dockAlign": "정렬",
+        "dockOrder": "순서"
       },
       "elements": {
         "orderHint": "목록에서 아래에 있는 요소가 위에 그려집니다. 위/아래 이동이 곧 앞뒤 순서입니다.",

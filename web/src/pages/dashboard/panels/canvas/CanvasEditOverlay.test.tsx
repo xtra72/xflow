@@ -25,6 +25,7 @@ vi.mock('@/lib/i18n', () => ({
 }));
 
 import type { BoxGeometry, CanvasElement } from './canvasConfig';
+import { CanvasEditDockRegion } from './CanvasEditDock';
 import CanvasEditOverlay from './CanvasEditOverlay';
 import {
   CanvasEditSelectionContext,
@@ -78,13 +79,18 @@ function Harness({
         className="relative"
       >
         <span data-testid="selection">{[...state.selection].join(',')}</span>
-        <CanvasEditOverlay
-          enabled={enabled}
-          elements={elements}
-          stage={stage}
-          textWidths={textWidths}
-          onElementsChange={onElementsChange}
-        />
+        {/* 도구는 스테이지 위가 아니라 **도크 자리**에만 그려진다 — 그 자리를 내지 않으면
+            (대시보드에 놓인 패널이 그렇다) 팔레트·격자·정렬·순서가 아예 없다. 하네스는
+            설정 미리보기와 같은 형상을 흉내 내므로 자리를 낸다. */}
+        <CanvasEditDockRegion enabled>
+          <CanvasEditOverlay
+            enabled={enabled}
+            elements={elements}
+            stage={stage}
+            textWidths={textWidths}
+            onElementsChange={onElementsChange}
+          />
+        </CanvasEditDockRegion>
       </div>
     </CanvasEditSelectionContext>
   );
@@ -1383,13 +1389,15 @@ function PaletteHarness({ initial }: { initial: readonly CanvasElement[] }) {
     <CanvasEditSelectionContext value={state}>
       <span data-testid="selection">{[...state.selection].join(',')}</span>
       <span data-testid="dump">{JSON.stringify(elements)}</span>
-      <CanvasEditOverlay
-        enabled
-        elements={elements}
-        stage={STAGE}
-        textWidths={{}}
-        onElementsChange={setElements}
-      />
+      <CanvasEditDockRegion enabled>
+        <CanvasEditOverlay
+          enabled
+          elements={elements}
+          stage={STAGE}
+          textWidths={{}}
+          onElementsChange={setElements}
+        />
+      </CanvasEditDockRegion>
     </CanvasEditSelectionContext>
   );
 }
@@ -1405,24 +1413,38 @@ function place(kind: string): void {
 }
 
 describe('도형 팔레트 (AC-05)', () => {
-  it('편집이 켜지면 네 종류의 버튼이 뜨고, 꺼지면 팔레트 자체가 없다', () => {
+  it('편집이 켜지면 네 종류의 버튼이 뜨고, 꺼지면 도구 자체가 없다', () => {
     render(<Harness enabled={false} elements={[]} onElementsChange={vi.fn()} />);
-    expect(screen.queryByTestId('canvas-palette')).toBeNull();
+    expect(screen.queryByTestId('canvas-dock-panel')).toBeNull();
 
     cleanup();
     render(<PaletteHarness initial={[]} />);
-    expect(screen.getByTestId('canvas-palette')).toBeTruthy();
+    expect(screen.getByTestId('canvas-dock-panel')).toBeTruthy();
     for (const kind of ['rect', 'ellipse', 'line', 'text']) {
       expect(screen.getByTestId(`canvas-palette-add-${kind}`)).toBeTruthy();
     }
   });
 
-  it('버튼마다 aria-label 이 있다 — 아이콘뿐이라 라벨이 곧 이름이다', () => {
+  it('스테이지 위에 떠 있던 띠는 남아 있지 않다 — 도구는 도크 한 자리에만 있다', () => {
+    // 둘이 남으면 같은 것을 두 자리에서 눌러야 하고, 그중 하나는 그림을 가린다.
     render(<PaletteHarness initial={[]} />);
-    expect(screen.getByTestId('canvas-palette-add-rect').getAttribute('aria-label')).toBe(
-      'dashboard.canvas.edit.paletteRect',
-    );
-    expect(screen.getByTestId('canvas-palette').getAttribute('aria-label')).toBe(
+    expect(screen.queryByTestId('canvas-palette')).toBeNull();
+    // 도구는 오버레이 **밖**(도크)에 그려진다 — 스테이지를 한 뼘도 먹지 않는다.
+    const overlay = screen.getByTestId('canvas-edit-overlay');
+    expect(overlay.contains(screen.getByTestId('canvas-dock-panel'))).toBe(false);
+    expect(
+      screen.getByTestId('canvas-dock').contains(screen.getByTestId('canvas-dock-panel')),
+    ).toBe(true);
+  });
+
+  it('버튼마다 aria-label 이 있고, 그 옆에 도형 이름이 보인다', () => {
+    render(<PaletteHarness initial={[]} />);
+    const button = screen.getByTestId('canvas-palette-add-rect');
+    // 하는 일은 `aria-label` 이, 무엇인지는 보이는 글자가 말한다. 접근성 이름이 보이는
+    // 라벨을 포함하므로 음성 조작이 보이는 대로 통한다(WCAG 2.5.3).
+    expect(button.getAttribute('aria-label')).toBe('dashboard.canvas.edit.paletteRect');
+    expect(button.textContent).toContain('dashboard.canvas.edit.shapeRect');
+    expect(screen.getByTestId('canvas-dock-panel').getAttribute('aria-label')).toBe(
       'dashboard.canvas.edit.paletteAria',
     );
   });
@@ -1484,7 +1506,7 @@ describe('도형 팔레트 (AC-05)', () => {
     stubOverlayRect();
 
     const evt = pointer('pointerdown', 5, 5);
-    fireEvent(screen.getByTestId('canvas-palette'), evt);
+    fireEvent(screen.getByTestId('canvas-dock-panel'), evt);
 
     // 스테이지를 가득 채운 사각형 위인데도 아무것도 골라지지 않았다.
     expect(screen.getByTestId('selection').textContent).toBe('');
@@ -2619,8 +2641,8 @@ describe('빈 지점은 미리보기의 다른 조작을 막지 않는다 (AC-E3
     fireEvent.wheel(handleEl('se'), { deltaY: -100 });
     expect(onParentWheel).toHaveBeenCalledTimes(3);
 
-    // 팔레트 위에서도 그대로다.
-    fireEvent.wheel(screen.getByTestId('canvas-palette'), { deltaY: -100 });
+    // 도크의 도구 위에서도 그대로다(포털이라 React 트리 전파는 종전과 같다).
+    fireEvent.wheel(screen.getByTestId('canvas-dock-panel'), { deltaY: -100 });
     expect(onParentWheel).toHaveBeenCalledTimes(4);
   });
 
