@@ -107,7 +107,19 @@
 // 그 정수의 배수로 맞춰 두고 칸을 px 로 건네므로, 이 층은 받은 값을 그대로 그린다. 셋이
 // 갈라질 수 있는 자리 자체가 사라졌다 — 환산이 없는 곳은 어긋날 수도 없다.
 //
-// @spec SPEC-CANVAS-002 REQ-01 / REQ-02 / REQ-03 / REQ-04 / REQ-05 / REQ-06
+// **어디가 패널에 나오는지 보인다**(SPEC-CANVAS-006 M6). 006 이 캔버스 비트맵을 패널
+// 출력 영역보다 넓은 **작업 영역**으로 넓혔으므로, 이 층은 그 안에서 "여기까지가 패널에
+// 나온다" 를 말하는 표시 셋을 든다 — 작업 영역 전체에 펴진 **격자**, 출력 영역 밖을 덮는
+// **흐림**, 출력 영역의 **경계**. 셋 다 DOM 이고 셋 다 `pointer-events-none` 이며 캔버스에
+// 한 픽셀도 칠하지 않는다(REQ-02 · 유휴 정지가 걸린 그 이유 그대로다).
+//
+// 셋 가운데 격자만 제 상자가 다르다. 오버레이 루트는 여전히 출력 영역 상자이므로 흐림과
+// 경계는 `inset-0` 하나로 그 사각형이 되지만, 격자는 **원점만큼 되돌아 나간** 상자 안에
+// 산다. 그 원점과 작업 영역 크기는 **표면이 지어 컨텍스트로 내려준 값**이며 여기서 다시
+// 파생하지 않는다(위험 R1 · 불변식 I10).
+//
+// @spec SPEC-CANVAS-002 REQ-01 / REQ-02 / REQ-03 / REQ-04 / REQ-05 / REQ-06 ·
+//       SPEC-CANVAS-006 REQ-02 / REQ-04
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -293,6 +305,42 @@ interface PendingPointer {
  * "화면에서 되살릴 수 없게 되지 않는다" 와 같은 취지).
  */
 const MIN_OUTLINE_PX = 2;
+
+/**
+ * 표면이 없을 때의 작업 영역 원점(SPEC-CANVAS-006 M6).
+ *
+ * 컨텍스트가 `null` 이면 상자를 지은 쪽이 없다는 뜻이므로 원점도 없다 — `(0,0)` 은
+ * 곧 "작업 영역과 출력 영역이 겹친다" 이고, 그것이 006 이전의 그림이다.
+ */
+const NO_WORKSPACE_ORIGIN = { x: 0, y: 0 } as const;
+
+/**
+ * 출력 영역 **밖**을 덮는 흐림의 색(SPEC-CANVAS-006 REQ-02).
+ *
+ * `PanelEditGrid` 가 "라이트/다크 어느 쪽에서도 보이도록" 고른 그 색상(slate 계열)을
+ * **그대로** 쓰고 불투명도만 달리한다 — 색을 새로 고르면 한 화면에 편집 보조 표시가 두
+ * 색으로 존재하게 된다. 안팎의 **단차**가 읽힐 만큼이되 그 위에서 저술할 수 있을 만큼
+ * 옅다(격자선 0.6 보다 옅다).
+ *
+ * **파랑이 아닌 것이 제약이다.** 이 화면에서 파랑은 이미 두 가지 뜻을 갖는다 — 선택
+ * 윤곽선(`border-blue-500/80`)과 격자의 중심 표식. 출력 영역에 파랑을 쓰면 아무것도
+ * 고르지 않았는데 무언가 골라진 것처럼 읽힌다.
+ */
+const REGION_SCRIM_COLOR = 'rgba(148, 163, 184, 0.22)';
+
+/**
+ * 출력 영역 **경계**의 색. 같은 색상에 불투명도만 올린다 — 격자선(0.6)보다 진하고
+ * **실선**이라 격자와 헷갈리지 않는다.
+ */
+const REGION_BOUNDS_COLOR = 'rgba(148, 163, 184, 0.95)';
+
+/**
+ * 흐림을 만드는 그림자의 퍼짐(px). 상자 **하나**에 바깥으로 퍼지는 그림자를 주면
+ * "구멍 뚫린 막" 이 요소 하나로 나오고, 잘라 내는 일은 표면 컨테이너의 `overflow-hidden`
+ * 이 이미 한다. 사각형 넷을 좌표로 계산해 두르는 길은 **같은 상자를 네 번 다시 파생하는
+ * 일**이라 위험 R1 의 축소판이다.
+ */
+const REGION_SCRIM_SPREAD_PX = 9999;
 
 /**
  * 핸들의 `aria-label` i18n 키. **키 이름 안에 점을 넣지 않는다**(프로젝트 규약 — 이름에
@@ -609,6 +657,22 @@ export default function CanvasEditOverlay({
    */
   const gridCell =
     stageGrid?.cell ?? stageLattice(projection.stage, projection.canvas, gridStep).cell;
+
+  /**
+   * **작업 영역의 원점과 크기** — 표면이 지어 내려준 값 그대로다(SPEC-CANVAS-006 M6).
+   *
+   * 오버레이 루트는 여전히 **패널 출력 영역** 상자다. 격자만이 그보다 넓은 **작업 영역**
+   * 전체에 펴지므로, 이 층은 원점만큼 되돌아 나간 상자를 하나 두고 그 안에 격자를 넣는다.
+   *
+   * **다시 파생하지 않는다**(위험 R1 · 불변식 I10). 두 값은 상자를 지은 쪽이 이미 손에
+   * 들고 있던 것이고, 여기서 `outer` 와 축소 비율로 되짚으면 그것이 곧 두 번째 측정원이다 —
+   * 오버레이가 제 상자로 재는 값과 표면이 지은 상자가 갈라지는 그 함정이다.
+   *
+   * 표면 밖(오버레이만 세운 단위 시험)에서는 컨텍스트가 `null` 이므로 `{0,0}` 과
+   * 출력 영역으로 떨어진다 — 그것이 곧 "상자가 하나뿐이던 시절" 의 값이며 006 이전과 같다.
+   */
+  const workspaceOrigin = stageGrid?.origin ?? NO_WORKSPACE_ORIGIN;
+  const workspaceSize = stageGrid?.box ?? projection.stage;
 
   /**
    * 오버레이 루트. 핸들에서 시작한 드래그도 **루트의 상자**로 좌표를 옮기고 **루트에서**
@@ -1072,12 +1136,61 @@ export default function CanvasEditOverlay({
 
           한 칸이 1px 도 되지 않으면 그리지 않는다. 1px 선에 1px 미만의 주기는 격자가
           아니라 **꽉 찬 사각형**이며, 참조선이라고 내놓을 수 없는 그림이다. */}
-      <PanelEditGrid
-        enabled={snapToGrid && gridCell.x >= 1 && gridCell.y >= 1}
-        step={gridCell.x}
-        stepY={gridCell.y}
-        strength="strong"
-        unit="px"
+      <div
+        data-testid="canvas-workspace-grid"
+        // 장식이다 — 보조기기에게 알릴 것이 없다.
+        aria-hidden="true"
+        // 이 상자는 오버레이 루트보다 **넓다.** 포인터를 받으면 그 위를 지나는 몸짓이
+        // 이 층에서 끊기므로(위험 R8) 받지 않는다.
+        className="pointer-events-none absolute"
+        style={{
+          left: -workspaceOrigin.x,
+          top: -workspaceOrigin.y,
+          width: workspaceSize.width,
+          height: workspaceSize.height,
+        }}
+      >
+        <PanelEditGrid
+          enabled={snapToGrid && gridCell.x >= 1 && gridCell.y >= 1}
+          step={gridCell.x}
+          stepY={gridCell.y}
+          strength="strong"
+          unit="px"
+          // 선은 **출력 영역의 원점**에서 시작한다(REQ-04 · 위험 R3). 이 상자의 왼쪽 위에서
+          // 시작하면 저술 여백이 한 칸의 배수가 아닌 순간 그린 선과 붙은 자리가 갈라진다.
+          offsetX={workspaceOrigin.x}
+          offsetY={workspaceOrigin.y}
+        />
+      </div>
+      {/*
+        **어디가 패널에 나오는가** — 출력 영역 밖을 흐리게 덮고 경계를 두른다(REQ-02).
+        둘 다 이 층의 루트 상자, 즉 **출력 영역 그 자체**에 걸린다: 오버레이 루트가 곧
+        `canvas-stage` 이므로 `inset-0` 하나가 그 사각형이다. 상자를 다시 계산하지 않는
+        것에 뜻이 있다 — 좌표로 두르는 순간 같은 상자가 두 벌이 된다(위험 R1).
+
+        **흐리는 쪽은 바깥이다.** 도해 도구의 관용(아트보드는 밝고 그 밖은 어둡다)이자,
+        이 기능이 답하려는 질문("어디가 패널에 나오나")에 직접 답하는 방향이다. 안쪽을
+        흐리면 사용자가 실제로 보려는 것이 흐려진다.
+
+        **칠하지 않고 DOM 으로 둔다**(REQ-02 · 불변식 I1). 캔버스에 칠하면 편집기 상태가
+        001 이 유휴로 만든 rAF 루프 안으로 들어와, 선택·호버·격자 토글이 프레임을 0 건
+        요청한다는 성질(AC-E4)이 무너진다.
+
+        경계선만 두고 흐림을 빼는 길은 기각했다 — 선 하나는 격자선과 혼동되고, 격자를
+        끄면 안팎을 가르는 단서가 그 한 줄뿐이 된다. 흐림의 **단차**는 선이 없어도 읽히는
+        신호라, 둘을 함께 두면 격자가 켜지든 꺼지든 안팎이 갈린다.
+      */}
+      <div
+        data-testid="canvas-region-scrim"
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{ boxShadow: `0 0 0 ${REGION_SCRIM_SPREAD_PX}px ${REGION_SCRIM_COLOR}` }}
+      />
+      <div
+        data-testid="canvas-region-bounds"
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 border"
+        style={{ borderColor: REGION_BOUNDS_COLOR }}
       />
       {/*
           도형 팔레트를 비롯한 **편집 도구 한 벌은 이 층이 만들지만 이 층 안에 그려지지

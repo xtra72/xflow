@@ -3386,3 +3386,310 @@ describe('캔버스 한국어 어휘에 구현 용어가 남아 있지 않다', 
     }
   });
 });
+
+// --- 출력 영역의 표시 (SPEC-CANVAS-006 M6) ---------------------------------
+//
+// 여기서 재는 것 셋: **작업 영역 전체에 펴지되 출력 영역의 원점에 앉은 격자**, 출력 영역
+// **밖**을 덮는 흐림, 출력 영역의 **경계**. 셋 다 DOM 이고 셋 다 포인터를 먹지 않는다.
+//
+// **이 절은 표면과 진짜 오버레이를 함께 세운다.** 원점을 짓는 것은 표면이고 그것을 쓰는
+// 것은 오버레이라, 어느 한쪽만 세우면 이음매가 통째로 빠져 결함이 그대로 통과한다
+// (0.4.0 결함 E 가 세운 규율). 그리고 `workspace` 를 **켠** 시험과 **끈** 시험을 둘 다
+// 둔다 — 켜지 않으면 006 의 코드가 한 줄도 실행되지 않고(D1), 끈 갈래가 없으면 오늘과
+// 같음을 아무도 지키지 않는다.
+//
+// 고정 입력 1749×796 × 5:4 캔버스에서 표면이 짓는 값은 `canvasWorkspace.test.ts` 가 이미
+// 못 박은 그대로다: 칸 37 · 출력 영역 740×592 · 원점 (504, 102).
+//
+//   **504 % 37 = 23 · 102 % 37 = 28 — 원점은 칸의 배수가 아니다**(D3).
+//
+// 이 사실이 이 절의 전부다. 원점이 칸의 배수인 고정 입력에서는 격자를 작업 영역의 왼쪽
+// 위에 앉히나 출력 영역의 원점에 앉히나 같은 자리가 되어, 위험 R3 의 결함이 **실패할 수
+// 없다**.
+
+/** 표면이 짓는 값들 — 위 머리말의 그 수다. */
+const WS_OUTER: StageSize = { width: 1749, height: 796 };
+const WS_CELL = 37;
+const WS_STAGE = { width: 740, height: 592 };
+const WS_ORIGIN = { x: 504, y: 102 };
+
+/** 표면 위에 오버레이를 얹되 **작업 영역을 켠** 하네스. */
+function WorkspaceComposed({
+  elements,
+  onElementsChange,
+  workspace = true,
+}: {
+  elements: readonly CanvasElement[];
+  onElementsChange: (next: CanvasElement[]) => void;
+  workspace?: boolean;
+}) {
+  const state = useCanvasEditSelectionState();
+  return (
+    <CanvasEditSelectionContext value={state}>
+      <div data-testid="parent" className="relative">
+        <span data-testid="selection">{[...state.selection].join(',')}</span>
+        <CanvasEditDockRegion enabled>
+          <CanvasSurface
+            elements={[...elements]}
+            canvas={CANVAS}
+            targetStyles={{}}
+            texts={{}}
+            workspace={workspace}
+            overlay={({ projection, textWidths }) => (
+              <CanvasEditOverlay
+                enabled
+                elements={elements}
+                projection={projection}
+                textWidths={textWidths}
+                onElementsChange={onElementsChange}
+              />
+            )}
+          />
+        </CanvasEditDockRegion>
+      </div>
+    </CanvasEditSelectionContext>
+  );
+}
+
+/** 자리와 크기를 CSS 에서 그대로 읽는다(jsdom 은 레이아웃을 하지 않는다). */
+function styleBox(testId: string): { left: number; top: number; width: number; height: number } {
+  const el = screen.getByTestId(testId);
+  return {
+    left: Number.parseFloat(el.style.left),
+    top: Number.parseFloat(el.style.top),
+    width: Number.parseFloat(el.style.width),
+    height: Number.parseFloat(el.style.height),
+  };
+}
+
+/** 격자 이미지가 시작하는 자리(px 두 축). */
+function gridPositionPx(): { x: number; y: number } {
+  const raw = screen.getByTestId('panel-edit-grid').style.backgroundPosition;
+  const m = /^(-?[\d.]+)px (-?[\d.]+)px$/.exec(raw);
+  expect(m, `배경 자리를 px 로 읽지 못했다: ${raw}`).not.toBeNull();
+  return { x: Number(m![1]), y: Number(m![2]) };
+}
+
+/**
+ * 격자선이 실제로 서는 자리의 **위상** — 출력 영역의 원점(오버레이 좌표 0)을 기준으로 잰다.
+ *
+ * 격자 상자는 오버레이 루트에서 `-원점` 에 놓이고 이미지는 그 상자 안에서 `배경 자리`
+ * 만큼 밀려 시작하므로, 첫 선이 서는 오버레이 좌표는 두 값의 합이다. 그 합이 0 이면
+ * 선이 **출력 영역의 원점에서** 시작한다는 뜻이고, 붙임이 죄는 자리(`k × 칸`)와 같은
+ * 자리가 된다.
+ */
+function gridPhase(): { x: number; y: number } {
+  const box = styleBox('canvas-workspace-grid');
+  const pos = gridPositionPx();
+  return { x: box.left + pos.x, y: box.top + pos.y };
+}
+
+function renderWorkspace(
+  elements: readonly CanvasElement[] = [],
+  workspace = true,
+): ReturnType<typeof vi.fn> {
+  const emit = vi.fn();
+  render(
+    <WorkspaceComposed elements={elements} onElementsChange={emit} workspace={workspace} />,
+  );
+  return emit;
+}
+
+describe('작업 영역과 출력 영역이 눈으로 갈린다 (SPEC-CANVAS-006 M6)', () => {
+  beforeEach(() => {
+    composedOuter = WS_OUTER;
+    vi.stubGlobal('ResizeObserver', ComposedResizeObserver as unknown as typeof ResizeObserver);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('두 상자의 크기가 **실제로 다르다** — 같으면 이 SPEC 이 아무 일도 하지 않은 것이다', () => {
+    renderWorkspace();
+
+    // D4: 축소 비율을 시험에서 1.0 으로 갈아 끼우면 아래 시험 전부가 무의미해진다.
+    // 그래서 나머지를 재기 **전에** 두 상자가 다름을 먼저 못 박는다.
+    expect(styleBox('canvas-workspace')).toMatchObject({ width: 1749, height: 796 });
+    expect(stageBoxSize()).toEqual(WS_STAGE);
+    expect(stageBoxSize().width).not.toBe(1749);
+  });
+
+  it('격자는 **작업 영역 전체**에 펴진다 (음수 인셋으로 출력 영역을 넘어선다)', () => {
+    renderWorkspace();
+    fireEvent.click(gridToggle());
+
+    const box = styleBox('canvas-workspace-grid');
+    // 오버레이 루트는 출력 영역 상자다. 격자 상자는 거기서 원점만큼 **되돌아 나가** 잰
+    // 상자 전부를 덮는다 — 저술 여백에도 칸이 보여야 밖에 놓은 요소가 어디에 붙는지 읽힌다.
+    expect(box).toEqual({ left: -504, top: -102, width: 1749, height: 796 });
+  });
+
+  it('격자선은 **출력 영역의 원점**에서 시작한다 (위험 R3 — 세 번 걷어낸 그 거짓말)', () => {
+    renderWorkspace();
+    fireEvent.click(gridToggle());
+
+    // 원점이 칸의 배수가 아니라는 사실을 시험이 **수로** 든다(D3).
+    expect(WS_ORIGIN.x % WS_CELL).toBe(23);
+    expect(WS_ORIGIN.y % WS_CELL).toBe(28);
+
+    // 배경 자리가 원점과 **같은 값**이다 — 이것이 AC-04 가 요구하는 곧은 단언이다.
+    expect(gridPositionPx()).toEqual(WS_ORIGIN);
+    // 그리고 그 결과 첫 선이 오버레이 좌표 0(= 출력 영역의 원점)에 선다. 격자를 작업
+    // 영역의 왼쪽 위에 앉히면 이 값이 -504 가 되어 붙임과 갈라진다.
+    expect(gridPhase()).toEqual({ x: 0, y: 0 });
+  });
+
+  it('그려진 칸은 여전히 정사각형 정수 px 다 (AC-E19 (R) · AC-E20 (V) 유지)', () => {
+    renderWorkspace();
+    fireEvent.click(gridToggle());
+
+    const cell = drawnCellPx();
+    expect(cell).toEqual({ x: WS_CELL, y: WS_CELL });
+    expect(Number.isInteger(cell.x)).toBe(true);
+    // 타일이 한 칸이므로 상자 크기(1749 — 칸의 배수가 아니다)가 위상을 흔들지 못한다.
+    expect(screen.getByTestId('panel-edit-grid').style.backgroundSize).toBe('37px 37px');
+  });
+
+  it('중심 표식 `+` 는 **출력 영역의 중심**에 선다 (작업 영역의 중심이 아니다)', () => {
+    renderWorkspace();
+    fireEvent.click(gridToggle());
+
+    // `+` 는 제 상자(= 격자 상자 = 작업 영역)의 정중앙에 선다. 출력 영역이 작업 영역
+    // 안에서 **가운데 정렬**되므로 두 중심이 같은 자리다(축마다 floor 로 인한 1px 이내).
+    // 자리 계산을 가운데 정렬이 아닌 것으로 바꾸면 이 단언이 함께 실패해야 한다.
+    const box = styleBox('canvas-workspace-grid');
+    const markX = box.left + box.width / 2;
+    const markY = box.top + box.height / 2;
+    expect(Math.abs(markX - WS_STAGE.width / 2)).toBeLessThanOrEqual(1);
+    expect(Math.abs(markY - WS_STAGE.height / 2)).toBeLessThanOrEqual(1);
+  });
+
+  it('출력 영역 **밖**으로 붙은 요소의 중심이 그려진 선 위다 (안쪽만 재면 통과하는 결함이다)', async () => {
+    const emit = renderWorkspace([rect('a', SNAP_GEOMETRY)]);
+    stubOverlayRect(0, 0, WS_STAGE.width, WS_STAGE.height);
+    fireEvent.click(gridToggle());
+
+    // 도형 안(px 상자 37,59.2 ~ 170.2,177.6)을 잡아 출력 영역 밖으로 끈다.
+    send('pointerdown', 103, 118);
+    send('pointermove', -197, -132);
+    await nextFrame();
+    send('pointerup', -197, -132);
+
+    const g = emittedGeometry(emit, 'a') as BoxGeometry;
+    const center = { x: g.x + g.w / 2, y: g.y + g.h / 2 };
+    // 실제로 **밖**으로 나갔는가 — 안에 남았으면 이 시험은 제 이름값을 하지 못한다.
+    expect(center.x).toBeLessThan(0);
+    expect(center.y).toBeLessThan(0);
+
+    // 중심을 화면으로 투영한 px(오버레이 좌표)가 그려진 선 위인가.
+    const px = {
+      x: (center.x * WS_STAGE.width) / CANVAS.width,
+      y: (center.y * WS_STAGE.height) / CANVAS.height,
+    };
+    const phase = gridPhase();
+    // `Math.abs` 는 음수 나머지의 `-0` 을 접기 위한 것이다 — 재는 것은 나머지가 0 인가다.
+    expect(Math.abs((px.x - phase.x) % WS_CELL)).toBe(0);
+    expect(Math.abs((px.y - phase.y) % WS_CELL)).toBe(0);
+  });
+
+  it('경계와 흐림이 그려지고, 파랑이 아니라 편집 보조선의 회색이다', () => {
+    renderWorkspace();
+
+    const scrim = screen.getByTestId('canvas-region-scrim');
+    const bounds = screen.getByTestId('canvas-region-bounds');
+    // 흐림은 상자 **하나**에 바깥으로 퍼지는 그림자다 — 사각형 넷을 좌표로 두르는 길은
+    // 같은 상자를 네 번 다시 파생하는 일이라 위험 R1 의 축소판이다.
+    expect(scrim.style.boxShadow).toBe('0 0 0 9999px rgba(148, 163, 184, 0.22)');
+    expect(bounds.style.borderColor).toBe('rgba(148, 163, 184, 0.95)');
+    // 파랑은 이 화면에서 이미 "고른 것"(선택 윤곽선)과 "가운데"(중심 표식)를 뜻한다.
+    expect(scrim.style.boxShadow).not.toContain('59, 130, 246');
+    expect(bounds.style.borderColor).not.toContain('59, 130, 246');
+    // 경계는 실선이라 격자선(점선이 아닌 반투명 선)과 헷갈리지 않는다.
+    expect(bounds.className).not.toContain('dashed');
+  });
+
+  it('경계·흐림·격자 상자는 장식이며 포인터를 먹지 않는다 (위험 R8)', () => {
+    renderWorkspace();
+    fireEvent.click(gridToggle());
+
+    for (const id of ['canvas-region-scrim', 'canvas-region-bounds', 'canvas-workspace-grid']) {
+      const el = screen.getByTestId(id);
+      expect(el.className, id).toContain('pointer-events-none');
+      expect(el.getAttribute('aria-hidden'), id).toBe('true');
+    }
+  });
+
+  it('요소 0개 + 편집에서 팔레트와 캔버스 누름이 그대로 통한다 (AC-E10 재확인)', () => {
+    const emit = renderWorkspace([]);
+    stubOverlayRect(0, 0, WS_STAGE.width, WS_STAGE.height);
+
+    // 재려는 것이 켜져 있음을 먼저 단언한다 — 표시가 없으면 이 시험은 틀린 이유로 통과한다.
+    expect(screen.getByTestId('canvas-region-scrim')).toBeTruthy();
+    expect(screen.getByTestId('canvas-region-bounds')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('canvas-palette-add-rect'));
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect((emit.mock.calls[0]?.[0] as CanvasElement[]).length).toBe(1);
+
+    // 빈 자리 누름은 여전히 소비되지 않는다 — 흐림이 그 위에 있어도 규칙이 달라지지 않는다.
+    const down = send('pointerdown', 300, 300);
+    expect(down.defaultPrevented).toBe(false);
+  });
+
+  it('격자를 꺼도 경계와 흐림은 남는다 (둘은 다른 축이다)', () => {
+    renderWorkspace();
+
+    expect(screen.queryByTestId('panel-edit-grid')).toBeNull();
+    expect(screen.getByTestId('canvas-region-scrim')).toBeTruthy();
+    expect(screen.getByTestId('canvas-region-bounds')).toBeTruthy();
+  });
+
+  it('작업 영역을 끄면 격자 상자가 출력 영역과 겹친다 (D1 — 끈 갈래도 함께 잰다)', () => {
+    renderWorkspace([], false);
+    fireEvent.click(gridToggle());
+
+    const stage = stageBoxSize();
+    expect(styleBox('canvas-workspace')).toMatchObject(stage);
+    expect(styleBox('canvas-workspace-grid')).toEqual({
+      left: 0,
+      top: 0,
+      width: stage.width,
+      height: stage.height,
+    });
+    expect(gridPositionPx()).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe('표면 밖에서는 오늘의 값으로 떨어진다 (컨텍스트 폴백)', () => {
+  it('격자 상자가 투영이 든 출력 영역과 같고 원점이 (0,0) 이다', () => {
+    render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} onElementsChange={vi.fn()} />);
+    fireEvent.click(gridToggle());
+
+    // 표면이 없으면 컨텍스트가 `null` 이므로 오버레이는 `origin = {0,0}` ·
+    // `box = projection.stage` 로 떨어진다 — 그것이 곧 "상자가 하나뿐이던 시절" 의 값이다.
+    expect(styleBox('canvas-workspace-grid')).toEqual({
+      left: 0,
+      top: 0,
+      width: STAGE.width,
+      height: STAGE.height,
+    });
+    expect(gridPositionPx()).toEqual({ x: 0, y: 0 });
+  });
+
+  it('경계와 흐림은 표면 밖에서도 그려진다 (편집이 켜져 있으면 언제나 뜬다)', () => {
+    render(<Harness elements={[]} onElementsChange={vi.fn()} />);
+
+    expect(screen.getByTestId('canvas-region-scrim')).toBeTruthy();
+    expect(screen.getByTestId('canvas-region-bounds')).toBeTruthy();
+  });
+
+  it('편집이 꺼져 있으면 셋 다 DOM 에 없다', () => {
+    render(<Harness enabled={false} elements={[]} onElementsChange={vi.fn()} />);
+
+    expect(screen.queryByTestId('canvas-region-scrim')).toBeNull();
+    expect(screen.queryByTestId('canvas-region-bounds')).toBeNull();
+    expect(screen.queryByTestId('canvas-workspace-grid')).toBeNull();
+  });
+});
