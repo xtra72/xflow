@@ -117,8 +117,16 @@ export function CanvasWorkspaceZoomField({
         {WORKSPACE_ZOOM_CHOICES.map((choice) => (
           // 옵션 글자도 번역한다 — 벌거벗은 숫자는 그것이 백분율인지 캔버스 단위인지
           // 말하지 않으며, 도크에서는 바로 한 줄 아래 칸이 캔버스 단위를 받는다.
+          //
+          // 치환은 **`replaceAll`** 이다(SPEC-CANVAS-006 M11). `replace` 는 같은 치환자가
+          // 둘인 문구에서 **첫 하나만** 바꾸고 나머지를 화면에 `{percent}` 로 남긴다 —
+          // 이 저장소는 그 형상을 이미 갖고 있다(`gridStepPartial` 의 `{step}` 이 둘이고,
+          // 도크가 `replaceAll` 을 쓰는 이유가 그것이다). 오늘 이 문구의 치환자는 하나라
+          // 두 함수의 결과가 같지만, **번역을 손보다 치환자를 하나 더 넣는 일**이 그
+          // 침묵을 깨는 순간이며 그때 고쳐야 할 자리가 여기라는 것을 이 한 낱말이 없애
+          // 준다. `M11` 의 형상 가드가 이 낱말을 지킨다.
           <option key={choice} value={workspaceZoomPercent(choice)}>
-            {t('dashboard.canvas.edit.workspaceZoomOption').replace(
+            {t('dashboard.canvas.edit.workspaceZoomOption').replaceAll(
               '{percent}',
               String(workspaceZoomPercent(choice)),
             )}

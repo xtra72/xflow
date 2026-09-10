@@ -1179,7 +1179,7 @@
         "alignBottom": "Align bottom",
         "bringToFront": "Bring to front",
         "sendToBack": "Send to back",
-        "keyboardHint": "Arrow keys move the selected shape by 1 unit; Shift+arrow moves it by one grid cell",
+        "keyboardHint": "Arrow keys move the selected shape by 1 unit; Shift+arrow moves it by one grid cell. Shapes may also be placed outside the output region, and whatever lies outside it is not shown in the panel. The dimmed surround and the border drawn around it mark the region that the panel shows.",
         "dockView": "View",
         "workspaceZoomBar": "View zoom bar",
         "workspaceZoom": "View zoom",
