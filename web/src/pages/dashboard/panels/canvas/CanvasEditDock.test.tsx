@@ -93,6 +93,17 @@ function overlaySource(): string {
   return readFileSync(join(__dirname, 'CanvasEditOverlay.tsx'), 'utf-8');
 }
 
+/**
+ * 배율 칸을 혼자 소유하는 컴포넌트의 소스(SPEC-CANVAS-006 M10).
+ *
+ * M9 의 환산 가드가 `dockSource()` 라는 **파일 이름**에 매여 있었으므로, 칸이 옮겨 가면
+ * 그 가드도 함께 옮겨야 한다 — 옮기지 않으면 빈 파일을 지키며 **조용히 무장 해제된다**
+ * (위험 R27 · R23 의 두 번째 얼굴).
+ */
+function fieldSource(): string {
+  return readFileSync(join(__dirname, 'CanvasWorkspaceZoomField.tsx'), 'utf-8');
+}
+
 function zoomInput(): HTMLInputElement {
   return screen.getByTestId('canvas-workspace-zoom') as HTMLInputElement;
 }
@@ -414,41 +425,124 @@ describe('배율은 몸짓을 하나도 가져가지 않는다 (AC-09 (AV))', ()
     expect(overlaySource()).not.toMatch(/onWheel|deltaY/);
   });
 
-  it('배율을 바꾸는 길은 그 칸 하나뿐이다 — 단축키가 붙지 않았다', () => {
-    // 오버레이에서 배율 setter 가 나타나는 자리는 **정확히 둘**이다: 선언 한 줄과 도크로
-    // 넘기는 prop 한 줄. 셋째가 생기면(키 처리자 · 휠 · 드래그) 그것이 곧 몸짓을 하나
-    // 가져간 것이고 여기서 걸린다.
+  it('배율을 바꾸는 길은 그 칸뿐이다 — **셈이 아니라 형상**으로 잰다 (위험 R27)', () => {
+    // M9 는 이것을 **셈**으로 지켰다(`setWorkspaceZoom` 이 정확히 둘: 선언 한 줄 + 도크로
+    // 넘기는 prop 한 줄). 그러나 그 가드가 지키려던 문장은 셈이 아니라 **"몸짓이 붙지
+    // 않았다"** 였고, M10 이 렌더 자리를 하나 늘리자(떠 있는 줄) 셈은 깨지는데 지키려던
+    // 문장은 그대로 참이었다 — 이름·셈에 매인 가드가 제 주제를 따라가지 못해 죽는 그
+    // 부류다(위험 R23 의 두 번째 얼굴 · R27).
+    //
+    // 그래서 형상으로 다시 쓴다: setter 는 **선언 한 줄과 렌더 prop 자리에만** 나타난다.
+    // **단언은 약해지지 않고 넓어진다** — 렌더 자리가 몇으로 늘어도 죽지 않고, 처리자
+    // 본문이나 인라인 화살표(`onKeyDown={() => setWorkspaceZoom(...)}`)에 한 번이라도
+    // 나타나면 걸린다.
     const source = overlaySource();
-    expect(source.match(/setWorkspaceZoom/g)?.length).toBe(2);
-    // 그리고 키 처리자 **본문 안**에는 그 이름이 없다 — 방향키는 이미 둘로 갈려 있다.
-    // 자르는 끝을 함수의 닫는 줄로 잡는다: 파일 끝까지 자르면 아래 JSX 의 prop 한 줄이
-    // 딸려 들어와 이 단언이 늘 실패한다(자를 자리를 틀리면 시험이 제 이름과 다른 것을 잰다).
-    const start = source.indexOf('const handleKeyDown');
-    expect(start).toBeGreaterThan(0);
-    const end = source.indexOf('\n  };', start);
-    expect(end).toBeGreaterThan(start);
-    expect(source.slice(start, end)).not.toMatch(/setWorkspaceZoom|onZoomChange/);
+    const lines = source.split('\n').filter((line) => line.includes('setWorkspaceZoom'));
+    const declarations = lines.filter((line) => /^\s*const setWorkspaceZoom =/.test(line));
+    const renders = lines.filter((line) => /^\s*onZoomChange=\{setWorkspaceZoom\}$/.test(line));
+    expect(declarations.length).toBe(1);
+    // 렌더 자리는 **둘 이상**이다(도크 + 줄). 이 수를 못박지 않는 것이 이 회차의 요점이다.
+    expect(renders.length).toBeGreaterThanOrEqual(2);
+    expect(lines.length).toBe(declarations.length + renders.length);
+
+    // 그리고 **어떤 이벤트 처리자 본문에도** 없다 — 방향키는 이미 둘로 갈려 있고, 휠은
+    // 미리보기 확대의 것이다. 자르는 끝을 함수의 닫는 줄로 잡는다: 파일 끝까지 자르면
+    // 아래 JSX 의 prop 한 줄이 딸려 들어와 이 단언이 늘 실패한다(자를 자리를 틀리면
+    // 시험이 제 이름과 다른 것을 잰다).
+    for (const name of [
+      'handleKeyDown',
+      'handlePointerDown',
+      'handlePointerMove',
+      'handlePointerUp',
+    ]) {
+      const start = source.indexOf(`const ${name}`);
+      expect(start, name).toBeGreaterThan(0);
+      const end = source.indexOf('\n  };', start);
+      expect(end, name).toBeGreaterThan(start);
+      expect(source.slice(start, end), name).not.toMatch(/setWorkspaceZoom|onZoomChange/);
+    }
+    // 휠 · 드래그 · 전역 리스너는 아예 없다 — 몸짓을 가져갈 자리 자체가 없다.
+    expect(source).not.toMatch(/onWheel|deltaY|addEventListener/);
   });
 
-  it('백분율 환산이 도크에 없다 — 단위를 넘는 자리는 `canvasWorkspace` 하나다', () => {
-    // `100` 이 도크에 나타나면 환산이 두 자리로 갈라진 것이다(불변식 I4 와 같은 규율).
-    expect(dockSource()).toMatch(/workspaceZoomPercent/);
-    expect(dockSource()).not.toMatch(/\* 100|\/ 100/);
+  it('백분율 환산이 나타나도 되는 파일은 **둘뿐**이다 (위험 R27 — 가드가 칸을 따라 옮겨 왔다)', () => {
+    // M9 는 이 가드를 `dockSource()` 라는 **파일 이름**에 매어 두었다. M10 이 칸을
+    // `CanvasWorkspaceZoomField.tsx` 로 옮기자 그 가드는 **빈 파일을 지키게 되어** 조용히
+    // 무장 해제될 참이었다 — 깨지는 것이 아니라 조용해지는 부류라 더 위험하다(R23 의 두
+    // 번째 얼굴). 그래서 옮기고, 같은 회차에 **범위를 넓힌다**.
+    //
+    // 환산이 나타나도 되는 파일은 `canvasWorkspace.ts`(산술의 주인)와 그 칸을 그리는
+    // `CanvasWorkspaceZoomField.tsx` 둘뿐이며, 도크와 오버레이 어디에도 없다.
+    expect(fieldSource()).toMatch(/workspaceZoomPercent/);
+    expect(fieldSource()).toMatch(/clampWorkspaceZoom/);
+    for (const [name, source] of [
+      ['CanvasEditDock.tsx', dockSource()],
+      ['CanvasEditOverlay.tsx', overlaySource()],
+      ['CanvasWorkspaceZoomField.tsx', fieldSource()],
+    ] as const) {
+      expect(source, name).not.toMatch(/\* 100|\/ 100/);
+    }
+    // 그리고 도크와 오버레이는 환산 함수를 **부르지도** 않는다 — 값을 그대로 지나 보낼 뿐이다.
+    for (const [name, source] of [
+      ['CanvasEditDock.tsx', dockSource()],
+      ['CanvasEditOverlay.tsx', overlaySource()],
+    ] as const) {
+      expect(source, name).not.toMatch(/workspaceZoomPercent|clampWorkspaceZoom/);
+    }
+  });
+
+  it('칸의 소유자가 **하나**다 — 범위 · `aria` · 제안 넷이 한 파일에만 적혀 있다 (불변식 I24)', () => {
+    // 두 벌이 되면 개명이나 범위 변경이 한쪽만 따라간다 — 0.11.0 의 격자 간격 목록과
+    // 0.4.0 의 폭·높이 칸이 각각 그 결말을 보였다.
+    expect(fieldSource()).toMatch(/data-testid="canvas-workspace-zoom"/);
+    expect(fieldSource()).toMatch(/MIN_WORKSPACE_ZOOM/);
+    expect(fieldSource()).toMatch(/MAX_WORKSPACE_ZOOM/);
+    expect(fieldSource()).toMatch(/WORKSPACE_ZOOM_CHOICES/);
+    expect(fieldSource()).toMatch(/data-testid="canvas-workspace-zoom-suggestions"/);
+    for (const [name, source] of [
+      ['CanvasEditDock.tsx', dockSource()],
+      ['CanvasEditOverlay.tsx', overlaySource()],
+    ] as const) {
+      expect(source, name).not.toMatch(/data-testid="canvas-workspace-zoom"/);
+      expect(source, name).not.toMatch(/WORKSPACE_ZOOM_CHOICES|MIN_WORKSPACE_ZOOM/);
+      // 도크에는 **격자 간격**의 `<datalist>` 가 여전히 있다 — 겨누는 것은 배율의 것 하나다.
+      expect(source, name).not.toMatch(/canvas-workspace-zoom-suggestions/);
+    }
   });
 });
 
-describe('대시보드에 놓인 패널에는 배율 컨트롤이 없다 (AC-09 (AV))', () => {
-  it('도크 자체가 없기 때문이며, 배율이 만든 비대칭이 **아니다**', () => {
-    // 같은 자리에 팔레트도 · 격자 토글도 · 간격도 · 정렬도 · 순서도 없다. 그 사실을 함께
-    // 단언해 다음 사람이 이것을 배율의 결함으로 읽지 않게 한다
-    // (spec.md §대시보드에서 편집하는 사람은 어떻게 되는가).
+describe('대시보드에 놓인 패널에는 **배율만** 있다 (AC-10 (AX) — 0.6.0 의 관측이 뒤집힌 자리)', () => {
+  it('배율은 떠 있는 줄에 서고, 나머지 넷은 **여전히 없다**', () => {
+    // **이 시험은 0.7.0 에서 겨눔이 뒤집혔다.** 0.6.0 은 "대시보드에는 배율 컨트롤이
+    // 없다" 를 **관측**으로 적었고, 사용자가 그 자리에서 "0.75 를 바꿀 수 있게" 를 다시
+    // 요구하면서 그 관측이 **결함 진술**이 되었다 — 표시 층 셋은 조건 없이 그려지는데
+    // 그것을 다스릴 손잡이가 그 표면에 하나도 없었다(불변식 I23).
+    //
+    // 함께 단언된 넷은 **글자 그대로 살아남는다.** 0.7.0 이 고치는 것은 배율 하나이며,
+    // 그 넷이 없는 것은 여전히 이름 붙은 미해결 비대칭이다(사용자가 도구 한 벌을 주는
+    // 안 (b) 를 고르지 않았다). **이 단언을 함께 지우면 그 넷에 대한 회귀 가드가 사라진다.**
     render(<Harness initial={[rect('el-1')]} docked={false} />);
 
-    expect(screen.queryByTestId('canvas-workspace-zoom')).toBeNull();
-    expect(screen.queryByTestId('canvas-workspace-zoom-hint')).toBeNull();
+    // 뒤집힌 둘 — 이제 있다. 그리고 도크가 아니라 **줄** 안에 있다.
+    const bar = screen.getByTestId('canvas-workspace-zoom-bar');
+    expect(bar.contains(zoomInput())).toBe(true);
+    expect(bar.contains(screen.getByTestId('canvas-workspace-zoom-hint'))).toBe(true);
+    // 도크 본문이 대시보드로 온 것이 **아니다** — 온 것은 배율 하나다.
+    expect(screen.queryByTestId('canvas-dock-panel')).toBeNull();
+
+    // 살아남는 넷 — 여전히 없다.
     expect(screen.queryByTestId('canvas-grid-toggle')).toBeNull();
     expect(screen.queryByTestId('canvas-grid-step')).toBeNull();
     expect(screen.queryByTestId('canvas-align-left')).toBeNull();
     expect(screen.queryByTestId('canvas-order-front')).toBeNull();
+    expect(screen.queryByTestId('canvas-palette-add-rect')).toBeNull();
+  });
+
+  it('도크가 있는 표면에는 줄이 서지 않는다 — 한 값에 살아 있는 컨트롤은 하나다 (불변식 I24)', () => {
+    render(<Harness initial={[rect('el-1')]} />);
+
+    expect(screen.queryByTestId('canvas-workspace-zoom-bar')).toBeNull();
+    expect(screen.getAllByTestId('canvas-workspace-zoom').length).toBe(1);
+    expect(screen.getByTestId('canvas-dock-panel').contains(zoomInput())).toBe(true);
   });
 });

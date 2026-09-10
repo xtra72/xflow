@@ -17,7 +17,9 @@
 
 import { useState } from 'react';
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 
 // i18n 은 키를 그대로 돌려준다(I18nProvider 없이 렌더 가능 — CanvasPanel.test.tsx 선례).
 vi.mock('@/lib/i18n', () => ({
@@ -27,7 +29,7 @@ vi.mock('@/lib/i18n', () => ({
 import type { BoxGeometry, CanvasElement, CanvasSize } from './canvasConfig';
 import { CanvasEditDockRegion } from './CanvasEditDock';
 import CanvasEditOverlay from './CanvasEditOverlay';
-import CanvasSurface from './CanvasSurface';
+import CanvasSurface, { type FrameScheduler } from './CanvasSurface';
 import {
   CanvasEditSelectionContext,
   useCanvasEditSelectionState,
@@ -3418,23 +3420,40 @@ function WorkspaceComposed({
   elements,
   onElementsChange,
   workspace = true,
+  docked = true,
+  canvas = CANVAS,
+  scheduler,
 }: {
   elements: readonly CanvasElement[];
   onElementsChange: (next: CanvasElement[]) => void;
   workspace?: boolean;
+  /**
+   * 도크 자리를 펴는가(SPEC-CANVAS-006 M10 · 시험 규율 D9). **기본은 편다** — 설정
+   * 다이얼로그의 형상이며 M6·M7 절이 재는 그 표면이다. 끄면 대시보드에 놓인 패널이고,
+   * 그때 배율 컨트롤은 도크가 아니라 **떠 있는 줄**에 선다.
+   *
+   * 이 인자가 이 파일에 새로 생긴 축이다 — M9 까지의 시험은 **한 표면만** 재었고, 그래서
+   * "층이 서는 자리에 손잡이가 없다" 는 부류가 구조적으로 보이지 않았다(D9).
+   */
+  docked?: boolean;
+  /** 캔버스 좌표계 크기. 기본은 이 파일의 5:4 고정 입력이다(M10 절만 고정점을 쓴다). */
+  canvas?: CanvasSize;
+  /** 프레임 계수를 재는 시험만 넘긴다. 기본은 브라우저 구현이다. */
+  scheduler?: FrameScheduler;
 }) {
   const state = useCanvasEditSelectionState();
   return (
     <CanvasEditSelectionContext value={state}>
       <div data-testid="parent" className="relative">
         <span data-testid="selection">{[...state.selection].join(',')}</span>
-        <CanvasEditDockRegion enabled>
+        <CanvasEditDockRegion enabled={docked}>
           <CanvasSurface
             elements={[...elements]}
-            canvas={CANVAS}
+            canvas={canvas}
             targetStyles={{}}
             texts={{}}
             workspace={workspace}
+            scheduler={scheduler}
             overlay={({ projection, textWidths }) => (
               <CanvasEditOverlay
                 enabled
@@ -3487,10 +3506,16 @@ function gridPhase(): { x: number; y: number } {
 function renderWorkspace(
   elements: readonly CanvasElement[] = [],
   workspace = true,
+  opts: { docked?: boolean; canvas?: CanvasSize; scheduler?: FrameScheduler } = {},
 ): ReturnType<typeof vi.fn> {
   const emit = vi.fn();
   render(
-    <WorkspaceComposed elements={elements} onElementsChange={emit} workspace={workspace} />,
+    <WorkspaceComposed
+      elements={elements}
+      onElementsChange={emit}
+      workspace={workspace}
+      {...opts}
+    />,
   );
   return emit;
 }
@@ -3987,5 +4012,640 @@ describe('저술 여백 전체가 포인터를 받는다 (SPEC-CANVAS-006 M7 · 
 
     // 오른쪽 변만 +50 — 옮겨진 것이 아니라 **늘어났다**.
     expectBox(emittedGeometry(emit, 'far'), { x: -160, y: -80, w: 150, h: 60 });
+  });
+});
+
+// --- 도크가 없는 자리의 배율 줄 (SPEC-CANVAS-006 M10 · REQ-10 · AC-10) --------
+//
+// **이 절의 무게중심은 컨트롤이 아니라 관계다.** 배율 칸이 그려지는지만 재면 이 회차는
+// M9 의 시험을 한 번 더 쓰는 일에 지나지 않는다. 실제로 잡아야 할 것은 **"층이 서는
+// 자리에 손잡이가 없다"** 는 부류이며, 그것은 **두 표면을 갈아 끼우며 층과 컨트롤을 함께**
+// 재야만 보인다(시험 규율 D9 · 불변식 I23).
+//
+// 006 이 그 원리를 깬 방식이 그대로 이 절의 정의다: 표시 층 셋은 **조건 없이** 그려지는데
+// (`canvas-workspace-grid` · `canvas-region-scrim` · `canvas-region-bounds`) 컨트롤 전부는
+// `dockHost !== null` 뒤에 있었고, 도크를 펴는 곳은 설정 다이얼로그 한 자리뿐이었다.
+// **전량 green 인 스위트가 그것을 잡지 못한 이유는 두 조건이 같은 자리에서 비교된 적이
+// 없어서다** — 층의 시험은 층만 보고 컨트롤의 시험은 컨트롤만 본다.
+//
+// **고정 입력은 이 SPEC 의 고정점이다**(시험 규율 D7): `canvas === outer === 1749×796` ·
+// 간격 25. 그 짝의 유도값을 수로 적는다.
+//
+//   | z    | reduced   | exact    | cell | 축척 | stage            | origin     |
+//   |------|-----------|----------|------|------|------------------|------------|
+//   | 0.75 | 1311×597  | 18.7392  | 18   | 0.72 | 1259.28×573.12   | (244, 111) |
+//   | 0.50 | 874×398   | 12.4928  | 12   | 0.48 | 839.52×382.08    | (454, 206) |
+//   | 1.00 | 1749×796  | 25       | 25   | 1.00 | 1749×796         | (0, 0)     |
+//
+// **D8 을 만족하는 짝을 고른 것이다**: `z = 0.50` 은 기본값과 `cell`·축척·`origin` 이
+// **셋 다** 다르다. 기본값과 같은 그림을 내는 이웃(0.73~0.76)을 골랐다면 배선이 끊겨 있어도
+// 초록이었을 것이다. 그리고 `z = 1.00` 행이 이 절에서만 관측 가능한 것 하나를 준다 —
+// 저술 여백이 **0** 이 되어 작업 영역의 왼쪽 아래가 곧 출력 영역의 왼쪽 아래가 되고,
+// 그때 줄이 경계의 한 모서리를 덮는다(대가를 숨기지 않는다 · AC-10 (BB)).
+//
+// 이 절이 재지 **않는** 것 둘을 미리 적는다: 줄은 **위험 R19 의 완화가 아니고**(배율을
+// 닿을 수 있게 할 뿐 배율이 못 하는 일을 하게 만들지 않는다), **대시보드의 나머지 넷**
+// (팔레트 · 격자 토글 · 격자 간격 · 정렬 · 순서)을 고치지 않는다 — 그 넷을 주는 안은
+// 사용자에게 제시되었고 고르지 않았다.
+
+/** 고정점 고정 입력 — `canvas === outer` 다(D7). 이 절만 쓴다. */
+const FP_CANVAS: CanvasSize = { width: 1749, height: 796 };
+const FP_STAGE = { width: 1259.28, height: 573.12 };
+const FP_ORIGIN = { x: 244, y: 111 };
+/** `z = 0.50` 의 값들 — 기본값과 셋이 모두 다르다(D8). */
+const FP_STAGE_HALF = { width: 839.52, height: 382.08 };
+const FP_ORIGIN_HALF = { x: 454, y: 206 };
+/** 줄이 작업 영역 모서리에서 떨어지는 px — 구현의 `ZOOM_BAR_INSET_PX` 와 같은 수다. */
+const FP_BAR_INSET = 8;
+
+/**
+ * **표시 층 → 그 층을 다스리는 컨트롤들.** 불변식 I23 의 그 표이며, 이 절의 가장 무거운
+ * 배달물이다.
+ *
+ * 격자 층에 배율이 함께 있는 것에 뜻이 있다 — 배율은 격자 상자의 **크기**를 정하므로
+ * 그 층을 다스리는 손잡이가 맞다. 그래서 대시보드에서도 격자 층은 손잡이가 **0 이 아니다**
+ * (격자 토글·간격은 여전히 없고, 그 비대칭은 이 회차가 고치지 않는다 — 부분 덮임과
+ * 무덮임의 차이가 이 불변식의 전부다).
+ */
+const LAYER_CONTROLS: Readonly<Record<string, readonly string[]>> = {
+  'canvas-workspace-grid': ['canvas-workspace-zoom', 'canvas-grid-toggle', 'canvas-grid-step'],
+  'canvas-region-scrim': ['canvas-workspace-zoom'],
+  'canvas-region-bounds': ['canvas-workspace-zoom'],
+};
+
+/**
+ * 이 노드나 그 자손이 **무언가를 칠하는가**. 위험 R8 가드를 이름에서 형상으로 옮기는 판정
+ * 이며, 닿는 면이 "아무것도 그리지 않는다" 를 단언할 때 이미 쓴 그 속성들이다.
+ *
+ * 자손까지 보는 이유: 격자 층 자신은 빈 상자이고 칠하는 것은 그 안의 `PanelEditGrid` 다.
+ */
+function paintsSomething(el: HTMLElement): boolean {
+  const nodes: HTMLElement[] = [el, ...el.querySelectorAll<HTMLElement>('*')];
+  return nodes.some(
+    (n) =>
+      n.style.backgroundColor !== '' ||
+      n.style.backgroundImage !== '' ||
+      n.style.borderColor !== '' ||
+      n.style.boxShadow !== '' ||
+      /(?:^|\s)(?:border|bg-)/.test(n.className),
+  );
+}
+
+/** 배율 칸. 두 표면에서 **같은 이름**이다 — 그래야 한 질의로 물을 수 있다. */
+function zoomInput(): HTMLInputElement {
+  return screen.getByTestId('canvas-workspace-zoom') as HTMLInputElement;
+}
+
+/** 떠 있는 배율 줄. */
+function zoomBar(): HTMLElement {
+  return screen.getByTestId('canvas-workspace-zoom-bar');
+}
+
+/** 고정점 고정 입력으로 표면 + 진짜 오버레이를 세운다. */
+function renderFixedPoint(
+  opts: { docked?: boolean; elements?: readonly CanvasElement[]; scheduler?: FrameScheduler } = {},
+): ReturnType<typeof vi.fn> {
+  return renderWorkspace(opts.elements ?? [], true, {
+    docked: opts.docked ?? false,
+    canvas: FP_CANVAS,
+    scheduler: opts.scheduler,
+  });
+}
+
+/** 표면이 지은 출력 영역이 앉은 자리 = 캔버스 좌표 원점. */
+function stageOrigin(): { x: number; y: number } {
+  const box = screen.getByTestId('canvas-stage');
+  return { x: Number.parseFloat(box.style.left), y: Number.parseFloat(box.style.top) };
+}
+
+/** 프레임 계수를 재는 최소 시계(`CanvasSurface.test.tsx` 의 그것과 같은 형상). */
+function makeClock() {
+  let requested = 0;
+  let nextHandle = 1;
+  const pending = new Map<number, (nowMs: number) => void>();
+  const scheduler: FrameScheduler = {
+    request(cb) {
+      requested += 1;
+      const handle = nextHandle++;
+      pending.set(handle, cb);
+      return handle;
+    },
+    cancel(handle) {
+      pending.delete(handle);
+    },
+  };
+  return {
+    scheduler,
+    get requested() {
+      return requested;
+    },
+    get pending() {
+      return pending.size;
+    },
+    flush(nowMs: number) {
+      const due = [...pending.values()];
+      pending.clear();
+      act(() => {
+        for (const cb of due) cb(nowMs);
+      });
+    },
+  };
+}
+
+describe('층이 서는 자리에 손잡이가 선다 (SPEC-CANVAS-006 M10 · 불변식 I23 · AC-10 (AX))', () => {
+  beforeEach(() => {
+    composedOuter = WS_OUTER;
+    vi.stubGlobal('ResizeObserver', ComposedResizeObserver as unknown as typeof ResizeObserver);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('①덮임 — 층이 DOM 에 있는 **모든 표면**에서 그 층의 컨트롤 가운데 적어도 하나가 있다', () => {
+    // 이 시험의 전부가 `for (const docked of [true, false])` 한 줄이다. 한 표면만 재면
+    // 0.6.0 을 통과시킨 그 형상이 그대로 돌아온다(D9).
+    for (const docked of [true, false] as const) {
+      cleanup();
+      renderFixedPoint({ docked });
+      // 도크가 있는 표면에서는 격자를 **켠다** — 재려는 층이 실제로 칠하고 있어야 한다.
+      if (docked) fireEvent.click(gridToggle());
+
+      for (const [layer, controls] of Object.entries(LAYER_CONTROLS)) {
+        expect(screen.queryByTestId(layer), `${layer} @docked=${docked}`).not.toBeNull();
+        const reachable = controls.filter((id) => screen.queryByTestId(id) !== null);
+        expect(reachable.length, `${layer} @docked=${docked} 의 손잡이가 0 이다`).toBeGreaterThan(
+          0,
+        );
+      }
+    }
+  });
+
+  it('②완전성 — `aria-hidden` 이면서 칠하는 오버레이 자식은 **전부** 표에 있다', () => {
+    // ①만 있으면 다음 층을 표에 적지 않고 넘어갈 수 있고, 그때 덮임 가드는 **조용히
+    // 아무것도 지키지 않는다.** 둘이 함께 있어야 다음 층이 이 결함을 되풀이할 수 없다.
+    for (const docked of [true, false] as const) {
+      cleanup();
+      renderFixedPoint({ docked, elements: [rect('under', { x: 100, y: 100, w: 200, h: 150 })] });
+      if (docked) {
+        fireEvent.click(gridToggle());
+        // 선택 파생 층(윤곽선)이 실제로 서는 상태로 한 번 잰다 — 아래 면제가 형상이
+        // 아니라 우연이면 여기서 드러난다.
+        stubOverlayRect(0, 0, FP_STAGE.width, FP_STAGE.height);
+        send('pointerdown', 150, 130);
+        expect(selectionText()).toBe('under');
+      }
+
+      const root = screen.getByTestId('canvas-edit-overlay');
+      const painting = [...root.children]
+        .filter(
+          (child): child is HTMLElement =>
+            child instanceof HTMLElement &&
+            child.getAttribute('aria-hidden') === 'true' &&
+            paintsSomething(child),
+        )
+        // 선택 윤곽선은 표시 **층**이 아니라 선택의 그림자다 — 그것을 다스리는 것은
+        // 컨트롤이 아니라 선택 자체이고, 선택은 두 표면에 다 있다(누르면 골라진다).
+        .filter((child) => !(child.dataset.testid ?? '').startsWith('canvas-selection-'));
+
+      expect(painting.length, `@docked=${docked}`).toBeGreaterThan(0);
+      for (const child of painting) {
+        const id = child.dataset.testid ?? '(이름 없음)';
+        expect(Object.keys(LAYER_CONTROLS), `표에 없는 칠하는 층: ${id} @docked=${docked}`).toContain(
+          id,
+        );
+      }
+    }
+  });
+
+  it('줄은 도크가 없을 때만 서고, 한 표면 안에 배율 칸이 **정확히 하나**다 (불변식 I24)', () => {
+    renderFixedPoint({ docked: false });
+    expect(screen.getAllByTestId('canvas-workspace-zoom').length).toBe(1);
+    expect(zoomBar().contains(zoomInput())).toBe(true);
+    // 도크가 대시보드로 오는 것이 아니다 — 온 것은 배율 하나다.
+    expect(screen.queryByTestId('canvas-dock-panel')).toBeNull();
+
+    cleanup();
+    renderFixedPoint({ docked: true });
+    expect(screen.queryByTestId('canvas-workspace-zoom-bar')).toBeNull();
+    expect(screen.getAllByTestId('canvas-workspace-zoom').length).toBe(1);
+    expect(screen.getByTestId('canvas-dock-panel').contains(zoomInput())).toBe(true);
+  });
+});
+
+describe('줄과 도크는 같은 값을 읽고 쓴다 (SPEC-CANVAS-006 M10 · AC-10 (AY))', () => {
+  beforeEach(() => {
+    composedOuter = WS_OUTER;
+    vi.stubGlobal('ResizeObserver', ComposedResizeObserver as unknown as typeof ResizeObserver);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('줄에서 적은 배율이 **표면의 상자**를 다시 짓는다 — 줄은 제 상태를 갖지 않는다', () => {
+    const emit = renderFixedPoint({ elements: [rect('a', { x: 100, y: 100, w: 200, h: 150 })] });
+
+    // 기본 배율의 상자를 **먼저** 못박는다 — 바뀌지 않으면 이 시험은 틀린 이유로 통과한다.
+    expect(zoomInput().value).toBe('75');
+    expect(stageBoxSize()).toEqual(FP_STAGE);
+    expect(stageOrigin()).toEqual(FP_ORIGIN);
+
+    fireEvent.change(zoomInput(), { target: { value: '50' } });
+
+    // 칸 · 상자 · 원점 셋이 **모두** 달라졌다(D8). 그리고 그 값은 도크에서 같은 값을
+    // 적었을 때의 수와 **한 글자도 다르지 않다** — 값의 주인이 하나이기 때문이다.
+    expect(zoomInput().value).toBe('50');
+    expect(stageBoxSize()).toEqual(FP_STAGE_HALF);
+    expect(stageOrigin()).toEqual(FP_ORIGIN_HALF);
+    // 줄이 제 `useState` 를 들고 있다면 표면의 상자는 한 픽셀도 움직이지 않았을 것이다.
+
+    // config 는 한 글자도 쓰이지 않는다 — 바뀌는 것은 시야뿐이다.
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('범위를 죄고, 읽을 수 없는 입력에는 지금 값이 그대로 남는다 (도크와 같은 계약)', () => {
+    renderFixedPoint();
+
+    fireEvent.change(zoomInput(), { target: { value: '400' } });
+    expect(zoomInput().value).toBe('100'); // 확대는 없다(불변식 I22)
+    fireEvent.change(zoomInput(), { target: { value: '1' } });
+    expect(zoomInput().value).toBe('25');
+    fireEvent.change(zoomInput(), { target: { value: '' } });
+    expect(zoomInput().value).toBe('25'); // 한 글자를 지우는 동안 화면이 무너지지 않는다
+  });
+
+  it('줄이 서 있기만 하면 프레임을 **0 건**, 배율을 바꾸면 **한 장** 부른다 (AC-E4)', () => {
+    const clock = makeClock();
+    renderFixedPoint({ scheduler: clock.scheduler });
+    clock.flush(0);
+    expect(clock.pending).toBe(0); // 유휴에 들었음을 **먼저** 단언한다
+    const before = clock.requested;
+
+    fireEvent.change(zoomInput(), { target: { value: '50' } });
+
+    // 그리는 상자가 실제로 달라지므로 한 장이다 — 격자 간격 변경과 **같은 부류**이며
+    // 새 깨우기 경로가 아니다. 도크로 바꿀 때와 같은 수다.
+    expect(clock.requested).toBe(before + 1);
+    clock.flush(16);
+    expect(clock.pending).toBe(0);
+  });
+});
+
+describe('줄은 포인터를 받고 빗나간 누름은 종전 그대로 흐른다 (M10 · AC-10 (AZ))', () => {
+  /** 기본 배율에서 줄 **밑**에 앉는 요소. px 로 x −230.4..−172.8 · y 648..676.8 이다. */
+  const UNDER_BAR: BoxGeometry = { x: -320, y: 900, w: 80, h: 40 };
+  /** 그 요소의 중심을 오버레이 px 로 옮긴 자리(축척 18÷25 = 0.72). */
+  const UNDER_BAR_CENTER = { x: -201.6, y: 662.4 };
+
+  beforeEach(() => {
+    composedOuter = WS_OUTER;
+    vi.stubGlobal('ResizeObserver', ComposedResizeObserver as unknown as typeof ResizeObserver);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('줄에는 `pointer-events-none` 이 **없다** — 그것이 이 컨트롤의 전부다', () => {
+    renderFixedPoint();
+
+    expect(zoomBar().className).not.toContain('pointer-events-none');
+    // 표시 층 셋의 가드는 **그대로 통과한다** — 줄을 그 목록에 넣으면 그 가드가 곧 이
+    // 기능을 금지한다(M7 의 닿는 면이 밟을 뻔한 그 함정 · 위험 R16).
+    for (const id of ['canvas-region-scrim', 'canvas-region-bounds', 'canvas-workspace-grid']) {
+      expect(screen.getByTestId(id).className, id).toContain('pointer-events-none');
+    }
+    expect(Object.keys(LAYER_CONTROLS)).not.toContain('canvas-workspace-zoom-bar');
+  });
+
+  it('위험 R8 가드를 **형상으로** 다시 쓴다 — 장식은 포인터를 먹지 않는다', () => {
+    // 지키는 문장이 "그리는 층은 포인터를 먹지 않는다" 에서 **"장식은 포인터를 먹지
+    // 않는다"** 로 좁아진다. 셋이 이 한 문장으로 갈린다: 표시 층 셋은 걸리고(칠하고
+    // `aria-hidden` 이다), 닿는 면은 빠지며(`aria-hidden` 이지만 칠하지 않는다), 줄은
+    // 빠진다(칠하지만 이름을 가진 컨트롤이라 `aria-hidden` 이 아니다).
+    //
+    // **세 이름을 손으로 적은 기존 두 시험은 지우지 않고 옆에 둔다** — 형상 판정이 잘못
+    // 넓어지면 이름 쪽이 먼저 운다.
+    for (const docked of [true, false] as const) {
+      cleanup();
+      renderFixedPoint({ docked });
+      if (docked) fireEvent.click(gridToggle());
+
+      const root = screen.getByTestId('canvas-edit-overlay');
+      let checked = 0;
+      for (const child of [...root.children]) {
+        if (!(child instanceof HTMLElement)) continue;
+        if (child.getAttribute('aria-hidden') !== 'true') continue;
+        if (!paintsSomething(child)) continue;
+        checked += 1;
+        expect(child.className, child.dataset.testid).toContain('pointer-events-none');
+      }
+      expect(checked, `@docked=${docked}`).toBeGreaterThan(0);
+
+      // 닿는 면은 `aria-hidden` 이지만 칠하지 않으므로 이 판정 밖이고, 그래서 포인터를 먹는다.
+      expect(screen.getByTestId('canvas-workspace-hit').className).not.toContain(
+        'pointer-events-none',
+      );
+      if (!docked) {
+        // 줄은 칠하지만 `aria-hidden` 이 아니다 — 이름을 가진 컨트롤이기 때문이다.
+        expect(zoomBar().getAttribute('aria-hidden')).toBeNull();
+        expect(zoomBar().getAttribute('role')).toBe('group');
+      }
+    }
+  });
+
+  it('줄 **위**의 누름은 아래 도형을 고르지 않고, `defaultPrevented` 도 세우지 않는다', () => {
+    renderFixedPoint({ elements: [rect('under', UNDER_BAR)] });
+    stubOverlayRect(0, 0, FP_STAGE.width, FP_STAGE.height);
+
+    // **먼저 그 좌표가 실제로 요소를 맞힘을 확인한다.** 이것이 없으면 이 시험은 끊음이
+    // 없어도 통과한다 — 빗나간 좌표로 "안 골라졌다" 를 재는 초록이 된다.
+    const onHit = sendToHit('pointerdown', UNDER_BAR_CENTER.x, UNDER_BAR_CENTER.y);
+    expect(selectionText()).toBe('under');
+    expect(onHit.defaultPrevented).toBe(true);
+    send('pointerup', UNDER_BAR_CENTER.x, UNDER_BAR_CENTER.y);
+    fireEvent.keyDown(overlayRoot(), { key: 'Escape' });
+
+    // 이제 같은 좌표를 **줄 위에서** 누른다. 끊지 않으면 배율을 적으려는 손짓이 그 뒤
+    // 도형을 고르고 이동 드래그까지 시작한다.
+    const before = selectionText();
+    const onBar = sendAt(zoomBar(), 'pointerdown', UNDER_BAR_CENTER.x, UNDER_BAR_CENTER.y);
+
+    expect(selectionText()).toBe(before);
+    // `preventDefault` 가 아니라 `stopPropagation` 이다 — 칸의 초점과 캐럿이 살아 있어야
+    // 하고, `defaultPrevented` 는 `previewPan` 이 읽는 표시라 뜻이 번진다.
+    expect(onBar.defaultPrevented).toBe(false);
+  });
+
+  it('줄을 **빗나간** 빈 자리 누름은 여전히 선택만 비우고 소비하지 않는다 (불변식 I8)', () => {
+    renderFixedPoint({ elements: [rect('far', { x: -300, y: -200, w: 100, h: 60 })] });
+    stubOverlayRect(0, 0, FP_STAGE.width, FP_STAGE.height);
+
+    // 저술 여백의 요소는 여전히 골라지고(AC-08 (AP) 가 그대로 통과한다)
+    sendToHit('pointerdown', -180, -122.4);
+    expect(selectionText()).toBe('far');
+
+    // 저술 여백의 빈 자리는 여전히 선택만 비우고 **소비하지 않는다** — 줄이 생겼다고 이
+    // 성질이 달라지지 않는다. 소비하지 않아야 `previewPan` 이 그 몸짓을 받는다.
+    const down = sendToHit('pointerdown', -60, -60);
+    expect(selectionText()).toBe('');
+    expect(down.defaultPrevented).toBe(false);
+  });
+});
+
+describe('문은 하나이고 방향키는 두 주인을 갖지 않는다 (M10 · AC-10 (BA))', () => {
+  const PICKED: BoxGeometry = { x: 100, y: 100, w: 200, h: 150 };
+
+  beforeEach(() => {
+    composedOuter = WS_OUTER;
+    vi.stubGlobal('ResizeObserver', ComposedResizeObserver as unknown as typeof ResizeObserver);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('탭 정지점의 **문**은 여전히 루트 하나다 — "정지점이 하나" 라는 뜻이 아니다', () => {
+    const emit = renderFixedPoint({ elements: [rect('a', PICKED)] });
+    stubOverlayRect(0, 0, FP_STAGE.width, FP_STAGE.height);
+
+    const root = overlayRoot();
+    expect(root.getAttribute('tabindex')).toBe('0');
+    expect(root.getAttribute('aria-keyshortcuts')).not.toBeNull();
+    // 줄의 칸은 루트의 **자손**이며, 탭 순서는 DOM 순서 그대로다.
+    expect(root.contains(zoomInput())).toBe(true);
+    expect(zoomInput().getAttribute('tabindex')).toBeNull();
+
+    // **오버레이 안의 정지점이 하나라는 뜻이 아니다**(가정 A22). 손잡이 `<button>` 넷이
+    // 이미 정지점이며, 그 사실을 여기 한 줄로 적어 다음 사람이 T15 를 잘못 읽지 않게 한다.
+    send('pointerdown', 150, 130);
+    send('pointerup', 150, 130);
+    expect(selectionText()).toBe('a');
+    expect(handleEl('se').tagName).toBe('BUTTON');
+    expect(handleEl('se').getAttribute('tabindex')).toBeNull();
+    expect(emit).toHaveBeenCalled();
+  });
+
+  it('줄의 DOM 자리 — 닿는 면 뒤 · 표시 층 셋 뒤 · 선택 윤곽선과 손잡이 **앞**', () => {
+    renderFixedPoint({ elements: [rect('a', PICKED)] });
+    stubOverlayRect(0, 0, FP_STAGE.width, FP_STAGE.height);
+
+    const root = overlayRoot();
+    const orderOf = (el: Element) => [...root.children].indexOf(el);
+
+    // 선택이 **없을 때**의 자리를 먼저 잰다.
+    const barIndexEmpty = orderOf(zoomBar());
+    expect(root.firstElementChild).toBe(screen.getByTestId('canvas-workspace-hit'));
+    for (const id of ['canvas-workspace-grid', 'canvas-region-scrim', 'canvas-region-bounds']) {
+      expect(orderOf(screen.getByTestId(id)), id).toBeLessThan(barIndexEmpty);
+    }
+
+    send('pointerdown', 150, 130);
+    send('pointerup', 150, 130);
+    expect(selectionText()).toBe('a');
+
+    // 손잡이가 줄보다 **뒤**에 있어야 왼쪽 아래 근처에서도 크기 조절이 그대로 시작된다 —
+    // 줄이 마지막이면 손잡이를 덮어 조절이 죽는다(AC-08 (AQ) 가 닿는 면에 대해 지키는 그 성질).
+    const barIndex = orderOf(zoomBar());
+    expect(barIndex).toBeLessThan(orderOf(screen.getByTestId('canvas-selection-a')));
+    expect(barIndex).toBeLessThan(orderOf(handleEl('sw')));
+    // 그리고 **무엇을 골랐든 줄의 탭 자리가 달라지지 않는다** — 손잡이는 선택에 따라
+    // 나타났다 사라지므로, 줄이 그 뒤에 있으면 배율의 탭 순서가 선택마다 달라진다.
+    expect(barIndex).toBe(barIndexEmpty);
+  });
+
+  it('요소를 **골라 둔 채** 줄의 칸에서 방향키를 눌러도 고른 것이 움직이지 않는다 (위험 R26)', () => {
+    const emit = renderFixedPoint({ elements: [rect('a', PICKED)] });
+    stubOverlayRect(0, 0, FP_STAGE.width, FP_STAGE.height);
+
+    // **선택이 있는 상태로 잰다.** 선택이 0 이면 `handleKeyDown` 이 일찍 돌아가므로 결함이
+    // 없어도 통과한다 — 꺼져 있어서 통과하는 초록이다.
+    send('pointerdown', 150, 130);
+    send('pointerup', 150, 130);
+    expect(selectionText()).toBe('a');
+    emit.mockClear();
+
+    // 루트에 직접 쏘면 오늘도 움직인다는 사실을 먼저 확인한다(재려는 경로가 살아 있다).
+    sendKey('ArrowRight');
+    expect(emittedGeometry(emit, 'a')).toMatchObject({ x: 101 });
+    emit.mockClear();
+
+    // 같은 키를 **줄의 칸에서** 쏘면 아무 일도 일어나지 않는다 — 줄이 제 자리에서 끊는다.
+    fireEvent.keyDown(zoomInput(), { key: 'ArrowRight' });
+    fireEvent.keyDown(zoomInput(), { key: 'ArrowUp' });
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('`handleKeyDown` 에 표적 가드가 생기지 않았다 — 끊는 자리는 컨트롤 쪽이다', () => {
+    // REQ-08 이 "한 줄도 바뀌지 않는다" 로 이름 적어 둔 경로다. 여기 가드가 생겼다면
+    // 끊을 자리를 잘못 고른 것이다(도크가 포인터에 대해 이미 컨트롤 쪽을 골랐다).
+    const source = readFileSync(join(__dirname, 'CanvasEditOverlay.tsx'), 'utf-8');
+    const start = source.indexOf('const handleKeyDown');
+    expect(start).toBeGreaterThan(0);
+    const end = source.indexOf('\n  };', start);
+    expect(end).toBeGreaterThan(start);
+    const body = source.slice(start, end);
+    expect(body).not.toMatch(/event\.target|\.closest\(|instanceof HTMLInputElement|tagName/);
+  });
+});
+
+describe('줄의 자리와 가림 — 무엇을 덮고 무엇으로 되찾는가 (M10 · AC-10 (BB) · 위험 R25)', () => {
+  const UNDER_BAR: BoxGeometry = { x: -320, y: 900, w: 80, h: 40 };
+
+  beforeEach(() => {
+    composedOuter = WS_OUTER;
+    vi.stubGlobal('ResizeObserver', ComposedResizeObserver as unknown as typeof ResizeObserver);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('작업 영역의 **왼쪽 아래**에 앉는다 — 상자는 손에 든 두 값 그대로다 (불변식 I10)', () => {
+    renderFixedPoint();
+
+    // 작업 영역은 오버레이 좌표로 `(-origin, box)` 다 — 격자·닿는 면이 쓰는 그 상자.
+    const area = styleBox('canvas-workspace-hit');
+    expect(area).toEqual({
+      left: -FP_ORIGIN.x,
+      top: -FP_ORIGIN.y,
+      width: WS_OUTER.width,
+      height: WS_OUTER.height,
+    });
+
+    // 줄의 **아래 변**이 작업 영역의 아래 변에서 8px 위에 앉고, 왼쪽 변이 왼쪽 변에서
+    // 8px 오른쪽에 앉는다. `outer` 와 축척으로 되짚지 않는다 — 그것이 두 번째 측정원이다.
+    const bar = zoomBar();
+    expect(Number.parseFloat(bar.style.left)).toBe(area.left + FP_BAR_INSET);
+    expect(Number.parseFloat(bar.style.top)).toBe(area.top + area.height - FP_BAR_INSET);
+    expect(bar.style.transform).toBe('translateY(-100%)');
+  });
+
+  it('나머지 세 모서리에는 **임자가 있다** — 왼쪽 아래는 고른 것이 아니라 남은 것이다', () => {
+    // 셋 다 `editMode && canEdit` 에서만 뜨는데 **그 상태가 곧 캔버스 편집이 가능한 상태**다.
+    // 그래서 "지금은 비어 있다" 가 아니라 "언제나 함께 있다" 이며, 자리는 하나로 정해진다.
+    const dashboard = readFileSync(join(__dirname, '../../DashboardPage.tsx'), 'utf-8');
+    const dragHandle = readFileSync(join(__dirname, '../../DragHandle.tsx'), 'utf-8');
+    expect(dragHandle).toMatch(/absolute inset-x-0 top-0[^"]*h-6/); // 위쪽 띠 전부
+    expect(dashboard).toMatch(/absolute right-1 top-1 z-20/); // 오른쪽 위
+    expect(dashboard).toMatch(/handles: \['se'\]/); // 오른쪽 아래 20×20
+    // 왼쪽 **위**도 아니다 — 걷어낸 아이콘 띠가 살던 자리이고(사용 시험 "도형 팔레트
+    // 크기가 너무 작음"), M8 뒤 옛 그림이 몰리는 자리다(위험 R19).
+    renderFixedPoint();
+    expect(Number.parseFloat(zoomBar().style.top)).toBeGreaterThan(FP_STAGE.height);
+  });
+
+  it('기본 배율에서는 **저술 여백만** 덮고, `z = 1.00` 에서는 경계의 한 모서리를 덮는다', () => {
+    renderFixedPoint();
+
+    // 출력 영역은 오버레이 좌표로 `(0,0)–(stage)` 다. 기본 배율에서 줄의 두 변은 **둘 다
+    // 그 밖**이다 — 왼쪽으로 236px, 아래로 104px 나가 있다.
+    const bar = () => zoomBar();
+    expect(Number.parseFloat(bar().style.left)).toBe(-FP_ORIGIN.x + FP_BAR_INSET);
+    expect(Number.parseFloat(bar().style.left)).toBeLessThan(0);
+    expect(Number.parseFloat(bar().style.top)).toBeGreaterThan(FP_STAGE.height);
+
+    // `z = 1.00` 에서는 저술 여백이 **0** 이라 작업 영역의 왼쪽 아래가 곧 출력 영역의
+    // 왼쪽 아래다. 그때 줄은 경계의 한 모서리를 덮는다 — **대가를 숨기지 않는다.** 그
+    // 배율은 사용자가 여백을 0 으로 하겠다고 **고른** 자리이므로, 덮을 여백이 없다는
+    // 사실 자체가 그 선택의 결과다.
+    fireEvent.change(zoomInput(), { target: { value: '100' } });
+
+    expect(stageOrigin()).toEqual({ x: 0, y: 0 });
+    expect(stageBoxSize()).toEqual({ width: WS_OUTER.width, height: WS_OUTER.height });
+    expect(Number.parseFloat(bar().style.left)).toBe(FP_BAR_INSET);
+    expect(Number.parseFloat(bar().style.top)).toBe(WS_OUTER.height - FP_BAR_INSET);
+  });
+
+  it('줄 아래의 요소는 그 자리에서 고를 수 없고, 회수 경로 **셋**이 새 기구 없이 선다', () => {
+    const emit = renderFixedPoint({ elements: [rect('under', UNDER_BAR)] });
+    stubOverlayRect(0, 0, FP_STAGE.width, FP_STAGE.height);
+
+    // (0) 가린다는 사실을 **숨기지 않는다** — 줄 위를 누르면 아래 요소가 골라지지 않는다.
+    const center = { x: -201.6, y: 662.4 }; // 축척 0.72 를 건 그 요소의 중심
+    sendAt(zoomBar(), 'pointerdown', center.x, center.y);
+    expect(selectionText()).toBe('');
+
+    // (1) **배율 자체가 첫 회수 경로다.** 줄은 작업 영역 모서리에 고정이고 요소는 축척을
+    //     따라 움직이므로, 배율을 낮추면 그림이 가운데로 물러나 줄 밑에서 빠져나온다 —
+    //     가리는 손잡이가 곧 벗어나는 손잡이다. 수로 적는다: 요소 중심과 줄의 왼쪽 변
+    //     사이가 34.4px 에서 311.6px 로, 아래 변과의 거리가 14.6px 에서 140.4px 로 벌어진다.
+    const gapBefore = {
+      x: center.x - Number.parseFloat(zoomBar().style.left),
+      y: Number.parseFloat(zoomBar().style.top) - center.y,
+    };
+    fireEvent.change(zoomInput(), { target: { value: '50' } });
+    const half = { x: (-320 + 40) * 0.48, y: (900 + 20) * 0.48 }; // 축척 12÷25
+    const gapAfter = {
+      x: half.x - Number.parseFloat(zoomBar().style.left),
+      y: Number.parseFloat(zoomBar().style.top) - half.y,
+    };
+    expect(gapAfter.x).toBeGreaterThan(gapBefore.x);
+    expect(gapAfter.y).toBeGreaterThan(gapBefore.y);
+    expect(gapBefore.x).toBeCloseTo(34.4, 6);
+    expect(gapBefore.y).toBeCloseTo(14.6, 6);
+    expect(gapAfter.x).toBeCloseTo(311.6, 6);
+    expect(gapAfter.y).toBeCloseTo(140.4, 6);
+
+    // (2) **방향키 미세 이동** — 골라 둔 뒤에는 포인터가 필요 없다(루트가 문이다 · T15).
+    fireEvent.change(zoomInput(), { target: { value: '75' } });
+    sendToHit('pointerdown', center.x, center.y);
+    send('pointerup', center.x, center.y);
+    expect(selectionText()).toBe('under');
+    emit.mockClear();
+    sendKey('ArrowUp');
+    expect(emittedGeometry(emit, 'under')).toMatchObject({ x: -320, y: 899 });
+
+    // (3) 목록 편집기의 **요소 기하 수치 칸**은 이 SPEC 이 처음부터 세워 둔 회수 경로이며
+    //     (불변식 I14 · 가정 A10) `CanvasElementsEditor` 의 시험과 AC-E10 이 진다.
+  });
+
+  it('도움말은 `aria-describedby` 로 이어진 **상시 문구**이고 클릭 팝오버가 아니다', () => {
+    renderFixedPoint();
+
+    const hint = screen.getByTestId('canvas-workspace-zoom-hint');
+    expect(zoomInput().getAttribute('aria-describedby')).toBe(hint.id);
+    expect(hint.textContent).toContain('dashboard.canvas.edit.workspaceZoomHint');
+    expect(hint.className).toContain('sr-only');
+    // `FieldHelp` 의 팝오버는 `absolute left-0 top-full w-64` 로 아래·오른쪽에 열리는데 줄은
+    // 왼쪽 아래 모서리에 살고 표면 컨테이너에 `overflow-hidden` 이 있어 **잘린다.** 열어도
+    // 보이지 않는 `?` 는 화면이 지키지 못할 약속이다.
+    expect(
+      within(zoomBar()).queryByRole('button', { name: 'property.fieldHelp.viewDescription' }),
+    ).toBeNull();
+    // 눈으로 보는 사람에게는 칸의 `title` 이 이름을 나른다 — 네이티브 툴팁은 DOM 이 아니라
+    // 브라우저 크롬이라 `overflow-hidden` 에 잘리지 않는다.
+    expect(zoomInput().getAttribute('title')).toBe('dashboard.canvas.edit.workspaceZoom');
+  });
+
+  it('줄에 이름이 있고, 새 키는 **하나**이며 나머지 셋은 그대로 다시 쓰인다', () => {
+    renderFixedPoint();
+
+    expect(zoomBar().getAttribute('role')).toBe('group');
+    expect(zoomBar().getAttribute('aria-label')).toBe('dashboard.canvas.edit.workspaceZoomBar');
+    // 나머지 셋은 **같은 칸이므로 같은 문구**를 그대로 쓴다 — 새 키를 만들면 두 표면의
+    // 문구가 갈라진다.
+    expect(zoomInput().getAttribute('aria-label')).toBe('dashboard.canvas.edit.workspaceZoom');
+    expect(
+      screen.getByTestId('canvas-workspace-zoom-suggestions').querySelectorAll('option').length,
+    ).toBe(4);
+
+    // 두 언어에 **모두** 있고 키 이름 안에 점이 없다(프로젝트 규약 — 이름에 점이 든 키는
+    // 어떤 조회 경로로도 닿지 않는다).
+    for (const messages of [koMessages, enMessages]) {
+      const edit = (messages as unknown as Record<string, never>)['dashboard'] as unknown as {
+        canvas: { edit: Record<string, string> };
+      };
+      for (const key of ['workspaceZoomBar', 'workspaceZoom', 'workspaceZoomOption', 'workspaceZoomHint']) {
+        expect(typeof edit.canvas.edit[key], key).toBe('string');
+        expect(key).not.toContain('.');
+      }
+    }
   });
 });

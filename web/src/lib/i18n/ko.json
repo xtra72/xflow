@@ -1181,6 +1181,7 @@
         "sendToBack": "맨 뒤로 보내기",
         "keyboardHint": "방향키로 고른 도형을 1 단위씩 옮기고, Shift+방향키로 한 격자 칸씩 옮깁니다",
         "dockView": "보기",
+        "workspaceZoomBar": "보기 배율 줄",
         "workspaceZoom": "보기 배율",
         "workspaceZoomOption": "{percent}% 배율",
         "workspaceZoomHint": "편집 중 시야만 바꿉니다. 캔버스 크기도 요소 좌표도 바뀌지 않습니다. 격자 간격이 배율을 눈금으로 나누므로 이웃한 백분율이 같은 그림을 낼 수 있습니다.",

@@ -148,6 +148,7 @@ import { cn } from '@/lib/utils/cn';
 import { PanelEditGrid } from '../../PanelEditGrid';
 import { EMPTY_SELECTION, nextSelection } from '../charts/panelEditSelection';
 import { CanvasEditDockBody } from './CanvasEditDock';
+import { CanvasWorkspaceZoomField } from './CanvasWorkspaceZoomField';
 import {
   DEFAULT_FONT_SIZE,
   type BoxGeometry,
@@ -360,6 +361,30 @@ const REGION_BOUNDS_COLOR = 'rgba(148, 163, 184, 0.95)';
  * 일**이라 위험 R1 의 축소판이다.
  */
 const REGION_SCRIM_SPREAD_PX = 9999;
+
+/**
+ * 떠 있는 배율 줄이 **작업 영역 모서리에서 떨어지는 px**(SPEC-CANVAS-006 REQ-10 · 결정 2).
+ *
+ * 기본 배율에서 저술 여백은 사방 100px 을 넘으므로(고정 입력 원점 (244, 111)) 이 값이
+ * 여백보다 작은 한 줄은 **출력 영역을 한 픽셀도 덮지 않는다.** `z = 1.00` 에서는 여백이
+ * 0 이라 작업 영역의 왼쪽 아래가 곧 출력 영역의 왼쪽 아래이고, 그때 줄은 경계의 한
+ * 모서리를 덮는다 — 그 배율은 사용자가 **여백을 0 으로 하겠다고 고른** 자리이므로 덮을
+ * 여백이 없다는 사실 자체가 그 선택의 결과다(위험 R25).
+ */
+const ZOOM_BAR_INSET_PX = 8;
+
+/**
+ * 떠 있는 배율 줄의 겉모습. **불투명하다** — 반투명 숫자는 읽을 수 없고, 아래에 요소가
+ * 있을 때 사라지는 컨트롤은 "필요할 때 없는" 컨트롤이다(결정 2 가 기각한 두 안).
+ */
+const ZOOM_BAR_CLASS =
+  'absolute z-30 flex items-center gap-1 rounded-md border border-(--color-border-default) ' +
+  'bg-(--color-bg-surface) px-1.5 py-1 shadow-sm';
+
+/** 줄 안의 입력 칸 — 떠 있는 컨트롤의 좁은 눈금이다(도크의 칸보다 짧다). */
+const ZOOM_BAR_INPUT_CLASS =
+  'w-14 rounded border border-(--color-border-default) bg-transparent px-1.5 py-0.5 text-xs ' +
+  'tabular-nums text-(--color-text-secondary) focus:outline-none focus:ring-2 focus:ring-blue-300';
 
 /**
  * 핸들의 `aria-label` i18n 키. **키 이름 안에 점을 넣지 않는다**(프로젝트 규약 — 이름에
@@ -1259,6 +1284,74 @@ export default function CanvasEditOverlay({
         className="pointer-events-none absolute inset-0 border"
         style={{ borderColor: REGION_BOUNDS_COLOR }}
       />
+      {/* **떠 있는 배율 줄**(SPEC-CANVAS-006 M10 · REQ-10 · 불변식 I23).
+
+          006 은 표시 층 셋(격자 · 흐림 · 경계)을 **조건 없이** 그리면서 컨트롤 전부를
+          `dockHost !== null` 뒤에 두었고, 도크 자리를 펴는 곳은 설정 다이얼로그 한 곳뿐이다.
+          그래서 대시보드에서 제자리 편집하는 사람은 **줄어든 출력 영역과 저술 여백을 보면서
+          그 어느 것도 다스릴 수 없었다** — 층이 그려지는 자리에 그 층을 다스리는 손잡이가
+          닿지 않았다. 이 줄이 그 자리를 메운다.
+
+          **도크가 있으면 서지 않는다**(결정 1 · 불변식 I24). 한 값에 살아 있는 컨트롤이
+          둘이면 같은 것을 두 자리에서 눌러야 하고 그중 하나는 **그림을 가린다** — 이
+          저장소는 그 형상을 이미 한 번 걷어냈다(스테이지 위의 아이콘 띠).
+
+          **자리는 작업 영역의 왼쪽 아래다** — 고른 것이 아니라 **남은 것**이다(결정 2).
+          나머지 세 모서리에는 임자가 있다: 위쪽 띠 전부는 `DragHandle`(`inset-x-0 top-0 h-6`),
+          오른쪽 위는 설정·삭제 단추(`right-1 top-1 z-20`), 오른쪽 아래 20×20 은
+          `react-grid-layout` 의 `se` 리사이즈 손잡이이며 셋 다 대시보드 편집모드에서만 뜨는데
+          **그 상태가 곧 캔버스 편집이 가능한 상태**다. 왼쪽 **위**는 걷어낸 아이콘 띠가
+          살던 자리이고 M8 뒤 옛 그림이 몰리는 자리다(위험 R19).
+
+          **상자는 손에 든 값 그대로 쓴다**(불변식 I10). 작업 영역의 아래 모서리는 오버레이
+          좌표로 `-origin.y + box.height` 이므로 그 자리에 줄의 **아래 변**을 앉힌다
+          (`translateY(-100%)`) — `outer` 와 축척으로 되짚으면 그것이 곧 두 번째 측정원이다.
+
+          **포인터를 받는다** — 위험 R8 의 가드가 열거하는 세 이름에 **들어가지 않는다**
+          (넣으면 그 가드가 곧 이 기능을 금지한다 · 위험 R16). 그 가드가 지키는 문장은
+          "그리는 층은 포인터를 먹지 않는다" 가 아니라 **"장식은 포인터를 먹지 않는다"**
+          이며, 줄은 이름을 가진 컨트롤이라 `aria-hidden` 이 아니다.
+
+          **줄 위의 누름과 키를 제 자리에서 끊는다.** 끊지 않으면 배율을 적으려는 손짓이
+          그 뒤 도형을 고르고 이동 드래그까지 시작하며(도크가 이미 같은 한 줄을 쓴다),
+          방향키는 `handleKeyDown` 이 표적을 보지 않으므로 **수는 그대로이고 요소가
+          움직인다**(가정 A23 · 위험 R26). `preventDefault` 는 쓰지 않는다 — 칸의 초점과
+          캐럿이 살아 있어야 하고, `defaultPrevented` 는 `previewPan` 이 읽는 표시라 뜻이
+          번진다. 끊는 자리를 `handleKeyDown` 안에 두지 않는 것도 그 함수가 REQ-08 이
+          "한 줄도 바뀌지 않는다" 로 이름 적어 둔 경로이기 때문이다. */}
+      {dockHost === null && (
+        <div
+          data-testid="canvas-workspace-zoom-bar"
+          role="group"
+          aria-label={t('dashboard.canvas.edit.workspaceZoomBar')}
+          className={ZOOM_BAR_CLASS}
+          style={{
+            left: -workspaceOrigin.x + ZOOM_BAR_INSET_PX,
+            top: -workspaceOrigin.y + workspaceSize.height - ZOOM_BAR_INSET_PX,
+            transform: 'translateY(-100%)',
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          <CanvasWorkspaceZoomField
+            zoom={workspaceZoom}
+            onZoomChange={setWorkspaceZoom}
+            className={ZOOM_BAR_INPUT_CLASS}
+            // 도크가 쓰는 `FieldHelp` 의 클릭 팝오버를 여기 그대로 쓰면 **잘린다** —
+            // 그 팝오버는 `absolute left-0 top-full w-64` 로 아래·오른쪽에 열리는데 줄은
+            // 왼쪽 아래 모서리에 살고 표면 컨테이너에 `overflow-hidden` 이 있다. 열어도
+            // 보이지 않는 `?` 는 화면이 지키지 못할 약속이다. 그래서 이 층이 이미 쓰는
+            // 관용구(`sr-only` 문단 + `aria-describedby`)를 그대로 쓰고, 눈으로 보는
+            // 사람에게는 칸의 `title` 이 같은 이름을 나른다 — 네이티브 툴팁은 DOM 이
+            // 아니라 브라우저 크롬이라 `overflow-hidden` 에 잘리지 않는다.
+            renderHelp={(describedById) => (
+              <p id={describedById} data-testid="canvas-workspace-zoom-hint" className="sr-only">
+                {t('dashboard.canvas.edit.workspaceZoomHint')}
+              </p>
+            )}
+          />
+        </div>
+      )}
       {/*
           도형 팔레트를 비롯한 **편집 도구 한 벌은 이 층이 만들지만 이 층 안에 그려지지
           않는다**(사용 시험: "도형 팔레트 크기가 너무 작음"). 스테이지 위에 떠 있던 띠는
