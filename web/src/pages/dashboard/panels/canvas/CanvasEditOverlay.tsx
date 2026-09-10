@@ -157,7 +157,13 @@ import {
   type Geometry,
   type LineGeometry,
 } from './canvasConfig';
-import { appendElement, appendPathElement, nextElementId, seedOffset } from './canvasElementFactory';
+import {
+  appendElement,
+  appendImportedElements,
+  appendPathElement,
+  nextElementId,
+  seedOffset,
+} from './canvasElementFactory';
 import {
   CanvasScratchpadDropContext,
   pointInRect,
@@ -192,6 +198,7 @@ import {
 } from './canvasEditArrange';
 import { useCanvasEditSelection } from './canvasEditContext';
 import { useCanvasEditDockHost } from './canvasEditDockHost';
+import type { ImportedPathSpec } from './svgimport/svgImportPlan';
 import { useCanvasStageGrid } from './canvasStageGrid';
 import { DEFAULT_WORKSPACE_ZOOM } from './canvasWorkspace';
 import {
@@ -1220,6 +1227,29 @@ export default function CanvasEditOverlay({
   };
 
   /**
+   * 가져온 SVG 도형들을 놓는다 — **위 두 함수와 같은 세 줄**이며 다른 것은 부르는 입구
+   * 하나뿐이다(`appendImportedElements`).
+   *
+   * **새 id 전부를 선택으로 세운다**(REQ-06). 그래야 놓자마자 한 덩어리로 끌린다 — 오버레이의
+   * 무리 이동이 선택된 **모든** 요소에서 `bases` 를 짓기 때문이고, 정렬 · 순서 · 방향키 미세
+   * 이동도 같은 선택 위에서 그대로 돈다. 004 의 `group` 이 서기 전까지 가져온 그림을 한
+   * 덩어리로 다루는 길은 이것과 서랍 저장 둘뿐이며, 그것이 완전한 대체가 아님을 감추지
+   * 않는다(위험 R11).
+   *
+   * 계단 오프셋은 **무리 전체에 한 번만** 더해진다 — 상자가 하나이므로 요소마다 더할 자리가
+   * 애초에 없다(`appendImportedElements`). 요소마다 더하면 문서에서 겹쳐 그려지던 조각들이
+   * 25 단위씩 흩어져 그림이 무너진다.
+   */
+  const placeFromImport = (
+    shapes: readonly ImportedPathSpec[],
+    box: BoxGeometry,
+  ): void => {
+    const { next, created } = appendImportedElements(elements, shapes, box);
+    onElementsChange(next);
+    setSelection(new Set(created.map((el) => el.id)));
+  };
+
+  /**
    * 서랍의 항목을 캔버스에 놓는다 — **형제 요소들을 옮겨 찍는 평평한 붙여넣기**다
    * (REQ-04 · spec.md §004 의 `group` 에 기대지 않는다 (c)).
    *
@@ -1606,6 +1636,9 @@ export default function CanvasEditOverlay({
               canScratchpadSave={selection.size > 0}
               scratchpadDropActive={dropActive}
               onScratchpadPlace={placeFromScratchpad}
+              // 가져오기도 같은 규칙이다 — 만드는 입구는 하나이고, 놓은 뒤의 선택은 이 층이
+              // 소유한다(불변식 K9).
+              onSvgImport={placeFromImport}
             />
           </CanvasScratchpadDropContext>,
           dockHost,

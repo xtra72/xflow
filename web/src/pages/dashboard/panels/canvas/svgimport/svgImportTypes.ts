@@ -165,6 +165,16 @@ export interface ImportRefusal {
 
 export type ImportRefusalReason =
   | 'fileTooLarge'
+  /**
+   * 파일을 **읽지** 못했다(`FileReader` 실패 — 읽는 도중 지워짐 · 권한 · 장치 오류).
+   *
+   * `notSvg` 와 합치지 않는 것에 뜻이 있다: 하나는 **문서가 나쁘다**이고 다른 하나는 **문서를
+   * 보지 못했다**이며, 사용자가 할 일이 다르다(고쳐 내보내기 vs 다시 고르기). 합치면 멀쩡한
+   * 파일을 두고 "SVG 가 아닙니다" 를 읽는다.
+   *
+   * 화면 층만 이 사유를 낸다 — 파싱 층은 이미 문자열을 받으므로 읽기에 실패할 자리가 없다.
+   */
+  | 'unreadable'
   | 'notSvg'
   | 'emptyDocument'
   | 'degenerateViewBox'

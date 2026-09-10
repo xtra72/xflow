@@ -61,7 +61,7 @@ import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
 import { CanvasWorkspaceZoomField } from './CanvasWorkspaceZoomField';
-import { type CanvasPrimitiveKind, type CanvasSize } from './canvasConfig';
+import { type BoxGeometry, type CanvasPrimitiveKind, type CanvasSize } from './canvasConfig';
 import {
   CANVAS_GRID_STEP_CHOICES,
   CANVAS_GRID_STEP_MAX,
@@ -73,6 +73,8 @@ import {
 } from './canvasEditArrange';
 import { CanvasEditDockHostContext } from './canvasEditDockHost';
 import { CanvasScratchpad } from './scratchpad/CanvasScratchpad';
+import { CanvasSvgImport } from './svgimport/CanvasSvgImport';
+import type { ImportedPathSpec } from './svgimport/svgImportPlan';
 import type { ScratchpadDropPoint } from './scratchpad/canvasScratchpadDrop';
 import type { ScratchpadEntry } from './scratchpad/scratchpadTypes';
 import { CanvasPaletteGroup, CanvasShapeCatalog } from './shapes/CanvasShapeCatalog';
@@ -347,6 +349,15 @@ export interface CanvasEditDockBodyProps {
    * 오버레이에 하나뿐이며(불변식 J7), 도크가 그 환산을 알면 두 벌이 된다.
    */
   onScratchpadPlace: (entry: ScratchpadEntry, at: ScratchpadDropPoint | null) => boolean;
+  /**
+   * 가져온 도형들을 놓는다 — **같은 생성 모듈의 또 다른 입구**다
+   * (`appendImportedElements`). 만드는 일도 놓은 뒤의 선택도 이 파일이 하지 않는다.
+   *
+   * 상자를 함께 받는 것에 뜻이 있다: 가져오기의 산출은 **한 그림의 조각들**이라 상자를
+   * 공유하고, 계단 오프셋도 무리 전체에 한 번만 더해진다(REQ-06). 조각마다 상자를 짓게
+   * 두면 정수 반올림이 조각마다 최대 0.5 단위씩 어긋나 그림이 갈라진다.
+   */
+  onSvgImport: (shapes: readonly ImportedPathSpec[], box: BoxGeometry) => void;
 }
 
 /**
@@ -376,6 +387,7 @@ export function CanvasEditDockBody({
   canScratchpadSave,
   scratchpadDropActive,
   onScratchpadPlace,
+  onSvgImport,
 }: CanvasEditDockBodyProps): React.ReactElement {
   const { t } = useTranslation();
   // 묶음 넷의 접힘 상태. 기기 지역에 남되 읽지 못해도 기능이 성립한다(REQ-06).
@@ -615,6 +627,20 @@ export function CanvasEditDockBody({
           <span>{t('dashboard.canvas.edit.sendToBack')}</span>
         </button>
       </section>
+
+      {/* 가져오기 — 순서 절과 스크래치패드 사이다(SPEC-CANVAS-007 REQ-04).
+
+          **위 다섯 절의 자리가 한 줄도 달라지지 않는 자리**를 고른 것이다(008 이 서랍을 맨
+          끝에 둔 그 판단과 같다). 뜻으로는 도형 절 옆에 서야 하지만(카탈로그가 "우리가 준
+          재료" 라면 가져오기는 "당신이 가져온 재료" 다), 가운데에 끼우면 격자 · 정렬 · 순서가
+          한꺼번에 스크롤 아래로 밀린다.
+
+          **기본으로 접혀 있다** — 도크 폭이 `w-44` 고정이고 가져오기는 한 번 쓰고 닫는
+          일이다. 그래서 펴지 않은 화면은 007 이전과 **묶음 머리 한 줄만** 다르다(AC-E1).
+
+          **캔버스 표면에 아무것도 그리지 않는다**(불변식 K10). 파일을 캔버스 위로 끌어놓는
+          길을 두지 않는 것이 그 성질의 값이며, 006 이 배달한 I23 결함의 재발을 형상으로 막는다. */}
+      <CanvasSvgImport canvas={canvas} onPlace={onSvgImport} />
 
       {/* 스크래치패드 — **도크의 맨 끝**이다(SPEC-CANVAS-008 REQ-03).
 
