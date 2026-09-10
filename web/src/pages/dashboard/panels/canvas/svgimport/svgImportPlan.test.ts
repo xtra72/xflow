@@ -199,6 +199,17 @@ describe('viewBox 3단 폴백 (REQ-02 · 뮤테이션 8)', () => {
     expect(result.shapes[0]!.commands[0]).toEqual({ c: 'M', x: 0, y: 0 });
   });
 
+  it('합집합은 도형 **전부**를 감싼다 — 첫 도형만 보면 오른쪽 조각이 상자 밖으로 나간다', () => {
+    const result = plan(
+      svg('<rect x="0" y="0" width="40" height="20"/><rect x="60" y="0" width="40" height="20"/>', 'id="no-size"'),
+    );
+    // 합집합 = (0,0)~(100,20) → 종횡비 5. 첫 도형만 보면 2 가 된다.
+    expect(Math.abs(result.box.w / result.box.h - 5)).toBeLessThan(0.05);
+    // 오른쪽 조각의 오른쪽 끝이 정확히 로컬 격자의 끝이다.
+    const second = result.shapes[1]!.commands[1];
+    expect(second).toEqual({ c: 'L', x: PATH_LOCAL_EXTENT, y: 0 });
+  });
+
   it('합집합이 한 축이라도 퇴화하면 거절한다 — 담을 종횡비가 없다', () => {
     const refused = planSvgImport(svg('<line x1="0" y1="40" x2="120" y2="40"/>', 'id="x"'), CANVAS);
     expect(refused.ok).toBe(false);
@@ -231,6 +242,14 @@ describe('바이트 상한은 파싱보다 먼저다 (REQ-03 · 위험 R10 · �
       expect(refused.refusal.limit).toBe(MAX_IMPORT_FILE_BYTES);
       expect(refused.refusal.actual).toBeGreaterThan(MAX_IMPORT_FILE_BYTES);
     }
+  });
+
+  it('주입된 읽기 함수의 실패가 그대로 값으로 돌아온다 — 예외가 아니다', () => {
+    const refused = planSvgImport(svg('<rect width="4" height="4"/>'), CANVAS, {
+      readDocument: () => ({ ok: false, refusal: { reason: 'notSvg', actual: 0, limit: 0 } }),
+    });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.refusal.reason).toBe('notSvg');
   });
 
   it('바이트를 문자 수가 아니라 UTF-8 로 센다 — 한글은 문자당 3바이트다', () => {

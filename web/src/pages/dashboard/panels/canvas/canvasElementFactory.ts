@@ -20,6 +20,7 @@
 
 import {
   DEFAULT_BOX_GEOMETRY,
+  type BoxGeometry,
   DEFAULT_LINE_GEOMETRY,
   DEFAULT_POINT_GEOMETRY,
   type CanvasElement,
@@ -304,6 +305,77 @@ export function appendPathElement(
     elements.length,
   );
   return { next: [...elements, created], created };
+}
+
+// --- 가져온 요소 ---------------------------------------------------------
+
+/**
+ * 가져오기가 들고 오는 도형 하나. **`svgimport/` 의 타입을 수입하지 않는다.**
+ *
+ * 구조가 같으면 통과하므로 형상만 여기 적는다. 수입하면 `svgimport/svgDocument` 가 이미
+ * 이 모듈의 `SEED_COLOR` 를 값으로 가져가고 있어 **모듈 순환**이 생기고, 무엇보다 요소를
+ * 만드는 모듈이 **가져오기라는 특정 출처를 알게 된다** — 훗날 다른 벡터 형식이 들어와도
+ * 이 입구가 그대로 서 있으려면 몰라야 하는 사실이다.
+ */
+export interface ImportedPathSource {
+  /** 요소 상자 로컬 정수. 이미 정규화되어 있다. */
+  readonly commands: readonly PathCommand[];
+  /** 알파가 색에 접힌 스타일. 비어 있을 수 있다. */
+  readonly style: ElementStyle;
+  /** 원본이 칠을 한 마디라도 말했는가 — 아니면 `pathSeedStyle` 이 선다. */
+  readonly hasOwnStyle: boolean;
+}
+
+/**
+ * 가져온 도형들을 배열 **끝에 문서 순서대로** 붙인 결과.
+ *
+ * **계단 오프셋을 무리 전체에 한 번만 더한다**(REQ-06). 요소마다 더하면 문서에서 겹쳐
+ * 그려지던 조각들이 25 단위씩 어긋나 **그림이 흩어진다** — 카탈로그 도형을 연달아 놓을
+ * 때 계단이 하는 바로 그 일이, 한 그림을 이루는 조각들에는 결함이 된다.
+ *
+ * **상자를 전부 함께 쓴다.** 조각마다 제 잉크의 상자를 주면 정수 반올림으로 서로 최대
+ * 0.5 단위 어긋나고, 공유하면 어긋남이 0 이다. 여덟 핸들이 똑같이 서는 것 자체가 "이것들은
+ * 한 그림이었다" 는 눈에 보이는 표시가 된다.
+ *
+ * **`catalog_id` 를 심지 않는다.** 그 필드는 "어느 카탈로그 도형에서 나왔는가" 를 뜻하고
+ * 가져온 요소에는 카탈로그가 없다. 예약값을 넣으면 한 필드가 두 뜻을 갖는다. 대가는 요소
+ * 목록에서 일반적인 "경로" 이름으로 보인다는 것이며, 새 필드를 만드는 것보다 싸다.
+ *
+ * **명령을 사본으로 싣는다.** 계획이 들고 있는 배열을 그대로 실으면 요소가 그 배열을
+ * **가리키게** 되고, 미리보기와 놓인 요소가 같은 목록을 공유한다.
+ *
+ * 만든 요소들을 함께 돌려주는 것은 호출부가 그 뒤에 **전량을 선택으로 세우기** 때문이다
+ * (REQ-06) — 배열에서 다시 찾게 하면 그 탐색이 또 하나의 규칙이 된다.
+ */
+export function appendImportedElements(
+  elements: readonly CanvasElement[],
+  shapes: readonly ImportedPathSource[],
+  box: BoxGeometry,
+): { next: CanvasElement[]; created: PathElement[] } {
+  const off = seedOffset(elements.length);
+  const geometry: BoxGeometry = {
+    x: shifted(box.x, off),
+    y: shifted(box.y, off),
+    w: box.w,
+    h: box.h,
+  };
+  const next: CanvasElement[] = [...elements];
+  const created: PathElement[] = [];
+  for (const shape of shapes) {
+    const path = shape.commands.map((cmd) => ({ ...cmd }));
+    const element: PathElement = {
+      id: nextElementId(next),
+      kind: 'path',
+      geometry: { ...geometry },
+      path,
+      // 원본이 아무 칠도 말하지 않았으면 **두 번째 씨앗 규칙을 만들지 않고** 008 의 것을
+      // 쓴다(닫힘이면 채움, 열림이면 선). 말한 것이 있으면 그것이 이긴다.
+      style: shape.hasOwnStyle ? { ...shape.style } : { ...pathSeedStyle(path), ...shape.style },
+    };
+    next.push(element);
+    created.push(element);
+  }
+  return { next, created };
 }
 
 // --- 문구 편집 -----------------------------------------------------------

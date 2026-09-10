@@ -372,6 +372,22 @@ describe('보고 세 갈래 (AC-07 · AC-E6 · 뮤테이션 6)', () => {
     expect(reasonCount(notes, 'gradientToSolid')).toBe(1);
   });
 
+  it('그라디언트 안쪽 깊이 있는 stop 도 찾는다 — 도구가 <g> 로 감싸 낸다', () => {
+    const { shapes } = read(
+      svg(
+        '<defs><linearGradient id="g"><g><stop stop-color="#8e44ad"/></g></linearGradient></defs>' +
+          '<rect width="10" height="4" fill="url(#g)"/>',
+      ),
+    );
+    expect(shapes[0]!.style.fill).toBe('#8e44ad');
+  });
+
+  it('모르는 SVG 요소는 조용히 지나간다 — 그려지지 않는 것을 버렸다고 말하지 않는다', () => {
+    const { shapes, notes } = read(svg('<blah/><switch/><path d="M0 0 L10 0 Z" fill="#c0392b"/>'));
+    expect(shapes).toHaveLength(1);
+    expect(notes).toEqual([]);
+  });
+
   it('풀 수 없는 참조는 씨앗 색으로 떨어지고 그 사실을 말한다', () => {
     const { shapes, notes } = read(svg('<rect width="10" height="4" fill="url(#nope)"/>'));
     expect(shapes[0]!.style.fill).toBe(SEED_COLOR);
