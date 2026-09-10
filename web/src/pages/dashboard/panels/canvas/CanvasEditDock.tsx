@@ -61,7 +61,7 @@ import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
 import { CanvasWorkspaceZoomField } from './CanvasWorkspaceZoomField';
-import { type CanvasElementKind, type CanvasSize } from './canvasConfig';
+import { type CanvasPrimitiveKind, type CanvasSize } from './canvasConfig';
 import {
   CANVAS_GRID_STEP_CHOICES,
   CANVAS_GRID_STEP_MAX,
@@ -130,8 +130,13 @@ const ICON_CLASS = 'h-4 w-4 shrink-0';
 /**
  * 도크가 내는 도형 4종. **목록 편집기의 나열 순서와 같다** — 같은 것을 두 자리에서 다른
  * 순서로 내면 사용자가 두 목록을 따로 외워야 한다.
+ *
+ * 원소 타입이 `CanvasPrimitiveKind` 인 것이 **넷이라는 사실을 지키는 가드다.** 배열은
+ * 그 자체로 총망라를 요구하지 않으므로 한 줄을 더해도 컴파일러가 울지 않지만, 원소
+ * 타입이 원시형 넷이면 다섯 번째로 경로를 더하는 순간 운다. 아래 세 표도 같은 키
+ * 집합을 쓰므로, 다섯 번째 단추를 세우려면 그 세 표를 함께 채워야 한다.
  */
-const PALETTE_KINDS: readonly CanvasElementKind[] = ['rect', 'ellipse', 'line', 'text'];
+const PALETTE_KINDS: readonly CanvasPrimitiveKind[] = ['rect', 'ellipse', 'line', 'text'];
 
 /**
  * 버튼의 `aria-label` i18n 키("사각형 놓기"). **키 이름 안에 점을 넣지 않는다**(프로젝트 규약).
@@ -139,7 +144,7 @@ const PALETTE_KINDS: readonly CanvasElementKind[] = ['rect', 'ellipse', 'line', 
  * 보이는 이름(`PALETTE_NAME_KEYS`)이 생긴 뒤에도 남는다 — 이쪽이 **무엇을 하는가**를
  * 말하고 보이는 쪽은 **무엇인가**를 말한다.
  */
-const PALETTE_ARIA_KEYS: Record<CanvasElementKind, string> = {
+const PALETTE_ARIA_KEYS: Record<CanvasPrimitiveKind, string> = {
   rect: 'dashboard.canvas.edit.paletteRect',
   ellipse: 'dashboard.canvas.edit.paletteEllipse',
   line: 'dashboard.canvas.edit.paletteLine',
@@ -147,7 +152,7 @@ const PALETTE_ARIA_KEYS: Record<CanvasElementKind, string> = {
 };
 
 /** 아이콘 옆에 보이는 도형 이름. `aria-label` 이 이 문자열을 포함한다(WCAG 2.5.3). */
-const PALETTE_NAME_KEYS: Record<CanvasElementKind, string> = {
+const PALETTE_NAME_KEYS: Record<CanvasPrimitiveKind, string> = {
   rect: 'dashboard.canvas.edit.shapeRect',
   ellipse: 'dashboard.canvas.edit.shapeEllipse',
   line: 'dashboard.canvas.edit.shapeLine',
@@ -155,7 +160,7 @@ const PALETTE_NAME_KEYS: Record<CanvasElementKind, string> = {
 };
 
 /** 도형 아이콘. */
-const PALETTE_ICONS: Record<CanvasElementKind, typeof Square> = {
+const PALETTE_ICONS: Record<CanvasPrimitiveKind, typeof Square> = {
   rect: Square,
   ellipse: Circle,
   line: Minus,
@@ -279,7 +284,7 @@ export interface CanvasEditDockBodyProps {
    * 버튼이 있었으나, 같은 함수(`canvasElementFactory.appendElement`)를 부르는 입구가 둘일
    * 이유가 없어 그쪽을 걷었다. 생성 경로 자체는 그대로다(가정 A7).
    */
-  onPlace: (kind: CanvasElementKind) => void;
+  onPlace: (kind: CanvasPrimitiveKind) => void;
   /** 격자 표시·붙임(하나의 토글이 둘을 함께 켠다 — T12). */
   snapToGrid: boolean;
   onSnapToGridChange: (next: boolean) => void;

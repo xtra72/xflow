@@ -1201,6 +1201,7 @@
         "kindEllipse": "타원",
         "kindLine": "선",
         "kindText": "텍스트",
+        "kindPath": "경로",
         "kindAria": "요소 {index} 종류",
         "moveUpAria": "요소 {index} 위로",
         "moveDownAria": "요소 {index} 아래로",

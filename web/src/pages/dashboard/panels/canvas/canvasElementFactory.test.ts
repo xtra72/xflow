@@ -20,7 +20,7 @@ import {
   DEFAULT_LINE_GEOMETRY,
   DEFAULT_POINT_GEOMETRY,
   type CanvasElement,
-  type CanvasElementKind,
+  type CanvasPrimitiveKind,
 } from './canvasConfig';
 import {
   appendElement,
@@ -34,7 +34,9 @@ import {
   withElementText,
 } from './canvasElementFactory';
 
-const KINDS: readonly CanvasElementKind[] = ['rect', 'ellipse', 'line', 'text'];
+// `newElement` 가 받는 것은 **원시형 넷**이다. 경로는 명령 목록 없이 만들어지지 않으므로
+// 이 목록에 오지 않는다(그 사실 자체를 아래 §원시형만 받는다 절이 형상으로 잰다).
+const KINDS: readonly CanvasPrimitiveKind[] = ['rect', 'ellipse', 'line', 'text'];
 
 /** 도형 3종 — 라벨이 붙을 수 있으나 `textColor` 없이는 칠해지지 않는 종류들이다. */
 const SHAPE_KINDS = ['rect', 'ellipse', 'line'] as const;

@@ -1201,6 +1201,7 @@
         "kindEllipse": "Ellipse",
         "kindLine": "Line",
         "kindText": "Text",
+        "kindPath": "Path",
         "kindAria": "Element {index} kind",
         "moveUpAria": "Move element {index} up",
         "moveDownAria": "Move element {index} down",

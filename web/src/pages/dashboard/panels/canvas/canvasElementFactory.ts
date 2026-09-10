@@ -23,7 +23,7 @@ import {
   DEFAULT_LINE_GEOMETRY,
   DEFAULT_POINT_GEOMETRY,
   type CanvasElement,
-  type CanvasElementKind,
+  type CanvasPrimitiveKind,
 } from './canvasConfig';
 
 // --- 씨앗 상수 -----------------------------------------------------------
@@ -136,8 +136,14 @@ function shifted(base: number, off: number): number {
  * 계단은 종류마다 여유가 있는 축으로만 준다. 상자는 대각선(우하), 선은 가로로 이미
  * 캔버스를 가로지르므로 세로로만, 문구는 오른쪽으로 흘러가므로 세로로만 내린다.
  * 어느 쪽도 되감기 전에 기본 캔버스를 벗어나지 않는다(최대 7칸 × 25 = 175 단위).
+ *
+ * **받는 것은 원시형 넷뿐이다**(`CanvasPrimitiveKind`). 경로는 씨앗 기하만으로 만들어지지
+ * 않는다 — 무슨 명령 목록을 지어낼 것인가에 대한 답이 이 함수에는 없기 때문이다. 경로를
+ * 만드는 입구는 카탈로그가 명령 목록을 들고 오는 자리이며 같은 모듈에 선다(M6). 입구가
+ * 여전히 이 모듈 하나인 것이 요점이고(불변식 J9), 인자를 넷으로 좁혀 두면 "씨앗 경로로
+ * 아무거나 만들어 두자" 는 우회로가 타입에서 막힌다.
  */
-export function newElement(id: string, kind: CanvasElementKind, count: number): CanvasElement {
+export function newElement(id: string, kind: CanvasPrimitiveKind, count: number): CanvasElement {
   const off = seedOffset(count);
   switch (kind) {
     case 'rect':
@@ -177,7 +183,9 @@ export function newElement(id: string, kind: CanvasElementKind, count: number): 
         // 선은 채우지 않으므로(열린 경로) 색만으로는 그려지지 않는다 — 두께를 함께 심는다.
         style: { stroke: SEED_COLOR, strokeWidth: SEED_STROKE_WIDTH },
       };
-    default:
+    // `default:` 가 아니라 이름으로 적는다 — 다섯 번째 원시형이 들어오면 컴파일러가 이
+    // 자리를 가리켜야 하고, `default:` 는 그 요소를 조용히 문구로 만들어 버린다.
+    case 'text':
       return {
         id,
         kind,
@@ -209,7 +217,7 @@ export function newElement(id: string, kind: CanvasElementKind, count: number): 
  */
 export function appendElement(
   elements: readonly CanvasElement[],
-  kind: CanvasElementKind,
+  kind: CanvasPrimitiveKind,
 ): { next: CanvasElement[]; created: CanvasElement } {
   const created = newElement(nextElementId(elements), kind, elements.length);
   return { next: [...elements, created], created };

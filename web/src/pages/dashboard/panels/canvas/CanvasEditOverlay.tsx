@@ -153,7 +153,7 @@ import {
   DEFAULT_FONT_SIZE,
   type BoxGeometry,
   type CanvasElement,
-  type CanvasElementKind,
+  type CanvasPrimitiveKind,
   type Geometry,
   type LineGeometry,
 } from './canvasConfig';
@@ -493,6 +493,10 @@ function resolveMeasuredWidth(width: number | undefined): number {
  * `drawElement.TEXT_BASELINE` 이 `'middle'` 이므로 기준점 y 는 상자의 **세로 중심**이고,
  * 따라서 상단은 `기준점 y - fontSize/2` 다. 상단으로 착각하면 외곽선이 글자 아래로 반 줄
  * 내려가 앉는다. `canvasHitTest` 의 문구 상자와 같은 식이어야 **보이는 대로 잡힌다**.
+ *
+ * **경로는 rect 와 같은 상자다.** 종전의 `default:` 는 경로의 상자 기하를 문구 기준점으로
+ * 읽어(구조적으로 대입된다 — 가정 A6) 외곽선을 실측 글자 폭 0 · 기본 글자 크기의 작은
+ * 상자로 그렸다. 컴파일러가 울지 않던 자리이므로 갈래를 이름으로 적는다.
  */
 function outlineBox(
   el: CanvasElement,
@@ -501,7 +505,8 @@ function outlineBox(
 ): PxBox {
   switch (el.kind) {
     case 'rect':
-    case 'ellipse': {
+    case 'ellipse':
+    case 'path': {
       const box = projectBox(el.geometry, proj);
       return normalizeBox(box);
     }
@@ -514,7 +519,7 @@ function outlineBox(
         h: line.y2 - line.y1,
       });
     }
-    default: {
+    case 'text': {
       const width = resolveMeasuredWidth(textWidths[el.id]);
       const fontSize = resolveFontSize(el.style.fontSize);
       const origin = resolveTextOrigin(
@@ -548,6 +553,11 @@ function normalizeBox(box: PxBox): PxBox {
  * 두 `null` 은 **일어나지 않는 조합**이다(사각형에 선 끝점 핸들 따위). 핸들은 언제나
  * `handlesFor(el.kind)` 가 낸 집합에서만 렌더되므로 이 자리에 닿을 길이 없지만, 닿았다면
  * 어긋난 기하를 쓰느니 아무것도 하지 않는 편이 낫다. 지우지 않고 남겨 둔다.
+ *
+ * **이 함수가 상자 조작의 실제 관문이다.** 종류 목록에서 경로를 빠뜨리면 `handlesFor` 가
+ * 여덟 손잡이를 내주고 `handlePositions` 가 자리까지 잡아 주는데도 **드래그가 시작되지
+ * 않는다** — 손잡이가 보이는데 잡히지 않는 도형이 되고, 그 증상은 화면에서만 드러난다.
+ * 앞선 두 함수를 고치고 이 한 줄을 빠뜨리면 크기 조절이 그대로 죽어 있다.
  */
 function handleDragState(
   el: CanvasElement,
@@ -562,7 +572,7 @@ function handleDragState(
     if (el.kind !== 'line') return null;
     return { ...common, mode: 'line', nodeId: el.id, endpoint: handle, geometry: el.geometry };
   }
-  if (el.kind !== 'rect' && el.kind !== 'ellipse') return null;
+  if (el.kind !== 'rect' && el.kind !== 'ellipse' && el.kind !== 'path') return null;
   return { ...common, mode: 'box', nodeId: el.id, handle, geometry: el.geometry };
 }
 
@@ -1075,7 +1085,7 @@ export default function CanvasEditOverlay({
    * 자리는 정하지 않는다. 씨앗 기하와 계단 오프셋이 `appendElement` 안에 있으므로 연속으로
    * 놓아도 같은 자리에 겹쳐 쌓이지 않고, 그 규칙은 어느 버튼을 눌렀든 같다.
    */
-  const placeFromPalette = (kind: CanvasElementKind): void => {
+  const placeFromPalette = (kind: CanvasPrimitiveKind): void => {
     const { next, created } = appendElement(elements, kind);
     onElementsChange(next);
     setSelection(new Set([created.id]));

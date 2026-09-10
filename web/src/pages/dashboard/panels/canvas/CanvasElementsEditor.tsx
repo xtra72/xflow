@@ -74,6 +74,7 @@ import {
   type BoxGeometry,
   type CanvasElement,
   type CanvasElementKind,
+  type CanvasPrimitiveKind,
   type ElementAlign,
   type ElementFontWeight,
   type ElementStyle,
@@ -95,18 +96,34 @@ import CanvasRuleTableEditor from './CanvasRuleTableEditor';
 
 // --- 상수 ---------------------------------------------------------------
 
-/** 도형 원시형 4종. 표시 순서는 §명세의 나열 순서를 따른다. */
-const ELEMENT_KINDS: readonly CanvasElementKind[] = ['rect', 'ellipse', 'line', 'text'];
+/**
+ * **종류 바꾸기가 내는 선택지 4종.** 표시 순서는 §명세의 나열 순서를 따른다.
+ *
+ * 경로가 여기 없는 것은 008 REQ-07 의 금지 조항이다 — 사각형을 경로로 바꾸려면 어떤 명령
+ * 목록을 지어낼 것인가에 대한 답이 없다. 원소 타입이 `CanvasPrimitiveKind` 라 그 금지가
+ * 배열 한 줄로 우연히 풀리지 않는다.
+ *
+ * 반대 방향은 열려 있다: 경로 요소의 행에도 이 선택지 넷이 그대로 서고, 지금 종류를
+ * 말하는 칸이 하나 더 붙는다(아래 `KIND_LABEL_KEY` · 종류 `select`).
+ */
+const ELEMENT_KINDS: readonly CanvasPrimitiveKind[] = ['rect', 'ellipse', 'line', 'text'];
 
 /** 이징 4종. */
 const TWEEN_EASINGS: readonly TweenEasing[] = ['linear', 'ease-in', 'ease-out', 'ease-in-out'];
 
-/** 종류 라벨 키. 리터럴 맵으로 두어야 어떤 키가 쓰이는지 검색으로 확인된다. */
+/**
+ * 종류 라벨 키. 리터럴 맵으로 두어야 어떤 키가 쓰이는지 검색으로 확인된다.
+ *
+ * **이 표는 `ELEMENT_KINDS` 보다 넓다** — 선택지는 넷이지만 이름을 말해야 하는 종류는
+ * 다섯이다. 경로 요소의 행이 제 이름을 잃으면 사용자는 목록에서 그 줄이 무엇인지 알
+ * 방법이 없고, 종류 칸은 첫 선택지(사각형)를 보여 **거짓말을 한다.**
+ */
 const KIND_LABEL_KEY: Record<CanvasElementKind, string> = {
   rect: 'dashboard.canvas.elements.kindRect',
   ellipse: 'dashboard.canvas.elements.kindEllipse',
   line: 'dashboard.canvas.elements.kindLine',
   text: 'dashboard.canvas.elements.kindText',
+  path: 'dashboard.canvas.elements.kindPath',
 };
 
 // --- 요소 카드의 네 갈래(탭) ---------------------------------------------
@@ -348,14 +365,35 @@ function toPointGeometry(g: Geometry): PointGeometry {
 }
 
 /**
+ * 종류를 넘어 살아남는 필드만 남긴다 — 기하와 `kind`, 그리고 **경로 전용 자료**를 뺀다.
+ *
+ * 명령 목록과 `catalog_id` 를 떨구는 것에 뜻이 있다. `...rest` 로 통째로 퍼 올리면 그 둘이
+ * 사각형 요소에 얹혀 config 로 흘러간다 — 타입은 여분 필드를 막지 못하고(전개는 초과
+ * 속성 검사를 지나지 않는다), 파서는 다음에 읽을 때 조용히 버리므로 **아무도 모르는 채로
+ * snapshot 바이트만 먹는다.** 경로 하나가 150~500B 이고 그 예산을 대시보드 전체가 나눠
+ * 쓰는 이상, 조용히 실려 다니는 자료를 남기지 않는다.
+ */
+function carriedFields(el: CanvasElement): Omit<CanvasElement, 'kind' | 'geometry' | 'path' | 'catalog_id'> {
+  if (el.kind === 'path') {
+    const { geometry: _g, kind: _k, path: _path, catalog_id: _catalogId, ...rest } = el;
+    return rest;
+  }
+  const { geometry: _g, kind: _k, ...rest } = el;
+  return rest;
+}
+
+/**
  * 요소의 종류를 바꾼다. **스타일 · 문구 · 바인딩 · 규칙은 그대로 남는다.**
  *
  * `CanvasElement` 는 `kind` 로 판별하는 합집합이라, 동적으로 받은 종류로 요소를 만들려면
  * 객체 리터럴 하나가 아니라 switch 가 필요하다 — 리터럴 하나로는 `kind` 와 `geometry` 의
  * 짝을 컴파일러가 확인할 수 없다.
+ *
+ * **받는 것은 원시형 넷뿐이다.** 경로로 바꾸는 길은 없다(REQ-07). `default:` 대신 갈래를
+ * 이름으로 적어 두면 다섯 번째 원시형이 들어올 때 컴파일러가 이 자리를 가리킨다.
  */
-function withKind(el: CanvasElement, kind: CanvasElementKind): CanvasElement {
-  const { geometry: _dropped, kind: _prevKind, ...rest } = el;
+function withKind(el: CanvasElement, kind: CanvasPrimitiveKind): CanvasElement {
+  const rest = carriedFields(el);
   switch (kind) {
     case 'rect':
       return { ...rest, kind, geometry: toBoxGeometry(el.geometry) };
@@ -363,7 +401,7 @@ function withKind(el: CanvasElement, kind: CanvasElementKind): CanvasElement {
       return { ...rest, kind, geometry: toBoxGeometry(el.geometry) };
     case 'line':
       return { ...rest, kind, geometry: toLineGeometry(el.geometry) };
-    default:
+    case 'text':
       return { ...rest, kind, geometry: toPointGeometry(el.geometry) };
   }
 }
@@ -1151,7 +1189,12 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
 
                               크기가 위치보다 먼저 오는 것은 참고 화면의 차례다: 얼마만큼인지를
                               정한 다음 어디인지를 정한다. */}
-                          {(el.kind === 'rect' || el.kind === 'ellipse') && (
+                          {/* 경로가 상자 갈래에 붙는 것이 008 이 이 절에 한 전부다. 경로의
+                              기하는 rect 와 **같은 상자**이므로 같은 여섯 칸이 선다. 빠뜨리면
+                              경로 행에는 기하 칸이 **하나도 없고**(어느 조건에도 걸리지
+                              않는다), 그러면 캔버스 밖으로 나간 경로를 수치로 되찾을 길이
+                              사라진다 — 이 목록이 마지막 회수 경로다. */}
+                          {(el.kind === 'rect' || el.kind === 'ellipse' || el.kind === 'path') && (
                             <>
                               <FieldGroup
                                 label={t('dashboard.canvas.elements.sizeLabel')}
@@ -1241,11 +1284,21 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                               하며, 탭으로 갈라도 그 경로는 그대로다. 머리줄이 아닌 것도 그대로다. */}
                           <select
                             value={el.kind}
-                            onChange={(e) => replaceAt(idx, withKind(el, e.target.value as CanvasElementKind))}
+                            onChange={(e) => replaceAt(idx, withKind(el, e.target.value as CanvasPrimitiveKind))}
                             aria-label={withIndex(t('dashboard.canvas.elements.kindAria'), idx)}
                             data-testid={`canvas-element-kind-${idx}`}
                             className={cn(INPUT_CLASS, 'shrink-0')}
                           >
+                            {/* 지금 종류가 **바꿀 수 있는 넷 밖**이면(경로) 그 이름을 말하는
+                                칸을 하나 더 세운다. 없으면 `select` 의 값이 어느 `option`
+                                과도 맞지 않아 브라우저가 첫 칸(사각형)을 보여 주고, 그것은
+                                "이 줄은 사각형이다" 라는 거짓말이다. 고를 수는 없게 둔다 —
+                                경로로 **바꾸는** 길은 없기 때문이다(REQ-07). */}
+                            {!(ELEMENT_KINDS as readonly string[]).includes(el.kind) && (
+                              <option value={el.kind} disabled>
+                                {t(KIND_LABEL_KEY[el.kind])}
+                              </option>
+                            )}
                             {ELEMENT_KINDS.map((k) => (
                               <option key={k} value={k}>
                                 {t(KIND_LABEL_KEY[k])}

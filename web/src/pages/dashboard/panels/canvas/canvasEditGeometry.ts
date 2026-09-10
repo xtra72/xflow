@@ -237,17 +237,24 @@ export function handleRole(id: CanvasHandleId): CanvasHandleRole {
 /**
  * 종류별 핸들 집합.
  *
- * rect·ellipse 는 8개(모서리 4 + 변 4), line 은 끝점 2개, **text 는 글자 크기 하나뿐이며
- * 박스 핸들이 없다**. 이 비대칭은 결함이 아니라 명세다(REQ-03).
+ * rect·ellipse·**path** 는 8개(모서리 4 + 변 4), line 은 끝점 2개, **text 는 글자 크기
+ * 하나뿐이며 박스 핸들이 없다**. 이 비대칭은 결함이 아니라 명세다(REQ-03).
+ *
+ * **경로가 상자 갈래에 붙는 것이 008 이 이 함수에 한 전부다.** 종전의 `default:` 는 경로를
+ * 문구로 읽어 글자 크기 핸들 **하나**를 돌려주었고, 컴파일러는 울지 않았다 — 인자가 `kind`
+ * 하나뿐이라 기하 형상이 검사에 참여하지 않기 때문이다. 그래서 갈래를 이름으로 적는다:
+ * `default:` 를 `case 'text':` 로 펴 두면 여섯 번째 종류가 들어올 때 컴파일러가 이 자리를
+ * 가리킨다.
  */
 export function handlesFor(kind: CanvasElementKind): readonly CanvasHandleId[] {
   switch (kind) {
     case 'rect':
     case 'ellipse':
+    case 'path':
       return BOX_HANDLE_IDS;
     case 'line':
       return LINE_HANDLE_IDS;
-    default:
+    case 'text':
       return TEXT_HANDLE_IDS;
   }
 }
@@ -268,8 +275,12 @@ export function handlePositions(
   opts: HandleLayoutOptions = {},
 ): CanvasHandle[] {
   switch (el.kind) {
+    // 경로는 rect 와 **같은 상자 기하**를 가지므로 같은 자리에 같은 여덟 손잡이가 선다.
+    // 종전의 `default:` 는 상자 기하를 문구 기준점으로 읽어(구조적으로 대입된다 — 가정
+    // A6) 손잡이 하나를 엉뚱한 곳에 앉혔고, 그 자리도 컴파일러가 울지 않던 곳이다.
     case 'rect':
-    case 'ellipse': {
+    case 'ellipse':
+    case 'path': {
       const box = normalizePxBox(projectBox(el.geometry, proj));
       return BOX_HANDLE_IDS.map((id): CanvasHandle => {
         const [fx, fy] = BOX_HANDLE_FACTORS[id];
@@ -287,7 +298,7 @@ export function handlePositions(
         { id: 'p2', role: handleRole('p2'), point: { x: line.x2, y: line.y2 } },
       ];
     }
-    default: {
+    case 'text': {
       const fontSize = clampCanvasFontSize(el.style.fontSize ?? DEFAULT_FONT_SIZE);
       const width = Math.max(0, finite(opts.measuredWidth ?? 0));
       const origin = resolveTextOrigin(
@@ -552,13 +563,17 @@ export function patchNodeGeometry(
         if ('x1' in geometry) return el;
         return { ...el, geometry: writablePoint(geometry) };
       }
-      // 경로는 rect 와 **같은 상자 기하**를 갖지만 이 자리는 아직 그것을 쓰지 않는다 —
-      // 상자 쓰기를 붙이는 것은 **M5 의 몫이다.** 그때까지 경로는 끌리지도 크기가 바뀌지도
-      // 않는다. `default:` 를 갈래 둘로 편 것이 이 변경의 절반이다: 종전의 `default:` 는
-      // 새 종류를 **문구 요소로 읽어** 조용히 삼켰고, 갈래를 이름으로 적어 두면 여섯 번째
-      // 종류가 들어올 때 컴파일러가 이 자리를 다시 가리킨다.
-      case 'path':
-        return el;
+      // 경로는 rect 와 **같은 상자 기하**를 쓴다. 그래서 8핸들 크기 조절 · 정렬 · 붙임 ·
+      // 무리 이동 · 방향키 미세 이동이 한 줄도 고치지 않고 경로에 걸린다 — 그 전부가
+      // 이 통로 하나를 지나기 때문이다. 갈래를 rect 에 합치지 않고 이름으로 적어 둔 것은
+      // 여섯 번째 종류가 들어올 때 컴파일러가 이 자리를 다시 가리키게 하려는 것이다.
+      //
+      // **명령 목록(`el.path`)은 여기를 지나지 않는다**(불변식 J2). 이 통로가 쓰는 것은
+      // 요소의 `geometry` 뿐이며, 경로 명령을 기하 쓰기로 넣는 설계는 그 불변식을 깬다.
+      case 'path': {
+        if (!('w' in geometry)) return el;
+        return { ...el, geometry: writableBox(geometry) };
+      }
     }
   });
 }
