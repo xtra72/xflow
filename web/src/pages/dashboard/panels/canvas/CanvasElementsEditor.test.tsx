@@ -1206,6 +1206,10 @@ function makePaintRecorder(): PaintRecorder {
     ellipse() {},
     moveTo() {},
     lineTo() {},
+    // SPEC-CANVAS-008 이 더한 멤버 둘. 여기서 묻는 것은 여전히 "칠해졌는가" 하나이므로
+    // 기록하지 않는다 — 명령·인자 검사는 `drawElement.path.test.ts` 의 몫이다.
+    closePath() {},
+    bezierCurveTo() {},
     stroke() {
       painted.push('stroke');
     },

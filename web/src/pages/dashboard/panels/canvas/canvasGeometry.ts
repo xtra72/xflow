@@ -36,6 +36,7 @@
 // @spec SPEC-CANVAS-001
 
 import { MAX_CANVAS_DIMENSION, MIN_CANVAS_DIMENSION } from './canvasConfig';
+import { PATH_LOCAL_EXTENT, type PathCommand } from './shapes/pathTypes';
 import type {
   BoxGeometry,
   CanvasElement,
@@ -118,6 +119,17 @@ export interface PxPoint {
   x: number;
   y: number;
 }
+
+/**
+ * 투영된 경로 명령(CSS px). `PathCommand` 와 **형상은 같고 단위가 다르다** —
+ * 저쪽은 요소 상자 로컬 정수이고 이쪽은 스테이지 px 다(`BoxGeometry` 와 `PxBox` 의 관계
+ * 그대로다). 이름을 갈라 두면 로컬 좌표를 그대로 `ctx` 에 넘기는 실수가 타입에서 걸린다.
+ */
+export type PxPathCommand =
+  | { c: 'M'; x: number; y: number }
+  | { c: 'L'; x: number; y: number }
+  | { c: 'C'; x1: number; y1: number; x2: number; y2: number; x: number; y: number }
+  | { c: 'Z' };
 
 /** `ctx.ellipse()` 인자 형태 — 중심 + 반지름. */
 export interface EllipseParams {
@@ -397,6 +409,62 @@ export function projectPoint(geo: PointGeometry, proj: CanvasProjection): PxPoin
   };
 }
 
+/**
+ * 경로 명령 목록을 **요소 상자 안의 스테이지 px** 로 투영한다(SPEC-CANVAS-008 REQ-01).
+ *
+ * `box` 는 `projectBox(el.geometry, proj)` 의 결과다 — **경로가 스테이지를 다시 재지
+ * 않는다.** 상자를 인자로 받는 것이 그 금지를 형상으로 만든다: 이 함수에는 `proj` 가 아예
+ * 없으므로 스테이지 축 길이를 볼 방법이 없다.
+ *
+ * `로컬 ÷ PATH_LOCAL_EXTENT × 상자 길이` 라는 나눗셈이 나타나는 자리는 **이 함수
+ * 하나여야 한다**(불변식 J3). 두 곳이 되면 렌더와 히트가 서로 다른 격자를 보게 되고,
+ * 그 어긋남은 화면에서만 드러난다.
+ *
+ * **소비자는 둘이다** — 렌더는 이 결과를 그대로 그리고, 히트는 이 결과를 평탄화해 훑는다
+ * (M4). 갈라지는 것은 마지막 한 걸음뿐이며 그 앞은 이 함수 하나다.
+ *
+ * 인자가 **둘뿐인 것이 이 시그니처의 요구다.** 셋째 인자(스타일 · 배율 · 표시 상태)를
+ * 받는 순간 경로 투영이 표시 상태를 보게 되고, 그러면 "그린 자리" 와 "잡히는 자리" 가
+ * 서로 다른 입력에서 나온다. 기본값 있는 셋째 인자는 `Function.length` 를 속이므로
+ * 시험은 **매개변수 목록의 형상**으로 판정한다(시험 규율 D9).
+ *
+ * 음수 크기 상자(001 이 읽기 경로의 견고성으로 허용한다)는 그대로 통과한다 — 좌표가
+ * 뒤집힐 뿐 NaN 이 되지 않는다. 로컬 좌표를 격자 안으로 clamp 하지 않는다(가정 A5).
+ */
+export function projectPathPoints(
+  path: readonly PathCommand[],
+  box: PxBox,
+): readonly PxPathCommand[] {
+  const originX = finite(box.x);
+  const originY = finite(box.y);
+  // 상수는 양수 리터럴이라 0 으로 나눌 일이 없다.
+  const scaleX = finite(box.w) / PATH_LOCAL_EXTENT;
+  const scaleY = finite(box.h) / PATH_LOCAL_EXTENT;
+  const px = (local: number): number => originX + finite(local) * scaleX;
+  const py = (local: number): number => originY + finite(local) * scaleY;
+
+  return path.map((cmd): PxPathCommand => {
+    switch (cmd.c) {
+      case 'M':
+        return { c: 'M', x: px(cmd.x), y: py(cmd.y) };
+      case 'L':
+        return { c: 'L', x: px(cmd.x), y: py(cmd.y) };
+      case 'C':
+        return {
+          c: 'C',
+          x1: px(cmd.x1),
+          y1: py(cmd.y1),
+          x2: px(cmd.x2),
+          y2: py(cmd.y2),
+          x: px(cmd.x),
+          y: py(cmd.y),
+        };
+      case 'Z':
+        return { c: 'Z' };
+    }
+  });
+}
+
 // --- 역투영 -------------------------------------------------------------
 //
 // 역투영이 여기 있는 것과 `canvasHitTest` 가 금지한 "도형별 역산" 은 다른 것이다. 금지된
@@ -487,13 +555,20 @@ export function toCanvasTextAlign(align: ElementAlign): 'left' | 'center' | 'rig
 /**
  * 요소에 붙는 라벨의 기준점(REQ-02: 도형에도 라벨이 붙을 수 있다).
  *
- * rect/ellipse 는 중심, line 은 중점, text 는 자기 기준점이다. `kind` 로 좁히면 `geometry`
- * 도 함께 좁혀지므로 형상 검사나 캐스팅이 필요 없다(canvasConfig 의 판별 합집합 설계).
+ * rect/ellipse/path 는 상자의 중심, line 은 중점, text 는 자기 기준점이다. `kind` 로
+ * 좁히면 `geometry` 도 함께 좁혀지므로 형상 검사나 캐스팅이 필요 없다(canvasConfig 의
+ * 판별 합집합 설계).
+ *
+ * **경로가 상자 갈래에 붙는 것이 이 함수에 더해진 전부다.** 종전의 `default:` 는 상자
+ * 기하를 문구 기준점으로 읽어(구조적으로 대입된다 — 가정 A6) 라벨을 상자의 **좌상단**에
+ * 앉혔다. 컴파일러가 울지 않는 자리였고, 그래서 갈래를 이름으로 적는다: `default:` 를
+ * `case 'text':` 로 펴 두면 여섯 번째 종류가 들어올 때 컴파일러가 이 자리를 가리킨다.
  */
 export function labelAnchor(el: CanvasElement, proj: CanvasProjection): PxPoint {
   switch (el.kind) {
     case 'rect':
-    case 'ellipse': {
+    case 'ellipse':
+    case 'path': {
       const { cx, cy } = ellipseParams(projectBox(el.geometry, proj));
       return { x: cx, y: cy };
     }
@@ -501,7 +576,7 @@ export function labelAnchor(el: CanvasElement, proj: CanvasProjection): PxPoint 
       const line = projectLine(el.geometry, proj);
       return { x: (line.x1 + line.x2) / 2, y: (line.y1 + line.y2) / 2 };
     }
-    default:
+    case 'text':
       return projectPoint(el.geometry, proj);
   }
 }

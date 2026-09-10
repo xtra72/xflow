@@ -35,6 +35,7 @@ import {
   labelAnchor,
   projectBox,
   projectLine,
+  projectPathPoints,
   projectPoint,
   resolveTextOrigin,
   type BackingSize,
@@ -72,6 +73,36 @@ export interface DrawContext2D {
   ): void;
   moveTo(x: number, y: number): void;
   lineTo(x: number, y: number): void;
+  /**
+   * 지금 부분 경로를 닫는다(SPEC-CANVAS-008 REQ-01 — 더하는 둘 가운데 하나).
+   *
+   * **채움에는 없어도 되고 선에는 없으면 안 된다.** `fill()` 은 부분 경로를 암묵적으로
+   * 닫으므로 채운 별은 멀쩡해 보이지만, 마지막 정점에서 첫 정점으로 `lineTo` 로 돌아가면
+   * 그 자리는 **이음(join)이 아니라 두 끝점**이라 두께 2px 이상에서 뾰족한 꼭짓점에 홈이
+   * 파인다. 다각형 23종에도 걸리는 요구라 곡선 도형만의 문제가 아니다.
+   */
+  closePath(): void;
+  /**
+   * 3차 베지어 한 구간(같은 REQ-01 — 더하는 둘 가운데 둘).
+   *
+   * 카탈로그 30종 가운데 곡선을 요구하는 7종(둥근 사각형 · 문서 · 원통 · 말풍선 · 액터 ·
+   * 구름 · 곡선 화살표)이 이것 하나로 전부 적힌다. `quadraticCurveTo` 를 더하지 않는 것은
+   * 2차가 3차로 **정확히** 표현되기 때문이고(`c1 = p0 + 2/3(q−p0)`), `arcTo` 를 더하지
+   * 않는 것은 4분원이 `k ≈ 0.5523` 오프셋에서 최대 반경 오차 0.027% 로 근사되며 접선
+   * 기반 의미가 "모서리를 적는 두 번째 방법" 을 만들기 때문이다.
+   *
+   * **둘 다 동기다.** 값을 돌려주지도 기다리지도 않으므로 프레임을 예약하지 않고, 그래서
+   * 001 REQ-05 의 유휴 정지가 한 줄도 바뀌지 않는다 — 004 가 `drawImage` 를 기각한 근거가
+   * 경로에 옮겨 오지 않는 이유가 정확히 이것이다.
+   */
+  bezierCurveTo(
+    cp1x: number,
+    cp1y: number,
+    cp2x: number,
+    cp2y: number,
+    x: number,
+    y: number,
+  ): void;
   stroke(): void;
   fill(): void;
   fillText(text: string, x: number, y: number): void;
@@ -262,6 +293,33 @@ function drawMeasuredElement(
         ctx.moveTo(line.x1, line.y1);
         ctx.lineTo(line.x2, line.y2);
         // 선은 채우지 않는다 — 열린 경로의 fill 은 뜻이 없다.
+        paintStroke(ctx, style);
+        break;
+      }
+      case 'path': {
+        // 상자는 **한 번만** 잰다 — 투영은 `projectPathPoints` 의 입력이며, 경로가
+        // 스테이지를 다시 재는 자리는 없다(불변식 J3).
+        const box = projectBox(el.geometry, proj);
+        ctx.beginPath();
+        for (const cmd of projectPathPoints(el.path, box)) {
+          switch (cmd.c) {
+            case 'M':
+              ctx.moveTo(cmd.x, cmd.y);
+              break;
+            case 'L':
+              ctx.lineTo(cmd.x, cmd.y);
+              break;
+            case 'C':
+              ctx.bezierCurveTo(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.x, cmd.y);
+              break;
+            case 'Z':
+              ctx.closePath();
+              break;
+          }
+        }
+        // 색 없는 요소를 그리지 않는 규율도, 두께 0 을 선 없음으로 읽는 규율도 그대로
+        // 걸린다 — 이 둘은 **한 글자도 고치지 않는다**.
+        paintFill(ctx, style);
         paintStroke(ctx, style);
         break;
       }

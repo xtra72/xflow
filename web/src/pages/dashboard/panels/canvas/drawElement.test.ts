@@ -72,6 +72,14 @@ function makeRecorder(): Recorder {
     lineTo(x, y) {
       calls.push(['lineTo', x, y]);
     },
+    // SPEC-CANVAS-008 이 `DrawContext2D` 에 더한 멤버 둘. 스텁이 구조 인터페이스를
+    // 만족해야 하므로 함께 자란다 — 기존 단언은 한 줄도 바뀌지 않는다.
+    closePath() {
+      calls.push(['closePath']);
+    },
+    bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y) {
+      calls.push(['bezierCurveTo', cp1x, cp1y, cp2x, cp2y, x, y]);
+    },
     stroke() {
       calls.push(['stroke']);
     },
