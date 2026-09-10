@@ -359,3 +359,33 @@ export function resolveStyle(atoms: StyleAtoms, options: ResolveStyleOptions = {
 
   return { style, notes, hasOwnStyle, evenOdd };
 }
+
+/**
+ * 같은 갈래·같은 사유의 항목을 하나로 합친다. **개수는 더한다.**
+ *
+ * 순회 중에는 항목이 하나씩 발행되는 편이 싸다(합칠 자리를 찾느라 목록을 훑지 않는다).
+ * 합치는 일은 화면에 닿기 직전 한 번이면 되고, 그 자리를 여기 두는 것은 **항목을 만드는
+ * 층이 항목을 합치는 층과 같아야** 두 곳이 갈라지지 않기 때문이다.
+ *
+ * 발행 순서를 지킨다 — 같은 사유가 처음 나온 자리에 합계가 선다. 순서가 흔들리면 화면의
+ * 보고 줄 차례가 파일마다 달라지고, 그것은 시험이 잡기 어려운 잡음이다.
+ */
+export function mergeNotes(notes: readonly ImportNote[]): ImportNote[] {
+  const order: string[] = [];
+  const byKey = new Map<string, { kind: ImportNote['kind']; reason: ImportNoteReason; count: number }>();
+  for (const item of notes) {
+    if (item.count <= 0) continue;
+    const key = `${item.kind}:${item.reason}`;
+    const found = byKey.get(key);
+    if (found === undefined) {
+      order.push(key);
+      byKey.set(key, { kind: item.kind, reason: item.reason, count: item.count });
+    } else {
+      found.count += item.count;
+    }
+  }
+  return order.flatMap((key) => {
+    const found = byKey.get(key);
+    return found === undefined ? [] : [{ kind: found.kind, reason: found.reason, count: found.count }];
+  });
+}
