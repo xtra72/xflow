@@ -129,7 +129,22 @@ describe('종류 칸이 경로의 이름을 말한다 (AC-E10)', () => {
     // 라는 거짓말이며, 그것이 이 단언의 표적이다.
     expect(select.value).toBe('path');
     const current = [...select.options].find((o) => o.value === 'path');
-    expect(current?.textContent).toBe('dashboard.canvas.elements.kindPath');
+    // **M11 이 이름의 출처를 옮겼다.** 이 고정 입력은 `catalog_id: 'rightTriangle'` 을
+    // 들고 있고, spec.md §출처 기록은 그 값을 "요소 목록에서 이름을 보이는 데에만" 쓰라고
+    // 적는다("구름" vs 정체 모를 "경로"). M5 는 일반 이름(`kindPath`)을 쟀는데, 이 단언이
+    // 지키던 불변식은 **"칸이 서고 이름이 붙는다"** 이지 어떤 키에서 왔는가가 아니다.
+    // 그 불변식은 그대로 두고 출처만 카탈로그로 옮긴다 — 아래 두 단언이 함께 지킨다.
+    expect(current?.textContent).toBe('dashboard.canvas.edit.catalogNames.rightTriangle');
+    expect(current?.textContent).not.toBe('');
+  });
+
+  it('카탈로그에서 오지 않은 경로는 **일반 이름**으로 떨어진다 — 칸은 그대로 선다', () => {
+    setup([pathEl({ catalog_id: undefined })], 'style');
+    const select = screen.getByTestId('canvas-element-kind-0') as HTMLSelectElement;
+    expect(select.value).toBe('path');
+    expect([...select.options].find((o) => o.value === 'path')?.textContent).toBe(
+      'dashboard.canvas.elements.kindPath',
+    );
   });
 
   it('경로 칸은 **고를 수 없다** — 무엇으로부터 경로를 지어낼지에 답이 없다(REQ-07)', () => {

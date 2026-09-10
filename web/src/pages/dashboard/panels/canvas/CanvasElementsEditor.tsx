@@ -93,6 +93,7 @@ import {
 } from './canvasEditContext';
 import { withElementText } from './canvasElementFactory';
 import CanvasRuleTableEditor from './CanvasRuleTableEditor';
+import { findShape } from './shapes/shapeCatalog';
 
 // --- 상수 ---------------------------------------------------------------
 
@@ -125,6 +126,26 @@ const KIND_LABEL_KEY: Record<CanvasElementKind, string> = {
   text: 'dashboard.canvas.elements.kindText',
   path: 'dashboard.canvas.elements.kindPath',
 };
+
+/**
+ * 요소 한 개가 목록에서 쓸 종류 이름 — **카탈로그 이름이 앞선다**(SPEC-CANVAS-008 M11).
+ *
+ * `catalog_id` 는 "표시·감사용" 이고 그 값이 쓰이는 자리는 **여기 하나뿐**이다
+ * (spec.md §출처 기록은 남기되 렌더는 읽지 않는다 — "구름" vs 정체 모를 "경로"). 카탈로그
+ * 도형을 열 개 놓으면 목록의 열 줄이 전부 "경로" 라고만 말하고, 그때 사용자가 어느 줄이
+ * 어느 도형인지 아는 길은 하나씩 골라 캔버스에서 강조되는 것을 보는 것뿐이다.
+ *
+ * **렌더 경로는 이 함수를 부르지 않는다.** `catalog_id` 가 없거나(스크래치패드에서 놓은
+ * 것 · 손으로 적은 config) 카탈로그에 없는 id 여도 일반 이름으로 떨어질 뿐, 그림도 편집도
+ * 그대로다(REQ-02 — 그 값이 없어도 그림은 완전하다).
+ */
+function kindLabel(el: CanvasElement, t: TranslationFn): string {
+  if (el.kind === 'path') {
+    const shape = findShape(el.catalog_id);
+    if (shape !== undefined) return t(shape.nameKey);
+  }
+  return t(KIND_LABEL_KEY[el.kind]);
+}
 
 // --- 요소 카드의 네 갈래(탭) ---------------------------------------------
 //
@@ -1293,10 +1314,13 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                                 칸을 하나 더 세운다. 없으면 `select` 의 값이 어느 `option`
                                 과도 맞지 않아 브라우저가 첫 칸(사각형)을 보여 주고, 그것은
                                 "이 줄은 사각형이다" 라는 거짓말이다. 고를 수는 없게 둔다 —
-                                경로로 **바꾸는** 길은 없기 때문이다(REQ-07). */}
+                                경로로 **바꾸는** 길은 없기 때문이다(REQ-07).
+
+                                이름은 `kindLabel` 이 정한다 — 카탈로그에서 온 도형이면
+                                **그 도형의 이름**이고("구름"), 아니면 일반 이름이다("경로"). */}
                             {!(ELEMENT_KINDS as readonly string[]).includes(el.kind) && (
                               <option value={el.kind} disabled>
-                                {t(KIND_LABEL_KEY[el.kind])}
+                                {kindLabel(el, t)}
                               </option>
                             )}
                             {ELEMENT_KINDS.map((k) => (
