@@ -38,7 +38,11 @@ import {
   type StoreSourceConfig,
   type TsdbSourceConfig,
 } from '../charts/chartChannelTypes';
-import type { PathCommand } from './shapes/pathTypes';
+import {
+  DEFAULT_PATH,
+  MAX_PATH_COMMANDS,
+  type PathCommand,
+} from './shapes/pathTypes';
 
 // --- 기본값 상수 ---------------------------------------------------------
 
@@ -579,6 +583,89 @@ function parseTween(raw: unknown): TweenSpec | undefined {
   return { duration_ms: duration, easing };
 }
 
+/**
+ * 경로 로컬 좌표 하나. 유한하지 않으면 `null` — **그 명령을 버린다**는 신호다.
+ *
+ * 기하 좌표와 규율이 갈리는 유일한 지점이다. 기하는 손상 필드를 기본값으로 **채우지만**
+ * (요소가 화면에서 사라지지 않아야 하므로) 명령 하나의 좌표에는 채울 기본값이 없다 —
+ * 지어낸 좌표를 끼워 넣으면 윤곽이 엉뚱한 곳으로 튀어 사용자가 무엇을 고쳐야 할지 모른다.
+ * 그 명령만 빠지면 나머지 윤곽은 읽던 대로 이어진다.
+ *
+ * 반올림은 `coordinate()` 를 그대로 쓴다. 위 유한성 관문 때문에 폴백 인자에는 닿지
+ * 않지만, **반올림 규율이 적히는 자리를 둘로 만들지 않는 것**이 이 재사용의 요점이다.
+ */
+function localCoordinate(v: unknown): number | null {
+  if (!isFiniteNumber(v)) return null;
+  return coordinate(v, 0);
+}
+
+/**
+ * 경로 명령 1건. 성립하지 않으면 `null`(그 명령만 버린다).
+ *
+ * 모르는 명령 문자를 **버리는** 것이 규칙 행(`parseRuleRow`)의 미지 연산자 정책과 같다 —
+ * 조용히 다른 명령으로 바꿔 읽는 것보다 빠뜨리는 편이 안전하다.
+ */
+function parsePathCommand(raw: unknown): PathCommand | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  switch (r.c) {
+    case 'Z':
+      return { c: 'Z' };
+    case 'M':
+    case 'L': {
+      const x = localCoordinate(r.x);
+      const y = localCoordinate(r.y);
+      if (x === null || y === null) return null;
+      return { c: r.c, x, y };
+    }
+    case 'C': {
+      const x1 = localCoordinate(r.x1);
+      const y1 = localCoordinate(r.y1);
+      const x2 = localCoordinate(r.x2);
+      const y2 = localCoordinate(r.y2);
+      const x = localCoordinate(r.x);
+      const y = localCoordinate(r.y);
+      if (x1 === null || y1 === null || x2 === null || y2 === null || x === null || y === null) {
+        return null;
+      }
+      return { c: 'C', x1, y1, x2, y2, x, y };
+    }
+    default:
+      return null;
+  }
+}
+
+/** 씨앗 경로의 **사본**. 얼려 둔 원본을 흘려보내면 쓰는 쪽이 전역을 오염시킨다. */
+function seedPath(): PathCommand[] {
+  return DEFAULT_PATH.map((cmd) => ({ ...cmd }));
+}
+
+/**
+ * 경로 명령 목록. **예외를 던지지 않으며 요소를 버리지도 않는다**(REQ-07).
+ *
+ * 씨앗으로 떨어지는 경우 셋과 그 이유:
+ *   1. 배열이 아니다 — 읽을 것이 없다.
+ *   2. 유효 명령이 하나도 남지 않았다 — 그릴 것이 없어 요소가 화면에서 사라진다.
+ *   3. **첫 유효 명령이 `M` 이 아니다** — 앞에 `M(0,0)` 을 세우지 않는다. 세우면 저술한
+ *      적 없는 변이 하나 생겨 화면에 정체 모를 형상이 나오고, 사용자는 그것이 제 저술인지
+ *      파서가 지어낸 것인지 구분할 수 없다.
+ *
+ * 상한을 넘으면 **앞에서부터 상한까지만** 살린다(전부 버리면 도형이 사라진다). 세는 것은
+ * 살아남은 명령이므로, 손상된 거대 배열도 한 프레임을 삼키지 않는다.
+ */
+function parsePathCommands(raw: unknown): PathCommand[] {
+  if (!Array.isArray(raw)) return seedPath();
+  const out: PathCommand[] = [];
+  for (const item of raw) {
+    const cmd = parsePathCommand(item);
+    if (!cmd) continue;
+    out.push(cmd);
+    if (out.length >= MAX_PATH_COMMANDS) break;
+  }
+  if (out.length === 0) return seedPath();
+  return out[0]?.c === 'M' ? out : seedPath();
+}
+
 /** 요소 1건. 정체성(id · kind)이 성립하지 않으면 버린다(null). */
 function parseElement(raw: unknown): CanvasElement | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -588,7 +675,17 @@ function parseElement(raw: unknown): CanvasElement | null {
   if (id === undefined) return null;
 
   const kind = e.kind;
-  if (kind !== 'rect' && kind !== 'ellipse' && kind !== 'line' && kind !== 'text') return null;
+  // `'path'` 가 이 줄에 없으면 저장된 경로 요소는 **읽을 때 조용히 사라진다** — 예외도
+  // 경고도 없이 사용자의 저술이 없어지는, 008 에서 가장 나쁜 실패다(위험 R2).
+  if (
+    kind !== 'rect' &&
+    kind !== 'ellipse' &&
+    kind !== 'line' &&
+    kind !== 'text' &&
+    kind !== 'path'
+  ) {
+    return null;
+  }
 
   const decimals =
     isFiniteNumber(e.decimals) && e.decimals >= 0 ? Math.trunc(e.decimals) : undefined;
@@ -621,6 +718,19 @@ function parseElement(raw: unknown): CanvasElement | null {
       return { ...base, kind, geometry: parseBoxGeometry(e.geometry) };
     case 'line':
       return { ...base, kind, geometry: parseLineGeometry(e.geometry) };
+    case 'path': {
+      // `catalog_id` 는 **표시·감사용**이다. 렌더가 읽지 않으므로 결측이어도 그림은
+      // 완전하고(REQ-01), 카탈로그에 없는 id 여도 그대로 보존한다 — 값으로 저장한 이상
+      // "정의를 못 찾은 경로" 라는 실패 모드는 만들지 않는다.
+      const catalogId = optionalString(e.catalog_id);
+      return {
+        ...base,
+        kind,
+        geometry: parseBoxGeometry(e.geometry),
+        path: parsePathCommands(e.path),
+        ...(catalogId !== undefined ? { catalog_id: catalogId } : {}),
+      };
+    }
     default:
       return { ...base, kind, geometry: parsePointGeometry(e.geometry) };
   }
