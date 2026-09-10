@@ -158,6 +158,8 @@ import {
   type LineGeometry,
 } from './canvasConfig';
 import { appendElement, appendPathElement } from './canvasElementFactory';
+import { CanvasScratchpadDropContext, pointInRect } from './scratchpad/canvasScratchpadDrop';
+import { useScratchpadStore } from './scratchpad/scratchpadStore';
 import type { ShapeCatalogEntry } from './shapes/shapeCatalog';
 import {
   handlePositions,
@@ -278,6 +280,15 @@ interface MoveDrag extends DragCommon {
    * 않으며, **잡는 순간의 값**이라 드래그 도중에 다시 재지 않는다(`frame` 과 같은 규율).
    */
   anchor: CanvasBox;
+  /**
+   * 잡는 순간의 **드롭 존 클라이언트 상자**. 도크가 없으면(대시보드) `null` 이고 그때
+   * 놓임 판정은 아예 돌지 않는다(SPEC-CANVAS-008 REQ-03).
+   *
+   * **여기서 한 번만 잰다** — `frame` · `anchor` 와 같은 규율이다. 매 `pointermove` 마다
+   * `getBoundingClientRect()` 를 부르면 이동 한 번마다 강제 리플로가 하나 붙는다. 도크는
+   * 드래그 도중에 움직이지 않으므로 다시 잴 이유도 없다.
+   */
+  dropRect: DOMRect | null;
 }
 
 /** 박스 8핸들 드래그. 잡는 순간의 기하를 들고 매 프레임 **절대 포인터 자리**로 다시 잡는다. */
@@ -663,6 +674,27 @@ export default function CanvasEditOverlay({
   const dockHost = useCanvasEditDockHost();
 
   /**
+   * 드롭 존 노드. **자손이 올려 준다** — 도크는 이 층이 포털로 그리는 자식이므로, 자리를
+   * 내려보내는 `dockHost` 와 방향이 반대다(`canvasScratchpadDrop` 머리말). `setDropZone`
+   * 은 `useState` 가 주는 고정 참조라 콜백 ref 로 그대로 내려보낼 수 있다.
+   */
+  const [dropZone, setDropZone] = useState<HTMLElement | null>(null);
+
+  /** 끌던 손이 드롭 존 위에 있는가. **강조는 드롭 존 자신이 입는다**(REQ-07 · I23). */
+  const [dropActive, setDropActive] = useState(false);
+  /**
+   * 위 값의 거울. 매 `pointermove` 마다 `setState` 를 부르지 않으려는 것이다 — 한 드래그에서
+   * 실제로 바뀌는 횟수는 많아야 두어 번이고, 나머지는 전부 헛된 렌더 요청이 된다.
+   */
+  const dropActiveRef = useRef(false);
+
+  /**
+   * 서랍에 넣는 **한 함수**(불변식 J11). 액션만 고르므로 항목이 늘어도 이 층은 다시 그려
+   * 지지 않는다 — zustand 의 액션 참조는 고정이다.
+   */
+  const saveEntry = useScratchpadStore((s) => s.saveEntry);
+
+  /**
    * 키보드 설명문의 id. 한 화면에 캔버스 패널이 둘 이상 뜰 수 있으므로 고정 문자열을
    * 쓸 수 없다 — id 가 겹치면 `aria-describedby` 가 남의 설명을 가리킨다.
    */
@@ -938,6 +970,8 @@ export default function CanvasEditOverlay({
       // 테두리와 격자에 붙는 중심이 다른 상자에서 나오면 "보이는 것과 다른 곳에 붙는다"
       // 가 된다. 잡는 순간 한 번만 되돌리고 드래그 중에는 다시 재지 않는다(`frame` 규율).
       anchor: unprojectBox(outlineBox(anchorEl, projection, textWidths), projection),
+      // 드래그 도중에 다시 재지 않는다(위 `dropRect` 주석). 도크가 없으면 `null` 이다.
+      dropRect: dropZone?.getBoundingClientRect() ?? null,
     };
     // 포인터가 스테이지를 벗어나도 이벤트가 계속 오게 한다. jsdom 에는 없는 API 라
     // 존재를 확인하고 부른다(§품질 게이트).
@@ -977,6 +1011,16 @@ export default function CanvasEditOverlay({
     host.setPointerCapture?.(event.pointerId);
   };
 
+  /**
+   * 드롭 존 강조를 **바뀔 때만** 갈아 끼운다. 같은 값을 다시 넣으면 React 가 렌더를
+   * 건너뛰기는 하나, 그 전에 갱신을 예약하는 비용은 매 이동마다 든다(AC-E4 의 규율).
+   */
+  const setDropHighlight = (next: boolean): void => {
+    if (dropActiveRef.current === next) return;
+    dropActiveRef.current = next;
+    setDropActive(next);
+  };
+
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
     const drag = dragRef.current;
     if (drag === null || event.pointerId !== drag.pointerId) return;
@@ -985,6 +1029,12 @@ export default function CanvasEditOverlay({
       point: stagePoint(event.clientX, event.clientY, drag.frame),
       shift: event.shiftKey,
     };
+    // 손이 서랍 위에 있는가 — **클라이언트 좌표 containment** 다(불변식 J7). 잡는 순간에
+    // 재 둔 상자를 쓰므로 이동마다 다시 재지 않는다. 몸통 이동이 아닐 때는 강조하지
+    // 않는다: 손잡이로 크기를 조절하는 중에 서랍이 켜지면 화면이 거짓말을 한다.
+    if (drag.mode === 'move') {
+      setDropHighlight(pointInRect(drag.dropRect, event.clientX, event.clientY));
+    }
     // 한 프레임 사이에 이벤트가 열 번 와도 쓰기는 한 번이다(AC-E4).
     if (frameRef.current === null) frameRef.current = requestAnimationFrame(flush);
   };
@@ -994,11 +1044,63 @@ export default function CanvasEditOverlay({
     if (host.hasPointerCapture?.(pointerId)) host.releasePointerCapture(pointerId);
   };
 
+  /**
+   * 고른 것들의 **사본**을 서랍에 넣는다 — **저장 경로는 이 함수 하나뿐**이다(J11 · AC-06).
+   *
+   * 끌어 넣기와 단추가 같은 이 함수를 부르고, 고를 요소를 가리는 규칙(`selection`)도 하나다.
+   * 두 벌이 되면 "끌어 넣은 것과 단추로 넣은 것이 다르다" 가 생기며, 그 차이는 서랍을 열어
+   * 보기 전까지 드러나지 않는다.
+   *
+   * 배열을 인자로 받는 것은 끌어 넣기 때문이다 — 그쪽은 **되돌린 뒤의** 배열에서 떠야
+   * 서랍에 든 것과 캔버스에 남은 것이 같아진다. 선택은 지워진 요소의 id 를 들고 있을 수
+   * 있으므로(목록 편집기에서 지우면 그렇다) 순회는 배열 쪽을 돈다.
+   */
+  const saveSelectionToScratchpad = (source: readonly CanvasElement[]): void => {
+    saveEntry(source.filter((el) => selection.has(el.id)));
+  };
+
+  /**
+   * 서랍 위에서 손을 뗐다 — **복사이지 이동이 아니다**(REQ-03 · AC-05).
+   *
+   * 끌던 요소의 기하를 **드래그 시작값**(`drag.bases`)으로 되돌린다. 되돌리지 않으면
+   * 서랍에 넣었을 뿐인데 캔버스의 도형이 도크 쪽으로 밀려나 있다. 되돌림 쓰기도
+   * `patchNodeGeometry` 를 지난다 — 기하 쓰기 통로는 여전히 하나다(REQ-03 · 불변식 J2).
+   *
+   * 프레임 대기 중인 이동은 **흘리지 않고 버린다**. 어차피 되돌릴 값이므로 한 번 쓰고
+   * 되돌리면 config 쓰기가 헛되이 두 번이 된다(AC-E4).
+   */
+  const dropToScratchpad = (drag: MoveDrag): void => {
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+    dragRef.current = null;
+    pendingRef.current = null;
+    setDropHighlight(false);
+
+    const { elements: els, onElementsChange: emit } = latestRef.current;
+    let next: CanvasElement[] = [...els];
+    for (const base of drag.bases) {
+      next = patchNodeGeometry(next, base.nodeId, base.geometry);
+    }
+    saveSelectionToScratchpad(next);
+    emit(next);
+  };
+
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
     const drag = dragRef.current;
     if (drag === null || event.pointerId !== drag.pointerId) return;
     event.preventDefault();
     releaseCapture(event.currentTarget, event.pointerId);
+    // **놓임 판정은 여기다.** 오버레이가 누름에서 루트에 포인터를 잡으므로, 손이 도크 위에
+    // 있어도 이 사건은 여기로 온다 — 드롭 존에 처리자를 달면 한 번도 불리지 않는다(실측).
+    // 판정은 클라이언트 좌표 containment 이며 `projection` 도 `stage` 도 보지 않는다
+    // (불변식 J7 · AC-E7). 도크가 없으면 `dropRect` 가 `null` 이라 이 갈래는 아예 돌지 않는다.
+    if (drag.mode === 'move' && pointInRect(drag.dropRect, event.clientX, event.clientY)) {
+      dropToScratchpad(drag);
+      return;
+    }
+    setDropHighlight(false);
     finishDrag({
       point: stagePoint(event.clientX, event.clientY, drag.frame),
       shift: event.shiftKey,
@@ -1009,7 +1111,9 @@ export default function CanvasEditOverlay({
     const drag = dragRef.current;
     if (drag === null || event.pointerId !== drag.pointerId) return;
     releaseCapture(event.currentTarget, event.pointerId);
-    // 취소는 좌표를 주지 않는다 — **마지막 유효 위치**를 그대로 확정한다.
+    setDropHighlight(false);
+    // 취소는 좌표를 주지 않는다 — **마지막 유효 위치**를 그대로 확정한다. 서랍에도 넣지
+    // 않는다: 브라우저·OS 가 끊은 몸짓은 "여기에 놓았다" 는 뜻이 아니다.
     finishDrag(null);
   };
 
@@ -1394,23 +1498,33 @@ export default function CanvasEditOverlay({
           위로 되돌아올 길을 남기지 않는 것이 "설정에서만 쓴다" 는 결정이다. */}
       {dockHost !== null &&
         createPortal(
-          <CanvasEditDockBody
-            onPlace={placeFromPalette}
-            onPlaceShape={placeFromCatalog}
-            snapToGrid={snapToGrid}
-            onSnapToGridChange={setSnapToGrid}
-            gridStep={gridStep}
-            onGridStepChange={setGridStep}
-            zoom={workspaceZoom}
-            onZoomChange={setWorkspaceZoom}
-            // 자투리 고지의 근거 — 간격이 이 두 축을 나누어떨어뜨리는가. 투영이 이미 들고
-            // 있는 그 크기이므로 새 측정원이 되지 않는다(위험 R1).
-            canvas={projection.canvas}
-            canAlign={canAlign}
-            canOrder={canOrder}
-            onAlign={applyAlign}
-            onOrder={applyZOrder}
-          />,
+          // 드롭 존 등록 채널을 **포털 안쪽**에 연다. 포털은 DOM 상으로만 패널 밖이고
+          // React 트리 상으로는 이 층의 자식이므로 컨텍스트가 그대로 내려간다 — 도크가
+          // 선택 컨텍스트를 이미 그렇게 받고 있다.
+          <CanvasScratchpadDropContext value={setDropZone}>
+            <CanvasEditDockBody
+              onPlace={placeFromPalette}
+              onPlaceShape={placeFromCatalog}
+              snapToGrid={snapToGrid}
+              onSnapToGridChange={setSnapToGrid}
+              gridStep={gridStep}
+              onGridStepChange={setGridStep}
+              zoom={workspaceZoom}
+              onZoomChange={setWorkspaceZoom}
+              // 자투리 고지의 근거 — 간격이 이 두 축을 나누어떨어뜨리는가. 투영이 이미 들고
+              // 있는 그 크기이므로 새 측정원이 되지 않는다(위험 R1).
+              canvas={projection.canvas}
+              canAlign={canAlign}
+              canOrder={canOrder}
+              onAlign={applyAlign}
+              onOrder={applyZOrder}
+              // 끌어 넣기와 **같은 함수**다(J11). 단추 쪽에는 되돌릴 기하가 없으므로 지금
+              // 배열에서 그대로 뜬다 — 뒷줄 하나가 도는지 마는지만 다르다.
+              onScratchpadSave={() => saveSelectionToScratchpad(elements)}
+              canScratchpadSave={selection.size > 0}
+              scratchpadDropActive={dropActive}
+            />
+          </CanvasScratchpadDropContext>,
           dockHost,
         )}
       {elements.map((el) => {

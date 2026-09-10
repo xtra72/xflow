@@ -72,6 +72,7 @@ import {
   type AlignMode,
 } from './canvasEditArrange';
 import { CanvasEditDockHostContext } from './canvasEditDockHost';
+import { CanvasScratchpad } from './scratchpad/CanvasScratchpad';
 import { CanvasPaletteGroup, CanvasShapeCatalog } from './shapes/CanvasShapeCatalog';
 import { usePaletteCollapse } from './shapes/paletteGroups';
 import type { ShapeCatalogEntry } from './shapes/shapeCatalog';
@@ -325,6 +326,18 @@ export interface CanvasEditDockBodyProps {
   onAlign: (axis: AlignAxis, mode: AlignMode) => void;
   /** 참이면 맨 앞으로, 거짓이면 맨 뒤로. */
   onOrder: (toFront: boolean) => void;
+  /**
+   * 고른 것을 스크래치패드에 넣는다 — **끌어 넣기와 같은 함수**다(불변식 J11).
+   *
+   * 이 컴포넌트가 저장 자체를 하지 않는 것에 뜻이 있다: 저장할 요소는 오버레이가 든
+   * 선택과 배열에서 나오고, 끌어 넣기의 되돌림도 오버레이의 드래그 상태를 요구한다.
+   * 두 경로가 만나는 자리를 여기에 두면 도크가 상태를 갖게 된다(이 파일의 규율에 반한다).
+   */
+  onScratchpadSave: () => void;
+  /** 고른 것이 있는가 — 없으면 저장 단추를 끈다(REQ-03). */
+  canScratchpadSave: boolean;
+  /** 끌던 손이 지금 드롭 존 위에 있는가. 판정은 오버레이가 한다(불변식 J7). */
+  scratchpadDropActive: boolean;
 }
 
 /**
@@ -350,6 +363,9 @@ export function CanvasEditDockBody({
   canOrder,
   onAlign,
   onOrder,
+  onScratchpadSave,
+  canScratchpadSave,
+  scratchpadDropActive,
 }: CanvasEditDockBodyProps): React.ReactElement {
   const { t } = useTranslation();
   // 묶음 넷의 접힘 상태. 기기 지역에 남되 읽지 못해도 기능이 성립한다(REQ-06).
@@ -362,6 +378,7 @@ export function CanvasEditDockBody({
   const orderId = useId();
   const suggestId = useId();
   const partialId = useId();
+  const scratchpadId = useId();
 
   /** 지금 간격이 캔버스 두 축을 나누어떨어뜨리지 못하는가 — 마지막 칸이 반 칸이 된다. */
   const partialCell = !gridDividesCanvas(gridStep, canvas);
@@ -588,6 +605,20 @@ export function CanvasEditDockBody({
           <span>{t('dashboard.canvas.edit.sendToBack')}</span>
         </button>
       </section>
+
+      {/* 스크래치패드 — **도크의 맨 끝**이다(SPEC-CANVAS-008 REQ-03).
+
+          뜻으로는 도형 절 옆에 서야 한다(카탈로그가 "우리가 준 재료" 라면 서랍은 "당신이
+          만든 재료" 다). 그런데 이 절은 드롭 존과 목록을 함께 들어 새 절 가운데 가장 키가
+          크고, 도크는 폭 `w-44` 의 세로 스크롤 상자다 — 가운데에 두면 격자 · 정렬 · 순서가
+          한꺼번에 스크롤 아래로 밀린다. M7 이 카탈로그 묶음 셋을 기본 접힘으로 둔 것과 같은
+          판단이며, 덤으로 위 다섯 절의 자리가 이 변경 전과 **한 줄도 달라지지 않는다**. */}
+      <CanvasScratchpad
+        titleId={scratchpadId}
+        canSave={canScratchpadSave}
+        onSave={onScratchpadSave}
+        dropActive={scratchpadDropActive}
+      />
     </div>
   );
 }
