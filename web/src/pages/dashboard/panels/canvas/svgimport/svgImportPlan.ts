@@ -1,4 +1,4 @@
-// 가져오기 계획 — viewBox · 상자 · 로컬 정규화 (SPEC-CANVAS-007 M6).
+// 가져오기 계획 — viewBox · 상자 · 로컬 정규화 · 분할 · 상한 (SPEC-CANVAS-007 M6 · M7).
 //
 // **`viewBox` 를 축마다 독립으로 로컬 격자에 앉힌다.** 그러면 그림이 일그러진다 —
 // **요소 상자의 종횡비를 문서의 종횡비로 정하지 않는다면.** 그래서 정한다: 가져온 그림의
@@ -33,7 +33,11 @@
 // 무리 전체에 한 번만 더해지는 것(REQ-06)도 이 결정의 귀결이다 — 상자가 하나이므로
 // 요소마다 더할 자리가 애초에 없다.
 //
-// @spec SPEC-CANVAS-007 REQ-02 · REQ-03 · REQ-05 · REQ-06 · AC-05 · AC-E8
+// **상한 셋은 서로 다른 층을 죄지만 함께 정해진 수다.** 요소 수만 죄면 64개가 전부 256
+// 명령일 때 16,384 명령이 되어 예산을 통째로 먹는다. 그래서 **명령 총수를 함께** 죈다.
+// 넘으면 **거절이다 — 앞부분만 가져오지 않는다**(§결정 7).
+//
+// @spec SPEC-CANVAS-007 REQ-02 · REQ-03 · REQ-05 · REQ-06 · AC-05 · AC-06 · AC-E8
 
 import {
   coordinate,
@@ -42,16 +46,25 @@ import {
   type CanvasSize,
   type ElementStyle,
 } from '../canvasConfig';
-import { PATH_LOCAL_EXTENT, type PathCommand } from '../shapes/pathTypes';
+import { MAX_PATH_COMMANDS, PATH_LOCAL_EXTENT, type PathCommand } from '../shapes/pathTypes';
 
 import { readSvgDocument, type SvgDocumentReader, type ViewBox } from './svgDocument';
 import {
+  MAX_IMPORT_COMMANDS,
+  MAX_IMPORT_ELEMENTS,
   MAX_IMPORT_FILE_BYTES,
   type ImportNote,
   type ImportReport,
   type ImportRefusal,
   type ImportedShape,
 } from './svgImportTypes';
+import {
+  applyEvenOddWinding,
+  commandBounds,
+  splitByCommandLimit,
+  unionBounds,
+  type Bounds,
+} from './svgImportSplit';
 import { mergeNotes } from './svgStyle';
 
 /**
@@ -83,70 +96,17 @@ export type SvgImportPlan =
     }
   | { readonly ok: false; readonly refusal: ImportRefusal };
 
-// --- 바운딩 박스 --------------------------------------------------------
+// --- 바운딩 박스 ---------------------------------------------------------
 
-interface Bounds {
-  minX: number;
-  minY: number;
-  maxX: number;
-  maxY: number;
-}
-
-/**
- * 명령 목록의 바운딩 박스 — **제어점까지 함께 센다.**
- *
- * 3차 베지어의 실제 극값은 제어점 볼록 껍질 **안**에 있으므로 이 상자는 참값의 상위집합이다.
- * 극값을 풀어 정확한 상자를 구하는 안을 기각한다: 이 상자가 쓰이는 자리는 `viewBox` 가
- * 없는 문서의 **폴백** 하나뿐이고, 그 자리에서 여백이 조금 넓은 것은 그림을 망치지 않는다.
- * 반대로 상위집합이 아니면 잉크가 상자 밖으로 나간다.
- */
-export function commandBounds(commands: readonly PathCommand[]): Bounds | undefined {
-  let bounds: Bounds | undefined;
-  const include = (x: number, y: number): void => {
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-    if (bounds === undefined) {
-      bounds = { minX: x, minY: y, maxX: x, maxY: y };
-      return;
-    }
-    bounds.minX = Math.min(bounds.minX, x);
-    bounds.minY = Math.min(bounds.minY, y);
-    bounds.maxX = Math.max(bounds.maxX, x);
-    bounds.maxY = Math.max(bounds.maxY, y);
-  };
-  for (const cmd of commands) {
-    switch (cmd.c) {
-      case 'Z':
-        break;
-      case 'M':
-      case 'L':
-        include(cmd.x, cmd.y);
-        break;
-      case 'C':
-        include(cmd.x1, cmd.y1);
-        include(cmd.x2, cmd.y2);
-        include(cmd.x, cmd.y);
-        break;
-    }
-  }
-  return bounds;
-}
+// `commandBounds` 는 `svgImportSplit` 이 소유한다 — 포함 판정과 `viewBox` 폴백이 **같은**
+// 상자를 봐야 하고, 둘이 갈라지면 "무리로는 붙어 있는데 폴백 상자로는 떨어져 있다" 가
+// 생긴다. 계획 층은 그것을 그대로 다시 내보내 호출부가 두 모듈을 다 알 필요가 없게 한다.
+export { commandBounds } from './svgImportSplit';
 
 /** 도형 전부의 합집합 바운딩 박스. */
-function unionBounds(shapes: readonly ImportedShape[]): Bounds | undefined {
+function shapesBounds(shapes: readonly ImportedShape[]): Bounds | undefined {
   let union: Bounds | undefined;
-  for (const shape of shapes) {
-    const bounds = commandBounds(shape.commands);
-    if (bounds === undefined) continue;
-    union =
-      union === undefined
-        ? bounds
-        : {
-            minX: Math.min(union.minX, bounds.minX),
-            minY: Math.min(union.minY, bounds.minY),
-            maxX: Math.max(union.maxX, bounds.maxX),
-            maxY: Math.max(union.maxY, bounds.maxY),
-          };
-  }
+  for (const shape of shapes) union = unionBounds(union, commandBounds(shape.commands));
   return union;
 }
 
@@ -177,7 +137,7 @@ export function resolveViewBox(
   if (size !== undefined) {
     return { ok: true, viewBox: { minX: 0, minY: 0, width: size.width, height: size.height } };
   }
-  const union = unionBounds(shapes);
+  const union = shapesBounds(shapes);
   if (union === undefined) return { ok: false, reason: 'emptyDocument' };
   const width = union.maxX - union.minX;
   const height = union.maxY - union.minY;
@@ -328,13 +288,45 @@ export function planSvgImport(
 
   const box = fitBox(resolved.viewBox, canvas);
   const strokeRatio = box.w / resolved.viewBox.width;
-  const specs: ImportedPathSpec[] = shapes.map((shape) => ({
-    commands: toLocalCommands(shape.commands, resolved.viewBox),
-    style: scaleStroke(shape.style, strokeRatio),
-    hasOwnStyle: shape.hasOwnStyle,
-  }));
+  const specs: ImportedPathSpec[] = [];
+  const extra: ImportNote[] = [];
 
-  return { ok: true, box, shapes: specs, report: buildReport(specs, box, notes) };
+  for (const shape of shapes) {
+    // **감김 뒤집기가 먼저다.** 나눈 뒤에 뒤집으면 무리 밖의 형제를 볼 수 없어 깊이를
+    // 잘못 세고, 그때 도넛의 구멍이 채워진다.
+    const winded = shape.evenOdd ? applyEvenOddWinding(shape.commands) : shape.commands;
+    const pieces = splitByCommandLimit(winded, MAX_PATH_COMMANDS);
+    if (pieces === undefined) {
+      // 무리로 나눠도 상한을 넘는다 — **자르지 않고 그 도형을 거절한다**(위험 R4).
+      extra.push({ kind: 'dropped', reason: 'commandLimitDropped', count: 1 });
+      continue;
+    }
+    for (const piece of pieces) {
+      specs.push({
+        commands: toLocalCommands(piece, resolved.viewBox),
+        style: scaleStroke(shape.style, strokeRatio),
+        hasOwnStyle: shape.hasOwnStyle,
+      });
+    }
+  }
+
+  // **넘으면 거절이다. 앞부분만 가져오지 않는다.** 도구가 내는 문서 순서는 배경→전경이라
+  // 앞의 64개는 대개 배경 조각들이고, 그 절단은 "설명 없는 틀린 그림" 이다.
+  if (specs.length > MAX_IMPORT_ELEMENTS) {
+    return {
+      ok: false,
+      refusal: { reason: 'tooManyElements', actual: specs.length, limit: MAX_IMPORT_ELEMENTS },
+    };
+  }
+  const commandTotal = specs.reduce((sum, spec) => sum + spec.commands.length, 0);
+  if (commandTotal > MAX_IMPORT_COMMANDS) {
+    return {
+      ok: false,
+      refusal: { reason: 'tooManyCommands', actual: commandTotal, limit: MAX_IMPORT_COMMANDS },
+    };
+  }
+
+  return { ok: true, box, shapes: specs, report: buildReport(specs, box, [...notes, ...extra]) };
 }
 
 function buildReport(
