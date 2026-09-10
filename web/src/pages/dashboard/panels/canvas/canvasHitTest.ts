@@ -27,6 +27,7 @@ import {
   ellipseParams,
   projectBox,
   projectLine,
+  projectPathPoints,
   projectPoint,
   resolveTextOrigin,
   type CanvasProjection,
@@ -35,6 +36,12 @@ import {
   type PxPoint,
 } from './canvasGeometry';
 import { TEXT_BASELINE } from './drawElement';
+import {
+  FLATTEN_TOLERANCE_PX,
+  flattenPath,
+  isInsidePath,
+  type FlatSubpath,
+} from './shapes/pathFlatten';
 
 // --- 타입 ---------------------------------------------------------------
 
@@ -158,6 +165,53 @@ function hitsLine(line: PxLine, point: PxPoint, strokeWidth: number, pad: number
 }
 
 /**
+ * 평탄화한 경로에 점이 드는가 — **(안쪽인가) 또는 (어느 변까지의 거리 ≤ 임계)**.
+ *
+ * 임계는 선 판정과 **같은 식**이다(`max(두께/2, 여유)`) — 경로의 변도 결국 선이고, 두
+ * 자가 갈라지면 "같은 두께인데 도형에 따라 다르게 잡힌다" 가 된다. 변 거리를 여기서 새로
+ * 재지 않고 `distanceToSegment` 를 그대로 쓰는 것도 같은 이유다(두 번째 측정원 금지).
+ *
+ * 안쪽 판정과 변 판정을 **또는**으로 묶는 것이 이 함수의 전부다. 안쪽만 보면 두께 1px
+ * 짜리 빈 별의 선을 누를 수 없고, 변만 보면 채워진 도형의 한가운데가 잡히지 않는다.
+ *
+ * 점이 하나뿐인 부분 경로는 변이 없으므로 그 점까지의 거리로 떨어진다 —
+ * `distanceToSegment` 가 길이 0 선분에 대해 하는 그대로이며, 퇴화한 경로도 화면에서
+ * 되찾을 수 있게 한다.
+ */
+function hitsPath(
+  subpaths: readonly FlatSubpath[],
+  point: PxPoint,
+  strokeWidth: number,
+  pad: number,
+): boolean {
+  if (isInsidePath(subpaths, point)) return true;
+  const threshold = Math.max(strokeWidth / 2, pad);
+  for (const sub of subpaths) {
+    const { points, closed } = sub;
+    if (points.length === 1) {
+      const only = points[0];
+      if (only !== undefined && Math.hypot(point.x - only.x, point.y - only.y) <= threshold) {
+        return true;
+      }
+      continue;
+    }
+    // 닫힌 부분 경로는 마지막 점에서 첫 점으로 돌아오는 **닫힘 변**을 하나 더 갖는다.
+    // 그 변을 빠뜨리면 별의 마지막 한 변만 잡히지 않는 결함이 되고, 그것은 화면에서만
+    // 드러난다(`closePath` 를 인터페이스에 들인 것과 같은 부류의 자리다).
+    const edges = closed ? points.length : points.length - 1;
+    for (let i = 0; i < edges; i++) {
+      const a = points[i];
+      const b = points[(i + 1) % points.length];
+      if (a === undefined || b === undefined) continue;
+      if (distanceToSegment({ x1: a.x, y1: a.y, x2: b.x, y2: b.y }, point) <= threshold) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * 요소 하나에 점이 드는가.
  *
  * 라벨은 여기에 **참여하지 않는다.** 도형의 라벨은 `labelAnchor` 에서 파생되는 위치를
@@ -196,12 +250,24 @@ function hitsElement(
       };
       return hitsBox(box, point, HIT_TOLERANCE_PX);
     }
-    // 경로의 윤곽 판정(평탄화 + nonzero winding + 변 거리)은 **M4 의 몫이다.** 그때까지
-    // 경로는 잡히지 않는다 — 여기에 상자 판정을 임시로 놓지 않는 것이 요점이다. 바운딩
-    // 박스는 이 SPEC 이 이름으로 기각한 안이고(REQ-07), 임시로 놓으면 "이미 잡히니까"
-    // M4 가 미뤄진다. 잡히지 않는 것은 눈에 보이고, 잘못 잡히는 것은 보이지 않는다.
-    case 'path':
-      return false;
+    case 'path': {
+      // **상자는 여기서 한 번만 잰다.** 그 상자가 곧 `projectPathPoints` 의 입력이며,
+      // 렌더가 쓰는 것과 **같은 함수의 같은 결과**다 — 그래서 그린 자리와 잡히는 자리가
+      // 갈라질 수 없다. 갈라지는 것은 마지막 한 걸음(곡선을 그대로 그릴 것인가, 잘게
+      // 나눌 것인가)뿐이고, 그 어긋남은 평탄화 허용 오차만큼이며 집기 여유의 1/12 이다.
+      //
+      // **바운딩 박스로 두지 않는다**(REQ-07). 위 `hitsEllipse` 가 이미 적어 둔 이유가
+      // 그대로 걸린다 — 별의 오목한 사이, 십자의 겨드랑이는 상자 안이지만 도형 밖이고,
+      // 거기서 잡히면 겹쳐 놓은 요소의 선택이 눈에 보이는 그림과 어긋난다.
+      const box = projectBox(el.geometry, proj);
+      const subpaths = flattenPath(projectPathPoints(el.path, box), FLATTEN_TOLERANCE_PX);
+      return hitsPath(
+        subpaths,
+        point,
+        resolveStrokeWidth(el.style.strokeWidth),
+        HIT_TOLERANCE_PX,
+      );
+    }
   }
 }
 
