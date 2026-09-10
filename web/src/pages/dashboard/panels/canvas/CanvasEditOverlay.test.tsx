@@ -4649,3 +4649,266 @@ describe('줄의 자리와 가림 — 무엇을 덮고 무엇으로 되찾는가
     }
   });
 });
+
+// ============================================================================
+// M12 — 견고성: 퇴화한 크기에서 이음매가 무엇을 내는가
+// ============================================================================
+//
+// **이 절이 재는 것은 이음매다.** 상자 산술(`canvasWorkspace.test.ts`)과 표면
+// (`CanvasSurface.test.ts`)은 퇴화 입력을 이미 각자 재고 있다 — 0 상자 · 비유한 상자 ·
+// 손상된 간격 · 극단 종횡비에서 NaN 도 예외도 없다는 사실은 그 두 파일이 진다. 여기서
+// 묻는 것은 그 다음 질문이다: **표면이 지은 그 값이 오버레이의 층으로 내려갔을 때 화면에
+// 무엇이 적히는가.**
+//
+// 두 층이 각자 초록인데 이음매가 비어 있는 부류를 이 저장소는 이미 한 번 맞았다
+// (0.4.0 결함 E — 편집기만 보면 통과, 렌더만 보면 통과). 006 의 상자는 **표면이 짓고
+// 오버레이가 쓴다**. 그래서 퇴화 입력도 두 층을 **함께 세워** 재야 한다(시험 규율
+// 0.4.0 행).
+//
+// 그리고 **줄을 세고 나서야 완전하다**(plan.md §M10 "M12(견고성)도 줄을 세고 나서야
+// 완전하다"). 0 크기 작업 영역의 모서리에 앉는 컨트롤이 어디에 어떤 수로 앉는지는 M10
+// 이전에는 물을 수 없던 질문이다.
+
+describe('퇴화한 크기에서 이음매가 유한한 수만 내린다 (M12 · AC-E5)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', ComposedResizeObserver as unknown as typeof ResizeObserver);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** 층의 CSS 자리·크기 넷이 전부 유한한 수인가. `NaN` 은 `Number.parseFloat` 로 새어 온다. */
+  function finiteBox(testId: string): { left: number; top: number; width: number; height: number } {
+    const box = styleBox(testId);
+    for (const [axis, value] of Object.entries(box)) {
+      expect(Number.isFinite(value), `${testId}.${axis} = ${value}`).toBe(true);
+    }
+    return box;
+  }
+
+  it('아직 재지 못한 상자(0)에서 층 둘이 **0** 이고 음수 크기가 되지 않는다', () => {
+    // 닿는 면과 격자 상자는 `(-origin, box)` 를 그대로 쓴다. 상자가 0 이면 원점도 0 이므로
+    // 두 층도 0 이며, 그 처리는 `workspaceBox` 가 이미 소유한다 — 여기서 확인하는 것은
+    // 그 소유가 **화면까지 이어지는가**다. 음수 크기는 CSS 에서 무시되어 층이 통째로
+    // 사라지고, 그때 닿는 면이 사라지면 여백의 누름이 다시 죽는다(REQ-08 · 불변식 I18).
+    composedOuter = { width: 0, height: 0 };
+    renderWorkspace([], true);
+
+    for (const id of ['canvas-workspace-hit', 'canvas-workspace-grid']) {
+      const box = finiteBox(id);
+      expect(box.width, `${id}.width`).toBe(0);
+      expect(box.height, `${id}.height`).toBe(0);
+      // `-0` 도 0 이다 — 원점이 0 이므로 `-origin` 이 `-0` 이 되는 갈래를 함께 덮는다.
+      expect(Math.abs(box.left), `${id}.left`).toBe(0);
+      expect(Math.abs(box.top), `${id}.top`).toBe(0);
+      expect(box.width, `${id}.width 음수 아님`).toBeGreaterThanOrEqual(0);
+      expect(box.height, `${id}.height 음수 아님`).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('그 상자에서도 흐림과 경계는 **DOM 에 그대로 있다** — 격자와 다른 축이다', () => {
+    // 둘은 `inset-0` 이라 오버레이 루트(=출력 영역)를 따라가고 제 수를 갖지 않는다.
+    // 크기가 0 이라고 걷어내면 "어디가 패널에 나오나" 의 답이 측정 전에 깜빡인다.
+    composedOuter = { width: 0, height: 0 };
+    renderWorkspace([], true);
+
+    for (const id of ['canvas-region-scrim', 'canvas-region-bounds']) {
+      const node = screen.getByTestId(id);
+      expect(node, id).toBeTruthy();
+      expect(node.className, id).toContain('inset-0');
+      // 제 수를 갖지 않으므로 NaN 이 적힐 자리도 없다.
+      expect(node.style.width, id).toBe('');
+      expect(node.style.height, id).toBe('');
+    }
+  });
+
+  it('그 상자에서 화면 전체에 `NaN` · `Infinity` 가 한 글자도 적히지 않는다', () => {
+    // 층을 이름으로 세는 대신 오버레이가 낸 **모든** 인라인 style 을 훑는다. 다음 사람이
+    // 층을 하나 더 더하고 퇴화 갈래를 잊으면 여기서 걸린다.
+    composedOuter = { width: 0, height: 0 };
+    renderWorkspace([rect('a', { x: 10, y: 10, w: 20, h: 20 })], true);
+
+    const root = screen.getByTestId('canvas-edit-overlay');
+    for (const node of [root, ...root.querySelectorAll<HTMLElement>('[style]')]) {
+      const css = node.getAttribute('style') ?? '';
+      expect(css, node.dataset.testid ?? css.slice(0, 40)).not.toMatch(/NaN|Infinity/);
+    }
+  });
+
+  it('극단적으로 납작한 · 긴 상자에서도 출력 영역이 작업 영역을 넘지 않는다', () => {
+    // 축척이 뒤집히면 출력 영역이 작업 영역보다 커져 "줄여서 여백을 만든다" 가 거짓이
+    // 되고, 그때 저술 여백이 음수가 되어 원점도 음수가 된다.
+    for (const outer of [
+      { width: 2000, height: 50 },
+      { width: 50, height: 2000 },
+      { width: 3, height: 3 },
+    ]) {
+      cleanup();
+      composedOuter = outer;
+      renderWorkspace([], true);
+
+      const area = finiteBox('canvas-workspace-hit');
+      const stage = stageBoxSize();
+      const label = `${outer.width}x${outer.height}`;
+      expect(Number.isFinite(stage.width), label).toBe(true);
+      expect(Number.isFinite(stage.height), label).toBe(true);
+      expect(stage.width, label).toBeLessThanOrEqual(area.width);
+      expect(stage.height, label).toBeLessThanOrEqual(area.height);
+      // 원점은 `-left` 다. 작업 영역이 출력 영역을 감싸므로 그 값이 0 이상이어야 한다.
+      expect(-area.left, `${label} origin.x`).toBeGreaterThanOrEqual(0);
+      expect(-area.top, `${label} origin.y`).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('한 칸이 1px 도 되지 않으면 격자는 꺼지되 **그림도 경계도 그대로다** (AC-E5)', () => {
+    // `stageLattice` 가 정수화하지 않고 소수 축척 하나를 그대로 쓰는 그 갈래다. 정수화하면
+    // 칸이 0 이 되고 `repeating-linear-gradient` 의 주기가 0 이 되어 격자가 **꽉 찬
+    // 사각형**이 된다 — 참조선이라고 내놓을 수 없는 그림이다.
+    composedOuter = { width: 10, height: 8 };
+    renderWorkspace([], true);
+
+    fireEvent.click(screen.getByTestId('canvas-grid-toggle'));
+
+    // 격자는 그려지지 않는다 — `enabled` 게이트가 `cell >= 1` 을 요구하고, `PanelEditGrid`
+    // 는 꺼지면 `null` 을 돌려주므로 그 노드 자체가 DOM 에 없다.
+    expect(screen.queryByTestId('panel-edit-grid')).toBeNull();
+    // 그럼에도 격자를 **담는 상자**는 남아 작업 영역을 그대로 덮는다(닿는 면과 같은 수).
+    expect(styleBox('canvas-workspace-grid')).toEqual(styleBox('canvas-workspace-hit'));
+    // 그럼에도 출력 영역은 살아 있고 경계·흐림이 그것을 두른다.
+    expect(stageBoxSize().width).toBeGreaterThan(0);
+    expect(screen.getByTestId('canvas-region-bounds')).toBeTruthy();
+    expect(screen.getByTestId('canvas-region-scrim')).toBeTruthy();
+  });
+});
+
+describe('퇴화한 상자에서도 배율 줄이 유한한 자리에 앉는다 (M12 · 0.7.0 이 더한 몫)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', ComposedResizeObserver as unknown as typeof ResizeObserver);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('0 크기 작업 영역에서도 줄이 서고 두 수가 유한하다 — 사라지지도 NaN 도 아니다', () => {
+    // 줄의 자리는 `(-origin.x + 8, -origin.y + box.height - 8)` 이다. 상자가 0 이면 그 값이
+    // `(8, -8)` 로 **작업 영역 위쪽 밖**이 되는데, 그것은 측정 전 한 프레임의 모습이며
+    // 곧 첫 측정이 덮는다. 여기서 못박는 것은 **그 갈래가 수를 잃지 않는다**는 사실이다 —
+    // 줄이 DOM 에서 사라지면 첫 측정 뒤 다시 마운트되어 초점이 튄다.
+    composedOuter = { width: 0, height: 0 };
+    renderWorkspace([], true, { docked: false });
+
+    const bar = zoomBar();
+    const left = Number.parseFloat(bar.style.left);
+    const top = Number.parseFloat(bar.style.top);
+    expect(Number.isFinite(left)).toBe(true);
+    expect(Number.isFinite(top)).toBe(true);
+    expect(left).toBe(FP_BAR_INSET);
+    expect(top).toBe(-FP_BAR_INSET);
+    expect(bar.style.transform).toBe('translateY(-100%)');
+  });
+
+  it('그 상태에서 배율을 바꿔도 예외가 없고 수가 유한하게 따라온다', () => {
+    // 0 상자에서 배율을 바꾸면 `reduced` 도 0 이고 `cell` 도 0 이 되는 갈래로 들어간다.
+    // 그 곱셈이 NaN 을 내면 화면에 `NaNpx` 가 적힌다.
+    composedOuter = { width: 0, height: 0 };
+    renderWorkspace([], true, { docked: false });
+
+    fireEvent.change(zoomInput(), { target: { value: '25' } });
+
+    expect(zoomInput().value).toBe('25');
+    for (const id of ['canvas-workspace-hit', 'canvas-workspace-grid']) {
+      const css = screen.getByTestId(id).getAttribute('style') ?? '';
+      expect(css, id).not.toMatch(/NaN|Infinity/);
+    }
+    expect(Number.isFinite(Number.parseFloat(zoomBar().style.top))).toBe(true);
+  });
+
+  it('납작한 상자에서도 줄은 작업 영역 **안쪽**에 앉는다 — 왼쪽 아래가 사라지지 않는다', () => {
+    composedOuter = { width: 2000, height: 50 };
+    renderWorkspace([], true, { docked: false });
+
+    const area = styleBox('canvas-workspace-hit');
+    const bar = zoomBar();
+    expect(Number.parseFloat(bar.style.left)).toBe(area.left + FP_BAR_INSET);
+    expect(Number.parseFloat(bar.style.top)).toBe(area.top + area.height - FP_BAR_INSET);
+  });
+});
+
+describe('유도한 캔버스는 간격의 배수가 아니다 — 그래도 선 자리는 정수다 (M12 · 가정 A19)', () => {
+  beforeEach(() => {
+    composedOuter = WS_OUTER;
+    vi.stubGlobal('ResizeObserver', ComposedResizeObserver as unknown as typeof ResizeObserver);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('`stage` 는 소수인데 `origin` 과 `cell` 은 정수이고, 두 여백 차가 **2px 미만**이다', () => {
+    // 이 셋이 A19 의 전부다. `stage` 가 소수여도(1259.28 × 573.12) 격자선이 서는 자리
+    // `origin + k × cell` 은 전부 정수여야 한다 — 0.9.0 이 고친 "선이 두 장치 픽셀에
+    // 걸친다" 를 막는 성질이 그것이다.
+    //
+    // **여백의 상한이 1px 이 아니라 2px 인 이유를 수로 적는다.** 자투리는
+    // `outer − stage − 2 × floor((outer − stage) / 2)` 이고, `stage` 가 소수이면 그 값이
+    // 1 을 넘을 수 있다: 가로는 `1749 − 1259.28 − 488 = 1.72`. 정수 `stage` 를 가정한
+    // 1px 상한(`canvasWorkspace.test.ts` 의 5:4 짝이 쓰는 그 상한)은 이 자리에서 **거짓**
+    // 이며, 그것이 0.5.0 이 상한을 다시 적은 이유다.
+    renderWorkspace([], true, { canvas: FP_CANVAS });
+
+    const area = styleBox('canvas-workspace-hit');
+    const stage = stageBoxSize();
+    const origin = { x: -area.left, y: -area.top };
+
+    expect(stage).toEqual(FP_STAGE);
+    expect(Number.isInteger(stage.width)).toBe(false);
+    expect(Number.isInteger(stage.height)).toBe(false);
+
+    expect(origin).toEqual(FP_ORIGIN);
+    expect(Number.isInteger(origin.x)).toBe(true);
+    expect(Number.isInteger(origin.y)).toBe(true);
+
+    const slackX = area.width - stage.width - 2 * origin.x;
+    const slackY = area.height - stage.height - 2 * origin.y;
+    expect(slackX).toBeCloseTo(1.72, 10);
+    expect(slackY).toBeCloseTo(0.88, 10);
+    for (const slack of [slackX, slackY]) {
+      expect(slack).toBeGreaterThanOrEqual(0);
+      expect(slack).toBeLessThan(2);
+    }
+  });
+
+  it('격자 한 칸은 정수이고 선의 첫 자리는 출력 영역의 원점이다 (불변식 I5)', () => {
+    renderWorkspace([], true, { canvas: FP_CANVAS });
+    fireEvent.click(screen.getByTestId('canvas-grid-toggle'));
+
+    const size = screen.getByTestId('panel-edit-grid').style.backgroundSize;
+    const m = /^([\d.]+)px ([\d.]+)px$/.exec(size);
+    expect(m, `격자 칸을 px 로 읽지 못했다: ${size}`).not.toBeNull();
+    expect(Number(m![1])).toBe(18);
+    expect(Number(m![2])).toBe(18);
+    // 위상은 출력 영역의 원점이다 — 작업 영역의 왼쪽 위가 아니다(위험 R3).
+    expect(gridPhase()).toEqual({ x: 0, y: 0 });
+  });
+
+  it('`z = 1.00` 에서는 여백이 **둘 다 0** 이다 — 자투리는 배율과 무관하다', () => {
+    // 자투리 `outer − stage − 2·floor(…)` 는 배율을 인자로 갖지 않는다. 그럼에도
+    // `z = 1.00` 은 `stage = outer` 라 그 식이 0 이 되는 유일한 자리다(불변식 I21 의
+    // 명시된 예외 — `canvas === outer` 인 고정점에서만 성립한다).
+    renderWorkspace([], true, { docked: false, canvas: FP_CANVAS });
+    fireEvent.change(zoomInput(), { target: { value: '100' } });
+
+    const area = styleBox('canvas-workspace-hit');
+    const stage = stageBoxSize();
+    expect(stage).toEqual({ width: WS_OUTER.width, height: WS_OUTER.height });
+    expect(Math.abs(area.left)).toBe(0);
+    expect(Math.abs(area.top)).toBe(0);
+    expect(area.width - stage.width).toBe(0);
+    expect(area.height - stage.height).toBe(0);
+  });
+});
