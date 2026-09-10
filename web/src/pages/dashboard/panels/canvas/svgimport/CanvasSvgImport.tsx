@@ -135,6 +135,9 @@ function ImportPreview({
 
   useEffect(() => {
     const node = ref.current;
+    // **과잉 가드다**(마운트된 `<canvas>` 의 ref 는 효과가 도는 시점에 언제나 있다). 그럼에도
+    // 두는 것은 타입이 `null` 을 담기 때문이며, 008 의 카탈로그 미리보기가 같은 자리에 같은
+    // 줄을 둔다 — 두 미리보기가 다른 모양을 하면 다음 사람이 어느 쪽이 옳은지 묻게 된다.
     if (node === null) return;
     const ctx = node.getContext('2d') as DrawContext2D | null;
     if (ctx === null) return;
@@ -256,12 +259,6 @@ export function CanvasSvgImport({
     setNotesOpen(false);
   };
 
-  const place = (): void => {
-    if (state.phase !== 'ready' || state.ready.shapes.length === 0) return;
-    onPlace(state.ready.shapes, state.ready.box);
-    reset();
-  };
-
   const Chevron = collapsed ? ChevronRight : ChevronDown;
   const NotesChevron = notesOpen ? ChevronDown : ChevronRight;
 
@@ -353,7 +350,14 @@ export function CanvasSvgImport({
                 // **가져올 것이 하나도 없으면 서지 않는다**(REQ-03) — 빈 요소를 만들지 않는다.
                 disabled={state.ready.shapes.length === 0}
                 className={ROW_BUTTON_CLASS}
-                onClick={place}
+                // 처리자를 **여기서** 만든다. 밖으로 빼면 `state` 가 좁혀지지 않아
+                // `state.phase !== 'ready'` 재확인이 필요하고, 그 가지는 **닿을 수 없다** —
+                // 이 단추는 준비됨 상태에서만 그려지기 때문이다. 닿을 수 없는 가지는
+                // 커버리지에 구멍으로 남고, 읽는 사람에게 "여기로 올 수도 있다" 고 거짓말한다.
+                onClick={() => {
+                  onPlace(state.ready.shapes, state.ready.box);
+                  reset();
+                }}
               >
                 <Check className={ICON_CLASS} aria-hidden="true" />
                 <span>{t(`${EDIT}.importPlace`)}</span>

@@ -269,6 +269,14 @@ export interface ResolvedImportStyle {
   readonly evenOdd: boolean;
 }
 
+/**
+ * SVG `fill` 의 **초기값**(사양 §11.3). 우리가 고른 색이 아니라 사양이 정한 값이다 —
+ * 그래서 씨앗 색(`SEED_COLOR`)과 섞이지 않게 이름을 따로 둔다. 둘을 한 상수로 합치면
+ * "사양대로의 값" 과 "우리가 고른 값" 이 한 이름을 나눠 쓰게 되고, 그 순간 `pathSeedStyle`
+ * 을 쓰는 자리와 이 자리를 구별할 근거가 사라진다.
+ */
+const SVG_INITIAL_FILL = '#000000';
+
 function note(kind: ImportNote['kind'], reason: ImportNoteReason): ImportNote {
   return { kind, reason, count: 1 };
 }
@@ -318,7 +326,23 @@ export function resolveStyle(atoms: StyleAtoms, options: ResolveStyleOptions = {
 
   const style: { -readonly [K in keyof ElementStyle]: ElementStyle[K] } = {};
 
-  const fill = resolvePaint(fillRaw, parseOpacity(atoms['fill-opacity']) ?? 1);
+  // **`fill` 을 말하지 않은 채 `stroke` 만 말한 도형은 검게 채워진다**(SVG 1.1 §11.3 —
+  // `fill` 의 초기값이 `black` 이다). `<path d="…" stroke="red"/>` 는 브라우저에서 검은 속에
+  // 빨간 테를 두른 도형으로 그려지며, 그것이 **사용자가 원본 도구에서 본 그림**이다.
+  //
+  // **기각 — 칠하지 않고 근사로 보고한다.** 그 안은 "우리는 이 칠을 하지 않았습니다" 를
+  // 말할 뿐 그림을 고치지 않는다. 사양이 정한 값을 세 줄로 적을 수 있는데 보고로 대신하는
+  // 것은 고칠 수 있는 어긋남을 **설명으로 바꾸는 일**이고, 게다가 사용자가 **적은 적 없는**
+  // 칠에 대한 알림이라 잡음이 된다(위험 R7 — 읽히지 않는 보고는 침묵과 같다).
+  //
+  // **보고에 올리지 않는 이유**: 이것은 근사가 아니라 **사양대로의 값**이다. 옳게 그린 것을
+  // 근사로 말하면 사용자가 미리보기의 정확함을 의심하게 된다.
+  //
+  // 그리고 이 규칙은 **아무 칠도 말하지 않은 도형에는 걸리지 않는다** — 그쪽은 008 의
+  // `pathSeedStyle` 이 서며(REQ-06), 그 결정은 SPEC 이 사양과 **의도적으로** 갈라선 자리다
+  // (가져온 도형이 카탈로그 도형과 같은 씨앗 색을 입어야 목록에서 구별되지 않는다).
+  const fillSource = fillRaw ?? (strokeRaw !== undefined ? SVG_INITIAL_FILL : undefined);
+  const fill = resolvePaint(fillSource, parseOpacity(atoms['fill-opacity']) ?? 1);
   if (fill !== undefined) style.fill = fill;
 
   const stroke = resolvePaint(strokeRaw, parseOpacity(atoms['stroke-opacity']) ?? 1);

@@ -464,3 +464,25 @@ describe('미리보기는 실제 렌더 경로다 (§도크 UI)', () => {
     expect(seen).toEqual(again);
   });
 });
+
+// --- 고르지 않은 채 닫기 ---------------------------------------------------
+
+describe('파일 고르기를 취소하면 아무 일도 일어나지 않는다', () => {
+  it('빈 목록으로 `change` 가 와도 상태가 대기 그대로다', async () => {
+    // 브라우저의 파일 대화상자를 열고 [취소] 를 누르면 이 형상이 온다. 이 가지가 없으면
+    // `undefined` 가 아래로 흘러 읽기 함수에 닿는다.
+    const read = vi.fn(async () => PLAIN);
+    render(
+      <I18nProvider>
+        <CanvasSvgImport canvas={DEFAULT_CANVAS_SIZE} onPlace={() => {}} readFile={read} />
+      </I18nProvider>,
+    );
+    fireEvent.click(screen.getByTestId('canvas-svg-import-group'));
+    fireEvent.change(screen.getByTestId('canvas-svg-import-file'), { target: { files: [] } });
+
+    await waitFor(() => expect(screen.getByTestId('canvas-svg-import-pick')).toBeTruthy());
+    expect(read).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('canvas-svg-import-summary')).toBeNull();
+    expect(screen.queryByTestId('canvas-svg-import-refused')).toBeNull();
+  });
+});

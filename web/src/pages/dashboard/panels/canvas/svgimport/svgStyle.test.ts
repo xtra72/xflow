@@ -365,3 +365,57 @@ describe('견고성 (REQ-07)', () => {
     expect(resolveStyle({ stroke: 'red', 'stroke-width': '-4' }).style.strokeWidth).toBe(0);
   });
 });
+
+// --- SVG 의 `fill` 초기값 (M11 · 결정 1) -----------------------------------
+
+describe('`stroke` 만 말한 도형은 **검게 채워진다** — SVG 초기값 (M11 결정 1)', () => {
+  it('`<path stroke="red"/>` 가 검은 채움을 든다 — 브라우저가 그리는 그 그림이다', () => {
+    // SVG 1.1 §11.3: `fill` 의 초기값은 `black` 이다. 그래서 `fill` 을 말하지 않고 `stroke`
+    // 만 말한 도형은 브라우저에서 **검은 속에 테를 두른** 모습으로 그려진다. 칠하지 않으면
+    // 우리 화면만 원본과 달라지고, 그 어긋남은 미리보기에서 사용자가 제 눈 탓으로 돌린다.
+    const { style } = resolveStyle({ stroke: 'red' });
+    expect(style.fill).toBe('#000000');
+    expect(style.stroke).toBe('red');
+  });
+
+  it('`fill-opacity` 도 그 초기값에 접힌다 — 반쯤 비치는 검정이다', () => {
+    expect(resolveStyle({ stroke: 'red', 'fill-opacity': '0.5' }).style.fill).toBe(
+      'rgba(0, 0, 0, 0.5)',
+    );
+  });
+
+  it('**보고에 오르지 않는다** — 근사가 아니라 사양대로의 값이다', () => {
+    // 옳게 그린 것을 근사로 말하면 사용자가 미리보기의 정확함을 의심하게 되고, 게다가
+    // 사용자가 **적은 적 없는** 칠에 대한 알림이라 잡음이 된다(위험 R7).
+    expect(resolveStyle({ stroke: 'red' }).notes).toEqual([]);
+    expect(resolveStyle({ stroke: 'red', 'stroke-width': '3' }).notes).toEqual([]);
+  });
+
+  it('`fill="none"` 을 **명시**하면 그대로 채우지 않는다 — 초기값이 그것을 덮지 않는다', () => {
+    expect(resolveStyle({ fill: 'none', stroke: 'red' }).style.fill).toBeUndefined();
+  });
+
+  it('상속받은 `fill` 이 있으면 그것이 이긴다 — 초기값이 조상을 덮지 않는다', () => {
+    const inherited = inheritStyleAtoms({ fill: '#c0392b' }, { stroke: 'red' });
+    expect(resolveStyle(inherited).style.fill).toBe('#c0392b');
+  });
+
+  it('**아무 칠도 말하지 않은 도형에는 걸리지 않는다** — 거기서는 `pathSeedStyle` 이 선다', () => {
+    // SPEC 이 사양과 의도적으로 갈라선 자리다(REQ-06): 가져온 도형이 카탈로그 도형과 같은
+    // 씨앗 색을 입어야 목록에서 구별되지 않는다. 이 규칙이 그 결정을 삼키면 안 된다.
+    const bare = resolveStyle({});
+    expect(bare.hasOwnStyle).toBe(false);
+    expect(bare.style.fill).toBeUndefined();
+    // `stroke` 아닌 축만 말한 경우도 같다 — `hasOwnStyle` 의 정의가 칠 두 축이기 때문이다.
+    expect(resolveStyle({ opacity: '0.5' }).style.fill).toBeUndefined();
+    expect(resolveStyle({ 'stroke-width': '3' }).style.fill).toBeUndefined();
+  });
+
+  it('`stroke` 의 초기값은 `none` 이라 반대 방향은 일어나지 않는다', () => {
+    // 사양이 두 축에 다른 초기값을 주므로 대칭이 아니다. 대칭으로 만들면 채움만 말한
+    // 도형에 있지도 않은 테가 생긴다.
+    const { style } = resolveStyle({ fill: '#c0392b' });
+    expect(style.stroke).toBeUndefined();
+    expect(style.strokeWidth).toBeUndefined();
+  });
+});

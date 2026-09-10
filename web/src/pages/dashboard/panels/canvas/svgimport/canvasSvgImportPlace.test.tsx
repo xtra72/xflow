@@ -26,6 +26,7 @@ vi.mock('@/lib/i18n', () => ({
 import { CanvasEditDockRegion } from '../CanvasEditDock';
 import CanvasEditOverlay from '../CanvasEditOverlay';
 import type { CanvasElement, CanvasSize, PathElement } from '../canvasConfig';
+import { parseScratchpadEntry, type ScratchpadEntry } from '../scratchpad/scratchpadTypes';
 import { CanvasEditSelectionContext, useCanvasEditSelectionState } from '../canvasEditContext';
 import type { StageSize } from '../canvasGeometry';
 
@@ -51,8 +52,11 @@ const DOC =
  * 이미 놓인 요소 **셋**. 계단 오프셋이 0 이 아닌 자리에서 재기 위한 것이다 — 0 이면
  * "무리 전체에 한 번" 과 "요소마다 한 번" 이 같은 답을 낸다.
  */
+/** 씨앗 첫 요소의 왼쪽 변. 정렬 시험이 이 수를 표적으로 쓴다. */
+const SEED_LEFT = 10;
+
 const SEED: readonly CanvasElement[] = [
-  { id: 'el-1', kind: 'rect', geometry: { x: 10, y: 10, w: 20, h: 20 }, style: { fill: '#a' } },
+  { id: 'el-1', kind: 'rect', geometry: { x: SEED_LEFT, y: 10, w: 20, h: 20 }, style: { fill: '#a' } },
   { id: 'el-2', kind: 'rect', geometry: { x: 40, y: 10, w: 20, h: 20 }, style: { fill: '#b' } },
   { id: 'el-3', kind: 'rect', geometry: { x: 70, y: 10, w: 20, h: 20 }, style: { fill: '#c' } },
 ];
@@ -265,6 +269,77 @@ describe('AC-09 — 놓으면 일반 요소가 된다 (REQ-06)', () => {
     expect(screen.getByTestId(`canvas-selection-${created[0]!.id}`)).toBeTruthy();
     for (const h of ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']) {
       expect(screen.queryByTestId(`canvas-handle-${h}`), h).not.toBeNull();
+    }
+  });
+
+  it('정렬 · 순서 단추가 가져온 요소에도 **그대로 닿는다** (AC-09)', async () => {
+    render(<Harness />);
+    await chooseDoc();
+    fireEvent.click(screen.getByTestId('canvas-svg-import-place'));
+
+    stubOverlayRect();
+    // **가져온 요소 하나와 씨앗 요소 하나**를 함께 고른다. 가져온 둘만 고르면 상자가 같아
+    // 정렬이 무동작이고, 그러면 이 시험이 "정렬이 닿는다" 를 재지 못한다.
+    send('pointerdown', 240, 20); // 빈 자리 — 선택을 비운다
+    const created = liveElements().slice(3) as PathElement[];
+    const g = created[0]!.geometry;
+    send('pointerdown', (g.x + g.w * 0.8) * 0.5, (g.y + g.h * 0.8) * 0.5); // 가져온 큰 도형
+    send('pointerdown', 10, 10, { shiftKey: true }); // 씨앗 el-1 (px 5..15 × 5..15)
+    expect(liveSelection().sort()).toEqual(['el-1', created[0]!.id]);
+
+    const align = screen.getByTestId('canvas-align-left') as HTMLButtonElement;
+    expect(align.disabled).toBe(false);
+    // 켜져 있음: 두 상자의 x 가 애초에 다르다(같으면 정렬이 아무것도 하지 않는다).
+    expect(g.x).not.toBe(SEED_LEFT);
+    fireEvent.click(align);
+
+    const moved = (liveElements().find((el) => el.id === created[0]!.id) as PathElement).geometry;
+    // 가져온 요소가 씨앗 요소의 왼쪽 변에 맞춰졌다 — 정렬이 출처를 구분하지 않는다.
+    expect(moved.x).toBe(SEED_LEFT);
+    // 함께 고르지 않은 나머지 가져온 요소는 그대로다.
+    expect((liveElements().find((el) => el.id === created[1]!.id) as PathElement).geometry.x).toBe(
+      g.x,
+    );
+
+    // 순서도 관측된다: 뒤로 보내면 배열 앞으로 간다(배열 순서가 유일한 z-order 다).
+    const idsBefore = liveElements().map((el) => el.id);
+    const picked = liveSelection().sort();
+    fireEvent.click(screen.getByTestId('canvas-order-back'));
+    const idsAfter = liveElements().map((el) => el.id);
+    expect(idsAfter).not.toEqual(idsBefore);
+    // 고른 둘(씨앗 하나 · 가져온 하나)이 나란히 맨 앞에 섰다 — 순서 단추도 출처를 구분하지
+    // 않는다. 켜져 있음: 그 둘 가운데 하나는 가져온 요소다.
+    expect(idsAfter.slice(0, 2).sort()).toEqual(picked);
+    expect(picked).toContain(created[0]!.id);
+    // 요소가 사라지거나 늘지 않았다.
+    expect(new Set(idsAfter)).toEqual(new Set(idsBefore));
+  });
+
+  it('서랍에 넣어 왕복시켜도 명령과 스타일이 **깊은 비교로 같다** (AC-E12 · REQ-08)', async () => {
+    render(<Harness />);
+    await chooseDoc();
+    fireEvent.click(screen.getByTestId('canvas-svg-import-place'));
+
+    const created = liveElements().slice(3) as PathElement[];
+    expect(created).toHaveLength(2);
+    // 008 의 서랍 항목 형상 그대로 담아 **직렬화 왕복**을 시킨다. 가져온 요소가 카탈로그
+    // 경로와 구별되지 않는다는 REQ-08 의 기계적 확인이다 — 구별되었다면 파서가 무언가를
+    // 잃거나 기본값으로 갈아 끼운다.
+    const entry: ScratchpadEntry = {
+      id: 'sp-1',
+      name: '가져온 그림',
+      created: 0,
+      origin: { x: created[0]!.geometry.x, y: created[0]!.geometry.y },
+      elements: created,
+    };
+    const reopened = parseScratchpadEntry(JSON.parse(JSON.stringify(entry)) as unknown);
+    expect(reopened).not.toBeNull();
+    expect(reopened?.elements).toHaveLength(2);
+    for (const [i, el] of (reopened?.elements ?? []).entries()) {
+      expect(el.kind, `#${i}`).toBe('path');
+      expect((el as PathElement).path, `#${i}`).toEqual(created[i]!.path);
+      expect(el.style, `#${i}`).toEqual(created[i]!.style);
+      expect(el.geometry, `#${i}`).toEqual(created[i]!.geometry);
     }
   });
 });
