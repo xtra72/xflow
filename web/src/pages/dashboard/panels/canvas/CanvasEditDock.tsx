@@ -73,6 +73,8 @@ import {
 } from './canvasEditArrange';
 import { CanvasEditDockHostContext } from './canvasEditDockHost';
 import { CanvasScratchpad } from './scratchpad/CanvasScratchpad';
+import type { ScratchpadDropPoint } from './scratchpad/canvasScratchpadDrop';
+import type { ScratchpadEntry } from './scratchpad/scratchpadTypes';
 import { CanvasPaletteGroup, CanvasShapeCatalog } from './shapes/CanvasShapeCatalog';
 import { usePaletteCollapse } from './shapes/paletteGroups';
 import type { ShapeCatalogEntry } from './shapes/shapeCatalog';
@@ -338,6 +340,13 @@ export interface CanvasEditDockBodyProps {
   canScratchpadSave: boolean;
   /** 끌던 손이 지금 드롭 존 위에 있는가. 판정은 오버레이가 한다(불변식 J7). */
   scratchpadDropActive: boolean;
+  /**
+   * 서랍의 항목을 캔버스에 놓는다. `at` 이 `null` 이면 계단 자리(`seedOffset`)다.
+   *
+   * 클라이언트 좌표를 그대로 지나 보내는 것에 뜻이 있다 — 스테이지로 옮기는 함수는
+   * 오버레이에 하나뿐이며(불변식 J7), 도크가 그 환산을 알면 두 벌이 된다.
+   */
+  onScratchpadPlace: (entry: ScratchpadEntry, at: ScratchpadDropPoint | null) => boolean;
 }
 
 /**
@@ -366,6 +375,7 @@ export function CanvasEditDockBody({
   onScratchpadSave,
   canScratchpadSave,
   scratchpadDropActive,
+  onScratchpadPlace,
 }: CanvasEditDockBodyProps): React.ReactElement {
   const { t } = useTranslation();
   // 묶음 넷의 접힘 상태. 기기 지역에 남되 읽지 못해도 기능이 성립한다(REQ-06).
@@ -618,6 +628,7 @@ export function CanvasEditDockBody({
         canSave={canScratchpadSave}
         onSave={onScratchpadSave}
         dropActive={scratchpadDropActive}
+        onPlace={onScratchpadPlace}
       />
     </div>
   );

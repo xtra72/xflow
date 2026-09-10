@@ -32,6 +32,18 @@ import { createContext, useContext } from 'react';
 export type ScratchpadDropRef = (node: HTMLElement | null) => void;
 
 /**
+ * 항목을 캔버스 위에 놓은 **클라이언트 자리**.
+ *
+ * 스테이지 좌표가 아닌 것에 뜻이 있다: 환산은 오버레이의 `stagePoint` 한 함수가 하며
+ * (불변식 J7), 서랍은 그 함수를 알지 못한다. 서랍이 스테이지 좌표를 만들려면 오버레이의
+ * 상자와 축척을 알아야 하고, 그 순간 좌표 공간을 넘는 자리가 둘이 된다.
+ */
+export interface ScratchpadDropPoint {
+  clientX: number;
+  clientY: number;
+}
+
+/**
  * 드롭 존 등록 채널. `null` 이면 등록할 곳이 없다는 뜻이고, 그때 스크래치패드는
  * 놓임 판정에 참여하지 않는다.
  */

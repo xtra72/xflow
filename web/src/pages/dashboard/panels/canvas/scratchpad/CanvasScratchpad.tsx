@@ -23,14 +23,14 @@
 //
 // @spec SPEC-CANVAS-008 REQ-03 · REQ-05 · REQ-06 · AC-05 · AC-06 · AC-08 · AC-E9
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
-import { Check, Inbox, Save, Trash2, X } from 'lucide-react';
+import { Check, Inbox, Save, StickyNote, Trash2, X } from 'lucide-react';
 
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
-import { useScratchpadDropRef } from './canvasScratchpadDrop';
+import { useScratchpadDropRef, type ScratchpadDropPoint } from './canvasScratchpadDrop';
 import { useScratchpadStore, type ScratchpadSaveStatus } from './scratchpadStore';
 import {
   SCRATCHPAD_MAX_BYTES,
@@ -106,11 +106,29 @@ interface EntryRowProps {
   entry: ScratchpadEntry;
   onRename: (id: string, name: string) => void;
   onRemove: (id: string) => void;
+  onPlace: (entry: ScratchpadEntry, at: ScratchpadDropPoint | null) => boolean;
 }
 
-function ScratchpadEntryRow({ entry, onRename, onRemove }: EntryRowProps): React.ReactElement {
+function ScratchpadEntryRow({
+  entry,
+  onRename,
+  onRemove,
+  onPlace,
+}: EntryRowProps): React.ReactElement {
   const { t } = useTranslation();
   const [confirming, setConfirming] = useState(false);
+  /**
+   * 방금 몸짓이 **끌어 놓기로 끝났는가**.
+   *
+   * 한 단추가 두 몸짓을 낸다: 누른 자리에서 그대로 떼면 누름(→ 계단 자리), 캔버스 위로
+   * 끌어다 떼면 놓기(→ 그 자리). 브라우저는 잡힌 포인터의 뗌 뒤에도 `click` 을 이 단추로
+   * 보내므로, 끌어 놓기로 이미 놓았으면 뒤따르는 누름을 **한 번 삼켜야** 한 몸짓이 요소를
+   * 두 벌 만들지 않는다.
+   *
+   * 상태가 아니라 ref 인 것은 이 값이 그림을 바꾸지 않기 때문이다 — 바꾸면 `pointerup` 과
+   * `click` 사이에 렌더가 한 번 끼어든다.
+   */
+  const placedByDrag = useRef(false);
 
   /** 이름이 없으면 자동 이름을 **보인다** — 저장하지는 않는다(`scratchpadTypes` §name). */
   const autoName = t('dashboard.canvas.edit.scratchpadAutoName').replaceAll(
@@ -159,6 +177,44 @@ function ScratchpadEntryRow({ entry, onRename, onRemove }: EntryRowProps): React
         className={NAME_INPUT_CLASS}
         onChange={(event) => onRename(entry.id, event.target.value)}
       />
+      {/* 놓기 — **한 단추가 두 몸짓을 낸다**(REQ-04).
+
+          누른 자리에서 그대로 떼면 계단 자리(`seedOffset`)에 놓이고, 캔버스 위로 끌어다
+          떼면 **그 자리**에 놓인다. 둘을 다른 컨트롤로 가르면 좁은 도크에 줄이 하나 더
+          생기고, 무엇보다 **끌지 않는 길이 눈에 보이지 않는 곳**에 남는다 —
+          WCAG 2.2 SC 2.5.7 이 요구하는 것은 등가물이 **있는** 것이지 숨어 있는 것이 아니다.
+
+          자리 판정은 오버레이가 한다. 여기서는 클라이언트 좌표를 그대로 올려 보낼 뿐이며,
+          캔버스 밖에서 떼면 오버레이가 거짓을 돌려주어 뒤따르는 누름이 계단 자리에 놓는다. */}
+      <button
+        type="button"
+        data-testid={`canvas-scratchpad-place-${entry.id}`}
+        aria-label={t('dashboard.canvas.edit.scratchpadPlace')}
+        title={t('dashboard.canvas.edit.scratchpadPlace')}
+        className={ICON_BUTTON_CLASS}
+        onPointerDown={(event) => {
+          placedByDrag.current = false;
+          // 잡아 두지 않으면 캔버스 위에서 뗀 사건이 오버레이로 가 버려 이 단추가 제
+          // 몸짓의 끝을 보지 못한다. jsdom 에는 없는 API 라 존재를 확인하고 부른다.
+          event.currentTarget.setPointerCapture?.(event.pointerId);
+        }}
+        onPointerUp={(event) => {
+          placedByDrag.current = onPlace(entry, {
+            clientX: event.clientX,
+            clientY: event.clientY,
+          });
+        }}
+        onClick={() => {
+          // 끌어 놓기로 이미 놓았으면 그 뒤의 누름은 같은 몸짓의 꼬리다 — 한 번 삼킨다.
+          if (placedByDrag.current) {
+            placedByDrag.current = false;
+            return;
+          }
+          onPlace(entry, null);
+        }}
+      >
+        <StickyNote className={SMALL_ICON_CLASS} aria-hidden="true" />
+      </button>
       <button
         type="button"
         data-testid={`canvas-scratchpad-remove-${entry.id}`}
@@ -182,6 +238,13 @@ export interface CanvasScratchpadProps {
   onSave: () => void;
   /** 끌던 손이 지금 드롭 존 위에 있는가. 판정은 오버레이가 하고 강조는 여기가 입는다. */
   dropActive: boolean;
+  /**
+   * 항목을 캔버스에 놓는다. `at` 이 `null` 이면 계단 자리(`seedOffset`)다.
+   *
+   * **놓았는가를 돌려준다.** 캔버스 밖에서 뗀 몸짓은 놓기가 아니며, 그 사실을 아는 것은
+   * 오버레이(제 상자를 든 쪽)뿐이다 — 서랍은 그 답으로 뒤따르는 누름을 삼킬지 정한다.
+   */
+  onPlace: (entry: ScratchpadEntry, at: ScratchpadDropPoint | null) => boolean;
   /** 묶음 제목을 이을 id(도크의 다른 절과 같은 배선). */
   titleId: string;
 }
@@ -190,6 +253,7 @@ export function CanvasScratchpad({
   canSave,
   onSave,
   dropActive,
+  onPlace,
   titleId,
 }: CanvasScratchpadProps): React.ReactElement {
   const { t } = useTranslation();
@@ -268,6 +332,7 @@ export function CanvasScratchpad({
               entry={entry}
               onRename={renameEntry}
               onRemove={removeEntry}
+              onPlace={onPlace}
             />
           ))}
         </div>

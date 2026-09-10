@@ -157,9 +157,18 @@ import {
   type Geometry,
   type LineGeometry,
 } from './canvasConfig';
-import { appendElement, appendPathElement } from './canvasElementFactory';
-import { CanvasScratchpadDropContext, pointInRect } from './scratchpad/canvasScratchpadDrop';
+import { appendElement, appendPathElement, nextElementId, seedOffset } from './canvasElementFactory';
+import {
+  CanvasScratchpadDropContext,
+  pointInRect,
+  type ScratchpadDropPoint,
+} from './scratchpad/canvasScratchpadDrop';
 import { useScratchpadStore } from './scratchpad/scratchpadStore';
+import {
+  cloneElements,
+  elementsBounds,
+  type ScratchpadEntry,
+} from './scratchpad/scratchpadTypes';
 import type { ShapeCatalogEntry } from './shapes/shapeCatalog';
 import {
   handlePositions,
@@ -1211,6 +1220,79 @@ export default function CanvasEditOverlay({
   };
 
   /**
+   * 서랍의 항목을 캔버스에 놓는다 — **형제 요소들을 옮겨 찍는 평평한 붙여넣기**다
+   * (REQ-04 · spec.md §004 의 `group` 에 기대지 않는다 (c)).
+   *
+   * `at` 이 있으면 그 자리를 묶음의 **좌상단**으로 삼고, 없으면(단추) 저장된 자리에서
+   * 계단(`seedOffset`)만큼 민다. 계단은 이미 있는 요소 수를 보므로, 같은 항목을 잇달아
+   * 눌러도 정확히 겹치지 않는다 — 팔레트가 새 도형에 대해 하는 그 일과 같은 규칙이다.
+   *
+   * **좌표는 `stagePoint` 를 지난다**(불변식 J7). 두 번째 호출 자리이지 두 번째 **함수**가
+   * 아니며, 드래그가 쓰는 그 프레임(`pointerFrameOf(루트 상자, stage)`)을 그대로 만든다.
+   * 붙임도 마찬가지로 **`snapDelta` 하나**를 쓴다 — 기준 상자는 저장된 묶음의 바깥 상자이고,
+   * 그래서 무리를 끌 때와 같은 규칙(중심을 격자에 맞춘다)이 걸린다.
+   *
+   * **id 는 새로 발급한다.** 저장된 id 를 그대로 쓰면 배열에 중복이 생기고, 001 의 파서는
+   * 중복 id 를 **먼저 온 것으로 접으므로** 놓은 것이 조용히 사라진다(REQ-04).
+   *
+   * **놓은 id 전부를 선택으로 세운다.** 이 SPEC 이 평평한 붙여넣기를 고르며 치른 값
+   * (요소 여덟이면 목록에 여덟 줄)의 유일한 완화이자 충분한 완화다 — 오버레이의 무리
+   * 이동이 선택된 **모든** 요소에서 `bases` 를 짓기 때문에, 놓자마자 한 덩어리로 끌리고
+   * 정렬 · 순서 · 방향키 미세 이동도 같은 선택 위에서 그대로 돈다.
+   *
+   * 돌려주는 값은 **놓았는가**다. 캔버스 밖에서 뗀 몸짓은 놓기가 아니며, 그 사실을 아는
+   * 것은 제 상자를 든 이 층뿐이다.
+   */
+  const placeFromScratchpad = (
+    entry: ScratchpadEntry,
+    at: ScratchpadDropPoint | null,
+  ): boolean => {
+    // 몸체가 빈 항목은 **여기까지 오지 못한다.** 저장은 빈 선택을 거절하고(`saveEntry`),
+    // 파서는 살아남은 요소가 없는 항목을 버린다(`parseScratchpadEntry`). 두 입구가 전부
+    // 막혀 있으므로 여기에 가드를 두면 검증되지 않은 채 남아 읽는 사람에게 "빈 항목이 올
+    // 수도 있다" 고 거짓말한다(이 파일이 `anchorEl` 에 대해 세운 그 규율).
+    let delta: CanvasDelta;
+    if (at === null) {
+      const off = seedOffset(elements.length);
+      delta = { dx: off, dy: off };
+    } else {
+      const host = rootRef.current;
+      if (host === null) return false;
+      const rect = host.getBoundingClientRect();
+      // 캔버스 **밖**에서 뗀 것은 놓기가 아니다. 판정은 드롭 존의 그것과 같은 규칙이며
+      // (클라이언트 좌표 containment) 같은 함수를 쓴다.
+      if (!pointInRect(rect, at.clientX, at.clientY)) return false;
+      if (!(stage.width > 0) || !(stage.height > 0)) return false;
+      const frame = pointerFrameOf(rect, stage);
+      const point = unprojectPoint(stagePoint(at.clientX, at.clientY, frame), projection);
+      const raw = { dx: point.x - entry.origin.x, dy: point.y - entry.origin.y };
+      delta = snapToGrid ? snapDelta(raw, elementsBounds(entry.elements), gridStep) : raw;
+    }
+
+    // **사본을 놓는다.** 서랍은 영속되는 자료이므로, 놓인 요소가 항목의 `style`·`path`·
+    // `rules` 를 그대로 나눠 가지면 캔버스 쪽에서 그중 하나를 제자리에서 고치는 순간 서랍
+    // 속 원본까지 함께 바뀐다(`canvasElementFactory.withElementText` 가 같은 이유로 style 을
+    // 새 객체로 갈아 끼운다). 기하는 아래 쓰기 통로가 어차피 새 값을 넣지만, 나머지는 이
+    // 한 줄이 유일한 경계다.
+    const body = cloneElements(entry.elements);
+
+    let next: CanvasElement[] = [...elements];
+    const created: string[] = [];
+    for (const el of body) {
+      const id = nextElementId(next);
+      // 배열 끝에 순서대로 붙는다 — 배열 순서가 001 의 유일한 z-order 이므로 저장할 때의
+      // 앞뒤가 그대로 살아난다. 기하는 **한 통로**(`patchNodeGeometry`)로 들어간다.
+      next = [...next, { ...el, id }];
+      next = patchNodeGeometry(next, id, moveGeometry(el.geometry, delta));
+      created.push(id);
+    }
+
+    onElementsChange(next);
+    setSelection(new Set(created));
+    return true;
+  };
+
+  /**
    * 고른 것들을 서로 맞춘다(T13 · REQ-04).
    *
    * 변환 사슬(**투영 px 상자 → 백분율 오프셋 → ÷100 → 캔버스 단위 델타**)은 순수 모듈
@@ -1523,6 +1605,7 @@ export default function CanvasEditOverlay({
               onScratchpadSave={() => saveSelectionToScratchpad(elements)}
               canScratchpadSave={selection.size > 0}
               scratchpadDropActive={dropActive}
+              onScratchpadPlace={placeFromScratchpad}
             />
           </CanvasScratchpadDropContext>,
           dockHost,

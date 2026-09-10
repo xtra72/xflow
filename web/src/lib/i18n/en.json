@@ -1243,7 +1243,8 @@
         "scratchpadVolatile": "Could not write to this browser. The bundle will only last for this session.",
         "scratchpadNoSelection": "Nothing is selected, so there is nothing to save.",
         "scratchpadLimitEntries": "The scratchpad holds {max} bundles. It already holds {max}, so nothing more fits.",
-        "scratchpadLimitBytes": "The scratchpad holds up to {maxKb}KB. Adding this bundle would exceed {maxKb}KB."
+        "scratchpadLimitBytes": "The scratchpad holds up to {maxKb}KB. Adding this bundle would exceed {maxKb}KB.",
+        "scratchpadPlace": "Place bundle"
       },
       "elements": {
         "orderHint": "Elements lower in the list are drawn on top. Moving up/down is the draw order.",
