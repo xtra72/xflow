@@ -1928,3 +1928,82 @@ describe('CanvasPanel — 작업 영역은 편집 게이팅에 얹힌다 (SPEC-C
     expect(surfaceRoot.className.split(/\s+/)).toContain('relative');
   });
 });
+
+// --- 편집 토글 왕복 (SPEC-CANVAS-006 AC-06 · M12 의 DoD 항목) ---------------
+//
+// **이 절이 있는 이유는 M13 의 DoD 걸음이 빈자리를 찾았기 때문이다.** AC-06 은
+// "편집을 켰다가 다시 끄면 config 패치가 **한 건도** 나가지 않는다" 를 요구하는데,
+// 그 문장은 0.1.0 에 적혔고 **REQ-07(0.2.0) 과 M8 의 항등 유도(0.5.0) 보다 앞선다.**
+//
+// 그 뒤의 세계에서 그 문장은 **고정점에서만 참이다**: `derivedCanvasSize(canvas, outer)`
+// 가 항등이므로 `canvas !== outer` 인 패널은 편집을 켜는 순간 **설계상 정확히 한 건**을
+// 쓴다(REQ-07 이 요구하는 그 쓰기이며, 위험 R19 가 그 대가를 진다). 그러므로 왕복의
+// 패치 0 건은 **`canvas === outer` 일 때의 성질**이다.
+//
+// acceptance.md AC-06 과 plan.md §M12 는 그 한정사를 달지 않았다 — 개항목 3(AC-10 (BB)
+// 의 `z = 1.00` 조항)과 **같은 모양의 SPEC 결함**이며, 이 절이 두 갈래를 모두 재어
+// 다음 사람이 어느 쪽을 결함으로 읽어야 하는지 못박는다.
+
+describe('CanvasPanel — 편집 토글 왕복 (AC-06 · 고정점에서만 패치 0 건)', () => {
+  beforeEach(() => {
+    act(() => {
+      useUIStore.setState({ dashboardEditMode: true });
+    });
+  });
+
+  afterEach(() => {
+    act(() => {
+      useUIStore.setState({ dashboardEditMode: false });
+    });
+  });
+
+  /** 두 상자의 CSS 를 그대로 뜬다 — "그림이 같다" 를 재는 이 파일의 방식이다. */
+  function picture(): Record<string, string> {
+    const shot = (id: string) => {
+      const el = screen.getByTestId(id);
+      return `${el.style.left}|${el.style.top}|${el.style.width}|${el.style.height}`;
+    };
+    return { workspace: shot('canvas-workspace'), stage: shot('canvas-stage') };
+  }
+
+  it('고정점에서는 켰다 꺼도 패치가 **0 건**이고 그림이 켜기 전과 같다', () => {
+    panelOuter = { width: 1749, height: 796 };
+    const onConfigChange = vi.fn();
+    renderEditablePanel([EDIT_RECT], { onConfigChange, canvas: fixedPointCanvas() });
+
+    // 켜기 전 — 편집이 정말 꺼져 있다(꺼진 것을 확인하지 않으면 왕복을 잰 것이 아니다).
+    expect(screen.queryByTestId('canvas-edit-overlay')).toBeNull();
+    const before = picture();
+
+    fireEvent.click(screen.getByTestId('canvas-edit-toggle'));
+    // 켜졌다 — 그리고 고정점이므로 첫 측정이 아무것도 쓰지 않는다.
+    expect(screen.getByTestId('canvas-edit-overlay')).toBeTruthy();
+    expect(canvasPatches(onConfigChange)).toEqual([]);
+    // 켠 동안에는 그림이 **달라진다** — 그 달라짐이 곧 "지금 편집 중" 이라는 신호다.
+    expect(picture()).not.toEqual(before);
+
+    fireEvent.click(screen.getByTestId('canvas-edit-toggle'));
+    // 다시 껐다 — 왕복 전체에 패치가 0 건이고 그림이 되돌아왔다.
+    expect(screen.queryByTestId('canvas-edit-overlay')).toBeNull();
+    expect(canvasPatches(onConfigChange)).toEqual([]);
+    expect(picture()).toEqual(before);
+  });
+
+  it('고정점이 **아니면** 켜는 순간 한 건을 쓴다 — 설계이지 회귀가 아니다 (REQ-07)', () => {
+    // 이 갈래가 AC-06 의 "왕복 패치 0 건" 을 무조건 참으로 읽을 수 없게 만드는 자리다.
+    // `canvas` 를 넘기지 않으면 기본값 500×400 이고 상자는 1749×796 이라 둘이 다르다.
+    panelOuter = { width: 1749, height: 796 };
+    const onConfigChange = vi.fn();
+    renderEditablePanel([EDIT_RECT], { onConfigChange });
+
+    expect(canvasPatches(onConfigChange)).toEqual([]);
+
+    fireEvent.click(screen.getByTestId('canvas-edit-toggle'));
+    // 정확히 **한 건**이고 그 값은 잰 상자 그 자체다(항등 유도).
+    expect(canvasPatches(onConfigChange)).toEqual([{ width: 1749, height: 796 }]);
+
+    fireEvent.click(screen.getByTestId('canvas-edit-toggle'));
+    // 끄는 쪽은 아무것도 쓰지 않는다 — 왕복의 한 건은 **켜는 쪽 하나뿐**이다.
+    expect(canvasPatches(onConfigChange)).toEqual([{ width: 1749, height: 796 }]);
+  });
+});
