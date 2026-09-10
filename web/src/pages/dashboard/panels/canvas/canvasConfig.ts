@@ -365,8 +365,12 @@ function clamp01(v: number): number {
  * 저술이며(가정 A5), 잘라내면 사용자 의도가 조용히 바뀐다. 정수화는 그와 다른 축이다:
  * 좌표계 자체가 정수라 소수 자리는 저장할 곳이 없고, 남겨 두면 격자·붙임·수치 칸이
  * 저마다 다른 반올림을 하게 된다.
+ *
+ * **내보내는 이유**: SVG 가져오기(007)가 사용자 단위를 경로 로컬 정수로 옮길 때 같은
+ * 규율을 써야 한다. 그 모듈이 제 반올림을 지어내면 이 파일에 **두 번째 수치 규율**이
+ * 생기고, 둘이 갈라지는 날 "읽을 때와 쓸 때가 다르다" 가 시작된다.
  */
-function coordinate(v: unknown, fallback: number): number {
+export function coordinate(v: unknown, fallback: number): number {
   return isFiniteNumber(v) ? Math.round(v) : fallback;
 }
 
