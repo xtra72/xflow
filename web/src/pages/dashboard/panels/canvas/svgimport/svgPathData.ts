@@ -140,6 +140,10 @@ class NumberScanner {
     return this.pos >= this.src.length;
   }
 
+  get position(): number {
+    return this.pos;
+  }
+
   at(): string | undefined {
     return this.src[this.pos];
   }
@@ -245,6 +249,25 @@ export function parseNumberList(raw: string): number[] {
     out.push(n);
   }
   return out;
+}
+
+/**
+ * 길이 속성 하나(`width` · `rx` · `cx` …). **단위 없는 수 또는 `px` 만 크기로 읽는다.**
+ *
+ * `%` 는 크기가 아니다 — `heatmap/svgAsset.ts` 의 `lengthOf` 가 스스로 내린 그 판정을
+ * 그대로 따른다(코드는 공유하지 않고 규칙만 따른다). 비율은 뷰포트를 요구하는데 007 에는
+ * 뷰포트가 없으므로, 받아 두면 "무엇의 몇 %인가" 에 답할 자리가 없다.
+ *
+ * 수 뒤에 `px` 아닌 것이 남아 있으면 `undefined` 다 — 부분만 읽어 `50em` 을 50 으로
+ * 삼키면 그림이 조용히 작아진다.
+ */
+export function parseLength(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const scanner = new NumberScanner(raw);
+  const value = scanner.readNumber();
+  if (value === undefined || !Number.isFinite(value)) return undefined;
+  const rest = raw.slice(scanner.position).trim().toLowerCase();
+  return rest === '' || rest === 'px' ? value : undefined;
 }
 
 // --- 토크나이즈 ---------------------------------------------------------
