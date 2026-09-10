@@ -157,7 +157,8 @@ import {
   type Geometry,
   type LineGeometry,
 } from './canvasConfig';
-import { appendElement } from './canvasElementFactory';
+import { appendElement, appendPathElement } from './canvasElementFactory';
+import type { ShapeCatalogEntry } from './shapes/shapeCatalog';
 import {
   handlePositions,
   moveGeometry,
@@ -1092,6 +1093,20 @@ export default function CanvasEditOverlay({
   };
 
   /**
+   * 카탈로그가 도형을 놓는다. 위 함수와 **같은 세 줄**이며 다른 것은 부르는 입구 하나뿐이다
+   * (`appendPathElement` — 경로는 명령 목록을 요구하므로 인자가 다르다).
+   *
+   * 그 셋이 같아야 하는 이유: 사용자에게 원시형 사각형과 카탈로그 별은 **같은 종류의 일**
+   * 이다. 놓은 것이 맨 위에 오고, 계단을 타고, 놓자마자 골라져 다음 몸짓이 배치 드래그가
+   * 되는 것이 어느 쪽에서 놓았든 같아야 한다.
+   */
+  const placeFromCatalog = (entry: ShapeCatalogEntry): void => {
+    const { next, created } = appendPathElement(elements, entry.id, entry.path);
+    onElementsChange(next);
+    setSelection(new Set([created.id]));
+  };
+
+  /**
    * 고른 것들을 서로 맞춘다(T13 · REQ-04).
    *
    * 변환 사슬(**투영 px 상자 → 백분율 오프셋 → ÷100 → 캔버스 단위 델타**)은 순수 모듈
@@ -1381,6 +1396,7 @@ export default function CanvasEditOverlay({
         createPortal(
           <CanvasEditDockBody
             onPlace={placeFromPalette}
+            onPlaceShape={placeFromCatalog}
             snapToGrid={snapToGrid}
             onSnapToGridChange={setSnapToGrid}
             gridStep={gridStep}

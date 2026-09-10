@@ -1161,6 +1161,7 @@
         "paletteGroupGeneral": "일반",
         "paletteGroupBasic": "기본",
         "paletteGroupArrow": "화살표",
+        "paletteShapeAria": "{shape} 놓기 — 캔버스에 {shape} 경로를 더합니다",
         "catalogNames": {
           "roundedRect": "둥근 사각형",
           "process": "처리",

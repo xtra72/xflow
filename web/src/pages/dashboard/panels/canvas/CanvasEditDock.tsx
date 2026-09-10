@@ -72,6 +72,9 @@ import {
   type AlignMode,
 } from './canvasEditArrange';
 import { CanvasEditDockHostContext } from './canvasEditDockHost';
+import { CanvasPaletteGroup, CanvasShapeCatalog } from './shapes/CanvasShapeCatalog';
+import { usePaletteCollapse } from './shapes/paletteGroups';
+import type { ShapeCatalogEntry } from './shapes/shapeCatalog';
 
 // --- 겉모습 --------------------------------------------------------------
 
@@ -285,6 +288,13 @@ export interface CanvasEditDockBodyProps {
    * 이유가 없어 그쪽을 걷었다. 생성 경로 자체는 그대로다(가정 A7).
    */
   onPlace: (kind: CanvasPrimitiveKind) => void;
+  /**
+   * 카탈로그 도형을 놓는다 — **같은 생성 모듈의 다른 입구**다(`appendPathElement`).
+   *
+   * `onPlace` 와 합치지 않는 이유는 인자에 있다: 원시형은 씨앗 기하만으로 만들어지고 경로는
+   * 명령 목록을 요구하므로, 하나의 콜백으로 합치려면 "원시형일 때는 무시되는 인자" 가 생긴다.
+   */
+  onPlaceShape: (entry: ShapeCatalogEntry) => void;
   /** 격자 표시·붙임(하나의 토글이 둘을 함께 켠다 — T12). */
   snapToGrid: boolean;
   onSnapToGridChange: (next: boolean) => void;
@@ -328,6 +338,7 @@ export interface CanvasEditDockBodyProps {
  */
 export function CanvasEditDockBody({
   onPlace,
+  onPlaceShape,
   snapToGrid,
   onSnapToGridChange,
   gridStep,
@@ -341,6 +352,8 @@ export function CanvasEditDockBody({
   onOrder,
 }: CanvasEditDockBodyProps): React.ReactElement {
   const { t } = useTranslation();
+  // 묶음 넷의 접힘 상태. 기기 지역에 남되 읽지 못해도 기능이 성립한다(REQ-06).
+  const { collapsed, toggle } = usePaletteCollapse();
   // 한 화면에 캔버스 설정이 둘 이상 뜰 수 있으므로 고정 id 를 쓸 수 없다.
   const viewId = useId();
   const shapesId = useId();
@@ -402,27 +415,38 @@ export function CanvasEditDockBody({
         />
       </section>
 
+      {/* 도형 — 목록 하나에서 **접히는 묶음 넷**으로 바뀐 절이다(REQ-02 · REQ-06).
+
+          바뀌지 않은 것을 먼저 적는다: 원시형 넷의 `data-testid` · 이름 · 차례는 그대로이고,
+          그 묶음은 **기본으로 펼쳐진다.** 카탈로그 30칸을 한 목록으로 펴면 도크 폭이 `w-44`
+          고정이라 자주 쓰는 넷이 스크롤 아래로 밀리므로(위험 R10), 카탈로그 묶음 셋은 기본
+          으로 접힌다 — 006 이 배율 칸을 도크 맨 앞에 둔 것과 같은 판단이다. */}
       <section role="group" aria-labelledby={shapesId} className="flex flex-col gap-0.5">
         <p id={shapesId} className={SECTION_TITLE_CLASS}>
           {t('dashboard.canvas.edit.dockShapes')}
         </p>
-        {PALETTE_KINDS.map((kind) => {
-          const Icon = PALETTE_ICONS[kind];
-          return (
-            <button
-              key={kind}
-              type="button"
-              data-testid={`canvas-palette-add-${kind}`}
-              aria-label={t(PALETTE_ARIA_KEYS[kind])}
-              title={t(PALETTE_ARIA_KEYS[kind])}
-              className={ROW_BUTTON_CLASS}
-              onClick={() => onPlace(kind)}
-            >
-              <Icon className={ICON_CLASS} aria-hidden="true" />
-              <span>{t(PALETTE_NAME_KEYS[kind])}</span>
-            </button>
-          );
-        })}
+        <CanvasPaletteGroup id="primitive" collapsed={collapsed.primitive} onToggle={toggle}>
+          <div className="flex flex-col gap-0.5">
+            {PALETTE_KINDS.map((kind) => {
+              const Icon = PALETTE_ICONS[kind];
+              return (
+                <button
+                  key={kind}
+                  type="button"
+                  data-testid={`canvas-palette-add-${kind}`}
+                  aria-label={t(PALETTE_ARIA_KEYS[kind])}
+                  title={t(PALETTE_ARIA_KEYS[kind])}
+                  className={ROW_BUTTON_CLASS}
+                  onClick={() => onPlace(kind)}
+                >
+                  <Icon className={ICON_CLASS} aria-hidden="true" />
+                  <span>{t(PALETTE_NAME_KEYS[kind])}</span>
+                </button>
+              );
+            })}
+          </div>
+        </CanvasPaletteGroup>
+        <CanvasShapeCatalog collapsed={collapsed} onToggle={toggle} onPlace={onPlaceShape} />
       </section>
 
       <section role="group" aria-labelledby={gridId} className="flex flex-col gap-1">

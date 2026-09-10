@@ -24,7 +24,10 @@ import {
   DEFAULT_POINT_GEOMETRY,
   type CanvasElement,
   type CanvasPrimitiveKind,
+  type ElementStyle,
+  type PathElement,
 } from './canvasConfig';
+import type { PathCommand } from './shapes/pathTypes';
 
 // --- 씨앗 상수 -----------------------------------------------------------
 
@@ -200,6 +203,68 @@ export function newElement(id: string, kind: CanvasPrimitiveKind, count: number)
   }
 }
 
+// --- 경로 요소 -----------------------------------------------------------
+
+/**
+ * 카탈로그 도형이 입고 나오는 씨앗 스타일. **명령 목록이 닫혔는가**로 갈린다.
+ *
+ * 두 갈래 다 **새 상수를 만들지 않는다** — 닫힌 것은 `rect` 의 씨앗 그대로(채움만), 열린
+ * 것은 `line` 의 씨앗 그대로(선과 두께)다. 원시형이 이미 쓰는 두 벌을 그대로 고르는 것이라
+ * 카탈로그가 제 색 규칙을 갖지 않는다.
+ *
+ * 갈라야 하는 이유는 `fill()` 의 규칙에 있다 — 그 함수는 열린 부분 경로를 **암묵적으로
+ * 닫아** 채우므로, 곡선 화살표처럼 닫히지 않은 윤곽을 채우면 **저술한 적 없는 변**이 하나
+ * 생겨 화면에 정체 모를 덩어리가 나온다.
+ *
+ * **대가를 적어 둔다:** 정육면체의 모서리 선 · 메모의 접힘 선 · 원통의 앞쪽 테두리는 선으로만
+ * 그려지는 부분 경로라, 채움만 심긴 씨앗에서는 **보이지 않는다**(셋 다 채움과 같은 색이 될
+ * 테두리를 그리는 셈이기 때문이다). 사용자가 테두리 색을 고르면 그때 드러난다. 대비되는
+ * 두 번째 씨앗 색을 여기서 지어내는 쪽을 **기각한다** — 그 색은 채움색과 표면색 양쪽에
+ * 대해 근거를 대야 하고, 그것은 `SEED_TEXT_COLOR` 주석이 한 번 치른 값이다.
+ */
+export function pathSeedStyle(commands: readonly PathCommand[]): ElementStyle {
+  return commands.some((cmd) => cmd.c === 'Z')
+    ? { fill: SEED_COLOR }
+    : { stroke: SEED_COLOR, strokeWidth: SEED_STROKE_WIDTH };
+}
+
+/**
+ * 카탈로그 도형 하나로 만든 경로 요소.
+ *
+ * `newElement` 와 갈라 두는 이유는 인자에 있다 — 경로는 **씨앗 기하만으로 만들어지지
+ * 않는다.** 무슨 명령 목록을 지어낼 것인가에 대한 답이 그 함수에는 없고, 답을 들고 오는
+ * 것은 카탈로그다. 입구가 여전히 이 모듈 하나인 것이 요점이다(불변식 J9).
+ *
+ * **명령을 사본으로 싣는다.** 카탈로그의 배열은 얼려 있으므로 그대로 실으면 요소가
+ * 카탈로그를 **가리키게** 되고, 그때부터 "이미 놓은 도형이 앱 갱신에 따라 달라지는가" 라는
+ * 질문이 생긴다. 값이지 참조가 아니다(spec.md §경로 자료는 값인가 참조인가 · REQ-02).
+ *
+ * 상자는 `rect` 와 **같은 씨앗 기하 · 같은 계단**을 쓴다. 경로의 기하가 `BoxGeometry` 인
+ * 덕에 여기서 따로 정할 것이 없다.
+ */
+export function newPathElement(
+  id: string,
+  catalogId: string,
+  commands: readonly PathCommand[],
+  count: number,
+): PathElement {
+  const off = seedOffset(count);
+  return {
+    id,
+    kind: 'path',
+    geometry: {
+      x: shifted(DEFAULT_BOX_GEOMETRY.x, off),
+      y: shifted(DEFAULT_BOX_GEOMETRY.y, off),
+      w: DEFAULT_BOX_GEOMETRY.w,
+      h: DEFAULT_BOX_GEOMETRY.h,
+    },
+    path: commands.map((cmd) => ({ ...cmd })),
+    // 표시·감사용이다. 렌더가 읽지 않으므로 결측이거나 모르는 값이어도 그림은 완전하다.
+    catalog_id: catalogId,
+    style: pathSeedStyle(commands),
+  };
+}
+
 /**
  * 새 요소를 **배열 끝에 붙인** 결과. 요소를 만드는 **유일한 입구**다 — 종전에는 목록
  * 편집기의 추가 버튼도 함께 불렀으나, 그 줄이 사라지고 캔버스 팔레트 하나만 남았다.
@@ -220,6 +285,24 @@ export function appendElement(
   kind: CanvasPrimitiveKind,
 ): { next: CanvasElement[]; created: CanvasElement } {
   const created = newElement(nextElementId(elements), kind, elements.length);
+  return { next: [...elements, created], created };
+}
+
+/**
+ * 카탈로그 도형을 배열 끝에 붙인 결과. `appendElement` 와 **같은 규칙**을 쓴다 — id 발급도
+ * 계단 오프셋도 현재 배열을 보고, 끝에 붙는 것이 곧 맨 위다.
+ */
+export function appendPathElement(
+  elements: readonly CanvasElement[],
+  catalogId: string,
+  commands: readonly PathCommand[],
+): { next: CanvasElement[]; created: CanvasElement } {
+  const created = newPathElement(
+    nextElementId(elements),
+    catalogId,
+    commands,
+    elements.length,
+  );
   return { next: [...elements, created], created };
 }
 

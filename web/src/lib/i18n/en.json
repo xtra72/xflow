@@ -1161,6 +1161,7 @@
         "paletteGroupGeneral": "General",
         "paletteGroupBasic": "Basic",
         "paletteGroupArrow": "Arrows",
+        "paletteShapeAria": "Place {shape} — adds a {shape} path to the canvas",
         "catalogNames": {
           "roundedRect": "Rounded rectangle",
           "process": "Process",
