@@ -38,6 +38,7 @@ import {
   type StoreSourceConfig,
   type TsdbSourceConfig,
 } from '../charts/chartChannelTypes';
+import type { PathCommand } from './shapes/pathTypes';
 
 // --- 기본값 상수 ---------------------------------------------------------
 
@@ -264,8 +265,37 @@ export interface TextElement extends CanvasElementBase {
   geometry: PointGeometry;
 }
 
+/**
+ * 경로 요소 — 임의의 닫힌(또는 열린) 윤곽 하나(SPEC-CANVAS-008 REQ-01).
+ *
+ * **기하가 `BoxGeometry` 인 것이 이 모델의 절반이다.** rect 와 같은 형상이므로 8핸들 크기
+ * 조절 · 정렬 · 붙임 · 무리 이동 · 방향키 미세 이동이 한 줄도 바뀌지 않고 경로에 걸린다 —
+ * 그 전부가 이미 `BoxGeometry` 위에 서 있다. 대가는 하나뿐이고 숨기지 않는다: 비균등하게
+ * 늘리면 윤곽이 함께 일그러진다(원이 타원이 되듯).
+ *
+ * 한 요소가 **하나의 윤곽**이고 그 윤곽 전체가 **하나의 스타일**을 입는다. 그래서 규칙 표는
+ * 경로의 **안쪽을 지목하지 못한다** — 상태를 나르는 조립체는 004 의 `group` 이 맡는다.
+ */
+export interface PathElement extends CanvasElementBase {
+  kind: 'path';
+  /** 정수 캔버스 단위. rect 와 **같은** 형상이다. */
+  geometry: BoxGeometry;
+  /** 요소 상자 로컬 정수(공칭 0..`PATH_LOCAL_EXTENT`). clamp 하지 않는다. */
+  path: PathCommand[];
+  /**
+   * 어느 카탈로그 도형에서 나왔는가. **표시·감사용이며 렌더 경로는 읽지 않는다** —
+   * 결측이거나 모르는 값이어도 그림은 완전하다(004 REQ-02 의 `symbol` 출처 기록과 같은 규율).
+   */
+  catalog_id?: string;
+}
+
 /** 캔버스 요소 — `kind` 로 판별하는 합집합. */
-export type CanvasElement = RectElement | EllipseElement | LineElement | TextElement;
+export type CanvasElement =
+  | RectElement
+  | EllipseElement
+  | LineElement
+  | TextElement
+  | PathElement;
 
 /**
  * 캔버스 패널 config. 데이터 소스 축은 기존 차트 패널과 동일한

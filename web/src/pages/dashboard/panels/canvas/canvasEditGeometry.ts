@@ -547,11 +547,18 @@ export function patchNodeGeometry(
         if (!('x1' in geometry)) return el;
         return { ...el, geometry: writableLine(geometry) };
       }
-      default: {
+      case 'text': {
         if ('w' in geometry) return el;
         if ('x1' in geometry) return el;
         return { ...el, geometry: writablePoint(geometry) };
       }
+      // 경로는 rect 와 **같은 상자 기하**를 갖지만 이 자리는 아직 그것을 쓰지 않는다 —
+      // 상자 쓰기를 붙이는 것은 **M5 의 몫이다.** 그때까지 경로는 끌리지도 크기가 바뀌지도
+      // 않는다. `default:` 를 갈래 둘로 편 것이 이 변경의 절반이다: 종전의 `default:` 는
+      // 새 종류를 **문구 요소로 읽어** 조용히 삼켰고, 갈래를 이름으로 적어 두면 여섯 번째
+      // 종류가 들어올 때 컴파일러가 이 자리를 다시 가리킨다.
+      case 'path':
+        return el;
     }
   });
 }

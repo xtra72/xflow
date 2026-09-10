@@ -196,6 +196,12 @@ function hitsElement(
       };
       return hitsBox(box, point, HIT_TOLERANCE_PX);
     }
+    // 경로의 윤곽 판정(평탄화 + nonzero winding + 변 거리)은 **M4 의 몫이다.** 그때까지
+    // 경로는 잡히지 않는다 — 여기에 상자 판정을 임시로 놓지 않는 것이 요점이다. 바운딩
+    // 박스는 이 SPEC 이 이름으로 기각한 안이고(REQ-07), 임시로 놓으면 "이미 잡히니까"
+    // M4 가 미뤄진다. 잡히지 않는 것은 눈에 보이고, 잘못 잡히는 것은 보이지 않는다.
+    case 'path':
+      return false;
   }
 }
 
