@@ -761,8 +761,13 @@ function parseElement(raw: unknown): CanvasElement | null {
  * 요소 목록. 배열이 아니면 빈 목록이고, 정체성이 없는 항목은 버린다.
  * id 중복은 **먼저 온 것이 이긴다** — 규칙·설정 UI 가 id 로 요소를 지목하므로
  * 중복이 남으면 어느 쪽을 가리키는지 정할 수 없다.
+ *
+ * **내보내는 이유는 스크래치패드다**(SPEC-CANVAS-008 REQ-05). 저장된 항목의 몸체도
+ * `CanvasElement[]` 이므로 그것을 읽는 파서가 둘이 되면 "config 에서는 살아나는데
+ * 서랍에서는 사라지는 요소" 가 생긴다. 두 번째 요소 파서를 만들지 않으려고 이 한
+ * 함수를 공유한다 — 형상이 아니라 **같은 코드**를 나눠 쓴다.
  */
-function parseElements(raw: unknown): CanvasElement[] {
+export function parseElements(raw: unknown): CanvasElement[] {
   if (!Array.isArray(raw)) return [];
   const out: CanvasElement[] = [];
   const seen = new Set<string>();
