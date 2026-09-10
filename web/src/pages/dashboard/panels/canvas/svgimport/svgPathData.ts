@@ -31,6 +31,8 @@
 
 import type { PathCommand } from '../shapes/pathTypes';
 
+import { arcToCubics } from './svgArc';
+
 // --- 토큰 ---------------------------------------------------------------
 
 /** 토크나이저가 내는 명령 글자. 대소문자가 곧 절대/상대다. */
@@ -539,6 +541,16 @@ export function reducePathSegments(
 }
 
 /** 문자열 하나를 넷으로. 토크나이즈와 축약을 잇는 편의 입구다. */
-export function reducePathData(d: string, arcToCubics: ArcReducer): PathCommand[] {
-  return reducePathSegments(tokenizePathData(d).segments, arcToCubics);
+export function reducePathData(d: string, arcReducer: ArcReducer): PathCommand[] {
+  return reducePathSegments(tokenizePathData(d).segments, arcReducer);
+}
+
+/**
+ * 실제 축약기를 물린 입구 — 문서 층(M5)이 부르는 것은 이것 하나다.
+ *
+ * 호 축약기를 인자로 남겨 둔 것은 시험이 그 위임을 **대역으로** 관측하기 위해서이고,
+ * 이 함수는 그 인자를 한 곳에서 채워 호출부마다 고르는 일이 없게 한다.
+ */
+export function parseSvgPathData(d: string): PathCommand[] {
+  return reducePathData(d, arcToCubics);
 }
