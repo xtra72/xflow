@@ -46,6 +46,7 @@ import {
   ChevronsDown,
   ChevronsUp,
   ChevronUp,
+  Group,
   Trash2,
 } from 'lucide-react';
 
@@ -86,7 +87,7 @@ import {
   type TweenSpec,
 } from './canvasConfig';
 import { bringToFront, moveElementTo, sendToBack } from './canvasEditArrange';
-import { isGroup, type CanvasNode } from './group/groupTypes';
+import { isGroup, type CanvasNode, type GroupElement } from './group/groupTypes';
 import {
   useCanvasEditSelection,
   useCanvasLiveSeries,
@@ -521,6 +522,23 @@ function withIndex(label: string, idx: number): string {
 }
 
 /**
+ * 치환자 여럿을 한 번에 채운다 — **`replaceAll` 인 것에 뜻이 있다**.
+ *
+ * `String.replace(문자열, …)` 은 **첫 자리만** 바꾸므로, 번역을 다듬다 같은 치환자가 한
+ * 문구에 두 번 들어가는 순간 뒤쪽이 `{count}` 인 채로 화면에 나온다. 그 실패는 한쪽
+ * 로케일에서만 나기 쉽고(문장 구조가 다르다) 그때 시험은 대개 기본 로케일만 본다 —
+ * 008 이 같은 자리에서 물렸고 그 교훈이 `canvas004I18n.test.tsx` 의 치환자 **횟수**
+ * 가드로 남아 있다.
+ */
+function fillTokens(label: string, tokens: Readonly<Record<string, string | number>>): string {
+  let out = label;
+  for (const [key, value] of Object.entries(tokens)) {
+    out = out.replaceAll(`{${key}}`, String(value));
+  }
+  return out;
+}
+
+/**
  * 접힌 줄의 한 줄 요약.
  *
  * 접기의 값은 "덜 보기" 가 아니라 "목록을 훑을 수 있음" 이다. 그래서 접혀도 각 줄은
@@ -545,6 +563,192 @@ function summaryOf(el: CanvasElement, t: TranslationFn): string {
 }
 
 // --- 하위 표현 -----------------------------------------------------------
+
+/**
+ * 그룹 노드 한 줄 — **접힘/펼침으로 부품을 드러내는 행** (SPEC-CANVAS-004 REQ-08).
+ *
+ * ## 왜 이 행이 있어야 하는가
+ *
+ * 없는 동안 목록은 그룹을 **말없이 건너뛰었다.** 그래서 가져온 것을 묶는 순간 (a) 부품이
+ * 된 요소들의 행이 사라지고(더는 최상위가 아니다) (b) 그룹 자신에게는 행이 없어, 목록이
+ * 통째로 비었다 — 예외도 안내도 없이. 결함은 하나이고 증상이 둘이었다.
+ *
+ * ## 부품 행이 **수치 칸을 내놓지 않는** 이유
+ *
+ * 부품 기하는 **그룹 로컬 정수 격자**(0..`GROUP_LOCAL_EXTENT`)에 적혀 있고, 004 는
+ * 역방향 중첩 투영(`unproject*In`)을 금지했다(REQ-05 · 가정 A18). 그러므로 선택지는 둘뿐이다.
+ *
+ *   - **로컬 수치를 그대로 보여 준다** — 그 숫자는 화면 어디에도 설명이 없는 단위이고
+ *     (팔레트도 캔버스 크기 칸도 배율 칸도 캔버스 단위로 말한다), 사용자는 캔버스 좌표를
+ *     적어 넣어 부품을 상자 왼쪽 위로 날려 보낸다. 되돌릴 실행 취소도 없다.
+ *   - **캔버스 단위로 환산해 보여 준다** — 쓰기에 역투영이 필요하고, 그것이 바로 004 가
+ *     좌표 넘기를 늘리지 않으려고 금지한 그것이다(불변식 G2).
+ *
+ * 그래서 칸을 두지 않고, **그 사실과 고치는 길(그룹 해제)을 안내 한 줄이 말한다.** 화면이
+ * 지키지 못할 약속을 하지 않는다는 이 파일의 규율이 여기서도 같게 적용된 것이다.
+ *
+ * ## 이 행이 **다시 만들지 않는** 것
+ *
+ * 순서 이동·삭제는 최상위 배열 조작이므로 요소 행과 **같은 함수**(`moveAt`·`removeAt`)를
+ * 받아서 부른다 — 그룹 전용 배열 규칙이 생기면 "목록에서 눌렀는가" 에 따라 결과가 갈린다.
+ * 고르기도 마찬가지로 `nextSelection` 한 규칙을 지난다. 그리고 **묶기/풀기 단추는 여기
+ * 없다** — 그 둘은 이미 도크와 떠 있는 줄 양쪽에 `CanvasGroupTools` 로 서 있고(M6), 한 값에
+ * 살아 있는 컨트롤이 둘이면 안 된다(006 불변식 I24). 특히 풀기는 규칙 손실 확인을 함께
+ * 들고 있어, 확인을 지나지 않는 세 번째 입구가 생기면 "설정에서는 물어보는데 목록에서는
+ * 그냥 풀린다" 가 표현 가능해진다.
+ */
+function GroupNodeRow({
+  node,
+  idx,
+  count,
+  open,
+  picked,
+  t,
+  onToggle,
+  onSelect,
+  onMove,
+  onRemove,
+  rowRef,
+}: {
+  node: GroupElement;
+  idx: number;
+  /** 최상위 노드의 총수. 끝자리에서 바깥쪽 이동을 잠그는 데 쓴다(요소 행과 같은 규칙). */
+  count: number;
+  open: boolean;
+  picked: boolean;
+  t: TranslationFn;
+  onToggle: () => void;
+  /** 부품 행을 눌렀을 때 — **그룹**을 고른다. 선택 키는 여전히 `nodeId` 하나다. */
+  onSelect: () => void;
+  onMove: (delta: -1 | 1) => void;
+  onRemove: () => void;
+  rowRef: (el: HTMLDivElement | null) => void;
+}) {
+  const parts = node.parts;
+  return (
+    <div
+      ref={rowRef}
+      data-testid={`canvas-group-row-${idx}`}
+      data-element-id={node.id}
+      data-selected={picked ? 'true' : undefined}
+      className={cn(
+        'space-y-1.5 rounded-md border p-1.5',
+        picked ? 'border-blue-500' : 'border-(--color-border-default)',
+      )}
+    >
+      {/* 머리줄 — 요소 행과 **같은 차례**다(순번 · 요약 · 순서 · 삭제). 차례가 갈리면
+          목록을 훑는 눈이 행 종류마다 다시 자리를 찾아야 한다. */}
+      <div className="flex w-full items-center gap-1.5">
+        <span className={ORDER_BADGE_CLASS} data-testid={`canvas-group-row-order-${idx}`}>
+          {idx + 1}
+        </span>
+
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          aria-label={fillTokens(t('dashboard.canvas.elements.groupDetailsAria'), {
+            index: idx + 1,
+            count: parts.length,
+          })}
+          data-testid={`canvas-group-row-toggle-${idx}`}
+          className="flex min-w-0 flex-1 items-center gap-1 rounded text-left text-xs text-(--color-text-muted) hover:text-(--color-text-secondary)"
+        >
+          {open ? (
+            <ChevronDown className="h-3 w-3 shrink-0" />
+          ) : (
+            <ChevronRight className="h-3 w-3 shrink-0" />
+          )}
+          {/* 그룹 행임을 아이콘 하나가 먼저 말한다 — 접힌 목록에서 행 종류를 가르는 것이
+              글자뿐이면 훑는 동안 읽어야 한다. 도크의 묶기 단추와 같은 아이콘이다. */}
+          <Group className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span className="truncate">
+            {[
+              t('dashboard.canvas.elements.groupLabel'),
+              node.id,
+              fillTokens(t('dashboard.canvas.elements.groupSummary'), { count: parts.length }),
+            ].join(' · ')}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onMove(-1)}
+          disabled={idx === 0}
+          className={ICON_BUTTON_CLASS}
+          aria-label={withIndex(t('dashboard.canvas.elements.groupMoveUpAria'), idx)}
+          data-testid={`canvas-group-row-move-up-${idx}`}
+        >
+          <ChevronUp className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          onClick={() => onMove(1)}
+          disabled={idx === count - 1}
+          className={ICON_BUTTON_CLASS}
+          aria-label={withIndex(t('dashboard.canvas.elements.groupMoveDownAria'), idx)}
+          data-testid={`canvas-group-row-move-down-${idx}`}
+        >
+          <ChevronDown className="h-3 w-3" />
+        </button>
+        {/* 삭제는 배열에서 **한 자리**를 뺀다 — 부품은 그 자리 안에 살므로 함께 사라진다
+            (REQ-04). aria 문구가 그 수를 말하는 것은 그래서다: 지우는 것이 한 줄처럼
+            보이지만 실제로 사라지는 그림은 부품 전부다. */}
+        <button
+          type="button"
+          onClick={onRemove}
+          className="shrink-0 text-(--color-text-muted) hover:text-red-500"
+          aria-label={fillTokens(t('dashboard.canvas.elements.groupDeleteAria'), {
+            index: idx + 1,
+            count: parts.length,
+          })}
+          data-testid={`canvas-group-row-delete-${idx}`}
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      </div>
+
+      {open && (
+        <div className="space-y-1 pl-4" data-testid={`canvas-group-row-parts-${idx}`}>
+          {parts.length === 0 ? (
+            // 부품 0 개 그룹은 오류가 아니다(REQ-05) — 빈 채로 서고, 비었다고 말한다.
+            // 아무것도 그리지 않으면 펼친 행이 고장난 것처럼 보인다.
+            <p className={HINT_CLASS} data-testid={`canvas-group-row-parts-empty-${idx}`}>
+              {t('dashboard.canvas.elements.groupPartsEmpty')}
+            </p>
+          ) : (
+            <>
+              {parts.map((part, pIdx) => (
+                <button
+                  key={part.id}
+                  type="button"
+                  onClick={onSelect}
+                  data-testid={`canvas-group-row-part-${idx}-${pIdx}`}
+                  data-part-id={part.id}
+                  aria-label={fillTokens(t('dashboard.canvas.elements.groupPartAria'), {
+                    index: idx + 1,
+                    part: part.id,
+                  })}
+                  className="flex w-full min-w-0 items-center gap-1.5 rounded text-left text-xs text-(--color-text-muted) hover:text-(--color-text-secondary)"
+                >
+                  <span className={ORDER_BADGE_CLASS}>{pIdx + 1}</span>
+                  {/* 종류를 여기서 말한다 — 요소 행은 펼친 카드의 종류 칸이 말하지만
+                      부품 행에는 그 카드가 없다. 빠뜨리면 목록의 여러 줄이 구분되지
+                      않는 요약만 남는다. */}
+                  <span className="shrink-0">{t(KIND_LABEL_KEY[part.kind])}</span>
+                  <span className="truncate">{summaryOf(part, t)}</span>
+                </button>
+              ))}
+              <p className={HINT_CLASS} data-testid={`canvas-group-row-parts-hint-${idx}`}>
+                {t('dashboard.canvas.elements.groupPartsHint')}
+              </p>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * 기하 좌표 한 칸. 축 이름을 눈에 보이게 붙여 어느 칸이 무엇인지 알 수 있게 한다.
@@ -830,11 +1034,24 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
     // 캔버스가 펼친 행을 손으로 접을 때는 그 자동 펼침도 함께 회수한다 — 회수하지 않으면
     // 파생 조건이 그대로 남아 도로 펼쳐지고, 사용자는 접을 방법이 없는 행을 갖게 된다.
     if (open && id === canvasExpandedId) setCanvasExpandedId(null);
-    if (!open) {
-      const picked = nextSelection(selection, id, false);
-      if (picked !== selection) setSelection(picked);
-    }
+    if (!open) selectNode(id);
   };
+
+  /**
+   * 최상위 노드 하나를 고른다 — **펼치지 않고**.
+   *
+   * 위 `toggleExpanded` 에서 갈라 낸 한 줄이다. 그룹의 부품 행이 이 입구를 쓴다: 부품에는
+   * 펼칠 몸통이 없으므로 누름이 뜻하는 것은 고르기뿐이고, 거기서 `toggleExpanded` 를
+   * 부르면 방금 열어 본 그룹이 도로 접힌다.
+   *
+   * **부품 행이 넘기는 것은 부품 id 가 아니라 그룹 id 다.** 선택 키는 언제나 최상위 배열
+   * 원소의 id 이며(002 REQ-06), `partId` 는 선택에 들어가지 않는다(004 REQ-08). 두 번째
+   * 선택 규칙이 생기면 오버레이의 윤곽선이 가리킬 것이 없는 키를 받는다.
+   */
+  function selectNode(id: string): void {
+    const picked = nextSelection(selection, id, false);
+    if (picked !== selection) setSelection(picked);
+  }
 
   // SPEC-CANVAS-004 M1 — 쓰기 경로의 원소 타입이 `CanvasNode` 로 넓어졌다. 목록이 아직
   // 그룹 행을 그리지 않더라도(M6/M10 의 몫) **배열은 통째로 오간다** — 여기서 그룹을
@@ -1017,9 +1234,30 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
       ) : (
         <div className="space-y-2">
           {elements.map((el, idx) => {
-            // SPEC-CANVAS-004 M1 — 그룹 행은 아직 없다(M6/M10 이 접힘/펼침 행을 얹는다).
-            // 자리를 건너뛰되 **배열에서 빼지는 않는다**: 위 `emit` 주석의 그 이유다.
-            if (isGroup(el)) return null;
+            // SPEC-CANVAS-004 M6 — 그룹은 제 행을 갖는다. 건너뛰던 동안 목록은 묶는
+            // 순간 통째로 비었다(부품이 된 요소의 행도, 그룹 자신의 행도 없었다).
+            // **자리(index)는 노드 배열의 자리 그대로다** — 위 `emit` 주석의 그 이유다.
+            if (isGroup(el)) {
+              return (
+                <GroupNodeRow
+                  key={el.id}
+                  node={el}
+                  idx={idx}
+                  count={elements.length}
+                  open={isExpanded(el.id)}
+                  picked={selection.has(el.id)}
+                  t={t}
+                  onToggle={() => toggleExpanded(el.id)}
+                  onSelect={() => selectNode(el.id)}
+                  onMove={(delta) => moveAt(idx, delta)}
+                  onRemove={() => removeAt(idx)}
+                  rowRef={(node) => {
+                    if (node === null) rowRefs.current.delete(el.id);
+                    else rowRefs.current.set(el.id, node);
+                  }}
+                />
+              );
+            }
             const bindingOptions = bindingOptionsFor(seriesOptions, el.binding?.series);
             const unbound = el.binding === undefined;
             const open = isExpanded(el.id);

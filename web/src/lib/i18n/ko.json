@@ -1397,7 +1397,16 @@
         "numericLabel": "숫자",
         "numericAria": "요소 {index} 값을 숫자로 읽기",
         "numericHint": "켜면 받은 값을 숫자로 읽어 소수 자리로 반올림하고 단위를 붙입니다. 끄면 받은 값을 글자 그대로 내보내며, 그때는 소수 자리와 단위가 걸릴 곳이 없어 함께 감춰집니다.",
-        "rulesNonNumericHint": "숫자로 읽지 않으므로 비교할 값이 없습니다. 초과·이상·구간 같은 행은 일치하지 않고 \"값 없음\" 행만 남습니다. 값에 따라 스타일을 바꾸려면 숫자를 켜세요."
+        "rulesNonNumericHint": "숫자로 읽지 않으므로 비교할 값이 없습니다. 초과·이상·구간 같은 행은 일치하지 않고 \"값 없음\" 행만 남습니다. 값에 따라 스타일을 바꾸려면 숫자를 켜세요.",
+        "groupLabel": "그룹",
+        "groupSummary": "부품 {count}개",
+        "groupDetailsAria": "그룹 {index} 부품 목록 — 펼치면 캔버스에서도 함께 골라집니다",
+        "groupMoveUpAria": "그룹 {index} 위로",
+        "groupMoveDownAria": "그룹 {index} 아래로",
+        "groupDeleteAria": "그룹 {index} 삭제 — 부품 {count}개가 함께 지워집니다",
+        "groupPartAria": "그룹 {index} 부품 {part} — 누르면 그룹이 골라집니다",
+        "groupPartsHint": "부품 좌표는 그룹 안쪽 격자에 적혀 있어 캔버스 단위와 다릅니다. 그래서 여기에는 수치 칸을 두지 않습니다. 부품을 수치로 고치려면 그룹을 해제하세요.",
+        "groupPartsEmpty": "부품이 없습니다."
       },
       "rules": {
         "firstMatchWins": "위에서부터 처음 일치하는 행 하나만 적용됩니다. 순서를 바꾸면 우선순위가 바뀝니다.",

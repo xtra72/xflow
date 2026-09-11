@@ -1397,7 +1397,16 @@
         "numericLabel": "Numeric",
         "numericAria": "Element {index} read value as a number",
         "numericHint": "On: the reading is read as a number, rounded to the decimals and given the unit. Off: the reading is passed through verbatim as text, so decimals and unit have nothing to apply to and are hidden with it.",
-        "rulesNonNumericHint": "With numeric off there is no number to compare, so comparison rows (greater than, at least, between …) never match and only \"no data\" rows remain. Turn numeric on to drive style from the value."
+        "rulesNonNumericHint": "With numeric off there is no number to compare, so comparison rows (greater than, at least, between …) never match and only \"no data\" rows remain. Turn numeric on to drive style from the value.",
+        "groupLabel": "Group",
+        "groupSummary": "{count} parts",
+        "groupDetailsAria": "Group {index} part list — expanding also selects it on the canvas",
+        "groupMoveUpAria": "Move group {index} up",
+        "groupMoveDownAria": "Move group {index} down",
+        "groupDeleteAria": "Delete group {index} — its {count} parts go with it",
+        "groupPartAria": "Group {index} part {part} — pressing selects the group",
+        "groupPartsHint": "Part coordinates are written on the group's inner grid, not in canvas units, so no numeric fields stand here. Ungroup to edit a part numerically.",
+        "groupPartsEmpty": "No parts."
       },
       "rules": {
         "firstMatchWins": "Only the first matching row from the top is applied. Reordering changes priority.",
