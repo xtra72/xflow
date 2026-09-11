@@ -41,6 +41,17 @@
 // (T13)이고, 그 규칙은 목록 편집기 쪽 AC-06("둘 이상 선택되면 아무 행도 자동으로 펼치지
 // 않는다")과 같은 방향이다 — 다중 선택에서는 표시만 남는다.
 //
+// **영역 선택은 modifier 로만 시작한다**(SPEC-CANVAS-009). 빈 자리에서 Shift·Ctrl·Cmd 를
+// 누른 채 끌면 사각형이 서고, 그 안에 **온전히 든** 것들이 지금 선택에 더해진다. 문턱
+// (몇 px 움직이면 마키로 승격)으로 가르지 않은 이유는 아래 §빈 지점과 한 몸이다 —
+// `previewPan` 은 **누름에서** 이미 팬을 시작하며 그것을 무를 신호가 없으므로, 문턱으로
+// 가르면 한 몸짓 위에서 팬과 마키가 동시에 돈다. modifier 로 가르면 맨손 누름이 종전
+// 그대로 흘러가 그 층의 몸짓 소유권 규칙이 한 글자도 바뀌지 않는다.
+//
+// 판정은 잉크가 아니라 **`outlineBox` 가 낸 상자**이며 그 근거와 대가는 `canvasMarquee`
+// 머리말이 갖는다. 여기서 지킬 것은 하나다 — 판정하는 상자와 골라진 뒤 화면에 뜨는
+// 상자가 **같은 함수**에서 나온다(위험 R1).
+//
 // **빈 지점 누름을 가로채지 않는다**(REQ-05 · AC-E3 · 위험 R2). 설정 미리보기에는 이미
 // 휠 확대와 패널 크기 조절이 걸려 있고, 대시보드 패널은 편집모드에서 몸통을 잡아 옮긴다.
 // 아무 데나 잡아도 끌리면 그것들과 부딪히므로 — `PanelDragLayer` 헤더가 같은 이유로 같은
@@ -149,6 +160,7 @@ import { PanelEditGrid } from '../../PanelEditGrid';
 import { EMPTY_SELECTION, nextSelection } from '../charts/panelEditSelection';
 import { CanvasEditDockBody } from './CanvasEditDock';
 import { CanvasWorkspaceZoomField } from './CanvasWorkspaceZoomField';
+import { marqueeCandidates, marqueeRect, marqueeSelection } from './canvasMarquee';
 import { CanvasGroupTools } from './group/CanvasGroupTools';
 import { groupNodes, rulesLostByUngroup, ungroupNode, type GroupRefusal } from './group/groupOps';
 import { isGroup, type CanvasNode } from './group/groupTypes';
@@ -199,7 +211,7 @@ import {
   type AlignAxis,
   type AlignMode,
 } from './canvasEditArrange';
-import { useCanvasEditSelection } from './canvasEditContext';
+import { useCanvasEditSelection, type CanvasSelection } from './canvasEditContext';
 import { useCanvasEditDockHost } from './canvasEditDockHost';
 import type { ImportedPathSpec, ImportedTextSpec } from './svgimport/svgImportPlan';
 import { useCanvasStageGrid } from './canvasStageGrid';
@@ -273,6 +285,29 @@ interface PointerFrame {
   /** 화면 px ÷ 스테이지 px. 변환이 없으면 1 이다. */
   scaleX: number;
   scaleY: number;
+}
+
+/**
+ * 진행 중인 **영역 선택**(마키) — 누른 자리부터 지금 자리까지의 사각형.
+ *
+ * **`dragRef` 가 아니라 React 상태다.** 드래그 상태를 ref 에 둔 것은 그것이 화면에 아무것도
+ * 그리지 않고 기하 쓰기만 하기 때문이고(쓰기는 rAF 로 모인다), 마키는 반대로 **제 사각형을
+ * 그려야** 하므로 렌더에 참여해야 한다. 둘을 한 자리에 합치면 이동 드래그가 매 포인터
+ * 이벤트마다 재렌더를 부르게 되어 AC-E4 의 규율이 깨진다.
+ *
+ * `base` 는 몸짓을 **시작할 때**의 선택이다. 매 이동마다 이 값에서 다시 합집합을 세므로
+ * 사각형을 줄이면 빠져나간 것이 실제로 풀린다(`canvasMarquee.marqueeSelection` §합집합).
+ */
+interface MarqueeState {
+  pointerId: number;
+  /** 잡는 순간의 좌표 기준. 드래그와 같은 규율으로 다시 재지 않는다. */
+  frame: PointerFrame;
+  /** 누른 자리(스테이지 로컬 CSS px). */
+  origin: PxPoint;
+  /** 지금 자리(스테이지 로컬 CSS px). */
+  point: PxPoint;
+  /** 몸짓을 시작할 때의 선택 — 합집합의 좌변이다. */
+  base: CanvasSelection;
 }
 
 /** 어느 드래그든 공통으로 드는 것. */
@@ -832,6 +867,12 @@ export default function CanvasEditOverlay({
    * 포인터를 잡는다 — 기준이 둘이 되면 몸통 드래그와 핸들 드래그가 서로 다른 원점을 믿게
    * 되고, 그 어긋남은 "핸들로 잡으면 조금 밀린다" 로만 보인다.
    */
+  /**
+   * 진행 중인 영역 선택. `null` 이면 그리지 않는다 — 이 층에 사각형이 **있는 시간은 손이
+   * 눌려 있는 동안뿐**이며, 그것이 아래 §마키 사각형이 표시 층이 아닌 근거다(불변식 I23).
+   */
+  const [marquee, setMarquee] = useState<MarqueeState | null>(null);
+
   const rootRef = useRef<HTMLDivElement>(null);
 
   const dragRef = useRef<DragState | null>(null);
@@ -951,6 +992,9 @@ export default function CanvasEditOverlay({
     if (enabled) return;
     dragRef.current = null;
     pendingRef.current = null;
+    // 진행 중이던 사각형도 함께 거둔다. 남기면 편집이 꺼진 표면 위에 **조작할 수 없는
+    // 그림**이 그대로 떠 있고, 선택은 이미 비워졌으므로 그 사각형은 아무것도 뜻하지 않는다.
+    setMarquee(null);
     setSelection(EMPTY_SELECTION);
   }, [enabled, setSelection]);
 
@@ -978,11 +1022,35 @@ export default function CanvasEditOverlay({
     const frame = pointerFrameOf(host.getBoundingClientRect(), stage);
     const point = stagePoint(event.clientX, event.clientY, frame);
 
+    // Shift·Ctrl·Cmd 는 **고르기 전용** 조작이다(`PanelDragLayer` 와 같은 규칙). 히트가
+    // 있을 때의 뜻("이것을 선택에 더하거나 뺀다")과 빈 지점에서의 뜻("사각형으로 감싼
+    // 것들을 선택에 더한다")은 **같은 한 낱말**이다 — 둘 다 "더한다" 이고, 어느 쪽도
+    // 배치를 건드리지 않는다.
+    const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+
     const hit = hitTest(elements, point, projection, textWidths);
     if (hit === undefined) {
-      // 빈 지점: 선택만 비우고 **이벤트를 소비하지 않는다**(AC-E3). 상위의 휠 확대·
-      // 패널 크기 조절·패널 끌기가 종전대로 동작해야 한다.
-      if (selection.size > 0) setSelection(EMPTY_SELECTION);
+      // **맨손으로 누른 빈 지점은 종전 그대로다**(AC-E3). 선택만 비우고 이벤트를
+      // 소비하지 않는다 — 상위의 휠 확대·패널 크기 조절·패널 끌기, 그리고 무엇보다
+      // `previewPan` 의 화면 이동이 그 몸짓을 받아야 한다. 그 층은 "아무도 가져가지
+      // 않은 몸짓" 을 `defaultPrevented` 로 가리므로, 여기서 한 번이라도 소비하면
+      // 빈 자리 끌기로 화면을 옮기는 길이 통째로 죽는다(previewPan.ts §몸짓의 소유권 2).
+      if (!additive) {
+        if (selection.size > 0) setSelection(EMPTY_SELECTION);
+        return;
+      }
+
+      // **영역 선택은 modifier 로 갈린다** — 움직임 문턱이 아니다(SPEC-CANVAS-009 결정 1).
+      // 문턱으로 가르려면 누름을 일단 흘려보낸 뒤 손이 움직인 다음에 가져와야 하는데,
+      // `previewPan` 은 **누름에서** 이미 팬을 시작했고 그것을 무르는 신호가 없다. 둘이
+      // 한 몸짓 위에서 동시에 돈다.
+      event.preventDefault();
+      event.stopPropagation();
+      // 히트 때와 같은 이유다 — 바로 위 `preventDefault` 가 브라우저의 기본 초점 이동을
+      // 막으므로, 이 한 줄이 없으면 방금 감싸 고른 것을 방향키로 옮길 수 없다(T15).
+      host.focus();
+      setMarquee({ pointerId: event.pointerId, frame, origin: point, point, base: selection });
+      host.setPointerCapture?.(event.pointerId);
       return;
     }
 
@@ -995,9 +1063,7 @@ export default function CanvasEditOverlay({
     // 고른 사람과 키보드로 옮기려는 사람이 같은 사람이다(T15 · REQ-01).
     host.focus();
 
-    // Shift·Ctrl·Cmd 는 **고르기 전용** 조작이다(`PanelDragLayer` 와 같은 규칙) —
-    // 그 상태로 끌리면 무리에 넣으려다 배치가 흐트러진다.
-    const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+    // 위 `additive` 로 갈린다 — 그 상태로 끌리면 무리에 넣으려다 배치가 흐트러진다.
     const picked = nextSelection(selection, hit.nodeId, additive);
     if (picked !== selection) setSelection(picked);
     if (additive) return;
@@ -1078,7 +1144,36 @@ export default function CanvasEditOverlay({
     setDropActive(next);
   };
 
+  /**
+   * 사각형이 지금 감싸는 것들 — **바탕과의 합집합**이다.
+   *
+   * 투영은 `outlineBox` 를 지난다: 판정하는 상자와 골라진 뒤 **화면에 뜨는 그 상자**가
+   * 같은 함수에서 나오므로 둘이 갈라질 수 없다(위험 R1 의 규율 그대로다).
+   */
+  const marqueeNext = (state: MarqueeState, point: PxPoint): CanvasSelection =>
+    marqueeSelection(
+      marqueeCandidates(elements, (el) => outlineBox(el, projection, textWidths)),
+      marqueeRect(state.origin, point),
+      state.base,
+    );
+
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+    // **영역 선택이 먼저다.** 둘은 배타적이므로(마키는 히트가 없을 때만, 이동 드래그는
+    // 있을 때만 시작된다) 순서가 뜻을 바꾸지는 않으나, 먼저 끊어 두면 아래 이동 경로가
+    // 마키를 모른 채로 남는다 — 그 경로는 REQ-08 이 "한 줄도 바뀌지 않는다" 로 이름
+    // 적어 둔 자리다.
+    if (marquee !== null && event.pointerId === marquee.pointerId) {
+      event.preventDefault();
+      const point = stagePoint(event.clientX, event.clientY, marquee.frame);
+      setMarquee({ ...marquee, point });
+      // **프레임을 예약하지 않는다**(REQ-05 · AC-E4). 마키는 기하를 한 글자도 쓰지 않으므로
+      // `CanvasSurface` 가 받는 props 가 그대로이고, 따라서 001 이 지은 유휴 정지가 유지된다.
+      // 이동 드래그가 rAF 로 모이는 것은 그쪽이 **config 를 쓰기** 때문이지 포인터라서가
+      // 아니다 — 여기서 그 통로(`pendingRef`·`frameRef`)를 빌리면 쓸 것이 없는데도 루프가 돈다.
+      const picked = marqueeNext(marquee, point);
+      if (picked !== selection) setSelection(picked);
+      return;
+    }
     const drag = dragRef.current;
     if (drag === null || event.pointerId !== drag.pointerId) return;
     event.preventDefault();
@@ -1151,7 +1246,22 @@ export default function CanvasEditOverlay({
     emit(next);
   };
 
+  /**
+   * 영역 선택을 끝낸다. **선택은 다시 세지 않는다** — 마지막 이동이 이미 확정해 두었고,
+   * 뗌 좌표로 한 번 더 세면 그 사이 좌표가 다른 경우에만 결과가 갈리는 두 번째 규칙이 된다.
+   * 움직임이 한 번도 없었으면(감싼 면적이 0) 합집합이 바탕 그대로이므로 선택은 불변이다.
+   */
+  const finishMarquee = (host: HTMLDivElement, pointerId: number): void => {
+    releaseCapture(host, pointerId);
+    setMarquee(null);
+  };
+
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (marquee !== null && event.pointerId === marquee.pointerId) {
+      event.preventDefault();
+      finishMarquee(event.currentTarget, event.pointerId);
+      return;
+    }
     const drag = dragRef.current;
     if (drag === null || event.pointerId !== drag.pointerId) return;
     event.preventDefault();
@@ -1172,6 +1282,12 @@ export default function CanvasEditOverlay({
   };
 
   const handlePointerCancel = (event: React.PointerEvent<HTMLDivElement>): void => {
+    // 이동 드래그의 취소가 **마지막 유효 위치를 확정하는** 것과 같은 규칙이다 — 되돌리면
+    // 사용자가 한 일이 소리 없이 사라진다. 사각형만 거둔다.
+    if (marquee !== null && event.pointerId === marquee.pointerId) {
+      finishMarquee(event.currentTarget, event.pointerId);
+      return;
+    }
     const drag = dragRef.current;
     if (drag === null || event.pointerId !== drag.pointerId) return;
     releaseCapture(event.currentTarget, event.pointerId);
@@ -1588,8 +1704,13 @@ export default function CanvasEditOverlay({
       {/* 눈으로 보는 사람에게는 손잡이와 커서가 조작법을 알리지만, 스크린 리더에게는
           알릴 것이 없다 — 그래서 설명을 DOM 에 **항상** 두고 `aria-describedby` 로 잇는다
           (`FieldHelp.tsx` 가 세운 이 저장소의 관용구다). */}
+      {/* 마키 사각형은 `aria-hidden` 인 장식이라 보조기기에게는 **존재하지 않는다** — 그
+          몸짓이 있다는 사실이 닿는 유일한 통로가 이 문단이다(006 M11 이 흐림·경계를 두고
+          세운 그 논리 그대로다). 그래서 키를 따로 두고 같은 문단에 잇는다: 두 문장은 모두
+          "이 표면을 어떻게 조작하는가" 이고, 문단을 나누면 `aria-describedby` 가 둘을
+          가리킬 수 없다. */}
       <p id={hintId} className="sr-only">
-        {t('dashboard.canvas.edit.keyboardHint')}
+        {t('dashboard.canvas.edit.keyboardHint')} {t('dashboard.canvas.edit.marqueeHint')}
       </p>
       {/* 격자 — **신규 격자 컴포넌트를 만들지 않는다**(REQ-04). `PanelEditGrid` 는 선을
           DOM 요소가 아니라 `repeating-linear-gradient` 로 그리고 `absolute inset-0` +
@@ -1843,6 +1964,39 @@ export default function CanvasEditOverlay({
             onPointerDown={(event) => startHandleDrag(handleHost, handle.id, event)}
           />
         ))}
+      {/* **마키 사각형** — 지금 감싸고 있는 영역(SPEC-CANVAS-009 결정 5).
+
+          **표시 층이 아니다**(불변식 I23). I23 이 막는 결함의 형상은 "**조건 없이** 그려지는
+          층을 다스리는 컨트롤이 이 표면에는 없다" 이며, 006 에서 그것이 실제로 터진 자리는
+          격자·흐림·경계였다 — 셋 다 손을 떼도 그대로 남고, 남아 있는 동안 사용자가 바꿀 수
+          있어야 하는데 바꿀 손잡이가 도크에만 있었다.
+
+          이 사각형은 그 어느 쪽도 아니다. **손이 눌려 있는 동안에만** 존재하고, 그리는 것도
+          거두는 것도 **그 몸짓 자신**이다. 다스릴 지속 상태가 없으므로 다스릴 컨트롤도 없고,
+          컨트롤을 하나 지어 붙인다면 그것은 누를 시간이 존재하지 않는 단추가 된다. 그래서
+          `LAYER_CONTROLS` 표에 행을 더하지 않고, 선택 윤곽선과 **같은 면제**를 받는다 —
+          그쪽의 근거("표시 층이 아니라 선택의 그림자다")가 여기서는 한 걸음 더 곧다:
+          이것은 **몸짓 자신의 그림자**다.
+
+          **위험 R8 의 가드는 그대로 통과한다.** 칠하고 `aria-hidden` 이므로 그 가드에
+          **걸리며**, 걸린 채로 `pointer-events-none` 을 갖는다. 가드가 지키는 문장
+          ("장식은 포인터를 먹지 않는다")을 우회하지 않고 만족시킨다 — 세 이름을 손으로 적은
+          쪽 목록에는 더하지 않는다(그 셋은 006 의 표시 층이고 이것은 아니다).
+
+          좌표계는 선택 윤곽선과 **같다**: 스테이지 로컬 px 을 `left`/`top` 에 그대로 쓴다.
+          루트에 `overflow` 가 없으므로 저술 여백까지 음수 좌표로 뻗는다(닿는 면과 같은 방식). */}
+      {marquee !== null &&
+        (() => {
+          const box = marqueeRect(marquee.origin, marquee.point);
+          return (
+            <div
+              data-testid="canvas-marquee"
+              aria-hidden="true"
+              className="pointer-events-none absolute border border-dashed border-blue-500 bg-blue-500/10"
+              style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
+            />
+          );
+        })()}
     </div>
   );
 }

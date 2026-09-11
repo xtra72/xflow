@@ -2703,7 +2703,13 @@ describe('키보드로 닿는다 — 루트가 초점을 받는 자리다 (AC-08
     expect(id).toBeTruthy();
     const hint = document.getElementById(id!);
     expect(hint).toBeTruthy();
-    expect(hint!.textContent).toBe('dashboard.canvas.edit.keyboardHint');
+    // **여전히 정확히 일치로 잰다**(`toContain` 으로 늦추지 않는다 — 그러면 문단에 엉뚱한
+    // 문구가 하나 더 끼어도 통과한다). 009 가 영역 선택 안내를 같은 문단에 이어 붙였으므로
+    // 기대값이 두 키가 된다: 사각형은 `aria-hidden` 인 장식이라 이 문단이 보조기기에게
+    // 그 몸짓을 알리는 **유일한 통로**다(006 M11 이 흐림·경계를 두고 세운 논리 그대로다).
+    expect(hint!.textContent).toBe(
+      'dashboard.canvas.edit.keyboardHint dashboard.canvas.edit.marqueeHint',
+    );
     // 눈에는 보이지 않아야 한다 — 스테이지 위에 안내문이 떠 있으면 그림을 가린다.
     expect(hint!.className).toContain('sr-only');
   });
@@ -4196,6 +4202,14 @@ describe('층이 서는 자리에 손잡이가 선다 (SPEC-CANVAS-006 M10 · �
         stubOverlayRect(0, 0, FP_STAGE.width, FP_STAGE.height);
         send('pointerdown', 150, 130);
         expect(selectionText()).toBe('under');
+        // **그리고 마키가 떠 있는 상태로도 한 번 잰다**(SPEC-CANVAS-009). 이 두 줄이
+        // 없으면 아래 면제는 **한 번도 걸리지 않는 죽은 필터**이고, 그 초록은 마키에
+        // 대해 아무것도 말하지 않는다("없어서 통과하는 시험은 엉뚱한 이유로 초록이다").
+        // 실제로 이 상태에서 면제를 빼면 이 시험은 `canvas-marquee` 로 빨개진다(실측).
+        send('pointerup', 150, 130);
+        send('pointerdown', 10, 10, { shiftKey: true });
+        send('pointermove', 400, 300, { shiftKey: true });
+        expect(screen.queryByTestId('canvas-marquee')).not.toBeNull();
       }
 
       const root = screen.getByTestId('canvas-edit-overlay');
@@ -4206,9 +4220,23 @@ describe('층이 서는 자리에 손잡이가 선다 (SPEC-CANVAS-006 M10 · �
             child.getAttribute('aria-hidden') === 'true' &&
             paintsSomething(child),
         )
-        // 선택 윤곽선은 표시 **층**이 아니라 선택의 그림자다 — 그것을 다스리는 것은
-        // 컨트롤이 아니라 선택 자체이고, 선택은 두 표면에 다 있다(누르면 골라진다).
-        .filter((child) => !(child.dataset.testid ?? '').startsWith('canvas-selection-'));
+        // **몸짓과 선택의 그림자는 표시 층이 아니다.**
+        //
+        // 선택 윤곽선을 면제한 근거는 "표시 **층**이 아니라 선택의 그림자다 — 그것을
+        // 다스리는 것은 컨트롤이 아니라 선택 자체이고, 선택은 두 표면에 다 있다" 였다.
+        // 마키 사각형에는 그 근거가 한 걸음 더 곧게 걸린다: **손이 눌려 있는 동안에만**
+        // 존재하고, 그리는 것도 거두는 것도 그 몸짓 자신이다. I23 이 막는 결함의 형상은
+        // "**조건 없이** 그려지는 층인데 이 표면에는 그 층을 다스릴 손잡이가 없다" 인데,
+        // 다스릴 지속 상태가 아예 없으므로 손잡이를 지어 붙이면 **누를 시간이 존재하지
+        // 않는 단추**가 된다. 그래서 표에 행을 더하는 대신 같은 면제를 준다.
+        //
+        // 면제가 표시 층으로 **번지지 않는다**는 것은 이웃 파일이 따로 지킨다
+        // (`CanvasEditOverlay.marquee.test.tsx` §I23 — 마키가 이 열거에 실제로 걸린다는
+        // 것과, 손을 떼면 DOM 에서 사라진다는 것을 함께 잰다).
+        .filter((child) => {
+          const id = child.dataset.testid ?? '';
+          return !id.startsWith('canvas-selection-') && id !== 'canvas-marquee';
+        });
 
       expect(painting.length, `@docked=${docked}`).toBeGreaterThan(0);
       for (const child of painting) {
