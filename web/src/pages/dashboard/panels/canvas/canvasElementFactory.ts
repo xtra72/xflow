@@ -103,8 +103,14 @@ const SEED_OFFSET_WRAP = 8;
 
 // --- 순수 도우미 ---------------------------------------------------------
 
-/** 배열 안에서 쓰이지 않은 요소 id 를 만든다(결정적 — 테스트가 값을 예측할 수 있다). */
-export function nextElementId(elements: readonly CanvasElement[]): string {
+/**
+ * 배열 안에서 쓰이지 않은 요소 id 를 만든다(결정적 — 테스트가 값을 예측할 수 있다).
+ *
+ * 인자가 **`id` 만 요구**하는 것에 뜻이 있다(SPEC-CANVAS-004 M5). 그룹해제는 요소와
+ * 그룹이 섞인 최상위 배열을 상대로 id 를 발급해야 하고, 그때 **id 규칙이 둘이 되지 않는
+ * 것**이 요구다. 읽는 것이 `e.id` 하나뿐이므로 이 넓히기는 동작을 한 글자도 바꾸지 않는다.
+ */
+export function nextElementId(elements: readonly { id: string }[]): string {
   const used = new Set(elements.map((e) => e.id));
   let n = 1;
   while (used.has(`el-${n}`)) n++;
