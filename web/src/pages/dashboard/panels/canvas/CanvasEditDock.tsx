@@ -74,7 +74,7 @@ import {
 import { CanvasEditDockHostContext } from './canvasEditDockHost';
 import { CanvasScratchpad } from './scratchpad/CanvasScratchpad';
 import { CanvasSvgImport } from './svgimport/CanvasSvgImport';
-import type { ImportedPathSpec } from './svgimport/svgImportPlan';
+import type { ImportedPathSpec, ImportedTextSpec } from './svgimport/svgImportPlan';
 import type { ScratchpadDropPoint } from './scratchpad/canvasScratchpadDrop';
 import type { ScratchpadEntry } from './scratchpad/scratchpadTypes';
 import { CanvasPaletteGroup, CanvasShapeCatalog } from './shapes/CanvasShapeCatalog';
@@ -356,8 +356,14 @@ export interface CanvasEditDockBodyProps {
    * 상자를 함께 받는 것에 뜻이 있다: 가져오기의 산출은 **한 그림의 조각들**이라 상자를
    * 공유하고, 계단 오프셋도 무리 전체에 한 번만 더해진다(REQ-06). 조각마다 상자를 짓게
    * 두면 정수 반올림이 조각마다 최대 0.5 단위씩 어긋나 그림이 갈라진다.
+   *
+   * 문구를 **둘째 인자로** 받는다 — 한 배열로 합치면 두 갈래를 판별할 표식이 값에
+   * 들어가야 하고, 그 표식은 요소의 어휘(`kind`)를 흉내 내게 된다(결함 B 정정).
    */
-  onSvgImport: (shapes: readonly ImportedPathSpec[]) => void;
+  onSvgImport: (
+    shapes: readonly ImportedPathSpec[],
+    texts: readonly ImportedTextSpec[],
+  ) => void;
   /**
    * 그룹 · 그룹 해제 컨트롤(SPEC-CANVAS-004 REQ-08).
    *

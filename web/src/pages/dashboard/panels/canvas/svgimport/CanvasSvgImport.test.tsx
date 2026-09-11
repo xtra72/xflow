@@ -206,7 +206,9 @@ describe('AC-07 — 못 다룬 것을 화면이 말한다', () => {
     const body = screen.getByTestId('canvas-svg-import-notes');
 
     // 버림 셋 · 근사 하나가 실제로 켜져 있다.
-    const text = screen.getByTestId('canvas-svg-import-note-textDropped');
+    // 개수를 말하는 본보기가 `textDropped` 에서 `textOrderChanged` 로 바뀌었다(결함 B 정정) —
+    // `<text>` 둘은 이제 들어오고, 뒤따르는 `<path>` 위로 올라선 것이 보고에 오른다.
+    const text = screen.getByTestId('canvas-svg-import-note-textOrderChanged');
     expect(text.textContent).toContain('2'); // <text> 둘 — "있습니다" 가 아니라 "2개".
     expect(body.querySelector('[data-testid="canvas-svg-import-note-imageDropped"]')).not.toBeNull();
     expect(body.querySelector('[data-testid="canvas-svg-import-note-styleRuleDropped"]')).not.toBeNull();

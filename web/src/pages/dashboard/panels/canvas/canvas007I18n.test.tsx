@@ -71,7 +71,7 @@ const STRUCTURE_KEYS: readonly string[] = [
   'importCommandLimitHint',
 ].map((k) => `${EDIT}.${k}`);
 
-/** 사유 문구 30종 — **표에서 유도한다**(사유가 늘면 가드도 늘어난다). */
+/** 사유 문구 36종 — **표에서 유도한다**(사유가 늘면 가드도 늘어난다). */
 const REASON_KEYS: readonly string[] = [...Object.values(NOTE_KEYS), ...Object.values(REFUSAL_KEYS)];
 
 const ALL_007_KEYS: readonly string[] = [...STRUCTURE_KEYS, ...REASON_KEYS];
@@ -115,11 +115,11 @@ function tokensOf(text: string): string[] {
 // --- 형상 가드 (DOM 없이) -------------------------------------------------
 
 describe('007 이 더한 문구는 ko · en 양쪽에 있다 (E13 · 품질 게이트 Unified)', () => {
-  it('키 44개가 양쪽 로케일에서 **비어 있지 않은 문자열**로 잡힌다', () => {
+  it('키 50개가 양쪽 로케일에서 **비어 있지 않은 문자열**로 잡힌다', () => {
     // 켜져 있음을 먼저 단언한다 — 목록이 비면 아래 순회가 0회 돌고 초록이 된다.
     expect(STRUCTURE_KEYS).toHaveLength(14);
-    expect(REASON_KEYS).toHaveLength(30);
-    expect(ALL_007_KEYS).toHaveLength(44);
+    expect(REASON_KEYS).toHaveLength(36);
+    expect(ALL_007_KEYS).toHaveLength(50);
 
     const missing: string[] = [];
     for (const key of ALL_007_KEYS) {
@@ -131,7 +131,7 @@ describe('007 이 더한 문구는 ko · en 양쪽에 있다 (E13 · 품질 게�
     expect(missing).toEqual([]);
   });
 
-  it('사유 30종은 **동적 키라서** 기존 가드를 지나지 않는다 — 여기서 센다', () => {
+  it('사유 36종은 **동적 키라서** 기존 가드를 지나지 않는다 — 여기서 센다', () => {
     // `i18nKeyShape.test.ts` 의 `T_CALL` 은 `t('리터럴')` 만 잡고, 사유 문구는 `t(NOTE_KEYS[r])`
     // 로 불린다. 그 구멍을 이 시험이 메운다.
     for (const key of REASON_KEYS) {
@@ -284,11 +284,13 @@ for (const locale of ['ko', 'en'] as const) {
       expect(toggle.textContent ?? '').not.toContain('{');
       fireEvent.click(toggle);
 
-      const item = screen.getByTestId('canvas-svg-import-note-textDropped');
+      // 사유가 `textDropped` 에서 `textOrderChanged` 로 바뀌었다(결함 B 정정) — 이 문서의
+      // `<text>` 는 이제 요소가 되고, 뒤따르는 `<path>` 위로 올라선 것이 보고에 오른다.
+      const item = screen.getByTestId('canvas-svg-import-note-textOrderChanged');
       expect(item.textContent ?? '').not.toContain('{');
       expect(item.textContent ?? '').not.toContain('dashboard.');
       // 사유 이름과 개수가 **둘 다** 들어 있다 — 하나만 있으면 "필터가 있습니다" 로 퇴화한다.
-      expect(item.textContent).toContain(lookup(LOCALES[locale], NOTE_KEYS.textDropped) ?? 'x');
+      expect(item.textContent).toContain(lookup(LOCALES[locale], NOTE_KEYS.textOrderChanged) ?? 'x');
       expect(item.textContent).toContain('1');
     });
 

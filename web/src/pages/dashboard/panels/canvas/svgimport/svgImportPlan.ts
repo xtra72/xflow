@@ -52,7 +52,9 @@ import {
   type BoxGeometry,
   type CanvasSize,
   type ElementStyle,
+  type PointGeometry,
 } from '../canvasConfig';
+import { clampCanvasFontSize } from '../canvasEditGeometry';
 import { MAX_PATH_COMMANDS, PATH_LOCAL_EXTENT, type PathCommand } from '../shapes/pathTypes';
 
 import { readSvgDocument, type SvgDocumentReader, type ViewBox } from './svgDocument';
@@ -64,8 +66,10 @@ import {
   type ImportReport,
   type ImportRefusal,
   type ImportedShape,
+  type ImportedText,
 } from './svgImportTypes';
 import {
+  placePoint,
   placeShape,
   tightCommandBounds,
   viewBoxBounds,
@@ -105,6 +109,23 @@ export interface ImportedPathSpec {
   readonly hasOwnStyle: boolean;
 }
 
+/**
+ * 요소 하나가 될 준비가 끝난 문구. 좌표는 **캔버스 단위 기준점**이다.
+ *
+ * 경로와 달리 로컬 정규화가 없다 — 문구 요소의 기하는 상자가 아니라 점 하나이고
+ * (`PointGeometry`), 점에는 나눌 격자가 없다. 그래서 이 층에서 이미 캔버스 단위다.
+ */
+export interface ImportedTextSpec {
+  /** 정렬 기준점(정수 캔버스 단위). **계단 오프셋은 아직 더해지지 않았다**(M8 의 몫). */
+  readonly at: PointGeometry;
+  /** 한 줄로 편 글자. 상한을 넘었으면 이미 잘려 있다. */
+  readonly text: string;
+  /** `fontSize` 가 **여기서 px 가 된다** — 문서 축척을 곱하고 패널 범위로 죈 뒤다. */
+  readonly style: ElementStyle;
+  /** 원본이 칠을 한 마디라도 말했는가 — 아니면 002 의 문구 씨앗 색이 선다. */
+  readonly hasOwnStyle: boolean;
+}
+
 /** 계획의 산출. **예외가 아니라 값으로 실패가 돌아온다**(REQ-07). */
 export type SvgImportPlan =
   | {
@@ -114,6 +135,11 @@ export type SvgImportPlan =
        * 살다 죽고(`fitBox`), 밖으로 나가는 것은 요소가 될 도형들뿐이다.
        */
       readonly shapes: readonly ImportedPathSpec[];
+      /**
+       * 문구들. **도형과 갈라 나간다** — 요소가 될 때 상자가 아니라 점 위에 서고, 하나는
+       * 명령을, 다른 하나는 글자를 예산에서 먹는다.
+       */
+      readonly texts: readonly ImportedTextSpec[];
       readonly report: ImportReport;
     }
   | { readonly ok: false; readonly refusal: ImportRefusal };
@@ -254,21 +280,45 @@ function scaleStroke(style: ElementStyle, ratio: number): ElementStyle {
  * 손으로 센 상수(명령당 27~67B)를 쓰지 않고 **실제 직렬화 길이를 잰다** — 상수는 명령
  * 형상이 바뀌는 날 조용히 틀리고, 그 틀림은 "저장이 413 으로 실패한다" 로만 드러난다
  * (위험 R6). id 는 아직 없으므로 자리를 채워 센다.
+ *
+ * **문자 수가 아니라 UTF-8 바이트다**(결함 B 정정). 경로의 직렬화는 숫자와 따옴표뿐이라
+ * 두 수가 같지만, 문구는 사용자의 글자를 그대로 싣는다 — 한글 한 자가 3바이트이므로
+ * `length` 로 재면 추정이 실제의 1/3 이 되고, 화면이 "약 24KB" 라고 말한 가져오기가
+ * 저장에서 57KB 를 먹는다. 파일 상한이 `TextEncoder` 를 쓰는 이유가 그대로 여기에도 있다.
  */
-export function estimateBytes(shapes: readonly ImportedPathSpec[]): number {
+export function estimateBytes(
+  shapes: readonly ImportedPathSpec[],
+  texts: readonly ImportedTextSpec[] = [],
+): number {
   let total = 2; // 배열의 대괄호 둘.
   for (const shape of shapes) {
-    total += JSON.stringify({
-      id: 'el-00',
-      kind: 'path',
-      geometry: shape.box,
-      path: shape.commands,
-      style: shape.style,
-    }).length;
+    total += byteLength(
+      JSON.stringify({
+        id: 'el-00',
+        kind: 'path',
+        geometry: shape.box,
+        path: shape.commands,
+        style: shape.style,
+      }),
+    );
+  }
+  // **문구도 센다.** 명령을 하나도 나르지 않으므로 명령 상한 아래를 그냥 지나가지만,
+  // 제 문자열로 예산을 먹는 것은 경로와 똑같다 — 세지 않으면 추정이 "저장이 413 으로
+  // 실패한다" 는 그 자리에서만 틀렸음이 드러난다(위험 R6).
+  for (const text of texts) {
+    total += byteLength(
+      JSON.stringify({
+        id: 'el-00',
+        kind: 'text',
+        geometry: text.at,
+        text: text.text,
+        style: text.style,
+      }),
+    );
   }
   // 원소 **사이**의 쉼표는 `n − 1` 개다. `n` 개로 세면 빈 배열이 3바이트가 되고, 그
   // 한 바이트의 어긋남이 "추정이 실제 직렬화를 재는가" 를 재는 시험을 통과시킨다.
-  return total + Math.max(0, shapes.length - 1);
+  return total + Math.max(0, shapes.length + texts.length - 1);
 }
 
 // --- 입구 --------------------------------------------------------------
@@ -301,7 +351,7 @@ export function planSvgImport(
   const read = options.readDocument ?? readSvgDocument;
   const outcome = read(text);
   if (!outcome.ok) return { ok: false, refusal: outcome.refusal };
-  const { shapes, notes, viewBox, size } = outcome.document;
+  const { shapes, texts, notes, viewBox, size } = outcome.document;
 
   const resolved = resolveViewBox(viewBox, size, shapes);
   if (!resolved.ok) {
@@ -338,12 +388,17 @@ export function planSvgImport(
     }
   }
 
+  // **문구도 요소 상한을 먹는다.** 상한이 죄는 것은 "경로 몇 개" 가 아니라 config 에 실릴
+  // 요소 수이므로, 문구를 빼고 세면 64개를 넘는 요소가 조용히 놓인다.
+  const textSpecs = planTexts(texts, doc, strokeRatio, extra);
+
   // **넘으면 거절이다. 앞부분만 가져오지 않는다.** 도구가 내는 문서 순서는 배경→전경이라
   // 앞의 64개는 대개 배경 조각들이고, 그 절단은 "설명 없는 틀린 그림" 이다.
-  if (specs.length > MAX_IMPORT_ELEMENTS) {
+  const elementCount = specs.length + textSpecs.length;
+  if (elementCount > MAX_IMPORT_ELEMENTS) {
     return {
       ok: false,
-      refusal: { reason: 'tooManyElements', actual: specs.length, limit: MAX_IMPORT_ELEMENTS },
+      refusal: { reason: 'tooManyElements', actual: elementCount, limit: MAX_IMPORT_ELEMENTS },
     };
   }
   const commandTotal = specs.reduce((sum, spec) => sum + spec.commands.length, 0);
@@ -354,17 +409,56 @@ export function planSvgImport(
     };
   }
 
-  return { ok: true, shapes: specs, report: buildReport(specs, [...notes, ...extra]) };
+  return {
+    ok: true,
+    shapes: specs,
+    texts: textSpecs,
+    report: buildReport(specs, textSpecs, [...notes, ...extra]),
+  };
+}
+
+/**
+ * 문구들을 놓을 준비가 끝난 값으로.
+ *
+ * **글자 크기가 여기서 px 가 된다.** 문서 층은 사용자 단위를 냈고, 이 곱셈은 선 두께가
+ * 지나는 **그 비**(`상자 ÷ viewBox`)를 그대로 쓴다 — 크기도 두께도 투영을 지나지 않는 화면
+ * 양이므로 축척 1 에서 정확하고 다른 축척에서는 다른 모든 요소와 **같은 방식으로** 어긋난다.
+ * 두 번째 비를 지어내면 글자만 도형과 다른 배율로 커진다.
+ *
+ * **죈 사실을 보고한다.** 패널의 범위(6..160px)는 파서보다 좁고(`canvasEditGeometry`
+ * §CANVAS_FONT_SIZE_MIN), 그 죔은 문서가 말한 크기와 화면의 크기가 갈라지는 유일한 자리다.
+ */
+function planTexts(
+  texts: readonly ImportedText[],
+  doc: DocumentPlacement,
+  ratio: number,
+  extra: ImportNote[],
+): ImportedTextSpec[] {
+  const out: ImportedTextSpec[] = [];
+  for (const text of texts) {
+    const scaled = text.fontSizeUserUnits * ratio;
+    const fontSize = clampCanvasFontSize(scaled);
+    if (fontSize !== scaled) extra.push({ kind: 'approximated', reason: 'textSizeClamped', count: 1 });
+    out.push({
+      at: placePoint(text.x, text.y, doc),
+      text: text.text,
+      style: { ...text.style, fontSize },
+      hasOwnStyle: text.hasOwnStyle,
+    });
+  }
+  return out;
 }
 
 function buildReport(
   specs: readonly ImportedPathSpec[],
+  texts: readonly ImportedTextSpec[],
   notes: readonly ImportNote[],
 ): ImportReport {
   return {
     shapes: specs.length,
+    texts: texts.length,
     commands: specs.reduce((sum, spec) => sum + spec.commands.length, 0),
-    estimatedBytes: estimateBytes(specs),
+    estimatedBytes: estimateBytes(specs, texts),
     notes: mergeNotes(notes),
   };
 }

@@ -50,14 +50,47 @@ export const MAX_IMPORT_ELEMENTS = 64;
  * 요소 한 건의 명령 밖 부분(id · kind · geometry · style) ≈ 135 B
  *   → 64 × 135                    ≈  8.6 KB
  * 합                              ≈ 33.6 KB = 256KB 예산의 약 13.1%
- * 최악(640 전부 C)                ≈ 52 KB   = 약 20.3%
  * ```
+ *
+ * **최악은 실측이다**(문서 → 계획 → 요소를 실제로 지나 `JSON.stringify` 의 UTF-8 바이트를
+ * 잰 값). 손으로 센 수를 그대로 두지 않는 이유는 이 파일이 이미 적은 그것이다 — 상수는
+ * 형상이 바뀌는 날 조용히 틀린다.
+ * ```
+ * 경로 64개 × 10 C-명령(명령 640 전부)        = 49,971 B = 19.06%
+ * 문구 64개 × 256자 한글                      = 57,370 B = 21.88%
+ * 문구 64개 × 256자 ASCII                     = 23,514 B =  8.97%
+ * **최악** 경로 3개(명령 640 전부) + 문구 61개(256자 한글)
+ *                                             = 97,465 B = 37.18%
+ * ```
+ * 마지막 줄이 최악인 이유가 두 상한의 관계를 드러낸다: 명령을 **가장 적은 경로에 몰면**
+ * 요소 자리가 남고, 남은 자리를 글자로 채울 수 있다. 그 문서는 66KB 짜리 SVG 이며 —
+ * 이름표 61개가 저마다 한글 256자인, 실사용에 없는 형상이다. 그래도 **적어 둔다**:
+ * 예산이 무엇으로 차는지를 모른 채 상한을 다시 정하는 것이 가장 나쁘다(위험 R6).
  * **이 수가 죄는 것은 저장 크기만이 아니다.** 빗나간 클릭 한 번이 모든 경로 요소를
  * 평탄화하므로(`hitTest` 가 처음 맞는 것에서 멈춘다 — 실측), 명령 총수는 포인터 사건당
  * 비용의 상한이기도 하다. 그 아래를 받쳐 줄 두 번째 죔쇠(공간 색인·캐시)가 이 저장소에
  * 없다(위험 R5).
  */
 export const MAX_IMPORT_COMMANDS = 640;
+
+/**
+ * 문구 요소 하나가 실을 수 있는 **글자 수**의 상한.
+ *
+ * 명령 상한이 죄지 못하는 축이 이것이다 — 문구 요소는 명령을 하나도 나르지 않으므로
+ * `MAX_IMPORT_COMMANDS` 아래를 자유롭게 지나가고, 그동안 제 문자열로 예산을 먹는다.
+ * 상한이 없으면 2MiB 짜리 문서의 글자가 거의 그대로 config 로 흘러 들어가 저장이 413 으로
+ * 실패한다(위험 R6 와 같은 부류이며, 다른 축이다).
+ *
+ * 256 인 이유: 도면의 이름표는 "회의실 A" · "3층 기계실" 처럼 짧고, 그 열 배 이상을 남겨도
+ * 문구만의 최악(64 × 256자 한글)이 **실측 57,370 B**(256KB 예산의 21.88%)로 경로 쪽 최악
+ * (49,971 B · 19.06%)과 같은 자리에 선다. **넘으면 자르고 보고한다** — 이름표 하나 때문에
+ * 문서 전체를 거절하는 것은 대가가 크다.
+ *
+ * 둘을 섞은 최악은 그보다 크다(97,465 B · 37.18% — `MAX_IMPORT_COMMANDS` 머리말의 실측표).
+ * 그 수를 여기서 더 죄지 않는 것은 **화면이 놓기 전에 그 크기를 말하기 때문**이다: 추정이
+ * UTF-8 바이트를 세므로(`estimateBytes`) 사용자는 "약 96KB" 를 읽고 판단할 수 있다.
+ */
+export const MAX_IMPORT_TEXT_LENGTH = 256;
 
 /**
  * `<use>` 전개의 깊이 상한.
@@ -114,8 +147,32 @@ export type ImportNoteReason =
   | 'rootTransformIgnored'
   /** `<use>` 의 `width`/`height` 를 무시했다. */
   | 'useSizeIgnored'
+  /**
+   * 문서가 말한 활자를 그대로 옮기지 못했다 — 패널은 제 글꼴 하나로 그린다.
+   *
+   * `font-family` · `font-style` · `letter-spacing` · `text-decoration` · `writing-mode` ·
+   * `textLength` 를 말했거나, `font-size` 의 단위를 읽지 못했거나, `dominant-baseline` ·
+   * `alignment-baseline` 이 가운데가 아닌 값일 때 문구 하나마다 한 번 오른다.
+   */
+  | 'textFontIgnored'
+  /** 옮긴 글자 크기가 패널의 범위(6..160px) 밖이라 죄였다. */
+  | 'textSizeClamped'
+  /** 문구 안에 `{value}` · `{name}` · `{unit}` 이 있어 패널이 그것을 치환한다. */
+  | 'textTemplateToken'
+  /** 문구를 문서에서 뒤따르던 도형들 **위**로 옮겼다 — 배열 순서가 유일한 z-order 다. */
+  | 'textOrderChanged'
   // --- 버림 ---
+  /**
+   * 글자를 요소로 세우지 못했다 — `<textPath>` 처럼 **곧은 한 줄이 아닌** 글자다.
+   *
+   * `<text>` 가 요소로 들어오게 된 뒤로 이 사유는 "글자를 지원하지 않는다" 가 아니라
+   * "이 글자는 옮길 길이 없다" 를 뜻한다.
+   */
   | 'textDropped'
+  /** `MAX_IMPORT_TEXT_LENGTH` 를 넘어 잘린 문구. */
+  | 'textTruncated'
+  /** `<tspan>` 이 제 자리(`x`/`y`/`dx`/`dy`)나 제 스타일을 말했다 — 내용만 한 줄로 남는다. */
+  | 'tspanDropped'
   | 'imageDropped'
   | 'foreignObjectDropped'
   | 'nestedSvgDropped'
@@ -147,6 +204,10 @@ export interface ImportNote {
 export interface ImportReport {
   /** 들어옴 — 요소가 된 도형 수. */
   readonly shapes: number;
+  /** 들어옴 — 요소가 된 문구 수. 도형과 **갈라 세는** 것은 둘이 나르는 것이 다르기
+   * 때문이다: 도형은 명령을, 문구는 글자를 나른다. 합쳐 세면 "명령 0개인 요소 5개" 가
+   * 화면에서 설명 없는 수가 된다. */
+  readonly texts: number;
   /** 들어옴 — 명령 총수. */
   readonly commands: number;
   /** 들어옴 — 직렬화 추정 바이트. */
@@ -203,4 +264,34 @@ export interface ImportedShape {
   readonly hasOwnStyle: boolean;
   /** `fill-rule="evenodd"` 인가 — 감김 무리 뒤집기의 입력. */
   readonly evenOdd: boolean;
+}
+
+/**
+ * 사용자 단위 좌표의 문구 하나. **아직 요소가 아니다.**
+ *
+ * `commands` 가 아니라 `x`/`y` 한 점을 드는 것이 이 타입의 요점이다 — 캔버스의 문구 요소는
+ * `PointGeometry`(정렬 기준점) 위에 서고, 상자를 갖지 않는다. 글자의 **폭과 높이는 이 층에서
+ * 잴 수 없다**: `getBBox` 는 jsdom 에 없고(불변식 K4) `measureText` 는 2D context 를 요구하며,
+ * 그 둘 없이 상자를 지어내면 그것은 문서의 값이 아니라 우리가 고른 값이다.
+ *
+ * 그래서 문구는 `viewBox` 폴백의 합집합에도 **들지 않는다** — 잴 수 없는 것으로 문서의
+ * 크기를 정할 수 없다.
+ */
+export interface ImportedText {
+  /** 사용자 단위 정렬 기준점. 조상 `transform` 은 **이미 좌표에 녹아 있다**. */
+  readonly x: number;
+  readonly y: number;
+  /** 한 줄로 편 글자. 공백은 SVG 의 `xml:space` 규칙으로 이미 정규화되어 있다. */
+  readonly text: string;
+  /**
+   * 알파가 색에 접힌 스타일 — `textColor` · `opacity` · `fontWeight` · `align`.
+   *
+   * **`fontSize` 는 여기 없다.** 그 값은 아직 사용자 단위이고 `ElementStyle.fontSize` 는
+   * px 라, 한 필드에 담는 순간 계획 층이 축척을 두 번 곱하거나 한 번도 곱하지 않는 길이 열린다.
+   */
+  readonly style: ElementStyle;
+  /** **사용자 단위** 글자 크기. 조상 `transform` 의 배율은 이미 곱해져 있다. */
+  readonly fontSizeUserUnits: number;
+  /** SVG 가 칠을 한 마디라도 말했는가. 아니면 002 의 문구 씨앗 색이 선다. */
+  readonly hasOwnStyle: boolean;
 }

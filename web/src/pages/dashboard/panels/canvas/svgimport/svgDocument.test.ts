@@ -214,9 +214,14 @@ describe('감춤은 하위 트리로 흐른다 (REQ-05 · 뮤테이션 1·2)', (
   });
 
   it('감춘 하위 트리의 미지원 내용은 보고하지 않는다 — 보고가 잡음이 되지 않는다', () => {
-    const { notes } = read(svg('<g visibility="hidden"><text>버려짐</text><image href="a.png"/></g>'));
-    expect(reasonCount(notes, 'textDropped')).toBe(0);
+    // **글자는 이 무리에서 빠졌다**(결함 B 정정) — `<text>` 는 이제 지원되므로 감춰지면
+    // 도형과 **같이** `hiddenDropped` 로 세어진다. 이 시험이 지키는 것은 그대로다:
+    // 그리지 못하는 것들은 감춘 하위 트리에서 **한 줄도** 보고되지 않는다.
+    const { notes } = read(
+      svg('<g visibility="hidden"><image href="a.png"/><foreignObject width="1" height="1"/></g>'),
+    );
     expect(reasonCount(notes, 'imageDropped')).toBe(0);
+    expect(reasonCount(notes, 'foreignObjectDropped')).toBe(0);
     expect(notes).toHaveLength(0);
   });
 });
@@ -310,16 +315,17 @@ describe('<use> 는 상한과 순환에서 멈춘다 (AC-E9 · 뮤테이션 4·5
 });
 
 describe('보고 세 갈래 (AC-07 · AC-E6 · 뮤테이션 6)', () => {
-  it('버림이 개수를 말한다 — <text> · <image> · <style> · 중첩 <svg> · <foreignObject>', () => {
+  it('버림이 개수를 말한다 — <image> · <style> · 중첩 <svg> · <foreignObject>', () => {
+    // 개수를 말하는 본보기가 `<text>` 둘에서 `<image>` 둘로 바뀌었다(결함 B 정정) — 글자는
+    // 이제 버림이 아니라 요소가 된다. 재는 성질은 그대로다: "있습니다" 가 아니라 "2개".
     const { notes } = read(
       svg(
-        '<text>a</text><text>b</text><image href="x.png"/>' +
+        '<image href="x.png"/><image href="y.png"/>' +
           '<style>.a{fill:red}.b{fill:blue}</style>' +
           '<svg width="10" height="10"/><foreignObject width="1" height="1"/>',
       ),
     );
-    expect(reasonCount(notes, 'textDropped')).toBe(2);
-    expect(reasonCount(notes, 'imageDropped')).toBe(1);
+    expect(reasonCount(notes, 'imageDropped')).toBe(2);
     expect(reasonCount(notes, 'styleRuleDropped')).toBe(2);
     expect(reasonCount(notes, 'nestedSvgDropped')).toBe(1);
     expect(reasonCount(notes, 'foreignObjectDropped')).toBe(1);

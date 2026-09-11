@@ -298,9 +298,15 @@ describe('viewBox 3단 폴백 (REQ-02 · 뮤테이션 8)', () => {
   });
 
   it('viewBox 가 있으면 그릴 것이 없어도 계획은 선다 — 보고를 보여야 한다', () => {
-    const result = plan(svg('<text>글자뿐</text><image href="a.png"/>'));
+    // 고정 입력에서 `<text>` 가 빠졌다(결함 B 정정) — 글자는 이제 요소가 되므로 "그릴 것이
+    // 없는 문서" 를 더는 대표하지 못한다. 재는 성질은 그대로다: `viewBox` 가 있으면 도형이
+    // 0개여도 계획이 서고 보고가 보인다.
+    const result = plan(svg('<image href="a.png"/><foreignObject width="1" height="1"/>'));
     expect(result.report.shapes).toBe(0);
-    expect(result.report.notes.map((n) => n.reason).sort()).toEqual(['imageDropped', 'textDropped']);
+    expect(result.report.notes.map((n) => n.reason).sort()).toEqual([
+      'foreignObjectDropped',
+      'imageDropped',
+    ]);
   });
 });
 

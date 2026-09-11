@@ -45,7 +45,7 @@ import { ChevronDown, ChevronRight, Check, FileUp, X } from 'lucide-react';
 
 import { useTranslation } from '@/lib/i18n';
 
-import type { CanvasSize, PathElement } from '../canvasConfig';
+import type { CanvasElement, CanvasSize } from '../canvasConfig';
 import { appendImportedElements } from '../canvasElementFactory';
 import type { CanvasProjection } from '../canvasGeometry';
 import { clearSurface, drawElements, type DrawContext2D } from '../drawElement';
@@ -58,7 +58,7 @@ import {
   readSvgFileText,
   refusalText,
 } from './svgImportPresent';
-import { planSvgImport, type ImportedPathSpec } from './svgImportPlan';
+import { planSvgImport, type ImportedPathSpec, type ImportedTextSpec } from './svgImportPlan';
 import {
   MAX_IMPORT_FILE_BYTES,
   type ImportNote,
@@ -123,7 +123,8 @@ function ImportPreview({
   elements,
   canvas,
 }: {
-  elements: readonly PathElement[];
+  /** 미리보기가 그리는 것 — **경로만이 아니다**(결함 B 정정: 문구도 요소로 들어온다). */
+  elements: readonly CanvasElement[];
   canvas: CanvasSize;
 }): React.ReactElement {
   const ref = useRef<HTMLCanvasElement | null>(null);
@@ -167,7 +168,17 @@ function ImportPreview({
 interface ReadyImport {
   /** 도형마다 제 상자를 든다 — 무리가 함께 쓰는 상자는 없다(결함 D3 정정). */
   readonly shapes: readonly ImportedPathSpec[];
+  /** 문구들. **도형이 하나도 없어도 이쪽이 있으면 놓을 것이 있다**(결함 B 정정). */
+  readonly texts: readonly ImportedTextSpec[];
   readonly report: ImportReport;
+}
+
+/**
+ * 놓을 것의 수. **도형만 세면 글자뿐인 문서에서 단추가 죽는다** — 그 문서는 가져올 것이
+ * 없는 문서가 아니라 가져올 것이 **글자인** 문서다.
+ */
+function placeableCount(ready: ReadyImport): number {
+  return ready.shapes.length + ready.texts.length;
 }
 
 type ImportState =
@@ -184,7 +195,10 @@ export interface CanvasSvgImportProps {
    * 놓는다. **요소를 만드는 일은 이 컴포넌트가 하지 않는다**(불변식 K9) — 만드는 입구는
    * `canvasElementFactory` 하나이고, 놓은 뒤의 선택은 오버레이가 소유한다.
    */
-  onPlace: (shapes: readonly ImportedPathSpec[]) => void;
+  onPlace: (
+    shapes: readonly ImportedPathSpec[],
+    texts: readonly ImportedTextSpec[],
+  ) => void;
   /** 파일을 문자열로 읽는 함수. 시험이 갈아 끼운다(기본은 `FileReader`). */
   readFile?: (file: File) => Promise<string>;
 }
@@ -211,13 +225,13 @@ export function CanvasSvgImport({
    * (`seedOffset(0)`), 그래서 미리보기의 자리가 곧 놓았을 때의 자리다(이미 놓인 요소가 있으면
    * 계단만큼 밀린다 — 그 차이는 한 자리 수 단위이고 미리보기의 목적은 자리가 아니라 그림이다).
    */
-  const preview = useMemo(
-    () =>
-      state.phase === 'ready'
-        ? appendImportedElements([], state.ready.shapes).created
-        : [],
-    [state],
-  );
+  const preview = useMemo(() => {
+    if (state.phase !== 'ready') return [];
+    // **놓을 그것 그대로** — 도형과 문구를 같은 입구에서 만들고, 그 입구가 정한 순서
+    // (도형 먼저, 문구가 그 위)를 미리보기도 그대로 그린다.
+    const made = appendImportedElements([], state.ready.shapes, state.ready.texts);
+    return [...made.created, ...made.createdTexts];
+  }, [state]);
 
   const pick = async (file: File | undefined, input: HTMLInputElement): Promise<void> => {
     // 같은 파일을 다시 골라도 `change` 가 나도록 값을 비운다 — 비우지 않으면 취소한 뒤 같은
@@ -250,7 +264,10 @@ export function CanvasSvgImport({
       setState({ phase: 'refused', refusal: plan.refusal });
       return;
     }
-    setState({ phase: 'ready', ready: { shapes: plan.shapes, report: plan.report } });
+    setState({
+      phase: 'ready',
+      ready: { shapes: plan.shapes, texts: plan.texts, report: plan.report },
+    });
   };
 
   /** [취소] · 놓은 뒤 — **무동작이다**(불변식 K15). 배열도 config 도 건드리지 않는다. */
@@ -327,6 +344,7 @@ export function CanvasSvgImport({
               <p data-testid="canvas-svg-import-summary" className={SUMMARY_CLASS}>
                 {t(`${EDIT}.importSummary`)
                   .replaceAll('{shapes}', String(state.ready.report.shapes))
+                  .replaceAll('{texts}', String(state.ready.report.texts))
                   .replaceAll('{commands}', String(state.ready.report.commands))
                   .replaceAll('{kb}', String(kb(state.ready.report.estimatedBytes)))}
               </p>
@@ -337,7 +355,7 @@ export function CanvasSvgImport({
                 bodyId={notesId}
                 Chevron={NotesChevron}
               />
-              {state.ready.shapes.length === 0 && (
+              {placeableCount(state.ready) === 0 && (
                 <p data-testid="canvas-svg-import-empty" role="status" className={HINT_CLASS}>
                   {t(`${EDIT}.importNothing`)}
                 </p>
@@ -348,14 +366,14 @@ export function CanvasSvgImport({
                 aria-label={t(`${EDIT}.importPlace`)}
                 title={t(`${EDIT}.importPlace`)}
                 // **가져올 것이 하나도 없으면 서지 않는다**(REQ-03) — 빈 요소를 만들지 않는다.
-                disabled={state.ready.shapes.length === 0}
+                disabled={placeableCount(state.ready) === 0}
                 className={ROW_BUTTON_CLASS}
                 // 처리자를 **여기서** 만든다. 밖으로 빼면 `state` 가 좁혀지지 않아
                 // `state.phase !== 'ready'` 재확인이 필요하고, 그 가지는 **닿을 수 없다** —
                 // 이 단추는 준비됨 상태에서만 그려지기 때문이다. 닿을 수 없는 가지는
                 // 커버리지에 구멍으로 남고, 읽는 사람에게 "여기로 올 수도 있다" 고 거짓말한다.
                 onClick={() => {
-                  onPlace(state.ready.shapes);
+                  onPlace(state.ready.shapes, state.ready.texts);
                   reset();
                 }}
               >

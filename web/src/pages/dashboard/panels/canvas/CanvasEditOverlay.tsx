@@ -201,7 +201,7 @@ import {
 } from './canvasEditArrange';
 import { useCanvasEditSelection } from './canvasEditContext';
 import { useCanvasEditDockHost } from './canvasEditDockHost';
-import type { ImportedPathSpec } from './svgimport/svgImportPlan';
+import type { ImportedPathSpec, ImportedTextSpec } from './svgimport/svgImportPlan';
 import { useCanvasStageGrid } from './canvasStageGrid';
 import { DEFAULT_WORKSPACE_ZOOM } from './canvasWorkspace';
 import {
@@ -1289,10 +1289,15 @@ export default function CanvasEditOverlay({
    * `appendImportedElements` 가 **같은** 오프셋을 모든 상자에 더하므로 문서에서의 상대 배치가
    * 그대로 보존된다. 요소마다 다른 오프셋을 주면 그때 그림이 25 단위씩 흩어진다.
    */
-  const placeFromImport = (shapes: readonly ImportedPathSpec[]): void => {
-    const { next, created } = appendImportedElements(elements, shapes);
+  const placeFromImport = (
+    shapes: readonly ImportedPathSpec[],
+    texts: readonly ImportedTextSpec[],
+  ): void => {
+    const { next, created, createdTexts } = appendImportedElements(elements, shapes, texts);
     onElementsChange(next);
-    setSelection(new Set(created.map((el) => el.id)));
+    // **문구도 선택에 든다.** 빠뜨리면 놓자마자 한 덩어리로 끌리는 것이 도형뿐이어서,
+    // 사용자가 그림을 옮기면 이름표만 제자리에 남는다.
+    setSelection(new Set([...created, ...createdTexts].map((el) => el.id)));
   };
 
   /**

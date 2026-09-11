@@ -27,6 +27,8 @@ import {
   type CanvasPrimitiveKind,
   type ElementStyle,
   type PathElement,
+  type PointGeometry,
+  type TextElement,
 } from './canvasConfig';
 // SPEC-CANVAS-004 M6 — **담는 그릇만 넓어졌다.** 만드는 것은 여전히 `CanvasElement` 이고
 // (`created` 의 타입이 그 사실을 든다) 새 입구도 늘지 않았다 — 008 불변식 J9 그대로다.
@@ -339,6 +341,35 @@ export interface ImportedPathSource {
 }
 
 /**
+ * 가져오기가 들고 오는 문구 하나. **도형과 갈라 받는 것에 뜻이 있다.**
+ *
+ * 합쳐 받으려면 두 갈래를 판별할 표식이 필요하고, 그 표식은 `kind` 라는 이름을 쓸 수밖에
+ * 없는데 — 그 이름은 이미 요소가 쓰는 이름이다. 들어오는 값이 요소의 어휘를 흉내 내면
+ * "아직 요소가 아닌 것" 과 "요소" 의 경계가 흐려진다. 배열 둘이 그 경계를 형상으로 지킨다.
+ */
+export interface ImportedTextSource {
+  /** 정렬 기준점. **계단 오프셋은 아직 더해지지 않았다** — 아래가 더한다. */
+  readonly at: PointGeometry;
+  /** 그릴 글자. 비어 있지 않다(비면 가져오기 층이 이미 걸렀다). */
+  readonly text: string;
+  /** 글자색·크기·정렬. 비어 있을 수 있다. */
+  readonly style: ElementStyle;
+  /** 원본이 칠을 한 마디라도 말했는가 — 아니면 문구 씨앗 색이 선다. */
+  readonly hasOwnStyle: boolean;
+}
+
+/**
+ * 문구 요소가 스스로 입고 나오는 씨앗 스타일.
+ *
+ * **새 상수를 만들지 않는다** — `newElement('text')` 가 심는 그 한 줄을 그대로 고른다.
+ * 가져온 문구가 손으로 놓은 문구와 다른 색을 입으면, 목록에서 둘을 구별할 이유 없는
+ * 차이가 생긴다(`pathSeedStyle` 이 카탈로그 도형에 대해 한 판단과 같다).
+ */
+export function textSeedStyle(): ElementStyle {
+  return { textColor: SEED_COLOR };
+}
+
+/**
  * 가져온 도형들을 배열 **끝에 문서 순서대로** 붙인 결과.
  *
  * **계단 오프셋을 무리 전체에 한 번만 더한다**(REQ-06). 요소마다 더하면 문서에서 겹쳐
@@ -363,7 +394,8 @@ export interface ImportedPathSource {
 export function appendImportedElements(
   elements: readonly CanvasNode[],
   shapes: readonly ImportedPathSource[],
-): { next: CanvasNode[]; created: PathElement[] } {
+  texts: readonly ImportedTextSource[] = [],
+): { next: CanvasNode[]; created: PathElement[]; createdTexts: TextElement[] } {
   // **한 번 센다.** 안에서 `next.length` 로 세면 요소가 하나 붙을 때마다 오프셋이 자라
   // 조각들이 계단으로 흩어진다 — REQ-06 이 금지하는 그것이다.
   const off = seedOffset(elements.length);
@@ -388,7 +420,24 @@ export function appendImportedElements(
     next.push(element);
     created.push(element);
   }
-  return { next, created };
+  // **문구는 도형 뒤에 붙는다 = 도형 위에 그려진다.** 배열 순서가 유일한 z-order 이므로 이
+  // 한 줄이 곧 "이름표는 제 도형에 가리지 않는다" 이고, 문서에서 문구보다 뒤에 그려지던
+  // 도형이 있었으면 그 사실은 가져오기 층의 보고가 말한다(`textOrderChanged`).
+  const createdTexts: TextElement[] = [];
+  for (const source of texts) {
+    const element: TextElement = {
+      id: nextElementId(next),
+      kind: 'text',
+      geometry: { x: shifted(source.at.x, off), y: shifted(source.at.y, off) },
+      // 원본이 아무 칠도 말하지 않았으면 **두 번째 씨앗 규칙을 만들지 않고** 문구 씨앗을
+      // 쓴다. 말한 것이 있으면 그것이 이긴다 — 도형과 **같은 순서**다.
+      style: source.hasOwnStyle ? { ...source.style } : { ...textSeedStyle(), ...source.style },
+      text: source.text,
+    };
+    next.push(element);
+    createdTexts.push(element);
+  }
+  return { next, created, createdTexts };
 }
 
 // --- 문구 편집 -----------------------------------------------------------

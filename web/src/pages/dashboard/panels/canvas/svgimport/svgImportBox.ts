@@ -50,7 +50,12 @@
 //
 // @spec SPEC-CANVAS-007 REQ-06 · AC-05 · AC-06 · AC-E8
 
-import { coordinate, MIN_ELEMENT_EXTENT, type BoxGeometry } from '../canvasConfig';
+import {
+  coordinate,
+  MIN_ELEMENT_EXTENT,
+  type BoxGeometry,
+  type PointGeometry,
+} from '../canvasConfig';
 import type { PathCommand } from '../shapes/pathTypes';
 
 import type { ViewBox } from './svgDocument';
@@ -225,14 +230,34 @@ export function placeShape(bounds: Bounds, doc: DocumentPlacement): ShapePlaceme
   const scaleY = doc.box.h / doc.viewBox.height;
   const x = axisSpan(bounds.minX, bounds.maxX, scaleX);
   const y = axisSpan(bounds.minY, bounds.maxY, scaleY);
+  // 원점은 **점 하나를 옮기는 그 함수**가 낸다. 같은 식을 두 번 적으면 어느 날 한쪽만
+  // 고쳐져 "도형은 여기, 문구는 저기" 가 된다.
+  const origin = placePoint(x.min, y.min, doc);
   return {
     box: {
-      x: coordinate(doc.box.x + (x.min - doc.viewBox.minX) * scaleX, doc.box.x),
-      y: coordinate(doc.box.y + (y.min - doc.viewBox.minY) * scaleY, doc.box.y),
+      x: origin.x,
+      y: origin.y,
       w: coordinate(x.extent * scaleX, MIN_ELEMENT_EXTENT),
       h: coordinate(y.extent * scaleY, MIN_ELEMENT_EXTENT),
     },
     frame: { minX: x.min, minY: y.min, width: x.extent, height: y.extent },
+  };
+}
+
+/**
+ * 사용자 좌표의 **점 하나**를 캔버스 단위 기준점으로.
+ *
+ * 문구 요소가 서는 자리이며, 동시에 도형 상자의 원점이 나오는 자리다(위 `placeShape`).
+ * 축척은 **문서 틀의 것**이라 도형과 문구가 같은 배율로 놓인다 — 그래서 이름표가 제
+ * 도형에서 떨어지지 않는다.
+ *
+ * **캔버스 안으로 죄지 않는다.** `viewBox` 밖을 가리키는 좌표는 문서가 실제로 말한 자리이고,
+ * 도형도 같은 이유로 죄이지 않는다(계획 층 §"로컬 좌표를 clamp 하지 않는다").
+ */
+export function placePoint(x: number, y: number, doc: DocumentPlacement): PointGeometry {
+  return {
+    x: coordinate(doc.box.x + (x - doc.viewBox.minX) * (doc.box.w / doc.viewBox.width), doc.box.x),
+    y: coordinate(doc.box.y + (y - doc.viewBox.minY) * (doc.box.h / doc.viewBox.height), doc.box.y),
   };
 }
 

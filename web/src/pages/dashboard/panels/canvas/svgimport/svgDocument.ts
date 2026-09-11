@@ -44,21 +44,34 @@ import {
   type ImportNoteReason,
   type ImportRefusal,
   type ImportedShape,
+  type ImportedText,
 } from './svgImportTypes';
 import { parseLength, parseNumberList, parseSvgPathData } from './svgPathData';
 import { isShorthandShapeTag, shorthandShapeCommands, type AttrBag } from './svgShapes';
 import {
   collectStyleAtoms,
+  collectTextAtoms,
+  TEXT_STYLE_PROPS,
   foldAlphaIntoColor,
   inheritStyleAtoms,
+  inheritTextAtoms,
   isHidden,
   mergeNotes,
   parseOpacity,
   resolveStyle,
   type StyleAtoms,
 } from './svgStyle';
+import {
+  hasTemplateToken,
+  normalizeSvgText,
+  preservesSpace,
+  readAnchorCoord,
+  resolveTextStyle,
+  truncateImportText,
+} from './svgText';
 import { parseCSSRules, getCSSPropertiesForElement, type CSSRules } from './svgCssRules';
 import {
+  applyMatrix,
   determinant,
   IDENTITY_MATRIX,
   isSimilarity,
@@ -109,6 +122,15 @@ export interface ViewBox {
 /** 문서 층이 낸 것 전부. 좌표는 **사용자 단위**이며 변환은 이미 녹아 있다. */
 export interface SvgDocumentRead {
   readonly shapes: readonly ImportedShape[];
+  /**
+   * 문구들. **도형과 갈라 둔다** — 둘이 나르는 것이 다르고(명령 대 글자), 무엇보다 `shapes`
+   * 를 합집합으로 넓히면 이 층을 이미 쓰고 있는 자리들이 `commands` 를 읽지 못한다.
+   *
+   * 배열 순서는 문서 순서다. 다만 요소가 될 때는 **도형 전부의 뒤**에 붙으므로, 문서에서
+   * 문구보다 나중에 그려지던 도형이 있었으면 z-order 가 바뀐다(그 사실이 `textOrderChanged`
+   * 로 보고에 오른다).
+   */
+  readonly texts: readonly ImportedText[];
   readonly notes: readonly ImportNote[];
   /** 문서가 스스로 말한 `viewBox`. 없으면 계획 층이 폴백을 탄다. */
   readonly viewBox: ViewBox | undefined;
@@ -181,6 +203,14 @@ interface WalkContext {
   readonly matrix: Matrix2x3;
   /** 조상에서 물려받은 **칠** 속성들(감춤은 여기 없다 — 위 머리말). */
   readonly atoms: StyleAtoms;
+  /**
+   * 조상에서 물려받은 **활자** 속성들. 칠과 **다른 자루**인 것이 뜻이다 — 상속 목록이
+   * 서로 다르고(`INHERITED_TEXT_PROPS`), 한 자루에 섞으면 "opacity 는 상속되지 않는다" 를
+   * 지키는 목록이 활자까지 책임지게 된다(`svgStyle` §TEXT_STYLE_PROPS).
+   */
+  readonly textAtoms: StyleAtoms;
+  /** 물려받은 `xml:space`. XML 에서 상속되므로 루트의 `preserve` 가 아래로 흐른다. */
+  readonly preserveSpace: boolean;
   /** 물려받은 `visibility`. 자식이 `visible` 로 **뒤집을 수 있다**. */
   readonly visibility: string | undefined;
   /** `display:none` 하위 트리인가 — **뒤집을 수 없다**. */
@@ -195,10 +225,20 @@ interface WalkContext {
 
 class DocumentWalker {
   private readonly shapes: ImportedShape[] = [];
+  private readonly texts: ImportedText[] = [];
   private readonly notes: ImportNote[] = [];
   private readonly byId = new Map<string, Element>();
   private hiddenShapes = 0;
   private cssRules: CSSRules = {};
+  /**
+   * 문구를 하나라도 세운 뒤에 도형이 또 섰는가 — 그 순간 z-order 가 바뀐다.
+   *
+   * 문구 **하나하나**가 추월당했는지를 따로 세지 않는 것에 뜻이 있다: 요소가 될 때 문구는
+   * 전부 뒤로 가므로, 마지막 문구보다 나중에 선 도형이 하나라도 있으면 **그 시점까지의 문구
+   * 전부**가 그 도형 위로 올라선다. 그래서 세어야 하는 것은 "추월당한 문구 수" 이고,
+   * 그 수는 도형이 설 때의 문구 개수다.
+   */
+  private overtakenTexts = 0;
 
   constructor(private readonly root: Element) {
     this.indexIds(root);
@@ -303,6 +343,72 @@ class DocumentWalker {
       hasOwnStyle: resolved.hasOwnStyle,
       evenOdd: resolved.evenOdd,
     });
+    // 지금까지 선 문구들은 **이 도형 아래에서** 그려지던 것이다. 요소가 될 때 문구는 전부
+    // 도형 뒤(=위)로 가므로, 그 수가 곧 z-order 가 뒤집힌 문구의 수다.
+    this.overtakenTexts = this.texts.length;
+  }
+
+  /**
+   * `<text>` 하나를 문구 후보로 세운다.
+   *
+   * **`emit` 과 갈라 둔 것에 뜻이 있다.** 도형은 명령 목록을 나르고 문구는 한 점과 글자를
+   * 나르며, 둘이 거치는 판정이 다르다 — 문구에는 감김도 `fill-rule` 도 없고, 대신 공백
+   * 규칙 · 글자 수 상한 · 템플릿 토큰이 있다. 한 함수에 담으면 두 갈래가 `if` 로 갈라지고
+   * 그 `if` 가 곧 두 번째 규칙이 된다.
+   *
+   * **그리지 않는 것은 세지 않는다.** 빈 `<text>` 는 SVG 에서도 아무것도 그리지 않으므로
+   * 보고에 오르지 않는다(`<defs>` 를 버림으로 세지 않는 것과 같은 규율).
+   */
+  private emitText(el: Element, attrs: AttrBag, ctx: WalkContext, own: StyleAtoms, hidden: boolean): void {
+    if (hasTextPathChild(el)) {
+      // 길 위의 글자 — 곧은 한 줄로 펴면 문서가 말한 적 없는 배치가 된다. 옮기지 못한다.
+      if (!hidden) this.note('dropped', 'textDropped');
+      return;
+    }
+    const text = normalizeSvgText(el.textContent ?? '', ctx.preserveSpace);
+    if (text === '') return;
+    if (hidden) {
+      this.hiddenShapes += 1;
+      return;
+    }
+    if (determinant(ctx.matrix) === 0) {
+      this.note('dropped', 'degenerateTransformDropped');
+      return;
+    }
+    const resolved = resolveTextStyle(own, ctx.textAtoms, {
+      resolvePaintRef: this.resolvePaintRef,
+      groupOpacity: ctx.opacity,
+      fallbackColor: SEED_COLOR,
+      fontScale: strokeScaleOf(ctx.matrix),
+      nonUniform: !isSimilarity(ctx.matrix),
+    });
+    if (resolved.style.textColor === undefined && resolved.hasOwnStyle) {
+      // `fill="none"` — 이 패널은 글자에 테를 두르지 않으므로 어느 쪽도 요소가 서지 않지만,
+      // **테가 있었으면 보이던 글자를 못 옮긴 것**이고 없었으면 문서에서도 감춰져 있었다.
+      if (resolved.strokePainted) this.note('dropped', 'textDropped');
+      else this.hiddenShapes += 1;
+      return;
+    }
+    this.notes.push(...resolved.notes);
+    // 글자마다 자리를 준 문서(`x="10 20 30"`)는 첫 수에 한 줄로 선다 — 그 배치도 활자다.
+    const ax = readAnchorCoord(attrs['x']);
+    const ay = readAnchorCoord(attrs['y']);
+    if (resolved.typographyIgnored || ax.perGlyph || ay.perGlyph) {
+      this.note('approximated', 'textFontIgnored');
+    }
+    this.note('dropped', 'tspanDropped', countOwnTspans(el));
+    const cut = truncateImportText(text);
+    if (cut.truncated) this.note('dropped', 'textTruncated');
+    if (hasTemplateToken(cut.text)) this.note('approximated', 'textTemplateToken');
+    const anchor = applyMatrix(ctx.matrix, ax.value, ay.value);
+    this.texts.push({
+      x: anchor.x,
+      y: anchor.y,
+      text: cut.text,
+      style: resolved.style,
+      fontSizeUserUnits: resolved.fontSizeUserUnits,
+      hasOwnStyle: resolved.hasOwnStyle,
+    });
   }
 
   /** 한 요소의 순회 문맥 — 변환 누적 · 칠 상속 · 감춤 전파 · 그룹 불투명도. */
@@ -321,10 +427,15 @@ class DocumentWalker {
     // 감춤 규칙이 두 벌이 된다.
     const hidden = displayNone || isHidden({ ...own, visibility: visibility ?? '' });
     const opacityOwn = parseOpacity(own['opacity']) ?? 1;
+    // 활자도 CSS 규칙을 받는다 — 인라인 속성이 규칙을 덮는 순서는 칠과 **같다**.
+    const ownText = collectTextAtoms(attrs);
+    const space = attrs['xml:space'];
     return {
       ctx: {
         matrix: multiplyMatrix(parent.matrix, parseTransformList(attrs['transform'])),
         atoms: own,
+        textAtoms: inheritTextAtoms(parent.textAtoms, { ...pickText(cssProps), ...ownText }),
+        preserveSpace: space === undefined ? parent.preserveSpace : preservesSpace(space),
         visibility,
         displayNone,
         opacity: parent.opacity * opacityOwn,
@@ -374,12 +485,17 @@ class DocumentWalker {
       return;
     }
 
+    if (tag === 'text') {
+      // **감춤 판정보다 앞이다.** 글자도 그려지는 것이므로 감췄으면 도형과 **같이** 개수로
+      // 센다 — 아래 가지의 "감춘 하위 트리의 미지원 내용은 보고하지 않는다" 는 그리지
+      // 못하는 것들의 규칙이고, 글자는 이제 그 무리가 아니다.
+      this.emitText(el, attrs, ctx, own, hidden);
+      return;
+    }
+
     if (hidden) return; // 감춘 하위 트리의 미지원 내용은 보고하지 않는다(위 머리말).
 
     switch (tag) {
-      case 'text':
-        this.note('dropped', 'textDropped');
-        return;
       case 'image':
         this.note('dropped', 'imageDropped');
         return;
@@ -444,7 +560,11 @@ class DocumentWalker {
   }
 
   /** 루트에서 시작해 전부 훑는다. 루트의 `transform` 은 **적용하지 않는다**. */
-  run(): { shapes: readonly ImportedShape[]; notes: readonly ImportNote[] } {
+  run(): {
+    shapes: readonly ImportedShape[];
+    texts: readonly ImportedText[];
+    notes: readonly ImportNote[];
+  } {
     const attrs = attrBag(this.root);
     if (attrs['transform'] !== undefined && attrs['transform'].trim() !== '') {
       // SVG 1.1 은 최외곽 `<svg>` 의 `transform` 을 정의하지 않는다. 적용하지 않고 보고한다.
@@ -460,6 +580,8 @@ class DocumentWalker {
     const rootCtx: WalkContext = {
       matrix: IDENTITY_MATRIX,
       atoms: rootAtoms,
+      textAtoms: collectTextAtoms(attrs),
+      preserveSpace: preservesSpace(attrs['xml:space']),
       visibility: rootAtoms['visibility'],
       displayNone: rootAtoms['display'] === 'none',
       opacity: parseOpacity(rootAtoms['opacity']) ?? 1,
@@ -468,8 +590,65 @@ class DocumentWalker {
     };
     this.walkChildren(this.root, rootCtx);
     if (this.hiddenShapes > 0) this.note('dropped', 'hiddenDropped', this.hiddenShapes);
-    return { shapes: this.shapes, notes: mergeNotes(this.notes) };
+    // **끝에서 한 번만 센다.** 순회 중에 세면 같은 문구가 도형마다 다시 올라 개수가 부풀고,
+    // 그 수는 "몇 개의 문구가 올라섰는가" 가 아니라 "몇 번 추월당했는가" 가 된다.
+    this.note('approximated', 'textOrderChanged', this.overtakenTexts);
+    return { shapes: this.shapes, texts: this.texts, notes: mergeNotes(this.notes) };
   }
+}
+
+/**
+ * `<text>` 안에 `<textPath>` 가 있는가 — 있으면 그 글자는 **곧은 한 줄이 아니다**.
+ *
+ * 자손까지 본다. 도구는 `<text><tspan><textPath>` 처럼 한 겹 더 싸서 내기도 하고, 겉의
+ * 자식만 보는 판정은 그때 길 위의 글자를 곧게 펴서 들여온다 — 문서가 말한 적 없는 배치다.
+ */
+function hasTextPathChild(el: Element): boolean {
+  for (const child of Array.from(el.children)) {
+    if (tagOf(child) === 'textpath') return true;
+    if (hasTextPathChild(child)) return true;
+  }
+  return false;
+}
+
+/** `<tspan>` 이 제 것을 말할 때 무시해도 좋은 속성. 둘 다 **그림에 영향을 주지 않는다**. */
+const TSPAN_HARMLESS_ATTRS = new Set(['id', 'xml:space']);
+
+/**
+ * 제 자리나 제 스타일을 말한 `<tspan>` 의 수.
+ *
+ * **속성 이름 목록을 열거하지 않는다.** `x`·`dy`·`fill`·`font-size`·`class`… 를 늘어놓으면
+ * 그 목록에 없는 속성이 조용히 통과하고(예: 도구가 내는 `baseline-shift`), 목록의 어느
+ * 항목이 실제로 무는지도 알 수 없다. 뒤집어 적는다 — **그림에 영향을 주지 않는 둘 말고
+ * 무엇이든 말했으면** 우리가 버린 것이 있다. 맨 `<tspan>`(묶기만 하는 흔한 형태)은 아무것도
+ * 잃지 않으므로 세지 않는다.
+ */
+function countOwnTspans(el: Element): number {
+  let count = 0;
+  for (const child of Array.from(el.children)) {
+    if (tagOf(child) === 'tspan') {
+      const list = child.attributes;
+      for (let i = 0; i < list.length; i += 1) {
+        const attr = list.item(i);
+        if (attr !== null && !TSPAN_HARMLESS_ATTRS.has(attr.name.toLowerCase())) {
+          count += 1;
+          break;
+        }
+      }
+    }
+    count += countOwnTspans(child);
+  }
+  return count;
+}
+
+/** 자루에서 활자 속성만 고른다 — CSS 규칙이 낸 표에서 활자 축을 갈라 내는 자리다. */
+function pickText(props: Readonly<Record<string, string>>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of TEXT_STYLE_PROPS) {
+    const value = props[name];
+    if (value !== undefined && value.trim() !== '') out[name] = value.trim();
+  }
+  return out;
 }
 
 /** `<style>` 안의 규칙 수를 센다 — 보고는 "규칙이 있습니다" 가 아니라 "규칙 N개" 다. */
@@ -523,9 +702,9 @@ export function readSvgDocument(text: string): SvgDocumentOutcome {
   }
   const root = doc.documentElement;
   const attrs = attrBag(root);
-  const { shapes, notes } = new DocumentWalker(root).run();
+  const { shapes, texts, notes } = new DocumentWalker(root).run();
   return {
     ok: true,
-    document: { shapes, notes, viewBox: readViewBox(attrs), size: readSize(attrs) },
+    document: { shapes, texts, notes, viewBox: readViewBox(attrs), size: readSize(attrs) },
   };
 }

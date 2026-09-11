@@ -58,6 +58,70 @@ export const INHERITED_STYLE_PROPS = [
   'stroke-opacity',
 ] as const;
 
+/**
+ * 글자에만 뜻이 있는 속성들 — **칠 축과 갈라 둔다**(결함 B 정정).
+ *
+ * `INHERITED_STYLE_PROPS` 에 얹지 않는 이유는 그 목록이 든 뜻에 있다: 그것은 **칠 속성의
+ * 상속**이고 그 목록의 여섯은 도형이 읽는 것 전부다. 활자를 그 안에 섞으면 "opacity 는
+ * 상속되지 않는다" 를 지키는 목록이 "글자 크기도 상속된다" 를 함께 지게 되어, 한 목록이 두
+ * 축을 책임진다 — 이 파일이 `visibility` 를 그 목록에 넣지 않은 것과 **같은 판단**이다.
+ */
+export const TEXT_STYLE_PROPS = [
+  'font-size',
+  'font-weight',
+  'font-family',
+  'font-style',
+  'text-anchor',
+  'letter-spacing',
+  'writing-mode',
+  'text-decoration',
+  'dominant-baseline',
+  'alignment-baseline',
+  'textlength',
+] as const;
+
+/**
+ * 그 가운데 **사양이 상속으로 정한** 것들.
+ *
+ * `dominant-baseline` · `alignment-baseline` · `text-decoration` · `textLength` 는 상속되지
+ * 않는다(SVG 1.1 각 속성의 "Inherited: no"). 넷을 함께 내려보내면 `<g dominant-baseline="hanging">`
+ * 안의 모든 글자가 어긋남으로 보고되어, 사양이 걸지 않는 성질을 화면이 말한다.
+ */
+export const INHERITED_TEXT_PROPS = [
+  'font-size',
+  'font-weight',
+  'font-family',
+  'font-style',
+  'text-anchor',
+  'letter-spacing',
+  'writing-mode',
+] as const;
+
+/** 한 요소가 스스로 말한 활자 — 표현 속성 + `style` 속성. **`style` 이 이긴다**(위 규율 그대로). */
+export function collectTextAtoms(attrs: AttrBag): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of TEXT_STYLE_PROPS) {
+    const value = attrs[name];
+    if (value !== undefined && value.trim() !== '') out[name] = value.trim();
+  }
+  const inline = parseStyleAttribute(attrs['style']);
+  for (const name of TEXT_STYLE_PROPS) {
+    const value = inline[name];
+    if (value !== undefined && value.trim() !== '') out[name] = value.trim();
+  }
+  return out;
+}
+
+/** 활자의 상속. 목록이 다를 뿐 `inheritStyleAtoms` 와 **같은 형상**이다. */
+export function inheritTextAtoms(parent: StyleAtoms, own: StyleAtoms): Record<string, string> {
+  const inherited: Record<string, string> = {};
+  for (const name of INHERITED_TEXT_PROPS) {
+    const value = parent[name];
+    if (value !== undefined) inherited[name] = value;
+  }
+  return { ...inherited, ...own };
+}
+
 /** 표현 속성으로도 읽는 스타일 이름 전부(상속 여부와 무관하다). */
 const STYLE_PROP_NAMES = [
   ...INHERITED_STYLE_PROPS,

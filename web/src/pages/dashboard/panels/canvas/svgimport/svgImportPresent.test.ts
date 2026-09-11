@@ -39,9 +39,9 @@ function lookup(tree: unknown, key: string): string | undefined {
 // --- 문구 표 --------------------------------------------------------------
 
 describe('사유 → 문구 키 표가 빈 자리를 남기지 않는다 (REQ-04)', () => {
-  it('보고 사유 23종 · 거절 사유 7종이 **양쪽 로케일**에서 잡힌다', () => {
+  it('보고 사유 29종 · 거절 사유 7종이 **양쪽 로케일**에서 잡힌다', () => {
     // 켜져 있음을 먼저 못박는다 — 표가 비면 아래 순회가 0회 돌고 초록이 된다.
-    expect(Object.keys(NOTE_KEYS)).toHaveLength(23);
+    expect(Object.keys(NOTE_KEYS)).toHaveLength(29);
     expect(Object.keys(REFUSAL_KEYS)).toHaveLength(7);
 
     const missing: string[] = [];
