@@ -57,6 +57,7 @@ import {
   resolveStyle,
   type StyleAtoms,
 } from './svgStyle';
+import { parseCSSRules, getCSSPropertiesForElement, type CSSRules } from './svgCssRules';
 import {
   determinant,
   IDENTITY_MATRIX,
@@ -197,9 +198,11 @@ class DocumentWalker {
   private readonly notes: ImportNote[] = [];
   private readonly byId = new Map<string, Element>();
   private hiddenShapes = 0;
+  private cssRules: CSSRules = {};
 
   constructor(private readonly root: Element) {
     this.indexIds(root);
+    this.collectStyleTags(root);
   }
 
   /**
@@ -216,6 +219,21 @@ class DocumentWalker {
     const id = el.getAttribute('id');
     if (id !== null && id !== '' && !this.byId.has(id)) this.byId.set(id, el);
     for (const child of Array.from(el.children)) this.indexIds(child);
+  }
+
+  /**
+   * SVG 문서의 모든 `<style>` 태그에서 CSS 규칙을 수집한다 (defect A 수정).
+   *
+   * **지원**: element 선택자, .class 선택자, #id 선택자
+   * **미지원**: cascade, specificity, 의사 클래스, 복합 선택자
+   */
+  private collectStyleTags(el: Element): void {
+    if (isSvgElement(el) && tagOf(el) === 'style') {
+      const cssText = el.textContent ?? '';
+      const parsed = parseCSSRules(cssText);
+      Object.assign(this.cssRules, parsed);
+    }
+    for (const child of Array.from(el.children)) this.collectStyleTags(child);
   }
 
   private note(kind: ImportNoteKind, reason: ImportNoteReason, count = 1): void {
@@ -288,9 +306,13 @@ class DocumentWalker {
   }
 
   /** 한 요소의 순회 문맥 — 변환 누적 · 칠 상속 · 감춤 전파 · 그룹 불투명도. */
-  private descend(attrs: AttrBag, parent: WalkContext): { ctx: WalkContext; own: StyleAtoms; hidden: boolean } {
+  private descend(attrs: AttrBag, parent: WalkContext, tagName?: string): { ctx: WalkContext; own: StyleAtoms; hidden: boolean } {
     const ownAtoms = collectStyleAtoms(attrs);
-    const own = inheritStyleAtoms(parent.atoms, ownAtoms);
+    // CSS 규칙 적용 (defect A 수정) — 인라인 속성이 CSS 규칙을 덮는다.
+    const classAttr = attrs['class'];
+    const cssProps = getCSSPropertiesForElement(tagName ?? '', classAttr, this.cssRules);
+    const ownAtomsWithCSS = { ...cssProps, ...ownAtoms };
+    const own = inheritStyleAtoms(parent.atoms, ownAtomsWithCSS);
     const ownVisibility = ownAtoms['visibility'];
     // **자기 값이 물려받은 값을 이긴다** — `visibility="visible"` 로 뒤집을 수 있다.
     const visibility = ownVisibility ?? parent.visibility;
@@ -330,7 +352,7 @@ class DocumentWalker {
     }
 
     const attrs = attrBag(el);
-    const { ctx, own, hidden } = this.descend(attrs, parent);
+    const { ctx, own, hidden } = this.descend(attrs, parent, tag);
 
     if (CONTAINER_TAGS.has(tag)) {
       this.walkChildren(el, ctx);
