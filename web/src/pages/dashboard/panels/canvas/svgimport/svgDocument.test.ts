@@ -318,10 +318,15 @@ describe('보고 세 갈래 (AC-07 · AC-E6 · 뮤테이션 6)', () => {
   it('버림이 개수를 말한다 — <image> · <style> · 중첩 <svg> · <foreignObject>', () => {
     // 개수를 말하는 본보기가 `<text>` 둘에서 `<image>` 둘로 바뀌었다(결함 B 정정) — 글자는
     // 이제 버림이 아니라 요소가 된다. 재는 성질은 그대로다: "있습니다" 가 아니라 "2개".
+    //
+    // `<style>` 의 두 규칙이 **복합 선택자**로 바뀌었다(결함 B 2차 정정). 앞의 `.a`·`.b` 는
+    // 이제 실제로 적용되므로 버림에 오르지 않는다 — 쓴 것을 버렸다고 말하지 않는 것이 그
+    // 정정이다. 여기서 재는 성질("버림이 개수를 말한다")은 **그대로**이며, 그 성질이 재어
+    // 지려면 고정 입력이 정말로 옮기지 못하는 규칙을 들어야 한다.
     const { notes } = read(
       svg(
         '<image href="x.png"/><image href="y.png"/>' +
-          '<style>.a{fill:red}.b{fill:blue}</style>' +
+          '<style>g .a{fill:red}rect > .b{fill:blue}</style>' +
           '<svg width="10" height="10"/><foreignObject width="1" height="1"/>',
       ),
     );
@@ -465,6 +470,43 @@ describe('<style> 의 색이 그림에 닿는다 (결함 A)', () => {
     // `SEED_COLOR` 가 여기 박혀 나오는 것은 `currentColor` 처럼 **말했으나 풀지 못한** 칠뿐이다.
     expect(shapes[0]!.style.fill).toBeUndefined();
     expect(shapes[0]!.hasOwnStyle).toBe(false);
+  });
+});
+
+describe('<style> 보고는 **옮기지 못한 것만** 센다 (결함 B · AC-E6 · 위험 R7)', () => {
+  it('적용된 규칙은 버림에 오르지 않는다 — 쓴 것을 버렸다고 말하지 않는다', () => {
+    const { shapes, notes } = read(
+      svg(
+        '<style>.a{fill:#c0392b}circle{fill:#145a32}</style>' +
+          '<rect class="a" width="4" height="4"/><circle cx="5" cy="5" r="2"/>',
+      ),
+    );
+    // 켜져 있음을 먼저 못박는다 — 두 규칙이 실제로 그림에 닿았다.
+    expect(shapes[0]!.style.fill).toBe('#c0392b');
+    expect(shapes[1]!.style.fill).toBe('#145a32');
+    expect(reasonCount(notes, 'styleRuleDropped')).toBe(0);
+  });
+
+  it('선택자를 읽지 못한 규칙만 개수로 오른다', () => {
+    const { notes } = read(
+      svg(
+        '<style>.a{fill:#c0392b}g .b{fill:#145a32}rect > path{fill:#8e44ad}</style>' +
+          '<rect class="a" width="4" height="4"/>',
+      ),
+    );
+    expect(reasonCount(notes, 'styleRuleDropped')).toBe(2);
+  });
+
+  it('닫히지 않은 CSS 는 통째로 한 줄 오른다 — 읽지 못한 것이 조용히 사라지지 않는다', () => {
+    const { notes } = read(
+      svg('<style>.a{fill:#c0392b</style><rect class="a" width="4" height="4"/>'),
+    );
+    expect(reasonCount(notes, 'styleRuleDropped')).toBe(1);
+  });
+
+  it('빈 <style> 는 아무 말도 하지 않는다', () => {
+    const { notes } = read(svg('<style>   </style><rect width="4" height="4"/>'));
+    expect(reasonCount(notes, 'styleRuleDropped')).toBe(0);
   });
 });
 

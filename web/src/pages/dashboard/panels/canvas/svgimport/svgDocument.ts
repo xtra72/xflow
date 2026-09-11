@@ -69,7 +69,12 @@ import {
   resolveTextStyle,
   truncateImportText,
 } from './svgText';
-import { parseCSSRules, getCSSPropertiesForElement, type CSSRules } from './svgCssRules';
+import {
+  countUnsupportedCssRules,
+  parseCSSRules,
+  getCSSPropertiesForElement,
+  type CSSRules,
+} from './svgCssRules';
 import {
   applyMatrix,
   determinant,
@@ -267,7 +272,8 @@ class DocumentWalker {
    * **지원**: element 선택자 · `.class` 선택자 · `#id` 선택자 — 셋 다 `descend` 가 실제로
    * 읽는다(`getCSSPropertiesForElement`). 표에만 들어가고 아무도 읽지 않는 선택자를 두지
    * 않는 것이 이 짝의 규율이다.
-   * **미지원**: cascade · specificity · 의사 클래스 · 복합 선택자.
+   * **미지원**: cascade · specificity · 의사 클래스 · 복합 선택자 — 그 개수는 `walk` 가
+   * 버림 보고에 올린다.
    *
    * 문서 순서대로 덮어쓴다(`Object.assign`) — 뒤에 선 `<style>` 이 앞을 이긴다.
    */
@@ -464,9 +470,12 @@ class DocumentWalker {
     if (!isSvgElement(el)) return; // 미지 네임스페이스 — 버림이 아니다(그려지지 않는다).
     const tag = tagOf(el);
     if (NON_RENDERED_TAGS.has(tag)) {
-      // `<style>` 만 예외로 보고에 오른다 — 그 규칙들이 **그림에 영향을 준다**.
+      // `<style>` 만 예외로 보고에 오른다. **오르는 것은 적용하지 못한 규칙뿐이다** —
+      // 규칙들은 `collectStyleTags` 가 이미 읽어 그림에 닿았고, 쓴 것을 "버렸다" 고 말하는
+      // 보고는 침묵보다 나쁘다. 적용된 것까지 세면 `<style>` 이 든 거의 모든 파일에서 한 줄이
+      // 울려 보고가 아무것도 말하지 않게 된다(위험 R7).
       if (tag === 'style' && !isHiddenContext(parent)) {
-        this.note('dropped', 'styleRuleDropped', countCssRules(el.textContent ?? ''));
+        this.note('dropped', 'styleRuleDropped', countUnsupportedCssRules(el.textContent ?? ''));
       }
       return;
     }
@@ -658,14 +667,6 @@ function pickText(props: Readonly<Record<string, string>>): Record<string, strin
     if (value !== undefined && value.trim() !== '') out[name] = value.trim();
   }
   return out;
-}
-
-/** `<style>` 안의 규칙 수를 센다 — 보고는 "규칙이 있습니다" 가 아니라 "규칙 N개" 다. */
-function countCssRules(css: string): number {
-  let count = 0;
-  for (const ch of css) if (ch === '}') count += 1;
-  // 닫는 중괄호가 없어도 내용이 있으면 규칙 하나로 센다(닫히지 않은 CSS 도 브라우저는 읽는다).
-  return count > 0 ? count : css.trim() === '' ? 0 : 1;
 }
 
 // --- viewBox 와 크기 ----------------------------------------------------

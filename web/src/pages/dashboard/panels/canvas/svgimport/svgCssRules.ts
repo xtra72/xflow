@@ -29,7 +29,12 @@ export type CSSRules = Record<string, Record<string, string>>;
 /** 규칙 한 덩이 — `선택자 { 선언들 }`. 닫는 중괄호가 있어야 잡힌다. */
 const RULE_BLOCK = /([^{]+)\s*\{\s*([^}]*)\s*\}/g;
 
-/** 이 파서가 **읽을 수 있는** 선택자의 꼴 — 홑마디 하나. */
+/**
+ * 이 파서가 **읽을 수 있는** 선택자의 꼴 — 홑마디 하나.
+ *
+ * `parseCSSRules` 와 `countUnsupportedCssRules` 가 **같은 술어를 쓴다**. 둘이 제 검사를
+ * 따로 들면 한쪽만 고친 변경이 "적용하지 않으면서 보고도 하지 않는" 조용한 구멍을 연다.
+ */
 function isSupportedSelector(selector: string): boolean {
   return /^[a-z0-9#.][a-z0-9#._-]*$/i.test(selector);
 }
@@ -46,8 +51,8 @@ function stripCssComments(cssText: string): string {
  * - class 선택자: `.red { fill: blue }`
  * - ID 선택자: `#myid { fill: green }`
  *
- * 읽지 못한 선택자는 건너뛴다. **그 건너뜀이 화면에 어떻게 보고되는지는 아직 이 파일의
- * 일이 아니다** — 오늘은 `svgDocument` 가 `<style>` 안의 규칙을 통째로 센다.
+ * 읽지 못한 선택자는 **조용히 건너뛰지 않는다** — 그 개수는 `countUnsupportedCssRules` 가
+ * 세어 화면의 보고에 오른다.
  */
 export function parseCSSRules(cssText: string): CSSRules {
   const rules: CSSRules = {};
@@ -78,6 +83,30 @@ export function parseCSSRules(cssText: string): CSSRules {
   }
 
   return rules;
+}
+
+/**
+ * **적용하지 못한** 규칙의 수 — 화면의 버림 보고가 드는 수다.
+ *
+ * 세는 것은 **선택자를 읽지 못한 덩이**뿐이다. 적용된 규칙을 함께 세면 보고가 거의 모든
+ * 파일에서 울려 아무것도 말하지 않게 되고(위험 R7), 쓴 것을 버렸다고 말하는 거짓이 된다.
+ *
+ * 닫는 중괄호가 없어 덩이로 잡히지도 못한 꼬리는 **한 줄로 센다** — 브라우저는 닫히지 않은
+ * CSS 도 읽으므로 그 자리는 "규칙이 없다" 가 아니라 "우리가 읽지 못했다" 이다. 꼬리에
+ * `{` 가 있을 때만 세어, 마지막 덩이 뒤에 남은 `}` 조각이 한 줄을 더 만들지 않게 한다.
+ */
+export function countUnsupportedCssRules(cssText: string): number {
+  const css = stripCssComments(cssText);
+  let count = 0;
+  let consumed = 0;
+
+  for (const match of css.matchAll(RULE_BLOCK)) {
+    if (!isSupportedSelector(match[1]?.trim().toLowerCase() ?? '')) count += 1;
+    consumed = (match.index ?? 0) + match[0].length;
+  }
+
+  if (css.slice(consumed).includes('{')) count += 1;
+  return count;
 }
 
 /**

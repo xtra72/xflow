@@ -43,8 +43,11 @@ function svg(body: string, attrs = VIEW_BOX): string {
 const PLAIN = svg('<rect x="5" y="12" width="40" height="20" fill="#c0392b"/>');
 
 /** 버림 셋과 근사 하나가 실제로 들어 있는 문서. */
+// `<style>` 이 **옮기지 못하는 규칙 하나**를 든다(결함 B 2차 정정). `.a` 만 있던 시절의
+// 보고는 그 규칙을 적용하고도 "버렸다" 고 말했다 — 이 고정 입력이 재는 성질("버림 갈래가
+// 실제로 켜져 있다")은 그대로이고, 그 성질이 재어지려면 정말로 옮기지 못하는 것이 있어야 한다.
 const NOISY = svg(
-  '<style>.a{fill:red}</style>' +
+  '<style>.a{fill:red}g .b{fill:blue}</style>' +
     '<text x="1" y="2">버려짐</text>' +
     '<text x="3" y="4">둘째</text>' +
     '<image href="a.png" x="0" y="0" width="4" height="4"/>' +

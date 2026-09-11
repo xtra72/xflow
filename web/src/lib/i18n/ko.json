@@ -1287,7 +1287,7 @@
         "importNoteImageDropped": "내장 이미지",
         "importNoteForeignObjectDropped": "foreignObject",
         "importNoteNestedSvgDropped": "중첩 svg",
-        "importNoteStyleRuleDropped": "style 규칙",
+        "importNoteStyleRuleDropped": "지원하지 않는 선택자의 style 규칙",
         "importNoteFilterDropped": "필터",
         "importNoteClipPathDropped": "clip-path",
         "importNoteMaskDropped": "mask",

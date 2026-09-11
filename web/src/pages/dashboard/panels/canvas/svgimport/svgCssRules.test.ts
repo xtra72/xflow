@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  countUnsupportedCssRules,
   getCSSPropertiesForElement,
   parseCSSRules,
   type CSSRules,
@@ -141,5 +142,34 @@ describe('#id 선택자는 표에 들어갈 뿐 아니라 **읽힌다**', () => 
   it('id 도 대소문자를 접는다 — class 와 같은 규칙이다', () => {
     const rules = parseCSSRules('#TOP { fill: #333333; }');
     expect(getCSSPropertiesForElement('rect', undefined, 'Top', rules)['fill']).toBe('#333333');
+  });
+});
+
+describe('적용하지 못한 규칙만 센다 (결함 B)', () => {
+  it('읽은 선택자는 세지 않는다', () => {
+    expect(countUnsupportedCssRules('rect{fill:red}.a{fill:blue}#b{fill:green}')).toBe(0);
+  });
+
+  it('복합 선택자는 하나씩 센다', () => {
+    expect(countUnsupportedCssRules('.a{fill:red}g .b{fill:blue}rect > path{fill:green}')).toBe(2);
+  });
+
+  it('빈 텍스트도 공백뿐인 텍스트도 0 이다', () => {
+    expect(countUnsupportedCssRules('')).toBe(0);
+    expect(countUnsupportedCssRules('   \n  ')).toBe(0);
+  });
+
+  it('주석뿐인 텍스트는 0 이다 — 주석 안의 중괄호가 한 줄을 만들지 않는다', () => {
+    expect(countUnsupportedCssRules('/* .a { fill: red } */')).toBe(0);
+  });
+
+  it('닫히지 않은 꼬리는 한 줄로 센다', () => {
+    expect(countUnsupportedCssRules('.a{fill:red')).toBe(1);
+    expect(countUnsupportedCssRules('.a{fill:red}.b{fill:blue')).toBe(1);
+  });
+
+  it('마지막 덩이 뒤에 남은 `}` 조각은 한 줄을 더 만들지 않는다', () => {
+    // `@media` 한 덩이는 **하나**로 센다 — 바깥 선택자가 읽히지 않아 1, 남은 `}` 는 0.
+    expect(countUnsupportedCssRules('@media print { .a { fill: red } }')).toBe(1);
   });
 });
