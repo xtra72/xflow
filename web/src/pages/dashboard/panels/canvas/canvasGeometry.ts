@@ -630,3 +630,16 @@ export function labelAnchor(el: CanvasElement, proj: CanvasProjection): PxPoint 
       return projectPoint(el.geometry, proj);
   }
 }
+
+/**
+ * 부품 라벨의 기준점 — **상자 안**에서 잰다(SPEC-CANVAS-004 M3).
+ *
+ * `labelAnchor` 가 하는 일은 전부 **평행이동과 교환되는** 산술(상자의 중심 · 선의 중점 ·
+ * 기준점)이므로, 로컬 투영으로 한 번 부른 뒤 원점을 더하면 끝난다. 종류 갈래를 한 벌 더
+ * 적지 않는 것이 요점이다 — 적는 순간 여섯 번째 종류가 들어올 때 고쳐야 할 자리가 둘이
+ * 되고, 위 함수의 `default:` 가 남긴 교훈이 그것이다.
+ */
+export function labelAnchorIn(el: CanvasElement, box: PxBox): PxPoint {
+  const local = labelAnchor(el, localProjection(box));
+  return { x: finite(box.x) + local.x, y: finite(box.y) + local.y };
+}

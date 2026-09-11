@@ -76,7 +76,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { documentVisibility, type VisibilitySource } from '../charts/visiblePolling';
-import type { CanvasElement, CanvasSize, TweenSpec } from './canvasConfig';
+import type { CanvasSize, TweenSpec } from './canvasConfig';
 import { CANVAS_GRID_STEP_UNITS } from './canvasEditArrange';
 import {
   computeBackingSize,
@@ -88,6 +88,8 @@ import { CanvasStageGridContext, type CanvasStageGrid } from './canvasStageGrid'
 import { beginTween, retargetTween, sampleTween, type TweenState } from './canvasTween';
 import { DEFAULT_WORKSPACE_ZOOM, workspaceBox } from './canvasWorkspace';
 import { clearSurface, drawElements, type DrawContext2D } from './drawElement';
+import { walkDrawables } from './group/frameKey';
+import type { CanvasNode } from './group/groupTypes';
 
 // --- 주입 지점 -----------------------------------------------------------
 
@@ -143,8 +145,14 @@ export interface CanvasOverlayContext {
 }
 
 export interface CanvasSurfaceProps {
-  /** 배열 순서 = 그리기 순서(뒤가 위). */
-  elements: CanvasElement[];
+  /**
+   * 배열 순서 = 그리기 순서(뒤가 위).
+   *
+   * SPEC-CANVAS-004 M3 — 원소 타입이 `CanvasNode` 로 넓어졌다. 그룹은 그릴 도형이 없고
+   * 제 **부품**이 그려지므로, 이 층이 드는 트윈 장부도 부품에 대해서는 복합 키를 쓴다.
+   * 최상위 원소의 키는 002 와 **바이트 동일**하다(불변식 G11).
+   */
+  elements: CanvasNode[];
   /**
    * 캔버스 좌표계의 크기(정수 단위). 요소 기하가 이 단위로 적혀 있으므로, 투영은 축마다
    * `스테이지 px / 이 값` 을 곱한다. 값이 바뀌면 같은 요소가 다른 자리에 그려지므로
@@ -394,10 +402,12 @@ export default function CanvasSurface({
       const seen = new Set<string>();
       let allDone = true;
 
-      for (const el of current.elements) {
-        seen.add(el.id);
-        const target = current.targetStyles[el.id] ?? el.style;
-        const live = tweens.get(el.id);
+      // **그리는 쪽과 같은 순회**를 쓴다(`walkDrawables`). 순회가 둘이 되면 키 집합이
+      // 갈라지고, 그 어긋남은 "어떤 부품만 트윈되지 않는다" 로만 보인다.
+      for (const { key, element: el } of walkDrawables(current.elements)) {
+        seen.add(key);
+        const target = current.targetStyles[key] ?? el.style;
+        const live = tweens.get(key);
         let state: TweenState<ResolvedStyle>;
         if (live === undefined) {
           state = beginTween(target, target, undefined, nowMs);
@@ -406,14 +416,16 @@ export default function CanvasSurface({
         } else {
           state = retargetTween(live, target, el.tween ?? current.panelTween, nowMs);
         }
-        tweens.set(el.id, state);
+        tweens.set(key, state);
 
         const sampled = sampleTween(state, nowMs);
-        styles[el.id] = sampled.style;
+        styles[key] = sampled.style;
         if (!sampled.done) allDone = false;
       }
 
-      // 사라진 요소의 장부를 정리한다(Map 은 순회 중 삭제가 안전하다).
+      // 사라진 요소의 장부를 정리한다(Map 은 순회 중 삭제가 안전하다). 그룹이 삭제되거나
+      // **해제되면** 그 부품의 복합 키도 여기서 함께 사라진다 — 키가 `그룹id/부품id` 라
+      // 그룹이 없어지는 순간 어느 순회도 그 키를 내지 않기 때문이다.
       for (const id of tweens.keys()) {
         if (!seen.has(id)) tweens.delete(id);
       }

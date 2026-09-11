@@ -31,11 +31,11 @@ import {
   MIN_ELEMENT_EXTENT,
   type BoxGeometry,
   type CanvasElement,
-  type CanvasElementKind,
   type Geometry,
   type LineGeometry,
   type PointGeometry,
 } from './canvasConfig';
+import type { CanvasNode, CanvasNodeKind } from './group/groupTypes';
 import {
   projectBox,
   projectLine,
@@ -246,11 +246,15 @@ export function handleRole(id: CanvasHandleId): CanvasHandleRole {
  * `default:` 를 `case 'text':` 로 펴 두면 여섯 번째 종류가 들어올 때 컴파일러가 이 자리를
  * 가리킨다.
  */
-export function handlesFor(kind: CanvasElementKind): readonly CanvasHandleId[] {
+export function handlesFor(kind: CanvasNodeKind): readonly CanvasHandleId[] {
   switch (kind) {
+    // 그룹은 **제 상자**에 여덟 손잡이를 세운다(REQ-08). 부품에는 손잡이가 서지 않으므로
+    // (가정 A18) 역방향 중첩 투영이 필요 없고, 그룹 상자는 `BoxGeometry` 라 크기 조절 ·
+    // 정렬 · 붙임 · 무리 이동 · 방향키가 한 줄도 고치지 않고 걸린다.
     case 'rect':
     case 'ellipse':
     case 'path':
+    case 'group':
       return BOX_HANDLE_IDS;
     case 'line':
       return LINE_HANDLE_IDS;
@@ -270,7 +274,7 @@ export function handlesFor(kind: CanvasElementKind): readonly CanvasHandleId[] {
  * `기준점 y + fontSize/2` 이며, 실측 폭이 아직 없으면 폭 0 으로 보아 기준점에 붙는다.
  */
 export function handlePositions(
-  el: CanvasElement,
+  el: CanvasNode,
   proj: CanvasProjection,
   opts: HandleLayoutOptions = {},
 ): CanvasHandle[] {
@@ -278,9 +282,11 @@ export function handlePositions(
     // 경로는 rect 와 **같은 상자 기하**를 가지므로 같은 자리에 같은 여덟 손잡이가 선다.
     // 종전의 `default:` 는 상자 기하를 문구 기준점으로 읽어(구조적으로 대입된다 — 가정
     // A6) 손잡이 하나를 엉뚱한 곳에 앉혔고, 그 자리도 컴파일러가 울지 않던 곳이다.
+    // 그룹도 같은 상자 기하를 쓰므로 같은 자리에 같은 여덟 손잡이가 선다.
     case 'rect':
     case 'ellipse':
-    case 'path': {
+    case 'path':
+    case 'group': {
       const box = normalizePxBox(projectBox(el.geometry, proj));
       return BOX_HANDLE_IDS.map((id): CanvasHandle => {
         const [fx, fy] = BOX_HANDLE_FACTORS[id];
@@ -544,11 +550,32 @@ export function patchNodeGeometry(
   elements: readonly CanvasElement[],
   nodeId: string,
   geometry: Geometry,
-): CanvasElement[] {
-  return elements.map((el): CanvasElement => {
+): CanvasElement[];
+export function patchNodeGeometry(
+  elements: readonly CanvasNode[],
+  nodeId: string,
+  geometry: Geometry,
+): CanvasNode[];
+export function patchNodeGeometry(
+  elements: readonly CanvasNode[],
+  nodeId: string,
+  geometry: Geometry,
+): CanvasNode[] {
+  return elements.map((el): CanvasNode => {
     if (el.id !== nodeId) return el;
 
     switch (el.kind) {
+      // **004 가 이 함수에 더한 것의 전부다.** 그룹은 rect 와 같은 상자 기하를 쓰므로
+      // 이동 · 8핸들 크기 조절 · 정렬 · 격자 붙임 · 방향키 미세 이동이 이 한 갈래로
+      // 그룹에 걸린다 — 그 전부가 이미 이 통로 하나를 지나기 때문이다.
+      //
+      // **`parts` 는 여기를 지나지 않는다**(가정 A17 · 008 불변식 J2 와 같은 자리).
+      // 이 통로가 쓰는 것은 노드의 `geometry` 뿐이며, 부품의 저장 좌표를 함께 고치는
+      // 설계는 "그룹을 늘려도 부품 좌표는 한 자리도 바뀌지 않는다" 를 깬다.
+      case 'group': {
+        if (!('w' in geometry)) return el;
+        return { ...el, geometry: writableBox(geometry) };
+      }
       case 'rect':
       case 'ellipse': {
         if (!('w' in geometry)) return el;

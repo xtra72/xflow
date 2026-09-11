@@ -28,21 +28,32 @@ import {
   DEFAULT_FONT_SIZE,
   DEFAULT_OPACITY,
   DEFAULT_STROKE_WIDTH,
+  type BoxGeometry,
   type CanvasElement,
+  type LineGeometry,
+  type PointGeometry,
 } from './canvasConfig';
 import {
   ellipseParams,
   labelAnchor,
+  labelAnchorIn,
   projectBox,
+  projectBoxIn,
   projectLine,
+  projectLineIn,
   projectPathPoints,
   projectPoint,
+  projectPointIn,
   resolveTextOrigin,
   type BackingSize,
   type CanvasProjection,
+  type PxBox,
+  type PxLine,
   type PxPoint,
 } from './canvasGeometry';
 import type { ResolvedStyle } from './canvasRules';
+import { walkDrawables } from './group/frameKey';
+import type { CanvasNode, GroupElement } from './group/groupTypes';
 
 // --- 최소 context 인터페이스 ---------------------------------------------
 
@@ -264,15 +275,29 @@ function drawMeasuredElement(
   style: ResolvedStyle,
   text: string | undefined,
   proj: CanvasProjection,
+  host?: PxBox,
 ): number | undefined {
   if (style.visible === false) return undefined;
+  // **투영을 고르는 자리는 여기 넷뿐이다**(SPEC-CANVAS-004 M3). 부품이면 그룹의 px 상자
+  // 안으로, 최상위 원소면 종전 그대로 스테이지로 간다. 아래 그리기 갈래는 어느 쪽인지
+  // 알지 못하며, 그래서 그리기 규칙이 두 벌로 갈라지지 않는다 — 경로 부품이 제 상자를
+  // `projectPathPoints` 에 그대로 넘길 수 있는 것도 같은 이유다(두 겹의 로컬 격자가
+  // **합성될 뿐 섞이지 않는다**).
+  const pxBox = (geo: BoxGeometry): PxBox =>
+    host === undefined ? projectBox(geo, proj) : projectBoxIn(geo, host);
+  const pxLine = (geo: LineGeometry): PxLine =>
+    host === undefined ? projectLine(geo, proj) : projectLineIn(geo, host);
+  const pxPoint = (geo: PointGeometry): PxPoint =>
+    host === undefined ? projectPoint(geo, proj) : projectPointIn(geo, host);
+  const pxAnchor = (target: CanvasElement): PxPoint =>
+    host === undefined ? labelAnchor(target, proj) : labelAnchorIn(target, host);
   let measured: number | undefined;
   ctx.save();
   try {
     ctx.globalAlpha = resolveAlpha(style.opacity);
     switch (el.kind) {
       case 'rect': {
-        const box = projectBox(el.geometry, proj);
+        const box = pxBox(el.geometry);
         ctx.beginPath();
         ctx.rect(box.x, box.y, box.w, box.h);
         paintFill(ctx, style);
@@ -280,7 +305,7 @@ function drawMeasuredElement(
         break;
       }
       case 'ellipse': {
-        const { cx, cy, rx, ry } = ellipseParams(projectBox(el.geometry, proj));
+        const { cx, cy, rx, ry } = ellipseParams(pxBox(el.geometry));
         ctx.beginPath();
         ctx.ellipse(cx, cy, rx, ry, 0, 0, FULL_TURN);
         paintFill(ctx, style);
@@ -288,7 +313,7 @@ function drawMeasuredElement(
         break;
       }
       case 'line': {
-        const line = projectLine(el.geometry, proj);
+        const line = pxLine(el.geometry);
         ctx.beginPath();
         ctx.moveTo(line.x1, line.y1);
         ctx.lineTo(line.x2, line.y2);
@@ -299,7 +324,7 @@ function drawMeasuredElement(
       case 'path': {
         // 상자는 **한 번만** 잰다 — 투영은 `projectPathPoints` 의 입력이며, 경로가
         // 스테이지를 다시 재는 자리는 없다(불변식 J3).
-        const box = projectBox(el.geometry, proj);
+        const box = pxBox(el.geometry);
         ctx.beginPath();
         for (const cmd of projectPathPoints(el.path, box)) {
           switch (cmd.c) {
@@ -327,7 +352,7 @@ function drawMeasuredElement(
         measured = paintText(
           ctx,
           text,
-          projectPoint(el.geometry, proj),
+          pxPoint(el.geometry),
           style,
           style.textColor ?? style.fill,
         );
@@ -336,7 +361,7 @@ function drawMeasuredElement(
     }
     // 도형에 붙은 라벨(REQ-02). text 요소는 위에서 이미 그렸다.
     if (el.kind !== 'text') {
-      paintText(ctx, text, labelAnchor(el, proj), style, style.textColor);
+      paintText(ctx, text, pxAnchor(el), style, style.textColor);
     }
   } catch {
     // 손상 요소 하나가 프레임 전체를 무너뜨리지 않는다(REQ-05). 재다 만 폭은 버린다 —
@@ -371,21 +396,39 @@ function drawMeasuredElement(
  */
 export function drawElements(
   ctx: DrawContext2D,
-  elements: readonly CanvasElement[],
+  elements: readonly CanvasNode[],
   styles: Record<string, ResolvedStyle>,
   texts: Record<string, string | undefined>,
   proj: CanvasProjection,
 ): Record<string, number> {
   const textWidths: Record<string, number> = {};
-  for (const el of elements) {
+  // 그룹 상자는 **그룹마다 한 번만** 잰다. 부품마다 다시 재면 같은 값을 부품 수만큼
+  // 계산하게 되고, 그보다 나쁜 것은 그 계산이 두 자리가 되는 것이다.
+  //
+  // **비교는 id 가 아니라 참조로 한다.** id 로 비교하면 같은 id 를 가진 그룹 둘이 나란히
+  // 올 때 뒤 그룹의 부품이 **앞 그룹의 상자 안에** 그려진다 — 파서가 최상위 id 중복을
+  // 걸러 내므로 config 에서는 오지 않지만, 이 모듈은 손으로 지은 배열도 받으며(미리보기)
+  // 그 결함은 예외도 빈 화면도 아닌 **조용한 어긋남**으로만 드러난다. `walkDrawables` 는
+  // 한 그룹의 모든 부품에 **같은 객체**를 실어 보내므로 참조 비교로도 캐시가 그대로 산다.
+  let hostGroup: GroupElement | undefined;
+  let hostBox: PxBox | undefined;
+  for (const { key, element, group } of walkDrawables(elements)) {
+    if (group === undefined) {
+      hostGroup = undefined;
+      hostBox = undefined;
+    } else if (group !== hostGroup) {
+      hostGroup = group;
+      hostBox = projectBox(group.geometry, proj);
+    }
     const measured = drawMeasuredElement(
       ctx,
-      el,
-      styles[el.id] ?? el.style,
-      texts[el.id] ?? el.text,
+      element,
+      styles[key] ?? element.style,
+      texts[key] ?? element.text,
       proj,
+      hostBox,
     );
-    if (measured !== undefined) textWidths[el.id] = measured;
+    if (measured !== undefined) textWidths[key] = measured;
   }
   return textWidths;
 }
