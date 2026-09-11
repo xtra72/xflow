@@ -36,6 +36,7 @@
 // @spec SPEC-CANVAS-001
 
 import { MAX_CANVAS_DIMENSION, MIN_CANVAS_DIMENSION } from './canvasConfig';
+import { GROUP_LOCAL_SIZE } from './group/groupTypes';
 import { PATH_LOCAL_EXTENT, type PathCommand } from './shapes/pathTypes';
 import type {
   BoxGeometry,
@@ -463,6 +464,55 @@ export function projectPathPoints(
         return { c: 'Z' };
     }
   });
+}
+
+// --- 상자 안 투영 (SPEC-CANVAS-004 M2) ------------------------------------
+//
+// 004 의 부품 좌표는 **그룹 로컬 정수 격자**에 산다. 그것을 화면에 놓으려면 "로컬 →
+// 상자 안 px" 라는 중첩 투영이 필요한데, **그 종류의 투영은 이 파일에 이미 있다** —
+// 008 이 경로를 위해 세운 `projectPathPoints` 가 바로 그것이다(불변식 J3).
+//
+// 그래서 004 는 **네 번째 좌표 넘기를 만들지 않고 둘째를 다시 매개변수화한다.** 로컬
+// 격자를 `canvas` 축으로, 상자 크기를 `stage` 축으로 놓으면 `project*` 이 그대로 로컬
+// 투영이 되고, 남는 일은 상자 원점을 **더하는 것 하나**다. 새 나눗셈 자리는 **0 개**다.
+//
+// 인자가 `CanvasProjection` 이 아니라 `PxBox` 인 것에 뜻이 있다. 008 이 같은 자리에 적은
+// 근거가 그대로 걸린다 — 이 함수들에는 `proj` 가 아예 없으므로 **부품이 스테이지를 다시
+// 잴 방법이 없다.** 셋째 인자를 받지 않는 것도 같은 요구다(표시 상태를 보는 순간 "그린
+// 자리" 와 "잡히는 자리" 가 다른 입력에서 나온다).
+//
+// **공간 불변이다.** `ellipseParams` 가 적어 둔 그 성질을 그대로 갖는다 — 상자와 로컬
+// 좌표가 같은 공간에 있기만 하면 되므로, 캔버스 단위 상자를 넣으면 캔버스 단위가 나온다.
+// 004 의 그룹해제(`toAbsolute*`)가 그 성질에 기대어 같은 함수를 쓴다.
+
+/**
+ * 상자 하나를 스테이지로 삼는 투영 한 벌. `canvas` 축이 **그룹 로컬 격자**다.
+ *
+ * 격자를 데이터로 넘기는 것이 요점이다 — 나누는 쪽(`project`)은 격자 상수를 이름으로
+ * 알지 못하므로, `로컬 ÷ EXTENT × 상자변` 이라는 **글자**가 이 파일에 늘지 않는다.
+ */
+export function localProjection(box: PxBox): CanvasProjection {
+  return { stage: { width: box.w, height: box.h }, canvas: GROUP_LOCAL_SIZE };
+}
+
+/** 그룹 로컬 상자를 **상자 안**으로 투영한다. `projectBox` + 원점 더하기가 전부다. */
+export function projectBoxIn(geo: BoxGeometry, box: PxBox): PxBox {
+  const local = projectBox(geo, localProjection(box));
+  return { x: finite(box.x) + local.x, y: finite(box.y) + local.y, w: local.w, h: local.h };
+}
+
+/** 그룹 로컬 선을 **상자 안**으로 투영한다(위와 같은 규율 — 끝점 둘 다 원점을 얻는다). */
+export function projectLineIn(geo: LineGeometry, box: PxBox): PxLine {
+  const local = projectLine(geo, localProjection(box));
+  const ox = finite(box.x);
+  const oy = finite(box.y);
+  return { x1: ox + local.x1, y1: oy + local.y1, x2: ox + local.x2, y2: oy + local.y2 };
+}
+
+/** 그룹 로컬 점을 **상자 안**으로 투영한다(위와 같은 규율). */
+export function projectPointIn(geo: PointGeometry, box: PxBox): PxPoint {
+  const local = projectPoint(geo, localProjection(box));
+  return { x: finite(box.x) + local.x, y: finite(box.y) + local.y };
 }
 
 // --- 역투영 -------------------------------------------------------------
