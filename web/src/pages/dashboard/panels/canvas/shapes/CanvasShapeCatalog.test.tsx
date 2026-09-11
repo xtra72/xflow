@@ -35,6 +35,7 @@ import type { CanvasProjection } from '../canvasGeometry';
 import type { DrawContext2D } from '../drawElement';
 import { PALETTE_STORAGE_KEY } from './paletteGroups';
 import { SHAPE_CATALOG, SHAPE_GROUPS, findShape } from './shapeCatalog';
+import type { CanvasNode } from '../group/groupTypes';
 
 const PROJ: CanvasProjection = {
   stage: { width: 200, height: 100 },
@@ -56,7 +57,7 @@ function Harness({
   initial: readonly CanvasElement[];
   docked?: boolean;
 }) {
-  const [elements, setElements] = useState<readonly CanvasElement[]>(initial);
+  const [elements, setElements] = useState<readonly CanvasNode[]>(initial);
   const state = useCanvasEditSelectionState();
   const overlay = (
     <div data-testid="scaled-panel">

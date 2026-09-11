@@ -31,6 +31,7 @@ import {
   cloneElements,
   type ScratchpadEntry,
 } from './scratchpadTypes';
+import type { CanvasNode } from '../group/groupTypes';
 
 const STAGE: StageSize = { width: 200, height: 100 };
 const CANVAS: CanvasSize = { width: 500, height: 400 };
@@ -40,7 +41,7 @@ const SEED: readonly CanvasElement[] = [
 ];
 
 function Harness() {
-  const [elements, setElements] = useState<readonly CanvasElement[]>(SEED);
+  const [elements, setElements] = useState<readonly CanvasNode[]>(SEED);
   const state = useCanvasEditSelectionState();
   return (
     <I18nProvider>

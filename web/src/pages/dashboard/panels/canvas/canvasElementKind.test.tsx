@@ -35,6 +35,7 @@ import { CanvasEditDockRegion } from './CanvasEditDock';
 import CanvasEditOverlay from './CanvasEditOverlay';
 import { CanvasEditSelectionContext, useCanvasEditSelectionState } from './canvasEditContext';
 import type { CanvasProjection } from './canvasGeometry';
+import type { CanvasNode } from './group/groupTypes';
 
 afterEach(cleanup);
 
@@ -95,7 +96,7 @@ const PROJ: CanvasProjection = {
 };
 
 function Harness() {
-  const [elements, setElements] = useState<readonly CanvasElement[]>([]);
+  const [elements, setElements] = useState<readonly CanvasNode[]>([]);
   const state = useCanvasEditSelectionState();
   return (
     <CanvasEditSelectionContext value={state}>

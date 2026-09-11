@@ -35,11 +35,12 @@ vi.mock('@/lib/i18n', async () => {
 
 import { cleanup } from '@testing-library/react';
 
-import { DEFAULT_CANVAS_SIZE, type CanvasElement } from './canvasConfig';
+import { DEFAULT_CANVAS_SIZE } from './canvasConfig';
 import { CanvasEditDockRegion } from './CanvasEditDock';
 import CanvasEditOverlay from './CanvasEditOverlay';
 import { CanvasEditSelectionContext, useCanvasEditSelectionState } from './canvasEditContext';
 import type { CanvasProjection } from './canvasGeometry';
+import type { CanvasNode } from './group/groupTypes';
 
 afterEach(cleanup);
 
@@ -49,7 +50,7 @@ const PROJ: CanvasProjection = {
 };
 
 function Harness() {
-  const [elements, setElements] = useState<readonly CanvasElement[]>([]);
+  const [elements, setElements] = useState<readonly CanvasNode[]>([]);
   const selection = useCanvasEditSelectionState();
   return (
     <CanvasEditSelectionContext value={selection}>

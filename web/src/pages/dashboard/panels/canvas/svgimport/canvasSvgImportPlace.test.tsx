@@ -30,6 +30,7 @@ import { parseScratchpadEntry, type ScratchpadEntry } from '../scratchpad/scratc
 import { CanvasEditSelectionContext, useCanvasEditSelectionState } from '../canvasEditContext';
 import type { StageSize } from '../canvasGeometry';
 import { planSvgImport } from './svgImportPlan';
+import type { CanvasNode } from '../group/groupTypes';
 
 // --- 고정 입력 -----------------------------------------------------------
 
@@ -67,7 +68,7 @@ const SEED: readonly CanvasElement[] = [
 let changes = 0;
 
 function Harness({ docked = true }: { docked?: boolean }) {
-  const [elements, setElements] = useState<readonly CanvasElement[]>(SEED);
+  const [elements, setElements] = useState<readonly CanvasNode[]>(SEED);
   const state = useCanvasEditSelectionState();
   return (
     <CanvasEditSelectionContext value={state}>

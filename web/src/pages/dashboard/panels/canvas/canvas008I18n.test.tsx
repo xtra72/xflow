@@ -42,6 +42,7 @@ import { SHAPE_CATALOG } from './shapes/shapeCatalog';
 import { PATH_LOCAL_EXTENT, type PathCommand } from './shapes/pathTypes';
 import { useScratchpadStore } from './scratchpad/scratchpadStore';
 import { SCRATCHPAD_MAX_ENTRIES, type ScratchpadEntry } from './scratchpad/scratchpadTypes';
+import type { CanvasNode } from './group/groupTypes';
 
 // --- 키 목록 -------------------------------------------------------------
 
@@ -224,7 +225,7 @@ function pathEl(over: Partial<PathElement> = {}): PathElement {
 
 /** 도크가 선 표면. `en` 을 고르려면 로케일을 저장소에 심어 둔다(Provider 가 그것을 읽는다). */
 function Harness({ initial }: { initial: readonly CanvasElement[] }) {
-  const [elements, setElements] = useState<readonly CanvasElement[]>(initial);
+  const [elements, setElements] = useState<readonly CanvasNode[]>(initial);
   const state = useCanvasEditSelectionState();
   return (
     <I18nProvider>

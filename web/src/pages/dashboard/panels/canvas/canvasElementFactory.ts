@@ -28,6 +28,10 @@ import {
   type ElementStyle,
   type PathElement,
 } from './canvasConfig';
+// SPEC-CANVAS-004 M6 — **담는 그릇만 넓어졌다.** 만드는 것은 여전히 `CanvasElement` 이고
+// (`created` 의 타입이 그 사실을 든다) 새 입구도 늘지 않았다 — 008 불변식 J9 그대로다.
+// 넓히지 않았다면 팔레트로 도형 하나를 놓는 순간 손으로 저술한 그룹이 배열에서 떨어진다.
+import type { CanvasNode } from './group/groupTypes';
 import type { PathCommand } from './shapes/pathTypes';
 
 // --- 씨앗 상수 -----------------------------------------------------------
@@ -288,9 +292,9 @@ export function newPathElement(
  * 그 탐색이 또 하나의 규칙이 된다.
  */
 export function appendElement(
-  elements: readonly CanvasElement[],
+  elements: readonly CanvasNode[],
   kind: CanvasPrimitiveKind,
-): { next: CanvasElement[]; created: CanvasElement } {
+): { next: CanvasNode[]; created: CanvasElement } {
   const created = newElement(nextElementId(elements), kind, elements.length);
   return { next: [...elements, created], created };
 }
@@ -300,10 +304,10 @@ export function appendElement(
  * 계단 오프셋도 현재 배열을 보고, 끝에 붙는 것이 곧 맨 위다.
  */
 export function appendPathElement(
-  elements: readonly CanvasElement[],
+  elements: readonly CanvasNode[],
   catalogId: string,
   commands: readonly PathCommand[],
-): { next: CanvasElement[]; created: CanvasElement } {
+): { next: CanvasNode[]; created: CanvasElement } {
   const created = newPathElement(
     nextElementId(elements),
     catalogId,
@@ -357,13 +361,13 @@ export interface ImportedPathSource {
  * (REQ-06) — 배열에서 다시 찾게 하면 그 탐색이 또 하나의 규칙이 된다.
  */
 export function appendImportedElements(
-  elements: readonly CanvasElement[],
+  elements: readonly CanvasNode[],
   shapes: readonly ImportedPathSource[],
-): { next: CanvasElement[]; created: PathElement[] } {
+): { next: CanvasNode[]; created: PathElement[] } {
   // **한 번 센다.** 안에서 `next.length` 로 세면 요소가 하나 붙을 때마다 오프셋이 자라
   // 조각들이 계단으로 흩어진다 — REQ-06 이 금지하는 그것이다.
   const off = seedOffset(elements.length);
-  const next: CanvasElement[] = [...elements];
+  const next: CanvasNode[] = [...elements];
   const created: PathElement[] = [];
   for (const shape of shapes) {
     const path = shape.commands.map((cmd) => ({ ...cmd }));

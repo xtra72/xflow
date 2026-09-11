@@ -244,7 +244,7 @@ function setupPalette(
             elements={elements}
             projection={PALETTE_PROJ}
             textWidths={{}}
-            onElementsChange={setElements}
+            onElementsChange={(next) => setElements(next as CanvasElement[])}
           />
         </CanvasEditDockRegion>
         {opts.withList === true && (

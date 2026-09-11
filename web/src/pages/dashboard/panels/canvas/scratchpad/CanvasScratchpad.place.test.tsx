@@ -36,6 +36,7 @@ import type { StageSize } from '../canvasGeometry';
 import { CanvasStageGridContext, type CanvasStageGrid } from '../canvasStageGrid';
 import { useScratchpadStore } from './scratchpadStore';
 import { cloneElements, elementsBounds, type ScratchpadEntry } from './scratchpadTypes';
+import type { CanvasNode } from '../group/groupTypes';
 
 // --- 고정 입력 -----------------------------------------------------------
 
@@ -80,10 +81,10 @@ const ENTRY: ScratchpadEntry = {
   * 달라진다** — "서랍의 객체를 나눠 갖는가" 를 그 값으로 재면 시험이 공허해진다(실측:
   * 사본을 빼는 뮤테이션이 통과했다). 그래서 그 판정만은 이 배열로 잰다.
   */
-let live: readonly CanvasElement[] = [];
+let live: readonly CanvasNode[] = [];
 
 function Harness() {
-  const [elements, setElements] = useState<readonly CanvasElement[]>([EXISTING]);
+  const [elements, setElements] = useState<readonly CanvasNode[]>([EXISTING]);
   live = elements;
   const [step, setStep] = useState(CANVAS_GRID_STEP_UNITS);
   const state = useCanvasEditSelectionState();

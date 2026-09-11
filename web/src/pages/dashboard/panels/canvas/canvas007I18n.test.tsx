@@ -41,6 +41,7 @@ import { CanvasEditSelectionContext, useCanvasEditSelectionState } from './canva
 import type { CanvasProjection } from './canvasGeometry';
 import { NOTE_KEYS, REFUSAL_KEYS } from './svgimport/svgImportPresent';
 import { MAX_IMPORT_ELEMENTS } from './svgimport/svgImportTypes';
+import type { CanvasNode } from './group/groupTypes';
 
 // --- 키 목록 -------------------------------------------------------------
 
@@ -199,7 +200,7 @@ const OVER_LIMIT =
   '</svg>';
 
 function Harness({ initial }: { initial: readonly CanvasElement[] }) {
-  const [elements, setElements] = useState<readonly CanvasElement[]>(initial);
+  const [elements, setElements] = useState<readonly CanvasNode[]>(initial);
   const state = useCanvasEditSelectionState();
   return (
     <I18nProvider>

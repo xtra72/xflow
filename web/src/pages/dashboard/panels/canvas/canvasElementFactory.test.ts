@@ -33,6 +33,7 @@ import {
   SEED_TEXT_COLOR,
   withElementText,
 } from './canvasElementFactory';
+import type { CanvasNode } from './group/groupTypes';
 
 // `newElement` 가 받는 것은 **원시형 넷**이다. 경로는 명령 목록 없이 만들어지지 않으므로
 // 이 목록에 오지 않는다(그 사실 자체를 아래 §원시형만 받는다 절이 형상으로 잰다).
@@ -185,7 +186,7 @@ describe('canvasElementFactory — appendElement', () => {
   });
 
   it('연속으로 붙이면 자리가 겹치지 않는다 — 계단이 배열 길이를 보기 때문이다', () => {
-    let els: CanvasElement[] = [];
+    let els: CanvasNode[] = [];
     for (let i = 0; i < 3; i++) els = appendElement(els, 'rect').next;
     const geos = els.map((e) => JSON.stringify(e.geometry));
     expect(new Set(geos).size).toBe(3);
@@ -195,7 +196,7 @@ describe('canvasElementFactory — appendElement', () => {
   });
 
   it('아홉 번을 붙여도 기본 캔버스 밖으로 행진하지 않는다', () => {
-    let els: CanvasElement[] = [];
+    let els: CanvasNode[] = [];
     for (let i = 0; i < 9; i++) els = appendElement(els, 'rect').next;
     for (const el of els) {
       const geo = el.geometry as unknown as Record<string, number>;

@@ -32,6 +32,7 @@ import CanvasEditOverlay from './CanvasEditOverlay';
 import { CanvasEditSelectionContext, useCanvasEditSelectionState } from './canvasEditContext';
 import { appendElement } from './canvasElementFactory';
 import type { CanvasProjection } from './canvasGeometry';
+import type { CanvasNode } from './group/groupTypes';
 
 afterEach(cleanup);
 
@@ -57,7 +58,7 @@ function Harness({
   initial: readonly CanvasElement[];
   docked?: boolean;
 }) {
-  const [elements, setElements] = useState<readonly CanvasElement[]>(initial);
+  const [elements, setElements] = useState<readonly CanvasNode[]>(initial);
   const state = useCanvasEditSelectionState();
   const overlay = (
     <div data-testid="scaled-panel">

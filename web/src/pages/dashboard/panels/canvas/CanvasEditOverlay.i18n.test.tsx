@@ -34,11 +34,12 @@ vi.mock('@/lib/i18n', async () => {
   return { useTranslation: () => ({ t: lookup }) };
 });
 
-import { DEFAULT_CANVAS_SIZE, type CanvasElement } from './canvasConfig';
+import { DEFAULT_CANVAS_SIZE } from './canvasConfig';
 import { CanvasEditDockRegion } from './CanvasEditDock';
 import CanvasEditOverlay from './CanvasEditOverlay';
 import { CanvasEditSelectionContext, useCanvasEditSelectionState } from './canvasEditContext';
 import type { CanvasProjection } from './canvasGeometry';
+import type { CanvasNode } from './group/groupTypes';
 
 afterEach(cleanup);
 
@@ -92,7 +93,7 @@ function editNamespace(messages: typeof ko | typeof en): Record<string, unknown>
  * 못한다.
  */
 function Harness({ docked }: { docked: boolean }): React.JSX.Element {
-  const [elements, setElements] = useState<readonly CanvasElement[]>([]);
+  const [elements, setElements] = useState<readonly CanvasNode[]>([]);
   const selection = useCanvasEditSelectionState();
   const overlay = (
     <CanvasEditOverlay

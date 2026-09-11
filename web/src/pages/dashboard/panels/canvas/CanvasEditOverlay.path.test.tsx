@@ -32,6 +32,7 @@ import {
 import { BOX_HANDLE_IDS } from './canvasEditGeometry';
 import type { StageSize } from './canvasGeometry';
 import { PATH_LOCAL_EXTENT, type PathCommand } from './shapes/pathTypes';
+import type { CanvasNode } from './group/groupTypes';
 
 // --- 고정 입력 -----------------------------------------------------------
 
@@ -64,7 +65,7 @@ function Harness({
   onElementsChange,
 }: {
   elements: readonly CanvasElement[];
-  onElementsChange: (next: CanvasElement[]) => void;
+  onElementsChange: (next: CanvasNode[]) => void;
 }) {
   const state = useCanvasEditSelectionState();
   return (

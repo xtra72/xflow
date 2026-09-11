@@ -45,7 +45,7 @@ import { storeSeriesId } from '../charts/chartChannelTypes';
 import { usePanelSeriesData } from '../charts/usePanelSeriesData';
 import type { VisibilitySource } from '../charts/visiblePolling';
 import { usePanelEditMode } from '../PanelEditToggle';
-import type { CanvasElement, CanvasSize } from './canvasConfig';
+import type { CanvasSize } from './canvasConfig';
 import { isNumericElement, parseCanvasConfig } from './canvasConfig';
 import { isGroup, type CanvasNode } from './group/groupTypes';
 import {
@@ -296,22 +296,6 @@ export default function CanvasPanel({
   // 참조 안정성이 곧 유휴다 — 표면은 props 참조가 그대로면 프레임을 예약하지 않는다(AC-E6).
   const frame = useMemo(() => buildCanvasFrame(cfg.elements, readings), [cfg.elements, readings]);
 
-  /**
-   * SPEC-CANVAS-004 M3 — **편집 오버레이만** 보는 요소 목록.
-   *
-   * 표면은 이제 `cfg.elements` 를 통째로 받아 그룹을 그린다(M3). 남은 좁히기는 오버레이
-   * 하나이며 M6 이 그것을 배선하면 사라진다. 그때까지 그룹은 잡히지 않고, **오버레이의
-   * 쓰기(드래그 · 삭제 · 순서)는 이 좁혀진 배열을 되돌려 쓰므로 손으로 저술한 그룹을
-   * 떨어뜨린다** — 그 손실을 여기 적어 둔다. 오버레이의 `onElementsChange` 를
-   * `CanvasNode[]` 로 넓히는 일은 M6 의 몫이며, 그때 출시된 시험 열다섯 파일이 그 콜백
-   * 타입을 고정하고 있다는 사실을 함께 풀어야 한다(그 가운데
-   * `canvasElementKind.test.tsx` 는 004 가 "수정되면 곧 설계 실패" 로 못박은 파일이다).
-   */
-  const editableElements = useMemo(
-    () => cfg.elements.filter((n): n is CanvasElement => !isGroup(n)),
-    [cfg.elements],
-  );
-
   // --- 결함 D: 바인딩 선택지를 **판독값과 같은 공간**에서 낸다 ---
   //
   // `buildCanvasFrame` 이 `readings.get(el.binding.series)` 로 찾는 바로 그 키 집합을 그대로
@@ -359,7 +343,10 @@ export default function CanvasPanel({
 
   /** 드래그가 만든 새 요소 배열을 config 로 흘려보낸다 — 기하 쓰기의 유일한 출구다. */
   const handleElementsChange = useCallback(
-    (next: CanvasElement[]) => onConfigChange?.({ elements: next }),
+    // SPEC-CANVAS-004 M6 — 오버레이가 쓰는 원소 타입이 `CanvasNode` 로 넓어졌다. M3~M5 동안
+    // 여기서 그룹을 걸러 내려보냈고, 그래서 오버레이의 쓰기가 손으로 저술한 그룹을
+    // 떨어뜨렸다. 그 좁히기가 사라진 자리가 이 한 줄이다.
+    (next: CanvasNode[]) => onConfigChange?.({ elements: next }),
     [onConfigChange],
   );
 
@@ -456,14 +443,14 @@ export default function CanvasPanel({
         )}
         <CanvasEditOverlay
           enabled={edit.active}
-          elements={editableElements}
+          elements={cfg.elements}
           projection={projection}
           textWidths={textWidths}
           onElementsChange={handleElementsChange}
         />
       </>
     ),
-    [isEmpty, t, edit.active, editableElements, handleElementsChange],
+    [isEmpty, t, edit.active, cfg.elements, handleElementsChange],
   );
 
   return (

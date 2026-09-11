@@ -47,8 +47,9 @@ import {
   SEED_STROKE_WIDTH,
   type ImportedPathSource,
 } from './canvasElementFactory';
-import { parseCanvasConfig, type BoxGeometry, type CanvasElement } from './canvasConfig';
+import { parseCanvasConfig, type BoxGeometry } from './canvasConfig';
 import type { PathCommand } from './shapes/pathTypes';
+import type { CanvasNode } from './group/groupTypes';
 
 /** 문서에서 서로 겹쳐 그려지던 조각 셋. 계단이 요소마다 더해지면 이 배치가 무너진다. */
 const CLOSED: PathCommand[] = [
@@ -111,7 +112,7 @@ describe('가져온 요소는 배열 끝에 문서 순서대로 붙는다 (AC-09
 describe('계단은 무리 전체에 한 번만 (REQ-06 · 뮤테이션 1 · 1b)', () => {
   /** 이미 요소가 셋 있으므로 계단은 0 이 아니다. 0 이면 이 시험이 아무것도 재지 못한다. */
   function withThreeBefore(sources: readonly ImportedPathSource[]) {
-    const before = [0, 1, 2].reduce<CanvasElement[]>((acc) => appendElement(acc, 'rect').next, []);
+    const before = [0, 1, 2].reduce<CanvasNode[]>((acc) => appendElement(acc, 'rect').next, []);
     return appendImportedElements(before, sources).created;
   }
 

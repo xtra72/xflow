@@ -358,6 +358,18 @@ export interface CanvasEditDockBodyProps {
    * 두면 정수 반올림이 조각마다 최대 0.5 단위씩 어긋나 그림이 갈라진다.
    */
   onSvgImport: (shapes: readonly ImportedPathSpec[]) => void;
+  /**
+   * 그룹 · 그룹 해제 컨트롤(SPEC-CANVAS-004 REQ-08).
+   *
+   * **노드를 통째로 받는 것에 뜻이 있다.** 같은 컨트롤이 대시보드의 떠 있는 줄에도 서야
+   * 하므로(가정 A21 · 불변식 I23), 그 컴포넌트를 짓는 자리는 두 표면을 모두 가진 오버레이
+   * 하나여야 한다. 도크가 콜백 넷(`canGroup`·`canUngroup`·`onGroup`·`onUngroup`)을 받아
+   * 스스로 지으면 줄 쪽에도 같은 조립이 한 벌 더 생기고, 그 둘은 갈라질 수 있다 —
+   * 배율 칸이 006 M10 에서 같은 이유로 같은 형상을 골랐다(불변식 I24).
+   *
+   * 도크가 더하는 것은 **자리와 이름**뿐이다.
+   */
+  groupTools: React.ReactNode;
 }
 
 /**
@@ -388,6 +400,7 @@ export function CanvasEditDockBody({
   scratchpadDropActive,
   onScratchpadPlace,
   onSvgImport,
+  groupTools,
 }: CanvasEditDockBodyProps): React.ReactElement {
   const { t } = useTranslation();
   // 묶음 넷의 접힘 상태. 기기 지역에 남되 읽지 못해도 기능이 성립한다(REQ-06).
@@ -398,6 +411,7 @@ export function CanvasEditDockBody({
   const gridId = useId();
   const alignId = useId();
   const orderId = useId();
+  const groupId = useId();
   const suggestId = useId();
   const partialId = useId();
   const scratchpadId = useId();
@@ -626,6 +640,22 @@ export function CanvasEditDockBody({
           <SendToBack className={ICON_CLASS} aria-hidden="true" />
           <span>{t('dashboard.canvas.edit.sendToBack')}</span>
         </button>
+      </section>
+
+      {/* 그룹 — 순서 절 바로 뒤다(SPEC-CANVAS-004 REQ-08).
+
+          자리의 근거: 묶기는 **선택 위에서 도는 연산**이라 정렬 · 순서와 같은 부류이고,
+          그 셋이 붙어 있어야 "고른 것들에 무엇을 할 수 있는가" 가 한 눈에 읽힌다. 가져오기와
+          서랍 앞에 두는 것도 그 때문이다 — 뒤엣둘은 "재료를 들여오는" 절이라 결이 다르다.
+
+          **묶음 안의 컨트롤은 이 파일이 짓지 않는다**(`groupTools` prop). 같은 것이
+          대시보드의 떠 있는 줄에도 서야 하므로 짓는 자리는 오버레이 하나여야 한다 —
+          도크가 더하는 것은 자리와 이름뿐이다(불변식 I23 · I24). */}
+      <section role="group" aria-labelledby={groupId} className="flex flex-col gap-0.5">
+        <p id={groupId} className={SECTION_TITLE_CLASS}>
+          {t('dashboard.canvas.edit.dockGroup')}
+        </p>
+        <div className="flex flex-wrap items-center gap-1">{groupTools}</div>
       </section>
 
       {/* 가져오기 — 순서 절과 스크래치패드 사이다(SPEC-CANVAS-007 REQ-04).

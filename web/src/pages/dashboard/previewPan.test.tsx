@@ -41,6 +41,7 @@ import {
   usePreviewPan,
   type PanSize,
 } from './previewPan';
+import type { CanvasNode } from './panels/canvas/group/groupTypes';
 
 afterEach(cleanup);
 
@@ -125,7 +126,7 @@ function PanHarness({
 
 /** 캔버스 편집 오버레이를 그 상자 안에 넣은 하네스 — 이음매를 재는 자리다. */
 function CanvasPanHarness({ elements }: { elements: readonly CanvasElement[] }) {
-  const [live, setLive] = useState<readonly CanvasElement[]>(elements);
+  const [live, setLive] = useState<readonly CanvasNode[]>(elements);
   const selection = useCanvasEditSelectionState();
   return (
     <CanvasEditSelectionContext value={selection}>

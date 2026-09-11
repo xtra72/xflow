@@ -149,6 +149,9 @@ import { PanelEditGrid } from '../../PanelEditGrid';
 import { EMPTY_SELECTION, nextSelection } from '../charts/panelEditSelection';
 import { CanvasEditDockBody } from './CanvasEditDock';
 import { CanvasWorkspaceZoomField } from './CanvasWorkspaceZoomField';
+import { CanvasGroupTools } from './group/CanvasGroupTools';
+import { groupNodes, rulesLostByUngroup, ungroupNode, type GroupRefusal } from './group/groupOps';
+import { isGroup, type CanvasNode } from './group/groupTypes';
 import {
   DEFAULT_FONT_SIZE,
   type BoxGeometry,
@@ -227,8 +230,14 @@ export interface CanvasEditOverlayProps {
    * 남고 끌리지 않는다(REQ-01 · AC-07, `PanelDragLayer` 와 같은 규칙).
    */
   enabled: boolean;
-  /** 배열 순서 = 그리기 순서(뒤가 위). 히트 순회의 z-order 이기도 하다. */
-  elements: readonly CanvasElement[];
+  /**
+   * 배열 순서 = 그리기 순서(뒤가 위). 히트 순회의 z-order 이기도 하다.
+   *
+   * SPEC-CANVAS-004 M6 — 원소 타입이 `CanvasNode` 로 넓어졌다. 그전까지 `CanvasPanel` 은
+   * 그룹을 **걸러 낸** 배열을 이 층에 내려보냈고, 그래서 이 층의 쓰기(드래그 · 순서 ·
+   * 붙여넣기)가 손으로 저술한 그룹을 조용히 떨어뜨렸다. 그 좁히기가 여기서 사라진다.
+   */
+  elements: readonly CanvasNode[];
   /**
    * 표면이 넘겨준 투영 한 벌(잰 스테이지 px + config 의 캔버스 단위 크기).
    * 이 층은 크기를 **스스로 재지 않고** 투영을 **다시 만들지 않는다**.
@@ -240,7 +249,7 @@ export interface CanvasEditOverlayProps {
    * 드래그가 만든 새 요소 배열. **끄는 동안 계속** 호출되어 그림이 손을 따라온다
    * (`PanelDragLayer` 의 "미리보기가 즉시 따라와야 어디에 놓일지 보인다" 와 같은 계약).
    */
-  onElementsChange: (next: CanvasElement[]) => void;
+  onElementsChange: (next: CanvasNode[]) => void;
 }
 
 /** 드래그에 참여하는 요소 하나 — **잡는 순간의** 기하를 든다. */
@@ -527,11 +536,16 @@ function resolveMeasuredWidth(width: number | undefined): number {
  * 상자로 그렸다. 컴파일러가 울지 않던 자리이므로 갈래를 이름으로 적는다.
  */
 function outlineBox(
-  el: CanvasElement,
+  el: CanvasNode,
   proj: CanvasProjection,
   textWidths: Readonly<Record<string, number>>,
 ): PxBox {
   switch (el.kind) {
+    // 그룹의 윤곽은 **제 상자**다(REQ-08). 부품의 합집합을 여기서 다시 재지 않는다 —
+    // 상자는 묶는 순간 적힌 **저장된 값**이고(가정 A16), 파생으로 되재면 8핸들이
+    // 잡는 상자와 윤곽이 두는 상자가 갈라진다. 그 갈라짐은 "늘리면 테두리만 안 따라온다"
+    // 로만 보고되는 부류다.
+    case 'group':
     case 'rect':
     case 'ellipse':
     case 'path': {
@@ -588,19 +602,26 @@ function normalizeBox(box: PxBox): PxBox {
  * 앞선 두 함수를 고치고 이 한 줄을 빠뜨리면 크기 조절이 그대로 죽어 있다.
  */
 function handleDragState(
-  el: CanvasElement,
+  el: CanvasNode,
   handle: CanvasHandleId,
   common: DragCommon,
 ): DragState | null {
-  // 글자 크기 핸들은 기하를 보지 않으므로 종류와 맞춰 볼 것이 없다.
+  // 글자 크기 핸들은 기하를 보지 않으므로 종류와 맞춰 볼 것이 없다. 그룹에는 `style` 이
+  // 선택 필드이므로(그릴 도형이 없다) 없을 수 있고, 그때는 기본 글자 크기로 떨어진다 —
+  // 애초에 그룹에는 글자 크기 핸들이 서지 않으므로 닿지 않는 자리다.
   if (handle === 'font') {
-    return { ...common, mode: 'font', nodeId: el.id, fontSize: resolveFontSize(el.style.fontSize) };
+    return { ...common, mode: 'font', nodeId: el.id, fontSize: resolveFontSize(el.style?.fontSize) };
   }
   if (handle === 'p1' || handle === 'p2') {
     if (el.kind !== 'line') return null;
     return { ...common, mode: 'line', nodeId: el.id, endpoint: handle, geometry: el.geometry };
   }
-  if (el.kind !== 'rect' && el.kind !== 'ellipse' && el.kind !== 'path') return null;
+  // **그룹이 이 목록에 들어가는 것이 M6 가 이 함수에 한 전부다.** 빠뜨리면 `handlesFor` 가
+  // 여덟을 내주고 `handlePositions` 가 자리까지 잡아 주는데도 드래그가 시작되지 않는다 —
+  // 손잡이가 보이는데 잡히지 않는 그룹이 되고, 그 증상은 화면에서만 드러난다.
+  if (el.kind !== 'rect' && el.kind !== 'ellipse' && el.kind !== 'path' && el.kind !== 'group') {
+    return null;
+  }
   return { ...common, mode: 'box', nodeId: el.id, handle, geometry: el.geometry };
 }
 
@@ -616,11 +637,11 @@ function handleDragState(
  * 이 쓰기가 닿는다면 그것은 관용할 입력이 아니라 잘못된 호출이다.
  */
 function patchNodeFontSize(
-  elements: readonly CanvasElement[],
+  elements: readonly CanvasNode[],
   nodeId: string,
   fontSize: number,
-): CanvasElement[] {
-  return elements.map((el): CanvasElement =>
+): CanvasNode[] {
+  return elements.map((el): CanvasNode =>
     el.kind === 'text' && el.id === nodeId ? { ...el, style: { ...el.style, fontSize } } : el,
   );
 }
@@ -695,6 +716,19 @@ export default function CanvasEditOverlay({
    * 은 `useState` 가 주는 고정 참조라 콜백 ref 로 그대로 내려보낼 수 있다.
    */
   const [dropZone, setDropZone] = useState<HTMLElement | null>(null);
+
+  /**
+   * 마지막 묶기 거절 사유(SPEC-CANVAS-004 REQ-07 · AC-12).
+   *
+   * **거절은 조용하지 않다.** 그룹이 섞인 선택을 묶으려 하면 단추는 눌리되 아무 일도
+   * 일어나지 않으므로, 그 사실을 화면이 말하지 않으면 사용자는 고장으로 읽는다. 사유를
+   * 여기 드는 것은 컨트롤이 두 표면에 각각 서기 때문이다 — 상태를 컨트롤 안에 두면
+   * 표면을 갈아 끼울 때 함께 사라진다.
+   *
+   * 선택이 바뀌면 지운다(아래 effect) — 사유는 **그 선택에 대한 말**이라, 다른 것을 고른
+   * 뒤에도 남아 있으면 지금 고른 것을 두고 하는 말로 읽힌다.
+   */
+  const [groupRefusal, setGroupRefusal] = useState<GroupRefusal | null>(null);
 
   /** 끌던 손이 드롭 존 위에 있는가. **강조는 드롭 존 자신이 입는다**(REQ-07 · I23). */
   const [dropActive, setDropActive] = useState(false);
@@ -862,7 +896,7 @@ export default function CanvasEditOverlay({
         // 간격은 **화면에 그려진 그 칸**이다 — 그리는 쪽도 같은 `gridStep` 에서 나온
         // 칸을 그대로 받아 그리므로 둘이 갈라질 수 없다.
         const delta = snap ? snapDelta(raw, drag.anchor, step) : raw;
-        let next: CanvasElement[] = [...els];
+        let next: CanvasNode[] = [...els];
         for (const base of drag.bases) {
           next = patchNodeGeometry(next, base.nodeId, moveGeometry(base.geometry, delta));
         }
@@ -919,6 +953,13 @@ export default function CanvasEditOverlay({
     pendingRef.current = null;
     setSelection(EMPTY_SELECTION);
   }, [enabled, setSelection]);
+
+  // 선택이 바뀌면 묶기 거절 안내를 거둔다(SPEC-CANVAS-004 REQ-07).
+  //
+  // 안내는 **그 선택에 대한 말**이다("고른 것에 그룹이 섞여 있다"). 선택을 고친 뒤에도
+  // 남아 있으면 지금 고른 것을 두고 하는 말로 읽히고, 사용자는 고쳤는데도 같은 거절을
+  // 보게 된다. `null` 은 상수라 이미 비어 있으면 React 가 재렌더를 건너뛴다.
+  useEffect(() => setGroupRefusal(null), [selection]);
 
   // 언마운트 정리 — 예약된 합류 프레임을 남기지 않는다.
   useEffect(
@@ -1005,7 +1046,7 @@ export default function CanvasEditOverlay({
    * 삼으면 잡은 자리가 핸들 안 어디냐에 따라 원점이 달라진다.
    */
   const startHandleDrag = (
-    el: CanvasElement,
+    el: CanvasNode,
     handle: CanvasHandleId,
     event: React.PointerEvent<HTMLButtonElement>,
   ): void => {
@@ -1071,8 +1112,15 @@ export default function CanvasEditOverlay({
    * 서랍에 든 것과 캔버스에 남은 것이 같아진다. 선택은 지워진 요소의 id 를 들고 있을 수
    * 있으므로(목록 편집기에서 지우면 그렇다) 순회는 배열 쪽을 돈다.
    */
-  const saveSelectionToScratchpad = (source: readonly CanvasElement[]): void => {
-    saveEntry(source.filter((el) => selection.has(el.id)));
+  const saveSelectionToScratchpad = (source: readonly CanvasNode[]): void => {
+    // **그룹은 서랍에 들어가지 않는다**(SPEC-CANVAS-004 M6). 서랍의 저장 형상은
+    // `CanvasElement[]` 이고 004 는 그것을 한 바이트도 바꾸지 않기로 했다(가정 A20) —
+    // 그룹을 담으려면 저장 형상이 넓어져야 하고, 그것은 이 SPEC 이 명시적으로 금지한
+    // 변경이다. 담는 길은 M14 의 "그룹으로 놓기" 반대편에 따로 서며, 그때까지는 빠진다.
+    // **감추지 않되 새 문구도 만들지 않는다**: 그룹만 골라 두고 저장을 누르면 남는 요소가
+    // 0 개이므로 서랍이 이미 가진 그 안내(`saveEntry` 의 `empty`)가 그대로 뜬다. 같은
+    // 사실을 두 문구로 말하면 어느 쪽이 참인지 화면이 답하지 못한다.
+    saveEntry(source.filter((el): el is CanvasElement => !isGroup(el) && selection.has(el.id)));
   };
 
   /**
@@ -1095,7 +1143,7 @@ export default function CanvasEditOverlay({
     setDropHighlight(false);
 
     const { elements: els, onElementsChange: emit } = latestRef.current;
-    let next: CanvasElement[] = [...els];
+    let next: CanvasNode[] = [...els];
     for (const base of drag.bases) {
       next = patchNodeGeometry(next, base.nodeId, base.geometry);
     }
@@ -1148,7 +1196,7 @@ export default function CanvasEditOverlay({
    * 쓰기는 곧 헛된 렌더 프레임이다(AC-E4).
    */
   const nudgeSelection = (delta: CanvasDelta): boolean => {
-    let next: CanvasElement[] = [...elements];
+    let next: CanvasNode[] = [...elements];
     let moved = false;
     for (const el of elements) {
       if (!selection.has(el.id)) continue;
@@ -1304,7 +1352,7 @@ export default function CanvasEditOverlay({
     // 한 줄이 유일한 경계다.
     const body = cloneElements(entry.elements);
 
-    let next: CanvasElement[] = [...elements];
+    let next: CanvasNode[] = [...elements];
     const created: string[] = [];
     for (const el of body) {
       const id = nextElementId(next);
@@ -1344,7 +1392,7 @@ export default function CanvasEditOverlay({
     if (deltas.length === 0) return;
 
     const geometryById = new Map(picked.map((el) => [el.id, el.geometry] as const));
-    let next: CanvasElement[] = [...elements];
+    let next: CanvasNode[] = [...elements];
     for (const { nodeId, delta } of deltas) {
       // 순수 모듈은 넘긴 노드 id 를 그대로 달아 돌려주므로 여기서 빌 수 없다. 그래도
       // 가드를 두는 것은 타입이 `Map.get` 의 `undefined` 를 요구하기 때문이며, 그 자리에
@@ -1372,6 +1420,66 @@ export default function CanvasEditOverlay({
     onElementsChange([...next]);
   };
 
+  /**
+   * 풀 수 있는 그룹 — **정확히 하나를 골랐고 그것이 그룹일 때만** 있다.
+   *
+   * 핸들이 서는 규칙(`selection.size === 1`)과 같은 자를 쓴다. 둘 이상을 골라 놓고 "무엇을
+   * 푸는가" 는 답이 없는 질문이며, 임의로 첫째를 고르면 사용자가 고르지 않은 것이 풀린다.
+   *
+   * **한 함수가 판정을 소유한다** — 단추의 활성 여부 · 안내가 뜰지 · 실제로 무엇을 푸는지가
+   * 전부 이 하나에서 나온다. 셋을 따로 지으면 "단추는 켜졌는데 눌러도 아무 일이 없다" 가
+   * 표현 가능해진다.
+   */
+  const selectedGroup = (): CanvasNode | undefined => {
+    if (selection.size !== 1) return undefined;
+    const picked = elements.find((el) => selection.has(el.id));
+    return picked !== undefined && isGroup(picked) ? picked : undefined;
+  };
+
+  /**
+   * 고른 것들을 묶는다 — **판정도 산술도 하지 않는다**(SPEC-CANVAS-004 REQ-07).
+   *
+   * 합집합 상자 · 퇴화 넓히기 · 로컬 변환 · 배열 자리 · 거절 판정은 전부 `groupNodes` 가
+   * 소유한다(M5). 이 함수가 그 순수 함수보다 더 하는 일은 둘뿐이다: **거절 사유를 화면에
+   * 올리는 것**과 **새 그룹 하나를 선택으로 세우는 것**. 뒤엣것은 팔레트 · 카탈로그 ·
+   * 가져오기 · 서랍이 이미 지킨 규율이다(놓은 것은 바로 끌 수 있어야 한다).
+   *
+   * **판정을 여기서 다시 짓지 않는 것이 요점이다.** 거절 조건을 이 층이 한 벌 더 들면
+   * "단추는 눌렸는데 아무 일도 없다" 와 "안내는 떴는데 실제로는 묶였다" 가 둘 다 가능해진다.
+   */
+  const applyGroup = (): void => {
+    const outcome = groupNodes(elements, selection);
+    if (outcome.refusal !== undefined) {
+      setGroupRefusal(outcome.refusal);
+      return;
+    }
+    setGroupRefusal(null);
+    onElementsChange([...outcome.nodes]);
+    // 거절이 아니면 `groupId` 는 반드시 있다(`GroupOutcome` 의 계약). 그래도 단언(`!`)을
+    // 쓰지 않는 것은, 나중에 그 계약이 바뀌면 여기가 조용히 `undefined` 를 선택에 넣기
+    // 때문이다 — 그때는 선택이 비는 편이 낫다.
+    if (outcome.groupId !== undefined) setSelection(new Set([outcome.groupId]));
+  };
+
+  /**
+   * 고른 그룹 하나를 푼다 — 확인은 **컨트롤이 이미 받았다**(REQ-07 · 가정 A19).
+   *
+   * 버려지는 규칙 행의 수는 `rulesLostByUngroup` 하나가 판정하고(M5), 컨트롤은 그 수가
+   * 0 보다 클 때만 확인을 묻는다. **같은 판정을 두 곳에서 짓지 않는 것**이 그 형상의
+   * 이유다 — 둘이 되면 "안내는 떴는데 아무것도 안 버렸다" 와 그 반대가 함께 가능해진다.
+   */
+  const applyUngroup = (): void => {
+    const target = selectedGroup();
+    if (target === undefined) return;
+    const outcome = ungroupNode(elements, target.id);
+    if (outcome.refusal !== undefined) return;
+    setGroupRefusal(null);
+    onElementsChange([...outcome.nodes]);
+    // **풀린 부품 전부**가 선택으로 남는다 — 그래야 방금 푼 것이 한 덩어리로 계속 끌린다
+    // (가져오기가 같은 이유로 같은 일을 한다).
+    setSelection(new Set(outcome.liftedIds));
+  };
+
   // 편집이 꺼져 있으면 DOM 에 아무것도 남기지 않는다(표시 전용).
   if (!enabled) return null;
 
@@ -1387,6 +1495,38 @@ export default function CanvasEditOverlay({
   const canAlign = selection.size >= 2;
   /** 순서 이동은 하나만 골라도 뜻이 있다. */
   const canOrder = selection.size >= 1;
+
+  /**
+   * 묶을 수 있는가 — **둘 이상**이다(REQ-07 · AC-12). `canAlign` 과 같은 자다.
+   *
+   * 부품 하나짜리 그룹은 정체성도 캐스케이드도 주지 않으면서 목록에 층만 더하므로,
+   * 그 상태에서는 단추를 **끈다** — 눌러도 아무 일이 없는 단추는 사용자에게 고장으로 보인다.
+   *
+   * **그룹이 섞인 선택에서는 끄지 않는다.** 그 경우는 "아직 고를 것이 모자라다" 가 아니라
+   * "이 조합은 묶을 수 없다" 이고, 고쳐야 할 것이 다르다 — 꺼진 단추는 이유를 말하지 못한다.
+   */
+  const canGroup = selection.size >= 2;
+
+  /** 풀 수 있는 그룹(없으면 단추가 꺼진다). */
+  const ungroupTarget = selectedGroup();
+
+  /**
+   * 풀면 **버려질** 규칙 행의 수. 판정은 M5 의 순수 함수 하나가 소유하며 이 층은 그 수를
+   * 나를 뿐이다 — 컨트롤이 `> 0` 일 때만 확인을 묻는다(REQ-07 · 가정 A19).
+   */
+  const ungroupRulesAtRisk = rulesLostByUngroup(ungroupTarget);
+
+  /** 두 표면이 **같은 컴포넌트**를 그린다 — 그것이 I23 을 형상으로 만드는 유일한 길이다. */
+  const groupTools = (
+    <CanvasGroupTools
+      canGroup={canGroup}
+      canUngroup={ungroupTarget !== undefined}
+      rulesAtRisk={ungroupRulesAtRisk}
+      refusal={groupRefusal}
+      onGroup={applyGroup}
+      onUngroup={applyUngroup}
+    />
+  );
 
   return (
     <div
@@ -1589,6 +1729,26 @@ export default function CanvasEditOverlay({
               </p>
             )}
           />
+          {/* **그룹 · 그룹 해제가 이 줄에도 선다**(SPEC-CANVAS-004 REQ-08 · 가정 A21 ·
+              불변식 I23). 도크에만 두면 006 이 배달했던 그 결함을 같은 파일에 다시 심는
+              것이다 — 그룹은 **두 표면 모두에서 그려지고 두 표면 모두에서 선택되는데**
+              도크를 펴는 곳은 설정 다이얼로그 한 자리뿐이다.
+
+              **도크와 같은 컴포넌트**를 그린다(불변식 I24 의 규율 — 한 도구의 두 표현이지
+              두 도구가 아니다). 배율 칸이 006 M10 에서 같은 형상을 세웠고, 그래서 활성
+              조건 · 확인 절차 · 거절 문구가 두 벌이 되지 않는다.
+
+              줄 자신의 이름은 **바뀌지 않는다**(`workspaceZoomBar`). 이름을 고치면 그
+              이름을 단언하는 006 의 시험이 빨개지고, 그것은 M6 가 006 의 가드를 걷어낸다는
+              뜻이다. 대신 제 이름을 가진 묶음을 **안쪽에** 둔다 — 듣는 사람에게는 "보기
+              배율 줄 → 그룹 → 단추 둘" 로 읽힌다. */}
+          <div
+            role="group"
+            aria-label={t('dashboard.canvas.edit.dockGroup')}
+            className="flex items-center gap-1"
+          >
+            {groupTools}
+          </div>
         </div>
       )}
       {/*
@@ -1637,6 +1797,9 @@ export default function CanvasEditOverlay({
               // 가져오기도 같은 규칙이다 — 만드는 입구는 하나이고, 놓은 뒤의 선택은 이 층이
               // 소유한다(불변식 K9).
               onSvgImport={placeFromImport}
+              // 그룹 묶음. 떠 있는 줄이 그리는 **그 컴포넌트**를 도크도 그린다 — 도크는
+              // 자리를 주고 이름을 달 뿐이다(SPEC-CANVAS-004 REQ-08).
+              groupTools={groupTools}
             />
           </CanvasScratchpadDropContext>,
           dockHost,

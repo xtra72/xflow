@@ -30,6 +30,7 @@ import type { CanvasElement, CanvasSize } from '../canvasConfig';
 import { CanvasEditSelectionContext, useCanvasEditSelectionState } from '../canvasEditContext';
 import type { StageSize } from '../canvasGeometry';
 import { useScratchpadStore } from './scratchpadStore';
+import type { CanvasNode } from '../group/groupTypes';
 
 // --- 고정 입력 -----------------------------------------------------------
 
@@ -58,11 +59,11 @@ function Harness({
   onChange,
 }: {
   docked?: boolean;
-  onChange?: (next: CanvasElement[]) => void;
+  onChange?: (next: CanvasNode[]) => void;
 }) {
-  const [elements, setElements] = useState<readonly CanvasElement[]>(SEED);
+  const [elements, setElements] = useState<readonly CanvasNode[]>(SEED);
   const state = useCanvasEditSelectionState();
-  const emit = (next: CanvasElement[]): void => {
+  const emit = (next: CanvasNode[]): void => {
     onChange?.(next);
     setElements(next);
   };

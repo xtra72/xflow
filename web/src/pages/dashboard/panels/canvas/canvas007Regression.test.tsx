@@ -33,7 +33,6 @@ import CanvasEditOverlay from './CanvasEditOverlay';
 import {
   DEFAULT_CANVAS_SIZE,
   parseCanvasConfig,
-  type CanvasElement,
   type CanvasPrimitiveKind,
   type PathElement,
 } from './canvasConfig';
@@ -400,7 +399,7 @@ function pathEl(id: string): PathElement {
 }
 
 function EditHarness({ docked }: { docked: boolean }) {
-  const [elements, setElements] = useState<readonly CanvasElement[]>([pathEl('p1')]);
+  const [elements, setElements] = useState<readonly CanvasNode[]>([pathEl('p1')]);
   const state = useSelectionState();
   const overlay = (
     <CanvasEditOverlay
@@ -503,6 +502,7 @@ describe('AC-E11 — 그려지는 자리에 손잡이가 닿는다 (I23 · 기�
 // 시험 하네스가 쓰는 얇은 껍데기. 본체는 `canvasEditContext` 에 있다.
 
 import { CanvasEditSelectionContext, useCanvasEditSelectionState } from './canvasEditContext';
+import type { CanvasNode } from './group/groupTypes';
 
 function useSelectionState(): ReturnType<typeof useCanvasEditSelectionState> {
   return useCanvasEditSelectionState();

@@ -65,7 +65,7 @@ interface HarnessProps {
   stage?: StageSize;
   canvas?: CanvasSize;
   textWidths?: Record<string, number>;
-  onElementsChange: (next: CanvasElement[]) => void;
+  onElementsChange: (next: CanvasNode[]) => void;
   onParentDown?: () => void;
   /** 미리보기 래퍼의 `onWheel={handlePreviewWheel}`(휠 확대)을 흉내 내는 눈이다(AC-E3). */
   onParentWheel?: () => void;
@@ -774,6 +774,7 @@ import {
   CANVAS_FONT_SIZE_MIN,
   handlePositions,
 } from './canvasEditGeometry';
+import type { CanvasNode } from './group/groupTypes';
 
 // --- 고정 입력 -----------------------------------------------------------
 
@@ -1405,7 +1406,7 @@ describe('선택·호버·초점은 프레임을 예약하지 않는다 (AC-E4)'
  * 자리를 낸다(목록 편집기 시험의 `setupStateful` 과 같은 이유다).
  */
 function PaletteHarness({ initial }: { initial: readonly CanvasElement[] }) {
-  const [elements, setElements] = useState<readonly CanvasElement[]>(initial);
+  const [elements, setElements] = useState<readonly CanvasNode[]>(initial);
   const state = useCanvasEditSelectionState();
   return (
     <CanvasEditSelectionContext value={state}>
@@ -1755,7 +1756,7 @@ function gridImage(): string {
 const GRID_STAGE: StageSize = { width: 200, height: 160 };
 
 /** 위 스테이지로 오버레이를 세우고 화면 자리까지 심는다(축척 1). */
-function renderGridHarness(emit: (next: CanvasElement[]) => void = vi.fn()): void {
+function renderGridHarness(emit: (next: CanvasNode[]) => void = vi.fn()): void {
   render(<Harness elements={[rect('a', SNAP_GEOMETRY)]} stage={GRID_STAGE} onElementsChange={emit} />);
   stubOverlayRect(0, 0, GRID_STAGE.width, GRID_STAGE.height);
 }
@@ -2024,7 +2025,7 @@ function Composed({
   onElementsChange,
 }: {
   elements: readonly CanvasElement[];
-  onElementsChange: (next: CanvasElement[]) => void;
+  onElementsChange: (next: CanvasNode[]) => void;
 }) {
   const state = useCanvasEditSelectionState();
   return (
@@ -3425,7 +3426,7 @@ function WorkspaceComposed({
   scheduler,
 }: {
   elements: readonly CanvasElement[];
-  onElementsChange: (next: CanvasElement[]) => void;
+  onElementsChange: (next: CanvasNode[]) => void;
   workspace?: boolean;
   /**
    * 도크 자리를 펴는가(SPEC-CANVAS-006 M10 · 시험 규율 D9). **기본은 편다** — 설정

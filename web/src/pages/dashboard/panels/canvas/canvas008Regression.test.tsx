@@ -42,6 +42,7 @@ import {
 } from './scratchpad/scratchpadTypes';
 import { SHAPE_CATALOG } from './shapes/shapeCatalog';
 import { PATH_LOCAL_EXTENT, type PathCommand } from './shapes/pathTypes';
+import type { CanvasNode } from './group/groupTypes';
 
 // --- 고정 입력 -----------------------------------------------------------
 
@@ -363,7 +364,7 @@ function EditHarness({
   initial: readonly CanvasElement[];
   docked?: boolean;
 }) {
-  const [elements, setElements] = useState<readonly CanvasElement[]>(initial);
+  const [elements, setElements] = useState<readonly CanvasNode[]>(initial);
   const state = useCanvasEditSelectionState();
   const overlay = (
     <CanvasEditOverlay
@@ -419,9 +420,9 @@ describe('경로는 출력 영역 밖에도 산다 (AC-E6 · REQ-08 · 006 계�
   });
 
   it('고른 뒤 방향키가 그 요소를 옮긴다 — 밖에 있어도 편집이 닿는다', () => {
-    let seen: readonly CanvasElement[] = [];
+    let seen: readonly CanvasNode[] = [];
     function Spy() {
-      const [elements, setElements] = useState<readonly CanvasElement[]>([OUTSIDE]);
+      const [elements, setElements] = useState<readonly CanvasNode[]>([OUTSIDE]);
       seen = elements;
       const state = useCanvasEditSelectionState();
       return (
@@ -540,9 +541,9 @@ describe('카탈로그 30종 전량이 실제로 놓인다 (품질 게이트 Tes
     // 요소 배열은 오버레이의 상태 안에 있으므로 **렌더마다 붙잡아** 마지막 값을 읽는다.
     // 이것을 하지 않고 카탈로그 정의만 다시 세면 시험 이름이 약속한 "놓인다" 를 아무도
     // 재지 않는다 — 이 SPEC 이 내내 겨눈 그 형상이다.
-    let seen: readonly CanvasElement[] = [];
+    let seen: readonly CanvasNode[] = [];
     function Spy() {
-      const [elements, setElements] = useState<readonly CanvasElement[]>([]);
+      const [elements, setElements] = useState<readonly CanvasNode[]>([]);
       seen = elements;
       const state = useCanvasEditSelectionState();
       return (
