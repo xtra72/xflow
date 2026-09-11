@@ -86,6 +86,7 @@ import {
   type TweenSpec,
 } from './canvasConfig';
 import { bringToFront, moveElementTo, sendToBack } from './canvasEditArrange';
+import { isGroup, type CanvasNode } from './group/groupTypes';
 import {
   useCanvasEditSelection,
   useCanvasLiveSeries,
@@ -835,7 +836,11 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
     }
   };
 
-  const emit = (next: CanvasElement[]): void => onConfigChange({ elements: next });
+  // SPEC-CANVAS-004 M1 — 쓰기 경로의 원소 타입이 `CanvasNode` 로 넓어졌다. 목록이 아직
+  // 그룹 행을 그리지 않더라도(M6/M10 의 몫) **배열은 통째로 오간다** — 여기서 그룹을
+  // 걸러 낸 배열을 되돌려 쓰면 패널을 한 번 편집하는 것만으로 손으로 저술한 그룹이
+  // 조용히 사라진다. 자리(index)도 그래서 노드 배열의 자리 그대로다.
+  const emit = (next: CanvasNode[]): void => onConfigChange({ elements: next });
 
   const replaceAt = (idx: number, el: CanvasElement): void => {
     emit(elements.map((e, i) => (i === idx ? el : e)));
@@ -1012,6 +1017,9 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
       ) : (
         <div className="space-y-2">
           {elements.map((el, idx) => {
+            // SPEC-CANVAS-004 M1 — 그룹 행은 아직 없다(M6/M10 이 접힘/펼침 행을 얹는다).
+            // 자리를 건너뛰되 **배열에서 빼지는 않는다**: 위 `emit` 주석의 그 이유다.
+            if (isGroup(el)) return null;
             const bindingOptions = bindingOptionsFor(seriesOptions, el.binding?.series);
             const unbound = el.binding === undefined;
             const open = isExpanded(el.id);

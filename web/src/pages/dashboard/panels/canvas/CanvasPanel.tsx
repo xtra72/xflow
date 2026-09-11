@@ -47,6 +47,7 @@ import type { VisibilitySource } from '../charts/visiblePolling';
 import { usePanelEditMode } from '../PanelEditToggle';
 import type { CanvasElement, CanvasSize } from './canvasConfig';
 import { isNumericElement, parseCanvasConfig } from './canvasConfig';
+import { isGroup, type CanvasNode } from './group/groupTypes';
 import {
   useCanvasLiveSeriesPublisher,
   type CanvasSeriesOption,
@@ -209,13 +210,16 @@ function resolveSeriesReadings(
  * `text` 가 실리므로, 부재는 "요소의 기본 문구를 쓰라" 는 뜻이다(canvasRules 계약).
  */
 function buildCanvasFrame(
-  elements: readonly CanvasElement[],
+  elements: readonly CanvasNode[],
   readings: Map<string, SeriesReading>,
 ): CanvasFrame {
   const targetStyles: Record<string, ResolvedStyle> = {};
   const texts: Record<string, string | undefined> = {};
 
   for (const el of elements) {
+    // SPEC-CANVAS-004 M1 — 그룹은 그릴 도형이 없어 제 스타일도 문구도 내지 않는다.
+    // 부품의 복합 키 항목(§프레임 키 표면 1·2)은 M9 가 2단 순회로 더한다.
+    if (isGroup(el)) continue;
     const reading = el.binding ? readings.get(el.binding.series) : undefined;
     const numeric = isNumericElement(el);
     // 숫자로 읽지 않는 요소에는 **비교할 수가 없다**. 그래서 규칙 평가에 넘기는 값은
@@ -291,6 +295,22 @@ export default function CanvasPanel({
 
   // 참조 안정성이 곧 유휴다 — 표면은 props 참조가 그대로면 프레임을 예약하지 않는다(AC-E6).
   const frame = useMemo(() => buildCanvasFrame(cfg.elements, readings), [cfg.elements, readings]);
+
+  /**
+   * SPEC-CANVAS-004 M1 — 표면과 오버레이가 아직 보는 **요소만의** 목록.
+   *
+   * M3 이 렌더에 그룹 갈래를 얹고 M6 이 편집 오버레이를 배선하면 이 좁히기는 사라진다.
+   * 그때까지 그룹은 그려지지도 잡히지도 않으며, **오버레이의 쓰기(드래그 · 삭제 · 순서)는
+   * 이 좁혀진 배열을 되돌려 쓰므로 손으로 저술한 그룹을 떨어뜨린다** — 그 손실을 여기
+   * 적어 둔다. 오버레이의 `onElementsChange` 를 `CanvasNode[]` 로 넓히는 일은 M6 의 몫이며,
+   * 그때 출시된 시험 열다섯 파일이 그 콜백 타입을 고정하고 있다는 사실을 함께 풀어야 한다
+   * (그 가운데 `canvasElementKind.test.tsx` 는 004 가 "수정되면 곧 설계 실패" 로 못박은
+   * 파일이다).
+   */
+  const editableElements = useMemo(
+    () => cfg.elements.filter((n): n is CanvasElement => !isGroup(n)),
+    [cfg.elements],
+  );
 
   // --- 결함 D: 바인딩 선택지를 **판독값과 같은 공간**에서 낸다 ---
   //
@@ -436,14 +456,14 @@ export default function CanvasPanel({
         )}
         <CanvasEditOverlay
           enabled={edit.active}
-          elements={cfg.elements}
+          elements={editableElements}
           projection={projection}
           textWidths={textWidths}
           onElementsChange={handleElementsChange}
         />
       </>
     ),
-    [isEmpty, t, edit.active, cfg.elements, handleElementsChange],
+    [isEmpty, t, edit.active, editableElements, handleElementsChange],
   );
 
   return (
@@ -463,7 +483,7 @@ export default function CanvasPanel({
       {/* 표면은 **언제나** 있다. 오류 상태에서도 내리지 않고(AC-E4), 요소가 0개여도 내리지
           않는다(AC-E9) — 빈 안내는 위 `renderOverlay` 안에서 겹치는 층으로 나온다. */}
       <CanvasSurface
-        elements={cfg.elements}
+        elements={editableElements}
         canvas={cfg.canvas}
         targetStyles={frame.targetStyles}
         texts={frame.texts}

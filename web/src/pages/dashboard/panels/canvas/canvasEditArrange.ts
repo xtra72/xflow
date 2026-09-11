@@ -69,8 +69,14 @@ import {
   type Box,
   type PanelElementBox,
 } from '../charts/panelEditAlign';
-import type { CanvasElement } from './canvasConfig';
 import type { CanvasBox, CanvasDelta, CanvasProjection, PxBox } from './canvasGeometry';
+
+// SPEC-CANVAS-004 M1 — 이 파일의 배열 재정렬 셋(`moveElementTo`·`bringToFront`·
+// `sendToBack`)은 원소의 `id` 밖에 보지 않는다. 004 가 최상위 배열에 그룹 노드를 더하면서
+// 그 셋의 인자 타입을 `<T extends { id: string }>` 로 **일반화**했다 — 004 의 계획은
+// "인자 타입이 이미 맞는다" 고 적었으나 TypeScript 는 구조적이어도 유니온이 제 원소로
+// 대입되지는 않으므로(`CanvasNode[]` 는 `CanvasElement[]` 가 아니다) 그 문장은 참이
+// 아니었다. 몸체는 한 글자도 바뀌지 않았고, 두 번째 재정렬 규칙도 생기지 않는다.
 
 // --- 타입 ---------------------------------------------------------------
 
@@ -330,11 +336,11 @@ export function alignDeltas(
  *
  * 식별은 언제나 `nodeId` 다(REQ-06).
  */
-export function moveElementTo(
-  elements: readonly CanvasElement[],
+export function moveElementTo<T extends { readonly id: string }>(
+  elements: readonly T[],
   nodeId: string,
   targetIndex: number,
-): readonly CanvasElement[] {
+): readonly T[] {
   const idx = elements.findIndex((el) => el.id === nodeId);
   if (idx < 0) return elements;
   const target = Math.max(0, Math.min(Math.trunc(targetIndex), elements.length - 1));
@@ -351,10 +357,10 @@ export function moveElementTo(
  * 배열 순서대로 훑으며 하나씩 끝으로 보내면 무리의 **상대 순서가 보존된다** — 무리를
  * 앞으로 꺼냈더니 자기들끼리 뒤섞이면 사용자는 그것을 되돌릴 방법을 화면에서 찾지 못한다.
  */
-export function bringToFront(
-  elements: readonly CanvasElement[],
+export function bringToFront<T extends { readonly id: string }>(
+  elements: readonly T[],
   nodeIds: ReadonlySet<string>,
-): readonly CanvasElement[] {
+): readonly T[] {
   let next = elements;
   for (const el of elements) {
     if (nodeIds.has(el.id)) next = moveElementTo(next, el.id, next.length - 1);
@@ -368,10 +374,10 @@ export function bringToFront(
  * 이쪽은 **뒤에서부터** 훑는다. 앞에서부터 0 으로 보내면 나중 것이 먼저 것을 계속 밀어내
  * 무리의 순서가 뒤집힌다.
  */
-export function sendToBack(
-  elements: readonly CanvasElement[],
+export function sendToBack<T extends { readonly id: string }>(
+  elements: readonly T[],
   nodeIds: ReadonlySet<string>,
-): readonly CanvasElement[] {
+): readonly T[] {
   let next = elements;
   for (let i = elements.length - 1; i >= 0; i -= 1) {
     const el = elements[i];

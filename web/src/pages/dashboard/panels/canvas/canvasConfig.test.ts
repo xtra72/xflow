@@ -28,6 +28,7 @@ import {
   type CanvasElement,
   isNumericElement,
 } from './canvasConfig';
+import type { CanvasNode } from './group/groupTypes';
 
 /** 최소 유효 요소를 만든다(테스트 잡음 축소). */
 function rawRect(over: Record<string, unknown> = {}): Record<string, unknown> {
@@ -37,9 +38,20 @@ function rawRect(over: Record<string, unknown> = {}): Record<string, unknown> {
 /** 파싱 결과의 첫 요소를 꺼낸다(없으면 실패). */
 function firstElement(raw: unknown): CanvasElement {
   const cfg = parseCanvasConfig(raw);
-  const el = cfg.elements[0];
+  const el = asElement(cfg.elements[0]);
   if (!el) throw new Error('요소가 파싱되지 않았다');
   return el;
+}
+
+/**
+ * 최상위 노드를 요소로 좁힌다(SPEC-CANVAS-004 M1).
+ *
+ * 004 가 `CanvasPanelConfig.elements` 의 원소 타입을 `CanvasNode` 로 넓혔다. 이 파일은
+ * **요소 파서**를 재는 곳이라 그룹을 넣지 않으므로, 좁히기는 타입을 맞추는 일 하나뿐이며
+ * 어느 단언도 바뀌지 않는다.
+ */
+function asElement(node: CanvasNode | undefined): CanvasElement | undefined {
+  return node === undefined || node.kind === 'group' ? undefined : node;
 }
 
 describe('buildDefaultCanvasConfig', () => {
@@ -176,7 +188,7 @@ describe('parseCanvasConfig — 요소 탈락 경로', () => {
       ],
     });
     expect(cfg.elements.map((e) => e.id)).toEqual(['dup', 'other']);
-    expect(cfg.elements[0]?.unit).toBe('first');
+    expect(asElement(cfg.elements[0])?.unit).toBe('first');
   });
 
   it('유효 요소는 배열 순서를 보존한다(그리기 순서 = z-order)', () => {
@@ -749,7 +761,7 @@ describe('parseCanvasConfig — numeric(숫자로 읽기)', () => {
       ],
     });
     expect(parseCanvasConfig(cfg)).toEqual(cfg);
-    expect(cfg.elements.map((e) => e.numeric)).toEqual([true, false, undefined]);
+    expect(cfg.elements.map((e) => asElement(e)?.numeric)).toEqual([true, false, undefined]);
   });
 });
 

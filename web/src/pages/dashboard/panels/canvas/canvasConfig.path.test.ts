@@ -20,6 +20,7 @@ import {
   type CanvasPanelConfig,
   type PathElement,
 } from './canvasConfig';
+import type { CanvasNode } from './group/groupTypes';
 import { DEFAULT_PATH, MAX_PATH_COMMANDS, PATH_LOCAL_EXTENT } from './shapes/pathTypes';
 
 /** 비대칭·네 명령 전부. 대칭 도형은 전치 결함을 감춘다(D2). */
@@ -50,9 +51,17 @@ function rawConfig(elements: readonly unknown[]): Record<string, unknown> {
   return { channel_name: '', canvas: { width: 500, height: 400 }, elements };
 }
 
+/**
+ * 최상위 노드를 요소로 좁힌다(SPEC-CANVAS-004 M1 — `elements` 의 원소가 `CanvasNode` 로
+ * 넓어졌다). 이 파일은 경로 요소만 넣으므로 좁히기는 타입을 맞추는 일 하나뿐이다.
+ */
+function asElement(node: CanvasNode | undefined): CanvasElement | undefined {
+  return node === undefined || node.kind === 'group' ? undefined : node;
+}
+
 /** 파싱된 config 에서 경로 요소 하나를 꺼낸다. 없으면 시험이 그 자리에서 죽는다. */
 function onlyPath(cfg: CanvasPanelConfig): PathElement {
-  const el: CanvasElement | undefined = cfg.elements[0];
+  const el: CanvasElement | undefined = asElement(cfg.elements[0]);
   expect(el, '경로 요소가 파서를 지나 살아남아야 한다').toBeDefined();
   expect(el?.kind).toBe('path');
   return el as PathElement;

@@ -43,6 +43,9 @@ import {
   MAX_PATH_COMMANDS,
   type PathCommand,
 } from './shapes/pathTypes';
+// 타입만 가져온다 — 런타임 의존이 없으므로 `group/groupTypes.ts` 와의 순환이 생기지
+// 않는다(저쪽도 이 파일에서 타입만 가져간다).
+import type { CanvasNode, GroupElement, SymbolStamp } from './group/groupTypes';
 
 // --- 기본값 상수 ---------------------------------------------------------
 
@@ -337,8 +340,14 @@ export interface CanvasPanelConfig extends ChartPanelConfigBase {
   background?: string;
   /** 패널 기본 트윈. 요소가 덮어쓸 수 있다. */
   tween?: TweenSpec;
-  /** 배열 순서 = 그리기 순서(뒤가 위). 001 의 유일한 z-order 수단. */
-  elements: CanvasElement[];
+  /**
+   * 배열 순서 = 그리기 순서(뒤가 위). 001 의 유일한 z-order 수단.
+   *
+   * **원소 타입이 `CanvasNode` 로 넓어진 것이 004 가 이 형상에 한 일의 전부다**(REQ-01).
+   * `CanvasElement` 유니온은 한 글자도 바뀌지 않으며, 그룹은 그 유니온 **바깥**에서
+   * 합쳐진다 — 그래야 `parts: CanvasElement[]` 가 그룹 중첩을 타입으로 막는다(A6).
+   */
+  elements: CanvasNode[];
 }
 
 // --- 원시 값 보정 도우미 -------------------------------------------------
@@ -786,6 +795,100 @@ export function parseElements(raw: unknown): CanvasElement[] {
 }
 
 /**
+ * 그룹의 출처 기록. 두 문자열이 다 있어야 뜻이 있으므로 한쪽만 있으면 미지정이다.
+ * 렌더가 읽지 않는 값이라 손상은 그림에 닿지 않는다(REQ-05 · AC-E1).
+ */
+function parseSymbolStamp(raw: unknown): SymbolStamp | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const s = raw as Record<string, unknown>;
+  const catalogId = optionalString(s.catalog_id);
+  const version = optionalString(s.version);
+  if (catalogId === undefined || version === undefined) return undefined;
+  return { catalog_id: catalogId, version };
+}
+
+/**
+ * 그룹의 기본 스타일. **빈 객체를 만들어 채우지 않는다** — `{}` 를 넣어 두면 "캐스케이드
+ * 미사용" 과 "빈 캐스케이드" 가 구분되지 않고, 설정 UI 가 두 상태를 다르게 보여 사용자를
+ * 혼란시킨다(§파서 생존). 001 의 `parseStyle` 을 **그대로 재사용**하고 결과가 비었을
+ * 때만 미지정으로 떨어뜨린다 — 스타일 파서가 둘이 되지 않는다.
+ */
+function parseGroupStyle(raw: unknown): ElementStyle | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const style = parseStyle(raw);
+  return Object.keys(style).length > 0 ? style : undefined;
+}
+
+/**
+ * 그룹 1건. 정체성(`id`)이 성립하지 않으면 버린다(001 의 요소 규칙과 같다).
+ *
+ * **`parts` 는 001 의 `parseElements` 를 그대로 부른다.** 그 함수는 `parseElement` 만
+ * 부르고 `parseElement` 의 `kind` 화이트리스트에는 `'group'` 이 없으므로, `parts` 안에
+ * 섞여 들어온 그룹 항목은 **형상 덕에 저절로** 버려진다(A6 · AC-E2) — 런타임 깊이 검사가
+ * 필요 없는 이유다. 부품 id 중복도 그 함수가 이미 "먼저 온 것이 이긴다" 로 다룬다.
+ *
+ * `parts` 가 배열이 아니면 빈 배열이다 — **빈 그룹은 오류가 아니라 아무것도 그리지 않는
+ * 그룹**이다(REQ-05).
+ */
+function parseGroup(e: Record<string, unknown>): GroupElement | null {
+  const id = optionalString(e.id);
+  if (id === undefined) return null;
+
+  const binding = parseBinding(e.binding);
+  const style = parseGroupStyle(e.style);
+  const rules = parseRules(e.rules);
+  const tween = parseTween(e.tween);
+  const symbol = parseSymbolStamp(e.symbol);
+
+  return {
+    id,
+    kind: 'group',
+    geometry: parseBoxGeometry(e.geometry),
+    parts: parseElements(e.parts),
+    ...(binding !== undefined ? { binding } : {}),
+    ...(style !== undefined ? { style } : {}),
+    ...(rules !== undefined ? { rules } : {}),
+    ...(tween !== undefined ? { tween } : {}),
+    ...(symbol !== undefined ? { symbol } : {}),
+  };
+}
+
+/**
+ * 최상위 노드 1건 — 그룹이면 그룹으로, 아니면 001 의 요소 파서로 보낸다.
+ *
+ * **갈래가 `parseElement` 안이 아니라 그 위 한 층에 서는 것이 이 형상의 요점이다**
+ * (§파서 생존). `parseElement` 는 `CanvasElement` 를 내는 계약이고 008 이 `'path'` 갈래를
+ * 더하며 그 계약을 다시 못박았다. 그룹을 그 안에 넣으면 반환 타입이 넓어져 계약이 깨지고,
+ * `parts` 안의 그룹을 **런타임으로** 걸러야 한다. 한 층 위에 두면 그 검사가 사라진다.
+ */
+function parseNode(raw: unknown): CanvasNode | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const e = raw as Record<string, unknown>;
+  return e.kind === 'group' ? parseGroup(e) : parseElement(raw);
+}
+
+/**
+ * 최상위 노드 목록. 규율은 `parseElements` 와 **한 글자도 다르지 않다** — 배열이 아니면
+ * 빈 목록이고, 정체성이 없는 항목은 버리며, id 중복은 먼저 온 것이 이긴다.
+ *
+ * 그룹과 요소가 **같은 id 공간**을 나눠 쓴다. 선택 키도 프레임 키도 최상위에서는 `nodeId`
+ * 하나이므로, 둘을 갈라 두면 "그룹 `a` 와 요소 `a` 가 동시에 있는" 상태가 생긴다.
+ */
+export function parseNodes(raw: unknown): CanvasNode[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CanvasNode[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const node = parseNode(item);
+    if (!node) continue;
+    if (seen.has(node.id)) continue;
+    seen.add(node.id);
+    out.push(node);
+  }
+  return out;
+}
+
+/**
  * 이 요소가 판독값을 **숫자로 읽는가**(`CanvasElementBase.numeric` 의 유일한 해석기).
  *
  * `false` 일 때만 거짓이다 — **부재는 숫자**다. 이 한 줄이 "이 필드가 없는 기존 config 가
@@ -856,6 +959,6 @@ export function parseCanvasConfig(raw: unknown): CanvasPanelConfig {
     // 크기는 **언제나** 있다(위 `CanvasPanelConfig.canvas` 주석) — 옵셔널로 두면 투영하는
     // 자리마다 "없으면 기본" 을 적게 되고, 그중 하나가 다른 기본을 적는 순간 갈라진다.
     canvas: parseCanvasSize(cfg.canvas),
-    elements: parseElements(cfg.elements),
+    elements: parseNodes(cfg.elements),
   };
 }

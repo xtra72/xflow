@@ -2926,7 +2926,7 @@ describe('CanvasElementsEditor — 숫자 스위치', () => {
     fireEvent.click(testid('canvas-element-numeric-0'));
 
     const parsed = parseCanvasConfig(live.config);
-    expect(parsed.elements[0]!.numeric).toBe(false);
+    expect((parsed.elements[0] as CanvasElement).numeric).toBe(false);
     expect(parseCanvasConfig(parsed)).toEqual(parsed);
   });
 });

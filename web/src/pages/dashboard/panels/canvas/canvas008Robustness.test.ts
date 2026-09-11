@@ -324,7 +324,10 @@ describe('망가진 상자가 파이프라인을 지나도 NaN 도 예외도 없
 
 describe('손상 입력은 요소를 죽이지 않는다 — 파서 갈래 (AC-E4)', () => {
   function parseOne(raw: Record<string, unknown>): CanvasElement | undefined {
-    return parseCanvasConfig({ canvas: { ...DEFAULT_CANVAS_SIZE }, elements: [raw] }).elements[0];
+    const node = parseCanvasConfig({ canvas: { ...DEFAULT_CANVAS_SIZE }, elements: [raw] }).elements[0];
+    // SPEC-CANVAS-004 M1 — 최상위 원소가 `CanvasNode` 로 넓어졌다. 이 시험은 경로 요소만
+    // 넣으므로 좁히기는 타입을 맞추는 일 하나뿐이다(단언은 한 글자도 바뀌지 않았다).
+    return node === undefined || node.kind === 'group' ? undefined : node;
   }
 
   const CORRUPT: ReadonlyArray<readonly [name: string, path: unknown]> = [
