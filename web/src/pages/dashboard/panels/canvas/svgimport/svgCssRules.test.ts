@@ -37,7 +37,7 @@ describe('SVG CSS 규칙 파싱', () => {
     const rules = parseCSSRules(css);
 
     expect(rules['rect']).toBeDefined();
-    expect(rules['rect']['fill']).toBe('red');
+    expect(rules['rect']!['fill']).toBe('red');
   });
 
   it('복합 선택자는 건너뜬다', () => {
@@ -65,7 +65,7 @@ describe('SVG CSS 규칙 파싱', () => {
     const props = getCSSPropertiesForElement('rect', 'red', rules);
     // element 선택자 먼저, 그다음 class 선택자가 덮는다
     expect(props['fill']).toBe('#ff0000');
-    expect(props['stroke']).toBe('#000');
+    expect(props['stroke']!).toBe('#000');
   });
 
   it('element 선택자만 적용한다', () => {
