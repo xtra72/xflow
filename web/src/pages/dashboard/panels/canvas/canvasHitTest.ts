@@ -21,14 +21,18 @@
 import {
   DEFAULT_FONT_SIZE,
   DEFAULT_STROKE_WIDTH,
+  type BoxGeometry,
   type CanvasElement,
 } from './canvasConfig';
 import {
   ellipseParams,
   projectBox,
+  projectBoxIn,
   projectLine,
+  projectLineIn,
   projectPathPoints,
   projectPoint,
+  projectPointIn,
   resolveTextOrigin,
   type CanvasProjection,
   type PxBox,
@@ -36,6 +40,8 @@ import {
   type PxPoint,
 } from './canvasGeometry';
 import { TEXT_BASELINE } from './drawElement';
+import { frameKey } from './group/frameKey';
+import { isGroup, type CanvasNode, type GroupElement } from './group/groupTypes';
 import {
   FLATTEN_TOLERANCE_PX,
   flattenPath,
@@ -224,24 +230,38 @@ function hitsElement(
   point: PxPoint,
   proj: CanvasProjection,
   textWidths: Readonly<Record<string, number>>,
+  key: string,
+  host?: PxBox,
 ): boolean {
+  // **투영을 고르는 자리는 이 모듈에서도 여기 셋뿐이다**(SPEC-CANVAS-004 M4). 부품이면
+  // 그룹의 px 상자 안으로, 최상위 원소면 종전 그대로 스테이지로 간다 —
+  // `drawElement.drawMeasuredElement` 가 같은 형상을 쓴다. 아래 판정 갈래는 어느 쪽인지
+  // 알지 못하며, 그래서 **그린 자리와 잡히는 자리**가 두 벌로 갈라지지 않는다.
+  const pxBox = (geo: BoxGeometry): PxBox =>
+    host === undefined ? projectBox(geo, proj) : projectBoxIn(geo, host);
   switch (el.kind) {
     case 'rect':
-      return hitsBox(projectBox(el.geometry, proj), point, HIT_TOLERANCE_PX);
+      return hitsBox(pxBox(el.geometry), point, HIT_TOLERANCE_PX);
     case 'ellipse':
-      return hitsEllipse(projectBox(el.geometry, proj), point, HIT_TOLERANCE_PX);
+      return hitsEllipse(pxBox(el.geometry), point, HIT_TOLERANCE_PX);
     case 'line':
       return hitsLine(
-        projectLine(el.geometry, proj),
+        host === undefined ? projectLine(el.geometry, proj) : projectLineIn(el.geometry, host),
         point,
         resolveStrokeWidth(el.style.strokeWidth),
         HIT_TOLERANCE_PX,
       );
     case 'text': {
       // 좌측 끝 원점은 렌더가 쓰는 그 함수에서 나온다(정렬이 두 벌이 되지 않는다).
-      const width = resolveMeasuredWidth(textWidths[el.id]);
+      // 폭은 **프레임 키**로 찾는다 — 부품이면 `그룹id/부품id` 다. 평평한 `el.id` 로
+      // 찾으면 폭이 없어 기준점 둘레 여유 상자로 조용히 폴백한다(§프레임 키 넷째 표면).
+      const width = resolveMeasuredWidth(textWidths[key]);
       const fontSize = resolveFontSize(el.style.fontSize);
-      const origin = resolveTextOrigin(projectPoint(el.geometry, proj), el.style.align ?? 'left', width);
+      const origin = resolveTextOrigin(
+        host === undefined ? projectPoint(el.geometry, proj) : projectPointIn(el.geometry, host),
+        el.style.align ?? 'left',
+        width,
+      );
       const box: PxBox = {
         x: origin.x,
         y: origin.y - fontSize * TEXT_BOX_TOP_RATIO[TEXT_BASELINE],
@@ -259,7 +279,10 @@ function hitsElement(
       // **바운딩 박스로 두지 않는다**(REQ-07). 위 `hitsEllipse` 가 이미 적어 둔 이유가
       // 그대로 걸린다 — 별의 오목한 사이, 십자의 겨드랑이는 상자 안이지만 도형 밖이고,
       // 거기서 잡히면 겹쳐 놓은 요소의 선택이 눈에 보이는 그림과 어긋난다.
-      const box = projectBox(el.geometry, proj);
+      // 부품 경로는 **두 겹의 로컬 격자를 합성**한다 — 바깥 겹이 상자를 그룹 안으로
+      // 옮기고, 안쪽 겹(`projectPathPoints`)이 명령을 그 상자 안으로 옮긴다. 두 격자는
+      // 합성될 뿐 섞이지 않으며, 그래서 나눗셈 자리가 늘지 않는다(불변식 G2 · 008 J3).
+      const box = pxBox(el.geometry);
       const subpaths = flattenPath(projectPathPoints(el.path, box), FLATTEN_TOLERANCE_PX);
       return hitsPath(
         subpaths,
@@ -286,13 +309,19 @@ function hitsElement(
  * - 비용은 프레임당이 아니라 **포인터 이벤트당 1회** 선형 순회다(가정 A10 · 위험 R9).
  *   공간 색인은 도입하지 않는다.
  *
- * @param elements 배열 순서가 z-order 다(뒤가 위).
+ * SPEC-CANVAS-004 M4 — 원소 타입이 `CanvasNode` 로 넓어졌다. 그룹은 **제 상자가 아니라
+ * 부품으로** 판정되며(`hitsGroup`), 맞으면 `partId` 가 채워진다. 호출부의 시그니처는
+ * 한 글자도 바뀌지 않는다 — 002 가 `CanvasHit` 를 레코드로 두고 `partId` 자리를 비워 둔
+ * 것이 그것을 위해서였다.
+ *
+ * @param elements 배열 순서가 z-order 다(뒤가 위). 그룹 안 부품 배열도 같은 규칙이다.
  * @param point 스테이지 로컬 CSS px 지점.
  * @param proj 표면이 잰 스테이지 크기 + config 의 캔버스 크기. 이 모듈은 **스스로 재지 않는다**.
- * @param textWidths 렌더 층이 잰 글자 폭(요소 id → px). 없는 항목은 폴백된다(AC-E7).
+ * @param textWidths 렌더 층이 잰 글자 폭(**프레임 키** → px). 부품은 `그룹id/부품id` 로
+ *   찾는다. 없는 항목은 폴백된다(AC-E7).
  */
 export function hitTest(
-  elements: readonly CanvasElement[],
+  elements: readonly CanvasNode[],
   point: PxPoint,
   proj: CanvasProjection,
   textWidths: Readonly<Record<string, number>>,
@@ -300,9 +329,55 @@ export function hitTest(
   // 손상된 포인터 좌표 방어. 비유한 좌표로 판정하면 모든 비교가 false 가 되어 "아무것도
   // 맞지 않음" 과 구분되지 않으므로, 들어오는 자리에서 한 번에 끊는다.
   if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return undefined;
-  for (const el of [...elements].reverse()) {
-    if (el.style.visible === false) continue;
-    if (hitsElement(el, point, proj, textWidths)) return { nodeId: el.id };
+  for (const node of [...elements].reverse()) {
+    if (isGroup(node)) {
+      const hit = hitsGroup(node, point, proj, textWidths);
+      if (hit !== undefined) return hit;
+      continue;
+    }
+    if (node.style.visible === false) continue;
+    if (hitsElement(node, point, proj, textWidths, frameKey(node.id))) return { nodeId: node.id };
+  }
+  return undefined;
+}
+
+/**
+ * 그룹은 **제 상자가 아니라 부품으로** 잡힌다(REQ-08 · AC-E11).
+ *
+ * **상자로 잡지 않는 이유는 이 파일이 이미 적어 두었다.** `hitsEllipse`·`hitsPath` 의 근거가
+ * 그대로 걸린다 — 별의 오목한 사이, 십자의 겨드랑이는 상자 안이지만 도형 밖이고, 거기서
+ * 잡히면 겹쳐 놓은 요소의 선택이 눈에 보이는 그림과 어긋난다. 밸브 심볼의 바깥 상자는
+ * **거의 전부 빈 공간**이므로, 상자로 잡으면 그 빈 공간에서 뒤에 놓인 요소가 영원히
+ * 잡히지 않는다.
+ *
+ * 값으로 치르는 대가는 하나이고 숨기지 않는다: 히트 비용이 `O(최상위 수)` 에서
+ * `O(최상위 수 + 부품 총수)` 로 늘어난다. 여전히 **포인터 사건당 1회** 선형이고 프레임당이
+ * 아니므로(002 가정 A10) 받아들인다.
+ *
+ * 부품 순회는 **역순**이다 — 부품 배열 순서가 곧 그리기 순서(뒤가 위)이므로 역순의 첫
+ * 일치가 눈에 보이는 맨 위다. 입력 배열을 뒤집지 않고 사본을 뒤집는 것도 최상위 순회와
+ * 같은 이유다.
+ *
+ * **그룹 자신의 `style.visible` 은 보지 않는다.** M3 의 `drawElements` 도 보지 않기 때문이며,
+ * 여기서만 보면 "그려지는데 잡히지 않는" 어긋남이 생긴다. 그룹 겉모습이 부품으로 내려오는
+ * 것은 캐스케이드(M8·M9)의 몫이고, 그때는 **그리는 쪽과 잡는 쪽이 함께** 그 값을 본다.
+ */
+function hitsGroup(
+  group: GroupElement,
+  point: PxPoint,
+  proj: CanvasProjection,
+  textWidths: Readonly<Record<string, number>>,
+): CanvasHit | undefined {
+  // 상자는 **그룹마다 한 번만** 잰다. 부품마다 다시 재도 값은 같지만(순수 함수) 부품 수만큼
+  // 같은 계산을 되풀이한다.
+  const box = projectBox(group.geometry, proj);
+  for (const part of [...group.parts].reverse()) {
+    if (part.style.visible === false) continue;
+    if (hitsElement(part, point, proj, textWidths, frameKey(group.id, part.id), box)) {
+      // **선택 키는 여전히 `nodeId` 하나다**(002 의 규칙 불변). `partId` 는 목록 편집기가
+      // 그 부품 행을 먼저 펼치는 데에만 쓰인다.
+      return { nodeId: group.id, partId: part.id };
+    }
   }
   return undefined;
 }
