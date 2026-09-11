@@ -29,13 +29,27 @@
 //   7. `scaleStroke` 를 항등으로 바꾸면 → "선 두께가 상자÷viewBox 비로 옮겨진다" 가
 //      빨개진다.
 //   8. `resolveViewBox` 의 퇴화 검사를 지우면 → "가로선뿐인 문서는 거절된다" 가 빨개진다.
+//   9. 요소 상자를 `tightCommandBounds` 가 아니라 `commandBounds`(제어점 껍질)로 재면 →
+//      "상자 폭이 참 넓이에서 나온다" 가 빨개진다. **곡선이 없는 고정 입력에서는 빨개지지
+//      않는다** — 직선만 있는 문서에서는 껍질과 참값이 같다.
+//  10. 상자를 나뉜 **조각마다** 재면 → (분할 시험의) "나뉜 조각들의 상자가 같다" 가
+//      빨개진다(AC-06).
+//  11. 상자만 좁히고 정규화를 문서 `viewBox` 로 두면 → (분할 시험의) 도넛 채움이 빨개진다 —
+//      그림이 제 상자 밖으로 통째로 나간다.
+//  12. 잴 수 없는 도형의 폴백을 문서 틀에서 빼앗으면 → "잴 수 없는 도형은 문서 틀을 그대로
+//      쓴다" 가 빨개진다.
 
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { DEFAULT_BOX_GEOMETRY, parseCanvasConfig, type CanvasSize } from '../canvasConfig';
+import {
+  DEFAULT_BOX_GEOMETRY,
+  parseCanvasConfig,
+  type CanvasSize,
+  type PathElement,
+} from '../canvasConfig';
 import { PATH_LOCAL_EXTENT } from '../shapes/pathTypes';
 
 import { commandBounds, fitBox, planSvgImport, resolveViewBox, toLocalCommands } from './svgImportPlan';
@@ -136,11 +150,55 @@ describe('상자가 문서 종횡비를 든다 (AC-05 · 뮤테이션 4·5)', ()
     expect(Math.abs(box.w / box.h - 100 / 900)).toBeLessThan(0.01);
   });
 
-  it('산출 요소 전부가 같은 상자를 쓴다 — 계단이 요소마다 더해질 자리가 없다', () => {
+  it('도형마다 제 상자를 든다 — 계획은 무리가 함께 쓰는 상자를 들지 않는다 (결함 D3)', () => {
     const result = plan(svg('<rect width="10" height="4"/><circle cx="50" cy="50" r="9"/>'));
     expect(result.shapes).toHaveLength(2);
-    // 상자는 계획 하나가 들고 있다 — 도형마다 들지 않는다(형상 판정).
-    expect(Object.keys(result.shapes[0]!).sort()).toEqual(['commands', 'hasOwnStyle', 'style']);
+    // 형상 판정: 상자는 도형이 든다. `box` 키가 사라지면 여기서 빨개진다.
+    expect(Object.keys(result.shapes[0]!).sort()).toEqual(['box', 'commands', 'hasOwnStyle', 'style']);
+    // 그리고 계획에는 상자가 **없다** — 있으면 옛 공유 상자가 남아 있는 것이다.
+    expect('box' in result).toBe(false);
+    // 두 도형은 문서에서 서로 떨어져 있으므로 상자도 달라야 한다. 같으면 공유 상자다.
+    expect(result.shapes[0]!.box).not.toEqual(result.shapes[1]!.box);
+  });
+});
+
+describe('요소 상자가 곡선의 **참** 넓이를 든다 — 제어점 껍질이 아니다 (결함 D3)', () => {
+  // `M 0 20 C 120 20 20 80 60 110` — 제어점 `x1 = 120` 이 껍질을 120 까지 벌리지만 곡선의
+  // 실제 최대는 `t ≈ 0.411` 의 **61.46** 이다. 껍질로 재면 상자가 2.5 배 넓어지고, 그만큼
+  // 손잡이 여덟이 그림에서 떨어져 선다 — 이 SPEC 이 고치려는 그 결함의 축소판이다.
+  const CURVE = '<path d="M 0 20 C 120 20 20 80 60 110" fill="#c0392b"/>';
+
+  it('상자 폭이 참 넓이(61.46)에서 나온다 — 껍질(120)에서가 아니다', () => {
+    const result = plan(svg(CURVE));
+    const box = result.shapes[0]!.box;
+    const scaleX = fitBox(VIEW_BOX, CANVAS).w / VIEW_BOX.width;
+    // 참값: round(61.46 × 400/317) = 78. 껍질값: round(120 × 400/317) = 151.
+    expect(box.w).toBe(78);
+    expect(box.w).toBeLessThan(Math.round(120 * scaleX));
+  });
+
+  it('곡선의 끝점이 로컬 격자의 끝에 닿지 **않는다** — 오른쪽 끝은 극값이 잡는다', () => {
+    // 끝점 x = 60 이고 상자의 오른쪽 변은 극값 61.46 이므로 로컬 x 는 9762 다. 껍질로 재면
+    // 60/120 = 5000 이 된다. 상자 폭만 재는 단언은 "상자는 좁혔는데 좌표는 옛 격자 그대로"
+    // 라는 결함을 통과시키므로, 좌표 쪽에서도 같은 수를 확인한다.
+    const result = plan(svg(CURVE));
+    const last = result.shapes[0]!.commands[1]!;
+    expect(last.c).toBe('C');
+    if (last.c !== 'C') return;
+    expect(last.x).toBe(9762);
+  });
+
+  it('잴 수 없는 도형은 문서 틀을 그대로 쓴다 — 요소를 잃지 않는다', () => {
+    // `transform="scale(1e200)"` 이 좌표를 `±∞` 로 밀어 버린 도형(실측: `|det|` 이 0 이
+    // 아니므로 문서 층을 통과한다). 잴 바운딩 박스가 없으므로 문서 틀로 떨어지며, 그것이
+    // 007 이 배달했던 그 자리다 — 떨어질 곳을 없애면 요소가 캔버스 구석으로 찌부러진다.
+    const result = plan(
+      svg('<rect x="1e200" y="1e200" width="1e200" height="1e200" transform="scale(1e200)"/><rect width="10" height="4"/>'),
+    );
+    expect(result.shapes).toHaveLength(2);
+    expect(result.shapes[0]!.box).toEqual(fitBox(VIEW_BOX, CANVAS));
+    // 켜져 있음: 함께 둔 멀쩡한 사각은 **제 작은 상자**를 얻었다(둘 다 문서 틀이 아니다).
+    expect(result.shapes[1]!.box).not.toEqual(fitBox(VIEW_BOX, CANVAS));
   });
 });
 
@@ -149,12 +207,19 @@ describe('퇴화 상자를 만들지 않는다 (AC-E8 · 가정 A15 · 뮤테이
     // `0 0 1000 1` → 높이 = round(1 × 0.4) = 0. 죄지 않으면 그대로 저장되고,
     // 다시 열 때 `isDegenerateBox` 가 기하를 **통째로** 씨앗으로 갈아 끼운다.
     const flat = plan(svg('<line x1="0" y1="0.5" x2="1000" y2="0.5"/>', 'viewBox="0 0 1000 1"'));
-    expect(flat.box.w).toBeGreaterThanOrEqual(1);
-    expect(flat.box.h).toBeGreaterThanOrEqual(1);
+    const box = flat.shapes[0]!.box;
+    expect(box.w).toBeGreaterThanOrEqual(1);
+    expect(box.h).toBeGreaterThanOrEqual(1);
 
-    const reopened = roundTrip(flat.box, flat.shapes[0]!.commands);
-    expect(reopened.geometry).toEqual(flat.box);
+    const reopened = roundTrip(box, flat.shapes[0]!.commands);
+    expect(reopened.geometry).toEqual(box);
     expect(reopened.geometry).not.toEqual(DEFAULT_BOX_GEOMETRY);
+    // **그리고 선이 상자 한가운데를 지난다.** 상자만 1 로 밀어 올리고 정규화의 나누는 수를
+    // 0 으로 두면 좌표가 폴백 0 으로 내려앉아 선이 상자 **위 모서리**에 붙는다 — 상자 크기만
+    // 재는 단언은 그 결함을 통과시킨다.
+    expect(reopened.kind).toBe('path');
+    const reopenedPath = (reopened as PathElement).path;
+    expect(reopenedPath.every((cmd) => cmd.c !== 'Z' && cmd.y === PATH_LOCAL_EXTENT / 2)).toBe(true);
   });
 
   it('가로선 · 세로선 · 반지름 0 인 원도 같다', () => {
@@ -164,11 +229,14 @@ describe('퇴화 상자를 만들지 않는다 (AC-E8 · 가정 A15 · 뮤테이
       ['<circle cx="1" cy="1" r="0"/><rect width="4" height="4"/>', 'viewBox="0 0 4 0.2"'],
     ] as const) {
       const result = plan(svg(body, attrs));
-      expect(result.box.w).toBeGreaterThanOrEqual(1);
-      expect(result.box.h).toBeGreaterThanOrEqual(1);
-      expect(roundTrip(result.box, result.shapes[0]?.commands ?? []).geometry).not.toEqual(
-        DEFAULT_BOX_GEOMETRY,
-      );
+      // **전수다.** 도형 하나만 보면 둘째 도형의 퇴화가 통과한다.
+      for (const shape of result.shapes) {
+        expect(shape.box.w, body).toBeGreaterThanOrEqual(1);
+        expect(shape.box.h, body).toBeGreaterThanOrEqual(1);
+        expect(roundTrip(shape.box, shape.commands).geometry, body).not.toEqual(
+          DEFAULT_BOX_GEOMETRY,
+        );
+      }
     }
   });
 });
@@ -193,8 +261,9 @@ describe('viewBox 3단 폴백 (REQ-02 · 뮤테이션 8)', () => {
         'id="no-size"',
       ),
     );
-    // 합집합 = (100,200)~(140,220) → 상자 종횡비는 40 : 20 이다.
-    expect(Math.abs(result.box.w / result.box.h - 2)).toBeLessThan(0.01);
+    // 합집합 = (100,200)~(140,220) → 그 도형 하나가 문서 전부이므로 상자 종횡비는 40 : 20 이다.
+    const box = result.shapes[0]!.box;
+    expect(Math.abs(box.w / box.h - 2)).toBeLessThan(0.01);
     // 그 합집합의 왼쪽 위가 로컬 원점이 된다.
     expect(result.shapes[0]!.commands[0]).toEqual({ c: 'M', x: 0, y: 0 });
   });
@@ -203,11 +272,17 @@ describe('viewBox 3단 폴백 (REQ-02 · 뮤테이션 8)', () => {
     const result = plan(
       svg('<rect x="0" y="0" width="40" height="20"/><rect x="60" y="0" width="40" height="20"/>', 'id="no-size"'),
     );
-    // 합집합 = (0,0)~(100,20) → 종횡비 5. 첫 도형만 보면 2 가 된다.
-    expect(Math.abs(result.box.w / result.box.h - 5)).toBeLessThan(0.05);
-    // 오른쪽 조각의 오른쪽 끝이 정확히 로컬 격자의 끝이다.
-    const second = result.shapes[1]!.commands[1];
-    expect(second).toEqual({ c: 'L', x: PATH_LOCAL_EXTENT, y: 0 });
+    // 합집합 = (0,0)~(100,20). **첫 도형만 보면 축척이 2.5 배가 되어 오른쪽 조각의 상자가
+    // 캔버스 밖으로 나간다** — 그것이 이 시험이 재는 것이다. 종횡비로는 잴 수 없다:
+    // 상대 배치는 축척에 불변이라 첫 도형만 본 폴백에서도 같은 비가 나온다(실측 확인).
+    for (const shape of result.shapes) {
+      expect(shape.box.x).toBeGreaterThanOrEqual(0);
+      expect(shape.box.x + shape.box.w).toBeLessThanOrEqual(CANVAS.width);
+      expect(shape.box.y + shape.box.h).toBeLessThanOrEqual(CANVAS.height);
+    }
+    // 그리고 두 조각의 **간격**이 문서의 뜻대로다 — 사이 20, 폭 40 이므로 폭의 절반이다.
+    const [first, second] = [result.shapes[0]!.box, result.shapes[1]!.box];
+    expect(second.x - (first.x + first.w)).toBeCloseTo(first.w / 2, 0);
   });
 
   it('합집합이 한 축이라도 퇴화하면 거절한다 — 담을 종횡비가 없다', () => {
@@ -265,7 +340,7 @@ describe('바이트 상한은 파싱보다 먼저다 (REQ-03 · 위험 R10 · �
 describe('선 두께와 보고 (REQ-05 · 뮤테이션 7)', () => {
   it('선 두께가 상자 ÷ viewBox 비로 옮겨진다', () => {
     const result = plan(svg('<path d="M0 0 L10 10" stroke="#145a32" stroke-width="3"/>'));
-    const ratio = result.box.w / VIEW_BOX.width;
+    const ratio = fitBox(VIEW_BOX, CANVAS).w / VIEW_BOX.width;
     expect(result.shapes[0]!.style.strokeWidth).toBeCloseTo(3 * ratio, 9);
     // 비가 1 이 아니어야 이 시험이 무언가를 잰다 — 항등 축척은 곱셈 결함을 숨긴다.
     expect(Math.abs(ratio - 1)).toBeGreaterThan(0.2);
@@ -281,7 +356,7 @@ describe('선 두께와 보고 (REQ-05 · 뮤테이션 7)', () => {
       result.shapes.map((s) => ({
         id: 'el-00',
         kind: 'path',
-        geometry: result.box,
+        geometry: s.box,
         path: s.commands,
         style: s.style,
       })),

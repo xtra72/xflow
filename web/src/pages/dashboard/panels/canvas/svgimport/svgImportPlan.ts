@@ -25,13 +25,20 @@
 // `DEFAULT_BOX_GEOMETRY` 로 갈아 끼운다**(실측 `isDegenerateBox` → `parseBoxGeometry`) —
 // "저장할 땐 맞고 다시 열면 딴 자리" 가 되는 자료 손상이다.
 //
-// **모든 산출 요소가 같은 상자를 쓴다.** 도형마다 제 잉크의 바운딩 박스를 주는 안을
-// 기각한다: 상자 좌표는 정수 캔버스 단위로 반올림되므로 도형마다 최대 0.5 단위씩 **서로
-// 어긋난다.** 상자를 공유하면 로컬 좌표가 문서의 뜻을 그대로 유지해 어긋남이 **0** 이고,
-// 히트는 어차피 윤곽으로 하므로 겹친 상자가 선택을 흐리지 않으며, **여덟 핸들이 똑같이
-// 서는 것 자체가 "이것들은 한 그림이었다" 는 눈에 보이는 표시**가 된다. 계단 오프셋이
-// 무리 전체에 한 번만 더해지는 것(REQ-06)도 이 결정의 귀결이다 — 상자가 하나이므로
-// 요소마다 더할 자리가 애초에 없다.
+// **요소마다 제 기하의 상자를 준다**(결함 D3 정정). 007 이 처음 배달한 것은 상자 하나를
+// 온 그림이 함께 쓰는 것이었고, 그 근거는 "도형마다 주면 정수 반올림으로 최대 0.5 단위씩
+// 어긋난다" 였다. 근거는 참이지만 대가가 더 크다 — 큰 문서 구석의 작은 별을 고르면 손잡이
+// 여덟이 문서 가장자리에 서고(I23 의 반대), 선택 윤곽이 그림 전부를 두르며, **정렬이 죽는다**
+// (`alignDeltas` 가 요소 상자로 맞추는데 상자가 전부 같으면 델타가 전부 0 이다). 왜 뒤집는지와
+// 무엇을 어떻게 재는지는 `svgImportBox` 가 소유한다.
+//
+// **다만 한 도형이 상한 때문에 나뉜 조각들은 여전히 같은 상자를 쓴다.** 도넛의 바깥과 구멍은
+// 한 도형이었고 조각마다 상자를 주면 구멍이 반올림만큼 어긋나 도넛이 어그러진다 — 그래서
+// 상자는 **나누기 전의 도형**에서 잰다(AC-06 이 요구하는 깊은 비교가 곧 이것이다).
+//
+// **계단 오프셋은 여전히 무리 전체에 한 번만 더해진다**(REQ-06). 상자가 여럿이 되었으므로
+// "더할 자리가 없다" 는 형상 논증은 사라졌고, 대신 요소를 만드는 입구가 **하나의 오프셋을
+// 모든 상자에** 더한다 — 같은 값을 더하므로 상대 배치가 보존된다.
 //
 // **상한 셋은 서로 다른 층을 죄지만 함께 정해진 수다.** 요소 수만 죄면 64개가 전부 256
 // 명령일 때 16,384 명령이 되어 예산을 통째로 먹는다. 그래서 **명령 총수를 함께** 죈다.
@@ -59,6 +66,12 @@ import {
   type ImportedShape,
 } from './svgImportTypes';
 import {
+  placeShape,
+  tightCommandBounds,
+  viewBoxBounds,
+  type DocumentPlacement,
+} from './svgImportBox';
+import {
   applyEvenOddWinding,
   commandBounds,
   splitByCommandLimit,
@@ -77,9 +90,16 @@ import { mergeNotes } from './svgStyle';
  */
 export const IMPORT_BOX_FILL = 0.8;
 
-/** 요소 하나가 될 준비가 끝난 도형. 좌표는 **로컬 정수**이며 상자는 무리가 함께 쓴다. */
+/** 요소 하나가 될 준비가 끝난 도형. 좌표는 **제 상자의 로컬 정수**다. */
 export interface ImportedPathSpec {
   readonly commands: readonly PathCommand[];
+  /**
+   * 이 도형의 기하가 차지하는 최소 영역. **계단 오프셋은 아직 더해지지 않았다**(M8 의 몫).
+   *
+   * 한 도형이 상한 때문에 나뉘었으면 그 조각들은 **같은 값**을 든다 — 상자를 나누기 전의
+   * 도형에서 재기 때문이다.
+   */
+  readonly box: BoxGeometry;
   readonly style: ElementStyle;
   /** SVG 가 칠을 한 마디라도 말했는가 — 아니면 008 의 `pathSeedStyle` 이 선다. */
   readonly hasOwnStyle: boolean;
@@ -89,8 +109,10 @@ export interface ImportedPathSpec {
 export type SvgImportPlan =
   | {
       readonly ok: true;
-      /** 무리 전체가 함께 쓰는 상자. **계단 오프셋은 아직 더해지지 않았다**(M8 의 몫). */
-      readonly box: BoxGeometry;
+      /**
+       * 도형마다 제 상자를 든다. **무리가 함께 쓰는 상자는 없다** — 문서 틀은 이 층 안에서
+       * 살다 죽고(`fitBox`), 밖으로 나가는 것은 요소가 될 도형들뿐이다.
+       */
       readonly shapes: readonly ImportedPathSpec[];
       readonly report: ImportReport;
     }
@@ -233,13 +255,13 @@ function scaleStroke(style: ElementStyle, ratio: number): ElementStyle {
  * 형상이 바뀌는 날 조용히 틀리고, 그 틀림은 "저장이 413 으로 실패한다" 로만 드러난다
  * (위험 R6). id 는 아직 없으므로 자리를 채워 센다.
  */
-export function estimateBytes(shapes: readonly ImportedPathSpec[], box: BoxGeometry): number {
+export function estimateBytes(shapes: readonly ImportedPathSpec[]): number {
   let total = 2; // 배열의 대괄호 둘.
   for (const shape of shapes) {
     total += JSON.stringify({
       id: 'el-00',
       kind: 'path',
-      geometry: box,
+      geometry: shape.box,
       path: shape.commands,
       style: shape.style,
     }).length;
@@ -286,8 +308,10 @@ export function planSvgImport(
     return { ok: false, refusal: { reason: resolved.reason, actual: 0, limit: 0 } };
   }
 
-  const box = fitBox(resolved.viewBox, canvas);
-  const strokeRatio = box.w / resolved.viewBox.width;
+  // 문서 틀 — 온 그림이 캔버스 안에 놓이는 자리이자 **모든 요소가 공유하는 축척의 출처**다.
+  // 이 값은 이 함수 안에서 살다 죽는다: 밖으로 나가는 상자는 도형마다의 것뿐이다.
+  const doc: DocumentPlacement = { box: fitBox(resolved.viewBox, canvas), viewBox: resolved.viewBox };
+  const strokeRatio = doc.box.w / resolved.viewBox.width;
   const specs: ImportedPathSpec[] = [];
   const extra: ImportNote[] = [];
 
@@ -301,9 +325,13 @@ export function planSvgImport(
       extra.push({ kind: 'dropped', reason: 'commandLimitDropped', count: 1 });
       continue;
     }
+    // **나누기 전의 도형에서 잰다.** 조각들(도넛의 바깥과 구멍)은 한 도형이었으므로 같은
+    // 상자와 같은 기준 틀을 써야 한다 — 조각마다 재면 구멍이 반올림만큼 어긋난다.
+    const placement = placeShape(tightCommandBounds(winded) ?? viewBoxBounds(doc.viewBox), doc);
     for (const piece of pieces) {
       specs.push({
-        commands: toLocalCommands(piece, resolved.viewBox),
+        commands: toLocalCommands(piece, placement.frame),
+        box: placement.box,
         style: scaleStroke(shape.style, strokeRatio),
         hasOwnStyle: shape.hasOwnStyle,
       });
@@ -326,18 +354,17 @@ export function planSvgImport(
     };
   }
 
-  return { ok: true, box, shapes: specs, report: buildReport(specs, box, [...notes, ...extra]) };
+  return { ok: true, shapes: specs, report: buildReport(specs, [...notes, ...extra]) };
 }
 
 function buildReport(
   specs: readonly ImportedPathSpec[],
-  box: BoxGeometry,
   notes: readonly ImportNote[],
 ): ImportReport {
   return {
     shapes: specs.length,
     commands: specs.reduce((sum, spec) => sum + spec.commands.length, 0),
-    estimatedBytes: estimateBytes(specs, box),
+    estimatedBytes: estimateBytes(specs),
     notes: mergeNotes(notes),
   };
 }

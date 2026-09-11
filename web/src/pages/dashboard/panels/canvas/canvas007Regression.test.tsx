@@ -203,7 +203,7 @@ describe('AC-E12 — 007 이 넓히지 않은 것들', () => {
     const result = planSvgImport(doc, { ...DEFAULT_CANVAS_SIZE });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    const { created } = appendImportedElements([], result.shapes, result.box);
+    const { created } = appendImportedElements([], result.shapes);
     expect(created).toHaveLength(1);
     // `catalog_id` 를 심지 않는다 — 그 필드는 "어느 카탈로그 도형에서 나왔는가" 를 뜻하고,
     // 가져온 요소에는 카탈로그가 없다. 예약값을 넣으면 한 필드가 두 뜻을 갖는다.
@@ -330,7 +330,7 @@ function maxImportElements(): PathElement[] {
     '</svg>';
   const result = planSvgImport(doc, { ...DEFAULT_CANVAS_SIZE });
   if (!result.ok) throw new Error('고정 입력이 거절되었다 — 시험이 잴 것이 없다');
-  return appendImportedElements([], result.shapes, result.box).created;
+  return appendImportedElements([], result.shapes).created;
 }
 
 describe('AC-E3 — 가져온 요소 64개가 있어도 유휴 정지가 그대로다 (001 REQ-05)', () => {

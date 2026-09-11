@@ -1236,15 +1236,13 @@ export default function CanvasEditOverlay({
    * 덩어리로 다루는 길은 이것과 서랍 저장 둘뿐이며, 그것이 완전한 대체가 아님을 감추지
    * 않는다(위험 R11).
    *
-   * 계단 오프셋은 **무리 전체에 한 번만** 더해진다 — 상자가 하나이므로 요소마다 더할 자리가
-   * 애초에 없다(`appendImportedElements`). 요소마다 더하면 문서에서 겹쳐 그려지던 조각들이
-   * 25 단위씩 흩어져 그림이 무너진다.
+   * 상자는 **도형마다** 다르다(결함 D3 정정) — 그래야 손잡이 여덟이 제 잉크에 닿고 가져온
+   * 요소들끼리 정렬이 산다. 계단 오프셋은 그래도 **무리 전체에 한 번만** 더해진다:
+   * `appendImportedElements` 가 **같은** 오프셋을 모든 상자에 더하므로 문서에서의 상대 배치가
+   * 그대로 보존된다. 요소마다 다른 오프셋을 주면 그때 그림이 25 단위씩 흩어진다.
    */
-  const placeFromImport = (
-    shapes: readonly ImportedPathSpec[],
-    box: BoxGeometry,
-  ): void => {
-    const { next, created } = appendImportedElements(elements, shapes, box);
+  const placeFromImport = (shapes: readonly ImportedPathSpec[]): void => {
+    const { next, created } = appendImportedElements(elements, shapes);
     onElementsChange(next);
     setSelection(new Set(created.map((el) => el.id)));
   };

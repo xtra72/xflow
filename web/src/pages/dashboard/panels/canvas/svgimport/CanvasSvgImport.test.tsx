@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { I18nProvider } from '@/lib/i18n';
 
-import { DEFAULT_CANVAS_SIZE, type BoxGeometry } from '../canvasConfig';
+import { DEFAULT_CANVAS_SIZE } from '../canvasConfig';
 import { appendImportedElements } from '../canvasElementFactory';
 import type { CanvasProjection } from '../canvasGeometry';
 import { clearSurface, drawElements, type DrawContext2D } from '../drawElement';
@@ -59,7 +59,6 @@ function file(text: string, name = 'a.svg'): File {
 
 interface Placed {
   shapes: readonly ImportedPathSpec[];
-  box: BoxGeometry;
 }
 
 function renderImport(text: string | (() => Promise<string>)): { placed: Placed[] } {
@@ -70,7 +69,7 @@ function renderImport(text: string | (() => Promise<string>)): { placed: Placed[
     <I18nProvider>
       <CanvasSvgImport
         canvas={DEFAULT_CANVAS_SIZE}
-        onPlace={(shapes, box) => placed.push({ shapes, box })}
+        onPlace={(shapes) => placed.push({ shapes })}
         readFile={readFile}
       />
     </I18nProvider>,
@@ -362,7 +361,7 @@ describe('거절은 값으로 돌아와 화면에 뜬다 (REQ-03 · REQ-07)', ()
 // --- 놓기와 취소 -----------------------------------------------------------
 
 describe('놓기와 취소 (REQ-06 · 불변식 K15)', () => {
-  it('[놓기] 가 도형들과 **하나의 상자**를 넘기고 묶음이 대기로 돌아간다', async () => {
+  it('[놓기] 가 도형마다 제 상자를 얹어 넘기고 묶음이 대기로 돌아간다 (AC-05)', async () => {
     const doc = svg('<rect x="5" y="12" width="40" height="20" fill="#c0392b"/><circle cx="60" cy="40" r="9" fill="#145a32"/>');
     const { placed } = renderImport(doc);
     await choose(file(doc));
@@ -370,12 +369,21 @@ describe('놓기와 취소 (REQ-06 · 불변식 K15)', () => {
 
     expect(placed).toHaveLength(1);
     expect(placed[0]?.shapes).toHaveLength(2);
-    // 상자는 **하나**다 — 조각마다 짓게 두면 정수 반올림이 조각마다 어긋난다.
-    expect(placed[0]?.box.w).toBeGreaterThan(0);
-    expect(placed[0]?.box.h).toBeGreaterThan(0);
-    // 상자 종횡비가 문서 종횡비(317 : 181)를 든다 (AC-05).
-    const box = placed[0]!.box;
-    expect(box.w / box.h).toBeCloseTo(317 / 181, 1);
+    const [rect, circle] = placed[0]!.shapes;
+    // **그림이 일그러지지 않는다** — 그것이 AC-05 가 문서 종횡비로 말하려던 것이다.
+    // 상자가 도형마다인 지금은 종횡비 하나를 물을 자리가 없고, 대신 **각 도형이 제 사용자
+    // 단위 종횡비를 그대로 든다**를 묻는다. 이 편이 강하다: 공유 상자 시절의 단언은 상자
+    // 하나의 비만 보았으므로 도형이 저마다 일그러져도 통과했다.
+    expect(rect!.box.w / rect!.box.h).toBeCloseTo(40 / 20, 1);
+    // 원은 **정사각**이다. 축척을 축마다 다르게 준 결함은 여기서만 보인다 — 사각 하나로는
+    // 40:20 과 축이 뒤바뀐 20:40 을 구분할 수 있어도, 축척이 조금 어긋난 것은 못 본다.
+    expect(circle!.box.w).toBe(circle!.box.h);
+    for (const shape of placed[0]!.shapes) {
+      expect(shape.box.w).toBeGreaterThan(0);
+      expect(shape.box.h).toBeGreaterThan(0);
+    }
+    // 그리고 두 상자가 **다르다** — 같으면 공유 상자로 되돌아간 것이다.
+    expect(rect!.box).not.toEqual(circle!.box);
     // 놓은 뒤에는 대기로 — 같은 계획이 두 번 놓이지 않는다.
     expect(screen.queryByTestId('canvas-svg-import-summary')).toBeNull();
     expect(screen.getByTestId('canvas-svg-import-pick')).toBeTruthy();
@@ -448,7 +456,7 @@ describe('미리보기는 실제 렌더 경로다 (§도크 UI)', () => {
     expect(seen.some((c) => c[0] === 'stroke' && c[1] === '#145a32')).toBe(true);
 
     fireEvent.click(screen.getByTestId('canvas-svg-import-place'));
-    const { shapes, box } = placed[0]!;
+    const { shapes } = placed[0]!;
 
     // 놓인 산출로 **같은 투영에** 다시 그린다.
     const size = fitPreviewSize(DEFAULT_CANVAS_SIZE);
@@ -459,7 +467,7 @@ describe('미리보기는 실제 렌더 경로다 (§도크 UI)', () => {
     const again: Call[] = [];
     const ctx = makeRecorder(again) as unknown as DrawContext2D;
     clearSurface(ctx, { ...projection.stage, scale: 2 });
-    drawElements(ctx, appendImportedElements([], shapes, box).created, {}, {}, projection);
+    drawElements(ctx, appendImportedElements([], shapes).created, {}, {}, projection);
 
     expect(seen).toEqual(again);
   });

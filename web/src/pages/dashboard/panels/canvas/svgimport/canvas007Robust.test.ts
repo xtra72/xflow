@@ -61,10 +61,11 @@ function coordsOf(cmd: PathCommand): number[] {
 /** 산출 전체에 유한하지 않은 수가 하나도 없다. **표본이 아니라 전수다.** */
 function expectAllFinite(result: SvgImportPlan): void {
   if (!result.ok) return;
-  for (const value of [result.box.x, result.box.y, result.box.w, result.box.h]) {
-    expect(Number.isFinite(value)).toBe(true);
-  }
   for (const shape of result.shapes) {
+    // 상자도 **전수**로 잰다 — 도형마다 제 상자를 들므로 하나만 보면 나머지가 새어 나간다.
+    for (const value of [shape.box.x, shape.box.y, shape.box.w, shape.box.h]) {
+      expect(Number.isFinite(value), JSON.stringify(shape.box)).toBe(true);
+    }
     for (const cmd of shape.commands) {
       for (const n of coordsOf(cmd)) {
         expect(Number.isFinite(n), JSON.stringify(cmd)).toBe(true);
@@ -309,7 +310,7 @@ describe('산출은 저장 왕복을 지나도 명령 수가 같다 (AC-06 · �
     expect(result.shapes.length).toBeGreaterThanOrEqual(2);
     expect(Math.max(...result.shapes.map((s) => s.commands.length))).toBeGreaterThan(200);
 
-    const { created } = appendImportedElements([], result.shapes, result.box);
+    const { created } = appendImportedElements([], result.shapes);
     const config = {
       canvas: { ...CANVAS },
       elements: created.map((el) => ({ ...el })),
@@ -352,10 +353,12 @@ describe('퇴화 상자를 만들지 않는다 (REQ-06 · 가정 A15)', () => {
     const result = plan(svg(body, attrs));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.box.w).toBeGreaterThanOrEqual(MIN_ELEMENT_EXTENT);
-    expect(result.box.h).toBeGreaterThanOrEqual(MIN_ELEMENT_EXTENT);
+    for (const shape of result.shapes) {
+      expect(shape.box.w).toBeGreaterThanOrEqual(MIN_ELEMENT_EXTENT);
+      expect(shape.box.h).toBeGreaterThanOrEqual(MIN_ELEMENT_EXTENT);
+    }
 
-    const { created } = appendImportedElements([], result.shapes, result.box);
+    const { created } = appendImportedElements([], result.shapes);
     // 도형이 하나라도 있어야 왕복이 무언가를 잰다.
     expect(created.length).toBeGreaterThanOrEqual(1);
     const reopened = parseCanvasConfig(
@@ -405,11 +408,17 @@ describe('AC-E5 — 최악 가져오기의 실제 직렬화 바이트를 잰다 
     return svg(`<path d="M 0 0 ${curve}" fill="#c0392b" stroke="#145a32" stroke-width="3"/>`.repeat(64));
   }
 
-  // **실측값(이 시험이 잰 수)**: 47,608 B = 46.5 KB = 256KB 예산의 **18.16%**.
+  // **실측값(이 시험이 잰 수)**: 50,424 B = 49.2 KB = 256KB 예산의 **19.24%**.
   // 가정 A4 가 "21% 를 넘지 않는다" 로 적은 그 수이며, 실측이 그보다 낮다 — SPEC 의 산술이
   // 명령당 39~68B 로 셈했는데 실제 좌표가 대개 네 자리보다 짧기 때문이다. 추정치
-  // (`report.estimatedBytes` = 47,617 B)는 실측과 9 B 차이다.
-  it('요소 64 · 명령 640(전부 `C`) = 47,608 B = 256KB 예산의 18.16% (가정 A4 의 21% 이하)', () => {
+  // (`report.estimatedBytes` = 50,433 B)는 실측과 9 B 차이다.
+  //
+  // **결함 D3 정정으로 2,816 B(요소당 44 B) 늘었다.** 상자가 요소마다 붙어서가 아니다 —
+  // 직렬화는 예나 지금이나 요소마다 `geometry` 를 한 벌씩 싣는다(공유했던 것은 **값**이지
+  // 자리가 아니었다). 늘어난 것은 **명령 좌표의 자릿수**다: 도형이 제 상자의 로컬 격자로
+  // 다시 정규화되므로 좌표가 문서 격자의 좁은 구간(세 자리)이 아니라 `0..10000` 전체(네
+  // 자리)를 쓴다. 명령 640 개 × 좌표 여섯 ÷ 요소로 나누면 대략 그 44 B 다.
+  it('요소 64 · 명령 640(전부 `C`) = 50,424 B = 256KB 예산의 19.24% (가정 A4 의 21% 이하)', () => {
     const result = plan(worstCase());
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -418,7 +427,7 @@ describe('AC-E5 — 최악 가져오기의 실제 직렬화 바이트를 잰다 
     expect(result.report.commands).toBe(MAX_IMPORT_COMMANDS);
     expect(result.shapes.every((s) => s.commands.filter((c) => c.c === 'C').length === 9)).toBe(true);
 
-    const { created } = appendImportedElements([], result.shapes, result.box);
+    const { created } = appendImportedElements([], result.shapes);
     const bytes = new TextEncoder().encode(JSON.stringify(created)).length;
     const ratio = bytes / DASHBOARD_BUDGET;
 

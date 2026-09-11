@@ -320,6 +320,8 @@ export function appendPathElement(
 export interface ImportedPathSource {
   /** 요소 상자 로컬 정수. 이미 정규화되어 있다. */
   readonly commands: readonly PathCommand[];
+  /** 이 도형이 차지하는 상자. **계단 오프셋은 아직 더해지지 않았다** — 아래가 더한다. */
+  readonly box: BoxGeometry;
   /** 알파가 색에 접힌 스타일. 비어 있을 수 있다. */
   readonly style: ElementStyle;
   /** 원본이 칠을 한 마디라도 말했는가 — 아니면 `pathSeedStyle` 이 선다. */
@@ -333,9 +335,10 @@ export interface ImportedPathSource {
  * 그려지던 조각들이 25 단위씩 어긋나 **그림이 흩어진다** — 카탈로그 도형을 연달아 놓을
  * 때 계단이 하는 바로 그 일이, 한 그림을 이루는 조각들에는 결함이 된다.
  *
- * **상자를 전부 함께 쓴다.** 조각마다 제 잉크의 상자를 주면 정수 반올림으로 서로 최대
- * 0.5 단위 어긋나고, 공유하면 어긋남이 0 이다. 여덟 핸들이 똑같이 서는 것 자체가 "이것들은
- * 한 그림이었다" 는 눈에 보이는 표시가 된다.
+ * **상자는 도형마다 다르되 오프셋은 하나다.** 도형은 제 기하가 차지하는 최소 영역을 상자로
+ * 들고 오고(그래야 손잡이가 제 잉크에 닿고 정렬이 산다), 이 함수는 그 **모든** 상자에 **같은**
+ * 오프셋을 더한다. 같은 값을 더하므로 문서에서의 상대 배치가 그대로 보존된다 — 요소마다
+ * 다른 오프셋을 주면 그때 그림이 25 단위씩 흩어진다.
  *
  * **`catalog_id` 를 심지 않는다.** 그 필드는 "어느 카탈로그 도형에서 나왔는가" 를 뜻하고
  * 가져온 요소에는 카탈로그가 없다. 예약값을 넣으면 한 필드가 두 뜻을 갖는다. 대가는 요소
@@ -350,15 +353,10 @@ export interface ImportedPathSource {
 export function appendImportedElements(
   elements: readonly CanvasElement[],
   shapes: readonly ImportedPathSource[],
-  box: BoxGeometry,
 ): { next: CanvasElement[]; created: PathElement[] } {
+  // **한 번 센다.** 안에서 `next.length` 로 세면 요소가 하나 붙을 때마다 오프셋이 자라
+  // 조각들이 계단으로 흩어진다 — REQ-06 이 금지하는 그것이다.
   const off = seedOffset(elements.length);
-  const geometry: BoxGeometry = {
-    x: shifted(box.x, off),
-    y: shifted(box.y, off),
-    w: box.w,
-    h: box.h,
-  };
   const next: CanvasElement[] = [...elements];
   const created: PathElement[] = [];
   for (const shape of shapes) {
@@ -366,7 +364,12 @@ export function appendImportedElements(
     const element: PathElement = {
       id: nextElementId(next),
       kind: 'path',
-      geometry: { ...geometry },
+      geometry: {
+        x: shifted(shape.box.x, off),
+        y: shifted(shape.box.y, off),
+        w: shape.box.w,
+        h: shape.box.h,
+      },
       path,
       // 원본이 아무 칠도 말하지 않았으면 **두 번째 씨앗 규칙을 만들지 않고** 008 의 것을
       // 쓴다(닫힘이면 채움, 열림이면 선). 말한 것이 있으면 그것이 이긴다.

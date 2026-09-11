@@ -29,6 +29,7 @@ import type { CanvasElement, CanvasSize, PathElement } from '../canvasConfig';
 import { parseScratchpadEntry, type ScratchpadEntry } from '../scratchpad/scratchpadTypes';
 import { CanvasEditSelectionContext, useCanvasEditSelectionState } from '../canvasEditContext';
 import type { StageSize } from '../canvasGeometry';
+import { planSvgImport } from './svgImportPlan';
 
 // --- 고정 입력 -----------------------------------------------------------
 
@@ -174,13 +175,52 @@ describe('AC-09 — 놓으면 일반 요소가 된다 (REQ-06)', () => {
     fireEvent.click(screen.getByTestId('canvas-svg-import-place'));
 
     const created = liveElements().slice(3) as PathElement[];
-    // 값이 같다 — 조각마다 상자를 지었으면 정수 반올림이 서로 어긋난다.
-    expect(created[0]?.geometry).toEqual(created[1]?.geometry);
+    const planned = planSvgImport(DOC, CANVAS);
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    // **상자는 도형마다 다르되 계단은 하나다**(결함 D3 정정). 옛 시험은 "두 기하가 같다" 로
+    // 계단을 재었고, 그것은 상자가 전부 같다는 우연에 기댄 단언이었다. 재야 하는 것은 값이
+    // 아니라 **델타**이며, 그 편이 강하다 — 상자가 저마다 달라도 계단만을 잰다.
+    const deltas = created.map((el, i) => ({
+      dx: el.geometry.x - planned.shapes[i]!.box.x,
+      dy: el.geometry.y - planned.shapes[i]!.box.y,
+    }));
+    for (const d of deltas) expect(d).toEqual(deltas[0]);
     // 그리고 계단이 실제로 **0 이 아니다**(이미 놓인 셋 때문) — 0 이면 이 시험이 무력하다.
-    expect(created[0]?.geometry.x).not.toBe(50);
-    // 상자 종횡비가 문서의 그것(317 : 181)이다.
+    expect(deltas[0]!.dx).toBeGreaterThan(0);
+    expect(deltas[0]!.dx).toBe(deltas[0]!.dy);
+    // 켜져 있음: 두 상자가 **다르다**. 둘째 사각(60×40)은 문서(317×181)의 일부만 차지한다.
+    expect(created[1]!.geometry.w).toBeLessThan(created[0]!.geometry.w);
+    // 첫 도형이 `viewBox` 를 가득 채우므로 그 상자가 문서 종횡비(317 : 181)를 든다.
     const g = created[0]!.geometry;
     expect(g.w / g.h).toBeCloseTo(317 / 181, 1);
+    // 둘째 도형은 제 종횡비(60 : 40)를 든다 — 문서의 것이 아니다. 이 한 줄이 없으면
+    // 상자를 여전히 문서 것으로 주는 결함이 위 단언들을 전부 통과한다.
+    expect(created[1]!.geometry.w / created[1]!.geometry.h).toBeCloseTo(60 / 40, 1);
+  });
+
+  it('가져온 요소들끼리도 정렬이 **움직인다** — 상자가 도형마다이기 때문이다 (결함 D3)', async () => {
+    render(<Harness />);
+    await chooseDoc();
+    fireEvent.click(screen.getByTestId('canvas-svg-import-place'));
+
+    // 놓자마자 새 id 전부가 선택이다(REQ-06) — 그래서 고르는 몸짓 없이 정렬이 곧바로 선다.
+    const created = liveElements().slice(3) as PathElement[];
+    expect(liveSelection().sort()).toEqual(created.map((el) => el.id).sort());
+    const before = created.map((el) => el.geometry.x);
+    // 켜져 있음: 두 왼쪽 변이 애초에 다르다. **공유 상자 시절에는 같았고**, 그래서
+    // `alignDeltas` 의 델타가 전부 0 이라 정렬 단추가 살아 있는 채로 죽어 있었다.
+    expect(before[0]).not.toBe(before[1]);
+
+    const align = screen.getByTestId('canvas-align-left') as HTMLButtonElement;
+    expect(align.disabled).toBe(false);
+    fireEvent.click(align);
+
+    const after = (liveElements().slice(3) as PathElement[]).map((el) => el.geometry.x);
+    // 두 왼쪽 변이 맞았다. 그리고 **실제로 움직였다** — 맞춰졌다는 단언만으로는 "애초에
+    // 같아서 아무 일도 없었다" 를 구분하지 못한다(그것이 이 결함의 형상이었다).
+    expect(after[0]).toBe(after[1]);
+    expect(after).not.toEqual(before);
   });
 
   it('새로 만들어진 id **전부**가 선택으로 선다 (REQ-06)', async () => {
@@ -278,8 +318,9 @@ describe('AC-09 — 놓으면 일반 요소가 된다 (REQ-06)', () => {
     fireEvent.click(screen.getByTestId('canvas-svg-import-place'));
 
     stubOverlayRect();
-    // **가져온 요소 하나와 씨앗 요소 하나**를 함께 고른다. 가져온 둘만 고르면 상자가 같아
-    // 정렬이 무동작이고, 그러면 이 시험이 "정렬이 닿는다" 를 재지 못한다.
+    // **가져온 요소 하나와 씨앗 요소 하나**를 함께 고른다 — 이 시험이 재는 것은 "정렬이
+    // 출처를 구분하지 않는가" 이므로 두 출처가 섞여 있어야 한다. 가져온 것들끼리의 정렬은
+    // 바로 위 시험이 따로 잰다(그것이 결함 D3 의 세 번째 증상이었다).
     send('pointerdown', 240, 20); // 빈 자리 — 선택을 비운다
     const created = liveElements().slice(3) as PathElement[];
     const g = created[0]!.geometry;
@@ -296,9 +337,11 @@ describe('AC-09 — 놓으면 일반 요소가 된다 (REQ-06)', () => {
     const moved = (liveElements().find((el) => el.id === created[0]!.id) as PathElement).geometry;
     // 가져온 요소가 씨앗 요소의 왼쪽 변에 맞춰졌다 — 정렬이 출처를 구분하지 않는다.
     expect(moved.x).toBe(SEED_LEFT);
-    // 함께 고르지 않은 나머지 가져온 요소는 그대로다.
+    // 함께 고르지 않은 나머지 가져온 요소는 **제 자리 그대로**다. 옛 시험은 이 자리를
+    // `g.x`(첫 요소의 x)와 견주었는데, 그것이 통했던 것은 두 상자가 같았기 때문이다 —
+    // 상자가 도형마다인 지금 견줄 것은 **그 요소 자신의 놓인 자리**다.
     expect((liveElements().find((el) => el.id === created[1]!.id) as PathElement).geometry.x).toBe(
-      g.x,
+      created[1]!.geometry.x,
     );
 
     // 순서도 관측된다: 뒤로 보내면 배열 앞으로 간다(배열 순서가 유일한 z-order 다).

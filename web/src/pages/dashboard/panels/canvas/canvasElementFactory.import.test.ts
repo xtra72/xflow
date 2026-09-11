@@ -10,9 +10,19 @@
 // 그 결함이 관측된다(조각 하나짜리 고정 입력에서는 요소마다 더하든 한 번 더하든 결과가
 // 같다).
 //
+// **결함 D3 정정 뒤 이 파일에서 달라진 것.** 도형은 이제 **저마다 제 상자**를 들고 온다.
+// 그래서 "계단을 한 번만 더한다" 를 "요소들의 상자가 전부 같다" 로 재던 옛 단언은 성립하지
+// 않는다 — 상자가 애초에 다르기 때문이다. 재야 하는 것은 값이 아니라 **델타**이고, 그
+// 단언이 옛것보다 강하다: 옛 단언은 모든 상자가 같다는 우연에 기대어 계단을 재었지만
+// 델타 단언은 상자가 저마다 달라도 계단만을 잰다. 고정 입력의 상자 셋은 서로 **다르다** —
+// 같게 두면 이 시험이 옛 공유 상자를 다시 재고 있는 것이고, 요소마다 계단을 더하는 뮤테이션
+// 하나만 잡을 뿐 상자 뒤섞임은 잡지 못한다.
+//
 // **확인한 뮤테이션(E12)** — "→" 뒤가 빨개지는 단언이다.
 //   1. 계단을 요소마다 더하면(`seedOffset(next.length)` 을 반복문 안으로) → "조각들이
 //      흩어지지 않는다" 가 빨개진다. **조각 하나짜리 고정 입력에서는 빨개지지 않는다.**
+//   1b. 도형의 상자를 무시하고 첫 도형의 상자를 전부에 쓰면(옛 공유 상자로 되돌리면) →
+//      "상자는 도형마다 다르다" 가 빨개진다. **상자가 같은 고정 입력에서는 빨개지지 않는다.**
 //   2. 명령 사본(`{ ...cmd }`)을 참조로 바꾸면 → "명령을 사본으로 싣는다" 가 빨개진다.
 //   3. `pathSeedStyle` 갈래를 지우고 언제나 원본 스타일을 쓰면 → "말하지 않은 도형은
 //      씨앗을 입는다" 가 빨개진다.
@@ -53,26 +63,33 @@ const OPEN: PathCommand[] = [
 ];
 
 const BOX: BoxGeometry = { x: 50, y: 86, w: 400, h: 228 };
+/** 첫 상자와 **네 수가 모두 다르다** — 한 수만 다르면 축을 뒤바꾼 뮤테이션이 통과한다. */
+const BOX_B: BoxGeometry = { x: 71, y: 40, w: 120, h: 300 };
+const BOX_C: BoxGeometry = { x: 12, y: 205, w: 61, h: 33 };
 
-function silent(commands: PathCommand[]): ImportedPathSource {
-  return { commands, style: {}, hasOwnStyle: false };
+function silent(commands: PathCommand[], box: BoxGeometry = BOX): ImportedPathSource {
+  return { commands, box, style: {}, hasOwnStyle: false };
 }
 
-function spoken(commands: PathCommand[], style: ImportedPathSource['style']): ImportedPathSource {
-  return { commands, style, hasOwnStyle: true };
+function spoken(
+  commands: PathCommand[],
+  style: ImportedPathSource['style'],
+  box: BoxGeometry = BOX,
+): ImportedPathSource {
+  return { commands, box, style, hasOwnStyle: true };
 }
 
 describe('가져온 요소는 배열 끝에 문서 순서대로 붙는다 (AC-09)', () => {
   it('끝에 붙는 것이 곧 맨 위다 — 배열 순서가 유일한 z-order 다', () => {
     const before = appendElement([], 'rect').next;
-    const { next, created } = appendImportedElements(before, [silent(CLOSED), silent(OPEN)], BOX);
+    const { next, created } = appendImportedElements(before, [silent(CLOSED), silent(OPEN)]);
     expect(next).toHaveLength(3);
     expect(next.slice(1)).toEqual(created);
   });
 
   it('id 가 서로 다르고 기존 id 와도 겹치지 않는다', () => {
     const before = appendElement(appendElement([], 'rect').next, 'line').next;
-    const { next, created } = appendImportedElements(before, [silent(CLOSED), silent(OPEN)], BOX);
+    const { next, created } = appendImportedElements(before, [silent(CLOSED), silent(OPEN)]);
     const ids = next.map((el) => el.id);
     expect(new Set(ids).size).toBe(ids.length);
     expect(created.map((el) => el.id)).toEqual(['el-3', 'el-4']);
@@ -91,38 +108,58 @@ describe('가져온 요소는 배열 끝에 문서 순서대로 붙는다 (AC-09
   });
 });
 
-describe('계단은 무리 전체에 한 번만 (REQ-06 · 뮤테이션 1)', () => {
-  it('조각들이 흩어지지 않는다 — 전부 같은 상자다', () => {
-    // 이미 요소가 셋 있으므로 계단은 0 이 아니다. 계단이 0 이면 이 시험이 아무것도 재지 못한다.
+describe('계단은 무리 전체에 한 번만 (REQ-06 · 뮤테이션 1 · 1b)', () => {
+  /** 이미 요소가 셋 있으므로 계단은 0 이 아니다. 0 이면 이 시험이 아무것도 재지 못한다. */
+  function withThreeBefore(sources: readonly ImportedPathSource[]) {
     const before = [0, 1, 2].reduce<CanvasElement[]>((acc) => appendElement(acc, 'rect').next, []);
-    const { created } = appendImportedElements(
-      before,
-      [silent(CLOSED), silent(OPEN), silent(CLOSED)],
-      BOX,
-    );
+    return appendImportedElements(before, sources).created;
+  }
+
+  it('조각들이 흩어지지 않는다 — 상자는 저마다 달라도 **같은 계단**이 더해진다', () => {
+    const sources = [silent(CLOSED, BOX), silent(OPEN, BOX_B), silent(CLOSED, BOX_C)];
+    const created = withThreeBefore(sources);
     expect(created).toHaveLength(3);
-    for (const el of created) expect(el.geometry).toEqual(created[0]!.geometry);
+    const deltas = created.map((el, i) => ({
+      dx: el.geometry.x - sources[i]!.box.x,
+      dy: el.geometry.y - sources[i]!.box.y,
+    }));
+    // 델타가 **전부 같다** = 계단이 한 번만 더해졌다. 상자 값이 같은지는 묻지 않는다 —
+    // 옛 시험이 그것을 물었고, 그래서 상자가 달라지는 변경에 통째로 무너졌다.
+    for (const d of deltas) expect(d).toEqual(deltas[0]);
     // 계단이 실제로 더해졌다 — 0 이면 "한 번만 더한다" 와 "안 더한다" 를 구분할 수 없다.
-    expect(created[0]!.geometry.x).toBeGreaterThan(BOX.x);
-    expect(created[0]!.geometry.x - BOX.x).toBe(created[0]!.geometry.y - BOX.y);
+    expect(deltas[0]!.dx).toBeGreaterThan(0);
+    expect(deltas[0]!.dx).toBe(deltas[0]!.dy);
+  });
+
+  it('상자는 도형마다 다르다 — 첫 도형의 상자가 나머지를 덮지 않는다 (뮤테이션 1b)', () => {
+    const created = withThreeBefore([silent(CLOSED, BOX), silent(OPEN, BOX_B), silent(CLOSED, BOX_C)]);
+    // 세 상자가 서로 다르다. **집합이 아니라 짝**으로 견준다 — 집합만 보면 순서를 뒤섞은
+    // 결함(둘째 도형이 셋째 상자를 받는)이 통과한다.
+    const off = created[0]!.geometry.x - BOX.x;
+    expect(created.map((el) => el.geometry)).toEqual(
+      [BOX, BOX_B, BOX_C].map((b) => ({ x: b.x + off, y: b.y + off, w: b.w, h: b.h })),
+    );
   });
 
   it('상자 크기는 계단에 흔들리지 않는다', () => {
     const before = appendElement([], 'rect').next;
-    const { created } = appendImportedElements(before, [silent(CLOSED)], BOX);
-    expect(created[0]!.geometry.w).toBe(BOX.w);
-    expect(created[0]!.geometry.h).toBe(BOX.h);
+    const { created } = appendImportedElements(before, [silent(CLOSED, BOX_B)]);
+    expect(created[0]!.geometry.w).toBe(BOX_B.w);
+    expect(created[0]!.geometry.h).toBe(BOX_B.h);
   });
 
   it('조각마다 제 상자 객체를 든다 — 하나를 고쳐도 다른 것이 따라 바뀌지 않는다', () => {
-    const { created } = appendImportedElements([], [silent(CLOSED), silent(OPEN)], BOX);
+    // 같은 상자 **객체**를 둘에 준다. 그래도 만들어진 둘은 서로 다른 객체여야 한다 —
+    // 한 도형이 상한 때문에 나뉜 조각들이 정확히 이 형상이다.
+    const { created } = appendImportedElements([], [silent(CLOSED, BOX), silent(OPEN, BOX)]);
+    expect(created[0]!.geometry).toEqual(created[1]!.geometry);
     expect(created[0]!.geometry).not.toBe(created[1]!.geometry);
   });
 });
 
 describe('스타일 (REQ-06 · 뮤테이션 3·4)', () => {
   it('말하지 않은 도형은 008 의 씨앗을 입는다 — 두 번째 씨앗 규칙을 만들지 않는다', () => {
-    const { created } = appendImportedElements([], [silent(CLOSED), silent(OPEN)], BOX);
+    const { created } = appendImportedElements([], [silent(CLOSED), silent(OPEN)]);
     // 닫힘 → 채움, 열림 → 선. `pathSeedStyle` 이 정확히 그 둘을 가른다.
     expect(created[0]!.style).toEqual({ fill: SEED_COLOR });
     expect(created[1]!.style).toEqual({ stroke: SEED_COLOR, strokeWidth: SEED_STROKE_WIDTH });
@@ -130,12 +167,12 @@ describe('스타일 (REQ-06 · 뮤테이션 3·4)', () => {
 
   it('말한 도형은 제 색을 지킨다 — 씨앗이 덮지 않는다', () => {
     const style = { fill: 'rgba(192, 57, 43, 0.6)', stroke: 'rgba(20, 90, 50, 0.9)', strokeWidth: 3.8 };
-    const { created } = appendImportedElements([], [spoken(CLOSED, style)], BOX);
+    const { created } = appendImportedElements([], [spoken(CLOSED, style)]);
     expect(created[0]!.style).toEqual(style);
   });
 
   it('칠을 말하지 않았어도 불투명도는 살아남는다', () => {
-    const { created } = appendImportedElements([], [{ commands: CLOSED, style: { opacity: 0.4 }, hasOwnStyle: false }], BOX);
+    const { created } = appendImportedElements([], [{ commands: CLOSED, box: BOX, style: { opacity: 0.4 }, hasOwnStyle: false }]);
     expect(created[0]!.style).toEqual({ fill: SEED_COLOR, opacity: 0.4 });
   });
 });
@@ -143,7 +180,7 @@ describe('스타일 (REQ-06 · 뮤테이션 3·4)', () => {
 describe('명령을 사본으로 싣는다 (뮤테이션 2)', () => {
   it('만든 요소의 명령을 고쳐도 입력 목록이 바뀌지 않는다', () => {
     const source = silent(CLOSED);
-    const { created } = appendImportedElements([], [source], BOX);
+    const { created } = appendImportedElements([], [source]);
     const first = created[0]!.path[0]!;
     if (first.c === 'M') first.x = 9999;
     expect(source.commands[0]).toEqual({ c: 'M', x: 0, y: 0 });
@@ -151,7 +188,7 @@ describe('명령을 사본으로 싣는다 (뮤테이션 2)', () => {
 
   it('같은 도형을 두 번 실어도 두 요소가 목록을 공유하지 않는다', () => {
     const source = silent(CLOSED);
-    const { created } = appendImportedElements([], [source, source], BOX);
+    const { created } = appendImportedElements([], [source, source]);
     expect(created[0]!.path).not.toBe(created[1]!.path);
     expect(created[0]!.path[0]).not.toBe(created[1]!.path[0]);
   });
@@ -159,14 +196,14 @@ describe('명령을 사본으로 싣는다 (뮤테이션 2)', () => {
 
 describe('카탈로그 경로와 구별되지 않는다 (REQ-08 · AC-E12 · 뮤테이션 6)', () => {
   it('가져온 요소는 catalog_id 를 갖지 않는다 — 한 필드가 두 뜻을 갖지 않는다', () => {
-    const { created } = appendImportedElements([], [silent(CLOSED)], BOX);
+    const { created } = appendImportedElements([], [silent(CLOSED)]);
     expect(created[0]!.catalog_id).toBeUndefined();
     expect('catalog_id' in created[0]!).toBe(false);
   });
 
   it('필드 이름 집합이 카탈로그 경로의 것과 같다(catalog_id 를 뺀 나머지)', () => {
     const catalog = appendPathElement([], 'donut', CLOSED).created;
-    const imported = appendImportedElements([], [silent(CLOSED)], BOX).created[0]!;
+    const imported = appendImportedElements([], [silent(CLOSED)]).created[0]!;
     expect(Object.keys(imported).sort()).toEqual(
       Object.keys(catalog)
         .filter((k) => k !== 'catalog_id')
@@ -176,7 +213,7 @@ describe('카탈로그 경로와 구별되지 않는다 (REQ-08 · AC-E12 · 뮤
 
   it('config 파서 왕복을 그대로 견딘다 — 명령도 스타일도 상자도 같다', () => {
     const style = { fill: 'rgba(192, 57, 43, 0.6)', stroke: 'rgba(20, 90, 50, 0.9)', strokeWidth: 3.8 };
-    const { next } = appendImportedElements([], [spoken(CLOSED, style), silent(OPEN)], BOX);
+    const { next } = appendImportedElements([], [spoken(CLOSED, style), silent(OPEN)]);
     const parsed = parseCanvasConfig(
       JSON.parse(JSON.stringify({ canvas: { width: 500, height: 400 }, elements: next })) as unknown,
     );

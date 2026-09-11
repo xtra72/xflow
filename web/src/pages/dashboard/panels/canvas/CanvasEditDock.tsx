@@ -61,7 +61,7 @@ import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
 import { CanvasWorkspaceZoomField } from './CanvasWorkspaceZoomField';
-import { type BoxGeometry, type CanvasPrimitiveKind, type CanvasSize } from './canvasConfig';
+import { type CanvasPrimitiveKind, type CanvasSize } from './canvasConfig';
 import {
   CANVAS_GRID_STEP_CHOICES,
   CANVAS_GRID_STEP_MAX,
@@ -357,7 +357,7 @@ export interface CanvasEditDockBodyProps {
    * 공유하고, 계단 오프셋도 무리 전체에 한 번만 더해진다(REQ-06). 조각마다 상자를 짓게
    * 두면 정수 반올림이 조각마다 최대 0.5 단위씩 어긋나 그림이 갈라진다.
    */
-  onSvgImport: (shapes: readonly ImportedPathSpec[], box: BoxGeometry) => void;
+  onSvgImport: (shapes: readonly ImportedPathSpec[]) => void;
 }
 
 /**

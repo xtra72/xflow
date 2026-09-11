@@ -32,12 +32,12 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { parseCanvasConfig, type CanvasSize } from '../canvasConfig';
+import { parseCanvasConfig, type BoxGeometry, type CanvasSize } from '../canvasConfig';
 import { projectPathPoints, type PxBox } from '../canvasGeometry';
 import { flattenPath, isInsidePath, FLATTEN_TOLERANCE_PX } from '../shapes/pathFlatten';
 import { MAX_PATH_COMMANDS, type PathCommand } from '../shapes/pathTypes';
 
-import { planSvgImport, toLocalCommands } from './svgImportPlan';
+import { fitBox, planSvgImport } from './svgImportPlan';
 import { parseSvgPathData } from './svgPathData';
 import {
   applyEvenOddWinding,
@@ -88,17 +88,28 @@ function pxBox(box: { x: number; y: number; w: number; h: number }): PxBox {
   return { x: box.x * 0.5, y: box.y * 0.5, w: box.w * 0.5, h: box.h * 0.5 };
 }
 
-/** 사용자 좌표 한 점을 산출과 **같은 길**로 px 까지 옮긴다. */
-function pxOf(user: { x: number; y: number }, box: PxBox): { x: number; y: number } {
-  const [m] = projectPathPoints(toLocalCommands([{ c: 'M', x: user.x, y: user.y }], VIEW_BOX), box);
-  if (m === undefined || m.c !== 'M') throw new Error('투영 실패');
-  return { x: m.x, y: m.y };
+/** 문서 전체가 놓이는 틀 — 요소 상자가 아니라 **문서 배치**다. */
+const DOC_BOX = fitBox(VIEW_BOX, CANVAS);
+
+/**
+ * 사용자 좌표 한 점을 **문서 배치를 지나** px 까지 옮긴다.
+ *
+ * 도형마다 제 상자를 든 뒤로는 요소의 정규화 틀(`frame`)이 도형마다 다르므로, 질의 점을
+ * 그 틀로 옮기면 "재는 자와 재는 대상이 같은 수" 가 되어 아무것도 재지 못한다. 문서 배치로
+ * 옮기면 **상자와 재정규화된 명령의 이음매**를 잰다 — 상자만 좁히고 좌표를 두거나 좌표만
+ * 옮기고 상자를 두면 이 점이 도형 밖으로 나간다.
+ */
+function pxOf(user: { x: number; y: number }): { x: number; y: number } {
+  return {
+    x: (DOC_BOX.x + ((user.x - VIEW_BOX.minX) * DOC_BOX.w) / VIEW_BOX.width) * 0.5,
+    y: (DOC_BOX.y + ((user.y - VIEW_BOX.minY) * DOC_BOX.h) / VIEW_BOX.height) * 0.5,
+  };
 }
 
 /** **채움 규칙으로** 안쪽인가 — 히트 규칙(윤곽까지의 거리)이 아니다. */
 function filledAt(commands: readonly PathCommand[], box: PxBox, user: { x: number; y: number }): boolean {
   const flat = flattenPath(projectPathPoints(commands, box), FLATTEN_TOLERANCE_PX);
-  return isInsidePath(flat, pxOf(user, box));
+  return isInsidePath(flat, pxOf(user));
 }
 
 /** 3차 베지어 위의 점 하나. 매개변수 `t` 를 직접 넣어 **중간점 대칭의 함정**을 피한다. */
@@ -121,8 +132,7 @@ function cubicAt(
 
 /** 산출을 실제 config 파서에 왕복시킨다 — "저장했다 다시 열었다" 의 기계적 재현. */
 function roundTripCommandCounts(
-  box: { x: number; y: number; w: number; h: number },
-  shapes: readonly { commands: readonly PathCommand[] }[],
+  shapes: readonly { commands: readonly PathCommand[]; box: BoxGeometry }[],
 ): number[] {
   const raw = JSON.parse(
     JSON.stringify({
@@ -130,7 +140,7 @@ function roundTripCommandCounts(
       elements: shapes.map((shape, i) => ({
         id: `el-${i + 1}`,
         kind: 'path',
-        geometry: box,
+        geometry: shape.box,
         path: shape.commands,
         style: {},
       })),
@@ -214,7 +224,7 @@ describe('감김과 포함 (AC-E7 · 뮤테이션 3·4·7)', () => {
   it('evenodd 도넛이 구멍을 지킨다 — 채움으로 잰다', () => {
     const result = plan(svg(`<path d="${DONUT_D}" fill-rule="evenodd" fill="#c0392b"/>`));
     expect(result.shapes).toHaveLength(1);
-    const box = pxBox(result.box);
+    const box = pxBox(result.shapes[0]!.box);
     const commands = result.shapes[0]!.commands;
     expect(filledAt(commands, box, RING_POINT)).toBe(true);
     expect(filledAt(commands, box, HOLE_POINT)).toBe(false);
@@ -253,8 +263,15 @@ describe('명령 상한: 나누고, 안 되면 거절한다 (AC-06 · 뮤테이�
     for (const shape of result.shapes) {
       expect(shape.commands.length).toBeLessThanOrEqual(MAX_PATH_COMMANDS);
     }
+    // **AC-06 — 나뉜 조각들의 상자가 깊은 비교로 같다.** 조각들은 한 `<path>` 였으므로
+    // 상자를 나누기 **전의** 도형에서 잰다. 조각마다 재면 도넛의 구멍이 바깥에 대해
+    // 반올림만큼 어긋나고, 그 어긋남은 채움으로만 보인다.
+    for (const shape of result.shapes) expect(shape.box).toEqual(result.shapes[0]!.box);
+    // 켜져 있음: 그 상자가 조각 하나가 아니라 **셋 전부**를 감싼다. 세 사각이 x 0..200 에
+    // 걸쳐 있으므로 상자 폭이 한 조각(40)의 폭보다 훨씬 넓다.
+    expect(result.shapes[0]!.box.w).toBeGreaterThan(3 * 40 * (DOC_BOX.w / VIEW_BOX.width));
     // 왕복 뒤에도 명령 수가 같다 — **자르지 않았다**(위험 R4 의 유일한 가드).
-    expect(roundTripCommandCounts(result.box, result.shapes)).toEqual(
+    expect(roundTripCommandCounts(result.shapes)).toEqual(
       result.shapes.map((s) => s.commands.length),
     );
   });
@@ -289,7 +306,7 @@ describe('명령 상한: 나누고, 안 되면 거절한다 (AC-06 · 뮤테이�
     expect(result.shapes.length).toBeGreaterThan(0);
     const overs = result.shapes.filter((s) => s.commands.length > MAX_PATH_COMMANDS);
     expect(overs).toEqual([]);
-    expect(roundTripCommandCounts(result.box, result.shapes)).toEqual(
+    expect(roundTripCommandCounts(result.shapes)).toEqual(
       result.shapes.map((s) => s.commands.length),
     );
   });

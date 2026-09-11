@@ -45,7 +45,7 @@ import { ChevronDown, ChevronRight, Check, FileUp, X } from 'lucide-react';
 
 import { useTranslation } from '@/lib/i18n';
 
-import type { BoxGeometry, CanvasSize, PathElement } from '../canvasConfig';
+import type { CanvasSize, PathElement } from '../canvasConfig';
 import { appendImportedElements } from '../canvasElementFactory';
 import type { CanvasProjection } from '../canvasGeometry';
 import { clearSurface, drawElements, type DrawContext2D } from '../drawElement';
@@ -165,7 +165,7 @@ function ImportPreview({
 
 /** 준비된 가져오기 하나 — 계획의 성공 갈래 그대로다. */
 interface ReadyImport {
-  readonly box: BoxGeometry;
+  /** 도형마다 제 상자를 든다 — 무리가 함께 쓰는 상자는 없다(결함 D3 정정). */
   readonly shapes: readonly ImportedPathSpec[];
   readonly report: ImportReport;
 }
@@ -184,7 +184,7 @@ export interface CanvasSvgImportProps {
    * 놓는다. **요소를 만드는 일은 이 컴포넌트가 하지 않는다**(불변식 K9) — 만드는 입구는
    * `canvasElementFactory` 하나이고, 놓은 뒤의 선택은 오버레이가 소유한다.
    */
-  onPlace: (shapes: readonly ImportedPathSpec[], box: BoxGeometry) => void;
+  onPlace: (shapes: readonly ImportedPathSpec[]) => void;
   /** 파일을 문자열로 읽는 함수. 시험이 갈아 끼운다(기본은 `FileReader`). */
   readFile?: (file: File) => Promise<string>;
 }
@@ -214,7 +214,7 @@ export function CanvasSvgImport({
   const preview = useMemo(
     () =>
       state.phase === 'ready'
-        ? appendImportedElements([], state.ready.shapes, state.ready.box).created
+        ? appendImportedElements([], state.ready.shapes).created
         : [],
     [state],
   );
@@ -250,7 +250,7 @@ export function CanvasSvgImport({
       setState({ phase: 'refused', refusal: plan.refusal });
       return;
     }
-    setState({ phase: 'ready', ready: { box: plan.box, shapes: plan.shapes, report: plan.report } });
+    setState({ phase: 'ready', ready: { shapes: plan.shapes, report: plan.report } });
   };
 
   /** [취소] · 놓은 뒤 — **무동작이다**(불변식 K15). 배열도 config 도 건드리지 않는다. */
@@ -355,7 +355,7 @@ export function CanvasSvgImport({
                 // 이 단추는 준비됨 상태에서만 그려지기 때문이다. 닿을 수 없는 가지는
                 // 커버리지에 구멍으로 남고, 읽는 사람에게 "여기로 올 수도 있다" 고 거짓말한다.
                 onClick={() => {
-                  onPlace(state.ready.shapes, state.ready.box);
+                  onPlace(state.ready.shapes);
                   reset();
                 }}
               >
