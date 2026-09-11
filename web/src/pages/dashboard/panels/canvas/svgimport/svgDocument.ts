@@ -9,8 +9,8 @@
 // **파싱한 문서를 살아 있는 문서에 붙이지 않는다**(불변식 K3). `appendChild` ·
 // `insertBefore` · `replaceWith` · `importNode` · `adoptNode` 가 이 파일에 **하나도 없다**.
 // 그 형상이 값을 셋 준다: 스크립트 실행 가능성이 형상으로 닫히고, `getComputedStyle` 로
-// 가는 길이 닫히며(그래서 `<style>` CSS 미지원이 게으름이 아니라 이 경계의 귀결이다),
-// 붙지 않은 문서는 외부 자원을 가져오지 않는다.
+// 가는 길이 닫히며(그래서 `<style>` 을 **손으로 쓴 파서**로 읽는 것이 게으름이 아니라 이
+// 경계의 귀결이다 — `svgCssRules.ts`), 붙지 않은 문서는 외부 자원을 가져오지 않는다.
 //
 // **SVG 기하 DOM API 를 하나도 쓰지 않는다**(불변식 K4). `getBBox` · `getTotalLength` ·
 // `getPointAtLength` · `pathSegList` · `getCTM` 은 jsdom 에 **없고**(측정: `getBBox` 와
@@ -262,10 +262,14 @@ class DocumentWalker {
   }
 
   /**
-   * SVG 문서의 모든 `<style>` 태그에서 CSS 규칙을 수집한다 (defect A 수정).
+   * SVG 문서의 모든 `<style>` 태그에서 CSS 규칙을 **한 표로** 모은다.
    *
-   * **지원**: element 선택자, .class 선택자, #id 선택자
-   * **미지원**: cascade, specificity, 의사 클래스, 복합 선택자
+   * **지원**: element 선택자 · `.class` 선택자 · `#id` 선택자 — 셋 다 `descend` 가 실제로
+   * 읽는다(`getCSSPropertiesForElement`). 표에만 들어가고 아무도 읽지 않는 선택자를 두지
+   * 않는 것이 이 짝의 규율이다.
+   * **미지원**: cascade · specificity · 의사 클래스 · 복합 선택자.
+   *
+   * 문서 순서대로 덮어쓴다(`Object.assign`) — 뒤에 선 `<style>` 이 앞을 이긴다.
    */
   private collectStyleTags(el: Element): void {
     if (isSvgElement(el) && tagOf(el) === 'style') {
@@ -414,9 +418,14 @@ class DocumentWalker {
   /** 한 요소의 순회 문맥 — 변환 누적 · 칠 상속 · 감춤 전파 · 그룹 불투명도. */
   private descend(attrs: AttrBag, parent: WalkContext, tagName?: string): { ctx: WalkContext; own: StyleAtoms; hidden: boolean } {
     const ownAtoms = collectStyleAtoms(attrs);
-    // CSS 규칙 적용 (defect A 수정) — 인라인 속성이 CSS 규칙을 덮는다.
-    const classAttr = attrs['class'];
-    const cssProps = getCSSPropertiesForElement(tagName ?? '', classAttr, this.cssRules);
+    // `<style>` 규칙을 먼저 깔고 **인라인 표현 속성이 그 위를 덮는다.** 규칙끼리의 순서는
+    // element → .class → #id 이며, 그 셋을 고르는 일은 `svgCssRules` 의 몫이다.
+    const cssProps = getCSSPropertiesForElement(
+      tagName ?? '',
+      attrs['class'],
+      attrs['id'],
+      this.cssRules,
+    );
     const ownAtomsWithCSS = { ...cssProps, ...ownAtoms };
     const own = inheritStyleAtoms(parent.atoms, ownAtomsWithCSS);
     const ownVisibility = ownAtoms['visibility'];

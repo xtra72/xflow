@@ -408,6 +408,66 @@ describe('보고 세 갈래 (AC-07 · AC-E6 · 뮤테이션 6)', () => {
   });
 });
 
+// --- <style> CSS ----------------------------------------------------------
+//
+// **여기서 묻는 것은 규칙표가 아니라 도형의 색이다.** `svgCssRules.test.ts` 는 `#id` 가
+// 규칙표에 **들어가는지**를 재는데, 그 단언은 규칙을 **읽는 자리가 하나도 없어도** 초록이다
+// (결함 A 가 꼭 그 형상으로 살아남았다). 그래서 아래 고정 입력은 **색의 유일한 출처**를
+// 선택자 하나로 두고 `shapes[i].style` 을 묻는다.
+
+describe('<style> 의 색이 그림에 닿는다 (결함 A)', () => {
+  it('색의 출처가 .class 하나뿐일 때 색이 온다 — 이 길이 살아 있음을 먼저 못박는다', () => {
+    const { shapes } = read(
+      svg('<style>.only{fill:#c0392b}</style><rect class="only" width="4" height="4"/>'),
+    );
+    expect(shapes).toHaveLength(1);
+    expect(shapes[0]!.style.fill).toBe('#c0392b');
+    expect(shapes[0]!.hasOwnStyle).toBe(true);
+  });
+
+  it('색의 출처가 #id 하나뿐일 때도 색이 온다 — 씨앗 색으로 떨어지지 않는다', () => {
+    const { shapes } = read(
+      svg('<style>#only{fill:#c0392b}</style><rect id="only" width="4" height="4"/>'),
+    );
+    expect(shapes).toHaveLength(1);
+    expect(shapes[0]!.style.fill).not.toBe(SEED_COLOR);
+    expect(shapes[0]!.style.fill).toBe('#c0392b');
+    expect(shapes[0]!.hasOwnStyle).toBe(true);
+  });
+
+  it('셋이 한 도형에 겹치면 #id 가 .class 를, .class 가 element 를 덮는다', () => {
+    // cascade 도 specificity 도 없다 — **적용 순서**가 element → class → id 일 뿐이다.
+    // 세 규칙이 같은 속성을 말하는 고정 입력이라야 그 순서가 관측된다.
+    const { shapes } = read(
+      svg(
+        '<style>rect{fill:#111111}.mid{fill:#222222}#top{fill:#333333}</style>' +
+          '<rect id="top" class="mid" width="4" height="4"/>' +
+          '<rect class="mid" width="4" height="4"/>' +
+          '<rect width="4" height="4"/>',
+      ),
+    );
+    expect(shapes.map((s) => s.style.fill)).toEqual(['#333333', '#222222', '#111111']);
+  });
+
+  it('인라인 표현 속성이 #id 규칙을 이긴다 — 오늘의 우선순위를 못박는다', () => {
+    const { shapes } = read(
+      svg('<style>#only{fill:#c0392b}</style><rect id="only" fill="#145a32" width="4" height="4"/>'),
+    );
+    expect(shapes[0]!.style.fill).toBe('#145a32');
+  });
+
+  it('id 가 없는 도형은 #id 규칙을 집어 오지 않는다', () => {
+    const { shapes } = read(
+      svg('<style>#only{fill:#c0392b}</style><rect width="4" height="4"/>'),
+    );
+    // **씨앗 색은 이 층에 없다.** 문서가 칠을 한 마디도 말하지 않으면 `fill` 이 아예 없고
+    // (`hasOwnStyle === false`), 008 의 `pathSeedStyle` 이 뒤에서 씨앗 색을 세운다 —
+    // `SEED_COLOR` 가 여기 박혀 나오는 것은 `currentColor` 처럼 **말했으나 풀지 못한** 칠뿐이다.
+    expect(shapes[0]!.style.fill).toBeUndefined();
+    expect(shapes[0]!.hasOwnStyle).toBe(false);
+  });
+});
+
 describe('viewBox 와 크기 읽기 (REQ-02)', () => {
   it('viewBox 네 수를 그대로 읽는다', () => {
     expect(read(svg('<rect width="1" height="1"/>')).viewBox).toEqual({
