@@ -191,7 +191,7 @@ function marqueeEl(): HTMLElement | null {
   return screen.queryByTestId('canvas-marquee');
 }
 
-/** Shift 를 누른 채 사각형을 긋는다. 뗌은 부르는 쪽이 정한다. */
+/** Shift 를 누른 채 사각형을 긋는다 — **더하기** 뜻이다. 뗌은 부르는 쪽이 정한다. */
 function dragMarquee(
   from: { x: number; y: number },
   ...points: readonly { x: number; y: number }[]
@@ -200,52 +200,125 @@ function dragMarquee(
   for (const p of points) send('pointermove', p.x, p.y, { shiftKey: true });
 }
 
+/** 맨손으로 사각형을 긋는다 — **갈아 끼우기** 뜻이다(SPEC-CANVAS-010). */
+function dragBare(
+  from: { x: number; y: number },
+  ...points: readonly { x: number; y: number }[]
+): void {
+  send('pointerdown', from.x, from.y);
+  for (const p of points) send('pointermove', p.x, p.y);
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
-// --- ③ 몸짓의 소유권 (previewPan 이 살아 있다) ----------------------------
+// --- ③ 몸짓의 소유권 (맨손 사각형과 팬의 경계) ----------------------------
+//
+// **009 의 modifier 게이트가 여기서 걷힌다**(SPEC-CANVAS-010). 009 는 "문턱으로 가르면
+// `previewPan` 이 누름에서 이미 팬을 시작했고 그것을 무를 신호가 없다" 를 근거로 맨손
+// 누름을 흘려보냈다. 그 근거는 **문턱**에 대해서는 지금도 참이지만, 맨손 누름을 그
+// 자리에서 곧장 가져가면 무를 것이 없다 — `previewPan.onPointerDown` 은
+// `if (event.defaultPrevented) return;` 한 줄로 이미 임자를 가리므로, 여기서 누르는 순간
+// `preventDefault` 하면 그 층은 **시작조차 하지 않는다**.
+//
+// 그래서 이 절이 재는 문장이 바뀐다. 종전: "맨손 빈 지점 누름은 소비되지 않는다".
+// 지금: **"빈 지점의 주 버튼 누름은 우리 것이고, 그렇지 않은 버튼은 종전 그대로다"**.
+// 캔버스 안에서 화면을 옮기는 길은 가운데 버튼(`previewPan` 의 캡처 단계 우회로)과
+// 고른 것이 없을 때의 방향키 둘이며, 그 둘은 `previewPan.test.tsx` 가 층을 건너 잰다.
 
-describe('맨손 빈 지점 누름은 종전 그대로 흘러간다 (AC-E3 · previewPan §몸짓의 소유권)', () => {
-  it('맨손이면 선택만 비우고 **소비하지 않는다** — 이 한 줄이 화면 이동의 전제다', () => {
+describe('빈 지점의 주 버튼 누름은 **우리 것이다** (SPEC-CANVAS-010)', () => {
+  it('맨손이어도 소비하고 위층에 닿지 않는다 — 팬은 `defaultPrevented` 로 물러선다', () => {
+    const parent = vi.fn();
+    render(<Harness elements={FIXTURE} onParentDown={parent} />);
+    stubOverlayRect();
+
+    const evt = send('pointerdown', EMPTY.x, EMPTY.y);
+
+    expect(evt.defaultPrevented).toBe(true);
+    expect(parent).not.toHaveBeenCalled();
+  });
+
+  it('그래도 **선택은 비운다** — 빈 자리를 누르면 풀린다는 종전 뜻이 그대로다', () => {
+    // 009 이전부터 참이던 문장이다. 사각형이 누름을 가져가면서 이 뜻이 조용히 사라질 수
+    // 있는데(선택은 이동에서만 다시 세므로), 움직이지 않은 몸짓은 그때 아무것도 하지
+    // 않는다 — 그래서 누르는 순간에 비우고 그 빈 선택을 합집합의 좌변으로 삼는다.
+    render(<Harness elements={FIXTURE} />);
+    stubOverlayRect();
+    send('pointerdown', 40, 20); // `a` 를 고른다
+    send('pointerup', 40, 20);
+    expect(selected()).toEqual(['a']);
+
+    send('pointerdown', EMPTY.x, EMPTY.y);
+    send('pointerup', EMPTY.x, EMPTY.y);
+
+    expect(selected()).toEqual([]);
+  });
+
+  it('맨손으로 끌면 사각형이 **선다** — 사용자가 말한 그 몸짓이다', () => {
+    render(<Harness elements={FIXTURE} />);
+    stubOverlayRect();
+
+    dragBare(FROM, TO);
+
+    expect(marqueeEl()).not.toBeNull();
+    expect(selected()).toEqual(['a', 'b']);
+  });
+
+  it('맨손은 **갈아 끼운다** — 사각형 밖에 있던 선택이 남지 않는다', () => {
+    // 이 한 줄이 modifier 에 남은 뜻이다. 맨손과 Shift 가 둘 다 합집합이면 modifier 는
+    // 아무것도 가르지 않는 장식이 된다.
+    render(<Harness elements={FIXTURE} />);
+    stubOverlayRect();
+    send('pointerdown', 200, 105); // `c` 의 중심 — 사각형 밖이다
+    send('pointerup', 200, 105);
+    expect(selected()).toEqual(['c']);
+
+    dragBare(FROM, TO);
+
+    expect(selected()).toEqual(['a', 'b']);
+  });
+
+  it('Shift 는 여전히 **더한다** — 갈아 끼우기와 갈리는 자리가 여기다', () => {
+    render(<Harness elements={FIXTURE} />);
+    stubOverlayRect();
+    send('pointerdown', 200, 105); // `c`
+    send('pointerup', 200, 105);
+
+    dragMarquee(FROM, TO);
+
+    expect(selected()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('주 버튼이 아니면 **종전 그대로다** — 상황 메뉴는 여전히 상황 메뉴의 것이다', () => {
+    // 오른쪽 버튼까지 가져가면 캔버스 위에서 상황 메뉴가 죽는다. `previewPan` 도 같은
+    // 이유로 버튼 2 를 받지 않는다(previewPan.ts §PRIMARY_BUTTON).
     const parent = vi.fn();
     render(<Harness elements={FIXTURE} onParentDown={parent} />);
     stubOverlayRect();
     send('pointerdown', 40, 20); // `a` 를 고른다
     send('pointerup', 40, 20);
-    expect(selected()).toEqual(['a']);
     parent.mockClear();
 
-    const evt = send('pointerdown', EMPTY.x, EMPTY.y); // 빈 자리
+    const evt = send('pointerdown', EMPTY.x, EMPTY.y, { button: 2 });
 
-    expect(selected()).toEqual([]);
-    // `previewPan.onPointerDown` 은 `defaultPrevented` 로 몸짓의 임자를 가린다.
     expect(evt.defaultPrevented).toBe(false);
     expect(parent).toHaveBeenCalledTimes(1);
     expect(marqueeEl()).toBeNull();
-  });
-
-  it('맨손 빈 지점에서 끌어도 사각형이 서지 않는다 — 그 몸짓은 위층의 것이다', () => {
-    render(<Harness elements={FIXTURE} />);
-    stubOverlayRect();
-
-    send('pointerdown', FROM.x, FROM.y);
-    send('pointermove', TO.x, TO.y);
-
-    expect(marqueeEl()).toBeNull();
+    // 선택을 비우는 종전 뜻은 버튼과 무관하게 그대로다.
     expect(selected()).toEqual([]);
   });
 
-  it('Shift 로 시작하면 **우리 것이다** — 소비하고 위층에 닿지 않는다', () => {
-    const parent = vi.fn();
-    render(<Harness elements={FIXTURE} onParentDown={parent} />);
+  it('오른쪽 버튼으로 끌어도 사각형이 서지 않는다 — 누름을 가져가지 않았으므로', () => {
+    render(<Harness elements={FIXTURE} />);
     stubOverlayRect();
 
-    const evt = send('pointerdown', FROM.x, FROM.y, { shiftKey: true });
+    send('pointerdown', FROM.x, FROM.y, { button: 2 });
+    send('pointermove', TO.x, TO.y, { button: 2 });
 
-    expect(evt.defaultPrevented).toBe(true);
-    expect(parent).not.toHaveBeenCalled();
+    expect(marqueeEl()).toBeNull();
+    expect(selected()).toEqual([]);
   });
 
   // 셋을 **모두** 잰다. 하나만 재면 `event.shiftKey` 한 갈래만 읽는 구현이 통과한다 —
@@ -255,15 +328,17 @@ describe('맨손 빈 지점 누름은 종전 그대로 흘러간다 (AC-E3 · pr
     ['Shift', { shiftKey: true }],
     ['Ctrl', { ctrlKey: true }],
     ['Cmd', { metaKey: true }],
-  ])('%s 로도 사각형이 선다 — 히트 경로의 `additive` 와 한 낱말이다', (_name, init) => {
+  ])('%s 로도 **더하기**가 된다 — 히트 경로의 `additive` 와 한 낱말이다', (_name, init) => {
     render(<Harness elements={FIXTURE} />);
     stubOverlayRect();
+    send('pointerdown', 200, 105); // `c` — 사각형 밖에 미리 골라 둔다
+    send('pointerup', 200, 105);
 
     send('pointerdown', FROM.x, FROM.y, init);
     send('pointermove', TO.x, TO.y, init);
 
     expect(marqueeEl()).not.toBeNull();
-    expect(selected()).toEqual(['a', 'b']);
+    expect(selected()).toEqual(['a', 'b', 'c']);
   });
 });
 
@@ -385,13 +460,34 @@ describe('저술 여백에서 시작한 사각형도 선다 (D6 ② · 006 M7 �
     expect(document.activeElement).toBe(overlayRoot());
   });
 
-  it('맨손 빈 지점 누름은 여전히 초점을 빼앗지 않는다 — 우리 조작이 아니다', () => {
+  it('맨손 빈 지점 누름도 **초점을 든다** — 이제 그 몸짓이 우리 것이기 때문이다', () => {
+    // 009 에서는 반대였다("우리 조작이 아니므로 초점을 빼앗지 않는다"). 010 이 그 몸짓의
+    // 임자를 바꾸었으므로 같은 규칙이 같은 자리에서 반대 답을 낸다 — 규칙은 "우리 몸짓이면
+    // 초점을 손으로 옮긴다" 하나이고, 바뀐 것은 무엇이 우리 몸짓인가다.
+    //
+    // 값이 있는 결과이기도 하다: 빈 자리를 한 번 누르면 선택이 비고 초점이 탭 정거장에
+    // 앉으므로, 가운데 버튼이 없는 손(트랙패드)도 곧바로 방향키로 화면을 옮길 수 있다.
     render(<Harness elements={FIXTURE} />);
     stubOverlayRect();
 
     send('pointerdown', EMPTY.x, EMPTY.y);
 
-    expect(document.activeElement).not.toBe(overlayRoot());
+    expect(document.activeElement).toBe(overlayRoot());
+  });
+
+  it('맨손 누름도 처리자 없는 닿는 면에서 **버블링으로** 올라온다 (D6 ②)', () => {
+    // 위 §경로 시험의 맨손 짝이다. 쏘는 자리는 루트가 **아니다** — 006 M7 이 고친 결함은
+    // 이 노드가 없을 때 여백의 누름이 영영 닿지 않는 것이었고, modifier 갈래만 재 두면
+    // 맨손 갈래가 그 결함을 다시 품어도 초록이다.
+    render(<Harness elements={FIXTURE} />);
+    stubOverlayRect();
+
+    const evt = sendToHit('pointerdown', FROM.x, FROM.y);
+    sendToHit('pointermove', TO.x, TO.y);
+
+    expect(evt.defaultPrevented).toBe(true);
+    expect(marqueeEl()).not.toBeNull();
+    expect(selected()).toEqual(['a', 'b']);
   });
 
   it('좌표 기준은 여전히 **루트**다 — 닿는 면을 재면 축척과 원점이 함께 틀린다', () => {
@@ -592,6 +688,21 @@ describe('사각형은 rAF 루프 밖의 DOM 이다 (REQ-05 · AC-E4)', () => {
 
     expect(selected()).toEqual(['a', 'b']);
     // 루프를 깨우는 유일한 경로는 `elements` 변경이며, 마키는 그것을 만들지 않는다.
+    expect(raf).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('**맨손** 갈래도 같다 — 누름을 가져갔다고 프레임이 도는 것은 아니다', () => {
+    // 010 이 연 새 입구다. modifier 갈래만 재 두면 맨손 갈래가 rAF 를 잡아도 초록이다.
+    const emit = vi.fn();
+    render(<Harness elements={FIXTURE} onElementsChange={emit} />);
+    stubOverlayRect();
+    const raf = vi.spyOn(globalThis, 'requestAnimationFrame');
+
+    dragBare(FROM, { x: 60, y: 30 }, { x: 100, y: 45 }, TO);
+    send('pointerup', TO.x, TO.y);
+
+    expect(selected()).toEqual(['a', 'b']);
     expect(raf).not.toHaveBeenCalled();
     expect(emit).not.toHaveBeenCalled();
   });

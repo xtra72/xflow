@@ -299,7 +299,12 @@ describe('누르면 고른다 — 배열 뒤가 위다 (AC-01)', () => {
 // --- 빈 지점 비가로채기 (AC-E3) -------------------------------------------
 
 describe('빈 지점 누름은 상위 조작으로 흘려보낸다 (AC-E3)', () => {
-  it('맞는 것이 없으면 선택만 비우고 이벤트를 소비하지 않는다', () => {
+  // **AC-E3 이 지키는 문장이 SPEC-CANVAS-010 에서 좁아졌다.** 종전에는 "빈 지점 누름은
+  // 소비하지 않는다" 였고, 지금은 **"주 버튼이 아닌 빈 지점 누름은 소비하지 않는다"** 다.
+  // 주 버튼은 사각형이 가져갔다(`CanvasEditOverlay.marquee.test.tsx` §몸짓의 소유권).
+  // **선택을 비운다는 절반은 두 갈래 모두에서 그대로 살아 있으며**, 아래 두 시험이 그 절반을
+  // 각각 따로 못박는다 — 소비 여부만 갈리고 선택의 뜻은 갈리지 않는다.
+  it('맞는 것이 없으면 선택을 비우고, **주 버튼이면** 사각형을 위해 소비한다', () => {
     const parent = vi.fn();
     render(
       <Harness
@@ -315,6 +320,31 @@ describe('빈 지점 누름은 상위 조작으로 흘려보낸다 (AC-E3)', () 
 
     // 요소에서 멀리 떨어진 빈 자리(집기 여유 6px 밖).
     const evt = send('pointerdown', 180, 90);
+
+    // 종전 그대로인 절반.
+    expect(selectionText()).toBe('');
+    // 010 이 바꾼 절반 — 이 누름이 곧 사각형의 시작이다.
+    expect(evt.defaultPrevented).toBe(true);
+    expect(parent).not.toHaveBeenCalled();
+  });
+
+  it('주 버튼이 아닌 빈 지점 누름은 **여전히** 흘러간다 — 상황 메뉴가 살아 있어야 한다', () => {
+    // 위 시험이 옮겨 온 절반이다. 이 갈래가 남아 있지 않으면 "빈 지점을 소비하지 않는다"
+    // 는 문장이 통째로 사라지고, 캔버스 위에서만 오른쪽 버튼이 죽는 화면이 된다.
+    const parent = vi.fn();
+    render(
+      <Harness
+        elements={[rect('a', { x: 50, y: 40, w: 100, h: 80 })]}
+        onElementsChange={vi.fn()}
+        onParentDown={parent}
+      />,
+    );
+    stubOverlayRect();
+    send('pointerdown', 30, 15);
+    expect(selectionText()).toBe('a');
+    parent.mockClear();
+
+    const evt = send('pointerdown', 180, 90, { button: 2 });
 
     expect(selectionText()).toBe('');
     expect(evt.defaultPrevented).toBe(false);
@@ -2738,11 +2768,26 @@ describe('키보드로 닿는다 — 루트가 초점을 받는 자리다 (AC-08
     expect(document.activeElement).toBe(overlayRoot());
   });
 
-  it('빈 지점을 누르면 초점을 빼앗지 않는다 (우리 조작이 아니다)', () => {
+  it('빈 지점의 주 버튼 누름은 **초점을 든다** (그 몸짓이 우리 것이 되었다)', () => {
+    // SPEC-CANVAS-010 이전에는 반대였다("우리 조작이 아니므로 빼앗지 않는다"). 규칙은
+    // 바뀌지 않았다 — "우리 몸짓이면 `preventDefault` 가 막은 초점을 손으로 옮긴다" 그대로이고,
+    // 바뀐 것은 무엇이 우리 몸짓인가다. 값도 있다: 빈 자리를 한 번 누르면 선택이 비고 초점이
+    // 이 탭 정거장에 앉으므로, 가운데 버튼이 없는 손도 곧바로 방향키로 화면을 옮길 수 있다.
     render(<Harness elements={[rect('a', BOX_GEOMETRY)]} onElementsChange={vi.fn()} />);
     stubOverlayRect();
 
     send('pointerdown', 5, 5);
+
+    expect(document.activeElement).toBe(overlayRoot());
+  });
+
+  it('주 버튼이 아닌 빈 지점 누름은 **여전히** 초점을 빼앗지 않는다 — 우리 조작이 아니다', () => {
+    // 위 시험이 옮겨 온 절반이다. 이 갈래가 없으면 "우리 것이 아니면 건드리지 않는다" 는
+    // 규칙이 이 파일에서 더 이상 재어지지 않는다.
+    render(<Harness elements={[rect('a', BOX_GEOMETRY)]} onElementsChange={vi.fn()} />);
+    stubOverlayRect();
+
+    send('pointerdown', 5, 5, { button: 2 });
 
     expect(document.activeElement).not.toBe(overlayRoot());
   });
@@ -3112,7 +3157,7 @@ describe('빈 지점은 미리보기의 다른 조작을 막지 않는다 (AC-E3
     expect(onParentWheel).toHaveBeenCalledTimes(4);
   });
 
-  it('골라 둔 것이 있어도 빈 지점 누름은 소비되지 않는다 (패널 크기 조절이 살아 있어야 한다)', () => {
+  it('골라 둔 것이 있어도 빈 지점 누름은 **선택을 비운다** (010: 주 버튼은 소비한다)', () => {
     const onParentDown = vi.fn();
     render(
       <Harness
@@ -3129,9 +3174,20 @@ describe('빈 지점은 미리보기의 다른 조작을 막지 않는다 (AC-E3
 
     const evt = send('pointerdown', 5, 5); // 빈 지점
 
-    expect(evt.defaultPrevented).toBe(false);
-    expect(onParentDown).toHaveBeenCalledTimes(1);
+    // 010 이 바꾼 절반 — 주 버튼 누름은 사각형이 가져간다.
+    expect(evt.defaultPrevented).toBe(true);
+    expect(onParentDown).not.toHaveBeenCalled();
+    // 종전 그대로인 절반.
     expect(selectionText()).toBe('');
+
+    // **흘러가는 갈래는 그대로 있다.** 이 절이 지키는 것은 "미리보기의 다른 조작이 죽지
+    // 않는다" 이고, 휠(위 시험)과 주 버튼이 아닌 누름이 그 문장을 계속 지탱한다. 캔버스
+    // 안에서 잃은 것은 주 버튼 끌기 팬 하나이며 그 자리는 가운데 버튼이 받는다
+    // (`previewPan.test.tsx` §이음매).
+    onParentDown.mockClear();
+    const other = send('pointerdown', 5, 5, { button: 2 });
+    expect(other.defaultPrevented).toBe(false);
+    expect(onParentDown).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -3665,9 +3721,11 @@ describe('작업 영역과 출력 영역이 눈으로 갈린다 (SPEC-CANVAS-006
     expect(emit).toHaveBeenCalledTimes(1);
     expect((emit.mock.calls[0]?.[0] as CanvasElement[]).length).toBe(1);
 
-    // 빈 자리 누름은 여전히 소비되지 않는다 — 흐림이 그 위에 있어도 규칙이 달라지지 않는다.
-    const down = send('pointerdown', 300, 300);
-    expect(down.defaultPrevented).toBe(false);
+    // 빈 자리 누름의 임자는 흐림이 그 위에 있어도 달라지지 않는다 — 주 버튼은 사각형이
+    // 가져가고(010), 그 밖의 버튼은 종전대로 흘러간다. 재는 것은 "흐림이 규칙을 바꾸지
+    // 않는다" 이므로 **두 갈래를 모두** 본다.
+    expect(send('pointerdown', 300, 300).defaultPrevented).toBe(true);
+    expect(send('pointerdown', 300, 300, { button: 2 }).defaultPrevented).toBe(false);
   });
 
   it('격자를 꺼도 경계와 흐림은 남는다 (둘은 다른 축이다)', () => {
@@ -3935,8 +3993,11 @@ describe('저술 여백 전체가 포인터를 받는다 (SPEC-CANVAS-006 M7 · 
 
     // 축척 0.5 를 **무시했을 때** 쓰게 되는 좌표(= 오버레이 px 를 그대로 client 로 쓴 값).
     // 여기서 골라지면 이 시험은 축척에 대해 아무것도 재지 않는 것이다.
+    // 주 버튼이 아닌 누름으로 잰다 — 010 이후 주 버튼은 빈 자리에서도 소비되므로
+    // `defaultPrevented` 가 더 이상 "골랐는가" 를 가리지 못한다. 이 시험이 재려는 것은
+    // **좌표 환산**이고, 그 눈은 `defaultPrevented` 가 아니라 선택이다.
     const naive = { x: -162.8, y: -74 };
-    expect(sendToHit('pointerdown', naive.x, naive.y).defaultPrevented).toBe(false);
+    expect(sendToHit('pointerdown', naive.x, naive.y, { button: 2 }).defaultPrevented).toBe(false);
     expect(selectionText()).toBe('');
 
     // 축척을 되돌린 진짜 좌표. 이 사건은 **처리자가 없는 노드**에서 시작한다.
@@ -3966,7 +4027,7 @@ describe('저술 여백 전체가 포인터를 받는다 (SPEC-CANVAS-006 M7 · 
     expect(g.x + g.w).toBeLessThan(0);
   });
 
-  it('밖의 **빈 자리** 누름은 선택만 비우고 이벤트를 소비하지 않는다 (REQ-03 셋째 조항 · AC-08 (AP))', () => {
+  it('밖의 **빈 자리** 누름도 안쪽과 **같은 사건**이다 (REQ-03 셋째 조항 · AC-08 (AP))', () => {
     renderWorkspace([rect('far', OUTSIDE_GEOMETRY)]);
     stubOverlayRect(0, 0, WS_POINTER_RECT.width, WS_POINTER_RECT.height);
 
@@ -3979,9 +4040,17 @@ describe('저술 여백 전체가 포인터를 받는다 (SPEC-CANVAS-006 M7 · 
     const down = sendToHit('pointerdown', empty.x, empty.y);
 
     expect(selectionText()).toBe('');
-    // 소비하지 않아야 `previewPan` 이 그 몸짓을 받는다(`if (event.defaultPrevented) return;`).
-    // 출력 영역 **안**의 빈 자리와 같은 사건이라는 A8 · I8 의 진술이 여기서 처음으로 참이 된다.
-    expect(down.defaultPrevented).toBe(false);
+    // A8 · I8 이 말하는 것은 "저술 여백의 빈 자리와 출력 영역 **안**의 빈 자리가 같은
+    // 사건이다" 이며, 그 진술은 010 뒤에도 그대로 참이다 — 다만 그 한 사건이 이제 사각형의
+    // 시작이다. 밖을 위한 분기가 없다는 것이 여기서 드러난다.
+    expect(down.defaultPrevented).toBe(true);
+    // 여백에서 시작한 사각형이 실제로 선다 — 소비만 하고 아무것도 하지 않으면 그 누름은
+    // 잃어버린 몸짓이다(006 M7 이 고친 결함의 새 갈래).
+    sendToHit('pointermove', empty.x + 40, empty.y + 30);
+    expect(screen.queryByTestId('canvas-marquee')).not.toBeNull();
+
+    // 주 버튼이 아닌 갈래는 여전히 흘러간다 — `previewPan` 이 읽는 그 표시 그대로다.
+    expect(sendToHit('pointerdown', empty.x, empty.y, { button: 2 }).defaultPrevented).toBe(false);
   });
 
   // --- ③ 바뀌지 않은 것 (AC-08 (AQ)) ---------------------------------------
@@ -4410,7 +4479,7 @@ describe('줄은 포인터를 받고 빗나간 누름은 종전 그대로 흐른
     expect(onBar.defaultPrevented).toBe(false);
   });
 
-  it('줄을 **빗나간** 빈 자리 누름은 여전히 선택만 비우고 소비하지 않는다 (불변식 I8)', () => {
+  it('줄을 **빗나간** 빈 자리 누름은 여전히 선택을 비운다 (불변식 I8)', () => {
     renderFixedPoint({ elements: [rect('far', { x: -300, y: -200, w: 100, h: 60 })] });
     stubOverlayRect(0, 0, FP_STAGE.width, FP_STAGE.height);
 
@@ -4418,11 +4487,13 @@ describe('줄은 포인터를 받고 빗나간 누름은 종전 그대로 흐른
     sendToHit('pointerdown', -180, -122.4);
     expect(selectionText()).toBe('far');
 
-    // 저술 여백의 빈 자리는 여전히 선택만 비우고 **소비하지 않는다** — 줄이 생겼다고 이
-    // 성질이 달라지지 않는다. 소비하지 않아야 `previewPan` 이 그 몸짓을 받는다.
+    // 저술 여백의 빈 자리는 여전히 선택을 비운다 — 줄이 생겼다고 이 성질이 달라지지
+    // 않는다는 것이 I8 이다. 임자는 010 의 규칙대로 갈린다: 주 버튼은 사각형, 나머지는
+    // 종전대로 흘러간다. 줄 **위**의 누름과 갈리는 자리가 여기다(바로 위 시험).
     const down = sendToHit('pointerdown', -60, -60);
     expect(selectionText()).toBe('');
-    expect(down.defaultPrevented).toBe(false);
+    expect(down.defaultPrevented).toBe(true);
+    expect(sendToHit('pointerdown', -60, -60, { button: 2 }).defaultPrevented).toBe(false);
   });
 });
 

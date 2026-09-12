@@ -456,16 +456,64 @@ describe('캔버스 편집이 가져간 몸짓은 팬이 받지 않는다 (층�
     expect(liveElements()[0]?.geometry).not.toEqual(CENTER_RECT.geometry);
   });
 
-  it('빈 자리를 끌면 화면이 움직이고 도형은 그대로다', () => {
+  it('빈 자리의 주 버튼 끌기는 **캔버스가 가져간다** — 사각형이 서고 화면은 그대로다', () => {
+    // SPEC-CANVAS-010 이전에는 이 몸짓이 팬이었다. 오버레이가 빈 자리의 주 버튼 누름을
+    // 영역 선택에 내주면서 그 몸짓의 임자가 바뀌었다.
+    //
+    // **이 층의 규칙은 한 글자도 바뀌지 않았다.** 팬은 여전히 "아무도 가져가지 않은 몸짓만"
+    // 받으며(`if (event.defaultPrevented) return;`), 달라진 것은 아래층이 그 몸짓을 이제
+    // 가져간다는 사실 하나다. 바로 아래 두 시험이 캔버스 안에 남은 두 길 — 가운데 버튼과
+    // 고른 것 없는 방향키 — 을 각각 잰다.
     render(<CanvasPanHarness elements={[CENTER_RECT]} />);
     stubOverlayRect();
 
-    // 스테이지 (40, 40) 은 사각형(정규화 0.4~0.6) 밖이다.
+    // 스테이지 (40, 40) 은 사각형 밖이다(px 상자는 320..480 × 160..240 — 축척 1.6 · 1).
+    // 끝점 (500, 250) 은 그 상자를 **온전히** 감싼다 — 감싸지 못하는 사각형은 아무것도
+    // 고르지 않아, 이 시험이 "가져갔다" 를 삼킴과 구별하지 못하게 된다.
     sendAt(overlay(), 'pointerdown', 40, 40);
-    sendAt(surface(), 'pointermove', 100, 70);
-    sendAt(surface(), 'pointerup', 100, 70);
+    sendAt(overlay(), 'pointermove', 500, 250);
+    sendAt(overlay(), 'pointerup', 500, 250);
 
-    expect(stageOffset()).toEqual({ x: 60, y: 30 });
+    expect(stageOffset()).toEqual({ x: 0, y: 0 });
+    // 몸짓을 삼키기만 한 것이 아니라 **제 일을 했다**.
+    expect(screen.getByTestId('selection').textContent).toBe('a');
+    expect(liveElements()[0]?.geometry).toEqual(CENTER_RECT.geometry);
+  });
+
+  it('주 버튼이 **아닌** 빈 자리 누름은 여전히 이 층까지 올라온다', () => {
+    // 위 시험이 옮겨 온 절반이다. 오버레이가 빈 자리 누름을 **통째로** 가져갔다면 이
+    // 시험이 빨개진다 — 가져간 것은 주 버튼 하나라는 것이 여기서 값으로 남는다.
+    // (팬 자신은 버튼 2 를 받지 않으므로 화면은 움직이지 않는다. 재는 것은 아래층이
+    // 그 누름을 소비하지 않는다는 사실이며, 그 눈이 `defaultPrevented` 다.)
+    render(<CanvasPanHarness elements={[CENTER_RECT]} />);
+    stubOverlayRect();
+
+    const evt = new MouseEvent('pointerdown', {
+      clientX: 40,
+      clientY: 40,
+      button: 2,
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(overlay(), evt);
+
+    expect(evt.defaultPrevented).toBe(false);
+  });
+
+  it('고른 것이 없으면 방향키가 화면을 옮긴다 — 가운데 버튼이 없는 손의 길이다', () => {
+    // 트랙패드처럼 가운데 버튼이 없는 손에 남는 길이다. 빈 자리를 한 번 누르면 선택이
+    // 비고 초점이 오버레이(탭 정거장)에 앉으므로, 바로 이어서 방향키를 쓸 수 있다.
+    render(<CanvasPanHarness elements={[CENTER_RECT]} />);
+    stubOverlayRect();
+
+    sendAt(overlay(), 'pointerdown', 40, 40);
+    sendAt(overlay(), 'pointerup', 40, 40);
+    expect(screen.getByTestId('selection').textContent).toBe('');
+    expect(document.activeElement).toBe(overlay());
+
+    fireEvent.keyDown(overlay(), { key: 'ArrowRight' });
+
+    expect(stageOffset()).toEqual({ x: PREVIEW_PAN_ARROW_PX, y: 0 });
     expect(liveElements()[0]?.geometry).toEqual(CENTER_RECT.geometry);
   });
 
@@ -576,9 +624,13 @@ describe('팬은 캔버스 프레임을 0 건 요청하고 기하를 한 글자�
     stubOverlayRect();
     const before = screen.getByTestId('dump').textContent;
 
-    sendAt(overlay(), 'pointerdown', 40, 40);
+    // **가운데 버튼으로 끈다.** 010 뒤 주 버튼 빈 자리 끌기는 캔버스의 것이라 이 자리에서
+    // 팬을 한 픽셀도 움직이지 못한다 — 그대로 두면 아래 `not.toEqual({0,0})` 을 뒤이은
+    // 방향키 혼자 만족시켜, 끌기에 대해 아무것도 재지 않으면서 초록인 시험이 된다.
+    sendAt(overlay(), 'pointerdown', 40, 40, { button: 1 });
     sendAt(surface(), 'pointermove', 140, 90);
     sendAt(surface(), 'pointerup', 140, 90);
+    expect(stageOffset()).toEqual({ x: 100, y: 50 });
     fireEvent.keyDown(surface(), { key: 'ArrowUp' });
 
     expect(stageOffset()).not.toEqual({ x: 0, y: 0 });
