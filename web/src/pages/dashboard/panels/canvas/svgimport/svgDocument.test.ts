@@ -45,6 +45,13 @@
 //      (가정 A9 — 미검증). 실측할 수 없는 것을 거동으로 잴 수 없으므로 **형상으로**
 //      강화했다: 아래 "파싱 실패 판정은 둘 다 본다(형상)" 가 두 검사의 존재를 잰다.
 //      그 가드를 지우면 뮤테이션 8 이 문다.
+//   9. `emit` 의 "아무것도 칠하지 않으면 요소가 되지 않는다" 에서 `hasOwnStyle` 조건을
+//      지우면 → "칠을 말하지 않은 도형은 그대로 들어온다" 가 빨개진다(씨앗 색이 설
+//      자리가 사라진다).
+//  10. 그 판정을 `fill === undefined || stroke === undefined` 로 넓히면 → "테만 두른
+//      도형은 들어온다" 가 빨개진다.
+//  11. 그 판정을 `resolveStyle` **앞**으로 옮겨 속성만 보면 → "조상에게 물려받은 테가
+//      살린다" 와 "`<style>` 규칙이 지운 도형" 이 빨개진다.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -682,5 +689,99 @@ describe('DOM 경계 (AC-E10 · 불변식 K3 · K4 · K7)', () => {
     expect(scoped[marker]).toBeUndefined();
     read(svg(`<script>globalThis['${marker}'] = 1;</script><rect width="4" height="4"/>`));
     expect(scoped[marker]).toBeUndefined();
+  });
+});
+
+// --- 아무것도 칠하지 않는 도형 (draw.io 의 잡는 자리) --------------------------
+
+describe('칠이 하나도 없는 도형은 요소가 되지 않는다 (뮤테이션 9 · 10 · 11)', () => {
+  /** 실제 draw.io 내보내기가 글자마다 함께 내는 투명 사각형. */
+  const HIT_AREA = '<rect x="40.45" y="119.8" width="60" height="40" fill="none" stroke="none" pointer-events="all"/>';
+
+  it('`fill="none" stroke="none"` 은 들어오지 않는다 — 원본에서 보이지 않던 것이다', () => {
+    const doc = read(svg(HIT_AREA));
+    expect(doc.shapes).toEqual([]);
+  });
+
+  it('보고에 올리지 않는다 — 안 보이던 것을 버렸다고 말하면 잡음이다 (위험 R7)', () => {
+    // draw.io 파일에는 글자 수만큼 이 사각형이 있다. 한 줄이라도 울리면 보고 전체가
+    // 읽히지 않게 되고, 읽히지 않는 보고는 침묵과 같다.
+    const doc = read(svg(`${HIT_AREA}${HIT_AREA}`));
+    expect(doc.notes).toEqual([]);
+  });
+
+  it('글자 하나가 요소 하나만 먹는다 — 잡는 자리가 상한을 함께 먹지 않는다', () => {
+    const doc = read(svg(`${HIT_AREA}<text x="70" y="140">펌프</text>`));
+    expect(doc.shapes).toEqual([]);
+    expect(doc.texts).toHaveLength(1);
+  });
+
+  it('`style` 로 말해도 같다 — 판정이 캐스케이드 뒤에 있다', () => {
+    expect(read(svg('<rect width="60" height="40" style="fill:none;stroke:none"/>')).shapes).toEqual([]);
+  });
+
+  it('`<style>` 규칙으로 지워도 같다 (뮤테이션 11)', () => {
+    const doc = read(
+      svg('<style>.hit{fill:none;stroke:none}</style><rect class="hit" width="60" height="40"/>'),
+    );
+    expect(doc.shapes).toEqual([]);
+  });
+
+  it('**테만 두른 도형은 들어온다** — 사양의 초기값이 검은 채움을 준다 (뮤테이션 10)', () => {
+    const doc = read(svg('<rect width="60" height="40" stroke="#666666"/>'));
+    expect(doc.shapes).toHaveLength(1);
+    expect(doc.shapes[0]?.style.stroke).toBe('#666666');
+    expect(doc.shapes[0]?.style.fill).toBe('#000000');
+  });
+
+  it('**칠을 말하지 않은 도형도 들어온다** — 거기서는 씨앗 색이 선다 (뮤테이션 9)', () => {
+    const doc = read(svg('<rect width="60" height="40"/>'));
+    expect(doc.shapes).toHaveLength(1);
+    expect(doc.shapes[0]?.hasOwnStyle).toBe(false);
+  });
+
+  it('조상에게 물려받은 테가 살린다 (뮤테이션 11)', () => {
+    // 속성만 보는 판정은 이 도형을 잘못 버린다 — 제 속성에는 `fill="none"` 뿐이다.
+    const doc = read(svg('<g stroke="#666666"><rect width="60" height="40" fill="none"/></g>'));
+    expect(doc.shapes).toHaveLength(1);
+    expect(doc.shapes[0]?.style.stroke).toBe('#666666');
+  });
+
+  it('조상이 `fill="none"` 이고 제 칠이 없으면 들어오지 않는다', () => {
+    expect(read(svg('<g fill="none"><rect width="60" height="40"/></g>')).shapes).toEqual([]);
+  });
+});
+
+describe('draw.io 내보내기 — 표현 속성과 `style` 을 함께 든 도형', () => {
+  it('도형이 씨앗 색이 아니라 원본 색으로 들어온다', () => {
+    const doc = read(
+      svg(
+        '<rect x="80.45" y="79.8" width="80" height="40" rx="6" ry="6" fill="#f5f5f5" stroke="#666666" pointer-events="all"' +
+          ' style="fill: light-dark(rgb(245, 245, 245), rgb(26, 26, 26)); stroke: light-dark(rgb(102, 102, 102), rgb(149, 149, 149));"/>',
+      ),
+    );
+    expect(doc.shapes).toHaveLength(1);
+    expect(doc.shapes[0]?.style.fill).toBe('rgb(245, 245, 245)');
+    expect(doc.shapes[0]?.style.stroke).toBe('rgb(102, 102, 102)');
+    expect(doc.shapes[0]?.style.fill).not.toBe(SEED_COLOR);
+    expect(doc.notes).toEqual([]);
+  });
+
+  it('바탕 사각형의 `var(--x, #ffffff)` 도 대체값으로 읽힌다', () => {
+    const doc = read(
+      svg('<rect fill="#ffffff" width="300" height="170" x="0" y="0" style="fill: var(--ge-adaptive-bg, #ffffff);"/>'),
+    );
+    expect(doc.shapes[0]?.style.fill).toBe('#ffffff');
+  });
+
+  it('다만 원본의 `width="100%"` 형태는 **다른 이유로** 들어오지 않는다 — 백분율 길이', () => {
+    // draw.io 의 바탕 사각형은 실제로 `width="100%" height="100%"` 를 든다. 그것이 빠지는
+    // 것은 칠과 무관한 이 층의 별개 성질(`parseLength('100%')` 가 `undefined`)이며, 이
+    // 커밋이 손댄 자리가 아니다. 여기 적어 두는 이유는 위 시험의 픽셀 치수가 원본 그대로가
+    // 아님을 읽는 사람이 알아야 하기 때문이다.
+    const doc = read(
+      svg('<rect fill="#ffffff" width="100%" height="100%" x="0" y="0" style="fill: var(--ge-adaptive-bg, #ffffff);"/>'),
+    );
+    expect(doc.shapes).toEqual([]);
   });
 });

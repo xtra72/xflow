@@ -468,6 +468,33 @@ class DocumentWalker {
       nonUniformStroke: !isSimilarity(ctx.matrix),
       fallbackColor: SEED_COLOR,
     });
+    // **아무것도 칠하지 않는 도형은 요소가 되지 않는다.**
+    //
+    // draw.io 는 글자마다 잡는 자리로 `<rect fill="none" stroke="none" pointer-events="all"/>`
+    // 를 함께 내보낸다. 그 사각형은 원본에서 **보이지 않는 것**이며, 요소로 세우면 글자
+    // 자리마다 빈 네모가 서고 64 개 상한도 하나가 아니라 둘씩 먹는다.
+    //
+    // **판정을 `resolveStyle` 뒤에 두는 것이 요점이다.** 그래야 캐스케이드(표현 속성 ·
+    // `style` · `<style>` 규칙 · 조상에게 물려받은 칠)를 모두 지난 뒤의 칠을 본다 —
+    // 앞에서 속성만 보면 `<g stroke="#666"><rect fill="none"/></g>` 를 잘못 버린다.
+    //
+    // **`hasOwnStyle` 을 함께 보는 까닭**: 칠을 한 마디도 말하지 않은 도형도 여기서는
+    // `fill`·`stroke` 가 비어 있지만, 그쪽은 008 의 `pathSeedStyle` 이 서는 자리다
+    // (REQ-06). 그 둘을 가르지 않으면 스타일 없는 경로가 통째로 사라진다. 사양의
+    // 초기값 규칙(`stroke` 만 말한 도형은 검게 채워진다)도 이미 `resolveStyle` 안에서
+    // 끝나 있으므로, 테만 두른 도형은 `fill` 을 들고 여기를 지난다.
+    //
+    // **보고에 올리지 않는다.** 원본에서 보이지 않던 것을 "버렸다" 고 말하는 줄은 거의
+    // 모든 draw.io 파일에서 울려 보고가 아무것도 말하지 않게 된다(위험 R7). 아래
+    // `default:` 가지와 달리 **여기서는 그 전제가 참이다** — 도형 요소에는 그림을 품은
+    // 자식이 없다.
+    if (
+      resolved.hasOwnStyle &&
+      resolved.style.fill === undefined &&
+      resolved.style.stroke === undefined
+    ) {
+      return;
+    }
     this.notes.push(...resolved.notes);
     // **변환은 여기서 좌표에 녹는다 — 호는 이미 3차가 되어 있다**(불변식 K2). 호 변수를
     // 든 자료 구조가 이 층에 도달할 수 없는 것이 그 불변식의 형상 판정이다.
