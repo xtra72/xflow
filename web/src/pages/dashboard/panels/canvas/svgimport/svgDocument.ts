@@ -64,9 +64,17 @@ import {
   isHidden,
   mergeNotes,
   parseOpacity,
+  parseStyleAttribute,
   resolveStyle,
   type StyleAtoms,
 } from './svgStyle';
+import {
+  anchorXInBox,
+  anchorYInBox,
+  collapseHtmlText,
+  readForeignLabelBox,
+  textAnchorFromHtmlFlow,
+} from './svgForeignLabel';
 import {
   hasTemplateToken,
   normalizeSvgText,
@@ -128,6 +136,11 @@ const NON_RENDERED_TAGS = new Set([
  * 하나만** 그린다. 전부 내려가면 대안 N개를 겹쳐 그려 원본에 없는 그림이 되고, "첫 하나"
  * 를 고르려면 조건부 처리 속성 평가가 필요한데 그것은 구멍 메우기가 아니라 기능이다.
  * 그래서 `<switch>` 는 들어가지 않고 **보고한다**(아래 `hasDrawableDescendant`).
+ *
+ * **한 꼴만 예외다**(`walk` 의 `switch` 가지 · `emitForeignLabel`): `<foreignObject>` 와
+ * `<image>` 를 함께 든 draw.io 이름표. 그것은 대안을 **고르는** 것이 아니라 두 대안이 같은
+ * 이름표를 말하고 있음을 아는 것이므로, 조건부 처리 속성을 평가하지 않고도 그릴 것이
+ * 정해진다. 그 꼴이 아닌 `<switch>` 는 예전 그대로 보고로 떨어진다.
  */
 const CONTAINER_TAGS = new Set(['g', 'a']);
 
@@ -534,7 +547,51 @@ class DocumentWalker {
     }
     const text = normalizeSvgText(el.textContent ?? '', ctx.preserveSpace);
     if (text === '') return;
-    if (hidden) {
+    // 글자마다 자리를 준 문서(`x="10 20 30"`)는 첫 수에 한 줄로 선다 — 그 배치도 활자다.
+    const ax = readAnchorCoord(attrs['x']);
+    const ay = readAnchorCoord(attrs['y']);
+    this.pushText({
+      text,
+      localX: ax.value,
+      localY: ay.value,
+      paint: own,
+      typography: ctx.textAtoms,
+      ctx,
+      hidden,
+      typographyIgnoredExtra: ax.perGlyph || ay.perGlyph,
+      extraNotes: [{ kind: 'dropped', reason: 'tspanDropped', count: countOwnTspans(el) }],
+    });
+  }
+
+  /**
+   * 문구 하나를 세우는 **공통 꼬리** — `<text>` 와 draw.io 이름표가 **같은 규칙**을 지난다.
+   *
+   * 갈라 두지 않는 것에 뜻이 있다. 이 꼬리가 지키는 것은 여섯이다: 감춘 하위 트리에서는
+   * 개수만 센다 · 퇴화 변환은 버림이다 · 칠은 `resolveTextStyle` 하나가 푼다 ·
+   * `fill="none"` 인 글자는 테의 유무로 갈린다 · 글자 수 상한 · 템플릿 토큰. 두 입구가 이
+   * 여섯을 각자 적으면 **한쪽만 고쳐지는 날**이 오고, 그때 같은 문서의 SVG 글자와 draw.io
+   * 이름표가 서로 다른 규칙으로 들어온다.
+   *
+   * 입구마다 다른 것은 **둘뿐**이라 인자로 받는다: 옮기지 못한 활자가 더 있었는가
+   * (`<text>` 는 글자별 자리, 이름표는 인라인 마크업), 그리고 그 입구만의 보고
+   * (`<text>` 의 `tspanDropped`).
+   */
+  private pushText(spec: {
+    /** 이미 제 규칙으로 한 줄이 된 글자. **비어 있지 않다**(호출부가 먼저 거른다). */
+    readonly text: string;
+    /** 행렬이 아직 녹지 않은 기준점. */
+    readonly localX: number;
+    readonly localY: number;
+    readonly paint: StyleAtoms;
+    readonly typography: StyleAtoms;
+    readonly ctx: WalkContext;
+    readonly hidden: boolean;
+    readonly typographyIgnoredExtra: boolean;
+    /** 이 입구만의 보고. 글자가 **선 뒤에만** 오른다. */
+    readonly extraNotes: readonly ImportNote[];
+  }): void {
+    const { ctx } = spec;
+    if (spec.hidden) {
       this.hiddenShapes += 1;
       return;
     }
@@ -542,7 +599,7 @@ class DocumentWalker {
       this.note('dropped', 'degenerateTransformDropped');
       return;
     }
-    const resolved = resolveTextStyle(own, ctx.textAtoms, {
+    const resolved = resolveTextStyle(spec.paint, spec.typography, {
       resolvePaintRef: this.resolvePaintRef,
       groupOpacity: ctx.opacity,
       fallbackColor: SEED_COLOR,
@@ -557,17 +614,14 @@ class DocumentWalker {
       return;
     }
     this.notes.push(...resolved.notes);
-    // 글자마다 자리를 준 문서(`x="10 20 30"`)는 첫 수에 한 줄로 선다 — 그 배치도 활자다.
-    const ax = readAnchorCoord(attrs['x']);
-    const ay = readAnchorCoord(attrs['y']);
-    if (resolved.typographyIgnored || ax.perGlyph || ay.perGlyph) {
+    if (resolved.typographyIgnored || spec.typographyIgnoredExtra) {
       this.note('approximated', 'textFontIgnored');
     }
-    this.note('dropped', 'tspanDropped', countOwnTspans(el));
-    const cut = truncateImportText(text);
+    for (const extra of spec.extraNotes) this.note(extra.kind, extra.reason, extra.count);
+    const cut = truncateImportText(spec.text);
     if (cut.truncated) this.note('dropped', 'textTruncated');
     if (hasTemplateToken(cut.text)) this.note('approximated', 'textTemplateToken');
-    const anchor = applyMatrix(ctx.matrix, ax.value, ay.value);
+    const anchor = applyMatrix(ctx.matrix, spec.localX, spec.localY);
     this.texts.push({
       x: anchor.x,
       y: anchor.y,
@@ -576,6 +630,69 @@ class DocumentWalker {
       fontSizeUserUnits: resolved.fontSizeUserUnits,
       hasOwnStyle: resolved.hasOwnStyle,
     });
+  }
+
+  /**
+   * draw.io 의 이름표 — `<switch>` 안의 `<foreignObject>` 를 문구 후보로 세운다.
+   *
+   * **세웠으면 `true`.** 호출부는 그때 그릇 버림 보고를 올리지 않는다 — 하위 트리를 삼킨
+   * 것이 아니라 옮긴 것이므로, 옮긴 것을 "버렸다" 고 말하면 보고가 거짓이 된다(위험 R7 의
+   * 반대 얼굴).
+   *
+   * **상자는 `<image>` 형제가 준다.** draw.io 는 이름표를 XHTML 과 래스터 대안 **둘 다**로
+   * 내보내고, 그 `<image>` 의 `x`/`y`/`width`/`height` 는 **이미 놓인 사용자 단위 상자**다.
+   * 바깥 `<div>` 의 `margin-left`/`padding-top`/`width` 로 상자를 다시 세우는 안을
+   * 기각한다 — 세로가 서지 않기 때문이다: draw.io 는 세로 가운데 맞춤을
+   * `height: 1px` + `padding-top` + `align-items: center` 로 내고 위/아래 맞춤은
+   * `flex-start`/`flex-end` 로 내는데, 뒤의 둘에서 **글줄의 세로 가운데를 알려면 글자의
+   * 높이를 재야 한다.** 이 층에는 그것을 잴 길이 없다(`getBBox` 는 jsdom 에 없고 — 불변식
+   * K4, `measureText` 는 2D 문맥을, `getComputedStyle` 은 살아 있는 문서를 요구한다 —
+   * 불변식 K3). 한 갈래에서만 참인 산술은 **나머지 둘에서 말없이 틀린다.**
+   *
+   * **그 대신 치르는 값을 적어 둔다**: 브리핑이 준 한 조각에서 `<image>` 상자의 세로
+   * 가운데(142)는 바깥 `<div>` 가 함의하는 가운데(padding-top 140 + 1px 의 절반 = 140.5)
+   * 보다 **1.5 아래**이고 도형 자신의 가운데(119.8 + 40/2 = 139.8)보다 **2.2 아래**다
+   * (실측). 12px 글자에서 약 0.18em 이며, **이름표가 통째로 없던 것**과 견줄 크기가 아니다.
+   * 표본이 하나뿐이므로 이 치우침이 상수인지 글꼴에 따라 변하는지는 **모른다**(가정).
+   *
+   * **`<image>` 가 없으면 세우지 않는다.** 상자가 없으면 놓을 자리가 없고, 자리를 지어내면
+   * 그것은 문서의 값이 아니라 우리가 고른 값이다. 세우지 않은 그 `<switch>` 는 호출부에서
+   * 예전 그대로 `unenteredContainerDropped` 로 오르므로 **침묵하지 않는다**(§결정 5).
+   */
+  private emitForeignLabel(el: Element, ctx: WalkContext, hidden: boolean): boolean {
+    const foreign = firstSvgChild(el, 'foreignobject');
+    if (foreign === undefined) return false;
+    const raster = firstSvgChild(el, 'image');
+    if (raster === undefined) return false;
+    const box = readForeignLabelBox(attrBag(raster));
+    if (box === undefined) return false;
+    const label = readForeignLabel(foreign);
+    const text = collapseHtmlText(label.text);
+    // 빈 이름표 — 브라우저도 그리지 않는다. **세운 것으로 친다**: 잃은 그림이 없으므로
+    // 버림에 올리면 보고가 잡음이 된다(빈 `<text>` 를 세지 않는 것과 같은 규율).
+    if (text === '') return true;
+    const anchor = textAnchorFromHtmlFlow(
+      label.declarations['justify-content'],
+      label.declarations['text-align'],
+    );
+    const color = label.declarations['color'];
+    this.pushText({
+      text,
+      localX: anchorXInBox(anchor, box),
+      localY: anchorYInBox(box),
+      // **`color` 가 `fill` 이 된다.** CSS 의 글자색과 SVG 의 글자 칠은 같은 것을 말하고,
+      // 그 하나를 `resolveStyle` 이 푼다 — `light-dark()` 풀기도 알파 접기도 씨앗 폴백도
+      // 도형이 지나는 그 자리다(`parseStyleAttribute` 가 이미 앞의 것을 끝내 두었다).
+      paint: color === undefined ? {} : { fill: color },
+      // 활자 축은 **이름을 옮길 것이 없다** — `font-size`·`font-weight`·`font-family` 는
+      // CSS 와 SVG 가 같은 이름을 쓴다. 갈리는 것은 정렬 하나이고 그것만 어휘를 바꾼다.
+      typography: { ...pickText(label.declarations), 'text-anchor': anchor },
+      ctx,
+      hidden,
+      typographyIgnoredExtra: label.inlineMarkup,
+      extraNotes: [],
+    });
+    return true;
   }
 
   /** 한 요소의 순회 문맥 — 변환 누적 · 칠 상속 · 감춤 전파 · 그룹 불투명도. */
@@ -683,6 +800,24 @@ class DocumentWalker {
       // 센다 — 아래 가지의 "감춘 하위 트리의 미지원 내용은 보고하지 않는다" 는 그리지
       // 못하는 것들의 규칙이고, 글자는 이제 그 무리가 아니다.
       this.emitText(el, attrs, ctx, own, hidden);
+      return;
+    }
+
+    if (tag === 'switch') {
+      // **draw.io 의 이름표가 여기 산다.** 그 도구는 SVG `<text>` 를 한 번도 내보내지
+      // 않고, 이름표마다 `<switch>` 에 XHTML `<foreignObject>` 와 래스터 `<image>` 를 함께
+      // 담는다. 이 가지가 없으면 그 파일의 **이름표가 하나도 들어오지 않는다**(실측 —
+      // 이 가지를 넣기 전 브리핑의 조각에서 `texts: 0`).
+      //
+      // **`<text>` 와 같이 감춤 판정보다 앞이다** — 세운 이름표는 그려지는 것이므로 감췄으면
+      // 도형과 함께 개수로 센다.
+      //
+      // 세우지 못한 `<switch>` 는 **예전 그대로** 조건부 그릇으로 떨어진다: 안을 골라
+      // 그리려면 `requiredFeatures`·`systemLanguage` 평가가 필요한데 그것은 구멍 메우기가
+      // 아니라 기능이고, 전부 그리면 원본에 없는 겹친 그림이 된다(위 `CONTAINER_TAGS`).
+      if (this.emitForeignLabel(el, ctx, hidden)) return;
+      if (hidden) return;
+      if (hasDrawableDescendant(el)) this.note('dropped', 'unenteredContainerDropped');
       return;
     }
 
@@ -811,6 +946,84 @@ function hasTextPathChild(el: Element): boolean {
     if (hasTextPathChild(child)) return true;
   }
   return false;
+}
+
+// --- draw.io 이름표 (`<switch>` → `<foreignObject>`) ----------------------
+
+/** 글자 노드. XML 에서는 CDATA 도 글자를 나르므로 **둘 다** 본다. */
+const TEXT_NODE = 3;
+const CDATA_SECTION_NODE = 4;
+const ELEMENT_NODE = 1;
+
+/** 직속 자식 가운데 그 태그인 **첫** SVG 요소. `<switch>` 의 "첫 하나" 규칙과 같은 결이다. */
+function firstSvgChild(el: Element, tag: string): Element | undefined {
+  for (const child of Array.from(el.children)) {
+    if (isSvgElement(child) && tagOf(child) === tag) return child;
+  }
+  return undefined;
+}
+
+/** `<foreignObject>` 하위 트리에서 긁어 온 것 — **여기까지가 DOM 이고 그 아래는 문자열이다**. */
+interface ForeignLabelRead {
+  /** 아직 접지 않은 원문. `<br>` 은 `'\n'` 으로 들어와 있다. */
+  readonly text: string;
+  /** `<div>` 사슬의 `style` 을 바깥에서 안으로 덮어 쓴 표. */
+  readonly declarations: Readonly<Record<string, string>>;
+  /** 이름표 **일부만** 꾸민 인라인 마크업(`<b>`·`<font>`·`<span>`)이 있었는가. */
+  readonly inlineMarkup: boolean;
+}
+
+/**
+ * `<foreignObject>` 안의 XHTML 이름표를 글자와 선언으로 편다.
+ *
+ * **`textContent` 하나로 끝내지 않는 이유는 `<br>` 이다.** 그 요소는 글자 노드를 하나도
+ * 남기지 않으므로(실측 — `"a<br/>c"` 의 `textContent` 는 `"ac"`) `textContent` 만 읽으면
+ * 두 줄짜리 이름표의 낱말이 **붙어서** 들어온다. 줄바꿈을 여기서 글자로 심어 두면 접는
+ * 규칙은 `collapseHtmlText` 한 곳에 남는다.
+ *
+ * **선언은 `<div>` 에서만 걷는다.** draw.io 의 이름표는 `<div>` 세 겹(자리 잡는 바깥 ·
+ * 상자 가운데 · 글자 안쪽)으로 오고 그 셋이 이름표 **전부**를 꾸민다. `<b>`·`<font
+ * style="font-size: 14px">` 같은 인라인 마크업은 **일부만** 꾸미는데, 이 층은 이름표 하나에
+ * 활자 한 벌만 실을 수 있으므로 그중 하나를 골라 전부에 바르면 문서가 말한 적 없는 그림이
+ * 된다. 그래서 **읽지 않고 보고한다**(`inlineMarkup` → `textFontIgnored`).
+ *
+ * **`<foreignObject>` 자신의 `style` 이 사슬의 맨 바깥이다** — draw.io 가 거기에
+ * `text-align` 을 적는다. 빼면 그 한 마디를 읽지 않은 채로 지나간다.
+ *
+ * **K3 을 지킨다**: 읽는 것은 `style` 속성 문자열 하나이며 `getComputedStyle` 도
+ * `innerHTML` 도 부르지 않는다. 그래서 여기서 푸는 것은 **적혀 있는 선언**뿐이고,
+ * 상속·캐스케이드는 `<div>` 사슬을 바깥에서 안으로 덮는 것으로 근사한다.
+ */
+function readForeignLabel(foreign: Element): ForeignLabelRead {
+  const declarations: Record<string, string> = {
+    ...parseStyleAttribute(foreign.getAttribute('style') ?? undefined),
+  };
+  let text = '';
+  let inlineMarkup = false;
+  const visit = (parent: Element): void => {
+    for (const node of Array.from(parent.childNodes)) {
+      if (node.nodeType === TEXT_NODE || node.nodeType === CDATA_SECTION_NODE) {
+        text += node.nodeValue ?? '';
+        continue;
+      }
+      // 주석·처리 지시는 글자가 아니다 — 읽으면 원본에 없는 글자가 config 에 실린다.
+      if (node.nodeType !== ELEMENT_NODE) continue;
+      const child = node as Element;
+      const tag = tagOf(child);
+      if (tag === 'br') {
+        text += '\n';
+        continue;
+      }
+      if (tag === 'div') {
+        Object.assign(declarations, parseStyleAttribute(child.getAttribute('style') ?? undefined));
+      } else {
+        inlineMarkup = true;
+      }
+      visit(child);
+    }
+  };
+  visit(foreign);
+  return { text, declarations, inlineMarkup };
 }
 
 /** `<tspan>` 이 제 것을 말할 때 무시해도 좋은 속성. 둘 다 **그림에 영향을 주지 않는다**. */
