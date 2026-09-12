@@ -510,6 +510,75 @@ describe('<style> 보고는 **옮기지 못한 것만** 센다 (결함 B · AC-E
   });
 });
 
+// --- 붙여 쓴 복합 선택자 ---------------------------------------------------
+//
+// **파싱 단언은 이 자리를 재지 못한다.** `rect.red` 는 규칙표에 `"rect.red"` 라는 칸으로
+// 들어가지만, `getCSSPropertiesForElement` 이 만드는 열쇠는 `rect` · `.red` · `#top`
+// 셋뿐이라 그 칸은 **아무도 열지 않는다**. 그래서 아래 고정 입력은 색의 **유일한 출처**를
+// 붙여 쓴 복합 선택자 하나로 두고, 도형의 색과 보고 개수를 **함께** 묻는다 — 어느 한쪽만
+// 물으면 "적용하지 않으면서 보고도 하지 않는" 자리가 다시 초록으로 지나간다.
+
+describe('붙여 쓴 복합 선택자는 닿지 않으며 **그 사실이 보고에 오른다**', () => {
+  // 세 꼴은 일러스트레이터·잉크스케이프가 실제로 뱉는 모양이다.
+  const CASES: ReadonlyArray<readonly [string, string, string]> = [
+    ['rect.red', 'rect.red{fill:#c0392b}', '<rect class="red" width="4" height="4"/>'],
+    ['.cls-1.cls-2', '.cls-1.cls-2{fill:#c0392b}', '<rect class="cls-1 cls-2" width="4" height="4"/>'],
+    ['rect#top', 'rect#top{fill:#c0392b}', '<rect id="top" width="4" height="4"/>'],
+  ];
+
+  for (const [name, css, body] of CASES) {
+    it(`${name} — 칠이 오지 않고 버림이 한 줄 오른다`, () => {
+      const { shapes, notes } = read(svg(`<style>${css}</style>${body}`));
+      expect(shapes).toHaveLength(1);
+      // **적용은 달라지지 않는다** — 이 규칙은 고치기 전에도 도형에 닿은 적이 없다.
+      // 씨앗 색은 이 층에 없다: 문서가 칠을 말하지 못하면 `fill` 이 아예 없다.
+      expect(shapes[0]!.style.fill).toBeUndefined();
+      expect(shapes[0]!.hasOwnStyle).toBe(false);
+      // **달라지는 것은 보고뿐이다** — 고치기 전에는 이 수가 0 이었다(실측).
+      expect(reasonCount(notes, 'styleRuleDropped')).toBe(1);
+    });
+  }
+
+  it('붙여 쓴 것 옆의 홑마디는 그대로 닿는다 — 좁히기가 멀쩡한 규칙을 데려가지 않는다', () => {
+    const { shapes, notes } = read(
+      svg(
+        '<style>.ok{fill:#c0392b}rect.red{fill:#145a32}</style>' +
+          '<rect class="ok red" width="4" height="4"/>',
+      ),
+    );
+    expect(shapes[0]!.style.fill).toBe('#c0392b');
+    expect(reasonCount(notes, 'styleRuleDropped')).toBe(1);
+  });
+
+  it('이름 없는 홑점 `.` 은 더 이상 칠하지 않고 보고로 나온다', () => {
+    // **고치기 전의 실측**: `class=" "` 는 `['','']` 로 갈라져 `.` 열쇠를 만들었고,
+    // `.{fill:…}` 규칙이 **실제로 칠했다**(fill=#c0392b, 보고 0). 어느 브라우저도 `.` 을
+    // 선택자로 읽지 않으므로(파싱 오류 → 규칙 통째 버림) 그 칠은 아무도 따라 하지 않는
+    // 칠이었다. 이제 브라우저와 같이 버리되, **말없이 버리지 않는다**.
+    const { shapes, notes } = read(
+      svg('<style>.{fill:#c0392b}</style><rect class=" " width="4" height="4"/>'),
+    );
+    expect(shapes[0]!.style.fill).toBeUndefined();
+    expect(reasonCount(notes, 'styleRuleDropped')).toBe(1);
+  });
+
+  it('쉼표로 늘어놓은 선택자는 여전히 읽지 못하고 한 줄로 센다 — 이 고침이 건드리지 않는다', () => {
+    const { shapes, notes } = read(
+      svg('<style>rect, circle{fill:#c0392b}</style><rect width="4" height="4"/>'),
+    );
+    expect(shapes[0]!.style.fill).toBeUndefined();
+    expect(reasonCount(notes, 'styleRuleDropped')).toBe(1);
+  });
+
+  it('선언이 비거나 망가진 덩이는 여전히 담기지도 세지도 않는다 (007 조용한 자리 둘 (나), 미착수)', () => {
+    // **일부러 고치지 않은 자리다** — 잃는 칠이 없으므로 SPEC 0.4.0 이 미착수로 적어 두었다.
+    // 여기 못을 박는 뜻은 고치는 것이 아니라, 이번 좁히기가 이 자리를 **건드리지 않았음**을
+    // 재는 데 있다.
+    expect(reasonCount(read(svg('<style>rect { }</style><rect width="4" height="4"/>')).notes, 'styleRuleDropped')).toBe(0);
+    expect(reasonCount(read(svg('<style>rect { color }</style><rect width="4" height="4"/>')).notes, 'styleRuleDropped')).toBe(0);
+  });
+});
+
 describe('viewBox 와 크기 읽기 (REQ-02)', () => {
   it('viewBox 네 수를 그대로 읽는다', () => {
     expect(read(svg('<rect width="1" height="1"/>')).viewBox).toEqual({

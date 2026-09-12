@@ -173,3 +173,81 @@ describe('적용하지 못한 규칙만 센다 (결함 B)', () => {
     expect(countUnsupportedCssRules('@media print { .a { fill: red } }')).toBe(1);
   });
 });
+
+describe('읽는 선택자의 꼴 — 홑마디 셋뿐 (조용한 자리 둘 (가))', () => {
+  /** 규칙 한 덩이가 표에 담겼는가. */
+  function stored(css: string): boolean {
+    return Object.keys(parseCSSRules(css)).length === 1;
+  }
+
+  const ACCEPTED = [
+    'rect', // element
+    'circle',
+    'font-face', // 이음표를 쓰는 SVG element 이름이 실제로 있다
+    'lineargradient', // 소문자로 접힌 뒤의 꼴
+    '.red', // class
+    '.cls-1',
+    '._foo', // class 속성은 CDATA 라 밑줄·이음표·숫자로 시작할 수 있다
+    '.-foo',
+    '.9foo',
+    '#top', // id
+    '#top_1',
+  ];
+
+  const REJECTED = [
+    'rect.red', // 붙여 쓴 복합 — 열쇠를 만들 수 없어 아무도 읽지 못한다
+    '.a.b',
+    'rect#top',
+    '#a.b',
+    '.a#b',
+    'g .b', // 자리 결합자
+    'rect > path',
+    'rect + path',
+    'rect ~ path',
+    'rect, circle', // 쉼표 목록 — 이 파서의 밖이다
+    '*',
+    '.a:hover', // 의사 클래스
+    '[fill]', // 속성 선택자
+    '.', // 이름 없는 홑점 — 브라우저도 읽지 못한다
+    '#',
+    '1abc', // XML element 이름은 숫자로 시작하지 못한다
+    'foo_bar', // SVG 에 밑줄을 쓰는 element 이름이 없다
+  ];
+
+  for (const sel of ACCEPTED) {
+    it(`\`${sel}\` 는 표에 담기고 세지 않는다`, () => {
+      const css = `${sel}{fill:#c0392b}`;
+      expect(stored(css)).toBe(true);
+      expect(parseCSSRules(css)[sel]!['fill']).toBe('#c0392b');
+      expect(countUnsupportedCssRules(css)).toBe(0);
+    });
+  }
+
+  for (const sel of REJECTED) {
+    it(`\`${sel}\` 는 표에 담기지 않고 한 줄로 센다`, () => {
+      const css = `${sel}{fill:#c0392b}`;
+      expect(parseCSSRules(css)).toEqual({});
+      expect(countUnsupportedCssRules(css)).toBe(1);
+    });
+  }
+
+  it('담기는 것과 세지 않는 것은 **같은 술어**를 본다 — 한쪽만 고친 변경이 여기서 빨개진다', () => {
+    // 둘이 제 검사를 따로 들면 "적용하지 않으면서 보고도 하지 않는" 구멍이 다시 열린다.
+    // 선언이 하나라도 성한 덩이에 대해 **담김 ⟺ 세지 않음** 이 성립해야 한다.
+    // (선언이 비거나 망가진 덩이는 이 맞걸림의 밖이다 — 담기지도 세지도 않는다.)
+    for (const sel of [...ACCEPTED, ...REJECTED]) {
+      const css = `${sel}{fill:#c0392b}`;
+      expect({ sel, stored: stored(css), counted: countUnsupportedCssRules(css) }).toEqual({
+        sel,
+        stored: ACCEPTED.includes(sel),
+        counted: ACCEPTED.includes(sel) ? 0 : 1,
+      });
+    }
+  });
+
+  it('여러 덩이가 섞여도 읽은 것만 담기고 읽지 못한 것만 세진다', () => {
+    const css = '.a{fill:red}rect.b{fill:blue}#c{fill:green}.d.e{fill:teal}';
+    expect(Object.keys(parseCSSRules(css)).sort()).toEqual(['#c', '.a']);
+    expect(countUnsupportedCssRules(css)).toBe(2);
+  });
+});
