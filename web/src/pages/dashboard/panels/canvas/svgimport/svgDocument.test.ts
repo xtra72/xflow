@@ -512,13 +512,18 @@ describe('<style> 보고는 **옮기지 못한 것만** 센다 (결함 B · AC-E
 
 // --- 붙여 쓴 복합 선택자 ---------------------------------------------------
 //
-// **파싱 단언은 이 자리를 재지 못한다.** `rect.red` 는 규칙표에 `"rect.red"` 라는 칸으로
-// 들어가지만, `getCSSPropertiesForElement` 이 만드는 열쇠는 `rect` · `.red` · `#top`
-// 셋뿐이라 그 칸은 **아무도 열지 않는다**. 그래서 아래 고정 입력은 색의 **유일한 출처**를
+// **파싱 단언은 이 자리를 재지 못한다.** `rect.red` 가 규칙표에 `"rect.red"` 라는 칸을 얻는
+// 것과 그 칸을 누가 연다는 것은 다른 이야기이고, 이 SPEC 은 그 차이로 구멍 둘을 배포까지
+// 내보냈다(`#id` 구멍 · 붙여 쓴 복합 구멍). 그래서 아래 고정 입력은 색의 **유일한 출처**를
 // 붙여 쓴 복합 선택자 하나로 두고, 도형의 색과 보고 개수를 **함께** 묻는다 — 어느 한쪽만
 // 물으면 "적용하지 않으면서 보고도 하지 않는" 자리가 다시 초록으로 지나간다.
+//
+// **이 블록이 뒤집힌 자리다.** 예전에는 같은 고정 입력으로 "닿지 않으며 그 사실이 보고에
+// 오른다" 를 재었다. 지키던 성질(침묵 금지 — 적용하지 않는다면 반드시 센다)은 **그대로**
+// 이고, 이제 그 성질은 "적용하므로 세지 않는다" 쪽으로 지켜진다. 여전히 읽지 못하는 꼴
+// (결합자 · 쉼표 목록 · 홑점)에 대해서는 아래에서 옛 방향 그대로 못박는다.
 
-describe('붙여 쓴 복합 선택자는 닿지 않으며 **그 사실이 보고에 오른다**', () => {
+describe('붙여 쓴 복합 선택자가 그림에 닿으며 **버림에 오르지 않는다**', () => {
   // 세 꼴은 일러스트레이터·잉크스케이프가 실제로 뱉는 모양이다.
   const CASES: ReadonlyArray<readonly [string, string, string]> = [
     ['rect.red', 'rect.red{fill:#c0392b}', '<rect class="red" width="4" height="4"/>'],
@@ -527,27 +532,49 @@ describe('붙여 쓴 복합 선택자는 닿지 않으며 **그 사실이 보고
   ];
 
   for (const [name, css, body] of CASES) {
-    it(`${name} — 칠이 오지 않고 버림이 한 줄 오른다`, () => {
+    it(`${name} — 칠이 오고 버림이 한 줄도 오르지 않는다`, () => {
       const { shapes, notes } = read(svg(`<style>${css}</style>${body}`));
       expect(shapes).toHaveLength(1);
-      // **적용은 달라지지 않는다** — 이 규칙은 고치기 전에도 도형에 닿은 적이 없다.
-      // 씨앗 색은 이 층에 없다: 문서가 칠을 말하지 못하면 `fill` 이 아예 없다.
-      expect(shapes[0]!.style.fill).toBeUndefined();
-      expect(shapes[0]!.hasOwnStyle).toBe(false);
-      // **달라지는 것은 보고뿐이다** — 고치기 전에는 이 수가 0 이었다(실측).
-      expect(reasonCount(notes, 'styleRuleDropped')).toBe(1);
+      // 색의 출처가 이 규칙 하나뿐이므로 이 단언이 곧 "규칙이 닿았다" 이다.
+      expect(shapes[0]!.style.fill).toBe('#c0392b');
+      expect(shapes[0]!.hasOwnStyle).toBe(true);
+      // 쓴 것을 버렸다고 말하지 않는다 — 고치기 전에는 이 수가 1 이었다(실측).
+      expect(reasonCount(notes, 'styleRuleDropped')).toBe(0);
     });
   }
 
-  it('붙여 쓴 것 옆의 홑마디는 그대로 닿는다 — 좁히기가 멀쩡한 규칙을 데려가지 않는다', () => {
+  it('마디가 어긋나면 서지 않는다 — 넓히기가 아무에게나 칠하지 않는다', () => {
+    // 같은 규칙, 태그만 다르다. 색이 오면 맞춰 보기가 마디를 보지 않는다는 뜻이다.
     const { shapes, notes } = read(
+      svg('<style>rect.red{fill:#c0392b}</style><circle class="red" cx="5" cy="5" r="2"/>'),
+    );
+    expect(shapes[0]!.style.fill).toBeUndefined();
+    expect(shapes[0]!.hasOwnStyle).toBe(false);
+    // 읽은 선택자이므로 세지 않는다 — 맞지 않은 것과 읽지 못한 것은 다른 일이다.
+    expect(reasonCount(notes, 'styleRuleDropped')).toBe(0);
+  });
+
+  it('붙여 쓴 것 옆의 홑마디도 그대로 닿는다 — 덮을 뿐 데려가지 않는다', () => {
+    // 복합이 뒤에 있으므로 **같은 칸 안에서** 복합이 `fill` 을 덮는다. 홑마디가 사라진
+    // 것이 아니라는 증거는 복합이 말하지 않은 `stroke` 가 살아남는 것이다.
+    const both = read(
       svg(
-        '<style>.ok{fill:#c0392b}rect.red{fill:#145a32}</style>' +
+        '<style>.ok{fill:#c0392b;stroke:#8e44ad}rect.red{fill:#145a32}</style>' +
           '<rect class="ok red" width="4" height="4"/>',
       ),
     );
-    expect(shapes[0]!.style.fill).toBe('#c0392b');
-    expect(reasonCount(notes, 'styleRuleDropped')).toBe(1);
+    expect(both.shapes[0]!.style.fill).toBe('#145a32');
+    expect(both.shapes[0]!.style.stroke).toBe('#8e44ad');
+    expect(reasonCount(both.notes, 'styleRuleDropped')).toBe(0);
+
+    // 복합이 맞지 않는 요소에서는 홑마디가 혼자 이긴다.
+    const alone = read(
+      svg(
+        '<style>.ok{fill:#c0392b;stroke:#8e44ad}rect.red{fill:#145a32}</style>' +
+          '<rect class="ok" width="4" height="4"/>',
+      ),
+    );
+    expect(alone.shapes[0]!.style.fill).toBe('#c0392b');
   });
 
   it('이름 없는 홑점 `.` 은 더 이상 칠하지 않고 보고로 나온다', () => {

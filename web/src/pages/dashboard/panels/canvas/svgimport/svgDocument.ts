@@ -336,13 +336,17 @@ class DocumentWalker {
   /**
    * SVG 문서의 모든 `<style>` 태그에서 CSS 규칙을 **한 표로** 모은다.
    *
-   * **지원**: element 선택자 · `.class` 선택자 · `#id` 선택자 — 셋 다 `descend` 가 실제로
-   * 읽는다(`getCSSPropertiesForElement`). 표에만 들어가고 아무도 읽지 않는 선택자를 두지
+   * **지원**: element 선택자 · `.class` · `#id`, 그리고 그것들을 **이어 붙인** 복합
+   * 선택자(`rect.cls-2` · `.a.b` · `rect#top`) — 모두 `descend` 가 실제로 읽는다
+   * (`getCSSPropertiesForElement`). 표에만 들어가고 아무도 읽지 않는 선택자를 두지
    * 않는 것이 이 짝의 규율이다.
-   * **미지원**: cascade · specificity · 의사 클래스 · 복합 선택자 — 그 개수는 `walk` 가
-   * 버림 보고에 올린다.
+   * **미지원**: cascade · specificity · 결합자(`g > rect` · `g .a`) · 의사 클래스 ·
+   * 속성 선택자 · 쉼표 목록 · `@media` — 그 개수는 `walk` 가 버림 보고에 올린다.
    *
    * 문서 순서대로 덮어쓴다(`Object.assign`) — 뒤에 선 `<style>` 이 앞을 이긴다.
+   * **키의 차례는 처음 본 자리에 남는다**(`CSSRules` 머리말): 같은 칸 안의 승부를
+   * `getCSSPropertiesForElement` 이 그 차례로 가르므로 이 `Object.assign` 은 값만 바꾸고
+   * 자리는 옮기지 않는다.
    */
   private collectStyleTags(el: Element): void {
     if (isSvgElement(el) && tagOf(el) === 'style') {
@@ -503,7 +507,8 @@ class DocumentWalker {
   private descend(attrs: AttrBag, parent: WalkContext, tagName?: string): { ctx: WalkContext; own: StyleAtoms; hidden: boolean } {
     const ownAtoms = collectStyleAtoms(attrs);
     // `<style>` 규칙을 먼저 깔고 **인라인 표현 속성이 그 위를 덮는다.** 규칙끼리의 순서는
-    // element → .class → #id 이며, 그 셋을 고르는 일은 `svgCssRules` 의 몫이다.
+    // 칸(element → .class → #id) 이 먼저고 같은 칸 안에서는 원문 순서이며, 맞는 규칙을
+    // 고르고 그 순서를 가르는 일은 모두 `svgCssRules` 의 몫이다.
     const cssProps = getCSSPropertiesForElement(
       tagName ?? '',
       attrs['class'],
