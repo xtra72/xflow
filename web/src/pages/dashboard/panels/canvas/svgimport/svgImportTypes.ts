@@ -189,6 +189,15 @@ export type ImportNoteReason =
   | 'imageDropped'
   | 'foreignObjectDropped'
   | 'nestedSvgDropped'
+  /**
+   * 들어가지 않은 그릇 안의 하위 트리를 통째로 버렸다 — `<switch>` · 모르는 SVG 요소 ·
+   * 미지 네임스페이스 래퍼.
+   *
+   * **안에 그렸을 것이 있을 때만 오른다.** 요소 자식이 없는 미지 요소는 잎이고, `<defs>`
+   * 아래의 도형은 들어갔더라도 그리지 않았을 것이므로 둘 다 잃은 것이 없다(위험 R7).
+   * 개수는 **끊은 그릇의 수**다 — 안쪽을 다시 세지 않으므로 겹친 그릇은 한 번만 센다.
+   */
+  | 'unenteredContainerDropped'
   | 'styleRuleDropped'
   | 'filterDropped'
   | 'clipPathDropped'

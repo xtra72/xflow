@@ -42,6 +42,7 @@ export const NOTE_KEYS: Readonly<Record<ImportNoteReason, string>> = {
   imageDropped: `${EDIT}.importNoteImageDropped`,
   foreignObjectDropped: `${EDIT}.importNoteForeignObjectDropped`,
   nestedSvgDropped: `${EDIT}.importNoteNestedSvgDropped`,
+  unenteredContainerDropped: `${EDIT}.importNoteUnenteredContainerDropped`,
   styleRuleDropped: `${EDIT}.importNoteStyleRuleDropped`,
   filterDropped: `${EDIT}.importNoteFilterDropped`,
   clipPathDropped: `${EDIT}.importNoteClipPathDropped`,

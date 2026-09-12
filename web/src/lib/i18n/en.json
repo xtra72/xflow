@@ -1288,6 +1288,7 @@
         "importNoteImageDropped": "Embedded image",
         "importNoteForeignObjectDropped": "foreignObject",
         "importNoteNestedSvgDropped": "Nested svg",
+        "importNoteUnenteredContainerDropped": "Unsupported wrapper skipped with its contents",
         "importNoteStyleRuleDropped": "style rule with unsupported selector",
         "importNoteFilterDropped": "Filter",
         "importNoteClipPathDropped": "clip-path",

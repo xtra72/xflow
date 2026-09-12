@@ -120,7 +120,15 @@ const NON_RENDERED_TAGS = new Set([
   'filter',
 ]);
 
-/** 안으로 내려가는 그릇. `<a>` 는 SVG 사양의 컨테이너이며 도구가 실제로 도형을 감싼다. */
+/**
+ * 안으로 내려가는 그릇. `<a>` 는 SVG 사양의 컨테이너이며 도구가 실제로 도형을 감싼다.
+ *
+ * **`<switch>` 를 여기 넣지 않는다.** 그것은 그릇이되 **조건부 그릇**이다 — 브라우저는 직속
+ * 자식 가운데 `requiredFeatures`·`requiredExtensions`·`systemLanguage` 가 모두 참인 **첫
+ * 하나만** 그린다. 전부 내려가면 대안 N개를 겹쳐 그려 원본에 없는 그림이 되고, "첫 하나"
+ * 를 고르려면 조건부 처리 속성 평가가 필요한데 그것은 구멍 메우기가 아니라 기능이다.
+ * 그래서 `<switch>` 는 들어가지 않고 **보고한다**(아래 `hasDrawableDescendant`).
+ */
 const CONTAINER_TAGS = new Set(['g', 'a']);
 
 /** `viewBox` 또는 그 폴백이 정한 사용자 좌표 상자. */
@@ -179,6 +187,46 @@ function isSvgElement(el: Element): boolean {
 
 function tagOf(el: Element): string {
   return (el.localName !== '' ? el.localName : el.nodeName).toLowerCase();
+}
+
+/** `walk` 가 닿았더라면 **그리거나 보고했을** 태그. 그릇(`g`·`a`)은 스스로 그리지 않는다. */
+function isDrawableTag(tag: string): boolean {
+  if (isShorthandShapeTag(tag)) return true;
+  return (
+    tag === 'path' ||
+    tag === 'text' ||
+    tag === 'use' ||
+    tag === 'image' ||
+    tag === 'foreignobject' ||
+    tag === 'svg'
+  );
+}
+
+/**
+ * 이 요소 **안에** 그렸을 것이 하나라도 있는가 — 들어가지 않은 그릇을 보고할지 가르는 유일한
+ * 조건이다.
+ *
+ * **"요소 자식이 있는가" 를 따로 묻지 않는다.** 그릴 것이 있으면 요소 자식은 반드시 있으므로
+ * 두 조건을 함께 두면 뒤의 것이 앞의 것을 삼켜 **물지 않는 가드**가 된다. 글자 노드만 든
+ * `<madeUpTag>글자</madeUpTag>` 와 주석만 든 요소는 요소 자식이 **아예 없으므로** 여기서
+ * 자연히 거짓이 된다 — 진짜 잎이고, 잃은 것이 없다.
+ *
+ * **`NON_RENDERED_TAGS` 아래는 세지 않는다.** `<defs>` 안의 `<rect>` 는 들어갔더라도 그리지
+ * 않았을 것이므로, 그것을 근거로 "버렸다" 고 말하면 보고가 거짓이 된다.
+ *
+ * **미지 네임스페이스 자식도 지난다** — 그릇이 겹쳐 있을 수 있고(`<foo:a><bar:b><text/>`),
+ * 안쪽의 `<text>` 는 기본 네임스페이스를 물려받아 여전히 SVG 의 글자다.
+ */
+function hasDrawableDescendant(el: Element): boolean {
+  for (const child of Array.from(el.children)) {
+    if (isSvgElement(child)) {
+      const tag = tagOf(child);
+      if (NON_RENDERED_TAGS.has(tag)) continue;
+      if (isDrawableTag(tag)) return true;
+    }
+    if (hasDrawableDescendant(child)) return true;
+  }
+  return false;
 }
 
 // --- 파싱 실패 판정 ------------------------------------------------------
@@ -550,7 +598,16 @@ class DocumentWalker {
   }
 
   private walk(el: Element, parent: WalkContext): void {
-    if (!isSvgElement(el)) return; // 미지 네임스페이스 — 버림이 아니다(그려지지 않는다).
+    if (!isSvgElement(el)) {
+      // 미지 네임스페이스 — 그 자신은 버림이 아니다(그려지지 않는다). 다만 **안에 그릴 것을
+      // 품고 있었다면** 그 하위 트리째 사라진 것이고, 그 사실은 말해야 한다(아래 `default:`
+      // 와 같은 판정). 잉크스케이프가 거의 모든 파일에 내보내는 `<sodipodi:namedview>` 는
+      // `<inkscape:grid>` 만 품으므로 여기서 조용하다 — 그 침묵이 위험 R7 의 값이다.
+      if (!isHiddenContext(parent) && hasDrawableDescendant(el)) {
+        this.note('dropped', 'unenteredContainerDropped');
+      }
+      return;
+    }
     const tag = tagOf(el);
     if (NON_RENDERED_TAGS.has(tag)) {
       // `<style>` 만 예외로 보고에 오른다. **오르는 것은 적용하지 못한 규칙뿐이다** —
@@ -615,7 +672,16 @@ class DocumentWalker {
         this.note('dropped', 'nestedSvgDropped');
         return;
       default:
-        // 모르는 SVG 요소 — 그려지지 않으므로 보고하지 않는다(위험 R7).
+        // 모르는 SVG 요소 — **잎이면** 그려지지 않으므로 보고하지 않는다(위험 R7). 그 전제가
+        // 참인 것은 잎일 때뿐이다: 안에 도형이나 글자를 품고 있었다면 하위 트리 전부가
+        // 그림에서도 보고에서도 사라지고, 그 조합(도형은 들어왔고 · 글자는 없고 · 버림 칸은
+        // 비었고)이 사용자가 실제로 본 화면이다.
+        //
+        // **들어가지 않고 말만 한다.** SVG 1.1 의 렌더 모델은 아는 그릇과 아는 도형만 그리므로
+        // 모르는 요소의 하위 트리는 브라우저에서도 그려지지 않는다 — 들어가면 브라우저가
+        // 그리지 않는 것을 우리가 그리게 되어, 이 층이 지켜 온 "브라우저가 그리는 것을
+        // 그린다" 가 깨진다. `<switch>` 도 같은 문으로 온다(위 `CONTAINER_TAGS` 머리말).
+        if (hasDrawableDescendant(el)) this.note('dropped', 'unenteredContainerDropped');
         return;
     }
   }

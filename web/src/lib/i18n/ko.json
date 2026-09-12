@@ -1288,6 +1288,7 @@
         "importNoteImageDropped": "내장 이미지",
         "importNoteForeignObjectDropped": "foreignObject",
         "importNoteNestedSvgDropped": "중첩 svg",
+        "importNoteUnenteredContainerDropped": "안의 그림째 건너뛴 미지원 요소",
         "importNoteStyleRuleDropped": "지원하지 않는 선택자의 style 규칙",
         "importNoteFilterDropped": "필터",
         "importNoteClipPathDropped": "clip-path",
