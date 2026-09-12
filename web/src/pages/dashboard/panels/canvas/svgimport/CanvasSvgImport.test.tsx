@@ -465,7 +465,13 @@ describe('미리보기는 실제 렌더 경로다 (§도크 UI)', () => {
     await choose(file(doc));
 
     // 켜져 있음을 먼저 단언한다 — 기록이 비면 아래 비교가 `[] === []` 가 된다.
-    expect(seen.length).toBeGreaterThan(4);
+    //
+    // **그림을 기다린다 — 요약 줄을 기다리지 않는다.** `choose()` 가 기다리는 요약 줄은
+    // 대리 신호이고, 그림은 캔버스가 붙은 **뒤의** 효과에서 나온다. 둘 사이가 벌어질 수
+    // 있다는 것을 상한을 서버에서 받게 된 날 부하 아래에서 확인했다(전체 실행 3회 중 2회
+    // `seen.length === 0`, 단독 실행은 언제나 통과). 상한을 올려 덮는 것은 무효다 —
+    // 단언하는 것과 **다른 것**을 기다리는 한 같은 자리가 다시 벌어진다.
+    await waitFor(() => expect(seen.length).toBeGreaterThan(4));
     expect(seen.some((c) => c[0] === 'fill' && c[1] === '#c0392b')).toBe(true);
     expect(seen.some((c) => c[0] === 'stroke' && c[1] === '#145a32')).toBe(true);
 
