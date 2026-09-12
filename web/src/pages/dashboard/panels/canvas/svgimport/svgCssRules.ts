@@ -1,5 +1,8 @@
 // 손으로 쓴 작은 CSS 규칙 파서 (SPEC-CANVAS-007).
 //
+// 문자열만 다루는 이웃에서 CSS 전역 값 해독기를 하나 빌려 온다(K7 은 DOM 을 금할 뿐
+// 문자열 도구의 공유를 금하지 않는다).
+//
 // **왜 손으로 쓰는가.** 브라우저에게 CSS 를 물으려면 문서를 살아 있는 문서에 붙이고
 // `getComputedStyle` 을 불러야 한다. 그 길은 불변식 K3 이 닫아 둔 길이다(붙이지 않는다 →
 // 스크립트가 돌 수 없고 외부 자원을 가져오지 않는다). 그래서 이 파서가 있다. 이 파일은
@@ -36,6 +39,8 @@
 // 본디 대소문자를 가리지만, 접기를 한쪽만 하면 표가 두 벌의 이름 규칙을 갖게 되고
 // `.RED` 규칙이 `class="RED"` 에 닿지 못하는 자리가 생긴다. 접기의 값은 `#Foo` 와 `#foo`
 // 가 한 칸을 다툰다는 것이고, 그 대가는 이 크기의 파서에서 치를 만하다.
+
+import { resolveCssWideValue } from './svgStyle';
 
 /**
  * 파싱된 CSS 규칙: 선택자 → 속성들. 선택자는 **소문자로 접혀** 있다.
@@ -125,7 +130,10 @@ export function parseCSSRules(cssText: string): CSSRules {
         const propName = decl.slice(0, colonIdx).trim().toLowerCase();
         const propValue = decl.slice(colonIdx + 1).trim();
         if (propName && propValue) {
-          props[propName] = propValue;
+          // **`style` 속성과 같은 해독을 여기서도 지난다.** `light-dark()` · `var()` 는
+          // 선언이 어느 자리에 적혔는지 가리지 않으므로, 한쪽만 풀면 같은 파일 안에서
+          // 인라인으로 적힌 색은 살아나고 규칙표로 적힌 색은 씨앗으로 떨어진다.
+          props[propName] = resolveCssWideValue(propValue);
         }
       }
     }

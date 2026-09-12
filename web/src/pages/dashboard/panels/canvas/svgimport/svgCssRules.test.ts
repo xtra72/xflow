@@ -352,4 +352,25 @@ describe('적용 순서 — 칸(element → class → id) 이 먼저, 같은 칸
     const props = getCSSPropertiesForElement('rect', 'a', undefined, rules);
     expect(props).toEqual({ 'stroke': '#111111', 'fill': '#c0392b' });
   });
+
+  // 규칙표에 적힌 색도 `style` 속성에 적힌 색과 **같은 해독**을 지나야 한다. 한쪽만
+  // 풀면 같은 파일 안에서 인라인 색은 살아나고 규칙표 색은 씨앗으로 떨어진다.
+  it('light-dark() 는 밝은 쪽으로 풀린다 — 안쪽 쉼표가 있어도 쪼개지지 않는다', () => {
+    const rules = parseCSSRules('rect{fill:light-dark(rgb(245, 245, 245), rgb(26, 26, 26))}');
+    expect(getCSSPropertiesForElement('rect', undefined, undefined, rules)['fill']).toBe(
+      'rgb(245, 245, 245)',
+    );
+  });
+
+  it('var() 는 적어 둔 대체값으로 풀린다', () => {
+    const rules = parseCSSRules('rect{fill:var(--ge-adaptive-bg, #ffffff)}');
+    expect(getCSSPropertiesForElement('rect', undefined, undefined, rules)['fill']).toBe('#ffffff');
+  });
+
+  it('대체값 없는 var() 는 풀지 않고 그대로 둔다 — 읽을 수 없음이 보고에 닿아야 한다', () => {
+    const rules = parseCSSRules('rect{fill:var(--only)}');
+    expect(getCSSPropertiesForElement('rect', undefined, undefined, rules)['fill']).toBe(
+      'var(--only)',
+    );
+  });
 });
