@@ -912,7 +912,16 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		WithPermissions(permCache).
 		WithAuthEnabled(serverCfg.BasicAuth.Enabled).
 		// ACL subject(user:/role:)의 실재 검증에 사용한다(acceptance.md AC-17).
-		WithSubjectDB(authDashboardDB)
+		WithSubjectDB(authDashboardDB).
+		// PUT 본문 상한은 설정된 캔버스 요소 수에서 유도한다
+		// (@SPEC:SPEC-CANVAS-007 §결정 14 — dashboard.max_canvas_elements).
+		WithPayloadLimit(cfg.Dashboard().PayloadBudgetBytes)
+
+	// 대시보드/캔버스 상한 조회 핸들러 — 편집기가 서버와 같은 수를 쓰게 한다.
+	// 이 창구가 없으면 프론트엔드의 컴파일 상수와 서버 예산이 다시 어긋나고, 그 어긋남은
+	// 저장 시점의 413 으로만 드러난다(SPEC-CANVAS-007 §결정 13 이 적은 위험).
+	dashboardLimitsHandler := handler.NewDashboardLimitsHandler(
+		cfg, obs.Loggers.NewLogger("api.handler.dashboard_limits").Logger())
 
 	// 대시보드 자산(도면 이미지 등) 저장소 — snapshot 과 분리해 보관한다.
 	// snapshot PUT 은 256KB 상한이 있어 이미지를 config 에 data-URL 로 박으면 대시보드
@@ -980,6 +989,7 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 		// SPEC-DASHBOARD-001 v0.2.0 M-8: 대시보드 라우트 (shared / mine).
 		dashboardHandler.RegisterRoutes(g)
 		dashboardAssetHandler.RegisterRoutes(g)
+		dashboardLimitsHandler.RegisterRoutes(g)
 
 		// 전역 설정 라우트 (GET/PUT /settings/{key}) — 디바이스 컬럼 구성 등.
 		settingsHandler.RegisterRoutes(g)

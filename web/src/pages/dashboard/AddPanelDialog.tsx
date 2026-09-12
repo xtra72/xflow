@@ -35,6 +35,7 @@ import {
   Grid3x3,
   PlugZap,
   Gauge,
+  Shapes,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -154,6 +155,9 @@ const PANEL_GROUPS_BY_CATEGORY: Record<Category, PanelGroup[]> = {
         { type: 'pie-chart', icon: PieChart, labelKey: 'dashboard.panelTypes.pieChart', descriptionKey: 'dashboard.addPanel.descriptions.pieChart' },
         // SPEC-HEATMAP-PANEL-001 (MVP): store 태그 바인딩 온도 히트맵. 채널 스텝 없이 기본 config 로 추가된다.
         { type: 'heatmap', icon: Thermometer, labelKey: 'dashboard.addPanel.labels.heatmap', descriptionKey: 'dashboard.addPanel.descriptions.heatmap' },
+        // SPEC-CANVAS-001 (MVP): 도형을 시리즈에 바인딩하고 조건 규칙으로 겉모습을 바꾸는
+        // 캔버스 패널. 히트맵과 같이 채널 스텝 없이 기본 config 로 바로 추가된다.
+        { type: 'canvas', icon: Shapes, labelKey: 'dashboard.addPanel.labels.canvas', descriptionKey: 'dashboard.addPanel.descriptions.canvas' },
       ],
     },
   ],

@@ -100,7 +100,10 @@ func (h *DashboardAssetHandler) upload(ctx api.Context) error {
 	body, err := readLimitedBody(ctx, maxAssetPayloadBytes)
 	if err != nil {
 		if errors.Is(err, errPayloadTooLarge) {
-			return errPayloadTooLargeAPI()
+			// **자산의 상한을 말한다.** 예전에는 인자 없는 errPayloadTooLargeAPI 가
+			// 대시보드 상수(256KB)를 메시지에 박아, 실제로는 12MiB 에서 잘린 요청에
+			// "262144 바이트를 넘었다" 고 답했다 — 48배 틀린 수다.
+			return errPayloadTooLargeAPI(maxAssetPayloadBytes)
 		}
 		return api.ErrBadRequest.WithMessage("read body: " + err.Error())
 	}

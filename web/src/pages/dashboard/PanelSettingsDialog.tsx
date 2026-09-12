@@ -149,6 +149,7 @@ import {
 } from './panels/PropertiesGridPanel';
 import { renderDashboardPanel } from './renderDashboardPanel';
 import { computeFitScale, computePreviewStage, initialPreviewZoom } from './previewStage';
+import { panTransform, usePreviewPan } from './previewPan';
 import { PanelGridBackdrop } from './PanelGridBackdrop';
 import {
   AGENT_BADGES,
@@ -237,6 +238,19 @@ import {
 import { MIN_GRID_RESOLUTION, MAX_GRID_RESOLUTION } from './panels/heatmap/HeatmapCanvas';
 // 히트맵 프리뷰(설정 다이얼로그 내 실제 패널 렌더 — MODBUS 프리뷰 선례와 동일 방식).
 import HeatmapPanel from './panels/heatmap/HeatmapPanel';
+import { CanvasEditDockRegion } from './panels/canvas/CanvasEditDock';
+import CanvasPanel from './panels/canvas/CanvasPanel';
+import CanvasElementsEditor from './panels/canvas/CanvasElementsEditor';
+import {
+  CanvasEditSelectionContext,
+  CanvasLiveSeriesContext,
+  useCanvasEditSelectionState,
+  useCanvasLiveSeriesState,
+} from './panels/canvas/canvasEditContext';
+import {
+  CanvasStageAspectContext,
+  useCanvasStageAspectState,
+} from './panels/canvas/canvasStageAspect';
 import BarChartPanel from './panels/charts/BarChartPanel';
 import LineChartPanel from './panels/charts/LineChartPanel';
 import PieChartPanel from './panels/charts/PieChartPanel';
@@ -799,6 +813,30 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     [zoomIn, zoomOut],
   );
 
+  // 미리보기 스테이지 — 패널을 대시보드에서의 실제 픽셀 크기로 렌더한 뒤 통째로
+  // 축소한다. 미리보기 크기에 맞춰 다시 레이아웃하면 반응형 재배치가 일어나
+  // 대시보드와 다른 화면이 되기 때문이다(previewStage.ts 주석 참조).
+  //
+  // 조기 반환(`if (!panel) return null`)보다 **위**에 있다 — 바로 아래 팬 훅이 이 값을
+  // 쓰는데, 훅이 조기 반환 아래에 서면 패널이 생겼다 사라질 때 훅 개수가 달라진다.
+  const previewStage = computePreviewStage({
+    w: effectiveSize?.w ?? 0,
+    h: effectiveSize?.h ?? 0,
+    cell: gridCell,
+    areaW: fitSize.w,
+    areaH: fitSize.h,
+    mode: previewFillMode,
+    zoom: previewZoom,
+  });
+  const previewBox =
+    previewStage !== null ? { w: previewStage.screenW, h: previewStage.screenH } : null;
+
+  // 미리보기 이동(팬) — 확대해서 영역보다 커진 그림의 가장자리에 닿는 유일한 길이다
+  // (`previewPan.ts` §왜 이 층에 있는가). 넘치지 않으면 이 한 벌은 통째로 잠들어 있다.
+  const previewPan = usePreviewPan(previewBox, fitSize, {
+    surfaceAria: t('dashboard.settings.previewPanAria'),
+  });
+
   // 2경계 비율(옵션 컬럼 폭 + 미리보기 높이 비율) — 패널별 localStorage 영속/복원 (T2/T3).
   // 손상/부재 값은 기본 비율로 폴백한다(usePanelSettingsRatio 내부, AC-03 edge).
   const { ratio, setRatio } = usePanelSettingsRatio(panelId ?? '');
@@ -884,6 +922,18 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [panel, onClose]);
 
+  // SPEC-CANVAS-002 T11: 캔버스 미리보기와 요소 목록 편집기가 **한 선택**을 나눠 쓰게 한다.
+  // 본문은 전부 `panels/canvas/` 에 있고 여기에는 감싸기와 `forceEdit` 만 더한다(§위험 R5).
+  const canvasSelection = useCanvasEditSelectionState();
+  // 그리고 **한 시리즈 목록**을 나눠 쓰게 한다. 미리보기가 판독값을 키잉한 그 집합을
+  // 내놓고 목록 편집기의 바인딩 드롭다운이 그것을 그대로 쓴다 — 두 곳이 각자 키를
+  // 추측하다 갈라진 자리를 없앤다. 여기도 감싸기 한 줄뿐이다(§위험 R4).
+  const canvasLiveSeries = useCanvasLiveSeriesState();
+  // 그리고 미리보기가 **잰 바깥 상자**를 목록 편집기로 흘려보낸다. 편집기의 "패널 비율에
+  // 맞춤" 이 그 값을 쓴다 — 편집기가 패널 크기를 추측하면 그 추측이 두 번째 출처가 된다.
+  // 여기도 감싸기 한 줄뿐이다(§위험 R4).
+  const canvasStageAspect = useCanvasStageAspectState();
+
   if (!panel) return null;
 
   // SPEC-WEB-005: 차트 패널이면 데이터 소스 섹션을 좌측 프리뷰 아래에 넓게 배치한다.
@@ -895,8 +945,13 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   // SPEC-CHART-002 §2.3 [U3] (M4.1): 게이지도 공용 Store 데이터 소스 surface 를 받는다.
   // heatmap 과 같은 이유로 CHART_PANEL_TYPES 에는 **넣지 않는다** — 그 집합은 데이터소스
   // 노출 외에 차트 전용 채널/타입 분기를 구동하며 게이지는 그 분기의 대상이 아니다(UB1-9).
+  //
+  // SPEC-CANVAS-001 REQ-03: 캔버스도 `usePanelSeriesData` 로 시리즈를 읽으므로 데이터 소스
+  // 섹션이 있어야 요소를 바인딩할 계열을 고를 수 있다. heatmap·gauge 와 **같은 이유로**
+  // CHART_PANEL_TYPES 에는 넣지 않는다 — 그 집합은 데이터소스 노출 외에 차트 전용
+  // 채널/타입 분기를 구동하고, 캔버스는 차트 종류·축·범례를 갖지 않아 그 분기의 대상이 아니다.
   const dataSourceBelowPreview =
-    isChartPanel || panel.type === 'heatmap' || panel.type === 'gauge';
+    isChartPanel || panel.type === 'heatmap' || panel.type === 'gauge' || panel.type === 'canvas';
 
   // @spec SPEC-PANEL-SETTINGS-001 (T1): 3분할 셸 슬롯 구성.
   // 기존 옵션/미리보기/데이터소스 편집 서브트리를 셸 영역으로 이관한다(편집 로직 보존).
@@ -1324,6 +1379,24 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               </CollapsibleSection>
             )}
 
+            {/* SPEC-CANVAS-001 REQ-01 (6): 캔버스 요소 설정 섹션. **마운트 지점만** 둔다 —
+                본문(요소 목록 · 기하 수치 · 스타일 · 바인딩 · 규칙 표)은 전부
+                `panels/canvas/CanvasElementsEditor.tsx` 에 있다(§위험 R4). */}
+            {panel.type === 'canvas' && (
+              <CollapsibleSection title={t('dashboard.settings.canvas')} defaultOpen={true}>
+                <CanvasLiveSeriesContext value={canvasLiveSeries}>
+                  <CanvasEditSelectionContext value={canvasSelection}>
+                    <CanvasStageAspectContext value={canvasStageAspect}>
+                      <CanvasElementsEditor
+                        config={panel.config ?? {}}
+                        onConfigChange={(c) => handleConfigChange(c)}
+                      />
+                    </CanvasStageAspectContext>
+                  </CanvasEditSelectionContext>
+                </CanvasLiveSeriesContext>
+              </CollapsibleSection>
+            )}
+
             {/* 데이터 소스 섹션(StoreSourceSection)은 좌측 프리뷰 아래에 있다(SPEC-WEB-005). */}
             {/* 차트 타입별 세부 설정 (SPEC-CHART-001 §4.2.2 / REQ-M5-03) */}
             {panel.type === 'stat' && (
@@ -1395,12 +1468,18 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
               - 통계도 내지 않는다 — 그룹 4개 중 header/badges/table 은 StatPanel 이
                 읽지 않는 죽은 컨트롤이었고, 살아 있던 `_base`(= panelColor)는 패널
                 옵션으로 올라갔다(SPEC-CHART-003 §5 D1). 남는 항목이 없다.
+              - 캔버스도 내지 않는다 — 같은 이유다. 캔버스는 `accentElements` 를 어디서도
+                읽지 않고(`panels/canvas/` 전체에 그 이름이 없다), 타입 분기에도 없어
+                기본 이름표(타이틀·요약 배지·테이블 헤더)가 흘러들어왔다. 캔버스에는
+                요약 배지도 표도 없으므로 셋 다 가리킬 대상이 없는 이름이고, 색을 골라도
+                화면은 그대로다.
             */}
             {panel.type === 'flows' ||
             panel.type === 'agents' ||
             panel.type === 'devices' ||
             panel.type === 'properties-grid' ||
             panel.type === 'stat' ||
+            panel.type === 'canvas' ||
             panel.type === 'agent-status' ? null : panel.type === 'ac-control' ? (
               <CollapsibleSection title={t('dashboard.settings.style')} defaultOpen={true}>
                 <AcControlStyleSection
@@ -1499,29 +1578,23 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
   /** 모든 미리보기는 스테이지 상자를 그대로 채운다 — 사이징 정본은 스테이지 한 곳이다. */
   const PREVIEW_CHILD_STYLE: React.CSSProperties = { width: '100%', height: '100%' };
 
-  // 미리보기 스테이지 — 패널을 대시보드에서의 실제 픽셀 크기로 렌더한 뒤 통째로
-  // 축소한다. 미리보기 크기에 맞춰 다시 레이아웃하면 반응형 재배치가 일어나
-  // 대시보드와 다른 화면이 되기 때문이다(previewStage.ts 주석 참조).
-  const previewStage = computePreviewStage({
-    w: effectiveSize?.w ?? 0,
-    h: effectiveSize?.h ?? 0,
-    cell: gridCell,
-    areaW: fitSize.w,
-    areaH: fitSize.h,
-    mode: previewFillMode,
-    zoom: previewZoom,
-  });
-  const previewBox =
-    previewStage !== null ? { w: previewStage.screenW, h: previewStage.screenH } : null;
-
   const previewSlot = (
     // fit 컨테이너: 남은 미리보기 영역을 세로로 가득(min-h-0 flex-1) 차지하고 자식을 양축
     // 가운데 정렬한다. ref 로 실측하여 fit 모드가 종횡비 보존 contain 을 결정론적으로 계산한다.
     // 크롬 옵션은 draft config 로 전파해 타이틀 바 토글이 미리보기에 즉시 반영되게 한다.
     <PanelChromeProvider config={panel.config}>
+    {/* 캔버스 편집 도구는 축소되는 미리보기 **바깥**에 선다 — 패널 안에 두면 패널 자신의
+        레이아웃이 달라져 미리보기가 대시보드와 다른 화면이 된다(§미리보기). */}
+    <CanvasEditDockRegion enabled={panel.type === 'canvas'}>
     <div
       ref={setFitContainer}
-      className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden"
+      // 팬 표면 — 확대해 넘친 그림을 끌어 옮긴다(`previewPan.ts`). 조작 규칙 전부가 그
+      // 훅 안에 있으므로 여기서는 **펼치기만** 한다(위험 R5: 이 파일은 8천 줄이다).
+      {...previewPan.surfaceProps}
+      className={cn(
+        'relative flex min-h-0 flex-1 items-center justify-center overflow-hidden',
+        previewPan.cursorClass,
+      )}
     >
       {/* 실제 패널처럼 크기를 조절한다. 그리드(칼럼 수·셀·마진)와 가이드 라인 표시는
           현재 대시보드 설정을 그대로 쓴다. 레이아웃이 없는 패널(대시보드 미배치)은
@@ -1553,6 +1626,10 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
           cellH={previewStage.cellH}
           gapX={previewStage.gapX}
           gapY={previewStage.gapY}
+          // 격자는 패널이 **놓인 칸**을 그린다 — 패널을 끌어 옮기면 그 칸도 함께 간다.
+          // 따라가지 않으면 칸 경계가 패널 모서리에서 어긋나 격자가 거짓말을 한다.
+          offsetX={previewPan.offset.x}
+          offsetY={previewPan.offset.y}
         />
       )}
 
@@ -1571,7 +1648,15 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
             ? {
                 width: `${previewStage.pxW}px`,
                 height: `${previewStage.pxH}px`,
-                transform: `scale(${previewStage.scaleX}, ${previewStage.scaleY})`,
+                // 평행이동이 배율 **바깥**이라 이동량은 화면 px 그대로다. 그리고 그것이
+                // 캔버스 포인터 환산에 보정을 하나도 요구하지 않는 이유다 —
+                // `getBoundingClientRect()` 의 left/top 이 이미 이 이동을 품고 있고
+                // width/height 는 평행이동으로 달라지지 않는다(`previewPan.ts` §좌표 보정).
+                transform: panTransform(
+                  previewPan.offset,
+                  previewStage.scaleX,
+                  previewStage.scaleY,
+                ),
                 transformOrigin: 'center',
               }
             : previewFillMode === 'fill'
@@ -1825,8 +1910,44 @@ export default function PanelSettingsDialog({ panelId, onClose }: PanelSettingsD
                 />
               </div>
             )}
+            {/*
+              SPEC-CANVAS-001 REQ-01 (6): 캔버스 라이브 미리보기. 실제 CanvasPanel 을 draft
+              config(panel)로 즉시 렌더한다 — 요소 기하·스타일·규칙은 시각 설정이라 store
+              재조회를 부르지 않으므로 debounce 없이 반영되어야 한다(히트맵과 같은 근거).
+              요소 0개·시리즈 결측·폴링 실패는 패널이 자체 빈 상태/오류 배지로 처리하므로
+              (REQ-05) 미리보기가 빈 영역이 되지 않는다.
+
+              요소·규칙 표 편집기는 여기가 아니라 별도 설정 섹션의 몫이다 — 이 블록은
+              **미리보기 마운트 지점**일 뿐이다.
+            */}
+            {panel.type === 'canvas' && (
+              <div
+                // 히트맵과 같은 이유로 flex 컨테이너다 — CanvasPanel 의 flex-1 루트가 부모
+                // 높이를 채우려면 부모가 flex 여야 하고, plain block 이면 요소가 없을 때
+                // 0-height 로 붕괴한다.
+                data-testid="canvas-preview-wrapper"
+                className="relative flex min-h-0 flex-col"
+                style={PREVIEW_CHILD_STYLE}
+                onWheel={handlePreviewWheel}
+              >
+                <CanvasLiveSeriesContext value={canvasLiveSeries}>
+                  <CanvasEditSelectionContext value={canvasSelection}>
+                    <CanvasStageAspectContext value={canvasStageAspect}>
+                      <CanvasPanel
+                        panelId={panel.id}
+                        title={panel.title}
+                        config={panel.config}
+                        onConfigChange={(c) => handleConfigChange(c)}
+                        forceEdit
+                      />
+                    </CanvasStageAspectContext>
+                  </CanvasEditSelectionContext>
+                </CanvasLiveSeriesContext>
+              </div>
+            )}
       </div>
     </div>
+    </CanvasEditDockRegion>
     </PanelChromeProvider>
   );
   const dataSourceSlot = dataSourceBelowPreview ? (

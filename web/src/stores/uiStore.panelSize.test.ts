@@ -53,6 +53,7 @@ const PANEL_TYPE_SET: Record<PanelType, true> = {
   'modbus-summary-stats': true,
   'agent-status': true,
   'heatmap': true,
+  'canvas': true,
   'monitor-stats': true,
   'monitor-metrics': true,
   'monitor-network': true,

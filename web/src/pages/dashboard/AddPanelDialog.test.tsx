@@ -212,6 +212,7 @@ describe('AddPanelDialog', () => {
         'dashboard.panelTypes.barChart',
         'dashboard.panelTypes.pieChart',
         'dashboard.addPanel.labels.heatmap',
+        'dashboard.addPanel.labels.canvas',
       ]],
       ['content', [
         'dashboard.panelTypes.acControl',

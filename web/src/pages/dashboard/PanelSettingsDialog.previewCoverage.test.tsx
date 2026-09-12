@@ -57,6 +57,7 @@ const PANEL_TYPE_SET: Record<PanelType, true> = {
   'agent-status': true,
   'agents': true,
   'bar-chart': true,
+  'canvas': true,
   'custom-control': true,
   'device': true,
   'devices': true,

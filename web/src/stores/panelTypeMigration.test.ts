@@ -20,7 +20,7 @@ describe('normalizePanelType', () => {
   });
 
   it('다른 패널 타입은 건드리지 않는다', () => {
-    for (const t of ['bar-chart', 'pie-chart', 'stat', 'table', 'heatmap']) {
+    for (const t of ['bar-chart', 'pie-chart', 'stat', 'table', 'heatmap', 'canvas']) {
       expect(normalizePanelType(t)).toBe(t);
     }
   });

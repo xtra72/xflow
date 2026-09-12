@@ -175,3 +175,32 @@ describe('SPEC-CHART-003 AC-04 — stat 외 패널의 스타일 섹션은 유지
     expect(screen.getByTestId('accent-group-picker')).toBeInTheDocument();
   });
 });
+
+describe('캔버스도 악센트 그룹 고르기를 내지 않는다', () => {
+  // stat · agent-status 와 **같은 이유**다: 캔버스는 `accentElements` 를 어디서도 읽지
+  // 않는다. 게다가 타입 분기에 없어 기본 이름표(타이틀 · 요약 배지 · 테이블 헤더)가
+  // 흘러들어왔는데, 캔버스에는 요약 배지도 표도 없으므로 셋 다 가리킬 대상이 없는
+  // 이름이었다. 색을 골라도 화면이 바뀌지 않는 죽은 컨트롤이다.
+  it('accent-group-picker 와 세 그룹의 편집 입구가 모두 없다', () => {
+    storeMock.panel = { id: 'p1', type: 'canvas', title: 't', config: {} };
+    render(
+      <QueryClientProvider client={inertQueryClient()}>
+        <PanelSettingsDialog panelId="p1" onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByTestId('accent-group-picker')).toBeNull();
+    for (const group of ['header', 'badges', 'table']) {
+      expect(screen.queryByTestId(`accent-group-${group}`)).toBeNull();
+    }
+  });
+
+  it('패널 색상은 그대로 남는다 — 지운 것은 죽은 그룹 고르기뿐이다', () => {
+    storeMock.panel = { id: 'p1', type: 'canvas', title: 't', config: {} };
+    render(
+      <QueryClientProvider client={inertQueryClient()}>
+        <PanelSettingsDialog panelId="p1" onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId('panel-color-row')).toBeInTheDocument();
+  });
+});
