@@ -58,6 +58,7 @@ import BarChartPanel from './panels/charts/BarChartPanel';
 import PieChartPanel from './panels/charts/PieChartPanel';
 import TablePanel from './panels/charts/TablePanel';
 import HeatmapPanel from './panels/heatmap/HeatmapPanel';
+import CanvasPanel from './panels/canvas/CanvasPanel';
 import ResourceWidget from './widgets/ResourceWidget';
 import { PanelChromeProvider } from './PanelChromeProvider';
 
@@ -401,6 +402,18 @@ function renderPanelBody(
     case 'heatmap':
       return (
         <HeatmapPanel
+          panelId={panel.id}
+          title={panel.title}
+          config={panel.config}
+          onConfigChange={onCfg}
+        />
+      );
+    // SPEC-CANVAS-001 (MVP): 시리즈 바인딩 도형 + 조건 규칙 표 캔버스 패널.
+    // 001 은 렌더 전용(가정 A7)이라 패널이 config 를 쓰지 않지만, 다른 패널과 같은 형상으로
+    // 넘겨 후속(002 시각 편집기)이 등록 지점을 다시 건드리지 않게 한다.
+    case 'canvas':
+      return (
+        <CanvasPanel
           panelId={panel.id}
           title={panel.title}
           config={panel.config}

@@ -22,6 +22,8 @@ import { generateUUID } from '@/lib/utils/uuid';
 import { buildDefaultStoreSource } from '@/pages/dashboard/panels/charts/chartChannelTypes';
 // SPEC-HEATMAP-PANEL-001: 히트맵 패널 기본 config 빌더(파서와 기본값 일치 보장).
 import { buildDefaultHeatmapConfig } from '@/pages/dashboard/panels/heatmap/heatmapConfig';
+// SPEC-CANVAS-001: 캔버스 패널 기본 config 빌더(parseCanvasConfig 와 기본값이 어긋나지 않게 한다).
+import { buildDefaultCanvasConfig } from '@/pages/dashboard/panels/canvas/canvasConfig';
 // 모니터링 패널의 기본 표시 항목은 모니터링 페이지의 기본 레이아웃과 같은 값을 쓴다.
 import { DEFAULT_LAYOUT as MONITOR_DEFAULT_LAYOUT } from '@/pages/monitoring/monitoringLayout';
 import { STORAGE_ITEMS as SYSMETRICS_STORAGE_ITEMS } from '@/pages/dashboard/panels/sysmetrics/sysMetricsPanelConfig';
@@ -202,6 +204,9 @@ export type PanelType =
   // SPEC-HEATMAP-PANEL-001 (MVP): store 태그 바인딩 온도 센서를 IDW 로 보간해
   // Canvas 2D 에 렌더하는 히트맵 패널. config 는 불투명 JSON(store_source + sensor_positions).
   | 'heatmap'
+  // SPEC-CANVAS-001 (MVP): 시리즈에 바인딩된 도형을 Canvas 2D 에 그리고, 조건 규칙 표의
+  // 첫 일치 행으로 겉모습·문구를 바꾸는 캔버스 패널. config 는 불투명 JSON(요소 배열 + 규칙).
+  | 'canvas'
   // 모니터링 패널 4종. 모니터링 페이지와 같은 항목 어휘를 쓰며(`config.items`),
   // 실시간 스트림은 프로세스 전역 단일 구독(`monitorStream`)을 공유한다.
   // 기존 'resource'/'logs' 를 대체하며, 그 둘은 추가 메뉴에서만 내려가고 렌더는 유지된다.
@@ -345,6 +350,9 @@ const PANEL_DEFAULT_SIZES: Record<PanelType, PanelGridSize> = {
   text: { w: 4, h: 3, minW: 2, minH: 2 },
   // 히트맵은 2차원 공간장을 그리므로 정사각이 자연스럽다.
   heatmap: { w: 5, h: 5, minW: 3, minH: 3 },
+  // SPEC-CANVAS-001 REQ-01: 캔버스는 계통도·상태판처럼 도형을 가로로 늘어놓는 쓰임이 주라
+  // 라인 차트와 같은 가로 우세 비율을 쓴다.
+  canvas: { w: 6, h: 4, minW: 3, minH: 2 },
 
   // --- 목록/테이블 계열 ---
   //
@@ -664,6 +672,19 @@ function createDefaultPanel(type: PanelType): Omit<PanelConfig, 'id'> {
     // SPEC-HEATMAP-PANEL-001: 히트맵 패널. 기본 config 는 store 태그 모드 + 빈 좌표 + 기본 IDW.
     case 'heatmap':
       return { type, title: '히트맵', config: buildDefaultHeatmapConfig() };
+    // SPEC-CANVAS-001: 캔버스 패널. 기본 config 는 store 소스 + 빈 요소 목록 + 기본 트윈이며
+    // `parseCanvasConfig` 가 그대로 받아들이는 형상이다.
+    //
+    // 넓히기(as unknown as Record)가 필요한 이유: `PanelConfig.config` 는
+    // `Record<string, unknown>` 인데 `CanvasPanelConfig` 는 인터페이스라 암묵적 인덱스
+    // 시그니처가 없어 직접 대입되지 않는다. 히트맵 빌더는 반환 타입 자체가 Record 라
+    // 이 문제를 겪지 않았을 뿐, 형상은 두 패널이 같다.
+    case 'canvas':
+      return {
+        type,
+        title: '캔버스',
+        config: buildDefaultCanvasConfig() as unknown as Record<string, unknown>,
+      };
   }
 }
 

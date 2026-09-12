@@ -19,6 +19,15 @@ interface PanelGridBackdropProps {
   cellH: number;
   gapX: number;
   gapY: number;
+  /**
+   * 패널 상자가 가운데에서 밀려난 화면 px(미리보기 팬 — `previewPan.ts`).
+   *
+   * 칸 경계는 **패널 상자**에 맞춘다. 그래서 그 상자가 끌려가면 격자도 같은 만큼 따라가야
+   * 한다 — 따라가지 않으면 패널 모서리와 칸 경계가 어긋나, 격자가 "여기가 칸 경계다" 라고
+   * 거짓말을 한다. 기본 0 이라 팬을 쓰지 않는 자리는 종전과 한 글자도 다르지 않다.
+   */
+  offsetX?: number;
+  offsetY?: number;
 }
 
 /**
@@ -27,8 +36,8 @@ interface PanelGridBackdropProps {
  * 패널 상자는 영역 가운데에 놓이므로, 그 왼쪽 모서리에서 칸 간격만큼 거슬러 올라가
  * 영역 밖까지 확장한다. 그래야 패널 주변의 칸이 패널의 칸과 같은 격자에 놓인다.
  */
-function gridStart(areaLen: number, boxLen: number, pitch: number): number {
-  const boxStart = (areaLen - boxLen) / 2;
+function gridStart(areaLen: number, boxLen: number, pitch: number, offset: number): number {
+  const boxStart = (areaLen - boxLen) / 2 + offset;
   if (!(pitch > 0)) return boxStart;
   return boxStart - Math.ceil(Math.max(0, boxStart) / pitch) * pitch;
 }
@@ -48,13 +57,15 @@ export function PanelGridBackdrop({
   cellH,
   gapX,
   gapY,
+  offsetX = 0,
+  offsetY = 0,
 }: PanelGridBackdropProps) {
   const pitchX = cellW + gapX;
   const pitchY = cellH + gapY;
   if (!(pitchX > 0) || !(pitchY > 0)) return null;
 
-  const left = gridStart(areaW, boxW, pitchX);
-  const top = gridStart(areaH, boxH, pitchY);
+  const left = gridStart(areaW, boxW, pitchX, offsetX);
+  const top = gridStart(areaH, boxH, pitchY, offsetY);
   const cols = gridCount(areaW, left, pitchX);
   const rows = gridCount(areaH, top, pitchY);
 

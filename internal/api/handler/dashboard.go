@@ -37,10 +37,17 @@ import (
 	"github.com/xtra/xflow/internal/storage"
 )
 
-// maxDashboardPayloadBytes 는 PUT 페이로드의 최대 크기이다 (spec.md §2.13 UB1 #9).
+// maxDashboardPayloadBytes 는 PUT 페이로드 최대 크기의 **컴파일 기본값**이다
+// (spec.md §2.13 UB1 #9).
 //
 // 초과 시 413 Payload Too Large 로 거부하며 저장하지 않는다. 단위가 묶음에서
 // 1장으로 줄었으므로 실효 상한은 완화되었다(spec.md §2.3).
+//
+// **이 수는 더 이상 유일한 상한이 아니다** (@SPEC:SPEC-CANVAS-007 §결정 14). 실제로
+// 적용되는 값은 `DashboardHandler.payloadLimit` 이며, 그것은 설정된 캔버스 요소 수에서
+// 유도된다(config.DeriveDashboardPayloadBytes). 이 상수는 주입이 없을 때 — 설정을 모르는
+// 테스트와 구형 배선 — 의 폴백으로 남고, 그 값이 유도 예산의 **바닥**과 같으므로
+// (config.MinDashboardPayloadBytes) 주입 유무로 상한이 줄어드는 일은 없다.
 const maxDashboardPayloadBytes = 256 * 1024
 
 // maxDashboardNameRunes 는 대시보드 이름의 최대 길이이다 (spec.md §2.7).
@@ -85,6 +92,22 @@ type DashboardHandler struct {
 	// authEnabled 는 basic_auth.enabled 이다. false 이면 spec.md §2.10 S1 에 따라
 	// 모든 인가 판정이 허용으로 처리되고 owner 는 빈 문자열이 된다.
 	authEnabled bool
+
+	// payloadLimit 은 PUT 본문 상한이다(바이트). 0 이면 maxDashboardPayloadBytes 를 쓴다.
+	// 설정된 캔버스 요소 수에서 유도되어 WithPayloadLimit 으로 주입된다
+	// (@SPEC:SPEC-CANVAS-007 §결정 14).
+	payloadLimit int64
+}
+
+// maxPayloadBytes 는 이 핸들러에 적용되는 본문 상한을 반환한다.
+//
+// 주입이 없으면(0) 컴파일 기본값으로 떨어진다 — 구형 배선과 설정을 모르는 테스트가
+// 그대로 살아 있게 하는 자리다.
+func (h *DashboardHandler) maxPayloadBytes() int64 {
+	if h.payloadLimit > 0 {
+		return h.payloadLimit
+	}
+	return maxDashboardPayloadBytes
 }
 
 // NewDashboardHandler 는 새 DashboardHandler 를 생성한다.
@@ -125,6 +148,17 @@ func (h *DashboardHandler) WithAuthEnabled(enabled bool) *DashboardHandler {
 // WithSubjectDB 는 ACL subject 실재 검증에 쓰일 DB 핸들을 주입한다.
 func (h *DashboardHandler) WithSubjectDB(db *sql.DB) *DashboardHandler {
 	h.db = db
+	return h
+}
+
+// WithPayloadLimit 은 PUT 본문 상한을 주입한다 (@SPEC:SPEC-CANVAS-007 §결정 14).
+//
+// 설정된 캔버스 요소 수에서 유도된 값(config.Config.Dashboard().PayloadBudgetBytes)을
+// 받는다. 0 이하는 무시되어 컴파일 기본값이 남는다 — 주입이 상한을 **줄이는** 길은 없다.
+func (h *DashboardHandler) WithPayloadLimit(limit int64) *DashboardHandler {
+	if limit > 0 {
+		h.payloadLimit = limit
+	}
 	return h
 }
 
@@ -731,18 +765,22 @@ func (h *DashboardHandler) updateError(ctx api.Context, err error, uid string, s
 	return api.ErrInternalServer.WithMessage("대시보드 저장 실패")
 }
 
-// readBody 는 256KB 상한을 적용해 요청 본문을 읽는다 (spec.md §2.13 UB1 #9).
+// readBody 는 페이로드 상한을 적용해 요청 본문을 읽는다 (spec.md §2.13 UB1 #9).
+//
+// 상한은 설정된 캔버스 요소 수에서 유도된 값이며(@SPEC:SPEC-CANVAS-007 §결정 14),
+// 주입이 없으면 컴파일 기본값 256KB 다.
 func (h *DashboardHandler) readBody(ctx api.Context) ([]byte, error) {
+	limit := h.maxPayloadBytes()
 	// Content-Length 헤더 기반 사전 거부 (정확하지 않을 수 있으므로 reader 단계도 보강).
 	if cl := ctx.GetHeader("Content-Length"); cl != "" {
-		if n, err := strconv.ParseInt(cl, 10, 64); err == nil && n > maxDashboardPayloadBytes {
-			return nil, errPayloadTooLargeAPI()
+		if n, err := strconv.ParseInt(cl, 10, 64); err == nil && n > limit {
+			return nil, errPayloadTooLargeAPI(limit)
 		}
 	}
-	body, err := readLimitedBody(ctx, maxDashboardPayloadBytes)
+	body, err := readLimitedBody(ctx, limit)
 	if err != nil {
 		if errors.Is(err, errPayloadTooLarge) {
-			return nil, errPayloadTooLargeAPI()
+			return nil, errPayloadTooLargeAPI(limit)
 		}
 		return nil, api.ErrBadRequest.WithMessage("read body: " + err.Error())
 	}
@@ -804,15 +842,18 @@ func newDashboardUID() string {
 // errPayloadTooLarge 는 readLimitedBody 의 내부 sentinel.
 var errPayloadTooLarge = errors.New("payload too large")
 
-// errPayloadTooLargeAPI 는 256KB 초과 시 반환되는 APIError 를 생성한다 (HTTP 413).
+// errPayloadTooLargeAPI 는 상한 초과 시 반환되는 APIError 를 생성한다 (HTTP 413).
 //
 // api 패키지의 사전 정의 sentinel 에는 413 이 없으므로 핸들러 레벨에서 직접 생성.
 // router.handleError 가 APIError.HTTPCode 를 그대로 사용하여 응답 코드를 결정한다.
-func errPayloadTooLargeAPI() *api.APIError {
+//
+// **limit 을 인자로 받는다** — 상한이 설정에서 오므로(@SPEC:SPEC-CANVAS-007 §결정 14)
+// 메시지가 상수를 읽으면 실제로 적용된 수와 다른 수를 사용자에게 말하게 된다.
+func errPayloadTooLargeAPI(limit int64) *api.APIError {
 	return &api.APIError{
 		HTTPCode: http.StatusRequestEntityTooLarge,
 		Code:     "PAYLOAD_TOO_LARGE",
-		Message:  fmt.Sprintf("payload exceeds %d bytes", maxDashboardPayloadBytes),
+		Message:  fmt.Sprintf("payload exceeds %d bytes", limit),
 	}
 }
 

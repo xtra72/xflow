@@ -45,6 +45,12 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("device_history.interval", "10s")
 	v.SetDefault("device_history.max_entries", 100)
 
+	// 대시보드 기본값 (@SPEC:SPEC-CANVAS-007 §결정 14).
+	// 한 번의 SVG 가져오기가 만들 수 있는 요소 수의 상한이며, 대시보드 PUT 페이로드
+	// 예산이 이 수에서 유도된다(dashboard_budget.go). 기본 1024 는 프론트엔드가 그동안
+	// 컴파일 상수로 들고 있던 그 수이므로, 설정을 쓰지 않는 설치는 동작이 달라지지 않는다.
+	v.SetDefault("dashboard.max_canvas_elements", DefaultMaxCanvasElements)
+
 	// 인증 기본값
 	v.SetDefault("auth.jwt.secret", "")
 	v.SetDefault("auth.jwt.access_ttl", "15m")

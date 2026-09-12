@@ -59,6 +59,65 @@ describe('PanelGridBackdrop', () => {
     expect(inner.style.gap).toBe(`${GAP}px ${GAP}px`);
   });
 
+  it('상자가 끌려가면 칸도 같은 만큼 따라간다 — 어긋나면 격자가 거짓말을 한다', () => {
+    // 미리보기를 확대해 넘친 그림을 끌면(`previewPan.ts`) 패널 상자가 가운데에서 밀린다.
+    // 칸 경계는 그 상자에 맞추므로, 따라가지 않으면 패널 모서리와 칸이 어긋난다.
+    render(
+      <PanelGridBackdrop areaW={800} areaH={600} boxW={448} boxH={332} {...base} offsetX={40} />,
+    );
+
+    const left = gridLeft();
+    const boxLeft = (800 - 448) / 2 + 40;
+    expect(((boxLeft - left) / (CELL + GAP)) % 1).toBeCloseTo(0, 10);
+    expect(left).toBeLessThanOrEqual(0);
+  });
+
+  it('밀린 뒤에도 영역 전체를 덮는다 — 끌었다고 가장자리에 빈 띠가 남으면 안 된다', () => {
+    render(
+      <PanelGridBackdrop
+        areaW={800}
+        areaH={600}
+        boxW={1200}
+        boxH={900}
+        {...base}
+        offsetX={200}
+        offsetY={150}
+      />,
+    );
+
+    const inner = screen.getByTestId('panel-grid-backdrop').firstElementChild as HTMLElement;
+    const cols = Number(inner.style.gridTemplateColumns.match(/repeat\((\d+),/)![1]!);
+    const rows = Number(inner.style.gridTemplateRows.match(/repeat\((\d+),/)![1]!);
+    const left = gridLeft();
+    const top = Number.parseFloat(inner.style.top);
+
+    expect(left).toBeLessThanOrEqual(0);
+    expect(top).toBeLessThanOrEqual(0);
+    expect(left + cols * (CELL + GAP)).toBeGreaterThanOrEqual(800);
+    expect(top + rows * (CELL + GAP)).toBeGreaterThanOrEqual(600);
+  });
+
+  it('밀지 않으면 종전과 한 픽셀도 다르지 않다 — 기본값 0 이 옛 화면을 지킨다', () => {
+    const { unmount } = render(
+      <PanelGridBackdrop areaW={800} areaH={600} boxW={448} boxH={332} {...base} />,
+    );
+    const before = gridLeft();
+    unmount();
+
+    render(
+      <PanelGridBackdrop
+        areaW={800}
+        areaH={600}
+        boxW={448}
+        boxH={332}
+        {...base}
+        offsetX={0}
+        offsetY={0}
+      />,
+    );
+    expect(gridLeft()).toBe(before);
+  });
+
   it('칸 간격이 0 이면 그리지 않는다 — 무한 루프 대신 아무것도 그리지 않는다', () => {
     const { container } = render(
       <PanelGridBackdrop

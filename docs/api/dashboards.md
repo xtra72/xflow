@@ -32,6 +32,8 @@ xflow 대시보드 페이지/그리드/레이아웃 구성을 SQLite 영속 저�
 
 > **인증 필수**: 모든 엔드포인트는 `Authorization: Bearer <jwt>` 헤더를 요구한다. `basic_auth` 가 비활성화된 상태로는 부팅을 거부한다. 자세한 내용은 [README 인증 섹션](../../README.md#인증-authentication) 참조.
 
+> 이 표 밖에 상한 조회 엔드포인트 `GET /api/v1/dashboard-limits`(권한 `dashboard.read`)가 있다 — §4 [페이로드 크기 한도](#페이로드-크기-한도) 참조.
+
 ## 3. 응답 코드
 
 | 코드 | 의미 |
@@ -43,7 +45,7 @@ xflow 대시보드 페이지/그리드/레이아웃 구성을 SQLite 영속 저�
 | `403 Forbidden` | 권한 부족 (예: editor 가 `PUT /shared` 시도) |
 | `404 Not Found` | GET 시 snapshot 미존재 (초기 상태) |
 | `409 Conflict` | PUT 시 `If-Match` version 불일치 (body 에 서버측 최신 snapshot 포함) |
-| `413 Payload Too Large` | payload 크기 256 KB 초과 |
+| `413 Payload Too Large` | payload 크기가 서버 예산 초과 (§4 [페이로드 크기 한도](#페이로드-크기-한도)) |
 | `500 Internal Server Error` | 저장소 I/O 실패 |
 
 ## 4. 데이터 모델
@@ -106,8 +108,38 @@ PUT 요청 body 는 다음 구조의 JSON 이다:
 
 ### 페이로드 크기 한도
 
-- 단일 PUT 페이로드는 **256 KB 이하** 여야 한다. 초과 시 `413 Payload Too Large`.
+> **고정 256 KB 가 아니다** (SPEC-CANVAS-007 §결정 14). 예산은 서버 설정 `dashboard.max_canvas_elements` 에서 **유도된다** — 운영자가 캔버스에 몇 개짜리 도면을 들일지 정하고, 서버가 그 수에 필요한 자리를 확보한다.
+
+- 예산 = `max_canvas_elements × 1 KiB`, `[256 KB, 8 MiB]` 로 죈다. 기본값 1024 개에서 **1 MiB**.
+  - 바닥 256 KB: 요소 수를 줄인 설정이 이미 저장되던 대시보드를 깨뜨리지 못하게 한다.
+  - 천장 8 MiB: 페이로드 상한은 DoS 방어물이므로 설정 오타가 그 성질을 없애지 못하게 한다. 이 값이 곧 요청 하나가 메모리에 올릴 수 있는 바이트의 상한이다.
+- 초과 시 `413 Payload Too Large`. 응답 메시지는 **그 요청에 실제로 적용된 상한**을 말한다 (자산 업로드는 자기 상한 12 MiB 를 말한다).
 - 평균 가정: 페이지당 패널 20개 이하, 사용자당 페이지 10개 이하 (ASM-004).
+- 적용 중인 값은 아래 조회 엔드포인트로 읽는다.
+
+#### `GET /api/v1/dashboard-limits` — 적용 중인 상한 조회
+
+| 항목 | 값 |
+|------|-----|
+| 인증 | 필수 (JWT) |
+| 권한 | `dashboard.read` |
+| 부수 효과 | 없음 (읽기 전용) |
+
+`200 OK` 응답 `data`:
+
+```json
+{
+  "max_canvas_elements": 1024,
+  "payload_budget_bytes": 1048576
+}
+```
+
+- `max_canvas_elements` — 캔버스 패널의 SVG 가져오기 한 번이 만들 수 있는 요소 수의 상한. 편집기가 이 값을 가져오기 거절 상한으로 쓴다.
+- `payload_budget_bytes` — 위 수에서 유도된 대시보드 PUT 본문 상한. 두 수는 **같은 출처에서 나온 한 쌍**이라 서로 어긋날 수 없다.
+
+> **admin 게이트를 두지 않는다.** 이 값은 비밀이 아니라 편집기가 동작하려면 알아야 하는 수다. admin 으로 죄면 admin 이 아닌 편집자만 컴파일 기본값으로 떨어져, 운영자가 상한을 올려도 그들에게만 가져오기가 거절된다.
+>
+> **클라이언트는 이 창구가 없어도 동작해야 한다.** 오프라인 · 구형 서버(`404`) · 권한 없음(`403`) · 응답 형상 변경은 전부 클라이언트 컴파일 기본값으로 떨어지고 가져오기는 계속된다. 상한이 낡는 것보다 가져오기를 아예 못 하게 되는 것이 나쁘다.
 
 ### `payload.schemaVersion` (선택)
 
