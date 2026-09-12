@@ -28,6 +28,14 @@
 // K3 이 깨진다. 게다가 jsdom 에는 레이아웃이 없어 시험에서 서지 않는다) 또는 선택자 엔진을
 // 들이는 것(신규 의존성이거나 수백 줄, 특이도·상속·`!important` 까지 따라온다)뿐이다.
 //
+// **`light-dark()` 와 `var()` 는 풀어서 읽는다** — 그 둘을 모르면 손에 쥔 색을 버리게 된다.
+// 지금의 draw.io 는 도형마다 표현 속성과 `style` 속성을 **함께** 내보내며(`fill="#f5f5f5"`
+// 와 `style="fill: light-dark(rgb(245,245,245), rgb(26,26,26))"`), `style` 이 이기는 것은
+// 옳지만 이긴 값을 읽지 못하면 모든 도형이 씨앗 색으로 나온다. 그래서 이 층은 (ㄱ) 두 함수
+// 표기를 정적으로 풀고(`resolveCssWideValue`), (ㄴ) 그러고도 읽지 못한 칠 선언은 **같은
+// 요소의 표현 속성으로 되돌린다**(`collectStyleAtoms`). 우선순위를 뒤집는 것이 아니라,
+// 이긴 값이 쓸 수 없을 때 이미 가진 값을 쓰는 것이다.
+//
 // **`opacity` 는 상속되지 않는다.** SVG 의 그룹 불투명도는 "자식들을 따로 그린 뒤 그 결과
 // 전체에 알파를 곱한다" 이지 상속이 아니다. 007 은 대안(그룹 노드)이 없으므로 **자식마다
 // 곱하고 그 사실을 근사로 보고한다** — 겹친 자리가 진해지는 성질을 감추지 않는다.
@@ -122,6 +130,15 @@ export function inheritTextAtoms(parent: StyleAtoms, own: StyleAtoms): Record<st
   return { ...inherited, ...own };
 }
 
+/**
+ * 표현 속성으로 **되돌릴 수 있는** 축 — 칠 둘뿐이다.
+ *
+ * 되돌림의 판정이 `normalizePaint` 인 까닭에 이 목록도 그 함수가 읽는 축과 같아야 한다.
+ * `stop-color` 는 여기 없다: 그 값은 `normalizePaint` 를 지나지 않고
+ * `foldAlphaIntoColor` 로 바로 가므로 같은 판정을 쓸 수 없다.
+ */
+const PAINT_PROP_NAMES = ['fill', 'stroke'] as const;
+
 /** 표현 속성으로도 읽는 스타일 이름 전부(상속 여부와 무관하다). */
 const STYLE_PROP_NAMES = [
   ...INHERITED_STYLE_PROPS,
@@ -136,10 +153,92 @@ const STYLE_PROP_NAMES = [
   'stop-opacity',
 ] as const;
 
+// --- CSS 넓은 값 풀기 ----------------------------------------------------
+
+const CSS_VALUE_CALL = /^([a-z-]+)\(([\s\S]*)\)$/i;
+
+/** 되풀이 상한 — 서로를 가리키는 대체값에서 멈춘다. */
+const CSS_VALUE_MAX_DEPTH = 4;
+
+/**
+ * **최상위 쉼표에서만** 자른 인자 목록. 괄호가 맞지 않으면 `undefined`.
+ *
+ * `light-dark(rgb(245, 245, 245), rgb(26, 26, 26))` 의 쉼표는 넷인데 인자는 둘이다 —
+ * `split(',')` 은 `rgb(245` 같은 조각을 내고, 그 조각은 색으로도 아닌 것으로도 읽히지
+ * 않는다. 괄호 깊이를 세는 것이 이 함수의 전부다.
+ *
+ * **따옴표는 세지 않는다.** 칠 값에 따옴표가 드는 표기는 SVG 에서 쓰이지 않으며, 세는
+ * 순간 이 함수가 작은 CSS 토크나이저가 되어 이 파일이 지켜 온 경계(머리말 — 선택자
+ * 엔진을 들이지 않는다)를 넘는다.
+ */
+function splitTopLevelArgs(body: string): string[] | undefined {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i];
+    if (ch === '(') depth += 1;
+    else if (ch === ')') {
+      depth -= 1;
+      // 여는 괄호보다 닫는 괄호가 먼저다 — 바깥 `(…)` 가 한 호출이 아니었다는 뜻이다.
+      if (depth < 0) return undefined;
+    } else if (ch === ',' && depth === 0) {
+      parts.push(body.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  if (depth !== 0) return undefined;
+  parts.push(body.slice(start).trim());
+  return parts;
+}
+
+function resolveCssWide(raw: string, depth: number): string {
+  const value = raw.trim();
+  if (depth >= CSS_VALUE_MAX_DEPTH) return value;
+  const call = CSS_VALUE_CALL.exec(value);
+  if (call === null) return value;
+  const name = (call[1] ?? '').toLowerCase();
+  if (name !== 'light-dark' && name !== 'var') return value;
+  const args = splitTopLevelArgs(call[2] ?? '');
+  if (args === undefined) return value;
+  if (name === 'light-dark') {
+    // 인자가 둘이 아니면 브라우저도 그 선언을 버린다 — 우리도 읽지 못한 것으로 둔다.
+    if (args.length !== 2) return value;
+    return resolveCssWide(args[0] ?? '', depth + 1);
+  }
+  // `var(--x, F)` — 첫 인자는 사용자 지정 속성이어야 하고, 대체값이 있어야 읽을 것이 있다.
+  if (args.length < 2 || !(args[0] ?? '').startsWith('--')) return value;
+  const fallback = args.slice(1).join(', ');
+  if (fallback === '') return value;
+  return resolveCssWide(fallback, depth + 1);
+}
+
+/**
+ * `light-dark()` 와 `var()` 를 **정적으로** 푼다. 읽지 못하는 표기는 그대로 돌려준다.
+ *
+ * **고르는 쪽마다 근거가 다르다.**
+ *   - `light-dark(A, B)` → `A`. 가져온 그림은 밝은 바탕에 대고 그려진 것이며(같은 파일의
+ *     바탕 `<rect>` 가 `#ffffff` 를 든다), 이 층에는 읽을 수 있는 색 구성이 없다
+ *     (`prefers-color-scheme` 은 살아 있는 문서의 것이고 불변식 K3 이 그것을 막는다).
+ *     둘 중 하나를 골라야 한다면 **저자가 기본으로 본 쪽**이다.
+ *   - `var(--x, F)` → `F`. 사용자 지정 속성의 실제 값은 살아 있는 캐스케이드에만 있고,
+ *     선언된 대체값은 저자가 "이 변수가 없으면 이 색" 이라고 **적어 둔** 값이다.
+ *   - `var(--x)` → 그대로. 대체값이 없으면 우리가 아는 것이 없으므로, 모르는 채로 두어
+ *     `normalizePaint` 의 `unsupported` 와 그 보고(`paintUnresolved`)에 닿게 한다.
+ *     모르는 것을 짐작해 색으로 통과시키는 것이 이 층에서 가장 나쁜 실패다(아래
+ *     `normalizePaint` 머리말).
+ */
+export function resolveCssWideValue(raw: string): string {
+  return resolveCssWide(raw, 0);
+}
+
 /**
  * `style="fill:red;stroke:none"` → 이름/값 표.
  *
  * 값 안의 콜론(`url(a:b)`)을 지키기 위해 **첫 콜론에서만** 자른다.
+ *
+ * 값은 `resolveCssWideValue` 를 지난다 — 칠뿐 아니라 활자 축도 같은 표기를 들 수 있고
+ * (`font-size: var(--fs, 12px)`), 푸는 자리를 둘로 나누면 규칙이 두 벌이 된다.
  */
 export function parseStyleAttribute(raw: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
@@ -148,7 +247,7 @@ export function parseStyleAttribute(raw: string | undefined): Record<string, str
     const colon = chunk.indexOf(':');
     if (colon === -1) continue;
     const name = chunk.slice(0, colon).trim().toLowerCase();
-    const value = chunk.slice(colon + 1).trim();
+    const value = resolveCssWideValue(chunk.slice(colon + 1));
     if (name !== '' && value !== '') out[name] = value;
   }
   return out;
@@ -161,12 +260,38 @@ export function parseStyleAttribute(raw: string | undefined): Record<string, str
  * 높다). 이 순서가 뒤집히면 `fill="red" style="fill:blue"` 인 도형이 빨갛게 나온다.
  */
 export function collectStyleAtoms(attrs: AttrBag): Record<string, string> {
-  const out: Record<string, string> = {};
+  const presented: Record<string, string> = {};
   for (const name of STYLE_PROP_NAMES) {
     const value = attrs[name];
-    if (value !== undefined && value.trim() !== '') out[name] = value.trim();
+    if (value !== undefined && value.trim() !== '') presented[name] = value.trim();
   }
-  return { ...out, ...parseStyleAttribute(attrs['style']) };
+  const declared = parseStyleAttribute(attrs['style']);
+  const merged: Record<string, string> = { ...presented, ...declared };
+
+  // **읽지 못한 선언이 읽을 수 있는 속성을 가리지 않는다.**
+  //
+  // 우선순위는 그대로다 — `style` 이 이긴다. 되돌리는 것은 이긴 값이 **쓸 수 없을 때**
+  // 뿐이고, 그때의 선택지는 둘이다: 씨앗 색으로 떨어지거나(`resolveStyle` 의
+  // `unsupported` 가지), 같은 요소가 이미 든 색을 쓰거나. 앞을 고르면 `fill="#f5f5f5"`
+  // 를 손에 쥐고도 도형을 파랗게 칠한다.
+  //
+  // **`none` 은 쓸 수 없는 값이 아니다.** `style="fill:none"` 은 `fill="red"` 를 이겨야
+  // 하고 `url(#g)` 도 마찬가지다 — `normalizePaint` 가 그 둘을 따로 된 갈래로 읽으므로,
+  // 되돌리는 판정을 `unsupported` 하나에 걸면 그 구별이 공짜로 따라온다.
+  //
+  // **표현 속성 쪽도 못 읽는 경우는 따로 가르지 않는다.** 되돌리든 말든 `unsupported` 는
+  // 한 바구니라 `resolveStyle` 이 똑같이 씨앗 색과 `paintUnresolved` 를 낸다 — 그것을
+  // 가르는 가지는 어떤 시험으로도 구별되지 않는(실측: 그 가지를 지워도 62 시험이 모두
+  // 초록인) 죽은 분기다. 되돌림은 보고를 지우는 길이 아니라 **보고할 일이 없게** 만드는
+  // 길이고, 읽을 값이 없으면 보고는 그대로 선다.
+  for (const name of PAINT_PROP_NAMES) {
+    const inline = declared[name];
+    const attr = presented[name];
+    if (inline === undefined || attr === undefined) continue;
+    if (normalizePaint(inline).kind !== 'unsupported') continue;
+    merged[name] = attr;
+  }
+  return merged;
 }
 
 /**

@@ -18,6 +18,20 @@
 //   6. `evenOdd` 보고를 "성공하면 생략" 으로 바꾸면 → "언제나 근사로 보고한다" 가 빨개진다.
 //   7. 선이 있을 때 `strokeWidth` 를 비우면 → "선이 있으면 두께를 반드시 적는다" 가
 //      빨개진다.
+//   8. `splitTopLevelArgs` 의 괄호 깊이 세기를 빼고 `split(',')` 로 바꾸면 → "중첩 괄호
+//      안의 쉼표에서 자르지 않는다" 가 빨개진다(`rgb(245` 가 나온다).
+//   9. `light-dark()` 에서 둘째 인자를 고르면(어두운 값) → "밝은 쪽을 고른다" 가 빨개진다.
+//  10. 되돌림 판정을 `kind !== 'unsupported'` 에서 `kind === 'color'` 로 좁히면(= `none`
+//      까지 되돌림 대상이 되면) → "`style=\"fill:none\"` 은 되돌리지 않는다" 가 빨개진다.
+//  11. `PAINT_PROP_NAMES` 에서 `'stroke'` 를 빼면 → "읽지 못한 선언 자리에 같은 요소의
+//      표현 속성이 선다" 가 빨개진다(고침이 두 축 모두에 걸렸는가).
+//  12. 되돌림을 `normalizePaint` 판정 없이 모든 축에 걸면 → "칠 두 축에만 건다" 를
+//      포함해 넷이 빨개진다.
+//  13. **물지 않은 뮤테이션**: 되돌림에서 **표현 속성 쪽** `unsupported` 검사를 지워도
+//      어느 시험도 빨개지지 않았다(실측 — 62 시험 전부 초록). `unsupported` 가 한
+//      바구니라 둘 중 어느 쪽을 남기든 `resolveStyle` 의 산출(씨앗 색 + `paintUnresolved`)
+//      이 같기 때문이다. 관측할 수 없는 성질을 시험으로 못박는 대신 **그 가지를 지웠다**
+//      (`collectStyleAtoms`) — 어느 시험도 구별하지 못하는 분기는 규칙이 아니라 무게다.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,6 +49,7 @@ import {
   normalizePaint,
   parseOpacity,
   parseStyleAttribute,
+  resolveCssWideValue,
   resolveStyle,
 } from './svgStyle';
 
@@ -417,5 +432,101 @@ describe('`stroke` 만 말한 도형은 **검게 채워진다** — SVG 초기�
     const { style } = resolveStyle({ fill: '#c0392b' });
     expect(style.stroke).toBeUndefined();
     expect(style.strokeWidth).toBeUndefined();
+  });
+});
+
+// --- `light-dark()` · `var()` 와 읽지 못한 선언의 되돌림 (draw.io 내보내기) --------
+
+describe('CSS 넓은 값 풀기 (뮤테이션 8 · 9)', () => {
+  it('`light-dark(A, B)` 는 밝은 쪽을 고른다 (뮤테이션 9)', () => {
+    expect(resolveCssWideValue('light-dark(#f5f5f5, #1a1a1a)')).toBe('#f5f5f5');
+  });
+
+  it('중첩 괄호 안의 쉼표에서 자르지 않는다 (뮤테이션 8)', () => {
+    // 실제 draw.io 내보내기의 값이다. `split(',')` 이면 `rgb(245` 가 나오고, 그것은 색으로도
+    // `none` 으로도 읽히지 않아 도형이 씨앗 색으로 떨어진다 — 고치려던 바로 그 결함이다.
+    const value = resolveCssWideValue('light-dark(rgb(245, 245, 245), rgb(26, 26, 26))');
+    expect(value).toBe('rgb(245, 245, 245)');
+    expect(normalizePaint(value)).toEqual({ kind: 'color', value: 'rgb(245, 245, 245)' });
+  });
+
+  it('`var(--x, F)` 는 적어 둔 대체값을 고른다', () => {
+    expect(resolveCssWideValue('var(--ge-adaptive-bg, #ffffff)')).toBe('#ffffff');
+  });
+
+  it('대체값이 없는 `var(--x)` 는 그대로 둔다 — 모르는 것을 짐작하지 않는다', () => {
+    expect(resolveCssWideValue('var(--ge-adaptive-bg)')).toBe('var(--ge-adaptive-bg)');
+    expect(normalizePaint('var(--ge-adaptive-bg)')).toEqual({ kind: 'unsupported' });
+  });
+
+  it('겹쳐 쓴 것도 풀린다 — 대체값이 다시 `light-dark()` 인 경우', () => {
+    expect(resolveCssWideValue('var(--x, light-dark(#fff, #000))')).toBe('#fff');
+  });
+
+  it('두 표기가 아닌 값은 손대지 않는다', () => {
+    expect(resolveCssWideValue('#f5f5f5')).toBe('#f5f5f5');
+    expect(resolveCssWideValue('rgb(1, 2, 3)')).toBe('rgb(1, 2, 3)');
+    expect(resolveCssWideValue('url(#g)')).toBe('url(#g)');
+    expect(resolveCssWideValue('  none  ')).toBe('none');
+  });
+
+  it('망가진 표기에 예외가 없고 그대로 돌아온다 — 읽지 못한 것으로 남는다', () => {
+    for (const broken of [
+      'light-dark(#fff',
+      'light-dark(#fff)',
+      'light-dark(#fff, #000, #111)',
+      'var(--a) var(--b)',
+      'var(#fff, #000)',
+      'var(--a,)',
+    ]) {
+      expect(resolveCssWideValue(broken)).toBe(broken.trim());
+    }
+  });
+
+  it('`style` 속성의 값이 이 풀기를 지난다', () => {
+    expect(
+      parseStyleAttribute('fill: light-dark(rgb(245, 245, 245), rgb(26, 26, 26)); stroke: var(--s, #666666);'),
+    ).toEqual({ fill: 'rgb(245, 245, 245)', stroke: '#666666' });
+  });
+});
+
+describe('읽지 못한 칠 선언은 표현 속성으로 되돌린다 (뮤테이션 10 · 11 · 12)', () => {
+  it('실제 draw.io 도형이 씨앗 색으로 떨어지지 않는다', () => {
+    // 지금의 draw.io 는 표현 속성과 `style` 을 함께 낸다. 이기는 값을 읽지 못하면 손에 쥔
+    // `#f5f5f5` 를 버리고 도형 전부가 파랗게 나온다.
+    const atoms = collectStyleAtoms({
+      fill: '#f5f5f5',
+      stroke: '#666666',
+      style: 'fill: light-dark(rgb(245, 245, 245), rgb(26, 26, 26)); stroke: light-dark(rgb(102, 102, 102), rgb(149, 149, 149));',
+    });
+    const { style, notes } = resolveStyle(atoms, { fallbackColor: SEED_COLOR });
+    expect(style.fill).toBe('rgb(245, 245, 245)');
+    expect(style.stroke).toBe('rgb(102, 102, 102)');
+    expect(notes).toEqual([]);
+  });
+
+  it('읽지 못한 선언 자리에 같은 요소의 표현 속성이 선다 (뮤테이션 11)', () => {
+    expect(collectStyleAtoms({ fill: '#f5f5f5', style: 'fill: currentColor' })['fill']).toBe('#f5f5f5');
+    expect(collectStyleAtoms({ stroke: '#666666', style: 'stroke: var(--s)' })['stroke']).toBe('#666666');
+  });
+
+  it('`style="fill:none"` 은 되돌리지 않는다 — 그것은 읽은 값이다 (뮤테이션 10)', () => {
+    // 되돌리면 "칠하지 말라" 가 "빨갛게 칠하라" 가 된다. `url(#g)` 도 같은 자리에 있다.
+    expect(collectStyleAtoms({ fill: 'red', style: 'fill:none' })['fill']).toBe('none');
+    expect(collectStyleAtoms({ fill: 'red', style: 'fill:url(#g)' })['fill']).toBe('url(#g)');
+    expect(collectStyleAtoms({ fill: 'red', style: 'fill:blue' })['fill']).toBe('blue');
+  });
+
+  it('두 쪽 모두 읽지 못하면 보고가 산다', () => {
+    const atoms = collectStyleAtoms({ fill: 'var(--a)', style: 'fill: var(--b)' });
+    const { style, notes } = resolveStyle(atoms, { fallbackColor: SEED_COLOR });
+    expect(style.fill).toBe(SEED_COLOR);
+    expect(reasons(notes)).toEqual(['paintUnresolved']);
+  });
+
+  it('칠 두 축에만 건다 — 다른 축에는 되돌릴 판정이 없다 (뮤테이션 12)', () => {
+    // `normalizePaint` 는 칠을 읽는 함수이고, 칠이 아닌 축에 그 판정을 걸면 `display:none`
+    // 같은 값이 "읽지 못한 색" 으로 읽혀 표현 속성으로 되돌아간다.
+    expect(collectStyleAtoms({ display: 'inline', style: 'display:none' })['display']).toBe('none');
   });
 });
