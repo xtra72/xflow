@@ -235,23 +235,27 @@ describe('상한은 **정확히 그 값에서** 받는다 (REQ-03 · `>` 이지 
   });
 
   it('정확히 `MAX_IMPORT_COMMANDS` 개면 **받는다** — 요소 수와 명령 수를 함께 죈다', () => {
-    // 요소 64개 × 명령 10개 = 640. **두 상한 모두 정확히 그 값**이라 어느 쪽 부등호가
-    // 어긋나도 여기서 드러난다.
-    const result = plan(svg(polygon(9).repeat(64)));
+    // 요소 1024개 × 명령 10개 = 10240. **두 상한 모두 정확히 그 값**이라 어느 쪽 부등호가
+    // 어긋나도 여기서 드러난다. 상한 둘을 같은 배(64→1024 · 640→10240)로 올렸으므로
+    // 요소당 10 명령이라는 이 비는 그대로다 — 수를 상수에서 끌어와 그 사실을 못박는다.
+    const perElement = MAX_IMPORT_COMMANDS / MAX_IMPORT_ELEMENTS;
+    expect(perElement).toBe(10);
+    const result = plan(svg(polygon(perElement - 1).repeat(MAX_IMPORT_ELEMENTS)));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.shapes).toHaveLength(64);
+    expect(result.shapes).toHaveLength(MAX_IMPORT_ELEMENTS);
     const total = result.shapes.reduce((sum, s) => sum + commandsOf(s).length, 0);
     expect(total).toBe(MAX_IMPORT_COMMANDS);
     expect(result.report.commands).toBe(MAX_IMPORT_COMMANDS);
   });
 
   it('명령이 하나 더 많으면 거절한다 — 요소 수는 상한 안인데도', () => {
-    const body = polygon(9).repeat(63) + polygon(10);
+    const perElement = MAX_IMPORT_COMMANDS / MAX_IMPORT_ELEMENTS;
+    const body = polygon(perElement - 1).repeat(MAX_IMPORT_ELEMENTS - 1) + polygon(perElement);
     const result = plan(svg(body));
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    // 요소 수(64)는 상한 안이다 — 그래서 이 거절은 **명령 상한**이 낸 것이다.
+    // 요소 수(1024)는 상한 안이다 — 그래서 이 거절은 **명령 상한**이 낸 것이다.
     expect(result.refusal.reason).toBe('tooManyCommands');
     expect(result.refusal.actual).toBe(MAX_IMPORT_COMMANDS + 1);
     expect(result.refusal.limit).toBe(MAX_IMPORT_COMMANDS);
@@ -438,29 +442,50 @@ describe('그리지 않는 것은 요소도 보고도 만들지 않는다 (§결
 // --- 예산 실측 (AC-E5) ------------------------------------------------------
 
 describe('AC-E5 — 최악 가져오기의 실제 직렬화 바이트를 잰다 (가정 A4 · 위험 R6)', () => {
-  /** 대시보드 snapshot PUT 의 상한(실측 `internal/api/handler/dashboard.go`). */
+  /**
+   * 대시보드 snapshot PUT 의 상한.
+   *
+   * **이것은 서버가 실제로 강제한다** — `internal/api/handler/dashboard.go` 의
+   * `maxDashboardPayloadBytes = 256 * 1024` 이며, 넘으면 413 Payload Too Large 로
+   * 거부하고 **저장하지 않는다**. 이 수를 넘긴 config 는 "조금 큰 config" 가 아니라
+   * **저장되지 않는 config** 다.
+   */
   const DASHBOARD_BUDGET = 256 * 1024;
 
   /**
-   * **최악은 명령 전부가 `C` 인 경우다**(`{"c":"C",…}` 가 67B 로 가장 길다). 요소 64 · 명령
-   * 640 을 정확히 채운다 — 요소마다 `C` 아홉과 `M` 하나.
+   * **최악은 명령 전부가 `C` 인 경우다**(`{"c":"C",…}` 가 67B 로 가장 길다). 요소와 명령을
+   * 상한까지 정확히 채운다 — 요소마다 `C` 아홉과 `M` 하나(= 요소당 10 명령).
    */
   function worstCase(): string {
-    const curve = Array.from({ length: 9 }, (_v, i) => `C ${i} ${i + 1} ${i + 2} ${i + 3} ${i + 4} ${i + 5}`).join(' ');
-    return svg(`<path d="M 0 0 ${curve}" fill="#c0392b" stroke="#145a32" stroke-width="3"/>`.repeat(64));
+    const perElement = MAX_IMPORT_COMMANDS / MAX_IMPORT_ELEMENTS;
+    const curve = Array.from(
+      { length: perElement - 1 },
+      (_v, i) => `C ${i} ${i + 1} ${i + 2} ${i + 3} ${i + 4} ${i + 5}`,
+    ).join(' ');
+    return svg(
+      `<path d="M 0 0 ${curve}" fill="#c0392b" stroke="#145a32" stroke-width="3"/>`.repeat(
+        MAX_IMPORT_ELEMENTS,
+      ),
+    );
   }
 
-  // **실측값(이 시험이 잰 수)**: 50,424 B = 49.2 KB = 256KB 예산의 **19.24%**.
-  // 가정 A4 가 "21% 를 넘지 않는다" 로 적은 그 수이며, 실측이 그보다 낮다 — SPEC 의 산술이
-  // 명령당 39~68B 로 셈했는데 실제 좌표가 대개 네 자리보다 짧기 때문이다. 추정치
-  // (`report.estimatedBytes` = 50,433 B)는 실측과 9 B 차이다.
+  // **실측값(이 시험이 잰 수)**: 807,854 B = 789 KB = 256KB 예산의 **308.17%**.
   //
-  // **결함 D3 정정으로 2,816 B(요소당 44 B) 늘었다.** 상자가 요소마다 붙어서가 아니다 —
-  // 직렬화는 예나 지금이나 요소마다 `geometry` 를 한 벌씩 싣는다(공유했던 것은 **값**이지
-  // 자리가 아니었다). 늘어난 것은 **명령 좌표의 자릿수**다: 도형이 제 상자의 로컬 격자로
-  // 다시 정규화되므로 좌표가 문서 격자의 좁은 구간(세 자리)이 아니라 `0..10000` 전체(네
-  // 자리)를 쓴다. 명령 640 개 × 좌표 여섯 ÷ 요소로 나누면 대략 그 44 B 다.
-  it('요소 64 · 명령 640(전부 `C`) = 50,424 B = 256KB 예산의 19.24% (가정 A4 의 21% 이하)', () => {
+  // **상한을 64/640 에서 1024/10240 으로 올리기 전에는 이 수가 50,424 B(19.24%)였고, 가정
+  // A4 는 "21% 를 넘지 않는다" 였다. 그 가정은 이제 거짓이다.** 최악 가져오기는 예산을
+  // 세 배 넘게 넘기며, 그런 config 는 PUT 에서 413 을 받아 **저장되지 않는다**.
+  //
+  // **이 시험은 이제 "예산 안에 있다" 를 지키지 않는다.** 지키는 것은 두 가지다 —
+  //   ① 최악이 얼마인지를 **실측한 수로** 남긴다(손으로 센 상수는 형상이 바뀌는 날 조용히
+  //      틀린다. 상한을 올린 이 날이 바로 그날이었다).
+  //   ② 상한 둘을 정확히 채웠다는 사실. 못 채웠으면 "최악" 이 최악이 아니다.
+  //
+  // **줄일 곳은 `MAX_IMPORT_COMMANDS` 가 아니다.** 명령을 한 칸도 쓰지 않는 문서
+  // (문구 1024 × 한글 256자 = 919,470 B · 350.75% — `svgImportNative.test.ts` §예산 의 B)가
+  // 이미 예산을 세 배 넘긴다. 즉 명령 상한을 0 으로 두어도 예산은 지켜지지 않는다. 예산을
+  // 지키는 유일한 길은 **바이트로 세운 한도**이며, 그것은 이 상한들을 되돌리는 일이 아니라
+  // 따로 짓는 일이다(아직 짓지 않았다).
+  it('요소 1024 · 명령 10240(전부 `C`) = 807,854 B = 256KB 예산의 308.17% — **예산을 넘긴다**', () => {
     const result = plan(worstCase());
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -473,20 +498,22 @@ describe('AC-E5 — 최악 가져오기의 실제 직렬화 바이트를 잰다 
 
     const { created } = appendImportedElements([], result.shapes);
     const bytes = new TextEncoder().encode(JSON.stringify(created)).length;
-    const ratio = bytes / DASHBOARD_BUDGET;
 
-    // **21% 를 넘으면 줄일 곳은 `MAX_IMPORT_COMMANDS` 다**(위험 R6 · 가정 A4). 그 사실을
-    // 이 상한이 말한다 — 넘어가는 변경은 여기서 빨개지고, 시험 이름이 실측값을 든다.
-    expect(bytes).toBeGreaterThan(40 * 1024);
-    expect(ratio).toBeLessThan(0.21);
-    // 추정이 실측과 크게 어긋나지 않는다 — 어긋나면 추정을 믿고 상한을 정한 근거가 무너진다.
+    // **실측을 못박는다.** 이 수가 움직이면 형상이 바뀐 것이고, 그때 다시 재야 한다.
+    expect(bytes).toBe(807854);
+
+    // **예산을 넘긴다는 사실 자체를 못박는다** — 되돌아가 초록이 되는 날은 바이트 한도를
+    // 지었거나 상한을 도로 내린 날이며, 어느 쪽이든 이 줄이 알려야 한다.
+    expect(bytes).toBeGreaterThan(DASHBOARD_BUDGET);
+    expect(bytes / DASHBOARD_BUDGET).toBeGreaterThan(3);
+
+    // 추정이 실측과 크게 어긋나지 않는다 — 화면이 사용자에게 보여 주는 수가 그 추정이고
+    // (`CanvasSvgImport` 가 "약 N KB" 로 읽는다), 지금은 **그 표시가 유일한 방어**다.
     expect(result.report.estimatedBytes).toBeGreaterThan(bytes * 0.8);
     expect(result.report.estimatedBytes).toBeLessThan(bytes * 1.2);
 
-    // 서랍 한 항목으로 넣었을 때의 비도 함께 적는다(`SCRATCHPAD_MAX_BYTES` = 256KB).
-    // 서랍 한 항목으로 넣으면 `SCRATCHPAD_MAX_BYTES`(256KB)의 같은 비를 쓴다 — 서랍이
-    // 50건까지이므로 이런 가져오기 다섯 건이면 서랍이 찬다.
-    const drawerRatio = bytes / SCRATCHPAD_MAX_BYTES;
-    expect(drawerRatio).toBeLessThan(0.21);
+    // 서랍 한 항목으로 넣었을 때도 마찬가지다(`SCRATCHPAD_MAX_BYTES` = 256KB) — 한 건이
+    // 서랍 한 칸의 세 배이므로, 이런 가져오기는 서랍에 **한 건도** 들어가지 않는다.
+    expect(bytes).toBeGreaterThan(SCRATCHPAD_MAX_BYTES);
   });
 });

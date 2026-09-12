@@ -54,7 +54,11 @@ import { MAX_PATH_COMMANDS } from '../shapes/pathTypes';
 import { planSvgImport, type ImportedShapeSpec } from './svgImportPlan';
 import { shorthandNativeShape, shorthandShapeCommands } from './svgShapes';
 import { IDENTITY_MATRIX, parseTransformList, preservesAxisAlignment } from './svgTransform';
-import { MAX_IMPORT_ELEMENTS, MAX_IMPORT_TEXT_LENGTH } from './svgImportTypes';
+import {
+  MAX_IMPORT_COMMANDS,
+  MAX_IMPORT_ELEMENTS,
+  MAX_IMPORT_TEXT_LENGTH,
+} from './svgImportTypes';
 
 const CANVAS: CanvasSize = { width: 500, height: 400 };
 
@@ -483,7 +487,23 @@ describe('보고 — 도형 수는 전부를, 명령 수는 경로만 센다', (
 // --- ⑦ 예산 재실측 ---------------------------------------------------------
 
 describe('예산 — 최악을 **다시 잰다** (위험 R6)', () => {
+  /**
+   * 대시보드 snapshot PUT 의 상한.
+   *
+   * **이것은 서버가 실제로 강제한다** — `internal/api/handler/dashboard.go` 의
+   * `maxDashboardPayloadBytes = 256 * 1024` 이며, 넘으면 413 Payload Too Large 로
+   * 거부하고 **저장하지 않는다**.
+   */
   const DASHBOARD_BUDGET = 256 * 1024;
+
+  /** 요소 하나에 실리는 명령 수(상한 둘의 비) — 64/640 때나 1024/10240 인 지금이나 10 이다. */
+  const PER_ELEMENT = MAX_IMPORT_COMMANDS / MAX_IMPORT_ELEMENTS;
+
+  /** 명령 전부를 **가장 적은 경로에** 몰았을 때의 그 경로 수. */
+  const FEWEST_PATHS = MAX_IMPORT_COMMANDS / MAX_PATH_COMMANDS;
+
+  /** 명령을 몰고 **남은 요소 자리** — 최악은 이 자리를 무엇으로 채우느냐로 갈린다. */
+  const FILL = MAX_IMPORT_ELEMENTS - FEWEST_PATHS;
 
   /** `n` 개의 명령을 든 `<path>` 하나(`M` 하나 + `C` n−1). */
   function curvePath(commands: number): string {
@@ -512,59 +532,69 @@ describe('예산 — 최악을 **다시 잰다** (위험 R6)', () => {
   }
 
   // **실측 표(이 시험이 잰 수).** 손으로 센 상수를 그대로 두지 않는 이유는 형상이 바뀌는
-  // 날 조용히 틀리기 때문이고, 원시형 치환이 바로 그 "형상이 바뀌는 날" 이다.
+  // 날 조용히 틀리기 때문이고, **상한을 64/640 에서 1024/10240 으로 올린 날이 바로 그
+  // "형상이 바뀌는 날"** 이다(§결정 13). 그래서 표 전체를 산술이 아니라 **실측으로** 갈았다 —
+  // 옛 수를 16배 해서 적지 않았다.
   //
-  // 후보 넷을 모두 재고 **가장 큰 것**을 최악으로 적는다. 원시형은 요소 자리를 먹되 명령을
-  // 먹지 않으므로 "명령을 적은 경로에 몰고 남은 자리를 채운다" 는 그 전략의 **채울 것**이
-  // 하나 늘었다 — 그래서 후보에 든다. 다만 원시형 요소 한 건은 256자 한글 문구 한 건보다
-  // 훨씬 짧으므로 최악을 갱신하지 못한다. 그 사실을 **재서** 적는다.
-  it('네 후보를 재고 가장 큰 것을 최악으로 적는다', () => {
+  // 후보 다섯을 모두 재고 **가장 큰 것**을 최악으로 적는다.
+  it('다섯 후보를 재고 가장 큰 것을 최악으로 적는다', () => {
     const measured = {
-      경로64_명령640: bytesOf(svg(curvePath(10).repeat(64))),
-      문구64_한글256: bytesOf(svg(Array.from({ length: 64 }, (_v, i) => koreanText(i)).join(''))),
-      원시형64: bytesOf(svg(Array.from({ length: 64 }, (_v, i) => nativeRect(i)).join(''))),
-      경로3_명령640_문구61: bytesOf(
+      경로1024_명령10240: bytesOf(svg(curvePath(PER_ELEMENT).repeat(MAX_IMPORT_ELEMENTS))),
+      문구1024_한글256: bytesOf(
+        svg(Array.from({ length: MAX_IMPORT_ELEMENTS }, (_v, i) => koreanText(i)).join('')),
+      ),
+      원시형1024: bytesOf(
+        svg(Array.from({ length: MAX_IMPORT_ELEMENTS }, (_v, i) => nativeRect(i)).join('')),
+      ),
+      경로40_명령10240_문구984: bytesOf(
         svg(
-          curvePath(MAX_PATH_COMMANDS) +
-            curvePath(MAX_PATH_COMMANDS) +
-            curvePath(640 - 2 * MAX_PATH_COMMANDS) +
-            Array.from({ length: 61 }, (_v, i) => koreanText(i)).join(''),
+          curvePath(MAX_PATH_COMMANDS).repeat(FEWEST_PATHS) +
+            Array.from({ length: FILL }, (_v, i) => koreanText(i)).join(''),
         ),
       ),
-      경로3_명령640_원시형61: bytesOf(
+      경로40_명령10240_원시형984: bytesOf(
         svg(
-          curvePath(MAX_PATH_COMMANDS) +
-            curvePath(MAX_PATH_COMMANDS) +
-            curvePath(640 - 2 * MAX_PATH_COMMANDS) +
-            Array.from({ length: 61 }, (_v, i) => nativeRect(i)).join(''),
+          curvePath(MAX_PATH_COMMANDS).repeat(FEWEST_PATHS) +
+            Array.from({ length: FILL }, (_v, i) => nativeRect(i)).join(''),
         ),
       ),
     };
     const worst = Math.max(...Object.values(measured));
 
     // **실측값** — 이 시험이 이 고정 입력으로 잰 수다(256KB 예산 대비 비를 함께 적는다).
-    //   경로 64 · 명령 640(전부 `C`)      =  50,424 B = 19.24%
-    //   문구 64 × 256자 한글              =  57,400 B = 21.90%
-    //   원시형 64(사각 · 칠과 선 둘 다)   =   9,528 B =  3.63%
-    //   경로 3(명령 640) + 문구 61        =  98,208 B = 37.46%  ← **최악**
-    //   경로 3(명령 640) + 원시형 61      =  52,580 B = 20.06%
-    //
-    // SPEC 의 표(97,465 B · 37.18%)와 어긋나는 것은 **고정 입력이 다르기 때문**이다 —
-    // 좌표 자릿수와 `<text>` 의 `x` 배치가 달라 요소마다 몇 바이트씩 차이가 난다. 원시형
-    // 치환은 경로·문구 후보를 한 바이트도 건드리지 않으므로(그 요소들의 형상이 그대로다)
-    // **최악 자체는 움직이지 않았다.** 움직인 것은 SPEC 에 적힌 수가 어느 문서를 잰 것인가다.
-    expect(measured.경로64_명령640).toBe(50424);
-    expect(measured.문구64_한글256).toBe(57400);
-    expect(measured.원시형64).toBe(9528);
-    expect(measured.경로3_명령640_문구61).toBe(98208);
-    expect(measured.경로3_명령640_원시형61).toBe(52580);
+    //   경로 1024 · 명령 10240(전부 `C`)     =   807,854 B = 308.17%
+    //   문구 1024 × 256자 한글               =   919,470 B = 350.75%
+    //   원시형 1024(사각 · 칠과 선 둘 다)    =   153,518 B =  58.56%
+    //   경로 40(명령 10240) + 원시형 984     =   842,558 B = 321.41%
+    //   경로 40(명령 10240) + 문구 984       = 1,578,590 B = 602.18%  ← **최악**
+    expect(measured.경로1024_명령10240).toBe(807854);
+    expect(measured.문구1024_한글256).toBe(919470);
+    expect(measured.원시형1024).toBe(153518);
+    expect(measured.경로40_명령10240_원시형984).toBe(842558);
+    expect(measured.경로40_명령10240_문구984).toBe(1578590);
 
-    // 최악은 여전히 **경로 3 + 문구 61** 이다 — 원시형은 명령을 안 먹지만 제 몸집이
-    // 256자 한글 문구의 1/6 이라, 남은 자리를 원시형으로 채우면 예산이 오히려 **줄어든다**.
-    expect(worst).toBe(measured.경로3_명령640_문구61);
-    expect(worst / DASHBOARD_BUDGET).toBeLessThan(0.38);
-    // 그리고 원시형만으로는 최악 근처에도 가지 못한다 — 치환은 예산을 **푸는** 방향이다.
-    expect(measured.원시형64).toBeLessThan(measured.경로64_명령640 / 5);
+    // **표의 구조는 옛 상한에서와 같다.** 최악은 여전히 **명령을 가장 적은 경로에 몰고 남은
+    // 자리를 문구로 채운** 것이다 — 그 전략이 상한의 비가 바뀌어도 살아남는지가 이 표를
+    // 다시 재면서 확인해야 했던 것이고, 살아남았다. 달라진 것은 몰 경로가 3 에서 40 으로,
+    // 채울 자리가 61 에서 984 로 는 것뿐이다.
+    expect(worst).toBe(measured.경로40_명령10240_문구984);
+    // 원시형은 여전히 최악을 갱신하지 못한다 — 명령을 안 먹지만 제 몸집이 256자 한글 문구의
+    // 1/6 이라, 남은 자리를 원시형으로 채우면 예산이 오히려 **줄어든다**.
+    expect(measured.경로40_명령10240_원시형984).toBeLessThan(measured.경로40_명령10240_문구984);
+
+    // **다섯 중 넷이 예산을 넘는다.** 옛 상한에서는 최악조차 37.46% 로 예산 안이었다.
+    // 이 시험이 지키는 것은 이제 "예산 안에 있다" 가 아니라 "얼마나 넘는지를 실측으로
+    // 남긴다" 이다. 되돌아가 이 줄이 빨개지는 날은 바이트 한도를 지었거나 상한을 도로
+    // 내린 날이며, 어느 쪽이든 알아야 한다.
+    expect(worst).toBeGreaterThan(DASHBOARD_BUDGET);
+    expect(worst / DASHBOARD_BUDGET).toBeGreaterThan(6);
+
+    // **명령 상한은 예산의 죔쇠가 아니다.** 명령을 한 칸도 쓰지 않는 문구 1024 짜리 문서가
+    // 이미 예산의 세 배다 — 즉 `MAX_IMPORT_COMMANDS` 를 0 으로 두어도 예산은 지켜지지
+    // 않는다. 예산을 지키려면 **바이트로 세운 한도**여야 하며, 아직 그것은 없다.
+    expect(measured.문구1024_한글256).toBeGreaterThan(3 * DASHBOARD_BUDGET);
+    // 요소 상한만으로 예산이 지켜지는 것은 가장 가벼운 후보(원시형)뿐이다.
+    expect(measured.원시형1024).toBeLessThan(DASHBOARD_BUDGET);
   });
 });
 

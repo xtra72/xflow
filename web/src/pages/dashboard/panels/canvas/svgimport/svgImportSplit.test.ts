@@ -332,12 +332,13 @@ describe('명령 상한: 나누고, 안 되면 거절한다 (AC-06 · 뮤테이�
 
 describe('가져오기 상한 둘 (AC-06 · 뮤테이션 5·6)', () => {
   it('요소 수가 넘으면 하나도 만들지 않고 실제 수와 상한을 말한다', () => {
-    const body = Array.from({ length: 100 }, (_, i) => `<rect x="${i}" y="10" width="4" height="4"/>`).join('');
+    const over = MAX_IMPORT_ELEMENTS + 1;
+    const body = Array.from({ length: over }, (_, i) => `<rect x="${i}" y="10" width="4" height="4"/>`).join('');
     const refused = planSvgImport(svg(body), CANVAS);
     expect(refused.ok).toBe(false);
     if (!refused.ok) {
       expect(refused.refusal.reason).toBe('tooManyElements');
-      expect(refused.refusal.actual).toBe(100);
+      expect(refused.refusal.actual).toBe(over);
       expect(refused.refusal.limit).toBe(MAX_IMPORT_ELEMENTS);
     }
   });
@@ -349,9 +350,11 @@ describe('가져오기 상한 둘 (AC-06 · 뮤테이션 5·6)', () => {
   });
 
   it('명령 총합이 넘으면 거절한다 — 요소 수는 상한 안인데도', () => {
-    // 60개 × 15명령 = 900. 요소 수(60)는 64 이하이므로 요소 상한으로는 걸리지 않는다.
+    // 60개 × 172명령 = 10320. 요소 수(60)는 1024 이하이므로 요소 상한으로는 걸리지 않고,
+    // 경로 하나의 명령(172)도 `MAX_PATH_COMMANDS`(256) 아래라 나뉘지도 않는다 — 그래서
+    // 이 거절을 낼 수 있는 것은 **명령 총수 상한**뿐이다.
     const body = Array.from({ length: 60 }, (_, i) => {
-      const points = Array.from({ length: 13 }, (_, k) => `${i + k} ${20 + k}`).join(' L ');
+      const points = Array.from({ length: 170 }, (_, k) => `${i + k} ${20 + k}`).join(' L ');
       return `<path d="M ${i} 20 L ${points} Z"/>`;
     }).join('');
     const refused = planSvgImport(svg(body), CANVAS);

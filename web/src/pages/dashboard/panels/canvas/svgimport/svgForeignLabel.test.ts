@@ -26,7 +26,7 @@ import {
   textAnchorFromHtmlFlow,
 } from './svgForeignLabel';
 import { planSvgImport } from './svgImportPlan';
-import type { ImportedText } from './svgImportTypes';
+import { MAX_IMPORT_ELEMENTS, type ImportedText } from './svgImportTypes';
 
 /** 원점 ≠ 0 · `minX` 음수 · 비정사각 (시험 규율 E2 · E3). */
 const VIEW_BOX = 'viewBox="-13 7 317 181"';
@@ -453,17 +453,20 @@ describe('예산 — 이름표가 요소 상한을 먹는 몫', () => {
     expect(measure(0, 10)).toBe(10);
   });
 
-  it('사용자 파일의 꼴(도형 25 · 이름표 30)은 상한 64 아래에 선다', () => {
-    // **실측 55** — 상한까지 9 칸이 남는다.
+  it('사용자 파일의 꼴(도형 25 · 이름표 30)은 상한 아래에 선다', () => {
+    // **실측 55.** 상한이 64 이던 때에는 여기까지 9 칸이 남았고, 그 좁음이 상한을 1024 로
+    // 올린 이유였다(§결정 13). 이제는 969 칸이 남는다.
     expect(measure(25, 30)).toBe(55);
+    expect(MAX_IMPORT_ELEMENTS - 55).toBe(969);
   });
 
-  it('상한은 도형과 이름표의 **합**에 걸린다 — 64 에서 정확히 끊긴다', () => {
-    expect(measure(25, 39)).toBe(64);
-    expect(measure(34, 30)).toBe(64);
+  it('상한은 도형과 이름표의 **합**에 걸린다 — 상한에서 정확히 끊긴다', () => {
+    // 합이 정확히 상한이면 받는다. 도형 쪽·이름표 쪽 어느 쪽으로 치우쳐도 같다.
+    expect(measure(24, MAX_IMPORT_ELEMENTS - 24)).toBe(MAX_IMPORT_ELEMENTS);
+    expect(measure(MAX_IMPORT_ELEMENTS - 30, 30)).toBe(MAX_IMPORT_ELEMENTS);
     // 넘으면 앞부분만 가져오지 않고 **거절한다**(§결정 7).
-    expect(measure(25, 40)).toBe('refused');
-    expect(measure(35, 30)).toBe('refused');
+    expect(measure(24, MAX_IMPORT_ELEMENTS - 23)).toBe('refused');
+    expect(measure(MAX_IMPORT_ELEMENTS - 29, 30)).toBe('refused');
   });
 });
 
