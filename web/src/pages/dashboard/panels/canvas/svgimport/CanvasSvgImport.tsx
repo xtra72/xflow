@@ -44,6 +44,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Check, FileUp, X } from 'lucide-react';
 
 import { useTranslation } from '@/lib/i18n';
+import { getDashboardLimits, type DashboardLimits } from '@/services/api/dashboardLimitsService';
 
 import type { CanvasElement, CanvasSize } from '../canvasConfig';
 import { appendImportedElements } from '../canvasElementFactory';
@@ -61,6 +62,7 @@ import {
 import { planSvgImport, type ImportedShapeSpec, type ImportedTextSpec } from './svgImportPlan';
 import {
   MAX_IMPORT_FILE_BYTES,
+  resolveImportLimits,
   type ImportNote,
   type ImportRefusal,
   type ImportReport,
@@ -201,6 +203,14 @@ export interface CanvasSvgImportProps {
   ) => void;
   /** 파일을 문자열로 읽는 함수. 시험이 갈아 끼운다(기본은 `FileReader`). */
   readFile?: (file: File) => Promise<string>;
+  /**
+   * 서버가 적용 중인 상한을 묻는 함수. 시험이 갈아 끼운다(@SPEC:SPEC-CANVAS-007 §결정 14).
+   *
+   * `readFile` 과 **같은 형상으로** 주입받는 것이 요점이다 — 이 컴포넌트는 이미 바깥
+   * 세계를 인자로 받는 규율을 갖고 있고, 그 규율에 하나를 더하는 것이 새 기구를
+   * 들이는 것보다 싸다.
+   */
+  fetchLimits?: () => Promise<DashboardLimits>;
 }
 
 /**
@@ -211,6 +221,7 @@ export function CanvasSvgImport({
   canvas,
   onPlace,
   readFile = readSvgFileText,
+  fetchLimits = getDashboardLimits,
 }: CanvasSvgImportProps): React.ReactElement {
   const { t } = useTranslation();
   const [collapsed, setCollapsed] = useState(true);
@@ -247,6 +258,18 @@ export function CanvasSvgImport({
       });
       return;
     }
+    // **상한 조회를 읽기와 나란히 띄운다.** 서버 왕복을 파일 읽기 뒤에 줄 세우면 고른
+    // 순간부터 미리보기까지가 그만큼 길어지는데, 두 일은 서로를 기다릴 이유가 없다.
+    //
+    // **`catch` 를 여기에 둔다 — 서비스가 이미 던지지 않기로 약속했는데도.** 약속은
+    // `dashboardLimitsService` 의 것이고 이 인자는 **주입 가능**하다. 이 자리에서 예외가
+    // 새면 결과가 "상한이 낡는다" 가 아니라 **"가져오기를 아예 못 한다"** 이므로, 한 줄로
+    // 그 낙차를 막는다. 띄우는 시점에 붙이는 것이 요점이다 — `await` 자리에서 잡으면 읽기가
+    // 먼저 실패한 경로에서 처리기 없는 거부가 남는다.
+    const limitsPromise = fetchLimits().catch(
+      (): DashboardLimits => ({ maxCanvasElements: undefined, payloadBudgetBytes: undefined }),
+    );
+
     let text: string;
     try {
       text = await readFile(file);
@@ -255,7 +278,11 @@ export function CanvasSvgImport({
       setState({ phase: 'refused', refusal: { reason: 'unreadable', actual: 0, limit: 0 } });
       return;
     }
-    const plan = planSvgImport(text, canvas);
+
+    // **서버가 말하지 못한 축은 컴파일 기본값으로 선다.** 오프라인·구형 서버·권한 없음
+    // 어느 쪽이든 가져오기 자체는 계속되어야 한다 — 상한이 낡는 것보다 못 쓰는 것이 나쁘다.
+    const { maxCanvasElements } = await limitsPromise;
+    const plan = planSvgImport(text, canvas, { limits: resolveImportLimits(maxCanvasElements) });
     // 여기서 `setNotesOpen(false)` 를 부르지 **않는다** — 이 자리에 닿는 길은 대기와 거절
     // 둘뿐이고 그 둘로 들어오는 길은 전부 `reset()` 을 지나므로(또는 첫 렌더이므로) 목록은
     // 이미 접혀 있다. 부르면 어느 시험으로도 관측되지 않는 줄이 하나 늘고, 관측되지 않는

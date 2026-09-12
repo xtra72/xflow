@@ -61,9 +61,9 @@ import { MAX_PATH_COMMANDS, PATH_LOCAL_EXTENT, type PathCommand } from '../shape
 
 import { readSvgDocument, type SvgDocumentReader, type ViewBox } from './svgDocument';
 import {
-  MAX_IMPORT_COMMANDS,
-  MAX_IMPORT_ELEMENTS,
+  DEFAULT_IMPORT_LIMITS,
   MAX_IMPORT_FILE_BYTES,
+  type SvgImportLimits,
   type ImportNote,
   type ImportReport,
   type ImportRefusal,
@@ -388,6 +388,14 @@ export function estimateBytes(
 export interface PlanSvgImportOptions {
   /** 문서를 읽는 함수. **주입 가능하다** — 바이트 상한이 파싱 **전에** 있음을 시험이 잰다. */
   readonly readDocument?: SvgDocumentReader;
+  /**
+   * 요소 · 명령 상한. 없으면 이 모듈의 컴파일 기본값이 선다.
+   *
+   * **상한이 인자로 들어오는 것이 §결정 14 의 형상이다** — 운영자가 설정한 수를 서버가
+   * 내려 주고 화면 층이 여기로 넘긴다. 이 함수는 여전히 순수하다: 상한을 스스로 물어보지
+   * 않으므로 시험이 어떤 상한으로든 계획을 재현할 수 있다.
+   */
+  readonly limits?: SvgImportLimits;
 }
 
 /**
@@ -402,6 +410,7 @@ export function planSvgImport(
   canvas: CanvasSize,
   options: PlanSvgImportOptions = {},
 ): SvgImportPlan {
+  const limits = options.limits ?? DEFAULT_IMPORT_LIMITS;
   const bytes = byteLength(text);
   if (bytes > MAX_IMPORT_FILE_BYTES) {
     return {
@@ -469,17 +478,17 @@ export function planSvgImport(
   // **넘으면 거절이다. 앞부분만 가져오지 않는다.** 도구가 내는 문서 순서는 배경→전경이라
   // 앞쪽은 대개 배경 조각들이고, 그 절단은 "설명 없는 틀린 그림" 이다.
   const elementCount = specs.length + textSpecs.length;
-  if (elementCount > MAX_IMPORT_ELEMENTS) {
+  if (elementCount > limits.maxElements) {
     return {
       ok: false,
-      refusal: { reason: 'tooManyElements', actual: elementCount, limit: MAX_IMPORT_ELEMENTS },
+      refusal: { reason: 'tooManyElements', actual: elementCount, limit: limits.maxElements },
     };
   }
   const commandTotal = countCommands(specs);
-  if (commandTotal > MAX_IMPORT_COMMANDS) {
+  if (commandTotal > limits.maxCommands) {
     return {
       ok: false,
-      refusal: { reason: 'tooManyCommands', actual: commandTotal, limit: MAX_IMPORT_COMMANDS },
+      refusal: { reason: 'tooManyCommands', actual: commandTotal, limit: limits.maxCommands },
     };
   }
 
