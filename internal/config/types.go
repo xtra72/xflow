@@ -87,6 +87,23 @@ type DeviceHistoryConfig struct {
 	MaxEntries int
 }
 
+// DashboardConfig - 대시보드 설정 (@SPEC:SPEC-CANVAS-007 §결정 14)
+//
+// 운영자가 정하는 것은 **MaxCanvasElements 하나**이고 PayloadBudgetBytes 는 그 수에서
+// 유도된다(dashboard_budget.go). 예산을 직접 설정하게 두지 않는 이유: 두 수를 따로 두면
+// 서로 어긋난 조합("요소 2048 · 예산 256KB")이 설정 파일에서 만들어지고, 그 어긋남은
+// 가져오기는 통과하되 저장이 413 으로 실패하는 — 원인이 보이지 않는 — 실패가 된다.
+type DashboardConfig struct {
+	// MaxCanvasElements 는 한 번의 SVG 가져오기가 만들 수 있는 요소 수의 상한이다.
+	// config key: dashboard.max_canvas_elements (기본 1024 — 기존 동작 불변).
+	// 프론트엔드가 이 값을 읽어 가져오기 거절 상한으로 쓴다.
+	MaxCanvasElements int
+
+	// PayloadBudgetBytes 는 MaxCanvasElements 에서 유도된 대시보드 PUT 페이로드 상한이다.
+	// 설정 키가 없다 — 유도값이므로 직접 쓰지 못한다.
+	PayloadBudgetBytes int64
+}
+
 // AuthConfig - 인증 설정
 type AuthConfig struct {
 	JWT    JWTConfig

@@ -49,6 +49,7 @@ type Config interface {
 	Engine() EngineConfig
 	Storage() StorageConfig
 	DeviceHistory() DeviceHistoryConfig // 디바이스 수신 데이터 이력(주기 스냅샷)
+	Dashboard() DashboardConfig         // 캔버스 요소 상한과 거기서 유도된 페이로드 예산
 	Auth() AuthConfig
 	Observe() ObserveConfig
 	Script() ScriptConfig
@@ -375,6 +376,22 @@ func (c *viperConfig) DeviceHistory() DeviceHistoryConfig {
 		Enabled:    c.v.GetBool("device_history.enabled"),
 		Interval:   interval,
 		MaxEntries: maxEntries,
+	}
+}
+
+// Dashboard - 대시보드 설정 반환 (@SPEC:SPEC-CANVAS-007 §결정 14).
+//
+// 설정에서 읽는 것은 요소 수 하나뿐이고, 페이로드 예산은 거기서 유도한다. 두 수가
+// 언제나 같은 출처에서 나오므로 어긋난 조합이 존재할 수 없다. 죄기·유도의 근거는
+// dashboard_budget.go 가 진다.
+func (c *viperConfig) Dashboard() DashboardConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	maxElements := ClampMaxCanvasElements(c.v.GetInt("dashboard.max_canvas_elements"))
+	return DashboardConfig{
+		MaxCanvasElements:  maxElements,
+		PayloadBudgetBytes: DeriveDashboardPayloadBytes(maxElements),
 	}
 }
 
