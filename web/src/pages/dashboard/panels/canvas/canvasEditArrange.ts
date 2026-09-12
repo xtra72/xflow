@@ -352,6 +352,33 @@ export function moveElementTo<T extends { readonly id: string }>(
 }
 
 /**
+ * 고른 것들을 배열에서 **뺀다** — 지우는 규칙은 이 함수 하나다(SPEC-CANVAS-010).
+ *
+ * 목록 편집기의 휴지통과 오버레이의 Delete·Backspace 가 같은 이 함수를 지난다. 두 벌이
+ * 되면 "목록에서 지웠는가 캔버스에서 지웠는가" 에 따라 결과가 갈리고, 그 차이는 저장된
+ * 뒤에야 드러난다 — `moveElementTo` 가 순서 이동에 대해 세운 그 규율과 같은 자다.
+ *
+ * **그룹은 부품을 따로 다루지 않는다.** 부품은 최상위 배열이 아니라 그룹 항목 **안**에
+ * 살므로(SPEC-CANVAS-004), 항목 하나를 빼는 것이 곧 그 무리를 통째로 빼는 것이다.
+ *
+ * **아무것도 빠지지 않으면 받은 배열을 그대로 돌려준다**(같은 참조). 호출부가 그것으로
+ * "쓸 일이 없다" 를 알아채 헛된 config 쓰기와 렌더 프레임을 만들지 않는다 — 위 함수와
+ * 같은 계약이다. 선택에는 이미 지워진 id 가 남아 있을 수 있으므로 이 경우는 실제로 온다.
+ *
+ * 식별은 언제나 `nodeId` 다(REQ-06) — 배열 위치가 아니다.
+ */
+export function removeNodes<T extends { readonly id: string }>(
+  elements: readonly T[],
+  nodeIds: ReadonlySet<string>,
+): readonly T[] {
+  // 빈 집합에 대한 지름길을 두지 않는다 — 그때도 아래 걸러 내기가 전부를 남기고 길이가
+  // 같으므로 **같은 참조**가 나온다. 넣어 보면 어떤 시험도 빨개지지 않는 줄이고, 무언가를
+  // 막는 것처럼 읽히는 그런 줄이 다음 사람에게는 "빈 집합은 다르게 다뤄진다" 고 말한다.
+  const next = elements.filter((el) => !nodeIds.has(el.id));
+  return next.length === elements.length ? elements : next;
+}
+
+/**
  * 고른 것들을 **맨 앞(배열 끝 = 위)** 으로 보낸다.
  *
  * 배열 순서대로 훑으며 하나씩 끝으로 보내면 무리의 **상대 순서가 보존된다** — 무리를

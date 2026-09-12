@@ -209,6 +209,7 @@ import {
   CANVAS_GRID_STEP_UNITS,
   alignDeltas,
   bringToFront,
+  removeNodes,
   sendToBack,
   snapDelta,
   type AlignAxis,
@@ -550,10 +551,20 @@ const ARROW_STEPS: Record<string, { x: -1 | 0 | 1; y: -1 | 0 | 1 }> = {
 };
 
 /**
- * 스크린 리더에 알리는 단축키 목록. 값은 W3C 가 정한 키 이름이라 **번역하지 않는다**
- * (번역하면 보조기기가 알아듣지 못한다). 사람이 읽는 설명은 `keyboardHint` 가 따로 낸다.
+ * **지우는 키**(SPEC-CANVAS-010). 둘을 함께 받는 이유는 손이 둘 다 쓰기 때문이다 —
+ * 본체 자판은 Delete 로 손이 가고 노트북·맥 자판은 Backspace 로 간다. 한쪽만 받으면
+ * 다른 자판을 쓰는 사람에게는 이 기능이 **없는 것과 같다**(사용자가 둘을 함께 적은
+ * 이유이기도 하다).
  */
-const NUDGE_KEY_SHORTCUTS =
+const DELETE_KEYS: ReadonlySet<string> = new Set(['Delete', 'Backspace']);
+
+/**
+ * 스크린 리더에 알리는 단축키 목록. 값은 W3C 가 정한 키 이름이라 **번역하지 않는다**
+ * (번역하면 보조기기가 알아듣지 못한다). 사람이 읽는 설명은 `keyboardHint` ·
+ * `deleteHint` 가 따로 낸다.
+ */
+const EDIT_KEY_SHORTCUTS =
+  'Delete Backspace ' +
   'ArrowUp ArrowDown ArrowLeft ArrowRight ' +
   'Shift+ArrowUp Shift+ArrowDown Shift+ArrowLeft Shift+ArrowRight';
 
@@ -1361,7 +1372,36 @@ export default function CanvasEditOverlay({
   };
 
   /**
-   * 방향키 미세 이동 · Shift+방향키 한 격자 칸(T15 · AC-08).
+   * 고른 것들을 지운다 — **규칙은 `canvasEditArrange.removeNodes` 한 곳에 있다**
+   * (SPEC-CANVAS-010). 목록 편집기의 휴지통이 같은 함수를 지나므로 "목록에서 지웠는가
+   * 캔버스에서 지웠는가" 에 따라 결과가 갈릴 수 없다.
+   *
+   * **한 번만 방출한다.** 고른 것마다 한 번씩 부르면 중간 배열이 프레임마다 화면에 서고
+   * config 쓰기가 N 번이 된다(AC-E4 의 규율). 그 함수가 집합 하나를 받는 것이 그래서다.
+   *
+   * **선택을 비운다.** 지운 뒤에도 그 id 들이 남아 있으면 서랍 저장·묶기 단추가 없는
+   * 것을 가리킨 채 켜져 있고, 사용자에게는 눌러도 아무 일이 없는 단추로 보인다.
+   *
+   * **확인을 묻지 않는다.** 이 저장소의 판정은 "잃을 것이 없으면 묻지 않는다" 이고
+   * (`CanvasGroupTools` — 그룹 해제는 규칙 행이 버려질 때만 묻는다), 지우기가 없애는
+   * 것은 윤곽선이 둘린 **바로 그것들**이라 보이지 않게 잃는 것이 없다. 무엇보다 목록
+   * 편집기의 휴지통이 이미 묻지 않고 지우므로, 키에만 확인을 달면 "설정에서는 물어보는데
+   * 목록에서는 그냥 지워진다" 가 된다. 되돌리기가 없다는 사실(SPEC-CANVAS-008 위험)은
+   * 확인 대화가 아니라 **오는 길을 좁히는 것**으로 다룬다 — 글자를 치는 칸에서 누른 키는
+   * 이 층에 닿지 않는다(`CanvasEditDock` 이 제 자리에서 끊는다).
+   *
+   * 돌려주는 값은 **지웠는가** 다. 지우지 않았으면 이벤트를 소비하지 않는다.
+   */
+  const deleteSelection = (): boolean => {
+    const next = removeNodes(elements, selection);
+    if (next === elements) return false;
+    onElementsChange([...next]);
+    setSelection(EMPTY_SELECTION);
+    return true;
+  };
+
+  /**
+   * 방향키 미세 이동 · Shift+방향키 한 격자 칸(T15 · AC-08) · Delete·Backspace 지우기.
    *
    * **우리가 실제로 옮겼을 때에만 이벤트를 소비한다.** 고른 것이 없거나 스테이지를 아직
    * 재지 못했으면 그대로 흘려보낸다 — 아무 일도 하지 않으면서 브라우저의 스크롤·초점
@@ -1378,10 +1418,23 @@ export default function CanvasEditOverlay({
     // `enabled` 를 다시 보지 않는다 — 꺼져 있으면 이 층이 DOM 에 아예 없어 키가 닿을 길이
     // 없다. 검증되지 않는 가드는 읽는 사람에게 "닿을 수도 있다" 고 거짓말한다.
     if (event.ctrlKey || event.metaKey || event.altKey) return;
-    const step = ARROW_STEPS[event.key];
-    if (step === undefined) return;
+    // **두 갈래가 함께 쓰는 문턱이다.** 끌고 있는 동안에는 손이 이기고(아래 머리말),
+    // 고른 것이 없으면 옮길 것도 지울 것도 없다. 갈래마다 따로 두면 한쪽만 고칠 수 있다.
     if (dragRef.current !== null) return;
     if (selection.size === 0) return;
+
+    // **지우기가 먼저다.** Shift 를 배제하지 않는다 — 방향키의 Shift 는 "한 격자 칸" 이라는
+    // 제 뜻이 있지만 지우기에는 더 셀 것이 없고, 배제하면 Shift 를 짚은 채 누른 Delete 가
+    // 조용히 아무 일도 하지 않는다.
+    if (DELETE_KEYS.has(event.key)) {
+      if (!deleteSelection()) return;
+      // 여기까지 왔다는 것은 실제로 지웠다는 뜻이다 — 그때에만 Backspace 의 뒤로 가기를 막는다.
+      event.preventDefault();
+      return;
+    }
+
+    const step = ARROW_STEPS[event.key];
+    if (step === undefined) return;
 
     // 두 갈래 다 **캔버스 단위 정수**라 나눌 것도 환산할 것도 없다. 그래서 스테이지를
     // 아직 재지 못한 순간에도 뜻이 성립하며, 무엇보다 "한 격자 칸" 이 화면에 그려진 그
@@ -1696,7 +1749,7 @@ export default function CanvasEditOverlay({
       // 맡고, 보조기기가 읽을 단축키 이름은 `aria-keyshortcuts` 가 그대로 알린다.
       tabIndex={0}
       aria-describedby={hintId}
-      aria-keyshortcuts={NUDGE_KEY_SHORTCUTS}
+      aria-keyshortcuts={EDIT_KEY_SHORTCUTS}
       // 캔버스 위 전면 층. 터치 스크롤이 드래그를 가로채지 않게 `touch-none` 을 둔다.
       className="absolute inset-0 z-20 touch-none"
       onPointerDown={handlePointerDown}
@@ -1746,7 +1799,8 @@ export default function CanvasEditOverlay({
           "이 표면을 어떻게 조작하는가" 이고, 문단을 나누면 `aria-describedby` 가 둘을
           가리킬 수 없다. */}
       <p id={hintId} className="sr-only">
-        {t('dashboard.canvas.edit.keyboardHint')} {t('dashboard.canvas.edit.marqueeHint')}
+        {t('dashboard.canvas.edit.keyboardHint')} {t('dashboard.canvas.edit.marqueeHint')}{' '}
+        {t('dashboard.canvas.edit.deleteHint')}
       </p>
       {/* 격자 — **신규 격자 컴포넌트를 만들지 않는다**(REQ-04). `PanelEditGrid` 는 선을
           DOM 요소가 아니라 `repeating-linear-gradient` 로 그리고 `absolute inset-0` +

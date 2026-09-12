@@ -24,10 +24,11 @@ import {
   CANVAS_GRID_STEP_MIN,
   CANVAS_GRID_STEP_UNITS,
   alignDeltas,
+  bringToFront,
   clampGridStep,
   gridDividesCanvas,
-  bringToFront,
   moveElementTo,
+  removeNodes,
   sendToBack,
   snapDelta,
   type AlignTarget,
@@ -509,5 +510,50 @@ describe('자투리 판별 — 자유 입력이 새로 지는 고지의 근거',
     expect(gridDividesCanvas(0, CANVAS)).toBe(false);
     expect(gridDividesCanvas(Number.NaN, CANVAS)).toBe(false);
     expect(gridDividesCanvas(25, { width: Number.NaN, height: 400 })).toBe(false);
+  });
+});
+
+// --- 지우기 (SPEC-CANVAS-010) --------------------------------------------
+//
+// 목록 편집기의 휴지통과 캔버스의 Delete·Backspace 가 함께 지나는 그 한 함수다. 값으로
+// 못박는 것 넷: 골라진 것만 빠지고 · 나머지 **순서가 보존되고** · 여럿을 한 번에 빼며 ·
+// 뺄 것이 없으면 **같은 참조**를 돌려준다(호출부가 그것으로 헛된 쓰기를 피한다).
+
+describe('고른 것들을 배열에서 뺀다', () => {
+  const ITEMS = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }] as const;
+
+  it('고른 것만 빠지고 나머지 순서는 그대로다 — 배열 순서가 곧 z-order 다', () => {
+    expect(removeNodes(ITEMS, new Set(['b']))).toEqual([{ id: 'a' }, { id: 'c' }, { id: 'd' }]);
+  });
+
+  it('여럿을 한 번에 뺀다 — 흩어진 자리도 함께 간다', () => {
+    expect(removeNodes(ITEMS, new Set(['a', 'c']))).toEqual([{ id: 'b' }, { id: 'd' }]);
+  });
+
+  it('빈 집합이면 **같은 참조**다 — 쓸 일이 없다는 신호가 곧 그 참조다', () => {
+    expect(removeNodes(ITEMS, new Set())).toBe(ITEMS);
+  });
+
+  it('배열에 없는 id 만 골라도 같은 참조다 — 선택에는 지워진 id 가 남을 수 있다', () => {
+    // 실제로 오는 경우다: 목록 편집기에서 지우면 선택에 그 id 가 남는다.
+    expect(removeNodes(ITEMS, new Set(['zzz']))).toBe(ITEMS);
+  });
+
+  it('있는 것과 없는 것이 섞여 있으면 **있는 것만** 빠진다', () => {
+    expect(removeNodes(ITEMS, new Set(['c', 'zzz']))).toEqual([
+      { id: 'a' },
+      { id: 'b' },
+      { id: 'd' },
+    ]);
+  });
+
+  it('전부 고르면 빈 배열이다 — 남길 것이 없는 것도 유효한 결과다', () => {
+    expect(removeNodes(ITEMS, new Set(['a', 'b', 'c', 'd']))).toEqual([]);
+  });
+
+  it('받은 배열을 제자리에서 고치지 않는다 — 호출부가 옛 배열을 들고 있을 수 있다', () => {
+    const before = [...ITEMS];
+    removeNodes(ITEMS, new Set(['b']));
+    expect(ITEMS).toEqual(before);
   });
 });

@@ -86,7 +86,7 @@ import {
   type TweenEasing,
   type TweenSpec,
 } from './canvasConfig';
-import { bringToFront, moveElementTo, sendToBack } from './canvasEditArrange';
+import { bringToFront, moveElementTo, removeNodes, sendToBack } from './canvasEditArrange';
 import { isGroup, type CanvasNode, type GroupElement } from './group/groupTypes';
 import {
   useCanvasEditSelection,
@@ -1063,7 +1063,23 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
     emit(elements.map((e, i) => (i === idx ? el : e)));
   };
 
-  const removeAt = (idx: number): void => emit(elements.filter((_, i) => i !== idx));
+  /**
+   * 행 하나를 지운다 — **규칙은 `canvasEditArrange.removeNodes` 한 곳에 있다**.
+   *
+   * 캔버스의 Delete·Backspace(SPEC-CANVAS-010)도 같은 함수를 지나므로, "목록에서
+   * 눌렀는가 캔버스에서 눌렀는가" 에 따라 결과가 달라질 수 없다 — 바로 아래 `moveAt` 이
+   * 순서 이동에 대해 하는 그 일과 같은 모양이다(자리로 받아 `nodeId` 로 넘긴다).
+   *
+   * 뺄 것이 없으면 그 함수가 받은 배열을 그대로(같은 참조) 돌려주고, 그 참조 비교가 곧
+   * "쓸 일이 없다" 다.
+   */
+  const removeAt = (idx: number): void => {
+    const el = elements[idx];
+    if (el === undefined) return;
+    const next = removeNodes(elements, new Set([el.id]));
+    if (next === elements) return;
+    emit([...next]);
+  };
 
   /**
    * 순서 이동 = z-order 조작. 001 의 유일한 z-order 수단이라 일급 동작이다.

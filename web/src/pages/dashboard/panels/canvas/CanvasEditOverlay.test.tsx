@@ -2734,11 +2734,13 @@ describe('키보드로 닿는다 — 루트가 초점을 받는 자리다 (AC-08
     const hint = document.getElementById(id!);
     expect(hint).toBeTruthy();
     // **여전히 정확히 일치로 잰다**(`toContain` 으로 늦추지 않는다 — 그러면 문단에 엉뚱한
-    // 문구가 하나 더 끼어도 통과한다). 009 가 영역 선택 안내를 같은 문단에 이어 붙였으므로
-    // 기대값이 두 키가 된다: 사각형은 `aria-hidden` 인 장식이라 이 문단이 보조기기에게
-    // 그 몸짓을 알리는 **유일한 통로**다(006 M11 이 흐림·경계를 두고 세운 논리 그대로다).
+    // 문구가 하나 더 끼어도 통과한다). 009 가 영역 선택 안내를 같은 문단에 이어 붙였고
+    // 010 이 지우기 안내를 그 뒤에 이었으므로 기대값이 세 키가 된다: 사각형은 `aria-hidden`
+    // 인 장식이고 지우기는 눈에 보이는 컨트롤이 아예 없으므로, 이 문단이 보조기기에게 두
+    // 몸짓을 알리는 **유일한 통로**다(006 M11 이 흐림·경계를 두고 세운 논리 그대로다).
     expect(hint!.textContent).toBe(
-      'dashboard.canvas.edit.keyboardHint dashboard.canvas.edit.marqueeHint',
+      'dashboard.canvas.edit.keyboardHint dashboard.canvas.edit.marqueeHint ' +
+        'dashboard.canvas.edit.deleteHint',
     );
     // 눈에는 보이지 않아야 한다 — 스테이지 위에 안내문이 떠 있으면 그림을 가린다.
     expect(hint!.className).toContain('sr-only');

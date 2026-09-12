@@ -1865,12 +1865,18 @@ describe('순서 이동 규칙은 한 곳에만 있다 (REQ-04)', () => {
     // 배치 탭이 맨 앞/맨 뒤 보내기를 함께 내면서 들여오는 이름이 셋이 됐다. 셋 다 같은
     // 모듈에서 오고, 그 모듈 안에서 `bringToFront`·`sendToBack` 은 `moveElementTo` 로
     // 지어져 있다 — 그래서 네 동작이 지나는 규칙은 여전히 하나다.
+    //
+    // SPEC-CANVAS-010 이 **지우기**를 같은 모듈로 올리면서 이름이 넷이 됐다. 캔버스의
+    // Delete·Backspace 가 같은 `removeNodes` 를 지나므로, 순서 이동에 대해 세운 이 규율이
+    // 지우기에도 그대로 걸린다.
     const source = readFileSync(join(__dirname, 'CanvasElementsEditor.tsx'), 'utf-8');
     expect(source).toMatch(
-      /import \{ bringToFront, moveElementTo, sendToBack \} from '\.\/canvasEditArrange'/,
+      /import \{ bringToFront, moveElementTo, removeNodes, sendToBack \} from '\.\/canvasEditArrange'/,
     );
     // 배열을 여기서 직접 자르지 않는다 — 두 번째 정렬 규칙이 생기는 자리가 그것이다.
     expect(source).not.toMatch(/\.splice\(/);
+    // 같은 이유로 **직접 걸러 내지도 않는다** — 두 번째 지우기 규칙이 생기는 자리다.
+    expect(source).not.toMatch(/\.filter\(\([^)]*\)\s*=>\s*i\s*!==/);
   });
 });
 
