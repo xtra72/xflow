@@ -48,10 +48,12 @@
 
 import {
   coordinate,
+  isDegenerateLine,
   MIN_ELEMENT_EXTENT,
   type BoxGeometry,
   type CanvasSize,
   type ElementStyle,
+  type LineGeometry,
   type PointGeometry,
 } from '../canvasConfig';
 import { clampCanvasFontSize } from '../canvasEditGeometry';
@@ -65,6 +67,7 @@ import {
   type ImportNote,
   type ImportReport,
   type ImportRefusal,
+  type ImportedNative,
   type ImportedShape,
   type ImportedText,
 } from './svgImportTypes';
@@ -96,6 +99,8 @@ export const IMPORT_BOX_FILL = 0.8;
 
 /** 요소 하나가 될 준비가 끝난 도형. 좌표는 **제 상자의 로컬 정수**다. */
 export interface ImportedPathSpec {
+  /** 갈래표. 세 spec 이 한 배열에 **문서 순서대로** 섞여 살므로 판별자가 필요하다. */
+  readonly kind: 'path';
   readonly commands: readonly PathCommand[];
   /**
    * 이 도형의 기하가 차지하는 최소 영역. **계단 오프셋은 아직 더해지지 않았다**(M8 의 몫).
@@ -108,6 +113,52 @@ export interface ImportedPathSpec {
   /** SVG 가 칠을 한 마디라도 말했는가 — 아니면 008 의 `pathSeedStyle` 이 선다. */
   readonly hasOwnStyle: boolean;
 }
+
+/**
+ * 요소 하나가 될 준비가 끝난 **사각형 또는 타원**.
+ *
+ * `ImportedPathSpec` 과 달리 `commands` 가 없다 — 캔버스의 `rect`·`ellipse` 는 상자 하나로
+ * 다 그려지므로 실을 명령이 없다. 그 없음이 예산에서 곧바로 값이 된다(`MAX_IMPORT_COMMANDS`
+ * 를 한 칸도 먹지 않는다).
+ *
+ * 둘을 한 타입에 둔 것은 **기하가 같기** 때문이다(`BoxGeometry`). 요소가 될 때 `kind` 를
+ * 그대로 옮겨 적는 것 말고 다른 차이가 없으므로, 갈라 두면 똑같은 줄이 두 벌 생긴다.
+ */
+export interface ImportedBoxSpec {
+  readonly kind: 'rect' | 'ellipse';
+  /** 요소 상자. **계단 오프셋은 아직 더해지지 않았다**(M8 의 몫). */
+  readonly box: BoxGeometry;
+  readonly style: ElementStyle;
+  /** SVG 가 칠을 한 마디라도 말했는가 — 아니면 씨앗 스타일이 선다. */
+  readonly hasOwnStyle: boolean;
+}
+
+/**
+ * 요소 하나가 될 준비가 끝난 **선**. 두 끝점(정수 캔버스 단위)을 그대로 든다.
+ *
+ * 상자 갈래와 갈라 두는 것은 기하가 다르기 때문이다 — `LineGeometry` 는 두 끝점이고
+ * 거기에는 "좌상단과 크기" 가 없다. 한 타입에 담으면 `kind` 로 기하를 좁히지 못해
+ * 요소를 만드는 자리가 형상 검사(`'w' in geo`)를 하게 되고, 그것은 `Geometry` 합집합이
+ * `kind` 로 판별되게 세워 둔 001 의 규율을 되돌리는 일이다.
+ */
+export interface ImportedLineSpec {
+  readonly kind: 'line';
+  /** 두 끝점. **계단 오프셋은 아직 더해지지 않았다**(M8 의 몫). */
+  readonly line: LineGeometry;
+  readonly style: ElementStyle;
+  readonly hasOwnStyle: boolean;
+}
+
+/**
+ * 요소가 될 도형 하나 — 경로이거나 원시형이다. **한 배열에 문서 순서대로 섞인다.**
+ *
+ * 갈래마다 배열을 따로 내는 안을 기각한다. 배열 순서가 이 패널의 **유일한 z-order** 이므로
+ * (001), 원시형을 뒤에 몰면 문서에서 배경이던 `<rect>` 가 그 위에 그려지던 `<path>` 를
+ * 덮는다 — 007 이 문구에 대해 치르고 `textOrderChanged` 로 보고한 그 대가이며, 배경 사각형
+ * 에서는 훨씬 크다(이름표가 가려지는 것과 그림 전체가 덮이는 것은 다른 일이다). 한 배열이면
+ * 그 대가가 아예 발생하지 않으므로 보고할 것도 없다.
+ */
+export type ImportedShapeSpec = ImportedPathSpec | ImportedBoxSpec | ImportedLineSpec;
 
 /**
  * 요소 하나가 될 준비가 끝난 문구. 좌표는 **캔버스 단위 기준점**이다.
@@ -134,7 +185,7 @@ export type SvgImportPlan =
        * 도형마다 제 상자를 든다. **무리가 함께 쓰는 상자는 없다** — 문서 틀은 이 층 안에서
        * 살다 죽고(`fitBox`), 밖으로 나가는 것은 요소가 될 도형들뿐이다.
        */
-      readonly shapes: readonly ImportedPathSpec[];
+      readonly shapes: readonly ImportedShapeSpec[];
       /**
        * 문구들. **도형과 갈라 나간다** — 요소가 될 때 상자가 아니라 점 위에 서고, 하나는
        * 명령을, 다른 하나는 글자를 예산에서 먹는다.
@@ -287,19 +338,30 @@ function scaleStroke(style: ElementStyle, ratio: number): ElementStyle {
  * 저장에서 57KB 를 먹는다. 파일 상한이 `TextEncoder` 를 쓰는 이유가 그대로 여기에도 있다.
  */
 export function estimateBytes(
-  shapes: readonly ImportedPathSpec[],
+  shapes: readonly ImportedShapeSpec[],
   texts: readonly ImportedTextSpec[] = [],
 ): number {
   let total = 2; // 배열의 대괄호 둘.
   for (const shape of shapes) {
+    // **요소가 실제로 실릴 형상 그대로 센다.** 원시형에는 `path` 칸이 아예 없고 선의 기하는
+    // 네 칸 모두 이름이 다르다 — 셋을 한 형상으로 뭉뚱그려 세면 추정이 형상마다 어긋난다.
     total += byteLength(
-      JSON.stringify({
-        id: 'el-00',
-        kind: 'path',
-        geometry: shape.box,
-        path: shape.commands,
-        style: shape.style,
-      }),
+      JSON.stringify(
+        shape.kind === 'path'
+          ? {
+              id: 'el-00',
+              kind: 'path',
+              geometry: shape.box,
+              path: shape.commands,
+              style: shape.style,
+            }
+          : {
+              id: 'el-00',
+              kind: shape.kind,
+              geometry: shape.kind === 'line' ? shape.line : shape.box,
+              style: shape.style,
+            },
+      ),
     );
   }
   // **문구도 센다.** 명령을 하나도 나르지 않으므로 명령 상한 아래를 그냥 지나가지만,
@@ -362,10 +424,21 @@ export function planSvgImport(
   // 이 값은 이 함수 안에서 살다 죽는다: 밖으로 나가는 상자는 도형마다의 것뿐이다.
   const doc: DocumentPlacement = { box: fitBox(resolved.viewBox, canvas), viewBox: resolved.viewBox };
   const strokeRatio = doc.box.w / resolved.viewBox.width;
-  const specs: ImportedPathSpec[] = [];
+  const specs: ImportedShapeSpec[] = [];
   const extra: ImportNote[] = [];
 
   for (const shape of shapes) {
+    // **원시형이 먼저다.** 태그가 스스로 무엇인지 말했고 그 말을 캔버스가 그대로 담을 수
+    // 있으면, 명령으로 옮겨 적을 이유가 없다. 담지 못하면(`undefined`) 아래로 떨어져
+    // 경로가 된다 — 같은 도형의 두 표현이 `ImportedShape` 에 함께 실려 있기 때문에
+    // 이 되돌아감에 특례가 필요 없다.
+    if (shape.native !== undefined) {
+      const spec = planNative(shape.native, shape, doc, strokeRatio);
+      if (spec !== undefined) {
+        specs.push(spec);
+        continue;
+      }
+    }
     // **감김 뒤집기가 먼저다.** 나눈 뒤에 뒤집으면 무리 밖의 형제를 볼 수 없어 깊이를
     // 잘못 세고, 그때 도넛의 구멍이 채워진다.
     const winded = shape.evenOdd ? applyEvenOddWinding(shape.commands) : shape.commands;
@@ -380,6 +453,7 @@ export function planSvgImport(
     const placement = placeShape(tightCommandBounds(winded) ?? viewBoxBounds(doc.viewBox), doc);
     for (const piece of pieces) {
       specs.push({
+        kind: 'path',
         commands: toLocalCommands(piece, placement.frame),
         box: placement.box,
         style: scaleStroke(shape.style, strokeRatio),
@@ -401,7 +475,7 @@ export function planSvgImport(
       refusal: { reason: 'tooManyElements', actual: elementCount, limit: MAX_IMPORT_ELEMENTS },
     };
   }
-  const commandTotal = specs.reduce((sum, spec) => sum + spec.commands.length, 0);
+  const commandTotal = countCommands(specs);
   if (commandTotal > MAX_IMPORT_COMMANDS) {
     return {
       ok: false,
@@ -414,6 +488,52 @@ export function planSvgImport(
     shapes: specs,
     texts: textSpecs,
     report: buildReport(specs, textSpecs, [...notes, ...extra]),
+  };
+}
+
+/**
+ * 원시 도형 하나를 놓을 준비가 끝난 값으로. **못 놓으면 `undefined`**(호출부가 경로로 떨어진다).
+ *
+ * **사용자 단위 → 캔버스 단위의 규칙을 새로 만들지 않는다.** 상자는 `placeShape` 를,
+ * 선의 두 끝점은 `placePoint` 를 지난다 — 경로의 상자가 지나는 그 함수이고 문구의 기준점이
+ * 지나는 그 함수다(007 0.2.0 이 `placeShape` 를 `placePoint` 위에 세워 규칙을 하나로 만든
+ * 뒤로 자리는 하나다). 여기서 `doc.box.x + (x − minX) × 축척` 을 다시 적으면 그 통일이
+ * 그날로 깨진다.
+ *
+ * **상자를 `tightCommandBounds` 로 재지 않는다.** 원시형의 상자는 **태그가 말한 수 그 자체**
+ * 이므로 잴 것이 없다 — `<rect>` 의 상자는 `x`·`y`·`width`·`height` 이고 `<ellipse>` 의 상자는
+ * `cx±rx`·`cy±ry` 다. 명령으로 옮겨 잰 값과 견주면 사각형은 정확히 같고 타원은 **다르다**:
+ * 4분원의 3차 근사는 반경을 최대 0.027% 안쪽으로 스치므로, 명령에서 잰 상자는 그만큼 작다.
+ * 태그가 말한 수를 쓰는 쪽이 **더 정확하며** 그것이 이 치환의 값 가운데 하나다.
+ * `strokeWidth` 는 여전히 상자에 들지 않는다(`svgImportBox` §결정 1 — 잉크까지 넓히면
+ * "손잡이가 잉크를 두른다" 가 축척 1 에서만 참이 된다).
+ *
+ * **퇴화한 선은 되돌린다.** 두 끝점이 캔버스 정수로 같은 칸에 떨어지면 저장 왕복에서
+ * 파서가 기하를 통째로 `DEFAULT_LINE_GEOMETRY` 로 갈아 끼운다(실측 `isDegenerateLine` →
+ * `parseLineGeometry`) — 캔버스 한복판을 가로지르는 400 단위짜리 선이 나타난다. 상자 갈래는
+ * 이 되돌림이 필요 없다: `placeShape` 의 `axisSpan` 이 **사용자 단위에서 먼저** 넓혀 두어
+ * 두 변이 반올림 뒤에도 `MIN_ELEMENT_EXTENT` 이상임을 이미 보장한다. 판정을 캔버스 정수
+ * **뒤에** 두는 것이 요점이다 — 사용자 단위로는 다른 두 점이 같은 칸에 떨어질 수 있다.
+ */
+function planNative(
+  native: ImportedNative,
+  shape: ImportedShape,
+  doc: DocumentPlacement,
+  ratio: number,
+): ImportedShapeSpec | undefined {
+  const style = scaleStroke(shape.style, ratio);
+  if (native.kind === 'line') {
+    const from = placePoint(native.x1, native.y1, doc);
+    const to = placePoint(native.x2, native.y2, doc);
+    const line: LineGeometry = { x1: from.x, y1: from.y, x2: to.x, y2: to.y };
+    if (isDegenerateLine(line)) return undefined;
+    return { kind: 'line', line, style, hasOwnStyle: shape.hasOwnStyle };
+  }
+  return {
+    kind: native.kind,
+    box: placeShape(native, doc).box,
+    style,
+    hasOwnStyle: shape.hasOwnStyle,
   };
 }
 
@@ -449,15 +569,39 @@ function planTexts(
   return out;
 }
 
+/**
+ * 명령 총수. **원시형은 한 칸도 먹지 않는다** — 상자 하나로 다 그려지므로 실을 명령이 없다.
+ *
+ * 상한 검사와 보고가 **같은 함수**를 지난다. 두 곳이 각자 세면 어느 날 한쪽만 원시형을
+ * 알아보게 되고, 그때 화면이 말하는 수와 상한이 죄는 수가 갈라진다.
+ */
+function countCommands(specs: readonly ImportedShapeSpec[]): number {
+  return specs.reduce((sum, spec) => sum + (spec.kind === 'path' ? spec.commands.length : 0), 0);
+}
+
+/**
+ * 보고 한 벌.
+ *
+ * **`shapes` 는 여전히 "요소가 된 도형 수" 다.** 경로와 원시형을 갈라 세지 않는 것에 뜻이
+ * 있다 — 사용자가 읽는 문장은 "도형 N개" 이고, 그 N 이 갑자기 경로만 뜻하면 `<rect>` 만 든
+ * 문서에서 "도형 0개" 가 나온다. 갈래는 요소 목록이 줄마다 이름으로 말한다(사각형 · 타원 ·
+ * 선 · 경로).
+ *
+ * **원시형이 되었다는 사실은 보고에 오르지 않는다.** 보고의 갈래는 `approximated` 와
+ * `dropped` 둘뿐이고 이것은 어느 쪽도 아니다 — 근사한 것이 없고(치환은 정확하다) 버린 것도
+ * 없다. "경로로 남았습니다" 를 적는 안도 기각한다: `<path>` 와 `<polygon>` 이 든 거의 모든
+ * 파일에서 울려 보고가 아무것도 말하지 않게 되는 그 부류다(위험 R7 · `<style>` 이 이미
+ * 같은 판단을 지났다).
+ */
 function buildReport(
-  specs: readonly ImportedPathSpec[],
+  specs: readonly ImportedShapeSpec[],
   texts: readonly ImportedTextSpec[],
   notes: readonly ImportNote[],
 ): ImportReport {
   return {
     shapes: specs.length,
     texts: texts.length,
-    commands: specs.reduce((sum, spec) => sum + spec.commands.length, 0),
+    commands: countCommands(specs),
     estimatedBytes: estimateBytes(specs, texts),
     notes: mergeNotes(notes),
   };

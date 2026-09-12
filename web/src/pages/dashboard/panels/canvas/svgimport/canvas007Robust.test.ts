@@ -17,15 +17,16 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_BOX_GEOMETRY,
+  DEFAULT_LINE_GEOMETRY,
+  isDegenerateLine,
   MIN_ELEMENT_EXTENT,
   parseCanvasConfig,
   type CanvasSize,
-  type PathElement,
 } from '../canvasConfig';
 import { appendImportedElements } from '../canvasElementFactory';
 import { MAX_PATH_COMMANDS, type PathCommand } from '../shapes/pathTypes';
 import { SCRATCHPAD_MAX_BYTES } from '../scratchpad/scratchpadTypes';
-import { planSvgImport, type SvgImportPlan } from './svgImportPlan';
+import { planSvgImport, type ImportedShapeSpec, type SvgImportPlan } from './svgImportPlan';
 import {
   MAX_IMPORT_COMMANDS,
   MAX_IMPORT_ELEMENTS,
@@ -45,6 +46,18 @@ function plan(text: string): SvgImportPlan {
   return planSvgImport(text, CANVAS);
 }
 
+/**
+ * 경로 spec 의 명령 목록. **경로가 아니면 시험이 선다.**
+ *
+ * 이 함수를 지나는 자리들의 고정 입력은 전부 `<polygon>` 과 `<path>` — 캔버스에 그 종류가
+ * 없어 경로로 남는 것들이다. 그러므로 이 던지기는 "명령을 세는 시험이 명령 없는 요소를
+ * 조용히 0 으로 세지 않는다" 는 단언이며, 고정 입력이 원시형이 되는 날 빨개진다.
+ */
+function commandsOf(spec: ImportedShapeSpec): readonly PathCommand[] {
+  if (spec.kind !== 'path') throw new Error(`경로가 아니다: ${spec.kind}`);
+  return spec.commands;
+}
+
 /** 명령 하나의 좌표 전부. `Z` 는 좌표를 나르지 않는다. */
 function coordsOf(cmd: PathCommand): number[] {
   switch (cmd.c) {
@@ -58,17 +71,28 @@ function coordsOf(cmd: PathCommand): number[] {
   }
 }
 
-/** 산출 전체에 유한하지 않은 수가 하나도 없다. **표본이 아니라 전수다.** */
+/**
+ * 산출 전체에 유한하지 않은 수가 하나도 없다. **표본이 아니라 전수다.**
+ *
+ * 갈래 셋을 **이름으로** 가른다 — 경로는 상자와 명령을, 사각형·타원은 상자만을, 선은 두
+ * 끝점을 나른다. `default:` 로 뭉뚱그리면 새 갈래가 조용히 검사 밖으로 나간다.
+ */
 function expectAllFinite(result: SvgImportPlan): void {
   if (!result.ok) return;
   for (const shape of result.shapes) {
-    // 상자도 **전수**로 잰다 — 도형마다 제 상자를 들므로 하나만 보면 나머지가 새어 나간다.
-    for (const value of [shape.box.x, shape.box.y, shape.box.w, shape.box.h]) {
-      expect(Number.isFinite(value), JSON.stringify(shape.box)).toBe(true);
+    // 기하는 **전수**로 잰다 — 도형마다 제 기하를 들므로 하나만 보면 나머지가 새어 나간다.
+    const numbers =
+      shape.kind === 'line'
+        ? [shape.line.x1, shape.line.y1, shape.line.x2, shape.line.y2]
+        : [shape.box.x, shape.box.y, shape.box.w, shape.box.h];
+    for (const value of numbers) {
+      expect(Number.isFinite(value), JSON.stringify(numbers)).toBe(true);
     }
-    for (const cmd of shape.commands) {
-      for (const n of coordsOf(cmd)) {
-        expect(Number.isFinite(n), JSON.stringify(cmd)).toBe(true);
+    if (shape.kind === 'path') {
+      for (const cmd of shape.commands) {
+        for (const n of coordsOf(cmd)) {
+          expect(Number.isFinite(n), JSON.stringify(cmd)).toBe(true);
+        }
       }
     }
     const width = shape.style.strokeWidth;
@@ -121,8 +145,11 @@ describe('망가진 입력은 값으로 실패한다 — 예외도 `NaN` 도 멈
     expectAllFinite(result!);
     if (result?.ok === true) {
       // 살아남은 도형이 있다면 상한을 지킨다 — 망가진 입력이 상한을 뚫는 길이 없다.
+      // **원시형에는 명령이 없다**(상한을 한 칸도 먹지 않는다) — 그래서 갈래를 가른다.
       for (const shape of result.shapes) {
-        expect(shape.commands.length).toBeLessThanOrEqual(MAX_PATH_COMMANDS);
+        if (shape.kind === 'path') {
+          expect(shape.commands.length).toBeLessThanOrEqual(MAX_PATH_COMMANDS);
+        }
       }
     } else {
       // 거절도 **값**이다 — 사유와 두 수를 함께 든다.
@@ -138,7 +165,7 @@ describe('망가진 입력은 값으로 실패한다 — 예외도 `NaN` 도 멈
     if (!result.ok) return;
     // 도형이 통째로 죽지 않았다 — 켜져 있음을 먼저 잰다.
     expect(result.shapes).toHaveLength(1);
-    const commands = result.shapes[0]!.commands;
+    const commands = commandsOf(result.shapes[0]!);
     // `M L L Z` — 손상된 `L` 하나만 빠졌다(`M L L L Z` 였을 것).
     expect(commands.map((c) => c.c)).toEqual(['M', 'L', 'L', 'Z']);
     expectAllFinite(result);
@@ -214,7 +241,7 @@ describe('상한은 **정확히 그 값에서** 받는다 (REQ-03 · `>` 이지 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.shapes).toHaveLength(64);
-    const total = result.shapes.reduce((sum, s) => sum + s.commands.length, 0);
+    const total = result.shapes.reduce((sum, s) => sum + commandsOf(s).length, 0);
     expect(total).toBe(MAX_IMPORT_COMMANDS);
     expect(result.report.commands).toBe(MAX_IMPORT_COMMANDS);
   });
@@ -236,7 +263,7 @@ describe('상한은 **정확히 그 값에서** 받는다 (REQ-03 · `>` 이지 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.shapes).toHaveLength(1);
-    expect(result.shapes[0]!.commands).toHaveLength(MAX_PATH_COMMANDS);
+    expect(commandsOf(result.shapes[0]!)).toHaveLength(MAX_PATH_COMMANDS);
   });
 
   /**
@@ -261,7 +288,7 @@ describe('상한은 **정확히 그 값에서** 받는다 (REQ-03 · `>` 이지 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     // 켜져 있음: 합이 정확히 상한이다.
-    const total = result.shapes.reduce((n, sh) => n + sh.commands.length, 0);
+    const total = result.shapes.reduce((n, sh) => n + commandsOf(sh).length, 0);
     expect(total).toBe(MAX_PATH_COMMANDS);
     // **한 요소**다 — 나눌 필요가 없으면 나누지 않는다(한 그림이 두 줄로 갈라지지 않는다).
     expect(result.shapes).toHaveLength(1);
@@ -277,7 +304,7 @@ describe('상한은 **정확히 그 값에서** 받는다 (REQ-03 · `>` 이지 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.shapes).toHaveLength(2);
-    expect(result.shapes.map((sh) => sh.commands.length).sort((a, b) => b - a)).toEqual([
+    expect(result.shapes.map((sh) => commandsOf(sh).length).sort((a, b) => b - a)).toEqual([
       MAX_PATH_COMMANDS,
       10,
     ]);
@@ -294,7 +321,7 @@ describe('상한은 **정확히 그 값에서** 받는다 (REQ-03 · `>` 이지 
     expect(result.report.notes.some((n) => n.reason === 'commandLimitDropped')).toBe(true);
     // **잘라 만든 요소가 하나도 없다.**
     for (const shape of result.shapes) {
-      expect(shape.commands.length).toBeLessThanOrEqual(MAX_PATH_COMMANDS);
+      expect(commandsOf(shape).length).toBeLessThanOrEqual(MAX_PATH_COMMANDS);
     }
   });
 });
@@ -308,7 +335,7 @@ describe('산출은 저장 왕복을 지나도 명령 수가 같다 (AC-06 · �
     if (!result.ok) return;
     // 켜져 있음: 상한에 가까운 도형이 실제로 들어 있다.
     expect(result.shapes.length).toBeGreaterThanOrEqual(2);
-    expect(Math.max(...result.shapes.map((s) => s.commands.length))).toBeGreaterThan(200);
+    expect(Math.max(...result.shapes.map((s) => commandsOf(s).length))).toBeGreaterThan(200);
 
     const { created } = appendImportedElements([], result.shapes);
     const config = {
@@ -319,13 +346,16 @@ describe('산출은 저장 왕복을 지나도 명령 수가 같다 (AC-06 · �
     expect(reopened.elements).toHaveLength(created.length);
     for (const [i, el] of reopened.elements.entries()) {
       const before = created[i]!;
+      // 고정 입력은 `<polygon>` 뿐이라 **전부 경로로 남는다** — 이 단언이 그 사실을 든다.
       expect(el.kind, `#${i}`).toBe('path');
+      expect(before.kind, `#${i}`).toBe('path');
+      if (el.kind !== 'path' || before.kind !== 'path') continue;
       // `parsePathCommands` 는 상한 초과분을 **조용히 자른다**(실측). 자른 흔적이 있으면
       // 여기서 수가 어긋난다 — "저장할 땐 맞고 다시 열면 잘린" 결함의 유일한 가드다.
-      expect((el as PathElement).path, `#${i}`).toEqual(before.path);
-      expect((el as PathElement).geometry, `#${i}`).toEqual(before.geometry);
+      expect(el.path, `#${i}`).toEqual(before.path);
+      expect(el.geometry, `#${i}`).toEqual(before.geometry);
       // 퇴화 상자였다면 파서가 기하를 **통째로** 씨앗으로 갈아 끼운다(가정 A15).
-      expect((el as PathElement).geometry, `#${i}`).not.toEqual(DEFAULT_BOX_GEOMETRY);
+      expect(el.geometry, `#${i}`).not.toEqual(DEFAULT_BOX_GEOMETRY);
     }
   });
 
@@ -354,8 +384,11 @@ describe('퇴화 상자를 만들지 않는다 (REQ-06 · 가정 A15)', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     for (const shape of result.shapes) {
-      expect(shape.box.w).toBeGreaterThanOrEqual(MIN_ELEMENT_EXTENT);
-      expect(shape.box.h).toBeGreaterThanOrEqual(MIN_ELEMENT_EXTENT);
+      if (shape.kind === 'line') expect(isDegenerateLine(shape.line)).toBe(false);
+      else {
+        expect(shape.box.w).toBeGreaterThanOrEqual(MIN_ELEMENT_EXTENT);
+        expect(shape.box.h).toBeGreaterThanOrEqual(MIN_ELEMENT_EXTENT);
+      }
     }
 
     const { created } = appendImportedElements([], result.shapes);
@@ -365,10 +398,19 @@ describe('퇴화 상자를 만들지 않는다 (REQ-06 · 가정 A15)', () => {
       JSON.parse(JSON.stringify({ canvas: { ...CANVAS }, elements: created })) as unknown,
     );
     for (const el of reopened.elements) {
+      // **갈래마다 파서가 갈아 끼우는 씨앗이 다르다.** 종전에는 산출이 경로뿐이라
+      // `DEFAULT_BOX_GEOMETRY` 하나만 보면 됐지만, 태그가 말한 도형이 원시형이 되면서
+      // 선은 `DEFAULT_LINE_GEOMETRY` 라는 **다른 씨앗**을 만난다(`parseLineGeometry`).
+      // 이 시험이 지키는 것은 "왕복이 기하를 통째로 갈아 끼우지 않는다" 이고, 그 명제는
+      // 갈래마다 다른 씨앗을 상대로 다시 세워야 참으로 남는다.
+      if (el.kind === 'line') {
+        expect(el.geometry).not.toEqual(DEFAULT_LINE_GEOMETRY);
+        expect(isDegenerateLine(el.geometry)).toBe(false);
+        continue;
+      }
+      expect(el.kind === 'rect' || el.kind === 'ellipse' || el.kind === 'path').toBe(true);
       expect(el.geometry).not.toEqual(DEFAULT_BOX_GEOMETRY);
-      // 경로 요소의 기하는 언제나 상자다 — 선·점 기하는 `line`·`text` 의 것이다.
-      expect(el.kind).toBe('path');
-      const box = (el as PathElement).geometry;
+      const box = el.geometry as { w: number; h: number };
       expect(box.w).toBeGreaterThanOrEqual(MIN_ELEMENT_EXTENT);
       expect(box.h).toBeGreaterThanOrEqual(MIN_ELEMENT_EXTENT);
     }
@@ -425,7 +467,9 @@ describe('AC-E5 — 최악 가져오기의 실제 직렬화 바이트를 잰다 
     // 켜져 있음: 상한 둘을 **정확히** 채웠다. 못 채웠으면 "최악" 이 최악이 아니다.
     expect(result.shapes).toHaveLength(MAX_IMPORT_ELEMENTS);
     expect(result.report.commands).toBe(MAX_IMPORT_COMMANDS);
-    expect(result.shapes.every((s) => s.commands.filter((c) => c.c === 'C').length === 9)).toBe(true);
+    expect(result.shapes.every((s) => commandsOf(s).filter((c) => c.c === 'C').length === 9)).toBe(
+      true,
+    );
 
     const { created } = appendImportedElements([], result.shapes);
     const bytes = new TextEncoder().encode(JSON.stringify(created)).length;

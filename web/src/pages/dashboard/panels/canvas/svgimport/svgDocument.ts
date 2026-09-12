@@ -43,11 +43,17 @@ import {
   type ImportNoteKind,
   type ImportNoteReason,
   type ImportRefusal,
+  type ImportedNative,
   type ImportedShape,
   type ImportedText,
 } from './svgImportTypes';
 import { parseLength, parseNumberList, parseSvgPathData } from './svgPathData';
-import { isShorthandShapeTag, shorthandShapeCommands, type AttrBag } from './svgShapes';
+import {
+  isShorthandShapeTag,
+  shorthandNativeShape,
+  shorthandShapeCommands,
+  type AttrBag,
+} from './svgShapes';
 import {
   collectStyleAtoms,
   collectTextAtoms,
@@ -82,6 +88,7 @@ import {
   isSimilarity,
   multiplyMatrix,
   parseTransformList,
+  preservesAxisAlignment,
   strokeScaleOf,
   transformCommands,
   type Matrix2x3,
@@ -203,6 +210,66 @@ function isHiddenContext(ctx: WalkContext): boolean {
   return ctx.displayNone || ctx.visibility === 'hidden';
 }
 
+/**
+ * 원시 도형의 좌표에 행렬을 녹인다. **못 녹이면 `undefined`** — 그 도형은 경로로 남는다.
+ *
+ * 두 갈래가 서로 다른 조건을 지나는 것이 이 함수의 요점이다.
+ *
+ * **선에는 조건이 없다.** `LineGeometry` 는 두 끝점을 그대로 나르고 아핀은 선분을 언제나
+ * 선분으로 옮기므로, 돌아간 `<line>` 도 · 기울어진 `<line>` 도 캔버스 선으로 **정확히**
+ * 선다. 상자에 물리는 축 정렬 조건을 선에까지 걸면, 걸 이유가 없는 곳에 걸어 **돌아간
+ * 선을 전부 경로로** 떨어뜨리게 된다.
+ *
+ * **상자에는 조건이 있다** — `preservesAxisAlignment`(그 주석이 조건과 근거를 적는다).
+ * 통과했으면 마주 보는 두 꼭짓점의 상(像)이 곧 결과 상자다: 두 변의 상이 각각 축에
+ * 나란하므로 옮겨진 도형은 그 두 점이 마주 보는 축 정렬 상자와 **정확히 같다**. 반사도
+ * 축 맞바꿈도 `min`/`max` 가 함께 흡수하므로 갈래를 더 가르지 않는다.
+ *
+ * **타원의 상자도 같은 두 점으로 난다.** 타원의 극점은 두 반축 끝이고 그 넷의 상은
+ * 옮겨진 상자의 네 변에 닿는다 — 조건을 통과한 행렬에서만 참인 성질이며, 그래서 이
+ * 산술이 게이트 뒤에 있다.
+ */
+function transformNative(native: ImportedNative, m: Matrix2x3): ImportedNative | undefined {
+  if (native.kind === 'line') {
+    const from = applyMatrix(m, native.x1, native.y1);
+    const to = applyMatrix(m, native.x2, native.y2);
+    return finiteNative({ kind: 'line', x1: from.x, y1: from.y, x2: to.x, y2: to.y });
+  }
+  if (!preservesAxisAlignment(m)) return undefined;
+  const a = applyMatrix(m, native.minX, native.minY);
+  const b = applyMatrix(m, native.maxX, native.maxY);
+  return finiteNative({
+    kind: native.kind,
+    minX: Math.min(a.x, b.x),
+    minY: Math.min(a.y, b.y),
+    maxX: Math.max(a.x, b.x),
+    maxY: Math.max(a.y, b.y),
+  });
+}
+
+/**
+ * 좌표 넷이 모두 유한한 원시형만 통과시킨다. **아니면 그 도형은 경로로 남는다.**
+ *
+ * `transform="scale(1e200)"` 처럼 좌표를 `±∞` 로 미는 문서가 실재한다(`|det|` 이 0 이
+ * 아니므로 퇴화 검사를 통과한다). 그 좌표로 원시형을 세우면 상자를 정하는 층이 유한 폴백
+ * 으로 내려앉아 **캔버스 구석의 1×1 부스러기**가 나온다.
+ *
+ * 경로에는 이 경우에 대한 답이 007 에 이미 있다 — 잴 바운딩 박스가 없으면 **문서 틀을
+ * 그대로** 쓴다(`viewBoxBounds` 폴백). 요소를 잃지도, 구석으로 찌부러뜨리지도 않는 그 답을
+ * 원시형 쪽에 다시 적는 대신 **경로로 돌려보낸다** — 그러면 답은 계속 한 곳에 있다.
+ *
+ * 경로의 부분 폴백(좌표 하나가 망가져도 나머지로 상자를 잰다)과 달리 여기는 **전부 아니면
+ * 전무**다. 원시형의 네 수는 도형 하나를 통째로 정하므로 하나가 망가지면 나머지 셋으로
+ * 세울 수 있는 도형이 없다.
+ */
+function finiteNative(native: ImportedNative): ImportedNative | undefined {
+  const numbers =
+    native.kind === 'line'
+      ? [native.x1, native.y1, native.x2, native.y2]
+      : [native.minX, native.minY, native.maxX, native.maxY];
+  return numbers.every((n) => Number.isFinite(n)) ? native : undefined;
+}
+
 interface WalkContext {
   /** 조상까지 누적한 변환. **조상이 바깥이다.** */
   readonly matrix: Matrix2x3;
@@ -318,12 +385,19 @@ class DocumentWalker {
     return undefined;
   }
 
-  /** 명령 목록 하나를 요소 후보로 세운다. 감춘 하위 트리에서는 **개수만** 는다. */
+  /**
+   * 명령 목록 하나를 요소 후보로 세운다. 감춘 하위 트리에서는 **개수만** 는다.
+   *
+   * `native` 가 있으면 그 도형은 경로가 아니라 캔버스 원시형이 될 수 있다. 그 판정을
+   * 여기서 하는 이유는 **행렬을 아는 층이 여기뿐**이기 때문이다 — 축약기는 행렬을 모르고
+   * (모듈 머리말 K7), 계획 층은 행렬이 이미 좌표에 녹은 뒤를 받는다.
+   */
   private emit(
     commands: readonly PathCommand[],
     atoms: StyleAtoms,
     ctx: WalkContext,
     hidden: boolean,
+    native?: ImportedNative,
   ): void {
     if (commands.length === 0) return;
     if (hidden) {
@@ -346,12 +420,16 @@ class DocumentWalker {
     // **변환은 여기서 좌표에 녹는다 — 호는 이미 3차가 되어 있다**(불변식 K2). 호 변수를
     // 든 자료 구조가 이 층에 도달할 수 없는 것이 그 불변식의 형상 판정이다.
     const transformed = transformCommands(commands, ctx.matrix);
+    // **원시형도 같은 행렬을 같은 자리에서 지난다.** 둘을 다른 자리에서 옮기면 한쪽만
+    // 고쳐질 수 있고, 그때 "경로로 보면 여기 있는데 사각형으로 보면 저기 있다" 가 된다.
+    const placed = native === undefined ? undefined : transformNative(native, ctx.matrix);
     this.shapes.push({
       commands: transformed,
       style: resolved.style,
       closed: transformed.some((cmd) => cmd.c === 'Z'),
       hasOwnStyle: resolved.hasOwnStyle,
       evenOdd: resolved.evenOdd,
+      ...(placed === undefined ? {} : { native: placed }),
     });
     // 지금까지 선 문구들은 **이 도형 아래에서** 그려지던 것이다. 요소가 될 때 문구는 전부
     // 도형 뒤(=위)로 가므로, 그 수가 곧 z-order 가 뒤집힌 문구의 수다.
@@ -499,7 +577,15 @@ class DocumentWalker {
     }
 
     if (isShorthandShapeTag(tag)) {
-      this.emit(shorthandShapeCommands(tag, attrs) ?? [], own, ctx, hidden);
+      // 명령과 원시형을 **함께** 낸다. 어느 쪽이 요소가 되는지는 `emit` 이 행렬을 보고
+      // 정하고, 원시형이 서지 못하면 명령이 그대로 남는다.
+      this.emit(
+        shorthandShapeCommands(tag, attrs) ?? [],
+        own,
+        ctx,
+        hidden,
+        shorthandNativeShape(tag, attrs),
+      );
       return;
     }
 

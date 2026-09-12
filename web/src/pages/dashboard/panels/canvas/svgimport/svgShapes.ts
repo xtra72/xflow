@@ -21,6 +21,7 @@
 import type { PathCommand } from '../shapes/pathTypes';
 
 import { arcToCubics } from './svgArc';
+import type { ImportedNative } from './svgImportTypes';
 import { parseLength, parseNumberList } from './svgPathData';
 
 /** 요소 하나의 속성 자루. 문서 층이 노드에서 긁어 만든다. */
@@ -61,28 +62,57 @@ function quarterArc(
   return arcToCubics(from.x, from.y, rx, ry, 0, 0, 1, to.x, to.y);
 }
 
+/** `<rect>` 가 말한 수 여섯. `width`/`height` 가 그려질 크기가 아니면 `undefined`. */
+interface RectMetrics {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+  readonly rx: number;
+  readonly ry: number;
+}
+
 /**
- * `<rect x y width height rx ry>`.
+ * `<rect>` 의 여섯 수를 **한 곳에서** 읽는다.
  *
- * 실제 파일이 자주 어기는 자리 셋을 코드가 먼저 갖는다.
- * - `rx` 만 있으면 `ry = rx`, `ry` 만 있으면 `rx = ry`, 둘 다 없으면 모서리 없음.
- * - `rx > w/2` 는 `w/2` 로, `ry > h/2` 는 `h/2` 로 **죈다**. 죄지 않으면 모서리 호가
- *   상자 밖으로 나가 도형이 뒤집힌다.
- * - 음수·비유한은 없는 것으로 읽는다.
+ * 명령 축약기와 원시형 판정이 이 함수를 **함께** 부른다. 두 곳이 각자 읽으면 `rx` 만 있을
+ * 때 `ry = rx` 로 읽는 규칙이나 `w/2` 로 죄는 규칙이 한쪽에서만 고쳐질 수 있고, 그때
+ * "명령은 깎인 모서리를 그리는데 요소는 사각형" 이 된다.
  */
-export function rectCommands(attrs: AttrBag): PathCommand[] {
-  const x = length(attrs, 'x');
-  const y = length(attrs, 'y');
+function rectMetrics(attrs: AttrBag): RectMetrics | undefined {
   const w = length(attrs, 'width');
   const h = length(attrs, 'height');
-  if (!(w > 0) || !(h > 0)) return [];
-
+  if (!(w > 0) || !(h > 0)) return undefined;
   const rawRx = cornerRadius(attrs, 'rx');
   const rawRy = cornerRadius(attrs, 'ry');
-  const rx = Math.min(rawRx ?? rawRy ?? 0, w / 2);
-  const ry = Math.min(rawRy ?? rawRx ?? 0, h / 2);
+  return {
+    x: length(attrs, 'x'),
+    y: length(attrs, 'y'),
+    w,
+    h,
+    rx: Math.min(rawRx ?? rawRy ?? 0, w / 2),
+    ry: Math.min(rawRy ?? rawRx ?? 0, h / 2),
+  };
+}
 
-  if (!(rx > 0) || !(ry > 0)) {
+/**
+ * 모서리가 깎이지 **않았는가** — 갈래를 정하는 술어는 이것 하나다.
+ *
+ * 축약기는 이 술어로 곧은 네 변과 호 넷을 가르고, 원시형 판정은 **같은 술어로** 캔버스
+ * 사각형이 될 수 있는지를 가른다. 캔버스의 `rect` 는 모서리 반지름을 나르지 않으므로
+ * (`BoxGeometry` 는 네 수뿐이다) 깎인 모서리는 경로로 남아야 하고, 그 경계가 두 곳에서
+ * 따로 정해지면 어느 날 한쪽만 움직인다.
+ */
+function isSharpCorner(m: RectMetrics): boolean {
+  return !(m.rx > 0) || !(m.ry > 0);
+}
+
+export function rectCommands(attrs: AttrBag): PathCommand[] {
+  const metrics = rectMetrics(attrs);
+  if (metrics === undefined) return [];
+  const { x, y, w, h, rx, ry } = metrics;
+
+  if (isSharpCorner(metrics)) {
     return [
       { c: 'M', x, y },
       { c: 'L', x: x + w, y },
@@ -198,6 +228,64 @@ export function polylineCommands(attrs: AttrBag): PathCommand[] {
 /** `<polygon points>` — 닫힌다. */
 export function polygonCommands(attrs: AttrBag): PathCommand[] {
   return polyCommands(attrs, true);
+}
+
+/**
+ * 태그가 말한 **원시 도형** — 캔버스가 이미 가진 종류로 그대로 옮길 수 있는 것들.
+ *
+ * 좌표는 사용자 단위이고 **변환은 아직 녹아 있지 않다**(축약기가 내는 명령과 같은 자리다).
+ * 변환을 녹이는 것도, 그 변환이 이 도형을 원시형으로 둘 수 있게 하는지 재는 것도 문서
+ * 층의 몫이다 — 이 모듈은 행렬을 모른다.
+ *
+ * **`undefined` 는 "경로로 남는다" 를 뜻한다.** 세 갈래가 그렇게 떨어진다:
+ *   - `<polygon>` · `<polyline>` · `<path>` — 캔버스에 그 종류가 없다.
+ *   - 모서리가 깎인 `<rect>` — `BoxGeometry` 가 모서리 반지름을 나르지 않는다.
+ *   - 그려질 것이 없는 도형(`width <= 0` · `r <= 0`) — 축약기도 빈 목록을 내고, 그때
+ *     문서 층이 아무 요소도 세우지 않는다. 여기서만 원시형을 내면 **축약기가 버린 도형이
+ *     요소로 되살아난다.**
+ */
+export function shorthandNativeShape(tag: string, attrs: AttrBag): ImportedNative | undefined {
+  switch (tag) {
+    case 'rect': {
+      const m = rectMetrics(attrs);
+      if (m === undefined || !isSharpCorner(m)) return undefined;
+      return { kind: 'rect', minX: m.x, minY: m.y, maxX: m.x + m.w, maxY: m.y + m.h };
+    }
+    case 'circle': {
+      const r = cornerRadius(attrs, 'r') ?? 0;
+      return ellipseNative(length(attrs, 'cx'), length(attrs, 'cy'), r, r);
+    }
+    case 'ellipse': {
+      // **반지름을 `ellipseCommands` 와 똑같이 읽는다** — 그 함수는 `rx` 만 있는 `<ellipse>`
+      // 에 `ry = rx` 를 채우지 않고 0 으로 읽어 빈 목록을 낸다. 여기서 채우면 축약기가
+      // 그리지 않기로 한 타원이 요소로 선다.
+      return ellipseNative(
+        length(attrs, 'cx'),
+        length(attrs, 'cy'),
+        cornerRadius(attrs, 'rx') ?? 0,
+        cornerRadius(attrs, 'ry') ?? 0,
+      );
+    }
+    case 'line':
+      // **퇴화한 선도 여기서는 낸다.** 두 끝점이 같은 선을 걸러야 하는 것은 참이지만
+      // (`isDegenerateLine` 이 저장 왕복에서 기하를 통째로 갈아 끼운다), 그 판정은
+      // **캔버스 정수로 반올림한 뒤**라야 성립한다 — 사용자 단위로는 다른 두 점이 같은
+      // 칸에 떨어질 수 있다. 그래서 그 게이트는 계획 층에 있고 여기에는 없다.
+      return {
+        kind: 'line',
+        x1: length(attrs, 'x1'),
+        y1: length(attrs, 'y1'),
+        x2: length(attrs, 'x2'),
+        y2: length(attrs, 'y2'),
+      };
+    default:
+      return undefined;
+  }
+}
+
+function ellipseNative(cx: number, cy: number, rx: number, ry: number): ImportedNative | undefined {
+  if (!(rx > 0) || !(ry > 0)) return undefined;
+  return { kind: 'ellipse', minX: cx - rx, minY: cy - ry, maxX: cx + rx, maxY: cy + ry };
 }
 
 /**

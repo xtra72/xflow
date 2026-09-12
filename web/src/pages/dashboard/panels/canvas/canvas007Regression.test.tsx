@@ -196,24 +196,30 @@ describe('AC-E12 — 007 이 넓히지 않은 것들', () => {
   });
 
   it('가져온 요소의 필드 이름 집합이 config 스키마를 넓히지 않는다 (K12)', () => {
+    // **두 갈래를 함께 잰다.** `<rect>` 는 태그가 제 종류를 말했으므로 캔버스 사각형이
+    // 되고(`path` 칸이 아예 없다), `<polygon>` 은 캔버스에 그 종류가 없어 경로로 남는다.
+    // 한 갈래만 재면 다른 갈래가 필드를 하나 더 달고 지나갈 수 있다.
     const doc =
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-13 7 317 181">' +
-      '<rect x="5" y="12" width="40" height="20" fill="#c0392b"/></svg>';
+      '<rect x="5" y="12" width="40" height="20" fill="#c0392b"/>' +
+      '<polygon points="5 12 45 12 45 32" fill="#27ae60"/></svg>';
     const result = planSvgImport(doc, { ...DEFAULT_CANVAS_SIZE });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const { created } = appendImportedElements([], result.shapes);
-    expect(created).toHaveLength(1);
+    expect(created).toHaveLength(2);
+    expect(created.map((el) => el.kind)).toEqual(['rect', 'path']);
     // `catalog_id` 를 심지 않는다 — 그 필드는 "어느 카탈로그 도형에서 나왔는가" 를 뜻하고,
     // 가져온 요소에는 카탈로그가 없다. 예약값을 넣으면 한 필드가 두 뜻을 갖는다.
-    expect(Object.keys(created[0]!).sort()).toEqual(['geometry', 'id', 'kind', 'path', 'style']);
+    expect(Object.keys(created[0]!).sort()).toEqual(['geometry', 'id', 'kind', 'style']);
+    expect(Object.keys(created[1]!).sort()).toEqual(['geometry', 'id', 'kind', 'path', 'style']);
 
     // 파서 왕복이 필드를 잃지도 더하지도 않는다.
     const reopened = parseCanvasConfig(
       JSON.parse(JSON.stringify({ canvas: { ...DEFAULT_CANVAS_SIZE }, elements: created })) as unknown,
     );
-    expect(reopened.elements).toHaveLength(1);
-    expect(reopened.elements[0]).toEqual(created[0]);
+    expect(reopened.elements).toHaveLength(2);
+    expect(reopened.elements).toEqual(created);
   });
 });
 
@@ -329,7 +335,12 @@ function maxImportElements(): PathElement[] {
     '</svg>';
   const result = planSvgImport(doc, { ...DEFAULT_CANVAS_SIZE });
   if (!result.ok) throw new Error('고정 입력이 거절되었다 — 시험이 잴 것이 없다');
-  return appendImportedElements([], result.shapes).created;
+  return appendImportedElements([], result.shapes).created.map((el) => {
+    // `<polygon>` 은 캔버스에 그 종류가 없어 **경로로 남는다**. 이 좁히기가 그 사실을
+    // 단언한다 — 원시형이 되어 버리면 명령이 0 개가 되어 아래 상한 검사가 잴 것을 잃는다.
+    if (el.kind !== 'path') throw new Error(`경로가 아니다: ${el.kind}`);
+    return el;
+  });
 }
 
 describe('AC-E3 — 가져온 요소 64개가 있어도 유휴 정지가 그대로다 (001 REQ-05)', () => {

@@ -47,7 +47,11 @@ const VIEW_BOX = 'viewBox="-13 7 317 181"';
 const DOC =
   `<svg xmlns="http://www.w3.org/2000/svg" ${VIEW_BOX}>` +
   '<rect x="-13" y="7" width="317" height="181" fill="#c0392b"/>' +
-  '<rect x="40" y="40" width="60" height="40" fill="#145a32"/>' +
+  // **둘째는 `<polygon>` 이다.** 태그가 제 종류를 말한 `<rect>` 는 캔버스 사각형이 되고
+  // `<polygon>` 은 캔버스에 그 종류가 없어 경로로 남는다 — 이 파일이 재는 것들(문서 순서 ·
+  // 계단 · 카탈로그 경로와의 구별 없음 · 서랍 왕복)은 **두 갈래 모두**에서 참이어야 하므로
+  // 고정 입력이 둘을 함께 낸다. 꼭짓점은 종전 둘째 `<rect>` 와 같다.
+  '<polygon points="40,40 100,40 100,80 40,80" fill="#145a32"/>' +
   '</svg>';
 
 /**
@@ -153,11 +157,12 @@ describe('AC-09 — 놓으면 일반 요소가 된다 (REQ-06)', () => {
     const els = liveElements();
     expect(els).toHaveLength(5);
     expect(els.slice(0, 3)).toEqual(SEED);
-    // 배열 끝 = 맨 위 = 문서의 나중 — 두 순서가 일치한다(REQ-06).
-    expect(els.slice(3).map((el) => el.kind)).toEqual(['path', 'path']);
-    // 문서에서 뒤에 있던 초록 사각이 배열에서도 뒤에 있다.
-    expect((els[3] as PathElement).style.fill).toBe('#c0392b');
-    expect((els[4] as PathElement).style.fill).toBe('#145a32');
+    // 배열 끝 = 맨 위 = 문서의 나중 — 두 순서가 일치한다(REQ-06). **갈래가 섞여도
+    // 순서는 문서 순서 하나다** — 원시형을 뒤로 몰면 여기서 `['path', 'rect']` 가 나온다.
+    expect(els.slice(3).map((el) => el.kind)).toEqual(['rect', 'path']);
+    // 문서에서 뒤에 있던 초록 도형이 배열에서도 뒤에 있다.
+    expect(els[3]!.style.fill).toBe('#c0392b');
+    expect(els[4]!.style.fill).toBe('#145a32');
   });
 
   it('새 id 가 `canvasElementFactory` 의 규칙을 따른다 — 겹치지 않는다', async () => {
@@ -182,10 +187,12 @@ describe('AC-09 — 놓으면 일반 요소가 된다 (REQ-06)', () => {
     // **상자는 도형마다 다르되 계단은 하나다**(결함 D3 정정). 옛 시험은 "두 기하가 같다" 로
     // 계단을 재었고, 그것은 상자가 전부 같다는 우연에 기댄 단언이었다. 재야 하는 것은 값이
     // 아니라 **델타**이며, 그 편이 강하다 — 상자가 저마다 달라도 계단만을 잰다.
-    const deltas = created.map((el, i) => ({
-      dx: el.geometry.x - planned.shapes[i]!.box.x,
-      dy: el.geometry.y - planned.shapes[i]!.box.y,
-    }));
+    const deltas = created.map((el, i) => {
+      const spec = planned.shapes[i]!;
+      // 고정 입력의 두 도형(사각형 · 경로)은 **둘 다 상자를 든다** — 선만 두 끝점이다.
+      if (spec.kind === 'line') throw new Error('선이 아니어야 한다');
+      return { dx: el.geometry.x - spec.box.x, dy: el.geometry.y - spec.box.y };
+    });
     for (const d of deltas) expect(d).toEqual(deltas[0]);
     // 그리고 계단이 실제로 **0 이 아니다**(이미 놓인 셋 때문) — 0 이면 이 시험이 무력하다.
     expect(deltas[0]!.dx).toBeGreaterThan(0);
@@ -275,7 +282,9 @@ describe('AC-09 — 놓으면 일반 요소가 된다 (REQ-06)', () => {
 
     const els = liveElements();
     const fromCatalog = els[3] as PathElement;
-    const fromImport = els[4] as PathElement;
+    // **가져온 것 가운데 경로인 쪽**과 견준다. `<polygon>` 은 캔버스에 그 종류가 없어
+    // 경로로 남으므로, 카탈로그 경로와 같은 갈래끼리의 비교가 성립한다.
+    const fromImport = els[5] as PathElement;
     expect(fromCatalog.kind).toBe('path');
     expect(fromImport.kind).toBe('path');
     // 필드 이름 집합이 `catalog_id` 하나만 다르다 — 009 가 출처별 분기를 갖지 않아도 된다.
@@ -379,11 +388,17 @@ describe('AC-09 — 놓으면 일반 요소가 된다 (REQ-06)', () => {
     const reopened = parseScratchpadEntry(JSON.parse(JSON.stringify(entry)) as unknown);
     expect(reopened).not.toBeNull();
     expect(reopened?.elements).toHaveLength(2);
+    // **갈래가 섞인 채로 왕복한다.** 사각형 하나와 경로 하나 — 종전에는 경로뿐이라
+    // 이 단언이 한 갈래만 지났다.
+    expect(reopened?.elements.map((el) => el.kind)).toEqual(['rect', 'path']);
     for (const [i, el] of (reopened?.elements ?? []).entries()) {
-      expect(el.kind, `#${i}`).toBe('path');
-      expect((el as PathElement).path, `#${i}`).toEqual(created[i]!.path);
-      expect(el.style, `#${i}`).toEqual(created[i]!.style);
-      expect(el.geometry, `#${i}`).toEqual(created[i]!.geometry);
+      const before = created[i]!;
+      expect(el.kind, `#${i}`).toBe(before.kind);
+      if (el.kind === 'path' && before.kind === 'path') {
+        expect(el.path, `#${i}`).toEqual(before.path);
+      }
+      expect(el.style, `#${i}`).toEqual(before.style);
+      expect(el.geometry, `#${i}`).toEqual(before.geometry);
     }
   });
 });

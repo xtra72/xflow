@@ -47,7 +47,7 @@ import {
   SEED_STROKE_WIDTH,
   type ImportedPathSource,
 } from './canvasElementFactory';
-import { parseCanvasConfig, type BoxGeometry } from './canvasConfig';
+import { parseCanvasConfig, type BoxGeometry, type CanvasElement, type PathElement } from './canvasConfig';
 import type { PathCommand } from './shapes/pathTypes';
 import type { CanvasNode } from './group/groupTypes';
 
@@ -68,8 +68,20 @@ const BOX: BoxGeometry = { x: 50, y: 86, w: 400, h: 228 };
 const BOX_B: BoxGeometry = { x: 71, y: 40, w: 120, h: 300 };
 const BOX_C: BoxGeometry = { x: 12, y: 205, w: 61, h: 33 };
 
+/**
+ * 만들어진 것을 경로로 좁힌다. **이 파일의 원천은 전부 경로다** — 입구가 원시형도 받게
+ * 넓어진 뒤로 `created` 는 `CanvasElement[]` 이므로, 좁히는 이 한 줄이 곧 "경로 원천은
+ * 여전히 경로 요소가 된다" 는 단언이다(종전에는 반환 타입이 그것을 말했다).
+ */
+function asPaths(created: readonly CanvasElement[]): PathElement[] {
+  return created.map((el) => {
+    if (el.kind !== 'path') throw new Error(`경로가 아니다: ${el.kind}`);
+    return el;
+  });
+}
+
 function silent(commands: PathCommand[], box: BoxGeometry = BOX): ImportedPathSource {
-  return { commands, box, style: {}, hasOwnStyle: false };
+  return { kind: 'path', commands, box, style: {}, hasOwnStyle: false };
 }
 
 function spoken(
@@ -77,7 +89,7 @@ function spoken(
   style: ImportedPathSource['style'],
   box: BoxGeometry = BOX,
 ): ImportedPathSource {
-  return { commands, box, style, hasOwnStyle: true };
+  return { kind: 'path', commands, box, style, hasOwnStyle: true };
 }
 
 describe('가져온 요소는 배열 끝에 문서 순서대로 붙는다 (AC-09)', () => {
@@ -113,7 +125,7 @@ describe('계단은 무리 전체에 한 번만 (REQ-06 · 뮤테이션 1 · 1b)
   /** 이미 요소가 셋 있으므로 계단은 0 이 아니다. 0 이면 이 시험이 아무것도 재지 못한다. */
   function withThreeBefore(sources: readonly ImportedPathSource[]) {
     const before = [0, 1, 2].reduce<CanvasNode[]>((acc) => appendElement(acc, 'rect').next, []);
-    return appendImportedElements(before, sources).created;
+    return asPaths(appendImportedElements(before, sources).created);
   }
 
   it('조각들이 흩어지지 않는다 — 상자는 저마다 달라도 **같은 계단**이 더해진다', () => {
@@ -144,7 +156,7 @@ describe('계단은 무리 전체에 한 번만 (REQ-06 · 뮤테이션 1 · 1b)
 
   it('상자 크기는 계단에 흔들리지 않는다', () => {
     const before = appendElement([], 'rect').next;
-    const { created } = appendImportedElements(before, [silent(CLOSED, BOX_B)]);
+    const created = asPaths(appendImportedElements(before, [silent(CLOSED, BOX_B)]).created);
     expect(created[0]!.geometry.w).toBe(BOX_B.w);
     expect(created[0]!.geometry.h).toBe(BOX_B.h);
   });
@@ -152,7 +164,7 @@ describe('계단은 무리 전체에 한 번만 (REQ-06 · 뮤테이션 1 · 1b)
   it('조각마다 제 상자 객체를 든다 — 하나를 고쳐도 다른 것이 따라 바뀌지 않는다', () => {
     // 같은 상자 **객체**를 둘에 준다. 그래도 만들어진 둘은 서로 다른 객체여야 한다 —
     // 한 도형이 상한 때문에 나뉜 조각들이 정확히 이 형상이다.
-    const { created } = appendImportedElements([], [silent(CLOSED, BOX), silent(OPEN, BOX)]);
+    const created = asPaths(appendImportedElements([], [silent(CLOSED, BOX), silent(OPEN, BOX)]).created);
     expect(created[0]!.geometry).toEqual(created[1]!.geometry);
     expect(created[0]!.geometry).not.toBe(created[1]!.geometry);
   });
@@ -160,7 +172,7 @@ describe('계단은 무리 전체에 한 번만 (REQ-06 · 뮤테이션 1 · 1b)
 
 describe('스타일 (REQ-06 · 뮤테이션 3·4)', () => {
   it('말하지 않은 도형은 008 의 씨앗을 입는다 — 두 번째 씨앗 규칙을 만들지 않는다', () => {
-    const { created } = appendImportedElements([], [silent(CLOSED), silent(OPEN)]);
+    const created = asPaths(appendImportedElements([], [silent(CLOSED), silent(OPEN)]).created);
     // 닫힘 → 채움, 열림 → 선. `pathSeedStyle` 이 정확히 그 둘을 가른다.
     expect(created[0]!.style).toEqual({ fill: SEED_COLOR });
     expect(created[1]!.style).toEqual({ stroke: SEED_COLOR, strokeWidth: SEED_STROKE_WIDTH });
@@ -168,12 +180,16 @@ describe('스타일 (REQ-06 · 뮤테이션 3·4)', () => {
 
   it('말한 도형은 제 색을 지킨다 — 씨앗이 덮지 않는다', () => {
     const style = { fill: 'rgba(192, 57, 43, 0.6)', stroke: 'rgba(20, 90, 50, 0.9)', strokeWidth: 3.8 };
-    const { created } = appendImportedElements([], [spoken(CLOSED, style)]);
+    const created = asPaths(appendImportedElements([], [spoken(CLOSED, style)]).created);
     expect(created[0]!.style).toEqual(style);
   });
 
   it('칠을 말하지 않았어도 불투명도는 살아남는다', () => {
-    const { created } = appendImportedElements([], [{ commands: CLOSED, box: BOX, style: { opacity: 0.4 }, hasOwnStyle: false }]);
+    const created = asPaths(
+      appendImportedElements([], [
+        { kind: 'path', commands: CLOSED, box: BOX, style: { opacity: 0.4 }, hasOwnStyle: false },
+      ]).created,
+    );
     expect(created[0]!.style).toEqual({ fill: SEED_COLOR, opacity: 0.4 });
   });
 });
@@ -181,7 +197,7 @@ describe('스타일 (REQ-06 · 뮤테이션 3·4)', () => {
 describe('명령을 사본으로 싣는다 (뮤테이션 2)', () => {
   it('만든 요소의 명령을 고쳐도 입력 목록이 바뀌지 않는다', () => {
     const source = silent(CLOSED);
-    const { created } = appendImportedElements([], [source]);
+    const created = asPaths(appendImportedElements([], [source]).created);
     const first = created[0]!.path[0]!;
     if (first.c === 'M') first.x = 9999;
     expect(source.commands[0]).toEqual({ c: 'M', x: 0, y: 0 });
@@ -189,7 +205,7 @@ describe('명령을 사본으로 싣는다 (뮤테이션 2)', () => {
 
   it('같은 도형을 두 번 실어도 두 요소가 목록을 공유하지 않는다', () => {
     const source = silent(CLOSED);
-    const { created } = appendImportedElements([], [source, source]);
+    const created = asPaths(appendImportedElements([], [source, source]).created);
     expect(created[0]!.path).not.toBe(created[1]!.path);
     expect(created[0]!.path[0]).not.toBe(created[1]!.path[0]);
   });
@@ -197,14 +213,14 @@ describe('명령을 사본으로 싣는다 (뮤테이션 2)', () => {
 
 describe('카탈로그 경로와 구별되지 않는다 (REQ-08 · AC-E12 · 뮤테이션 6)', () => {
   it('가져온 요소는 catalog_id 를 갖지 않는다 — 한 필드가 두 뜻을 갖지 않는다', () => {
-    const { created } = appendImportedElements([], [silent(CLOSED)]);
+    const created = asPaths(appendImportedElements([], [silent(CLOSED)]).created);
     expect(created[0]!.catalog_id).toBeUndefined();
     expect('catalog_id' in created[0]!).toBe(false);
   });
 
   it('필드 이름 집합이 카탈로그 경로의 것과 같다(catalog_id 를 뺀 나머지)', () => {
     const catalog = appendPathElement([], 'donut', CLOSED).created;
-    const imported = appendImportedElements([], [silent(CLOSED)]).created[0]!;
+    const imported = asPaths(appendImportedElements([], [silent(CLOSED)]).created)[0]!;
     expect(Object.keys(imported).sort()).toEqual(
       Object.keys(catalog)
         .filter((k) => k !== 'catalog_id')

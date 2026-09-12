@@ -310,7 +310,12 @@ describe('문구는 캔버스 단위 기준점 위에 선다', () => {
     // 상자 400×200, 원점 (50,100). 문구 (30,40) → (50+(30−20)×2, 100+(40−10)×2) = (70,160).
     const result = plan(svg('<text x="30" y="40">가</text><rect x="30" y="40" width="10" height="10"/>'));
     expect(result.texts[0]?.at).toEqual({ x: 70, y: 160 });
-    expect(result.shapes[0]?.box).toMatchObject({ x: 70, y: 160 });
+    // `<rect>` 는 태그가 제 종류를 말했으므로 캔버스 사각형이 된다 — 그래도 놓이는 자리는
+    // 문구와 **같은 축척**에서 나온다(둘 다 `placePoint` 를 지난다).
+    const shape = result.shapes[0]!;
+    expect(shape.kind).toBe('rect');
+    if (shape.kind === 'line') throw new Error('선이 아니어야 한다');
+    expect(shape.box).toMatchObject({ x: 70, y: 160 });
   });
 
   it('크기가 문서 축척을 탄다 (뮤테이션 7)', () => {
@@ -400,7 +405,7 @@ describe('문구 요소를 만드는 입구는 도형과 **하나**다', () => {
   const TEXT = { at: { x: 10, y: 20 }, text: '가', style: { fontSize: 20 }, hasOwnStyle: false };
 
   it('문구는 도형 **뒤**에 붙는다 = 도형 **위**에 그려진다 (뮤테이션 10)', () => {
-    const shape = { commands: [{ c: 'M' as const, x: 0, y: 0 }], box: { x: 1, y: 2, w: 3, h: 4 }, style: {}, hasOwnStyle: false };
+    const shape = { kind: 'path' as const, commands: [{ c: 'M' as const, x: 0, y: 0 }], box: { x: 1, y: 2, w: 3, h: 4 }, style: {}, hasOwnStyle: false };
     const { next } = appendImportedElements([], [shape], [TEXT]);
     expect(next.map((el) => el.kind)).toEqual(['path', 'text']);
   });
@@ -410,7 +415,7 @@ describe('문구 요소를 만드는 입구는 도형과 **하나**다', () => {
       (acc) => appendElement(acc, 'rect').next,
       [],
     );
-    const shape = { commands: [{ c: 'M' as const, x: 0, y: 0 }], box: { x: 10, y: 20, w: 3, h: 4 }, style: {}, hasOwnStyle: false };
+    const shape = { kind: 'path' as const, commands: [{ c: 'M' as const, x: 0, y: 0 }], box: { x: 10, y: 20, w: 3, h: 4 }, style: {}, hasOwnStyle: false };
     const { created, createdTexts } = appendImportedElements(before, [shape], [TEXT, TEXT]);
     const off = seedOffset(3);
     expect(off).toBeGreaterThan(0);
@@ -419,7 +424,7 @@ describe('문구 요소를 만드는 입구는 도형과 **하나**다', () => {
   });
 
   it('id 가 도형과 이어서 발급된다 — 겹치지 않는다', () => {
-    const shape = { commands: [{ c: 'M' as const, x: 0, y: 0 }], box: { x: 1, y: 2, w: 3, h: 4 }, style: {}, hasOwnStyle: false };
+    const shape = { kind: 'path' as const, commands: [{ c: 'M' as const, x: 0, y: 0 }], box: { x: 1, y: 2, w: 3, h: 4 }, style: {}, hasOwnStyle: false };
     const { next, created, createdTexts } = appendImportedElements([], [shape, shape], [TEXT]);
     expect([...created, ...createdTexts].map((el) => el.id)).toEqual(['el-1', 'el-2', 'el-3']);
     expect(new Set(next.map((el) => el.id)).size).toBe(3);

@@ -52,8 +52,30 @@ import {
 } from '../canvasConfig';
 import { PATH_LOCAL_EXTENT } from '../shapes/pathTypes';
 
-import { commandBounds, fitBox, planSvgImport, resolveViewBox, toLocalCommands } from './svgImportPlan';
+import {
+  commandBounds,
+  fitBox,
+  planSvgImport,
+  resolveViewBox,
+  toLocalCommands,
+  type ImportedShapeSpec,
+} from './svgImportPlan';
 import { MAX_IMPORT_FILE_BYTES } from './svgImportTypes';
+
+/**
+ * spec 의 상자. **선에만 상자가 없다**(두 끝점을 든다) — 이 자리들의 고정 입력에 선은
+ * 없으므로 이 던지기는 "상자를 재는 시험이 선을 보고 조용히 지나가지 않는다" 는 단언이다.
+ */
+function boxOf(spec: ImportedShapeSpec): { x: number; y: number; w: number; h: number } {
+  if (spec.kind === 'line') throw new Error('선에는 상자가 없다');
+  return spec.box;
+}
+
+/** spec 의 명령. **경로가 아니면 시험이 선다** — 원시형은 명령을 나르지 않는다. */
+function commandsOf(spec: ImportedShapeSpec) {
+  if (spec.kind !== 'path') throw new Error(`경로가 아니다: ${spec.kind}`);
+  return spec.commands;
+}
 
 /** E2 · E3 의 고정 입력. 원점 ≠ 0 · 부호가 다르다 · 비정사각 · 안 나누어떨어진다. */
 const VIEW_BOX = { minX: -13, minY: 7, width: 317, height: 181 } as const;
@@ -151,14 +173,29 @@ describe('상자가 문서 종횡비를 든다 (AC-05 · 뮤테이션 4·5)', ()
   });
 
   it('도형마다 제 상자를 든다 — 계획은 무리가 함께 쓰는 상자를 들지 않는다 (결함 D3)', () => {
-    const result = plan(svg('<rect width="10" height="4"/><circle cx="50" cy="50" r="9"/>'));
-    expect(result.shapes).toHaveLength(2);
+    // **세 갈래를 함께 둔다.** `<rect>` 는 캔버스 사각형이 되고 `<polygon>` 은 경로로 남는다 —
+    // 한 갈래만 재면 다른 갈래에서 상자가 다시 공유되어도 통과한다.
+    const result = plan(
+      svg('<rect width="10" height="4"/><circle cx="50" cy="50" r="9"/><polygon points="200,150 260,150 260,170"/>'),
+    );
+    expect(result.shapes).toHaveLength(3);
+    expect(result.shapes.map((sh) => sh.kind)).toEqual(['rect', 'ellipse', 'path']);
     // 형상 판정: 상자는 도형이 든다. `box` 키가 사라지면 여기서 빨개진다.
-    expect(Object.keys(result.shapes[0]!).sort()).toEqual(['box', 'commands', 'hasOwnStyle', 'style']);
+    expect(Object.keys(result.shapes[0]!).sort()).toEqual(['box', 'hasOwnStyle', 'kind', 'style']);
+    // 경로는 거기에 명령을 더 든다 — **원시형에는 그 칸이 아예 없다**(예산의 값이 그 없음이다).
+    expect(Object.keys(result.shapes[2]!).sort()).toEqual([
+      'box',
+      'commands',
+      'hasOwnStyle',
+      'kind',
+      'style',
+    ]);
     // 그리고 계획에는 상자가 **없다** — 있으면 옛 공유 상자가 남아 있는 것이다.
     expect('box' in result).toBe(false);
-    // 두 도형은 문서에서 서로 떨어져 있으므로 상자도 달라야 한다. 같으면 공유 상자다.
-    expect(result.shapes[0]!.box).not.toEqual(result.shapes[1]!.box);
+    // 세 도형은 문서에서 서로 떨어져 있으므로 상자도 달라야 한다. 같으면 공유 상자다.
+    const boxes = result.shapes.map((sh) => (sh.kind === 'line' ? undefined : sh.box));
+    expect(boxes[0]).not.toEqual(boxes[1]);
+    expect(boxes[1]).not.toEqual(boxes[2]);
   });
 });
 
@@ -170,7 +207,7 @@ describe('요소 상자가 곡선의 **참** 넓이를 든다 — 제어점 껍�
 
   it('상자 폭이 참 넓이(61.46)에서 나온다 — 껍질(120)에서가 아니다', () => {
     const result = plan(svg(CURVE));
-    const box = result.shapes[0]!.box;
+    const box = boxOf(result.shapes[0]!);
     const scaleX = fitBox(VIEW_BOX, CANVAS).w / VIEW_BOX.width;
     // 참값: round(61.46 × 400/317) = 78. 껍질값: round(120 × 400/317) = 151.
     expect(box.w).toBe(78);
@@ -182,7 +219,7 @@ describe('요소 상자가 곡선의 **참** 넓이를 든다 — 제어점 껍�
     // 60/120 = 5000 이 된다. 상자 폭만 재는 단언은 "상자는 좁혔는데 좌표는 옛 격자 그대로"
     // 라는 결함을 통과시키므로, 좌표 쪽에서도 같은 수를 확인한다.
     const result = plan(svg(CURVE));
-    const last = result.shapes[0]!.commands[1]!;
+    const last = commandsOf(result.shapes[0]!)[1]!;
     expect(last.c).toBe('C');
     if (last.c !== 'C') return;
     expect(last.x).toBe(9762);
@@ -196,9 +233,12 @@ describe('요소 상자가 곡선의 **참** 넓이를 든다 — 제어점 껍�
       svg('<rect x="1e200" y="1e200" width="1e200" height="1e200" transform="scale(1e200)"/><rect width="10" height="4"/>'),
     );
     expect(result.shapes).toHaveLength(2);
-    expect(result.shapes[0]!.box).toEqual(fitBox(VIEW_BOX, CANVAS));
+    // **좌표가 `±∞` 인 원시형은 서지 못하고 경로로 돌아간다** — 그 답(문서 틀을 그대로
+    // 쓴다)이 007 에 이미 있고, 원시형 쪽에 두 번째 답을 만들지 않는다.
+    expect(result.shapes[0]!.kind).toBe('path');
+    expect(boxOf(result.shapes[0]!)).toEqual(fitBox(VIEW_BOX, CANVAS));
     // 켜져 있음: 함께 둔 멀쩡한 사각은 **제 작은 상자**를 얻었다(둘 다 문서 틀이 아니다).
-    expect(result.shapes[1]!.box).not.toEqual(fitBox(VIEW_BOX, CANVAS));
+    expect(boxOf(result.shapes[1]!)).not.toEqual(fitBox(VIEW_BOX, CANVAS));
   });
 });
 
@@ -206,12 +246,17 @@ describe('퇴화 상자를 만들지 않는다 (AC-E8 · 가정 A15 · 뮤테이
   it('납작한 문서의 상자가 파서 왕복을 견딘다 — 두 변 모두 최소 크기 이상이다', () => {
     // `0 0 1000 1` → 높이 = round(1 × 0.4) = 0. 죄지 않으면 그대로 저장되고,
     // 다시 열 때 `isDegenerateBox` 가 기하를 **통째로** 씨앗으로 갈아 끼운다.
-    const flat = plan(svg('<line x1="0" y1="0.5" x2="1000" y2="0.5"/>', 'viewBox="0 0 1000 1"'));
-    const box = flat.shapes[0]!.box;
+    // **`<polyline>` 이다.** `<line>` 은 이제 캔버스 선이 되어 로컬 정규화를 지나지 않으므로,
+    // 이 시험이 재는 것(납작한 상자의 왕복 + 정규화가 선을 상자 한가운데에 두는가)을 재려면
+    // 경로로 남는 도형이어야 한다. 두 점의 좌표는 종전 `<line>` 과 **같다**.
+    const flat = plan(svg('<polyline points="0,0.5 1000,0.5"/>', 'viewBox="0 0 1000 1"'));
+    const first = flat.shapes[0]!;
+    if (first.kind !== 'path') throw new Error(`경로가 아니다: ${first.kind}`);
+    const box = first.box;
     expect(box.w).toBeGreaterThanOrEqual(1);
     expect(box.h).toBeGreaterThanOrEqual(1);
 
-    const reopened = roundTrip(box, flat.shapes[0]!.commands);
+    const reopened = roundTrip(box, first.commands);
     expect(reopened.geometry).toEqual(box);
     expect(reopened.geometry).not.toEqual(DEFAULT_BOX_GEOMETRY);
     // **그리고 선이 상자 한가운데를 지난다.** 상자만 1 로 밀어 올리고 정규화의 나누는 수를
@@ -223,14 +268,17 @@ describe('퇴화 상자를 만들지 않는다 (AC-E8 · 가정 A15 · 뮤테이
   });
 
   it('가로선 · 세로선 · 반지름 0 인 원도 같다', () => {
+    // 도형은 전부 **경로로 남는 것**들이다 — 이 시험이 재는 것은 경로 요소의 상자이고,
+    // 원시형의 퇴화는 제 기하(두 끝점)를 상대로 따로 재어진다(`canvas007Robust`).
     for (const [body, attrs] of [
-      ['<line x1="0" y1="40" x2="120" y2="40"/>', 'viewBox="0 0 120 0.4"'],
-      ['<line x1="40" y1="0" x2="40" y2="120"/>', 'viewBox="0 0 0.4 120"'],
-      ['<circle cx="1" cy="1" r="0"/><rect width="4" height="4"/>', 'viewBox="0 0 4 0.2"'],
+      ['<polyline points="0,40 120,40"/>', 'viewBox="0 0 120 0.4"'],
+      ['<polyline points="40,0 40,120"/>', 'viewBox="0 0 0.4 120"'],
+      ['<circle cx="1" cy="1" r="0"/><polygon points="0,0 4,0 4,4 0,4"/>', 'viewBox="0 0 4 0.2"'],
     ] as const) {
       const result = plan(svg(body, attrs));
       // **전수다.** 도형 하나만 보면 둘째 도형의 퇴화가 통과한다.
       for (const shape of result.shapes) {
+        if (shape.kind !== 'path') throw new Error(`경로가 아니다: ${shape.kind}`);
         expect(shape.box.w, body).toBeGreaterThanOrEqual(1);
         expect(shape.box.h, body).toBeGreaterThanOrEqual(1);
         expect(roundTrip(shape.box, shape.commands).geometry, body).not.toEqual(
@@ -257,15 +305,18 @@ describe('viewBox 3단 폴백 (REQ-02 · 뮤테이션 8)', () => {
   it('둘 다 없으면 변환을 녹인 뒤의 합집합 바운딩 박스를 쓴다', () => {
     const result = plan(
       svg(
-        '<g transform="translate(100,200)"><rect x="0" y="0" width="40" height="20"/></g>',
+        '<g transform="translate(100,200)"><polygon points="0,0 40,0 40,20 0,20"/></g>',
         'id="no-size"',
       ),
     );
     // 합집합 = (100,200)~(140,220) → 그 도형 하나가 문서 전부이므로 상자 종횡비는 40 : 20 이다.
-    const box = result.shapes[0]!.box;
-    expect(Math.abs(box.w / box.h - 2)).toBeLessThan(0.01);
+    // **`<polygon>` 이다** — 아래가 로컬 좌표를 읽으므로 경로로 남는 도형이어야 한다. 꼭짓점은
+    // 종전 `<rect>` 와 같고, 폴백이 원시형 도형도 함께 센다는 것은 `svgImportNative` 가 잰다.
+    const first = result.shapes[0]!;
+    if (first.kind !== 'path') throw new Error(`경로가 아니다: ${first.kind}`);
+    expect(Math.abs(first.box.w / first.box.h - 2)).toBeLessThan(0.01);
     // 그 합집합의 왼쪽 위가 로컬 원점이 된다.
-    expect(result.shapes[0]!.commands[0]).toEqual({ c: 'M', x: 0, y: 0 });
+    expect(first.commands[0]).toEqual({ c: 'M', x: 0, y: 0 });
   });
 
   it('합집합은 도형 **전부**를 감싼다 — 첫 도형만 보면 오른쪽 조각이 상자 밖으로 나간다', () => {
@@ -275,13 +326,17 @@ describe('viewBox 3단 폴백 (REQ-02 · 뮤테이션 8)', () => {
     // 합집합 = (0,0)~(100,20). **첫 도형만 보면 축척이 2.5 배가 되어 오른쪽 조각의 상자가
     // 캔버스 밖으로 나간다** — 그것이 이 시험이 재는 것이다. 종횡비로는 잴 수 없다:
     // 상대 배치는 축척에 불변이라 첫 도형만 본 폴백에서도 같은 비가 나온다(실측 확인).
+    // 두 도형은 **원시형**이다(태그가 제 종류를 말했다) — 그래도 `viewBox` 폴백의 합집합에
+    // 함께 든다. 들지 않으면 `<rect>` 만 있는 문서가 "빈 문서" 로 거절된다.
+    expect(result.shapes.map((sh) => sh.kind)).toEqual(['rect', 'rect']);
     for (const shape of result.shapes) {
-      expect(shape.box.x).toBeGreaterThanOrEqual(0);
-      expect(shape.box.x + shape.box.w).toBeLessThanOrEqual(CANVAS.width);
-      expect(shape.box.y + shape.box.h).toBeLessThanOrEqual(CANVAS.height);
+      const box = boxOf(shape);
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.w).toBeLessThanOrEqual(CANVAS.width);
+      expect(box.y + box.h).toBeLessThanOrEqual(CANVAS.height);
     }
     // 그리고 두 조각의 **간격**이 문서의 뜻대로다 — 사이 20, 폭 40 이므로 폭의 절반이다.
-    const [first, second] = [result.shapes[0]!.box, result.shapes[1]!.box];
+    const [first, second] = [boxOf(result.shapes[0]!), boxOf(result.shapes[1]!)];
     expect(second.x - (first.x + first.w)).toBeCloseTo(first.w / 2, 0);
   });
 
@@ -353,19 +408,34 @@ describe('선 두께와 보고 (REQ-05 · 뮤테이션 7)', () => {
   });
 
   it('보고가 도형 수 · 명령 총수 · 추정 바이트를 함께 말한다', () => {
-    const result = plan(svg('<rect width="10" height="4"/><rect x="5" y="5" width="10" height="4"/>'));
-    expect(result.report.shapes).toBe(2);
-    expect(result.report.commands).toBe(10);
+    // **갈래 셋을 섞는다.** 사각형 · 선 · 경로가 한 문서에 있어야 "도형 수는 전부를 세고
+    // 명령 총수는 경로만 센다" 를 가를 수 있다 — 경로만 든 문서에서는 두 수가 함께 움직여
+    // 어느 쪽을 세는지 시험이 말하지 못한다.
+    const result = plan(
+      svg(
+        '<rect width="10" height="4"/><line x1="5" y1="5" x2="80" y2="60"/>' +
+          '<polygon points="100,100 140,100 140,130 100,130"/>',
+      ),
+    );
+    expect(result.shapes.map((sh) => sh.kind)).toEqual(['rect', 'line', 'path']);
+    // 도형 **셋** — 원시형도 요소가 되므로 함께 센다.
+    expect(result.report.shapes).toBe(3);
+    // 명령 **다섯** — `<polygon>` 넷 + `Z` 하나. 원시형 둘은 한 칸도 먹지 않는다.
+    expect(result.report.commands).toBe(5);
     expect(result.report.estimatedBytes).toBeGreaterThan(0);
-    // 추정이 실제 직렬화 길이를 재는지 — 상수를 곱한 값이 아니다.
+    // 추정이 실제 직렬화 길이를 재는지 — 상수를 곱한 값이 아니다. **갈래마다 실릴 형상이
+    // 다르므로**(경로에만 `path` 칸이 있고 선의 기하는 이름이 넷 다 다르다) 그 형상 그대로 센다.
     const actual = JSON.stringify(
-      result.shapes.map((s) => ({
-        id: 'el-00',
-        kind: 'path',
-        geometry: s.box,
-        path: s.commands,
-        style: s.style,
-      })),
+      result.shapes.map((s) =>
+        s.kind === 'path'
+          ? { id: 'el-00', kind: 'path', geometry: s.box, path: s.commands, style: s.style }
+          : {
+              id: 'el-00',
+              kind: s.kind,
+              geometry: s.kind === 'line' ? s.line : s.box,
+              style: s.style,
+            },
+      ),
     ).length;
     expect(result.report.estimatedBytes).toBe(actual);
   });

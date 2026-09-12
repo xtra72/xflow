@@ -27,7 +27,16 @@ import { clearSurface, drawElements, type DrawContext2D } from '../drawElement';
 import { MAX_PATH_COMMANDS } from '../shapes/pathTypes';
 import { CanvasSvgImport } from './CanvasSvgImport';
 import { fitPreviewSize } from './svgImportPresent';
-import type { ImportedPathSpec } from './svgImportPlan';
+import type { ImportedShapeSpec } from './svgImportPlan';
+
+/**
+ * spec 의 상자. **선에만 상자가 없다** — 이 파일의 고정 입력에 선은 없으므로 이 던지기는
+ * "상자를 재는 시험이 선을 보고 조용히 지나가지 않는다" 는 단언이다.
+ */
+function boxOf(spec: ImportedShapeSpec): { x: number; y: number; w: number; h: number } {
+  if (spec.kind === 'line') throw new Error('선에는 상자가 없다');
+  return spec.box;
+}
 import { MAX_IMPORT_ELEMENTS, MAX_IMPORT_FILE_BYTES } from './svgImportTypes';
 
 // --- 고정 입력 -----------------------------------------------------------
@@ -61,7 +70,7 @@ function file(text: string, name = 'a.svg'): File {
 }
 
 interface Placed {
-  shapes: readonly ImportedPathSpec[];
+  shapes: readonly ImportedShapeSpec[];
 }
 
 function renderImport(text: string | (() => Promise<string>)): { placed: Placed[] } {
@@ -374,21 +383,21 @@ describe('놓기와 취소 (REQ-06 · 불변식 K15)', () => {
 
     expect(placed).toHaveLength(1);
     expect(placed[0]?.shapes).toHaveLength(2);
-    const [rect, circle] = placed[0]!.shapes;
+    const [rect, circle] = placed[0]!.shapes.map(boxOf);
     // **그림이 일그러지지 않는다** — 그것이 AC-05 가 문서 종횡비로 말하려던 것이다.
     // 상자가 도형마다인 지금은 종횡비 하나를 물을 자리가 없고, 대신 **각 도형이 제 사용자
     // 단위 종횡비를 그대로 든다**를 묻는다. 이 편이 강하다: 공유 상자 시절의 단언은 상자
     // 하나의 비만 보았으므로 도형이 저마다 일그러져도 통과했다.
-    expect(rect!.box.w / rect!.box.h).toBeCloseTo(40 / 20, 1);
+    expect(rect!.w / rect!.h).toBeCloseTo(40 / 20, 1);
     // 원은 **정사각**이다. 축척을 축마다 다르게 준 결함은 여기서만 보인다 — 사각 하나로는
     // 40:20 과 축이 뒤바뀐 20:40 을 구분할 수 있어도, 축척이 조금 어긋난 것은 못 본다.
-    expect(circle!.box.w).toBe(circle!.box.h);
-    for (const shape of placed[0]!.shapes) {
-      expect(shape.box.w).toBeGreaterThan(0);
-      expect(shape.box.h).toBeGreaterThan(0);
+    expect(circle!.w).toBe(circle!.h);
+    for (const box of placed[0]!.shapes.map(boxOf)) {
+      expect(box.w).toBeGreaterThan(0);
+      expect(box.h).toBeGreaterThan(0);
     }
     // 그리고 두 상자가 **다르다** — 같으면 공유 상자로 되돌아간 것이다.
-    expect(rect!.box).not.toEqual(circle!.box);
+    expect(rect).not.toEqual(circle);
     // 놓은 뒤에는 대기로 — 같은 계획이 두 번 놓이지 않는다.
     expect(screen.queryByTestId('canvas-svg-import-summary')).toBeNull();
     expect(screen.getByTestId('canvas-svg-import-pick')).toBeTruthy();

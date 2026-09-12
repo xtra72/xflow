@@ -217,7 +217,7 @@ import {
 } from './canvasEditArrange';
 import { useCanvasEditSelection, type CanvasSelection } from './canvasEditContext';
 import { useCanvasEditDockHost } from './canvasEditDockHost';
-import type { ImportedPathSpec, ImportedTextSpec } from './svgimport/svgImportPlan';
+import type { ImportedShapeSpec, ImportedTextSpec } from './svgimport/svgImportPlan';
 import { useCanvasStageGrid } from './canvasStageGrid';
 import { DEFAULT_WORKSPACE_ZOOM } from './canvasWorkspace';
 import {
@@ -1495,7 +1495,7 @@ export default function CanvasEditOverlay({
    * 그대로 보존된다. 요소마다 다른 오프셋을 주면 그때 그림이 25 단위씩 흩어진다.
    */
   const placeFromImport = (
-    shapes: readonly ImportedPathSpec[],
+    shapes: readonly ImportedShapeSpec[],
     texts: readonly ImportedTextSpec[],
   ): void => {
     const { next, created, createdTexts } = appendImportedElements(elements, shapes, texts);

@@ -26,6 +26,7 @@ import {
   type CanvasElement,
   type CanvasPrimitiveKind,
   type ElementStyle,
+  type LineGeometry,
   type PathElement,
   type PointGeometry,
   type TextElement,
@@ -236,7 +237,24 @@ export function newElement(id: string, kind: CanvasPrimitiveKind, count: number)
  * 대해 근거를 대야 하고, 그것은 `SEED_TEXT_COLOR` 주석이 한 번 치른 값이다.
  */
 export function pathSeedStyle(commands: readonly PathCommand[]): ElementStyle {
-  return commands.some((cmd) => cmd.c === 'Z')
+  return closedSeedStyle(commands.some((cmd) => cmd.c === 'Z'));
+}
+
+/**
+ * 닫힘/열림 한 불린에서 씨앗 스타일로. **규칙은 이 함수 하나다.**
+ *
+ * `pathSeedStyle` 은 명령 목록에서 닫힘을 읽어 이것을 부르고, 가져온 원시형은 제 종류에서
+ * 닫힘을 읽어(사각형·타원은 닫혔고 선은 열렸다) **같은 것**을 부른다. 원시형 쪽에 두 줄을
+ * 다시 적는 안을 기각한다 — 씨앗 색이나 두께를 갈아도 한 곳만 고치면 되는 성질이
+ * `newElement` 이래 이 모듈의 값이고(가정 A7), 두 벌이 되는 순간 "어디서 왔는가" 에 따라
+ * 색이 달라진다.
+ *
+ * 나오는 값이 `newElement('rect')`·`newElement('line')` 이 심는 것과 **같다**는 사실에도
+ * 뜻이 있다: 가져온 사각형과 팔레트로 놓은 사각형이 목록에서 구별할 이유 없는 차이를
+ * 갖지 않는다.
+ */
+function closedSeedStyle(closed: boolean): ElementStyle {
+  return closed
     ? { fill: SEED_COLOR }
     : { stroke: SEED_COLOR, strokeWidth: SEED_STROKE_WIDTH };
 }
@@ -330,6 +348,7 @@ export function appendPathElement(
  * 이 입구가 그대로 서 있으려면 몰라야 하는 사실이다.
  */
 export interface ImportedPathSource {
+  readonly kind: 'path';
   /** 요소 상자 로컬 정수. 이미 정규화되어 있다. */
   readonly commands: readonly PathCommand[];
   /** 이 도형이 차지하는 상자. **계단 오프셋은 아직 더해지지 않았다** — 아래가 더한다. */
@@ -339,6 +358,36 @@ export interface ImportedPathSource {
   /** 원본이 칠을 한 마디라도 말했는가 — 아니면 `pathSeedStyle` 이 선다. */
   readonly hasOwnStyle: boolean;
 }
+
+/**
+ * 가져오기가 들고 오는 **사각형 또는 타원** 하나.
+ *
+ * 이 모듈이 "가져오기" 라는 출처를 모르는 채로 있어야 한다는 규율은 그대로다(위 머리말) —
+ * 들어오는 것은 여전히 형상뿐이고, 이 타입이 더 아는 것은 **어느 종류의 요소가 되는가**
+ * 하나다. 그 하나를 알아야 하는 이유는 이 모듈이 요소를 만드는 **유일한 입구**이기
+ * 때문이다(불변식 J9): 종류를 밖에서 정해 주지 않으면 여기서 지어내야 하고, 지어낸 종류는
+ * 곧 두 번째 규칙이다.
+ */
+export interface ImportedBoxSource {
+  readonly kind: 'rect' | 'ellipse';
+  /** 이 도형이 차지하는 상자. **계단 오프셋은 아직 더해지지 않았다** — 아래가 더한다. */
+  readonly box: BoxGeometry;
+  readonly style: ElementStyle;
+  /** 원본이 칠을 한 마디라도 말했는가 — 아니면 씨앗 스타일이 선다. */
+  readonly hasOwnStyle: boolean;
+}
+
+/** 가져오기가 들고 오는 **선** 하나. 기하가 상자가 아니라 두 끝점이라 갈래가 다르다. */
+export interface ImportedLineSource {
+  readonly kind: 'line';
+  /** 두 끝점. **계단 오프셋은 아직 더해지지 않았다** — 아래가 더한다. */
+  readonly line: LineGeometry;
+  readonly style: ElementStyle;
+  readonly hasOwnStyle: boolean;
+}
+
+/** 가져오기가 들고 오는 도형 하나 — `kind` 로 판별한다. */
+export type ImportedShapeSource = ImportedPathSource | ImportedBoxSource | ImportedLineSource;
 
 /**
  * 가져오기가 들고 오는 문구 하나. **도형과 갈라 받는 것에 뜻이 있다.**
@@ -393,30 +442,16 @@ export function textSeedStyle(): ElementStyle {
  */
 export function appendImportedElements(
   elements: readonly CanvasNode[],
-  shapes: readonly ImportedPathSource[],
+  shapes: readonly ImportedShapeSource[],
   texts: readonly ImportedTextSource[] = [],
-): { next: CanvasNode[]; created: PathElement[]; createdTexts: TextElement[] } {
+): { next: CanvasNode[]; created: CanvasElement[]; createdTexts: TextElement[] } {
   // **한 번 센다.** 안에서 `next.length` 로 세면 요소가 하나 붙을 때마다 오프셋이 자라
   // 조각들이 계단으로 흩어진다 — REQ-06 이 금지하는 그것이다.
   const off = seedOffset(elements.length);
   const next: CanvasNode[] = [...elements];
-  const created: PathElement[] = [];
+  const created: CanvasElement[] = [];
   for (const shape of shapes) {
-    const path = shape.commands.map((cmd) => ({ ...cmd }));
-    const element: PathElement = {
-      id: nextElementId(next),
-      kind: 'path',
-      geometry: {
-        x: shifted(shape.box.x, off),
-        y: shifted(shape.box.y, off),
-        w: shape.box.w,
-        h: shape.box.h,
-      },
-      path,
-      // 원본이 아무 칠도 말하지 않았으면 **두 번째 씨앗 규칙을 만들지 않고** 008 의 것을
-      // 쓴다(닫힘이면 채움, 열림이면 선). 말한 것이 있으면 그것이 이긴다.
-      style: shape.hasOwnStyle ? { ...shape.style } : { ...pathSeedStyle(path), ...shape.style },
-    };
+    const element = importedElement(nextElementId(next), shape, off);
     next.push(element);
     created.push(element);
   }
@@ -438,6 +473,55 @@ export function appendImportedElements(
     createdTexts.push(element);
   }
   return { next, created, createdTexts };
+}
+
+/**
+ * 가져온 도형 하나를 요소로. **계단 오프셋은 인자로 받는다** — 무리 전체가 같은 값을
+ * 쓰기 때문이며, 여기서 다시 세면 그 규칙이 깨진다.
+ *
+ * 씨앗 규칙은 갈래마다 갈라지지 않는다: 원본이 칠을 한 마디라도 말했으면 그것이 이기고,
+ * 아니면 닫힘/열림에서 나오는 씨앗이 깔린다(`closedSeedStyle`). 사각형과 타원은 닫혔고
+ * 선은 열렸다 — 그 사실은 종류가 **이미** 말하므로 `Z` 를 세어 알아낼 것이 없다.
+ *
+ * **`catalog_id` 는 어느 갈래에도 심지 않는다.** 그 필드는 `kind: 'path'` 에만 있고 뜻은
+ * "어느 카탈로그 도형에서 나왔는가" 인데, 가져온 것에는 카탈로그가 없다(위 머리말). 원시형이
+ * 되면서 그 사실이 오히려 **드러난다** — 목록이 "경로" 대신 "사각형" 을 말하므로, 007 이
+ * 치르기로 했던 "일반적인 경로 이름으로 보인다" 는 대가가 세 종류에서는 사라진다.
+ */
+function importedElement(id: string, shape: ImportedShapeSource, off: number): CanvasElement {
+  // **경로의 닫힘은 명령에서 읽는다.** 종류에서 읽으면(`kind !== 'line'`) 모든 경로가
+  // 닫힌 것이 되어 열린 경로가 채움 씨앗을 입는다 — 008 이 `pathSeedStyle` 로 가른 그 자리다.
+  const closed = shape.kind === 'path' ? shape.commands.some((cmd) => cmd.c === 'Z') : shape.kind !== 'line';
+  // 칸을 적는 **순서**를 갈래마다 같게 둔다(`id` · `kind` · `geometry` · [`path`] · `style`).
+  // 뜻은 없지만 저장된 config 의 diff 가 순서 때문에 통째로 흔들리지 않는다.
+  const style = shape.hasOwnStyle
+    ? { ...shape.style }
+    : { ...closedSeedStyle(closed), ...shape.style };
+  if (shape.kind === 'line') {
+    return {
+      id,
+      kind: 'line',
+      geometry: {
+        x1: shifted(shape.line.x1, off),
+        y1: shifted(shape.line.y1, off),
+        x2: shifted(shape.line.x2, off),
+        y2: shifted(shape.line.y2, off),
+      },
+      style,
+    };
+  }
+  const geometry: BoxGeometry = {
+    x: shifted(shape.box.x, off),
+    y: shifted(shape.box.y, off),
+    w: shape.box.w,
+    h: shape.box.h,
+  };
+  if (shape.kind === 'path') {
+    // **명령을 사본으로 싣는다.** 계획이 들고 있는 배열을 그대로 실으면 요소가 그 배열을
+    // 가리키게 되고, 미리보기와 놓인 요소가 같은 목록을 공유한다.
+    return { id, kind: 'path', geometry, path: shape.commands.map((cmd) => ({ ...cmd })), style };
+  }
+  return { id, kind: shape.kind, geometry, style };
 }
 
 // --- 문구 편집 -----------------------------------------------------------

@@ -74,7 +74,7 @@ import {
 import { CanvasEditDockHostContext } from './canvasEditDockHost';
 import { CanvasScratchpad } from './scratchpad/CanvasScratchpad';
 import { CanvasSvgImport } from './svgimport/CanvasSvgImport';
-import type { ImportedPathSpec, ImportedTextSpec } from './svgimport/svgImportPlan';
+import type { ImportedShapeSpec, ImportedTextSpec } from './svgimport/svgImportPlan';
 import type { ScratchpadDropPoint } from './scratchpad/canvasScratchpadDrop';
 import type { ScratchpadEntry } from './scratchpad/scratchpadTypes';
 import { CanvasPaletteGroup, CanvasShapeCatalog } from './shapes/CanvasShapeCatalog';
@@ -361,7 +361,7 @@ export interface CanvasEditDockBodyProps {
    * 들어가야 하고, 그 표식은 요소의 어휘(`kind`)를 흉내 내게 된다(결함 B 정정).
    */
   onSvgImport: (
-    shapes: readonly ImportedPathSpec[],
+    shapes: readonly ImportedShapeSpec[],
     texts: readonly ImportedTextSpec[],
   ) => void;
   /**

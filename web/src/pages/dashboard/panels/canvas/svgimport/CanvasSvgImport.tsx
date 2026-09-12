@@ -58,7 +58,7 @@ import {
   readSvgFileText,
   refusalText,
 } from './svgImportPresent';
-import { planSvgImport, type ImportedPathSpec, type ImportedTextSpec } from './svgImportPlan';
+import { planSvgImport, type ImportedShapeSpec, type ImportedTextSpec } from './svgImportPlan';
 import {
   MAX_IMPORT_FILE_BYTES,
   type ImportNote,
@@ -167,7 +167,7 @@ function ImportPreview({
 /** 준비된 가져오기 하나 — 계획의 성공 갈래 그대로다. */
 interface ReadyImport {
   /** 도형마다 제 상자를 든다 — 무리가 함께 쓰는 상자는 없다(결함 D3 정정). */
-  readonly shapes: readonly ImportedPathSpec[];
+  readonly shapes: readonly ImportedShapeSpec[];
   /** 문구들. **도형이 하나도 없어도 이쪽이 있으면 놓을 것이 있다**(결함 B 정정). */
   readonly texts: readonly ImportedTextSpec[];
   readonly report: ImportReport;
@@ -196,7 +196,7 @@ export interface CanvasSvgImportProps {
    * `canvasElementFactory` 하나이고, 놓은 뒤의 선택은 오버레이가 소유한다.
    */
   onPlace: (
-    shapes: readonly ImportedPathSpec[],
+    shapes: readonly ImportedShapeSpec[],
     texts: readonly ImportedTextSpec[],
   ) => void;
   /** 파일을 문자열로 읽는 함수. 시험이 갈아 끼운다(기본은 `FileReader`). */

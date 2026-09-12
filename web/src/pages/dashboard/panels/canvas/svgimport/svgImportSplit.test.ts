@@ -37,7 +37,12 @@ import { projectPathPoints, type PxBox } from '../canvasGeometry';
 import { flattenPath, isInsidePath, FLATTEN_TOLERANCE_PX } from '../shapes/pathFlatten';
 import { MAX_PATH_COMMANDS, type PathCommand } from '../shapes/pathTypes';
 
-import { fitBox, planSvgImport } from './svgImportPlan';
+import {
+  fitBox,
+  planSvgImport,
+  type ImportedPathSpec,
+  type ImportedShapeSpec,
+} from './svgImportPlan';
 import { parseSvgPathData } from './svgPathData';
 import {
   applyEvenOddWinding,
@@ -128,6 +133,15 @@ function cubicAt(
     x: w0 * x0 + w1 * cmd.x1 + w2 * cmd.x2 + w3 * cmd.x,
     y: w0 * y0 + w1 * cmd.y1 + w2 * cmd.y2 + w3 * cmd.y,
   };
+}
+
+/**
+ * 경로 spec 만 골라 낸다. **원시형은 명령을 나르지 않으므로** 명령 상한을 재는 자리에서
+ * 셀 것이 없다 — 이 골라 냄이 곧 그 사실의 선언이고, 고른 뒤의 검사는 **골라진 것 전부**를
+ * 지나므로 "표본이 아니라 전수" 는 그대로 참이다.
+ */
+function pathSpecs(shapes: readonly ImportedShapeSpec[]): ImportedPathSpec[] {
+  return shapes.filter((sh): sh is ImportedPathSpec => sh.kind === 'path');
 }
 
 /** 산출을 실제 config 파서에 왕복시킨다 — "저장했다 다시 열었다" 의 기계적 재현. */
@@ -224,8 +238,8 @@ describe('감김과 포함 (AC-E7 · 뮤테이션 3·4·7)', () => {
   it('evenodd 도넛이 구멍을 지킨다 — 채움으로 잰다', () => {
     const result = plan(svg(`<path d="${DONUT_D}" fill-rule="evenodd" fill="#c0392b"/>`));
     expect(result.shapes).toHaveLength(1);
-    const box = pxBox(result.shapes[0]!.box);
-    const commands = result.shapes[0]!.commands;
+    const box = pxBox(pathSpecs(result.shapes)[0]!.box);
+    const commands = pathSpecs(result.shapes)[0]!.commands;
     expect(filledAt(commands, box, RING_POINT)).toBe(true);
     expect(filledAt(commands, box, HOLE_POINT)).toBe(false);
   });
@@ -260,20 +274,20 @@ describe('명령 상한: 나누고, 안 되면 거절한다 (AC-06 · 뮤테이�
     const d = [denseRect(0, 20, 40, 30, 118), denseRect(80, 20, 40, 30, 118), denseRect(160, 20, 40, 30, 118)].join(' ');
     const result = plan(svg(`<path d="${d}" fill="#c0392b"/>`));
     expect(result.shapes).toHaveLength(3);
-    for (const shape of result.shapes) {
+    const pieces = pathSpecs(result.shapes);
+    expect(pieces).toHaveLength(3);
+    for (const shape of pieces) {
       expect(shape.commands.length).toBeLessThanOrEqual(MAX_PATH_COMMANDS);
     }
     // **AC-06 — 나뉜 조각들의 상자가 깊은 비교로 같다.** 조각들은 한 `<path>` 였으므로
     // 상자를 나누기 **전의** 도형에서 잰다. 조각마다 재면 도넛의 구멍이 바깥에 대해
     // 반올림만큼 어긋나고, 그 어긋남은 채움으로만 보인다.
-    for (const shape of result.shapes) expect(shape.box).toEqual(result.shapes[0]!.box);
+    for (const shape of pieces) expect(shape.box).toEqual(pieces[0]!.box);
     // 켜져 있음: 그 상자가 조각 하나가 아니라 **셋 전부**를 감싼다. 세 사각이 x 0..200 에
     // 걸쳐 있으므로 상자 폭이 한 조각(40)의 폭보다 훨씬 넓다.
-    expect(result.shapes[0]!.box.w).toBeGreaterThan(3 * 40 * (DOC_BOX.w / VIEW_BOX.width));
+    expect(pieces[0]!.box.w).toBeGreaterThan(3 * 40 * (DOC_BOX.w / VIEW_BOX.width));
     // 왕복 뒤에도 명령 수가 같다 — **자르지 않았다**(위험 R4 의 유일한 가드).
-    expect(roundTripCommandCounts(result.shapes)).toEqual(
-      result.shapes.map((s) => s.commands.length),
-    );
+    expect(roundTripCommandCounts(pieces)).toEqual(pieces.map((s) => s.commands.length));
   });
 
   it('한 부분 경로가 홀로 상한을 넘으면 그 도형을 거절한다 — 자르지 않는다', () => {
@@ -304,11 +318,15 @@ describe('명령 상한: 나누고, 안 되면 거절한다 (AC-06 · 뮤테이�
       ),
     );
     expect(result.shapes.length).toBeGreaterThan(0);
-    const overs = result.shapes.filter((s) => s.commands.length > MAX_PATH_COMMANDS);
+    // 켜져 있음: 문서에 섞어 둔 `<rect>` 가 실제로 원시형이 되었다. 그래야 이 시험이
+    // "섞인 문서에서도 경로 쪽 상한이 지켜진다" 를 재는 것이지, 경로뿐인 문서를 재는 것이
+    // 아니다.
+    expect(result.shapes.some((sh) => sh.kind === 'rect')).toBe(true);
+    const paths = pathSpecs(result.shapes);
+    expect(paths.length).toBeGreaterThan(0);
+    const overs = paths.filter((s) => s.commands.length > MAX_PATH_COMMANDS);
     expect(overs).toEqual([]);
-    expect(roundTripCommandCounts(result.shapes)).toEqual(
-      result.shapes.map((s) => s.commands.length),
-    );
+    expect(roundTripCommandCounts(paths)).toEqual(paths.map((s) => s.commands.length));
   });
 });
 
