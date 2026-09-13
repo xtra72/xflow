@@ -4942,5 +4942,16 @@
       "rate": "Rate",
       "total": "Total"
     }
+  },
+  "colorPicker": {
+    "ariaDialog": "{label} color picker",
+    "custom": "Selected color",
+    "hex": "Hex color value",
+    "hue": "Hue",
+    "opacity": "Opacity",
+    "eyedropper": "Pick a color from the screen",
+    "presets": "Preset colors",
+    "recent": "Recently used colors",
+    "clear": "Clear color"
   }
 }

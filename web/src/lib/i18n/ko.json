@@ -4942,5 +4942,16 @@
       "rate": "증가량",
       "total": "누적값"
     }
+  },
+  "colorPicker": {
+    "ariaDialog": "{label} 색 고르개",
+    "custom": "선택한 색",
+    "hex": "16진 색값",
+    "hue": "색상",
+    "opacity": "불투명도",
+    "eyedropper": "화면에서 색 집기",
+    "presets": "기본 제공 색",
+    "recent": "최근 사용한 색",
+    "clear": "색 지우기"
   }
 }
