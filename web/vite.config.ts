@@ -69,6 +69,11 @@ export default defineConfig({
         'src/services/api/seriesMatrixPivot.ts',
         'src/services/api/seriesDataSource.ts',
         'src/services/api/tsdbSource.ts',
+        // SPEC-COLOR-001 — 통합 색 고르개. 위 주석들과 같은 이유로 여기 적는다.
+        // 계획은 이 줄을 M7(2차 목표)에 두었으나 M1 이 이미 이 경로에 파일을 만든다 —
+        // 적지 않으면 `colorFormat.ts` 의 "분기 100%" 게이트를 **잴 수가 없다**(0% 도
+        // 아니고 보고서에서 아예 빠진다). 그래서 파일이 생기는 커밋으로 앞당긴다.
+        'src/components/common/colorpicker/**',
       ],
       exclude: [
         '**/*.test.ts',
