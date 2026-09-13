@@ -64,22 +64,93 @@ UNION14   = [3b82f6 8b5cf6 06b6d4 10b981 f59e0b ef4444 ec4899 6b7280
 
 **Given** 저장소의 모든 색 필드
 **When** M2 감사를 수행한다
-**Then** 아래 모양의 표가 이 문서에 채워져 있고, **`읽는 자리` 열의 모든 항목이 실제
-grep 출력에서 나왔으며**, **`판정` 열의 근거가 AC-E5 의 실행 결과**다.
+**Then** 아래 표가 채워져 있고, **`읽는 자리` 열의 모든 항목이 실제 grep 출력에서
+나왔으며**, 새로 찾은 관문 셋은 **함수를 직접 불러** 확인했다.
 
-| 저장 키 | 편집 자리 수 | 읽는 자리 | 갈래 | 등급 | `alpha` |
-|---------|-------------:|-----------|------|------|---------|
-| `config.panelColor` | | | | | |
-| `config.accentElements[*]` | | | | | |
-| `config.*.font_color` | | | | | |
-| `color_table[i].color` | | | | | |
-| `--color-*` 테마 토큰 | | | | | |
-| … (감사가 채운다) | | | | | |
+**감사 수행일**: 2026-09-13 · **결과: 32필드 — A 22 · B 8 · C 2**
 
-**Then** 표의 **모든 행이 A / B / C 중 하나로 판정**되어 있다. 빈 칸이 하나라도 있으면
-이 AC 는 실패다.
+| # | 저장 키 | 편집 자리 | 읽는 자리 (대표) | 갈래 | 등급 | `alpha` |
+|---|---------|----------:|------------------|------|------|---------|
+| 1 | `config.panelColor` | 3 | `DashboardPage:787` C1 · `RemoteDashboardView:444` C1 · **12 이어붙이기 C5** | C1+C5 | **C→A** | 켬(M3 후) |
+| 2 | `config.accentElements[<그룹>]` | 2 | `acColor` 여섯 사본 → **12 이어붙이기 C5** · `propertiesGridStyle:267` C1 | C1+C5 | **C→A** | 켬(M3 후) |
+| 3 | `accentElements['labels.bg'\|'labels.text']` | 1 | `DeviceDetailPanel:833,834` C1 (유일) | C1 | **A** | 켬 |
+| 4 | `config.series[i].color` | 1 | `ChartLegend:146` C1 · `BarChartPanel:472` C2 · `PieChartPanel:542` C2 · `pieLabel` C4-연착륙 | C1·C2·C4안전 | **A** | 켬 |
+| 5 | `config.tsdbSource.series[i].color` | 1 | 위 series 경로와 같음 | C2 | **A** | 켬 |
+| 6 | `config.sysmetricsSource.series[i].color` | 1 | 위 series 경로와 같음 | C2 | **A** | 켬 |
+| 7 | `config.delta_display.{up,down,flat}_color` | 2 | `statDisplayOptions:63` (형식 검사 없음) → `StatSubLines:113` C1 | C1 | **A** | 켬 |
+| 8 | `config.threshold_color_rules[i].color` | 1 | `StatPanel:710` C1 | C1 | **A** | 켬 |
+| 9 | `config.y_thresholds[i].color` | 1 | `LineChartPanel:973,977,993` C2 | C2 | **A** | 켬 |
+| 10 | `config.{x,y}_{label,tick}_font.color` | 1 | `chartChannelTypes:991` → recharts `fill` C2 (게이트 없음) | C2 | **A** | 켬 |
+| 11 | 차트 `legend.font_color` | 1 | **`textStyle:56 resolveFontColor` → 8자리 거부** | C4-불안전 | **B** | 끔 |
+| 12 | `legend_font_color` · `label_font_color` | 1 | **`textStyle:56` 거부**(`PieChartPanel:120` · `BarChartPanel:120`) | C4-불안전 | **B** | 끔 |
+| 13 | 히트맵 `legend.font_color` | 1 | `heatmapConfig:576`(빈문자만) → `HeatmapLegend:302` C1 | C1 | **A** | 켬 |
+| 14 | `config.color_table[i].color` | 1 | **`idw:108` `h.length !== 6` → `[0,0,0]` 검정** | C4-불안전 | **B** | 끔 |
+| 15 | `config.contour.line.color` | 1 | `ContourLayer:101` `stroke` C2 | C2 | **A** | 켬 |
+| 16 | `…valueColors[i].color` | 1 | `propertiesGridStyle:484` C1 · `tileSelection:159` C1 | C1 | **A** | 켬 |
+| 17 | `config.propertyOverrides[k].bg` | 1 | `PropertiesGridPanel:453` C1 (tileSelection 경유 안 함) | C1 | **A** | 켬 |
+| 18 | `{summaryStyles,badgeStyles,statTileStyles}[i].bg` | 2 | **`tileSelection:73` `HEX_COLOR` → 8자리 탈락, 배경 소실** | C4-불안전 | **B** | 끔 |
+| 19 | 같은 키의 레거시 `.color` | (위와 같음) | **`tileSelection:80` C5** + `resolveFontColor` 게이트 | C4+C5 | **B** | 끔 |
+| 20 | `config.tileBg` | 1 | `PropertiesGridPanel:453` C1 · **`tileSelection:154` 거부** | C1+C4-불안전 | **B** | 끔 |
+| 21 | sysmetrics `valueColor`·`labelColor` | 1 | `SysMetricsPanelShell:224,238` C1 | C1 | **A** | 켬 |
+| 22 | 게이지 `{caption,threshold_legend}_font_color` | 1 | **`textStyle:56` 거부**(`GaugePanel:244,564`) | C4-불안전 | **B** | 끔 |
+| 23 | `config.needle_color` | 1 | `gaugeShapes:640,739,937` `stroke`/`fill` C2 | C2 | **A** | 켬 |
+| 24 | `config.base_color` | 1 | `gaugeShapes:478,528,787` `fill` C2 | C2 | **A** | 켬 |
+| 25 | 게이지 `thresholds[i].color` | 1 | `gaugeShapes:481,707,917` C2 | C2 | **A** | 켬 |
+| 26 | `*_font.color` 일가(17 호출) | 1 공용 | **`panelChromeContext:69` → `textStyle:56` 거부** · **`tileSelection:80` C5** · **`listPanelStyle:80` C5** | C4-불안전+C5 | **B** | 끔 |
+| 27 | `--color-*` 테마 토큰 | 1 | **`tokens:224 isValidHexColor` → `normalizeOverrides` 가 저장을 버린다** | C4-불안전(저장층) | **B** | 끔 |
+| 28 | `controlButtonColor.{unselected,selectedColor,perButton}` | 3 | `acControlColors:126` → `AcControlPanel:350` C1 | C1 | **A** | 켬 |
+| 29 | `fanLevelColor.{unselected,perLevel}` | 2 | `acControlColors:135` → `AcControlPanel:388` C1 | C1 | **A** | 켬 |
+| 30 | `config.valueColor.ranges[i].color` | 1 | `acControlColors:62` → `AcControlPanel:215` C1 | C1 | **A** | 켬 |
+| 31 | 캔버스 `config.background` | 1 | `drawElement:452` `ctx.fillStyle` C3 | C3 | **A** | 켬 |
+| 32 | 캔버스 `elements[i].style.{fill,stroke,textColor}` + `rules[i].patch.*` | 5 | `drawElement:191,199,357` C3 · `canvasTween:115` C4-연착륙 | C3+C4안전 | **A** | 켬 |
 
-**Then** `alpha` 가 켜진 필드의 수 + 꺼진 필드의 수 = 표의 행 수다(누락 없음).
+**Then** 모든 행이 A / B / C 중 하나로 판정되었다. 빈 칸 없음.
+**Then** `alpha` 켠 필드 22 + 끈 필드 10(B 8 + C 2 는 M3 전 기준) = **32** = 표의 행 수.
+
+### 감사가 SPEC 본문을 정정한 것 넷 — 전부 실행으로 확인
+
+**정정 A — C4 관문이 다섯이 아니라 일곱이다. 여섯째가 가장 넓다.**
+`panels/charts/textStyle.ts:56 resolveFontColor` 는 `/^#([0-9a-f]{3}|[0-9a-f]{6})$/i` 로
+**8자리를 거부하고 `undefined` 를 낸다** — 사용자가 정한 글자색이 통째로 사라지는
+"조용한 소실" 이다. 실행 확인: `resolveFontColor('#3b82f680') === undefined`.
+`panelChromeContext:69` 를 통해 **모든 `*_font.color`** 를, 그리고 `ChartLegend` ·
+`PieChartPanel` · `BarChartPanel` · `GaugePanel` 에서 **모든 `*_font_color`** 를 막는다.
+**B급 8개 중 4개를 이 하나가 만든다.** spec.md §결정 2 의 C4 표에 없던 자리다.
+
+**정정 B — 일곱째 관문은 저장 단계에 있다.**
+`lib/theme/tokens.ts:224 isValidHexColor` 가 8자리를 거부하고 `normalizeOverrides:239` 가
+그 값을 **저장 자체에서 버린다**. 실행 확인: `isValidHexColor('#3b82f680') === false`.
+곧 테마 토큰이 B급인 근거는 §범위가 적은 "감사 범위가 전역이라" 가 아니라 **쓰기가
+기계적으로 성립하지 않아서**다. OQ2 를 정할 때 이 사실이 먼저다.
+
+**정정 C — `gaugeShapes.hexToRgb` 의 "조용한 알파 소실" 은 어떤 필드에도 닿지 않는다.**
+`hexToRgb` 의 유일한 호출자는 `sampleColorTheme` 이고, 그것은 **하드코딩된
+`GAUGE_COLOR_THEMES`**(`'green-red'`·`'blue-purple'`·`'cyan-blue'`, 전부 6자리 리터럴)
+만 읽는다. 사용자가 고르는 `config.colorTheme` 은 **테마 ID 문자열**이지 색이 아니다.
+곧 이 위험은 **어떤 필드의 등급도 낮추지 못한다.** 게이지의 실제 색 필드 셋은 전부
+SVG `fill`/`stroke`(C2)라 A급이다.
+
+> **0.1.0 의 행(폐기 · 남긴다)**: `` | `gauge/gaugeShapes.tsx:68` `hexToRgb` | … | **조용한
+> 알파 소실** | `` — 함수의 거동 서술은 **맞다**. 틀린 것은 그것이 **살아 있는 위험**
+> 이라는 함의다. **AC-E5 의 `gaugeShapes` 보간 행은 하드코딩 상수를 재게 되므로 아무것도
+> 재지 못한다** — 그 행은 삭제하거나 "도달 불가" 로 다시 적어야 한다.
+
+**정정 D — `PanelSettingsDialog` 의 색 입력 14 중 하나는 죽은 코드다.**
+`TileGridEditor` 의 디자인 블록은 `{(onStylesChange || renderDesign) && …}` 로 막혀
+있는데 호출자 셋 중 **어느 것도 두 속성을 넘기지 않는다**. 곧 **살아 있는 네이티브
+호출 자리는 23이 아니라 22**이고, 교체 총계는 40이 아니라 **39**다.
+
+### 감사가 확인한 명령 (수행 결과)
+
+| 명령 | 결과 |
+|------|------|
+| `grep -rn 'type="color"' web/src` | 27 (주석 2 · 시험 1 제외 → 24, 부품 자신 1 제외 → **23**, 죽은 코드 1 제외 → **22**) |
+| `grep -rn '<ColorSwatchButton' web/src --exclude='*.test.*'` | **17** |
+| 이어붙이기 가드 두 벌 (교체 전) | **10 + 2 = 12** — SPEC 과 일치 |
+| 이어붙이기 가드 두 벌 (교체 후) | **0 + 0 = 0** |
+| `resolveFontColor('#3b82f680')` 실행 | `undefined` |
+| `isValidHexColor('#3b82f680')` 실행 | `false` |
+| `resolveTileStyle(undefined, {bg:'#3b82f680'})` 실행 | `{hasOwnBackground:false}` — 배경 소실 확인 |
 
 ### AC-03 — A급 자리에서 알파가 살아서 저장되고 살아서 그려진다 (REQ-03)
 
@@ -365,5 +436,13 @@ grep -rnE '\$\{[^}]*\}\$\{[A-Z_]*(ALPHA|TINT|OPACITY)[A-Z_]*\}' web/src --exclud
 - [ ] `vite.config.ts` 허용목록 갱신, 신규 모듈이 보고서에 나타남
 - [ ] i18n 9키 × 2로케일
 - [ ] 중간 커밋 전부 detached worktree 에서 빌드 확인
-- [ ] **OQ1 · OQ2 가 사용자에게 제시되었고, OQ1 의 기본 구현((가) 상속)이 문서에 명시되어
-      있다**
+- [x] **OQ1 이 닫혔다.** 사용자의 답은 **"자동 — 테마에 맞는 적절한 색 추천"** 이며,
+      (가)도 (나)도 아닌 **역할별 테마 팔레트 해석**이다. spec.md §OQ1 이 역할→토큰 대응
+      (글자 `--color-text-primary` · 칠 `--color-bg-surface` · 선 `--color-border-default`)
+      과 day/night 값을 적고, "없음 = 테마 기본" 이 **성립하지 않는 네 갈래**(부모 상속 ·
+      안 그림 · 얼어붙은 리터럴 · 캔버스 `var()` 불가)를 표로 가른다. **본 SPEC 은 "자동"
+      을 구현하지 않는다** — `inheritedColor`(표시 전용 · 저장 안 함)는 갈래 ①의 답으로
+      그대로 유효하고, 나머지 셋은 후속 SPEC 이다
+- [ ] **OQ2 가 사용자에게 제시되었다.** (AC-02 정정 B 가 근거를 하나 더한다 — 테마 토큰이
+      B급인 것은 감사 비용이 아니라 `isValidHexColor` 가 8자리를 **저장 단계에서** 버리기
+      때문이다)
