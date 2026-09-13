@@ -28,6 +28,13 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  actualCanvasIdentifiers,
+  actualCanvasImports,
+  allowedCanvasIdentifiers,
+  allowedCanvasImports,
+} from '@/test/panelSettingsDialogCanvasSurface';
+
+import {
   DEFAULT_CANVAS_SIZE,
   parseCanvasConfig,
   type CanvasElement,
@@ -433,25 +440,35 @@ describe('불변식 J10 — `CanvasProjection` 은 두 칸이다', () => {
   });
 });
 
-describe('불변식 J12 — `PanelSettingsDialog.tsx` 는 자라지 않는다 (006 I7)', () => {
-  // 기준선 재측정: 8,371 → 8,373.
+describe('불변식 J12 — 캔버스 작업이 `PanelSettingsDialog.tsx` 로 새지 않는다 (006 I7)', () => {
+  // **행 수 등식을 걷어냈다(0.3.0).** 이 자리가 오래 들고 있던 자는 `toBe(8371)` →
+  // `toBe(8373)` 이었다. 그 수는 불변식이 아니라 **대리**다 — 막으려는 것은 캔버스 작업이
+  // 이 파일로 새는 것인데, 등식은 캔버스와 무관한 편집에도(그리고 **줄이는** 편집에도)
+  // 울린다. 실제로 패널 색상 자유 입력 두 줄(import 1 + JSX 1)에 울렸고, 다음 사람은 왜
+  // 울렸는지 보는 대신 수를 고쳤다. **재기준되어야 하는 가드는 보호처럼 보이는 소음이다.**
   //
-  // 이 가드가 막으려던 것은 **캔버스 작업(006·007·008)이 이 파일로 새는 것**이다.
-  // 늘어난 두 줄은 캔버스와 무관하다 — 패널 색상 한 줄에 자유 색 입력을 붙이면서
-  // 생긴 import 한 줄과 `<PanelColorFreeInput />` 한 줄이다. 캔버스 어휘가 들어오지
-  // 않았다는 것은 바로 아래 시험(카탈로그·서랍 토큰 부재)이 그대로 지킨다.
-  //
-  // spec.md(CANVAS-006/007/008)에 적힌 8,371 은 **그때의 실측치**라 손대지 않았다.
-  // 그래서 이 수와 spec.md 의 수는 지금 다르다 — 캔버스 SPEC 을 다시 열 때 맞출 것.
-  it('행 수가 8,373 그대로다 (캔버스 무관한 +2 이후 재측정)', () => {
-    const src = fs.readFileSync(
-      path.resolve(CANVAS_DIR, '../../PanelSettingsDialog.tsx'),
-      'utf8',
-    );
-    // `split('\n').length` 는 끝의 개행 때문에 한 줄을 더 센다. `wc -l` 과 같은 셈으로
-    // 맞춘다 — spec.md 가 적은 수가 그 셈의 값이기 때문이다.
-    const lines = src.split('\n').length - (src.endsWith('\n') ? 1 : 0);
-    expect(lines).toBe(8373);
+  // 대신 불변식을 **직접** 잰다. 자는 `src/test/panelSettingsDialogCanvasSurface.ts` 에 있고
+  // 007 K13 과 **같은 자를 나눠 쓴다**(허용목록이 두 벌이면 갈라진다 — 지금 SPEC 과 시험이
+  // 갈라진 것이 바로 그 부류의 사고다).
+  it('`panels/canvas/` 에서 들이는 모듈과 이름이 허용목록 그대로다', () => {
+    expect(
+      actualCanvasImports(),
+      '006 I7 이 깨졌다 — 다이얼로그의 캔버스 수입이 허용목록과 다르다.\n' +
+        '늘었다면 캔버스 작업이 다이얼로그로 샌 것이다: 그 코드를 `panels/canvas/` 안으로 옮겨라.\n' +
+        '다이얼로그만 펼 수 있는 자리라면(도크 자리처럼) `src/test/panelSettingsDialogCanvasSurface.ts` 의\n' +
+        '`ALLOWED_CANVAS_IMPORTS` 에 적고, **왜 그 코드가 캔버스 밖에 사는지**를 SPEC 에 남겨라.',
+    ).toEqual(allowedCanvasImports());
+  });
+
+  it('수입 없이 펴 넣은 캔버스 코드도 없다 — `Canvas…` 이름이 허용목록에서만 나온다', () => {
+    // 수입 허용목록이 못 보는 한 가지가 **인라인**이다. 그 자리를 등식이 막고 있었으므로,
+    // 등식을 걷는 대신 같은 구멍을 **파생**으로 막는다 — 고정 열거가 아니라 허용목록에서
+    // 뽑으므로, 새로 이름 붙인 캔버스 표면(`CanvasScratchpad` 든 `CanvasFoo` 든)도 걸린다.
+    expect(
+      actualCanvasIdentifiers(),
+      '허용목록에 없는 `Canvas…` 이름이 다이얼로그 본문에 서 있다 — 수입하지 않고 펴 넣은 캔버스 코드다.\n' +
+        '캔버스 어휘를 쓰는 코드는 `panels/canvas/` 에 산다. 그리로 옮기고 여기서는 수입만 해라.',
+    ).toEqual(allowedCanvasIdentifiers());
   });
 
   it('008 이 그 파일에 심은 것은 도크 자리 하나뿐이다 — 카탈로그도 서랍도 들어가지 않았다', () => {

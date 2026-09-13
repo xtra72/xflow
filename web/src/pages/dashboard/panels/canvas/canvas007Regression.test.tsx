@@ -26,6 +26,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { I18nProvider } from '@/lib/i18n';
 
+import {
+  actualCanvasIdentifiers,
+  actualCanvasImports,
+  allowedCanvasIdentifiers,
+  allowedCanvasImports,
+} from '@/test/panelSettingsDialogCanvasSurface';
+
 import type { VisibilitySource } from '../charts/visiblePolling';
 import CanvasSurface, { type FrameScheduler } from './CanvasSurface';
 import { CanvasEditDockRegion } from './CanvasEditDock';
@@ -148,18 +155,28 @@ describe('AC-E12 — 007 이 넓히지 않은 것들', () => {
     expect(source).not.toContain("c: 'Q'");
   });
 
-  // 기준선 재측정: 8,371 → 8,373. 늘어난 두 줄은 007 이 아니라 패널 색상 자유 입력
-  // (import 1 + JSX 1)이다. 007 이 이 파일을 넓히지 않았다는 판정 자체는 그대로다.
-  it('`PanelSettingsDialog.tsx` 가 007 때문에 자라지 않았다 (K13 · 006 I7)', () => {
-    const dialog = fs.readFileSync(
-      path.join(CANVAS_DIR, '..', '..', 'PanelSettingsDialog.tsx'),
-      'utf8',
-    );
-    // `wc -l` 과 같은 셈이다 — 마지막 줄바꿈 뒤의 빈 조각을 세지 않는다. `split('\n').length`
-    // 로 세면 8,372 가 나와 SPEC 이 적은 실측값과 하나 어긋난다.
-    expect(dialog.split('\n').filter((_l, i, all) => i < all.length - 1 || _l !== '').length).toBe(
-      8373,
-    );
+  // **행 수 등식을 걷어냈다(0.9.0).** K13 이 들고 있던 `toBe(8371)` → `toBe(8373)` 은
+  // 불변식("007 이 이 파일을 넓히지 않았다")의 **대리**였다. 대리는 007 과 무관한 편집에도
+  // 울렸고(패널 색상 자유 입력 두 줄), 울린 자리에서 수만 고쳐졌다. 여기서는 007 이 이
+  // 파일에 **캔버스 표면을 하나도 더하지 않았다**를 직접 잰다 — 자는 008 J12 와 같은 것을
+  // 나눠 쓴다(`src/test/panelSettingsDialogCanvasSurface.ts`).
+  //
+  // **이 자리에는 008 의 토큰 부재 시험 같은 짝이 없었다.** 등식이 K13 의 **유일한** 자였다.
+  it('007 이 다이얼로그에 캔버스 수입을 더하지 않았다 (K13 · 006 I7)', () => {
+    expect(
+      actualCanvasImports(),
+      'K13 이 깨졌다 — 다이얼로그의 캔버스 수입이 허용목록과 다르다.\n' +
+        '007 의 가져오기 UI 는 도크가 그린다: 다이얼로그는 도크 자리만 편다.\n' +
+        '늘었다면 그 코드를 `panels/canvas/` 안으로 옮기고, 옮길 수 없다면\n' +
+        '`src/test/panelSettingsDialogCanvasSurface.ts` 의 `ALLOWED_CANVAS_IMPORTS` 와 SPEC 을 함께 고쳐라.',
+    ).toEqual(allowedCanvasImports());
+  });
+
+  it('펴 넣은 캔버스 코드도 없다 — `Canvas…` 이름이 허용목록에서만 나온다 (K13)', () => {
+    expect(
+      actualCanvasIdentifiers(),
+      '허용목록에 없는 `Canvas…` 이름이 다이얼로그 본문에 서 있다 — 수입하지 않고 펴 넣은 캔버스 코드다.',
+    ).toEqual(allowedCanvasIdentifiers());
   });
 
   it('팔레트는 **넷**이다 — 다섯 번째 원시형 단추를 만들지 않았다 (K14)', () => {
