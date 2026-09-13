@@ -327,12 +327,12 @@ describe('CanvasRuleTableEditor — 비운 패치 칸은 키 자체가 사라진
 
 
   it('컬러 스와치는 공용 팔레트를 그대로 쓰며 고른 색을 패치에 담는다', () => {
-    // 새 컬러 픽커를 만들지 않고 `colorSwatchPalette` 를 재사용한다 — 팝오버의
-    // 팔레트 버튼은 색 문자열 자체를 aria-label 로 쓴다.
+    // 공용 `ColorPicker` 를 그대로 쓴다 — 팝오버의 팔레트 칸은 목록상자의
+    // `option` 이고 색 문자열 자체를 aria-label 로 쓴다.
     const onChange = setup([row({ patch: {} })]);
 
     fireEvent.click(testid('canvas-rule-fill-0'));
-    const palette = screen.getByRole('dialog').querySelectorAll<HTMLElement>('button');
+    const palette = screen.getByRole('dialog').querySelectorAll<HTMLElement>('[role="option"]');
     expect(palette.length).toBeGreaterThan(1);
     const first = palette[0]!;
     fireEvent.click(first);
@@ -346,7 +346,7 @@ describe('CanvasRuleTableEditor — 비운 패치 칸은 키 자체가 사라진
     const onChange = setup([row({ patch: { stroke: '#ef4444', fill: '#000000' } })]);
 
     fireEvent.click(testid('canvas-rule-stroke-0'));
-    fireEvent.click(screen.getByLabelText('dashboard.colorSwatch.defaultAria'));
+    fireEvent.click(screen.getByTestId('colorpicker-clear'));
 
     const next = lastPayload(onChange)![0]!.patch;
     expect(next).not.toHaveProperty('stroke');
@@ -357,7 +357,9 @@ describe('CanvasRuleTableEditor — 비운 패치 칸은 키 자체가 사라진
     const onChange = setup([row({ patch: {} })]);
 
     fireEvent.click(testid('canvas-rule-text-color-0'));
-    const first = screen.getByRole('dialog').querySelectorAll<HTMLElement>('button')[0]!;
+    const first = screen
+      .getByRole('dialog')
+      .querySelectorAll<HTMLElement>('[role="option"]')[0]!;
     fireEvent.click(first);
 
     expect(lastPayload(onChange)![0]!.patch).toEqual({

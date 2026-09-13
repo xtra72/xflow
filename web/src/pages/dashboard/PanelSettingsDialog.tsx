@@ -277,7 +277,7 @@ import { useFloorPlanAspect } from './panels/heatmap/useFloorPlanAspect';
 import { gridCellSize, gridHeightForAspect, panelPixelAspect } from './gridGeometry';
 import { PanelChromeProvider } from './PanelChromeProvider';
 import type { PanelTitleFont } from './panelChromeContext';
-import ColorSwatchButton from './colorSwatchPalette';
+import ColorPicker from '@/components/common/colorpicker/ColorPicker';
 import { COLOR_PALETTE } from './colorPalette';
 import {
   StatChartSection,
@@ -2842,8 +2842,9 @@ function HeatmapSettingsSection({
         <div className="space-y-1.5">
           {colorTable.map((stop, idx) => (
             <div key={idx} className="flex items-center gap-1.5">
-              <ColorSwatchButton
-                color={stop.color}
+              <ColorPicker
+                clearable
+                value={stop.color}
                 onChange={(c) => updateColorStop(idx, { color: c ?? COLOR_PALETTE[0]! })}
                 ariaLabel={t('dashboard.settings.heatmapColorStopAria').replace('{index}', String(idx + 1))}
               />
@@ -3301,8 +3302,10 @@ function HeatmapSettingsSection({
               <span className="text-[11px] text-(--color-text-muted)">
                 {t('dashboard.settings.heatmapContourLineColor')}
               </span>
-              <ColorSwatchButton
-                color={contourCfg?.line.color}
+              <ColorPicker
+                alpha
+                clearable
+                value={contourCfg?.line.color}
                 onChange={(color) => setContourLine({ color })}
                 ariaLabel={t('dashboard.settings.heatmapContourLineColorAria')}
               />

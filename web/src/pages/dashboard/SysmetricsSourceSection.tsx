@@ -31,7 +31,7 @@ import { cn } from '@/lib/utils/cn';
 import { SeriesSelectTable, type SeriesRow } from '@/pages/agents/SeriesSelectTable';
 import type { PanelConfig } from '@/stores/uiStore';
 
-import ColorSwatchButton from './colorSwatchPalette';
+import ColorPicker from '@/components/common/colorpicker/ColorPicker';
 import { SeriesNameFormatField } from './SeriesNameFormatField';
 import { toSnapshot } from './panels/sysmetrics/sysMetricsSeries';
 import {
@@ -234,8 +234,10 @@ export function SysmetricsSourceSection({
       const ref = series[idx]!;
       return (
         <span className="flex items-center gap-1">
-          <ColorSwatchButton
-            color={ref.color}
+          <ColorPicker
+            alpha
+            clearable
+            value={ref.color}
             onChange={(c) => patchSeriesAt(idx, { color: c })}
             ariaLabel={t('dashboard.chart.storeSeriesColorAria')}
             testId={`chart-sysmetrics-color-${row.id}`}

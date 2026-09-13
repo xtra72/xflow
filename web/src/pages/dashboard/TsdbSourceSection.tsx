@@ -34,7 +34,7 @@ import {
   type TsdbSeriesEnumResult,
 } from '@/services/api/tsdbSeriesEnum';
 import { SeriesSelectTable, type SeriesRow } from '@/pages/agents/SeriesSelectTable';
-import ColorSwatchButton from './colorSwatchPalette';
+import ColorPicker from '@/components/common/colorpicker/ColorPicker';
 import { FillPreviousLimitField } from './FillPreviousLimitField';
 import { SeriesNameFormatField } from './SeriesNameFormatField';
 import { SeriesRangeField } from './SeriesRangeField';
@@ -702,8 +702,10 @@ export function TsdbSourceSection({
             }}
             className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[11px]"
           />
-          <ColorSwatchButton
-            color={color}
+          <ColorPicker
+            alpha
+            clearable
+            value={color}
             testId={colorTestId}
             ariaLabel={t('dashboard.chart.tsdbRegisteredColor')}
             onChange={(next) =>

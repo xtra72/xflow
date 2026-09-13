@@ -21,7 +21,7 @@ import { FieldHelp } from '@/components/property/FieldHelp';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
-import ColorSwatchButton from '../../colorSwatchPalette';
+import ColorPicker from '@/components/common/colorpicker/ColorPicker';
 import type {
   ElementFontWeight,
   RuleOp,
@@ -183,8 +183,10 @@ function PatchColorField({
     );
   }
   return (
-    <ColorSwatchButton
-      color={color}
+    <ColorPicker
+      alpha
+      clearable
+      value={color}
       onChange={onChange}
       ariaLabel={ariaLabel}
       testId={testId}
