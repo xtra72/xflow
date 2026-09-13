@@ -283,7 +283,8 @@ export function EditorToolbar({
   };
 
   return (
-    <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-(--color-bg-surface) px-2 py-1 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+    // 배경은 팔레트(--color-bg-surface)가 정한다. night 전용 덮어쓰기는 제거했다.
+    <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-(--color-bg-surface) px-2 py-1 shadow-sm dark:border-zinc-700">
       {/* 서브플로우 "돌아가기" — 들어가기로 진입한 플로우에서만(백 스택 비어있지 않을 때)
           표시되며, 직전(부모) 플로우로 되돌아간다. 중첩(A→B→C) 을 지원한다. */}
       <SubflowBackButton />

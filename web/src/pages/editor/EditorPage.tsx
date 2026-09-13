@@ -822,7 +822,9 @@ function EditorPageInner() {
               nodeColor={miniMapNodeColor}
               nodeStrokeColor={miniMapNodeStrokeColor}
               maskColor="rgba(0, 0, 0, 0.1)"
-              className="!bg-(--color-bg-surface) dark:!bg-gray-900 !border-(--color-border-default) dark:!border-gray-700"
+              // 배경·테두리 모두 팔레트 토큰이 단일 원천이다.
+              // night 전용 덮어쓰기는 제거했다.
+              className="!bg-(--color-bg-surface) !border-(--color-border-default)"
             />
             <Controls className="!border-(--color-border-default) !bg-(--color-bg-elevated) !shadow-sm" />
             <Background

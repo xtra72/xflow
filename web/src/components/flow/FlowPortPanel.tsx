@@ -35,7 +35,8 @@ export function FlowPortPanel({ onClose }: FlowPortPanelProps) {
     <div
       className={cn(
         'flex w-64 flex-col rounded-lg border border-zinc-200 bg-(--color-bg-surface) shadow-lg',
-        'dark:border-zinc-700 dark:bg-zinc-900',
+        // 배경은 팔레트(--color-bg-surface)가 정한다.
+        'dark:border-zinc-700',
       )}
       role="dialog"
       aria-label={t('editor.port.panelAria')}
@@ -207,7 +208,8 @@ function PortRow({ port, onRename, onRemove }: PortRowProps) {
           className={cn(
             'w-full rounded border border-blue-400 bg-(--color-bg-surface) px-1.5 py-0.5 text-xs',
             'text-zinc-900 outline-none focus:ring-1 focus:ring-blue-400',
-            'dark:bg-zinc-800 dark:text-zinc-100',
+            // 입력창 배경도 팔레트(--color-bg-surface)를 따른다.
+            'dark:text-zinc-100',
           )}
         />
       </li>

@@ -421,7 +421,10 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
       data-tapped={isTapped ? 'true' : 'false'}
       className={cn(
         'relative flex flex-col rounded-lg border bg-(--color-bg-surface) px-3 py-2 shadow-sm',
-        'dark:bg-zinc-900 dark:border-zinc-700',
+        // 배경은 팔레트(--color-bg-surface)가 단일 원천이다. night 전용 배경
+        // 덮어쓰기가 남아 있어 카드가 캔버스보다 어두워지는 역전을 만들었으므로
+        // 제거했다. 테두리는 아직 토큰화 대상이 아니라 그대로 둔다.
+        'dark:border-zinc-700',
         // 2026-05-31: min-h 로 카드 크기를 고정하고 포트 row 들이 vertical center
         // 정렬되도록 한다. 1 port 와 2 port 노드의 첫 포트 위치가 시각적으로
         // 일치 — 헤더 바로 아래가 아니라 카드의 center 영역에서 균등 분포.

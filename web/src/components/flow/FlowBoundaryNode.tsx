@@ -46,8 +46,8 @@ export function FlowBoundaryNode({ data, isConnectable }: NodeProps) {
   return (
     <div
       className={cn(
+        // 배경은 팔레트(--color-bg-surface)가 정한다. night 전용 덮어쓰기는 제거했다.
         'min-w-[120px] rounded-lg border-2 border-dashed bg-(--color-bg-surface)/90 px-2 py-2 shadow-sm',
-        'dark:bg-zinc-900/90',
         isInput
           ? 'border-blue-400 dark:border-blue-500/60'
           : 'border-emerald-400 dark:border-emerald-500/60',
