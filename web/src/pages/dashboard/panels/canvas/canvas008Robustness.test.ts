@@ -434,7 +434,16 @@ describe('불변식 J10 — `CanvasProjection` 은 두 칸이다', () => {
 });
 
 describe('불변식 J12 — `PanelSettingsDialog.tsx` 는 자라지 않는다 (006 I7)', () => {
-  it('행 수가 spec.md 가 실측해 적은 8,371 그대로다', () => {
+  // 기준선 재측정: 8,371 → 8,373.
+  //
+  // 이 가드가 막으려던 것은 **캔버스 작업(006·007·008)이 이 파일로 새는 것**이다.
+  // 늘어난 두 줄은 캔버스와 무관하다 — 패널 색상 한 줄에 자유 색 입력을 붙이면서
+  // 생긴 import 한 줄과 `<PanelColorFreeInput />` 한 줄이다. 캔버스 어휘가 들어오지
+  // 않았다는 것은 바로 아래 시험(카탈로그·서랍 토큰 부재)이 그대로 지킨다.
+  //
+  // spec.md(CANVAS-006/007/008)에 적힌 8,371 은 **그때의 실측치**라 손대지 않았다.
+  // 그래서 이 수와 spec.md 의 수는 지금 다르다 — 캔버스 SPEC 을 다시 열 때 맞출 것.
+  it('행 수가 8,373 그대로다 (캔버스 무관한 +2 이후 재측정)', () => {
     const src = fs.readFileSync(
       path.resolve(CANVAS_DIR, '../../PanelSettingsDialog.tsx'),
       'utf8',
@@ -442,7 +451,7 @@ describe('불변식 J12 — `PanelSettingsDialog.tsx` 는 자라지 않는다 (0
     // `split('\n').length` 는 끝의 개행 때문에 한 줄을 더 센다. `wc -l` 과 같은 셈으로
     // 맞춘다 — spec.md 가 적은 수가 그 셈의 값이기 때문이다.
     const lines = src.split('\n').length - (src.endsWith('\n') ? 1 : 0);
-    expect(lines).toBe(8371);
+    expect(lines).toBe(8373);
   });
 
   it('008 이 그 파일에 심은 것은 도크 자리 하나뿐이다 — 카탈로그도 서랍도 들어가지 않았다', () => {

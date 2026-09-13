@@ -29,6 +29,7 @@ import {
   type DeviceListColumnKey,
 } from '@/hooks/useDeviceColumns';
 import { cn } from '@/lib/utils/cn';
+import PanelColorFreeInput from '@/components/common/PanelColorFreeInput';
 import { PANEL_COLORS } from './panelColorPresets';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
 
@@ -6732,6 +6733,7 @@ function PanelColorRow({
             style={{ backgroundColor: color }}
           />
         ))}
+        <PanelColorFreeInput value={panelColor} onChange={onChange} />
         {panelColor && (
           <button
             type="button"

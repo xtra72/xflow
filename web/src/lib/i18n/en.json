@@ -3280,6 +3280,10 @@
     }
   },
   "panel": {
+    "color": {
+      "custom": "Custom color",
+      "hex": "Hex color value"
+    },
     "settings": {
       "aria": "Panel settings",
       "title": "Title",

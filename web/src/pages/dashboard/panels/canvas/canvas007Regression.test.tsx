@@ -148,7 +148,9 @@ describe('AC-E12 — 007 이 넓히지 않은 것들', () => {
     expect(source).not.toContain("c: 'Q'");
   });
 
-  it('`PanelSettingsDialog.tsx` 가 **한 줄도 자라지 않았다** (K13 · 006 I7)', () => {
+  // 기준선 재측정: 8,371 → 8,373. 늘어난 두 줄은 007 이 아니라 패널 색상 자유 입력
+  // (import 1 + JSX 1)이다. 007 이 이 파일을 넓히지 않았다는 판정 자체는 그대로다.
+  it('`PanelSettingsDialog.tsx` 가 007 때문에 자라지 않았다 (K13 · 006 I7)', () => {
     const dialog = fs.readFileSync(
       path.join(CANVAS_DIR, '..', '..', 'PanelSettingsDialog.tsx'),
       'utf8',
@@ -156,7 +158,7 @@ describe('AC-E12 — 007 이 넓히지 않은 것들', () => {
     // `wc -l` 과 같은 셈이다 — 마지막 줄바꿈 뒤의 빈 조각을 세지 않는다. `split('\n').length`
     // 로 세면 8,372 가 나와 SPEC 이 적은 실측값과 하나 어긋난다.
     expect(dialog.split('\n').filter((_l, i, all) => i < all.length - 1 || _l !== '').length).toBe(
-      8371,
+      8373,
     );
   });
 

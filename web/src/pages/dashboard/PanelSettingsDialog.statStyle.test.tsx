@@ -204,3 +204,44 @@ describe('캔버스도 악센트 그룹 고르기를 내지 않는다', () => {
     expect(screen.getByTestId('panel-color-row')).toBeInTheDocument();
   });
 });
+
+describe('패널 색상 — 프리셋 밖의 색도 고를 수 있다', () => {
+  it('패널 색상 한 줄에 자유 입력이 함께 놓인다', () => {
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+    expect(screen.getByTestId('panel-color-row')).toBeInTheDocument();
+    expect(screen.getByTestId('panel-color-free')).toBeInTheDocument();
+  });
+
+  it('프리셋에 없는 헥스를 쳐서 저장할 수 있다', () => {
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+
+    fireEvent.change(screen.getByTestId('panel-color-hex'), { target: { value: '#123abc' } });
+    fireEvent.click(screen.getByText('dashboard.settings.apply'));
+
+    const [, cfg] = storeMock.updatePanelConfig.mock.calls[0]!;
+    expect((cfg as Record<string, unknown>).panelColor).toBe('#123abc');
+  });
+
+  it('형식이 맞지 않는 글자는 설정에 들어가지 않는다', () => {
+    storeMock.panel = { id: 'p1', type: 'stat', title: 's', config: { panelColor: '#ef4444' } };
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+
+    fireEvent.change(screen.getByTestId('panel-color-hex'), { target: { value: 'red' } });
+    fireEvent.click(screen.getByText('dashboard.settings.apply'));
+
+    const [, cfg] = storeMock.updatePanelConfig.mock.calls[0]!;
+    // 종전 값이 그대로다 — 'red' 는 어디에도 닿지 않았다.
+    expect((cfg as Record<string, unknown>).panelColor).toBe('#ef4444');
+  });
+
+  it('프리셋 스와치는 종전대로 동작한다', () => {
+    storeMock.panel = { id: 'p1', type: 'stat', title: 's', config: {} };
+    render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
+
+    fireEvent.click(screen.getByTestId('panel-color-#10b981'));
+    fireEvent.click(screen.getByText('dashboard.settings.apply'));
+
+    const [, cfg] = storeMock.updatePanelConfig.mock.calls[0]!;
+    expect((cfg as Record<string, unknown>).panelColor).toBe('#10b981');
+  });
+});

@@ -10,6 +10,7 @@ import { useTranslation } from '@/lib/i18n';
 // 패널 컬러 프리셋 — 팔레트는 `panelColorPresets` 가 소유한다. 패널 설정 다이얼로그의
 // 패널 색상 컨트롤과 같은 목록이어야 하므로 사본을 두지 않는다.
 import { PANEL_COLORS } from '@/pages/dashboard/panelColorPresets';
+import PanelColorFreeInput from './PanelColorFreeInput';
 
 export interface ColumnOption<T extends string> {
   key: T;
@@ -206,6 +207,9 @@ export default function PanelSettingsDropdown<T extends string>({
                         aria-label={color}
                       />
                     ))}
+                  </div>
+                  <div className="mt-1.5">
+                    <PanelColorFreeInput value={panelColor} onChange={onPanelColorChange} />
                   </div>
                   {panelColor && (
                     <button
