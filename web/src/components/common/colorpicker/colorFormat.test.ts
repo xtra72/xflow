@@ -99,6 +99,10 @@ describe('withAlpha — §결정 5 의 곱', () => {
     expect(withAlpha('red', 0.5)).toBeUndefined();
   });
 
+  it('색이 `undefined` 면 그대로 `undefined` — 12자리의 `acColor` 모양과 맞물린다', () => {
+    expect(withAlpha(undefined, 0.5)).toBeUndefined();
+  });
+
   it('유한하지 않은 알파는 `undefined`', () => {
     expect(withAlpha(BLUE, Number.NaN)).toBeUndefined();
     expect(withAlpha(BLUE, Number.POSITIVE_INFINITY)).toBeUndefined();

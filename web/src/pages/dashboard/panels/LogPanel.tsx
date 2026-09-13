@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Palette, Settings, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
+import { withAlpha } from '@/components/common/colorpicker/colorFormat';
 import { useWebSocket } from '@/hooks';
 import { useRemoteStream } from '@/hooks/useRemoteStream';
 import { useTranslation } from '@/lib/i18n';
@@ -389,7 +390,7 @@ export default function LogPanel({
               {/* 레벨 뱃지 */}
               <span
                 className={`w-[44px] shrink-0 rounded px-1 py-0.5 text-center text-[10px] font-semibold ${LEVEL_STYLES[entry.level]}`}
-                style={acColor('levels') ? { backgroundColor: `${acColor('levels')}20`, color: acColor('levels')! } : undefined}
+                style={acColor('levels') ? { backgroundColor: withAlpha(acColor('levels'), 0x20 / 255), color: acColor('levels')! } : undefined}
               >
                 {entry.level}
               </span>

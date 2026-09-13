@@ -89,6 +89,23 @@ describe('자리 11 — resolveTileStyle 의 배경 틴트', () => {
     expect(style?.backgroundColor).toBe('#111111');
   });
 
+  it('3자리 약식 글자색 — 교체로 **의도한 거동 변화**가 하나 생긴다', () => {
+    // `resolveFontColor` 가 3자리를 통과시키므로(`textStyle.ts:56`) 이 입력은 실제로
+    // 도달 가능하다. 다만 UI 로는 만들 수 없고(네이티브 피커·프리셋·자유 입력이 모두
+    // 6자리를 낸다) 손으로 고친 config 나 가져온 설정에서만 들어온다.
+    //
+    //   교체 전: `'#abc' + '20'` = `'#abc20'` — 16진 5자리라 **무효**. 브라우저가 그
+    //            선언을 버리므로 틴트가 아예 그려지지 않았다.
+    //   교체 후: `withAlpha('#abc', 0x20/255)` = `'#aabbcc20'` — **유효**. 틴트가 그려진다.
+    //
+    // 이것은 I8 위반이 아니다. I8 은 "**6자리**로 저장된 기존 값" 에 걸리고, 6자리는
+    // 위 12자리 전 영역에서 바이트가 같음을 확인했다. 3자리는 코드가 본래 하려던
+    // 일(`타일 색을 정하면 배경 틴트도 그 색으로`)이 이어붙이기 때문에 조용히 실패하던
+    // 자리이며, 그 실패가 이 SPEC 이 없애려는 결함 그 자체다.
+    const { style } = resolveTileStyle(undefined, { color: '#abc' });
+    expect(style?.backgroundColor).toBe('#aabbcc20');
+  });
+
   it('틴트 상수는 0x20 이다', () => {
     // 교체 뒤 이 상수는 문자열이 아니라 수가 된다. 값이 같음을 여기서 고정한다.
     expect(parseInt(String(TILE_TINT_ALPHA), 16) || Math.round(Number(TILE_TINT_ALPHA) * 255)).toBe(
@@ -116,6 +133,23 @@ describe('자리 12 — 배지 배경 틴트', () => {
   it('색이 없으면 틴트도 없다 — 상태별 기본 클래스가 살아야 한다', () => {
     const style = readListPanelStyle({ badge_font: { size: 12 } });
     expect(style.badgeStyle?.backgroundColor).toBeUndefined();
+  });
+
+  it('hex 가 아닌 악센트 색 — 무효 문자열 대신 선언을 만들지 않는다', () => {
+    // `accentColor` 는 `panelColor` 를 **검증 없이** 흘려보낸다(`listPanelStyle.ts:45`).
+    //
+    //   교체 전: `'var(--color-text-muted)' + '20'`. `var()` 치환은 토큰 단위라
+    //            `#6b7280` 다음에 토큰 `20` 이 오는 꼴이 되어 선언이 무효다.
+    //   교체 후: `undefined` — 선언을 **아예 만들지 않는다**.
+    //
+    // 화면 결과는 둘 다 "배지 배경 없음" 으로 같다. 다른 것은 스타일 객체의 모양뿐이며,
+    // 글자색(`color`)은 양쪽 모두 그대로 남는다.
+    const style = readListPanelStyle({
+      panelColor: 'var(--color-text-muted)',
+      badge_font: { size: 12 },
+    });
+    expect(style.badgeStyle?.backgroundColor).toBeUndefined();
+    expect(style.badgeStyle?.color).toBe('var(--color-text-muted)');
   });
 });
 

@@ -80,10 +80,15 @@ export function normalizeColor(input: string, opts: { alpha: boolean }): ColorVa
  * 무효 문자열이 되어 브라우저가 그 선언을 버린다. 원래 문자열을 그대로 돌려주면
  * 무효였던 선언이 **유효해져서** 오늘 없던 색이 화면에 나타난다.
  *
+ * 색 자체가 `undefined` 여도 받는다. 이 함수가 대체하는 12자리가 전부
+ * `acColor(그룹) ? … : undefined` 꼴이라 넘어오는 색이 `string | undefined` 이며,
+ * 받지 않으면 자리마다 `!` 를 열두 번 쓰게 된다.
+ *
  * @param color 3·4·6·8자리 hex(`foldHex` 와 같은 범위). 그 밖은 `undefined`.
  * @param alpha 0–1. 범위 밖은 가둔다.
  */
-export function withAlpha(color: string, alpha: number): ColorValue | undefined {
+export function withAlpha(color: string | undefined, alpha: number): ColorValue | undefined {
+  if (color === undefined) return undefined;
   if (!Number.isFinite(alpha)) return undefined;
   const base = normalizeColor(color, { alpha: true });
   if (base === null) return undefined;

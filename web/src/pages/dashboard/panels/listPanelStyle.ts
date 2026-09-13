@@ -14,11 +14,18 @@
 
 import type { CSSProperties } from 'react';
 
+import { withAlpha } from '@/components/common/colorpicker/colorFormat';
+
 import { resolvePanelTitleStyle } from '../panelChromeContext';
 import { readTileFont, readTileItems, resolveTileStyle, type TileStyle } from './tileSelection';
 
-/** 배지 배경 틴트의 알파(16진 2자리) — 글자색과 같은 색을 옅게 깐다. */
-const BADGE_TINT_ALPHA = '20';
+/**
+ * 배지 배경 틴트의 불투명도 — 글자색과 같은 색을 옅게 깐다.
+ *
+ * 옛 16진 두 자리 `'20'` 과 같은 값을 **수**로 든다. 이어붙이던 시절에는 글자색이
+ * 8자리면 10자리 무효 문자열이 되어 배지 배경이 조용히 사라졌다.
+ */
+const BADGE_TINT_ALPHA = 0x20 / 255;
 
 export interface ListPanelStyle {
   /** 상태 요약 배지를 그릴지. 기본 true — 명시적으로 끌 때만 숨긴다. */
@@ -61,6 +68,17 @@ function styleWithFallbackColor(
   return { ...(style ?? {}), color: fallback };
 }
 
+/**
+ * 배지 글자색과 같은 색을 옅게 깔아 알약 모양을 만든다.
+ *
+ * 색이 정해졌을 때만이다 — 색이 없으면 상태별 기본 클래스(초록/빨강 등)가 그대로
+ * 살아야 한다. 접을 수 없는 색(악센트가 hex 가 아닌 경우)도 마찬가지로 그냥 둔다.
+ */
+function foldBadgeTint(badgeStyle: CSSProperties | undefined): CSSProperties | undefined {
+  const tint = withAlpha(badgeStyle?.color as string | undefined, BADGE_TINT_ALPHA);
+  return tint ? { ...badgeStyle, backgroundColor: tint } : badgeStyle;
+}
+
 /** 패널 config 에서 디자인 설정을 읽는다. 손상/미설정 값은 종전 모양으로 폴백한다. */
 export function readListPanelStyle(config: Record<string, unknown> | undefined): ListPanelStyle {
   const accentElements =
@@ -74,11 +92,7 @@ export function readListPanelStyle(config: Record<string, unknown> | undefined):
 
   return {
     showSummaryBadges: config?.showSummaryBadges !== false,
-    // 배지는 글자색과 같은 색을 옅게 깔아 알약 모양을 만든다. 색이 정해졌을 때만이다 —
-    // 색이 없으면 상태별 기본 클래스(초록/빨강 등)가 그대로 살아야 한다.
-    badgeStyle: badgeStyle?.color
-      ? { ...badgeStyle, backgroundColor: `${badgeStyle.color}${BADGE_TINT_ALPHA}` }
-      : badgeStyle,
+    badgeStyle: foldBadgeTint(badgeStyle),
     headerStyle: styleWithFallbackColor(config?.table_header_font, tableAccent),
     cellStyle: resolvePanelTitleStyle(config?.table_cell_font),
     headerAccent: (resolvePanelTitleStyle(config?.table_header_font)?.color as string | undefined) ?? tableAccent,
