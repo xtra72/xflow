@@ -2424,7 +2424,7 @@ function AxisFontRow({
         className={`h-6 w-6 shrink-0 rounded border text-[11px] font-bold transition-colors ${
           isBold
             ? 'border-blue-500 bg-blue-500/10 text-blue-500'
-            : 'border-(--color-border-default) text-(--color-text-muted) hover:bg-(--color-bg-hover)'
+            : 'border-(--color-border-default) text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
         }`}
       >
         B

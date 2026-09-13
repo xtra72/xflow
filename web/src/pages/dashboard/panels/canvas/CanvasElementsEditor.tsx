@@ -228,7 +228,7 @@ const ICON_BUTTON_CLASS =
  */
 const ORDER_BUTTON_CLASS =
   'inline-flex shrink-0 items-center gap-0.5 rounded border border-(--color-border-default) ' +
-  'px-1.5 py-0.5 text-xs text-(--color-text-secondary) hover:bg-(--color-bg-hover) ' +
+  'px-1.5 py-0.5 text-xs text-(--color-text-secondary) hover:bg-(--color-bg-elevated) ' +
   'disabled:cursor-not-allowed disabled:opacity-40';
 
 /** 소구획 제목 클래스. 칸의 이름이므로 본문과 같은 크기다. */

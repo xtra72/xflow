@@ -695,7 +695,7 @@ function PanelStoreSelectTable({
                 '{count}',
                 String(staleSeries.length),
               )}
-              className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[11px] text-amber-700 transition-colors hover:bg-(--color-bg-hover) dark:text-amber-300"
+              className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[11px] text-amber-700 transition-colors hover:bg-(--color-bg-elevated) dark:text-amber-300"
             >
               <Eraser className="h-3.5 w-3.5" />
               {String(staleSeries.length)}
@@ -709,7 +709,7 @@ function PanelStoreSelectTable({
             data-testid="panel-store-select-refresh"
             aria-label={t('dashboard.settings.dataSourceStoreSelectRefresh')}
             title={t('dashboard.settings.dataSourceStoreSelectRefresh')}
-            className="inline-flex items-center rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-hover) hover:text-(--color-text-default) disabled:opacity-40"
+            className="inline-flex items-center rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary) disabled:opacity-40"
           >
             <RefreshCw className={cn('h-3.5 w-3.5', keysFetching && 'animate-spin')} />
           </button>

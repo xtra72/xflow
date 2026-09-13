@@ -2980,7 +2980,7 @@ function HeatmapSettingsSection({
                       title={t('dashboard.settings.heatmapLayerMoveUp')}
                       disabled={idx === 0}
                       onClick={() => moveLayer(idx, -1)}
-                      className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-hover) disabled:opacity-30"
+                      className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-30"
                     >
                       <ChevronUp className="h-3.5 w-3.5" />
                     </button>
@@ -2991,7 +2991,7 @@ function HeatmapSettingsSection({
                       title={t('dashboard.settings.heatmapLayerMoveDown')}
                       disabled={idx === layers.length - 1}
                       onClick={() => moveLayer(idx, 1)}
-                      className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-hover) disabled:opacity-30"
+                      className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-30"
                     >
                       <ChevronDown className="h-3.5 w-3.5" />
                     </button>
@@ -8179,7 +8179,7 @@ function PanelSettingsShell({
               data-testid="panel-settings-preview-expand"
               aria-label={t('dashboard.settings.previewExpandAria')}
               title={t('dashboard.settings.previewExpandAria')}
-              className="order-1 flex w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+              className="order-1 flex w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) text-(--color-text-muted) hover:bg-(--color-bg-sunken) hover:text-(--color-text-primary)"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
@@ -8250,7 +8250,7 @@ function PanelSettingsShell({
                   data-testid="panel-settings-preview-zoom-out"
                   aria-label={t('dashboard.settings.zoomOutAria')}
                   title={t('dashboard.settings.zoomOutTitle')}
-                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default) disabled:opacity-40"
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary) disabled:opacity-40"
                 >
                   <Minus className="h-3 w-3" />
                 </button>
@@ -8260,7 +8260,7 @@ function PanelSettingsShell({
                   data-testid="panel-settings-preview-zoom-reset"
                   aria-label={t('dashboard.settings.zoomResetAria')}
                   title={t('dashboard.settings.zoomResetTitle')}
-                  className="min-w-10 rounded px-1 text-[10px] font-medium tabular-nums text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+                  className="min-w-10 rounded px-1 text-[10px] font-medium tabular-nums text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
                 >
                   {Math.round(previewZoom * 100)}%
                 </button>
@@ -8271,7 +8271,7 @@ function PanelSettingsShell({
                   data-testid="panel-settings-preview-zoom-in"
                   aria-label={t('dashboard.settings.zoomInAria')}
                   title={t('dashboard.settings.zoomInTitle')}
-                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default) disabled:opacity-40"
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary) disabled:opacity-40"
                 >
                   <Plus className="h-3 w-3" />
                 </button>
@@ -8291,7 +8291,7 @@ function PanelSettingsShell({
                       ? t('dashboard.settings.previewModeFillAria')
                       : t('dashboard.settings.previewModeFitAria')
                   }
-                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
                 >
                   {previewFillMode === 'fill' ? (
                     <Maximize2 className="h-3 w-3" />
@@ -8311,7 +8311,7 @@ function PanelSettingsShell({
                       data-testid="panel-settings-preview-reset-layout"
                       aria-label={t('dashboard.settings.previewResetLayout')}
                       title={t('dashboard.settings.previewResetLayout')}
-                      className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+                      className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
                     >
                       <RotateCcw className="h-3 w-3" />
                     </button>
@@ -8324,7 +8324,7 @@ function PanelSettingsShell({
                   data-testid="panel-settings-preview-collapse"
                   aria-label={t('dashboard.settings.previewCollapseAria')}
                   title={t('dashboard.settings.previewCollapseAria')}
-                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
                 >
                   <ChevronLeft className="h-3.5 w-3.5" />
                 </button>

@@ -61,7 +61,7 @@ export function SystemInfoCard() {
         {/* self 명시 라벨 — 원격 노드 목록과 혼동 방지 (M8/AC-12). */}
         <span
           data-testid="sysinfo-self-badge"
-          className="rounded bg-(--color-bg-base) px-2 py-0.5 text-xs font-medium text-(--color-text-muted)"
+          className="rounded bg-(--color-bg-primary) px-2 py-0.5 text-xs font-medium text-(--color-text-muted)"
           title={t('system.info.selfBadgeTitle')}
         >
           {t('system.info.selfBadge')}
@@ -175,8 +175,8 @@ function IdentitySkeleton() {
     >
       {Array.from({ length: 4 }).map((_, i) => (
         <div key={i} className="space-y-1">
-          <div className="h-3 w-1/3 animate-pulse rounded bg-(--color-bg-hover)" />
-          <div className="h-5 w-2/3 animate-pulse rounded bg-(--color-bg-hover)" />
+          <div className="h-3 w-1/3 animate-pulse rounded bg-(--color-bg-elevated)" />
+          <div className="h-5 w-2/3 animate-pulse rounded bg-(--color-bg-elevated)" />
         </div>
       ))}
     </div>

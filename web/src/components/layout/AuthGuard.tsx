@@ -98,7 +98,7 @@ export default function AuthGuard({
   // 인증 상태 확인 중 — 로딩 표시
   if (authEnabled === null || isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-(--color-bg-base)">
+      <div className="flex min-h-screen items-center justify-center bg-(--color-bg-primary)">
         <Loader2 className="h-8 w-8 animate-spin text-(--color-text-muted)" />
       </div>
     );

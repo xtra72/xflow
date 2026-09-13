@@ -777,7 +777,7 @@ export default function LineChartPanel({
           type="button"
           onClick={() => handleExportCsv(chartData as Array<Record<string, unknown>>, seriesKeys)}
           data-testid="line-chart-csv-button"
-          className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+          className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
           aria-label={t('dashboard.chart.exportCsv')}
           title={t('dashboard.chart.exportCsv')}
         >
@@ -787,7 +787,7 @@ export default function LineChartPanel({
           type="button"
           onClick={togglePause}
           data-testid="line-chart-pause-button"
-          className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+          className="flex h-6 w-6 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
           aria-label={isPaused ? t('dashboard.chart.resume') : t('dashboard.chart.pause')}
           title={isPaused ? t('dashboard.chart.resume') : t('dashboard.chart.pause')}
         >

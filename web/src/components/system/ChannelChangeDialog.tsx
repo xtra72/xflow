@@ -144,7 +144,7 @@ export function ChannelChangeDialog({
             disabled={isPending}
             aria-label={t('common.close')}
             data-testid="channel-dialog-close"
-            className="rounded p-1 text-(--color-text-muted) hover:bg-(--color-bg-hover) disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded p-1 text-(--color-text-muted) hover:bg-(--color-bg-elevated) disabled:cursor-not-allowed disabled:opacity-50"
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -174,7 +174,7 @@ export function ChannelChangeDialog({
             onChange={(e) => setSelectedChannel(e.target.value as Channel)}
             disabled={isPending}
             className={cn(
-              'w-full rounded-md border border-(--color-border) bg-(--color-bg-base)',
+              'w-full rounded-md border border-(--color-border-default) bg-(--color-bg-primary)',
               'px-3 py-2 text-sm text-(--color-text-primary)',
               'disabled:cursor-not-allowed disabled:opacity-50',
             )}
@@ -218,9 +218,9 @@ export function ChannelChangeDialog({
             disabled={isPending}
             data-testid="channel-dialog-cancel"
             className={cn(
-              'rounded-md border border-(--color-border) bg-(--color-bg-base)',
+              'rounded-md border border-(--color-border-default) bg-(--color-bg-primary)',
               'px-4 py-2 text-sm text-(--color-text-primary)',
-              'hover:bg-(--color-bg-hover)',
+              'hover:bg-(--color-bg-elevated)',
               'disabled:cursor-not-allowed disabled:opacity-50',
             )}
           >

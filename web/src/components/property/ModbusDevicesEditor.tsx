@@ -929,7 +929,7 @@ export function DeviceEditDialog({
 
             {/* 모델 덮어쓰기 확인 (AC-21) */}
             {!readOnly && pendingModel && (
-              <div className="space-y-2 rounded border border-(--color-border-warning,--color-border-default) bg-(--color-bg-elevated) p-2">
+              <div className="space-y-2 rounded border border-(--color-border-default) bg-(--color-bg-elevated) p-2">
                 <p className="text-[11px] text-(--color-text-muted)">
                   {`${pendingModel.name}: ${t('property.modbusDevices.modelOverwriteConfirm')} `}
                   {`(${segmentCount(draft)} → ${pendingModel.register_count})`}

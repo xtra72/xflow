@@ -576,7 +576,7 @@ function AgentRow({
                   if (e.key === 'Enter') handleSaveName(e);
                   if (e.key === 'Escape') handleCancelName(e);
                 }}
-                className="rounded border border-(--color-border) bg-(--color-bg-base) px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-(--color-primary)"
+                className="rounded border border-(--color-border-default) bg-(--color-bg-primary) px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-(--color-interactive-primary)"
                 autoFocus
               />
               <button

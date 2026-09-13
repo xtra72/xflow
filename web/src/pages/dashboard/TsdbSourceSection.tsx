@@ -1329,7 +1329,7 @@ export function TsdbSourceSection({
               onClick={() => {
                 void refresh();
               }}
-              className="rounded border border-(--color-border) px-2 py-0.5 text-xs disabled:opacity-50"
+              className="rounded border border-(--color-border-default) px-2 py-0.5 text-xs disabled:opacity-50"
             >
               {refreshing
                 ? t('dashboard.chart.tsdbGroupPreviewLoading')
@@ -1385,7 +1385,7 @@ export function TsdbSourceSection({
             type="button"
             data-testid="chart-tsdb-registered-clear"
             onClick={() => applySelection([])}
-            className="rounded border border-(--color-border) px-1.5 py-0.5 text-[11px] text-(--color-text-muted)"
+            className="rounded border border-(--color-border-default) px-1.5 py-0.5 text-[11px] text-(--color-text-muted)"
           >
             {t('dashboard.chart.tsdbRegisteredClear')}
           </button>
@@ -1461,7 +1461,7 @@ export function FillStrategyField({
             aria-label={t('dashboard.chart.tsdbFillWhy')}
             title={t('dashboard.chart.tsdbFillWhy')}
             onClick={() => setWhyOpen((v) => !v)}
-            className="rounded-full border border-(--color-border) px-1 text-[10px] leading-none text-(--color-text-muted)"
+            className="rounded-full border border-(--color-border-default) px-1 text-[10px] leading-none text-(--color-text-muted)"
           >
             ?
           </button>
