@@ -38,6 +38,7 @@ import {
   TableChartSection,
 } from './ChartPanelSections';
 import type { PanelConfig } from '@/stores/uiStore';
+import { pickColorByTestId } from '@/test/pickColor';
 
 function makePanel(type: PanelConfig['type'], config: Record<string, unknown>): PanelConfig {
   return { id: 'p1', type, title: '테스트', config };
@@ -489,9 +490,7 @@ describe('PieChartSection', () => {
         target: { value: 'mono' },
       });
       expect(onConfigChange).toHaveBeenCalledWith({ label_font_family: 'mono' });
-      fireEvent.change(screen.getByTestId('pie-chart-label-font-color'), {
-        target: { value: '#ff0000' },
-      });
+      pickColorByTestId('pie-chart-label-font-color', '#ff0000');
       expect(onConfigChange).toHaveBeenCalledWith({ label_font_color: '#ff0000' });
       // 색을 지정하지 않았으면 초기화 버튼이 없다 — 되돌릴 것이 없다.
       expect(screen.queryByTestId('pie-chart-label-font-color-reset')).toBeNull();
@@ -589,9 +588,7 @@ describe('PieChartSection', () => {
         target: { value: 'serif' },
       });
       expect(onConfigChange).toHaveBeenCalledWith({ legend_font_family: 'serif' });
-      fireEvent.change(screen.getByTestId('pie-chart-legend-font-color'), {
-        target: { value: '#00ff00' },
-      });
+      pickColorByTestId('pie-chart-legend-font-color', '#00ff00');
       expect(onConfigChange).toHaveBeenCalledWith({ legend_font_color: '#00ff00' });
     });
 
@@ -1438,7 +1435,9 @@ describe('StatChartSection 보조 표기 설정 (SPEC-CHART-003)', () => {
     render(<StatChartSection panel={statPanel()} onConfigChange={onChange} />);
     expect(screen.getByTestId('stat-delta-colors')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByTestId('stat-delta-up-color'), {
+    // 색 칸은 팝오버를 여는 단추다. 16진 칸에 값을 치는 것이 편집 경로다.
+    fireEvent.click(screen.getByTestId('stat-delta-up-color'));
+    fireEvent.change(screen.getByTestId('colorpicker-hex'), {
       target: { value: '#123456' },
     });
     expect(onChange).toHaveBeenCalledWith({ delta_display: { up_color: '#123456' } });
@@ -1446,8 +1445,14 @@ describe('StatChartSection 보조 표기 설정 (SPEC-CHART-003)', () => {
 
   it('색 입력의 기본값은 현행 하드코딩 색이다(빈 값이 아니다)', () => {
     render(<StatChartSection panel={statPanel()} onConfigChange={vi.fn()} />);
-    expect(screen.getByTestId('stat-delta-up-color')).toHaveValue('#10b981');
-    expect(screen.getByTestId('stat-delta-down-color')).toHaveValue('#f43f5e');
+    // 값이 없을 때 단추가 칠해 보이는 색이 곧 실제로 적용되는 색이다 — 상속색은
+    // 표시 전용이라 저장되지 않지만, 빈 칸으로 보여서는 안 된다.
+    expect(screen.getByTestId('stat-delta-up-color')).toHaveStyle({
+      backgroundColor: '#10b981',
+    });
+    expect(screen.getByTestId('stat-delta-down-color')).toHaveStyle({
+      backgroundColor: '#f43f5e',
+    });
   });
 
   it('구간 통계 체크박스 3개가 config 를 토글한다', () => {

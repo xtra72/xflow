@@ -3,21 +3,20 @@
 // 소스/레벨 필터, 자동 스크롤, 최대 라인 수 제한을 지원한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FileText, Palette, Settings, X } from 'lucide-react';
+import { FileText, Settings } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
 import { withAlpha } from '@/components/common/colorpicker/colorFormat';
 import { useWebSocket } from '@/hooks';
 import { useRemoteStream } from '@/hooks/useRemoteStream';
 import { useTranslation } from '@/lib/i18n';
+import ColorPicker from '@/components/common/colorpicker/ColorPicker';
 import { isRemoteTarget } from '@/lib/remote/target';
 import { useTargetContext } from '@/lib/remote/TargetContext';
 import { remoteLogsStreamUrl } from '@/services/api/remoteService';
 import { WS_MESSAGE_TYPES } from '@/services/ws/wsHandlers';
 import type { LogLevel } from '@/pages/monitoring/LogViewer';
 import { usePanelTitleStyle, usePanelTitleVisible } from '../panelChromeContext';
-
-const LOG_COLOR_PRESETS = ['#3b82f6','#8b5cf6','#06b6d4','#10b981','#f59e0b','#ef4444','#ec4899','#6b7280'];
 
 /** 로그 항목 */
 interface LogEntry {
@@ -462,54 +461,16 @@ export default function LogPanel({
               <span className="mb-2 block text-xs font-medium text-(--color-text-muted)">
                 {t('dashboard.logPanel.panelColor')}
               </span>
+              {/* 프리셋 여덟 칸 · 커스텀 칸 · 리셋 단추가 각각 서 있던 자리다. 셋 다
+                  공용 고르개 안에 있으므로 한 칸으로 접는다. */}
               <div className="flex flex-wrap items-center gap-1.5">
-                {LOG_COLOR_PRESETS.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    onClick={() => handlePanelColorChange(color)}
-                    className={`h-5 w-5 rounded-full border-2 transition-transform hover:scale-110 ${
-                      panelColor === color ? 'border-white ring-2 ring-blue-500' : 'border-transparent'
-                    }`}
-                    style={{ backgroundColor: color }}
-                    aria-label={color}
-                  />
-                ))}
-                {/* 커스텀 컬러 피커 */}
-                <label
-                  className={`relative flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border-2 transition-transform hover:scale-110 ${
-                    panelColor && !LOG_COLOR_PRESETS.includes(panelColor)
-                      ? 'border-white ring-2 ring-blue-500'
-                      : 'border-dashed border-(--color-border-strong)'
-                  }`}
-                  style={
-                    panelColor && !LOG_COLOR_PRESETS.includes(panelColor)
-                      ? { backgroundColor: panelColor }
-                      : undefined
-                  }
-                  title={t('dashboard.logPanel.pickCustom')}
-                >
-                  {!(panelColor && !LOG_COLOR_PRESETS.includes(panelColor)) && (
-                    <Palette className="h-2.5 w-2.5 text-(--color-text-muted)" />
-                  )}
-                  <input
-                    type="color"
-                    value={panelColor ?? '#3b82f6'}
-                    onChange={(e) => handlePanelColorChange(e.target.value)}
-                    className="absolute inset-0 cursor-pointer opacity-0"
-                  />
-                </label>
-                {/* 리셋 */}
-                {panelColor && (
-                  <button
-                    type="button"
-                    onClick={() => handlePanelColorChange(undefined)}
-                    className="flex h-5 w-5 items-center justify-center rounded-full border-2 border-(--color-border-strong) text-(--color-text-muted) transition-transform hover:scale-110"
-                    title={t('dashboard.logPanel.reset')}
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                )}
+                <ColorPicker
+                  alpha
+                  clearable
+                  value={panelColor}
+                  onChange={handlePanelColorChange}
+                  ariaLabel={t('dashboard.logPanel.panelColor')}
+                />
               </div>
             </div>
           </div>,

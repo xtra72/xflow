@@ -34,6 +34,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 
 import { inertQueryClient } from '@/hooks/inertQueryClient';
 import PanelSettingsDialog from './PanelSettingsDialog';
+import { pickColorByTestId } from '@/test/pickColor';
 
 function renderDialog() {
   render(
@@ -88,7 +89,7 @@ describe('요약 타일 설정', () => {
   it('타일 배경색을 정하고 되돌린다', () => {
     renderDialog();
     fireEvent.click(screen.getByTestId('summary-tile-design-active-button'));
-    fireEvent.change(screen.getByTestId('summary-tile-bg-active'), { target: { value: '#111111' } });
+    pickColorByTestId('summary-tile-bg-active', '#111111');
     expect((savedConfig().summaryStyles as Record<string, { bg?: string }>).active!.bg).toBe('#111111');
 
     fireEvent.click(screen.getByTestId('summary-tile-bg-reset-active'));
@@ -451,7 +452,7 @@ describe('레이아웃 표의 차례와 디자인', () => {
   it('타일 배경색을 정한다', () => {
     renderDialog();
     fireEvent.click(screen.getByTestId('stat-tile-design-errors-button'));
-    fireEvent.change(screen.getByTestId('stat-tile-errors-bg'), { target: { value: '#331111' } });
+    pickColorByTestId('stat-tile-errors-bg', '#331111');
     expect((savedConfig().statTileStyles as Record<string, { bg?: string }>).errors!.bg).toBe(
       '#331111',
     );

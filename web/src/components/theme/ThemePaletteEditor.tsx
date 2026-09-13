@@ -17,6 +17,7 @@ import {
   type PresetId,
 } from '@/lib/theme/tokens';
 import { useTranslation } from '@/lib/i18n';
+import ColorPicker from '@/components/common/colorpicker/ColorPicker';
 import { useUIStore } from '@/stores/uiStore';
 import { cn } from '@/lib/utils/cn';
 
@@ -206,12 +207,14 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
                     </td>
 
                     <td className="py-1.5 pr-3">
-                      <input
-                        type="color"
-                        value={value}
-                        aria-label={token.label}
-                        onChange={(e) => setThemeToken(target, token.cssVar, e.target.value)}
-                        className="h-8 w-12 cursor-pointer rounded border border-(--color-border-default) bg-(--color-bg-elevated) p-0.5"
+                      {/* 알파를 켜지 않는다 — `isValidHexColor` 가 여덟 자리를 거부해
+                          `normalizeOverrides` 가 저장 자체를 버린다(감사표 27행). */}
+                      <ColorPicker
+                        value={value === '' ? undefined : value}
+                        onChange={(c) => {
+                          if (c !== undefined) setThemeToken(target, token.cssVar, c);
+                        }}
+                        ariaLabel={token.label}
                       />
                     </td>
 

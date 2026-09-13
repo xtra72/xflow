@@ -13,6 +13,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useTranslation } from '@/lib/i18n';
+import ColorPicker from '@/components/common/colorpicker/ColorPicker';
 
 import { TextStyleFields } from './textStyleFields';
 import { DEFAULT_DELTA_COLORS, type DeltaColors } from './panels/charts/statDisplayOptions';
@@ -37,17 +38,6 @@ export interface StatStylePatch {
   font_size?: number | undefined;
   font_color?: string | undefined;
   font_weight?: 'normal' | 'bold' | undefined;
-}
-
-/**
- * `<input type="color">` 이 받을 수 있는 형태로 바꾼다.
- *
- * 변화량의 "변화 없음" 기본색은 `var(--color-text-muted)` 라 색 입력에 넣을 수 없다 —
- * 그대로 주면 브라우저가 조용히 `#000000` 으로 떨어뜨려, 열기만 해도 검정으로 보인다.
- * 스와치에는 실제 값을 그대로 쓰고, 입력의 초기값만 중립 회색으로 대체한다.
- */
-function toColorInputValue(v: string): string {
-  return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v.trim()) ? v.trim() : '#9ca3af';
 }
 
 /** 요소 종류별 라벨 i18n 키. */
@@ -169,24 +159,21 @@ export function StatElementStylePopover({
               ['flat', 'flat_color', 'dashboard.chart.deltaFlatColor'],
             ] as const
           ).map(([slot, key, labelKey]) => (
-            <label
+            <span
               key={slot}
               className="flex items-center gap-1.5 text-[11px] text-(--color-text-muted)"
             >
-              <span
-                className="h-4 w-4 shrink-0 rounded-sm border border-(--color-border-default)"
-                style={{ backgroundColor: colors[slot] }}
+              <ColorPicker
+                alpha
+                value={colors[slot]}
+                onChange={(c) => {
+                  if (c !== undefined) onDeltaColorChange?.({ [key]: c });
+                }}
+                ariaLabel={t(labelKey)}
+                testId={`stat-style-delta-${slot}`}
               />
               {t(labelKey)}
-              <input
-                type="color"
-                data-testid={`stat-style-delta-${slot}`}
-                aria-label={t(labelKey)}
-                value={toColorInputValue(colors[slot])}
-                onChange={(e) => onDeltaColorChange?.({ [key]: e.target.value })}
-                className="h-0 w-0 opacity-0"
-              />
-            </label>
+            </span>
           ))}
         </div>
       )}

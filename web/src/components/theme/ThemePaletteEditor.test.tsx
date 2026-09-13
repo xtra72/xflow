@@ -36,6 +36,19 @@ function selectFile(content: string) {
   fireEvent.change(input, { target: { files: [file] } });
 }
 
+/**
+ * 색 칸에 색을 넣는다.
+ *
+ * 색 칸은 네이티브 색 입력이 아니라 공용 고르개의 팝오버 단추다 — 값은 팝오버 안의
+ * 16진 칸으로 들어간다. 고른 뒤 Esc 로 닫는 것은 팝오버가 하나만 떠 있게 하기
+ * 위해서다(둘이 뜨면 `colorpicker-hex` 조회가 갈라진다).
+ */
+function pickColor(label: string, hex: string): void {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.change(screen.getByTestId('colorpicker-hex'), { target: { value: hex } });
+  fireEvent.keyDown(document, { key: 'Escape' });
+}
+
 beforeEach(() => {
   useUIStore.setState({ themeOverrides: { day: {}, night: {} }, notifications: [] });
 });
@@ -43,8 +56,9 @@ beforeEach(() => {
 describe('ThemePaletteEditor', () => {
   it('활성 팔레트의 기본값을 컬러 테이블에 보여준다', () => {
     renderEditor();
-    const input = screen.getByLabelText('기본 배경') as HTMLInputElement;
-    expect(input.value).toBe(DAY_PRESET['--color-bg-primary']);
+    expect(screen.getByLabelText('기본 배경')).toHaveStyle({
+      backgroundColor: DAY_PRESET['--color-bg-primary']!,
+    });
   });
 
   it('카테고리를 나눠도 표는 하나다 — 표를 쪼개면 컬럼 폭이 어긋난다', () => {
@@ -63,7 +77,7 @@ describe('ThemePaletteEditor', () => {
 
   it('색을 바꾸면 해당 프리셋의 오버라이드로 저장된다', () => {
     renderEditor();
-    fireEvent.change(screen.getByLabelText('기본 배경'), { target: { value: '#123456' } });
+    pickColor('기본 배경', '#123456');
 
     expect(useUIStore.getState().themeOverrides).toEqual({
       day: { '--color-bg-primary': '#123456' },
@@ -75,10 +89,11 @@ describe('ThemePaletteEditor', () => {
     renderEditor();
     fireEvent.click(screen.getByTestId('palette-tab-night'));
 
-    const input = screen.getByLabelText('기본 배경') as HTMLInputElement;
-    expect(input.value).toBe(NIGHT_PRESET['--color-bg-primary']);
+    expect(screen.getByLabelText('기본 배경')).toHaveStyle({
+      backgroundColor: NIGHT_PRESET['--color-bg-primary']!,
+    });
 
-    fireEvent.change(input, { target: { value: '#010203' } });
+    pickColor('기본 배경', '#010203');
     expect(useUIStore.getState().themeOverrides.night).toEqual({
       '--color-bg-primary': '#010203',
     });
@@ -87,10 +102,9 @@ describe('ThemePaletteEditor', () => {
 
   it('기본값과 같은 색으로 되돌리면 오버라이드가 사라진다', () => {
     renderEditor();
-    const input = screen.getByLabelText('기본 배경');
 
-    fireEvent.change(input, { target: { value: '#123456' } });
-    fireEvent.change(input, { target: { value: DAY_PRESET['--color-bg-primary']! } });
+    pickColor('기본 배경', '#123456');
+    pickColor('기본 배경', DAY_PRESET['--color-bg-primary']!);
 
     expect(useUIStore.getState().themeOverrides.day).toEqual({});
   });

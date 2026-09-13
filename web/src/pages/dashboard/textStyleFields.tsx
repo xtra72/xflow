@@ -14,6 +14,7 @@
 import React from 'react';
 
 import { useTranslation } from '@/lib/i18n';
+import ColorPicker from '@/components/common/colorpicker/ColorPicker';
 
 import {
   FONT_FAMILY_OPTIONS,
@@ -137,14 +138,15 @@ export function TextStyleFields({
           }}
           className="w-16 shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-center text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
         />
+        {/* 알파를 켜지 않는다 — `resolveFontColor` 가 여덟 자리를 거부해 사용자가
+            정한 글자색이 통째로 사라진다(감사표 26행). */}
         {showColor && (
-          <input
-            type="color"
-            value={color ?? '#9ca3af'}
-            data-testid={`${testIdPrefix}-color`}
-            aria-label={`${label} ${t('dashboard.chart.fontColor')}`}
-            onChange={(e) => onChange({ color: e.target.value })}
-            className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+          <ColorPicker
+            value={color}
+            inheritedColor="#9ca3af"
+            onChange={(c) => onChange({ color: c })}
+            ariaLabel={`${label} ${t('dashboard.chart.fontColor')}`}
+            testId={`${testIdPrefix}-color`}
           />
         )}
         {weight !== undefined && (
