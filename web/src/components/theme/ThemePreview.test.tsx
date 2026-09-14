@@ -105,7 +105,7 @@ describe('조각과 토큰이 서로를 가리킨다 (AC-05 · AC-08)', () => {
   });
 
   it('표에서 고른 토큰을 쓰는 조각만 강조된다', () => {
-    render(<ThemePreview target="day" overrides={{}} hoveredToken="--color-flow-edge" />);
+    render(<ThemePreview target="day" overrides={{}} activeToken="--color-flow-edge" />);
     const lit = PREVIEW_PARTS.filter((p) => {
       const el = screen.queryByTestId(`theme-preview-${p.id}`);
       return el !== null && el.dataset.lit === 'true';
@@ -119,7 +119,7 @@ describe('조각과 토큰이 서로를 가리킨다 (AC-05 · AC-08)', () => {
     const { rerender } = render(<ThemePreview target="day" overrides={{}} />);
     expect(screen.getByTestId('theme-preview').dataset.area).toBe('dashboard');
 
-    rerender(<ThemePreview target="day" overrides={{}} hoveredToken="--color-flow-edge" />);
+    rerender(<ThemePreview target="day" overrides={{}} activeToken="--color-flow-edge" />);
     expect(screen.getByTestId('theme-preview').dataset.area).toBe('flow');
     expect(screen.getByTestId('theme-preview-edge')).toBeInTheDocument();
   });
@@ -127,7 +127,7 @@ describe('조각과 토큰이 서로를 가리킨다 (AC-05 · AC-08)', () => {
   it('어느 화면에나 있는 조각만 쓰는 색은 탭을 옮기지 않는다', () => {
     // `text-inverse` 는 단추 줄에만 있고 단추 줄은 항상 보인다.
     expect(areaForToken('--color-text-inverse')).toBeUndefined();
-    render(<ThemePreview target="day" overrides={{}} hoveredToken="--color-text-inverse" />);
+    render(<ThemePreview target="day" overrides={{}} activeToken="--color-text-inverse" />);
     expect(screen.getByTestId('theme-preview').dataset.area).toBe('dashboard');
     expect(screen.getByTestId('theme-preview-controls').dataset.lit).toBe('true');
   });

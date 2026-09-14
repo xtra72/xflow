@@ -45,24 +45,46 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
   /** 편집 대상 팔레트. 기본은 지금 적용 중인 쪽. */
   const [target, setTarget] = useState<PresetId>(activePreset);
   /**
-   * 표 위를 스쳐 가는 커서가 가리키는 토큰. **머무르지 않는다.**
+   * 커서가 스쳐 가는 토큰. **기본으로는 아무 일도 하지 않는다.**
    *
-   * 선택(`selectedPart`)과 가르는 이유는, 둘을 한 상태로 묶으면 미리보기에서 조각을
-   * 고른 직후 표 위로 커서를 옮기는 것만으로 그 선택이 지워지기 때문이다.
+   * 커서만 지나가도 미리보기가 따라 움직이면, 표를 훑어보는 동안 화면이 쉬지 않고
+   * 바뀐다 — 읽으려던 사람이 멀미를 한다. 그래서 따라가기는 `followCursor` 를 켠
+   * 사람만 쓴다.
    */
   const [hovered, setHovered] = useState<string | undefined>(undefined);
+  /** 커서를 따라갈 것인가. 기본은 **끔** — 고르는 것은 누르는 일이다. */
+  const [followCursor, setFollowCursor] = useState(false);
+  /** 표에서 눌러 고른 토큰. */
+  const [selectedToken, setSelectedToken] = useState<string | undefined>(undefined);
   /** 미리보기에서 고른 조각. 그 조각이 쓰는 토큰 행들이 표에서 함께 표시된다. */
   const [selectedPart, setSelectedPart] = useState<string | undefined>(undefined);
-  /** 선택된 조각이 쓰는 토큰 집합 — 행 표시에 쓴다. */
-  const selectedTokens = new Set(selectedPart === undefined ? [] : tokensOfPart(selectedPart));
+
   /**
-   * 미리보기에 넘길 강조 토큰 — **커서가 가리키는 것뿐이다.**
+   * 지금 미리보기가 가리키는 토큰.
    *
-   * 고른 조각의 첫 토큰을 여기 얹으면 미리보기가 그 토큰이 처음 쓰이는 화면으로
-   * 따라가 버린다. `bg-surface` 를 첫 토큰으로 가진 목록·스케줄·노드가 모두
-   * 대시보드로 튀던 자리다. 선택은 표시(§`selectedTokens`)로만 드러낸다.
+   * 커서 따라가기를 켰을 때만 커서가 우선한다. 끄면 누른 것만 남는다.
    */
-  const highlight = hovered;
+  const activeToken = (followCursor ? hovered : undefined) ?? selectedToken;
+
+  /** 표에서 표시할 토큰들 — 조각을 골랐으면 그 조각이 쓰는 색 전부. */
+  const selectedTokens = new Set(
+    selectedPart !== undefined
+      ? tokensOfPart(selectedPart)
+      : selectedToken === undefined
+        ? []
+        : [selectedToken],
+  );
+
+  /**
+   * 표에서 행을 눌러 고른다.
+   *
+   * 미리보기의 조각 선택과는 **서로를 지운다** — 한 화면에 "이 색" 과 "이 조각" 이
+   * 동시에 고정되어 있으면 무엇을 고친 것인지 읽히지 않는다.
+   */
+  const pickToken = (cssVar: string): void => {
+    setSelectedToken(cssVar);
+    setSelectedPart(undefined);
+  };
   /** 행 스크롤용 — 조각을 고르면 첫 토큰 행을 화면 안으로 데려온다. */
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
 
@@ -74,6 +96,7 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
    */
   const pickPart = (partId: string): void => {
     setSelectedPart(partId);
+    setSelectedToken(undefined);
     setHovered(undefined);
     const first = tokensOfPart(partId)[0];
     if (first === undefined) return;
@@ -247,18 +270,20 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
                       else rowRefs.current.set(token.cssVar, el);
                     }}
                     data-token={token.cssVar}
-                    data-lit={highlight === token.cssVar ? 'true' : 'false'}
+                    data-lit={activeToken === token.cssVar ? 'true' : 'false'}
                     data-selected={selectedTokens.has(token.cssVar) ? 'true' : 'false'}
-                    // 행 위를 지나면 미리보기에서 그 토큰이 칠하는 조각이 강조된다.
-                    // 이름만 보고 "이 토큰이 어디에 쓰이는가" 를 아는 사람은 없다.
+                    // 누르면 고른다. 포커스도 같은 일을 한다 — 키보드로 이 행에 온
+                    // 것은 마우스로 누른 것과 같은 뜻이다.
+                    onClick={() => pickToken(token.cssVar)}
+                    onFocus={() => pickToken(token.cssVar)}
+                    // 커서는 따라가기를 켠 사람에게만 뜻이 있다.
                     onMouseEnter={() => setHovered(token.cssVar)}
                     onMouseLeave={() => setHovered(undefined)}
-                    onFocus={() => setHovered(token.cssVar)}
                     className={cn(
                       'align-middle',
                       // 고른 조각이 쓰는 색은 여럿이므로 행 여럿이 함께 표시된다.
                       selectedTokens.has(token.cssVar) && 'bg-(--color-interactive-muted)',
-                      highlight === token.cssVar && 'bg-(--color-interactive-muted)',
+                      activeToken === token.cssVar && 'bg-(--color-interactive-muted)',
                     )}
                   >
                     <td className="py-1.5 pr-3">
@@ -319,17 +344,32 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
             어떻게 보일지는 이 자리 말고는 볼 곳이 없다: 비활성 프리셋을 고치면 바깥
             화면은 아무것도 바뀌지 않기 때문이다. */}
         <aside className="w-full min-w-0 flex-1 lg:basis-1/2 lg:sticky lg:top-4">
-          <h3 className="mb-2 text-xs font-medium text-(--color-text-muted)">
-            {t('settings.palette.preview')}
-          </h3>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="text-xs font-medium text-(--color-text-muted)">
+              {t('settings.palette.preview')}
+            </h3>
+            {/* 기본은 끔. 커서만 지나가도 미리보기가 따라 움직이면 표를 훑어보는
+                동안 화면이 쉬지 않고 바뀐다 — 읽으려던 사람이 멀미를 한다. */}
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-(--color-text-muted)">
+              <input
+                type="checkbox"
+                checked={followCursor}
+                data-testid="palette-follow-cursor"
+                onChange={(e) => setFollowCursor(e.target.checked)}
+                className="h-3.5 w-3.5 cursor-pointer accent-(--color-interactive-primary)"
+              />
+              {t('settings.palette.followCursor')}
+            </label>
+          </div>
           <ThemePreview
             target={target}
             overrides={overrides}
-            hoveredToken={highlight}
+            activeToken={activeToken}
             selectedPart={selectedPart}
             onPickPart={pickPart}
             onClearSelection={() => {
               setSelectedPart(undefined);
+              setSelectedToken(undefined);
               setHovered(undefined);
             }}
           />

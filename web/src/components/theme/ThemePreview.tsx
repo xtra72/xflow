@@ -33,15 +33,15 @@ export interface ThemePreviewProps {
   /** 그 프리셋의 사용자 오버라이드. */
   overrides: ThemeTokens;
   /**
-   * 표 위를 지나는 커서가 가리키는 토큰 — 그 토큰을 쓰는 조각에 윤곽선을 두르고,
-   * 그 조각이 다른 화면에 있으면 그 화면으로 옮겨 간다.
+   * 표에서 지금 가리키는 토큰 — 그 토큰을 쓰는 조각에 윤곽선을 두르고, 그 조각이
+   * 다른 화면에 있으면 그 화면으로 옮겨 간다.
    *
-   * **선택은 여기로 들어오지 않는다.** 고른 조각은 이미 지금 화면에 있으므로 화면을
-   * 옮길 이유가 없고, 옮기면 조각의 첫 토큰이 어느 화면에서 처음 쓰이느냐에 따라
-   * 엉뚱한 데로 끌려간다 — 목록·스케줄·노드가 모두 `bg-surface` 를 첫 토큰으로
-   * 가져서 대시보드로 튀던 자리다.
+   * **조각 선택(`selectedPart`)은 여기로 들어오지 않는다.** 고른 조각은 이미 지금
+   * 화면에 있으므로 옮길 이유가 없고, 옮기면 조각의 첫 토큰이 어느 화면에서 처음
+   * 쓰이느냐에 따라 엉뚱한 데로 끌려간다 — 목록·스케줄·노드가 모두 `bg-surface` 를
+   * 첫 토큰으로 가져서 대시보드로 튀던 자리다.
    */
-  hoveredToken?: string | undefined;
+  activeToken?: string | undefined;
   /**
    * 지금 골라 둔 조각. 커서가 표를 떠나도 표시가 남아 있어야, 무엇을 고쳤는지
    * 보인다.
@@ -74,7 +74,7 @@ function v(token: string): string {
 export function ThemePreview({
   target,
   overrides,
-  hoveredToken,
+  activeToken,
   selectedPart,
   onPickPart,
   onClearSelection,
@@ -91,10 +91,10 @@ export function ThemePreview({
   // 않으면 강조가 아무 데도 나타나지 않고, 사용자는 "이 색은 아무 데도 안 쓰이나"
   // 로 읽는다. 덮어쓰기가 아니라 밀기이므로 탭 클릭이 나중에 이기다.
   useEffect(() => {
-    if (hoveredToken === undefined) return;
-    const followed = areaForToken(hoveredToken);
+    if (activeToken === undefined) return;
+    const followed = areaForToken(activeToken);
     if (followed !== undefined) setArea(followed);
-  }, [hoveredToken]);
+  }, [activeToken]);
 
   /** 그 화면에 이 조각이 있는가. `always` 조각은 어느 화면에나 있다. */
   const partVisibleIn = (partId: string, target: Exclude<PreviewArea, 'always'>): boolean => {
@@ -108,7 +108,7 @@ export function ThemePreview({
     if (selectedPart !== undefined && !partVisibleIn(selectedPart, next)) onClearSelection?.();
   };
 
-  const lit = hoveredToken === undefined ? [] : partsUsingToken(hoveredToken);
+  const lit = activeToken === undefined ? [] : partsUsingToken(activeToken);
 
   /**
    * 조각 하나의 공통 껍데기. 강조와 클릭이 여기 붙는다.

@@ -2232,6 +2232,7 @@
       "systemHint": "Following the system setting. You can edit the light and dark palettes separately.",
       "active": "In use",
       "preview": "Preview",
+      "followCursor": "Follow cursor",
       "export": "Export",
       "import": "Import",
       "imported": "Palette imported",

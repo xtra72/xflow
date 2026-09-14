@@ -287,3 +287,69 @@ describe('미리보기에서 조각을 고르면 그 색 항목들이 표에서 
     }
   });
 });
+
+// --- 고르는 것은 누르는 일이다 (커서 따라가기는 옵션) ---
+
+describe('표에서 색을 고르는 길', () => {
+  function row(container: HTMLElement, cssVar: string): HTMLElement {
+    const el = container.querySelector(`tr[data-token="${cssVar}"]`);
+    expect(el, `${cssVar} 행이 없다`).not.toBeNull();
+    return el as HTMLElement;
+  }
+  function litTokens(container: HTMLElement): string[] {
+    return [...container.querySelectorAll('tr[data-lit="true"]')].map(
+      (el) => el.getAttribute('data-token') ?? '',
+    );
+  }
+
+  it('커서가 지나가기만 하면 아무 일도 없다 — 기본', () => {
+    // 표를 훑어보는 동안 미리보기가 쉬지 않고 바뀌면 읽으려던 사람이 멀미를 한다.
+    const { container } = renderEditor();
+    fireEvent.mouseEnter(row(container, '--color-flow-edge'));
+
+    expect(litTokens(container)).toEqual([]);
+    expect(screen.getByTestId('theme-preview').dataset.area).toBe('dashboard');
+  });
+
+  it('행을 누르면 고른 색이 되고 미리보기가 그 화면으로 간다', () => {
+    const { container } = renderEditor();
+    fireEvent.click(row(container, '--color-flow-edge'));
+
+    expect(litTokens(container)).toEqual(['--color-flow-edge']);
+    expect(screen.getByTestId('theme-preview').dataset.area).toBe('flow');
+    expect(screen.getByTestId('theme-preview-edge').dataset.lit).toBe('true');
+  });
+
+  it('커서 따라가기를 켜면 지나가기만 해도 따라온다', () => {
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByTestId('palette-follow-cursor'));
+    fireEvent.mouseEnter(row(container, '--color-flow-edge'));
+
+    expect(litTokens(container)).toEqual(['--color-flow-edge']);
+    expect(screen.getByTestId('theme-preview').dataset.area).toBe('flow');
+  });
+
+  it('따라가기를 켜도 커서가 떠나면 누른 것이 돌아온다', () => {
+    const { container } = renderEditor();
+    fireEvent.click(row(container, '--color-flow-edge'));
+    fireEvent.click(screen.getByTestId('palette-follow-cursor'));
+
+    const other = row(container, '--color-bg-sunken');
+    fireEvent.mouseEnter(other);
+    expect(litTokens(container)).toEqual(['--color-bg-sunken']);
+
+    fireEvent.mouseLeave(other);
+    expect(litTokens(container)).toEqual(['--color-flow-edge']);
+  });
+
+  it('행을 누르면 미리보기의 조각 선택이 지워진다 — 둘이 함께 고정되지 않는다', () => {
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+    fireEvent.click(screen.getByTestId('theme-preview-node'));
+    expect(screen.getByTestId('theme-preview-node').dataset.selected).toBe('true');
+
+    fireEvent.click(row(container, '--color-flow-edge'));
+    expect(screen.getByTestId('theme-preview-node').dataset.selected).toBe('false');
+    expect(litTokens(container)).toEqual(['--color-flow-edge']);
+  });
+});
