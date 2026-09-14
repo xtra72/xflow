@@ -19,6 +19,8 @@ import {
 import { useTranslation } from '@/lib/i18n';
 import ColorPicker from '@/components/common/colorpicker/ColorPicker';
 import { useUIStore } from '@/stores/uiStore';
+import { ThemePreview } from './ThemePreview';
+import { tokensOfPart } from './themePreviewParts';
 import { cn } from '@/lib/utils/cn';
 
 interface ThemePaletteEditorProps {
@@ -42,6 +44,8 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
 
   /** 편집 대상 팔레트. 기본은 지금 적용 중인 쪽. */
   const [target, setTarget] = useState<PresetId>(activePreset);
+  /** 표에서 고른 토큰. 미리보기의 어느 조각이 그것을 쓰는지 윤곽선으로 알린다. */
+  const [highlight, setHighlight] = useState<string | undefined>(undefined);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const overrides = themeOverrides[target] ?? {};
@@ -166,7 +170,8 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
 
       {/* 컬러 테이블 — 카테고리를 tbody 로 묶어 하나의 표로 그린다.
           카테고리마다 표를 따로 두면 각자 폭을 계산해 컬럼이 어긋난다. */}
-      <div className="overflow-x-auto p-4">
+      <div className="flex flex-col gap-4 p-4 xl:flex-row">
+      <div className="min-w-0 flex-1 overflow-x-auto">
         <table className="w-full min-w-[560px] table-fixed border-collapse text-sm">
           {/* 컬럼 폭 고정 — 모든 카테고리가 같은 격자를 쓴다 */}
           <colgroup>
@@ -200,7 +205,19 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
                 const value = resolved[token.cssVar] ?? '';
                 const isOverridden = overrides[token.cssVar] !== undefined;
                 return (
-                  <tr key={token.cssVar} className="align-middle">
+                  <tr
+                    key={token.cssVar}
+                    data-token={token.cssVar}
+                    data-lit={highlight === token.cssVar ? 'true' : 'false'}
+                    // 행을 고르면 미리보기에서 그 토큰이 칠하는 조각이 강조된다.
+                    // 이름만 보고 "이 토큰이 어디에 쓰이는가" 를 아는 사람은 없다.
+                    onMouseEnter={() => setHighlight(token.cssVar)}
+                    onFocus={() => setHighlight(token.cssVar)}
+                    className={cn(
+                      'align-middle',
+                      highlight === token.cssVar && 'bg-(--color-interactive-muted)',
+                    )}
+                  >
                     <td className="py-1.5 pr-3">
                       <div className="truncate text-(--color-text-primary)">{token.label}</div>
                       <div className="truncate text-xs text-(--color-text-muted)">{token.hint}</div>
@@ -253,6 +270,22 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
             </tbody>
           ))}
         </table>
+      </div>
+
+        {/* 미리보기 — **편집 중인** 프리셋을 그린다. 표에서 고치는 색이 실제 화면에서
+            어떻게 보일지는 이 자리 말고는 볼 곳이 없다: 비활성 프리셋을 고치면 바깥
+            화면은 아무것도 바뀌지 않기 때문이다. */}
+        <aside className="w-full shrink-0 xl:w-80">
+          <h3 className="mb-2 text-xs font-medium text-(--color-text-muted)">
+            {t('settings.palette.preview')}
+          </h3>
+          <ThemePreview
+            target={target}
+            overrides={overrides}
+            highlightToken={highlight}
+            onPickPart={(partId) => setHighlight(tokensOfPart(partId)[0])}
+          />
+        </aside>
       </div>
 
     </div>

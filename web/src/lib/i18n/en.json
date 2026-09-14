@@ -2231,6 +2231,7 @@
       "subtitle": "Edit the colors of the palette in use. Changes apply to the screen immediately.",
       "systemHint": "Following the system setting. You can edit the light and dark palettes separately.",
       "active": "In use",
+      "preview": "Preview",
       "export": "Export",
       "import": "Import",
       "imported": "Palette imported",
