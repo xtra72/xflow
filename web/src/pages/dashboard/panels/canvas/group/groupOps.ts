@@ -417,6 +417,31 @@ export function patchPartGeometry(
   );
 }
 
+/**
+ * `partInCanvasUnits` 의 **역**: 캔버스 단위로 고친 부품을 저장 형상으로 되돌려 쓴다
+ * (SPEC-CANVAS-009 M5).
+ *
+ * 목록의 부품 카드는 캔버스 단위 의사 노드를 보고 고친다. 그 결과에는 기하만이 아니라
+ * 겉모습 · 문구 · 바인딩 · **종류**까지 실려 오므로, 되돌릴 때 기하만 따로 빼내지 않고
+ * **받은 요소 전체**를 한 번에 변환해 쓴다 — `withGeometry` 가 `edited.kind` 로 갈래를
+ * 고르기 때문에 종류가 바뀌어도 새 기하 형상에 맞는 변환이 걸린다.
+ *
+ * **id 는 부품 id 로 되돌린다.** 읽는 쪽이 복합 키를 실어 보냈으므로(오버레이의 네 통로가
+ * 그 키로 프레임 상태를 뒤진다), 그대로 저장하면 부품 id 가 `그룹id/부품id` 로 바뀌어
+ * 다음 조회가 `그룹id/그룹id/부품id` 를 찾게 된다.
+ */
+export function writePartFromCanvasUnits(
+  nodes: readonly CanvasNode[],
+  groupId: string,
+  partId: string,
+  edited: CanvasElement,
+): readonly CanvasNode[] {
+  const found = findPart(nodes, groupId, partId);
+  if (found === undefined) return nodes;
+  const local = withGeometry(edited, found.group.geometry, toLocalGeometry);
+  return replacePart(nodes, groupId, partId, { ...local, id: partId });
+}
+
 // --- 부품 분리 (SPEC-CANVAS-009 M6) ----------------------------------------
 
 /**

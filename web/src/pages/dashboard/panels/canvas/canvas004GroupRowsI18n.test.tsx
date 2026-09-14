@@ -245,7 +245,10 @@ describe('두 로케일에서 그룹 행의 문구가 진짜 번역으로 선다
     for (const locale of LOCALE_NAMES) {
       renderAt(locale);
       fireEvent.click(screen.getByTestId('canvas-group-row-toggle-1'));
-      const label = screen.getByTestId('canvas-group-row-part-1-2').getAttribute('aria-label') ?? '';
+      // SPEC-CANVAS-009 M5 — 부품 행이 펼칠 수 있는 카드가 되면서 이름은 바깥 상자가
+      // 아니라 **머리줄 단추**가 든다(펼침 상태를 `aria-expanded` 로 알리는 그 요소다).
+      const label =
+        screen.getByTestId('canvas-group-row-part-toggle-1-2').getAttribute('aria-label') ?? '';
       const template = lookup(LOCALES[locale], `${ELEMENTS}.groupPartAria`) ?? '';
       expect(label, locale).toBe(template.replaceAll('{index}', '2').replaceAll('{part}', 'label'));
       expect(label, locale).not.toMatch(/\{[a-zA-Z]+\}/);

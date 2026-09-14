@@ -1402,7 +1402,7 @@
         "groupMoveDownAria": "Move group {index} down",
         "groupDeleteAria": "Delete group {index} — its {count} parts go with it",
         "groupPartAria": "Group {index} part {part} — pressing selects the group",
-        "groupPartsHint": "Part coordinates are written on the group's inner grid, not in canvas units, so no numeric fields stand here. Ungroup to edit a part numerically.",
+        "groupPartsHint": "Part numbers read in canvas units. The coordinates actually stored on a part live on the group's inner grid and never surface here. To lift one part out, select it on the canvas and press Detach part.",
         "groupPartsEmpty": "No parts."
       },
       "rules": {

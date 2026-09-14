@@ -239,33 +239,81 @@ describe('선택 키는 여전히 `nodeId` 하나다 (REQ-08)', () => {
     expect([...live.selection]).toEqual(['grp-1']);
   });
 
-  it('부품 행을 누르면 **그룹**이 골라진다 — 부품 id 는 선택에 들어가지 않는다', () => {
+  // **뒤집힌 단언 ① — SPEC-CANVAS-009 REQ-01 · AC-23.**
+  //
+  // 004 는 여기서 **그룹**이 골라진다고 단언했다. 그 결정의 근거는 "두 번째 편집 UI 를
+  // 만들지 않는다"(REQ-08)였고, 009 가 그것을 뒤집은 근거는 **복합 키가 이미 있고 그것이
+  // 최상위에서 평평한 키를 유지한다**는 것이다 — `frameKey(nodeId)` 는 `nodeId` 를 그대로
+  // 돌려주므로(불변식 G11) 최상위 선택 경로는 한 글자도 바뀌지 않는다. 아래 "최상위 선택
+  // 키는 여전히 평평하다" 가 그 절반을 같은 파일에서 계속 지킨다.
+  //
+  // 삭제하지 않고 뒤집는다 — 뒤집힌 근거가 시험 옆에 있어야 다음 사람이 "왜 004 와
+  // 다른가" 를 다시 묻지 않는다(SPEC-CANVAS-009 §뒤집히는 시험).
+  it('부품 행을 누르면 **그 부품**이 골라진다 (SPEC-CANVAS-009 에서 뒤집힘)', () => {
     const live = setupWithSelection(cfg([rectNode(), groupNode()]));
     fireEvent.click(screen.getByTestId('canvas-group-row-toggle-1'));
     // 부품 행을 누르기 전에 선택을 비워 두어야 "원래 골라져 있었다" 와 구분된다.
     fireEvent.click(screen.getByTestId('canvas-element-toggle-0'));
     expect([...live.selection]).toEqual(['r1']);
 
-    fireEvent.click(screen.getByTestId('canvas-group-row-part-1-2'));
+    fireEvent.click(screen.getByTestId('canvas-group-row-part-toggle-1-2'));
+    // 복합 키다 — 그룹 id 는 선택에 들어가지 않는다(REQ-01-a).
+    expect([...live.selection]).toEqual(['grp-1/label']);
+    expect(live.selection.has('grp-1')).toBe(false);
+  });
+
+  it('최상위 선택 키는 여전히 평평하다 — 뒤집힌 것은 부품뿐이다 (불변식 G11)', () => {
+    const live = setupWithSelection(cfg([rectNode(), groupNode()]));
+    fireEvent.click(screen.getByTestId('canvas-element-toggle-0'));
+    expect([...live.selection]).toEqual(['r1']);
+    fireEvent.click(screen.getByTestId('canvas-group-row-toggle-1'));
     expect([...live.selection]).toEqual(['grp-1']);
-    expect(live.selection.has('label')).toBe(false);
   });
 });
 
 // --- 없음 둘과 그 근거 ------------------------------------------------------
 
 describe('부품 행이 **내놓지 않는 것**과 그 근거', () => {
-  it('부품 행에 수치 칸이 없다 — 그 숫자는 그룹 로컬 격자라 캔버스 단위가 아니다', () => {
+  // **뒤집힌 단언 ② — SPEC-CANVAS-009 REQ-04 · AC-19 · AC-21.**
+  //
+  // 004 는 부품 행에 수치 칸을 두지 않았고 그 기각 근거는 둘이었다(A18): (가) 그룹 로컬
+  // 격자를 그대로 보이면 화면에 네 번째 단위가 생긴다, (나) 캔버스 단위로 환산해 보이면
+  // **쓰기에 역투영이 필요하다**.
+  //
+  // **(가) 는 009 도 뒤집지 않는다** — 아래 "로컬 격자 숫자가 화면에 없다" 가 그것을 계속
+  // 지킨다. **(나) 만 뒤집혔다**: 004 가 그렇게 적었을 때 그 역투영은 아직 없었고,
+  // REQ-07(풀기)을 구현하면서 `groupOps` 가 그것을 만들었다. 009 는 그 함수의 **두 번째
+  // 호출자**가 될 뿐 두 번째 역투영을 짓지 않는다(불변식 G2).
+  it('부품 행을 펼치면 **캔버스 단위** 수치 칸이 선다 (SPEC-CANVAS-009 에서 뒤집힘)', () => {
     setup(cfg([rectNode(), groupNode()]));
     expandGroup(1);
-    // 전제 — 행은 실제로 서 있다. 이 단언이 없으면 아래 "칸 없음" 은 "행이 없어서" 다.
-    const row = screen.getByTestId('canvas-group-row-part-1-0');
-    expect(row.querySelectorAll('input')).toHaveLength(0);
-    expect(row.querySelectorAll('select')).toHaveLength(0);
-    // 대신 그 사실과 고치는 길을 안내 한 줄이 말한다.
-    expect(screen.getByTestId('canvas-group-row-parts-hint-1')).toHaveTextContent(
-      'dashboard.canvas.elements.groupPartsHint',
+    // 전제 — 접힌 동안에는 칸이 없다. 이 단언이 없으면 아래 "있다" 가 펼침과 무관해진다.
+    expect(screen.queryByTestId('canvas-part-body-1-0')).toBeNull();
+    fireEvent.click(screen.getByTestId('canvas-group-row-part-toggle-1-0'));
+
+    const body = screen.getByTestId('canvas-part-body-1-0');
+    expect(body.querySelectorAll('input').length).toBeGreaterThan(0);
+    expect(body.querySelectorAll('select').length).toBeGreaterThan(0);
+    // `body` 부품은 로컬 (0,0)-(3000,2000) 이고 그룹 상자는 (73,41,317,181) 이므로
+    // 캔버스 단위로는 x=73 · w=95 다. **로컬 숫자(0 · 3000)가 아니다.**
+    expect(screen.getByTestId('canvas-part-geo-x-1-0')).toHaveValue(73);
+    expect(screen.getByTestId('canvas-part-geo-w-1-0')).toHaveValue(95);
+  });
+
+  it('그룹 로컬 격자의 숫자가 화면에 나오지 않는다 (AC-22 — 004 의 (가) 기각 근거 승계)', () => {
+    setup(cfg([rectNode(), groupNode()]));
+    expandGroup(1);
+    for (const pIdx of [0, 1, 2]) {
+      fireEvent.click(screen.getByTestId(`canvas-group-row-part-toggle-1-${pIdx}`));
+    }
+    // 고정 입력의 로컬 좌표 전량(0 은 캔버스 단위로도 나올 수 있어 뺀다).
+    const localValues = [3000, 2000, 4100, 3300, 1700, 900, 5000, 9200];
+    const shown = [...document.querySelectorAll('input')].map((el) =>
+      Number((el as HTMLInputElement).value),
     );
+    for (const v of localValues) {
+      expect(shown, String(v)).not.toContain(v);
+    }
   });
 
   it('최상위 요소 행의 수치 칸은 그대로 있다 — 위 "없음" 이 목록 전체의 마비가 아니다', () => {
