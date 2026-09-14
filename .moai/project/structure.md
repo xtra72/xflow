@@ -324,7 +324,15 @@ xflow/
 │   │   │   ├── PropertyPanel/  # 노드 속성 편집 패널
 │   │   │   └── common/         # 공통 UI 컴포넌트
 │   │   │       ├── ImportDialog.tsx    # 공용 Import 모달 컴포넌트 (파일 선택, 드래그 앤 드롭, JSON/YAML 파싱, 미리보기)
-│   │   │       └── PanelSettingsDropdown.tsx  # 패널 설정 드롭다운 컴포넌트 (패널 제목/컬럼 구성)
+│   │   │       └── colorpicker/        # 통합 색 고르개 (SPEC-COLOR-001) — 색을 고르는 유일한 자리
+│   │   │           ├── ColorPicker.tsx      # 조립부. 트리거 단추 + body 포털 팝오버
+│   │   │           ├── SaturationField.tsx  # 채도·명도 2D 판
+│   │   │           ├── SwatchGrid.tsx       # 팔레트·최근색 격자 (role=listbox)
+│   │   │           ├── colorFormat.ts       # 자릿수를 아는 유일한 자리 (정규화 · withAlpha · HSV 변환)
+│   │   │           ├── palette.ts           # UNIFIED_PALETTE 28색 — 프리셋의 유일한 정본
+│   │   │           ├── recentColors.ts      # 최근 쓴 색 MRU 12칸 (localStorage)
+│   │   │           ├── popoverPlacement.ts  # 팝오버 배치 산술 (컴포넌트 밖 순수 함수)
+│   │   │           └── singleSource.test.ts # 갈라짐 재발 방지 CI 가드 4종
 │   │   ├── pages/               # 페이지 컴포넌트
 │   │   │   ├── FlowEditorPage/ # 플로우 편집 페이지
 │   │   │   ├── DashboardPage/  # 대시보드 페이지
