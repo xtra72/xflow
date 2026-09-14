@@ -1,14 +1,14 @@
 ---
 id: SPEC-COLOR-001
-version: "0.1.0"
-status: draft
+version: "1.0.0"
+status: completed
 created: 2026-09-13
-updated: 2026-09-13
+updated: 2026-09-14
 author: xtra
 priority: P2
 lifecycle_level: spec-first
 title: "통합 색 고르개 — 색을 고르는 자리를 하나로 모으고, 알파를 받을 수 있는 자리와 받을 수 없는 자리를 갈라 적는다"
-phase: plan
+phase: run
 module: web/dashboard
 tier: L
 tags: [frontend, dashboard, color, picker, a11y, alpha, refactor]
@@ -20,6 +20,7 @@ tags: [frontend, dashboard, color, picker, a11y, alpha, refactor]
 
 | 일자 | 버전 | 변경 | 작성자 |
 |------|------|------|--------|
+| 2026-09-14 | 1.0.0 | M5~M11 완료. 색을 고르는 자리 **39**(옛 네이티브 22 + 옛 스와치 17)가 전부 `ColorPicker` 하나를 지난다. 여섯 벌이던 프리셋 사본이 `UNIFIED_PALETTE` 한 벌로 접혔고, 옛 부품 파일 **여덟**(`colorSwatchPalette` · `colorPalette` · `panelColorPresets` · `PanelColorFreeInput` · `PanelSettingsDropdown` + 시험 셋)이 사라졌다. 재수출 껍데기는 남기지 않았다. 손으로 돌리던 grep 넷을 `singleSource.test.ts` 로 옮겨 CI 가 지키게 했고, 그 가드가 실제로 무는지 일부러 어겨 확인했다. 알파는 감사표를 그대로 따라 자리마다 갈렸다 — 글자색 일가 · 타일 배경 · 테마 토큰은 껐다(저장·렌더 관문이 여덟 자리를 조용히 버리는 자리들이다). 게이트: 타입 0 · 린트 오류 0 · 시험 10,040 초록 · 부품 커버리지 구문 100% / 분기 99.15% · 네 커밋 각각 detached worktree 빌드 통과 | xtra |
 | 2026-09-13 | 0.1.0 | 최초 작성. 사용자가 draw.io 의 **글꼴 색** 대화상자 그림을 붙이고 **"컬러 팔렛트를 첨부한 이미지와 같게 다양한 기능 추가. 패널 컬러 외에도 배경색, 라인색, 문자색등 모든 컬러 설정에 적용"** 을 냈다. 사용자가 이미 정한 것 셋(① 알파 지원 — 8자리 hex + 불투명도 슬라이더, ② 스포이트 포함하되 **없는 브라우저에서는 단추를 그리지 않는다**, ③ 갈라진 프리셋 배열을 **하나로 합치고 모든 자리를 한 번에 옮긴다**)을 그대로 받는다. 정찰이 이 SPEC 의 크기를 정한 사실 **일곱**을 실측으로 확인했고, 그중 넷은 브리핑의 수치·주장을 **정정한다**(§정찰이 정정한 것). 가장 무거운 것은 다섯째다 — **`panelColor` 는 `${색}NN` 문자열 이어붙이기 12자리로 흘러들어 간다.** 그 자리가 8자리 색을 받으면 10자리 문자열이 되어 CSS 선언이 **조용히 버려진다**. 알파를 들이는 일의 실제 하중은 브리핑이 지목한 `border: 4px solid ${panelColor}` 가 아니라 여기에 있다 | xtra |
 
 ## 개요 (Overview)

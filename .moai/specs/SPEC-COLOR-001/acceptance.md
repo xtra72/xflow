@@ -427,15 +427,23 @@ grep -rnE '\$\{[^}]*\}\$\{[A-Z_]*(ALPHA|TINT|OPACITY)[A-Z_]*\}' web/src --exclud
 
 ## Definition of Done
 
-- [ ] REQ-01 ~ REQ-10 전부 구현
-- [ ] 불변식 I1 ~ I10 전부 기계 검사로 확인
-- [ ] AC-01 ~ AC-09 · AC-E1 ~ AC-E11 전부 통과
-- [ ] **AC-02 의 감사 표가 빈 칸 없이 채워졌고, 각 행이 실행 증거를 갖는다**
-- [ ] 40 호출 자리 전부 교체, 삭제 대상 6파일 제거, 재수출 껍데기 0
-- [ ] 이어붙이기 12자리 → `withAlpha`, grep 가드 두 벌 통과
-- [ ] `vite.config.ts` 허용목록 갱신, 신규 모듈이 보고서에 나타남
-- [ ] i18n 9키 × 2로케일
-- [ ] 중간 커밋 전부 detached worktree 에서 빌드 확인
+- [x] REQ-01 ~ REQ-10 전부 구현
+- [x] 불변식 I1 ~ I10 전부 기계 검사로 확인 — I3 · I4 · I6 은
+      `components/common/colorpicker/singleSource.test.ts` 가 CI 에서 지킨다(가드 7).
+      그 가드가 실제로 무는지 일부러 어겨 확인했다(`type="color"` 한 줄 + `${…}80` 한 줄을
+      넣자 해당 두 가드가 붉어졌다)
+- [x] AC-01 ~ AC-09 · AC-E1 ~ AC-E11 전부 통과 — AC-03~09 · E3 · E6 · E8 · E10 · E11 은
+      `ColorPicker.test.tsx`(51) 외 부품 시험 160개가, AC-01 · E2 · E4 는 `singleSource.test.ts`
+      가, AC-02 · E1 · E5 는 §AC-02 의 감사 표와 그 아래 실행 기록이 진다
+- [x] **AC-02 의 감사 표가 빈 칸 없이 채워졌고, 각 행이 실행 증거를 갖는다**
+- [x] 39 호출 자리 전부 교체(옛 네이티브 22 + 옛 스와치 17 — §정정 D 가 40 을 39 로
+      정정했다), 삭제 대상 6파일 제거(+ 그 시험 2), 재수출 껍데기 0
+- [x] 이어붙이기 12자리 → `withAlpha`, grep 가드 두 벌 통과(교체 후 0 + 0)
+- [x] `vite.config.ts` 허용목록 갱신, 신규 모듈이 보고서에 나타남 — 구문 100% · 분기 99.15%
+- [x] i18n 9키 × 2로케일 (+ M9 에서 `ruleColorAria` · `thresholdColorAria` 2키, 갈 곳이
+      없어진 6키 제거 — 전부 두 로케일 대칭)
+- [x] 중간 커밋 전부 detached worktree 에서 빌드 확인 — 네 커밋(b9526c8b · 6a1a878f ·
+      5fe8b65e · 19acd27d) 각각에서 `tsc -b` 통과, 앞 셋은 `vite build` 도 통과
 - [x] **OQ1 이 닫혔다.** 사용자의 답은 **"자동 — 테마에 맞는 적절한 색 추천"** 이며,
       (가)도 (나)도 아닌 **역할별 테마 팔레트 해석**이다. spec.md §OQ1 이 역할→토큰 대응
       (글자 `--color-text-primary` · 칠 `--color-bg-surface` · 선 `--color-border-default`)
