@@ -233,4 +233,41 @@ describe('미리보기에서 조각을 고르면 그 색 항목들이 표에서 
       ].sort(),
     );
   });
+
+  it('고른 조각이 없는 화면으로 옮기면 화면이 바뀌고 선택이 비워진다', () => {
+    // 종전에는 선택이 화면을 못으로 박아 탭을 눌러도 화면이 바뀌지 않았다.
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+    fireEvent.click(screen.getByTestId('theme-preview-node'));
+    expect(selectedTokens(container).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByTestId('theme-preview-tab-schedule'));
+
+    expect(screen.getByTestId('theme-preview').dataset.area).toBe('schedule');
+    expect(selectedTokens(container)).toEqual([]);
+    expect(screen.queryByTestId('theme-preview-node')).toBeNull();
+  });
+
+  it('어느 화면에나 있는 조각을 골랐으면 화면을 옮겨도 선택이 남는다', () => {
+    // 앱 셸은 어느 탭에서나 보이므로 비울 이유가 없다.
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByTestId('theme-preview-shell'));
+    const before = selectedTokens(container);
+    expect(before.length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByTestId('theme-preview-tab-list'));
+
+    expect(screen.getByTestId('theme-preview').dataset.area).toBe('list');
+    expect(selectedTokens(container)).toEqual(before);
+    expect(screen.getByTestId('theme-preview-shell').dataset.selected).toBe('true');
+  });
+
+  it('같은 화면 안의 조각이면 탭을 눌러도 선택이 남는다', () => {
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+    fireEvent.click(screen.getByTestId('theme-preview-edge'));
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+
+    expect(selectedTokens(container)).toEqual(['--color-flow-edge']);
+  });
 });

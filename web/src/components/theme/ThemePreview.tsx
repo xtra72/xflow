@@ -14,7 +14,7 @@
 //
 // @spec SPEC-THEME-001 §결정 3 · REQ-04 · REQ-05 · 불변식 I3 · I4 · I7
 
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 
 import { resolveTokens, type PresetId, type ThemeTokens } from '@/lib/theme/tokens';
 import { cn } from '@/lib/utils/cn';
@@ -41,6 +41,13 @@ export interface ThemePreviewProps {
   selectedPart?: string | undefined;
   /** 조각을 눌렀을 때. 표를 그 토큰 행으로 데려간다. */
   onPickPart?: (partId: string) => void;
+  /**
+   * 고른 조각이 없는 화면으로 옮겨 갈 때.
+   *
+   * 없는 조각을 고른 채로 두면 그 선택은 아무 데도 보이지 않으면서 표의 행만 계속
+   * 물들인다 — 화면과 표가 서로 다른 이야기를 한다.
+   */
+  onClearSelection?: () => void;
 }
 
 /** 토큰 값을 컨테이너 인라인 CSS 변수로 편다. */
@@ -62,13 +69,36 @@ export function ThemePreview({
   highlightToken,
   selectedPart,
   onPickPart,
+  onClearSelection,
 }: ThemePreviewProps): React.ReactElement {
-  const [picked, setPicked] = useState<Exclude<PreviewArea, 'always'>>('dashboard');
+  /**
+   * 지금 보고 있는 화면. **여기 하나가 정본이다.**
+   *
+   * 종전에는 강조가 화면을 계속 덮어써서(`followed ?? picked`), 조각을 고른 뒤에는
+   * 탭을 눌러도 화면이 바뀌지 않았다 — 선택이 화면을 못으로 박고 있었다.
+   */
+  const [area, setArea] = useState<Exclude<PreviewArea, 'always'>>('dashboard');
 
-  // 표에서 짚은 색이 지금 탭에 없으면 그 색이 있는 탭으로 따라간다. 따라가지 않으면
-  // 강조가 아무 데도 나타나지 않고, 사용자는 "이 색은 아무 데도 안 쓰이나" 로 읽는다.
-  const followed = highlightToken === undefined ? undefined : areaForToken(highlightToken);
-  const area = followed ?? picked;
+  // 표에서 짚은 색이 지금 화면에 없으면 그 색이 있는 화면으로 **밀어 준다**. 밀지
+  // 않으면 강조가 아무 데도 나타나지 않고, 사용자는 "이 색은 아무 데도 안 쓰이나"
+  // 로 읽는다. 덮어쓰기가 아니라 밀기이므로 탭 클릭이 나중에 이기다.
+  useEffect(() => {
+    if (highlightToken === undefined) return;
+    const followed = areaForToken(highlightToken);
+    if (followed !== undefined) setArea(followed);
+  }, [highlightToken]);
+
+  /** 그 화면에 이 조각이 있는가. `always` 조각은 어느 화면에나 있다. */
+  const partVisibleIn = (partId: string, target: Exclude<PreviewArea, 'always'>): boolean => {
+    const p = PREVIEW_PARTS.find((x) => x.id === partId);
+    return p !== undefined && (p.area === 'always' || p.area === target);
+  };
+
+  /** 탭을 누를 때. 고른 조각이 그쪽에 없으면 선택을 비운다. */
+  const goTo = (next: Exclude<PreviewArea, 'always'>): void => {
+    setArea(next);
+    if (selectedPart !== undefined && !partVisibleIn(selectedPart, next)) onClearSelection?.();
+  };
 
   const lit = highlightToken === undefined ? [] : partsUsingToken(highlightToken);
 
@@ -144,7 +174,7 @@ export function ThemePreview({
             type="button"
             data-testid={`theme-preview-tab-${tab.id}`}
             aria-pressed={area === tab.id}
-            onClick={() => setPicked(tab.id)}
+            onClick={() => goTo(tab.id)}
             className="rounded-md border px-2 py-1 text-[11px] font-medium transition-colors"
             style={
               area === tab.id

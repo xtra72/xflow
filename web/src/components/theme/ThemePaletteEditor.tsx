@@ -323,6 +323,10 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
             highlightToken={highlight}
             selectedPart={selectedPart}
             onPickPart={pickPart}
+            onClearSelection={() => {
+              setSelectedPart(undefined);
+              setHovered(undefined);
+            }}
           />
         </aside>
       </div>
