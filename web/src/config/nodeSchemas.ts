@@ -2832,6 +2832,73 @@ export const NODE_SCHEMAS: Record<string, NodeTypeSchema> = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// SPEC-LG-HVACR-003 — LG HVACR-03 (PMBUSB00A Modbus) 노드 스키마
+//
+// lg-hvacr02 와 노드 구현을 공유하므로 설정 필드도 같다. 스키마를 복제하지 않고
+// 파생시켜, lg-hvacr02 쪽 필드가 바뀌면 이쪽도 자동으로 따라가게 한다.
+// 갈아끼우는 것은 두 가지뿐이다 — 설명 문구와 연결 가능한 에이전트 타입.
+// ---------------------------------------------------------------------------
+
+/**
+ * agent_ref 필드의 선택 가능한 에이전트 타입만 교체한 스키마를 만든다.
+ * baseType 이 없으면 파생 자체가 성립하지 않으므로 즉시 실패시킨다 — 조용히
+ * undefined 를 흘리면 노드 설정 폼이 빈 채로 뜬다.
+ */
+function withAgentType(
+  baseType: string,
+  agentType: string,
+  descriptions: { description: string; inputDesc?: string; outputDesc?: string },
+): NodeTypeSchema {
+  const base = NODE_SCHEMAS[baseType];
+  if (!base) {
+    throw new Error(`nodeSchemas: cannot derive from unknown node type "${baseType}"`);
+  }
+  return {
+    ...base,
+    ...descriptions,
+    configSchema: {
+      ...base.configSchema,
+      fields: base.configSchema.fields.map((f) =>
+        f.name === 'agent_ref'
+          ? { ...f, options: [agentType], description: `연결할 LG HVACR-03 에이전트를 선택합니다` }
+          : f,
+      ),
+    },
+  };
+}
+
+NODE_SCHEMAS['lg-hvacr03-status'] = withAgentType(
+  'lg-hvacr02-status',
+  'lg_hvacr03',
+  {
+    description:
+      'LG HVACR-03 에이전트(PMBUSB00A Modbus 게이트웨이)의 에어컨 상태를 수신합니다. 에이전트가 실내기를 주기 폴링하여 상태 변경 시 push 하며, inactivity_timeout 동안 무수신 시에만 request_state 명령을 전송합니다.',
+    inputDesc: '없음 (push 모델). 입력 메시지 수신 시 즉시 drain.',
+    outputDesc:
+      'payload: 디바이스 상태 (전원, 모드, 온도, 풍량, 에러 코드, 알람, 필터, 잠금 등). metadata 구성은 lg-hvacr02-status 와 동일. unit_id 는 실내기 중앙 주소 10진 문자열("0"~"15").',
+  },
+);
+
+NODE_SCHEMAS['lg-hvacr03-control'] = withAgentType(
+  'lg-hvacr02-control',
+  'lg_hvacr03',
+  {
+    description:
+      'PMBUSB00A Modbus 게이트웨이로 실내기를 제어합니다. 전원·모드·풍량·온도에 더해 스윙, 필터 알람 해제, 리모컨 잠금, 온도 상하한, ERV 명령을 지원합니다. 에이전트에 control_enabled: true 가 필요합니다.',
+    inputDesc:
+      'payload: {address, command, ...params} (예: {address:"3", command:"set_power", power:true}). address 는 10진 실내기 번호.',
+    outputDesc:
+      'payload: 에이전트 응답. 쓰기 후 read-back 결과가 verified / expected / actual 로 실리며, 잠금으로 무시된 경우 locked_by 가 함께 실립니다.',
+  },
+);
+
+NODE_SCHEMAS['lg-hvacr03'] = withAgentType('lg-hvacr02', 'lg_hvacr03', {
+  description: 'LG HVACR-03 (PMBUSB00A Modbus) 실내기 상태 조회 + 제어 통합 노드입니다.',
+  inputDesc: 'payload.address (조회/제어 대상, 10진), payload.command + params (제어 시)',
+  outputDesc: 'payload: 디바이스 상태 또는 제어 결과 JSON',
+});
+
 /** flow-node 참조 실행 모드. */
 export type FlowNodeMode = 'shared' | 'instance';
 

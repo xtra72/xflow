@@ -17,6 +17,7 @@ export const AGENT_TYPES = [
   { value: 'samsung_hvacr01', label: 'Samsung HVACR-01' },
   { value: 'lgap', label: 'LG LGAP' },
   { value: 'lg_hvacr02', label: 'LG HVACR-02 Capture' },
+  { value: 'lg_hvacr03', label: 'LG HVACR-03 (PMBUSB00A Modbus)' },
   { value: 'lg_hvacr01', label: 'LG HVACR-01 Capture' },
   { value: 'century_hvacr01', label: 'Century HVACR-01 (passive)' },
   { value: 'chirpstack-client', label: 'ChirpStack LoRaWAN (passive)' },
@@ -412,6 +413,46 @@ const LG_HVACR02_FIELDS: ConfigField[] = [
 ];
 
 // ──────────────────────────────────────────────────────────────────────────
+// LG HVACR-03 (PMBUSB00A Modbus 게이트웨이, SPEC-LG-HVACR-003)
+// LG ICP-02 계열과 달리 공식 Modbus RTU/TCP 경로이며, 능동 폴링 마스터로 동작한다.
+// CRC 는 CRC-16/MODBUS 를 쓰므로 LG ICP-02 의 XMODEM 설정과 혼동하지 않도록 한다.
+// ──────────────────────────────────────────────────────────────────────────
+const LG_HVACR03_FIELDS: ConfigField[] = [
+  // ── Transport ──
+  { name: 'transport_type', type: 'select', label: '연결 방식', options: ['rtu', 'tcp-client'], default: 'rtu', required: true, description: '통신 전송 방식 — rtu: RS-485 직결 / tcp-client: 시리얼-이더넷 컨버터 경유', section: 'transport' },
+  { name: 'serial_port', type: 'string', label: '시리얼 포트', required: true, description: 'RS-485 시리얼 포트 경로 (예: /dev/ttyUSB0)', visibleWhen: { field: 'transport_type', value: 'rtu' }, section: 'transport' },
+  { name: 'baud_rate', type: 'number', label: '통신 속도 (Baud Rate)', default: 9600, description: 'PMBUSB00A 사양 고정값 9600bps', visibleWhen: { field: 'transport_type', value: 'rtu' }, section: 'transport' },
+  { name: 'data_bits', type: 'number', label: '데이터 비트', default: 8, visibleWhen: { field: 'transport_type', value: 'rtu' }, section: 'transport' },
+  { name: 'stop_bits', type: 'number', label: '스톱 비트', default: 1, visibleWhen: { field: 'transport_type', value: 'rtu' }, section: 'transport' },
+  { name: 'parity', type: 'select', label: '패리티', options: ['none', 'even', 'odd'], default: 'none', description: 'PMBUSB00A 사양은 8N1 (패리티 없음)', visibleWhen: { field: 'transport_type', value: 'rtu' }, section: 'transport' },
+  { name: 'tcp_host', type: 'string', label: 'TCP 호스트', required: true, description: '시리얼-이더넷 컨버터 IP 주소', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
+  { name: 'tcp_port', type: 'number', label: 'TCP 포트', default: 502, description: 'Modbus TCP 기본 포트 502', visibleWhen: { field: 'transport_type', value: 'tcp-client' }, section: 'transport' },
+  { name: 'slave_id', type: 'number', label: '게이트웨이 주소', default: 1, required: true, description: '게이트웨이 보드 DIP 스위치(SW_02M) 로 설정한 슬레이브 주소 (1~16)', section: 'transport' },
+  { name: 'request_timeout', type: 'string', label: '요청 타임아웃', default: '1s', description: '단일 Modbus 트랜잭션 응답 대기 시간', section: 'transport' },
+  { name: 'reconnect_interval', type: 'string', label: '재연결 초기 간격', default: '5s', description: '재연결 backoff 시작값', section: 'transport' },
+  { name: 'max_reconnect_backoff', type: 'string', label: '재연결 backoff 상한', default: '5m', description: '재연결 최대 백오프', section: 'transport' },
+  { name: 'msg_channel_size', type: 'number', label: '메시지 버퍼 크기', default: 256, description: '내부 메시지 채널 버퍼', advanced: true, section: 'transport' },
+  // ── Protocol-specific (현장 실측으로 교정 가능) ──
+  { name: 'temp_scale', type: 'number', label: '온도 스케일', default: 10, description: '설정·센서 온도의 레지스터 배율. 리모컨 24℃ 설정 후 읽은 값이 240 이면 10, 24 면 1 로 교정', section: 'protocol' },
+  { name: 'address_base', type: 'number', label: '실내기 주소 기준', default: 0, description: '실내기 주소 표기 기준 (0 또는 1). 실내기 1대만 켜고 스캔해 어느 번호로 잡히는지 확인 후 교정', section: 'protocol' },
+  { name: 'fan_auto_code', type: 'number', label: '풍량 자동 코드', default: 4, description: '"자동" 풍량에 해당하는 레지스터 값. 값 4 가 초강으로 동작하면 5 로 교정', section: 'protocol' },
+  { name: 'control_enabled', type: 'boolean', label: '제어 기능 활성화', default: false, description: '실내기 능동 제어 (전원·모드·풍량·온도·스윙·잠금 등)', section: 'protocol' },
+  { name: 'control_verify_delay', type: 'string', label: '제어 검증 대기', default: '3s', description: '쓰기 후 read-back 까지 대기 시간. 게이트웨이가 실내기에 명령을 중계하는 데 수 초가 걸린다', section: 'protocol' },
+  // ── Polling + Device discovery ──
+  { name: 'poll_interval', type: 'string', label: '폴링 주기', default: '10s', description: '상태 레지스터 폴링 간격 (최소 5s — 그보다 빠르면 게이트웨이가 응답을 거른다)', section: 'operation' },
+  { name: 'scan_interval', type: 'string', label: '스캔 주기', default: '30s', description: '실내기 연결 상태 전체 스캔 간격 (1 트랜잭션으로 16대 확인)', section: 'operation' },
+  { name: 'auto_discovery', type: 'boolean', label: '자동 디바이스 발견', default: true, description: '스캔에서 발견된 실내기 자동 등록', section: 'operation' },
+  { name: 'offline_timeout', type: 'string', label: '오프라인 타임아웃', default: '30s', description: '이 시간 동안 응답이 없으면 디바이스 오프라인 판정', section: 'operation' },
+  { name: 'report_interval', type: 'string', label: '상태보고 주기', default: '60s', description: '전체 디바이스 상태 주기 보고 간격', section: 'operation' },
+  { name: 'event_temp_threshold', type: 'number', label: '이벤트 온도 임계값 (℃)', default: 1.0, description: '실내온도만 변경된 경우 |Δ| ≥ 임계값일 때만 이벤트 보고 (0 이하=비활성)', advanced: true, section: 'operation' },
+  // ── Output / logging (advanced) ──
+  { name: 'log_decode_errors', type: 'boolean', label: '디코드 오류 로그', default: false, description: '응답 파싱 실패 시 WARN 로그 출력', advanced: true, section: 'logging' },
+  { name: 'log_drops', type: 'boolean', label: '드롭 로그', default: false, description: '버퍼 가득 참으로 인한 이벤트 드롭 시 per-drop WARN 로그', advanced: true, section: 'logging' },
+  { name: 'log_state_updates', type: 'boolean', label: '상태 갱신 로그', default: false, description: '디바이스 state 갱신마다 읽은 레지스터를 INFO 로그로 출력 (진단용)', advanced: true, section: 'logging' },
+  { name: 'log_messages', type: 'boolean', label: '송수신 프레임 로그', default: false, description: 'Modbus TX/RX PDU 를 hex 로 INFO 로그 (진단용, 운영 환경 비활성 권장)', advanced: true, section: 'logging' },
+];
+
+// ──────────────────────────────────────────────────────────────────────────
 // LG HVACR-01 (ICP-01, SPEC-LG-HVACR-01)
 // LG agent 는 device state 변경 시 항상 emit (master toggle 없음).
 // dedupe_frames 는 동일 state 반복 emit 차단용으로 별도 운영.
@@ -745,6 +786,7 @@ export const HVACR_QUADRANT_AGENT_TYPES = new Set([
   'samsung_hvacr01',
   'lg_hvacr01',
   'lg_hvacr02',
+  'lg_hvacr03',
   'century_hvacr01',
 ]);
 
@@ -761,6 +803,7 @@ const AGENT_CONFIG_SCHEMAS: Record<string, ConfigField[]> = {
   'samsung_hvacr01': SAMSUNG_HVACR01_FIELDS,
   'lgap': LG_LGAP_FIELDS,
   'lg_hvacr02': LG_HVACR02_FIELDS,
+  'lg_hvacr03': LG_HVACR03_FIELDS,
   'lg_hvacr01': LG_HVACR01_FIELDS,
   'century_hvacr01': CENTURY_HVACR01_FIELDS,
   'chirpstack-client': CHIRPSTACK_FIELDS,

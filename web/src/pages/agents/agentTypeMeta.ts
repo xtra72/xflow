@@ -275,6 +275,39 @@ export const AGENT_TYPE_META: Record<string, AgentTypeDetailMeta> = {
     },
   },
 
+  lg_hvacr03: {
+    description:
+      'LG HVACR-03 에이전트 (PMBUSB00A Modbus 게이트웨이) 로 LG 시스템에어컨을 폴링하고 제어합니다. LG 공식 Modbus RTU/TCP 경로이므로 전원·모드·풍량·온도에 더해 에러 코드, 알람, 필터, 리모컨 잠금 상태까지 노출합니다. 모듈 1개당 실내기 16대를 지원합니다.',
+    configFields: [
+      { name: 'transport_type', type: 'select', required: true, description: '연결 방식 (rtu / tcp-client)', default: 'rtu' },
+      { name: 'serial_port', type: 'string', required: false, description: 'RS-485 시리얼 포트 경로 (rtu 모드)' },
+      { name: 'baud_rate', type: 'number', required: false, description: '통신 속도 — PMBUSB00A 사양 고정', default: '9600' },
+      { name: 'tcp_host', type: 'string', required: false, description: '시리얼-이더넷 컨버터 IP (tcp-client 모드)' },
+      { name: 'tcp_port', type: 'number', required: false, description: 'Modbus TCP 포트', default: '502' },
+      { name: 'slave_id', type: 'number', required: true, description: '게이트웨이 DIP 스위치 주소 (1~16)', default: '1' },
+      { name: 'poll_interval', type: 'string', required: false, description: '상태 폴링 주기 (최소 5s)', default: '10s' },
+      { name: 'scan_interval', type: 'string', required: false, description: '실내기 연결 상태 전체 스캔 주기', default: '30s' },
+      { name: 'temp_scale', type: 'number', required: false, description: '온도 레지스터 배율 (현장 실측으로 교정)', default: '10' },
+      { name: 'address_base', type: 'number', required: false, description: '실내기 주소 표기 기준 0 또는 1 (현장 실측으로 교정)', default: '0' },
+      { name: 'fan_auto_code', type: 'number', required: false, description: '"자동" 풍량 레지스터 값 (현장 실측으로 교정)', default: '4' },
+      { name: 'control_enabled', type: 'boolean', required: false, description: '실내기 능동 제어 기능 활성화', default: 'false' },
+      { name: 'control_verify_delay', type: 'string', required: false, description: '쓰기 후 read-back 대기 시간', default: '3s' },
+      { name: 'auto_discovery', type: 'boolean', required: false, description: '스캔에서 발견된 실내기 자동 등록', default: 'true' },
+    ],
+    configExample: {
+      transport_type: 'rtu',
+      serial_port: '/dev/ttyUSB0',
+      baud_rate: 9600,
+      slave_id: 1,
+      poll_interval: '10s',
+      scan_interval: '30s',
+      temp_scale: 10,
+      address_base: 0,
+      fan_auto_code: 4,
+      control_enabled: false,
+    },
+  },
+
   lg_hvacr01: {
     description:
       'LG HVACR-01(LG ICP-01 프로토콜) 으로 LG 시스템에어컨을 패시브 모니터링하는 에이전트. RS-485 1200bps 통신으로 TYPE-A(ODU 20B) / TYPE-B(IDU 40B) 이중 프레임을 캡처하며, 6계층 신뢰성 모델(체크섬, 이중기록, 구조, 물리범위 검증)을 적용합니다.',
