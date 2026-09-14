@@ -1,14 +1,14 @@
 ---
 id: SPEC-CANVAS-009
-version: "0.1.0"
-status: draft
+version: "0.2.0"
+status: implemented
 created: 2026-09-14
 updated: 2026-09-14
 author: xtra
 priority: P2
 lifecycle_level: spec-first
 title: "그룹 안을 다룬다 — 부품 개별 편집 · 부품 분리 · 그룹 투명도"
-phase: plan
+phase: run
 module: web/dashboard
 tier: M
 tags: "canvas, group, selection, opacity, ungroup"
@@ -22,6 +22,7 @@ prerequisite: SPEC-CANVAS-004
 | 버전 | 날짜 | 작성자 | 변경 내용 |
 |------|------|--------|----------|
 | 0.1.0 | 2026-09-14 | xtra | 최초 작성 |
+| 0.2.0 | 2026-09-14 | xtra | **③ 의 전제를 실측으로 고쳤다** — "이미 동작한다" 는 거짓이었다(아래 §③ 의 전제는 틀렸다). M1 의 범위가 편집 칸 하나에서 렌더 캐스케이드까지로 넓어졌다. 구현 완료 |
 
 ---
 
@@ -44,10 +45,22 @@ prerequisite: SPEC-CANVAS-004
 |---|:---:|:---:|:---:|:---:|:---:|
 | ① 부품 개별 편집 | `parts` ✅ | `partId` ✅ | 복합키 ✅ | 양방향 ✅ | ❌ |
 | ② 부품 분리 | ✅ | — | — | ✅ | ❌ |
-| ③ 그룹 투명도 | `style.opacity` ✅ | — | **곱셈 적용 ✅** | — | ❌ |
+| ③ 그룹 투명도 | `style.opacity` ✅ | — | **적용 ❌**(0.2.0 정정) | — | ❌ |
 
-**③ 은 이미 동작한다.** `bakeStyle` 이 그룹 투명도와 부품 투명도를 곱해 굽고 있고, config 를
-손으로 쓰면 지금도 화면에 나온다. 없는 것은 편집 칸 하나다.
+**③ 의 전제는 틀렸다 (0.2.0 정정).** 0.1.0 은 "`bakeStyle` 이 곱해 굽고 있으므로 없는 것은
+편집 칸 하나다" 라고 적었다. 구현 착수 전 실측 결과는 반대였다.
+
+- `bakeStyle` 의 호출자는 **`ungroupNode` 하나뿐**이다(`groupOps.ts:262`). 렌더 경로에는 없다.
+- `buildCanvasFrame` 은 그룹을 **통째로 건너뛴다**(`CanvasPanel.tsx` — `if (isGroup(el)) continue;`).
+  따라서 `targetStyles` 에 부품 복합 키 항목이 **하나도 생기지 않는다**.
+- `drawElements` 는 `styles[key] ?? element.style` 로 폴백한다. 즉 부품은 **제 원본 스타일
+  그대로** 그려졌고 그룹 캐스케이드도 투명도 곱셈도 일어나지 않았다.
+
+그 구멍은 004 가 M9(프레임 조립)로 미뤄 둔 자리이며, 004 는 M8 이후를 구현하지 않은 채
+멈췄다(`group/canvasCascade.ts` 없음 · `symbols/` 없음). 그래서 009 M1 은 편집 칸 하나가
+아니라 **최소 2단 캐스케이드**를 함께 세운다 — `buildCanvasFrame` 의 순회를 `walkDrawables`
+로 바꾸고 부품 기본 스타일을 `bakeStyle(그룹, 부품)` 으로 굽는다. 그룹 규칙 평가와 바인딩
+1단 상속은 004 M8·M9 의 몫으로 남긴다.
 
 **① 은 004 가 의도적으로 닫아 둔 문이다.** 히트 테스트는 이미 `{ nodeId, partId }` 를
 돌려주는데 선택 상태가 `nodeId` 하나로 좁혀진다. 이것은 누락이 아니라 결정이며, 출시된
@@ -222,8 +235,9 @@ groupOps.ts:260 — const el: CanvasElement = withGeometry(part, box, toAbsolute
 
 **REQ-06-a** (State-Driven) — 렌더는 그룹 투명도와 부품 투명도를 **곱해** 적용해야 한다.
 
-> 이 조항은 **이미 구현되어 있다**(`bakeStyle`). 여기 적는 이유는 009 가 편집 칸을 여는
-> 순간 그 곱셈이 사용자 눈에 처음 보이기 때문이고, 시험이 그것을 고정해야 하기 때문이다.
+> **0.2.0 정정 — 이 조항은 구현되어 있지 않았다.** `bakeStyle` 은 풀기 경로에만 걸려 있었고
+> 렌더는 부품 스타일을 해석조차 하지 않았다(위 §③ 의 전제는 틀렸다). 009 M1 이 그 곱셈을
+> 렌더 경로에 세운다 — 같은 `bakeStyle` 을 부르므로 구현이 두 벌이 되지는 않는다.
 
 ### REQ-07 — 견고성 (Unwanted)
 
