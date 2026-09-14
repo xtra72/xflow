@@ -33,6 +33,7 @@ import {
 
 import { useDeviceHistory, useExecuteCommand, useUpdateMetadata } from '@/hooks/useDevice';
 import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
+import { withAlpha } from '@/components/common/colorpicker/colorFormat';
 import PermissionButton from '@/components/common/PermissionButton';
 import { usePermission } from '@/hooks/usePermission';
 import { useTranslation } from '@/lib/i18n';
@@ -773,10 +774,10 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
       {!compact && <h4 className="mb-3 text-sm font-semibold text-(--color-text-primary)" style={labelText ? { color: labelText } : undefined}>{t('devices.detail.state')}</h4>}
       <div
         className={cn('overflow-hidden', !compact && 'max-w-sm rounded-2xl border border-(--color-border-default) bg-(--color-bg-surface)')}
-        style={acColor('borders') ? { borderColor: `${acColor('borders')}40` } : undefined}
+        style={acColor('borders') ? { borderColor: withAlpha(acColor('borders'), 0x40 / 255) } : undefined}
       >
         {/* 헤더: 전원 + 잠금 + 에러코드 */}
-        <div className="flex items-center justify-between border-b border-(--color-border-subtle) px-4 py-3" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
+        <div className="flex items-center justify-between border-b border-(--color-border-subtle) px-4 py-3" style={acColor('borders') ? { borderColor: withAlpha(acColor('borders'), 0x20 / 255) } : undefined}>
           <button
             type="button"
             onClick={interactive ? () => {
@@ -812,7 +813,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
         </div>
 
         {/* 운전 모드 */}
-        <div className="border-b border-(--color-border-subtle) px-4 py-3" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
+        <div className="border-b border-(--color-border-subtle) px-4 py-3" style={acColor('borders') ? { borderColor: withAlpha(acColor('borders'), 0x20 / 255) } : undefined}>
           <div className="flex flex-wrap gap-2">
             {Object.entries(MODE_CONFIG).map(([key, cfg]) => {
               const isActive = mode === key;
@@ -844,7 +845,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
         </div>
 
         {/* 온도 표시 */}
-        <div className="border-b border-(--color-border-subtle) px-4 py-5 text-center" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
+        <div className="border-b border-(--color-border-subtle) px-4 py-5 text-center" style={acColor('borders') ? { borderColor: withAlpha(acColor('borders'), 0x20 / 255) } : undefined}>
           {currentTemp != null ? (
             <>
               <p
@@ -854,7 +855,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
                 {currentTemp}
                 <span className="text-2xl font-normal text-(--color-text-muted)">&deg;C</span>
               </p>
-              <p className="mt-1 text-xs text-(--color-text-muted)" style={acColor('temperature') ? { color: `${acColor('temperature')}90` } : undefined}>{t('devices.detail.currentTemperature')}</p>
+              <p className="mt-1 text-xs text-(--color-text-muted)" style={acColor('temperature') ? { color: withAlpha(acColor('temperature'), 0x90 / 255) } : undefined}>{t('devices.detail.currentTemperature')}</p>
             </>
           ) : (
             <p className="text-2xl text-(--color-border-strong)">--</p>
@@ -891,7 +892,7 @@ function LgapRemoteControl({ properties, compact, deviceId, accentColor, accentE
         </div>
 
         {/* 풍량 (LGAP: 6단계) */}
-        <div className="border-b border-(--color-border-subtle) px-4 py-3" style={acColor('borders') ? { borderColor: `${acColor('borders')}20` } : undefined}>
+        <div className="border-b border-(--color-border-subtle) px-4 py-3" style={acColor('borders') ? { borderColor: withAlpha(acColor('borders'), 0x20 / 255) } : undefined}>
           <div className="flex items-center gap-3">
             <Wind className="h-4 w-4 shrink-0 text-(--color-text-muted)" style={acColor('controls') ? { color: acColor('controls')! } : undefined} />
             <span className="min-w-fit text-xs text-(--color-text-muted)" style={acColor('controls') ? { color: acColor('controls')! } : undefined}>{t('devices.detail.fanSpeed')}</span>
@@ -990,7 +991,7 @@ function GenericPropertiesGrid({
           <div
             key={id}
             className="rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-3 py-2"
-            style={acColor('borders') ? { borderColor: `${acColor('borders')}30` } : undefined}
+            style={acColor('borders') ? { borderColor: withAlpha(acColor('borders'), 0x30 / 255) } : undefined}
           >
             <p className="text-xs text-(--color-text-muted)" style={acColor('labels') ? { color: acColor('labels')! } : undefined}>
               {getPropertyLabel(key, protocol, type)}

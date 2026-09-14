@@ -57,6 +57,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 
 import { inertQueryClient } from '@/hooks/inertQueryClient';
 import PanelSettingsDialog from './PanelSettingsDialog';
+import { pickColorByTestId } from '@/test/pickColor';
 
 function renderDialog() {
   return render(
@@ -464,7 +465,7 @@ describe('배경색과 초기화', () => {
   it('공통 속성 디자인에서 타일 배경색을 정하고 되돌린다', () => {
     renderDialog();
     fireEvent.click(screen.getByTestId('properties-grid-card-button'));
-    fireEvent.change(screen.getByTestId('properties-grid-tile-bg'), { target: { value: '#112233' } });
+    pickColorByTestId('properties-grid-tile-bg', '#112233');
     expect(savedConfig().tileBg).toBe('#112233');
 
     fireEvent.click(screen.getByTestId('properties-grid-tile-bg-reset'));
@@ -620,9 +621,7 @@ describe('항목별 배경색 설정', () => {
   it('정하고 되돌린다', () => {
     renderDialog();
     openItemDesign('temperature');
-    fireEvent.change(screen.getByTestId('property-bg-temperature'), {
-      target: { value: '#331111' },
-    });
+    pickColorByTestId('property-bg-temperature', '#331111');
     const overrides = savedConfig().propertyOverrides as Record<string, { bg?: string }>;
     expect(overrides.temperature!.bg).toBe('#331111');
 

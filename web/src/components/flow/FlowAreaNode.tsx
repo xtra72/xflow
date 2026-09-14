@@ -29,7 +29,7 @@ export function FlowAreaNode({ data }: NodeProps) {
       // 순수 표시용: 클릭/드래그 등 모든 포인터 이벤트를 통과시킨다.
       // zIndex: 0 을 명시해 음수 z 스택 컨텍스트 벗어나기.
       style={{ width, height, pointerEvents: 'none', zIndex: 0 }}
-      className="rounded-2xl border-2 border-dashed border-zinc-300/70 bg-zinc-400/5 dark:border-zinc-600/60 dark:bg-zinc-400/5"
+      className="rounded-2xl border-2 border-dashed border-(--color-flow-area)/70 bg-(--color-flow-area)/5"
       aria-hidden="true"
     />
   );

@@ -36,6 +36,19 @@ function selectFile(content: string) {
   fireEvent.change(input, { target: { files: [file] } });
 }
 
+/**
+ * 색 칸에 색을 넣는다.
+ *
+ * 색 칸은 네이티브 색 입력이 아니라 공용 고르개의 팝오버 단추다 — 값은 팝오버 안의
+ * 16진 칸으로 들어간다. 고른 뒤 Esc 로 닫는 것은 팝오버가 하나만 떠 있게 하기
+ * 위해서다(둘이 뜨면 `colorpicker-hex` 조회가 갈라진다).
+ */
+function pickColor(label: string, hex: string): void {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.change(screen.getByTestId('colorpicker-hex'), { target: { value: hex } });
+  fireEvent.keyDown(document, { key: 'Escape' });
+}
+
 beforeEach(() => {
   useUIStore.setState({ themeOverrides: { day: {}, night: {} }, notifications: [] });
 });
@@ -43,8 +56,9 @@ beforeEach(() => {
 describe('ThemePaletteEditor', () => {
   it('활성 팔레트의 기본값을 컬러 테이블에 보여준다', () => {
     renderEditor();
-    const input = screen.getByLabelText('기본 배경') as HTMLInputElement;
-    expect(input.value).toBe(DAY_PRESET['--color-bg-primary']);
+    expect(screen.getByLabelText('기본 배경')).toHaveStyle({
+      backgroundColor: DAY_PRESET['--color-bg-primary']!,
+    });
   });
 
   it('카테고리를 나눠도 표는 하나다 — 표를 쪼개면 컬럼 폭이 어긋난다', () => {
@@ -63,7 +77,7 @@ describe('ThemePaletteEditor', () => {
 
   it('색을 바꾸면 해당 프리셋의 오버라이드로 저장된다', () => {
     renderEditor();
-    fireEvent.change(screen.getByLabelText('기본 배경'), { target: { value: '#123456' } });
+    pickColor('기본 배경', '#123456');
 
     expect(useUIStore.getState().themeOverrides).toEqual({
       day: { '--color-bg-primary': '#123456' },
@@ -75,10 +89,11 @@ describe('ThemePaletteEditor', () => {
     renderEditor();
     fireEvent.click(screen.getByTestId('palette-tab-night'));
 
-    const input = screen.getByLabelText('기본 배경') as HTMLInputElement;
-    expect(input.value).toBe(NIGHT_PRESET['--color-bg-primary']);
+    expect(screen.getByLabelText('기본 배경')).toHaveStyle({
+      backgroundColor: NIGHT_PRESET['--color-bg-primary']!,
+    });
 
-    fireEvent.change(input, { target: { value: '#010203' } });
+    pickColor('기본 배경', '#010203');
     expect(useUIStore.getState().themeOverrides.night).toEqual({
       '--color-bg-primary': '#010203',
     });
@@ -87,10 +102,9 @@ describe('ThemePaletteEditor', () => {
 
   it('기본값과 같은 색으로 되돌리면 오버라이드가 사라진다', () => {
     renderEditor();
-    const input = screen.getByLabelText('기본 배경');
 
-    fireEvent.change(input, { target: { value: '#123456' } });
-    fireEvent.change(input, { target: { value: DAY_PRESET['--color-bg-primary']! } });
+    pickColor('기본 배경', '#123456');
+    pickColor('기본 배경', DAY_PRESET['--color-bg-primary']!);
 
     expect(useUIStore.getState().themeOverrides.day).toEqual({});
   });
@@ -150,5 +164,233 @@ describe('ThemePaletteEditor', () => {
       expect(useUIStore.getState().themeOverrides.day).toEqual({ '--color-bg-primary': '#0a0b0c' });
     });
     expect(useUIStore.getState().notifications.at(-1)?.type).toBe('warning');
+  });
+});
+
+// --- 미리보기에서 고르면 표가 따라온다 (AC-08) ---
+
+describe('미리보기에서 조각을 고르면 그 색 항목들이 표에서 선택된다', () => {
+  /** 지금 선택 표시가 붙어 있는 토큰 행들. */
+  function selectedTokens(container: HTMLElement): string[] {
+    return [...container.querySelectorAll('tr[data-selected="true"]')].map(
+      (el) => el.getAttribute('data-token') ?? '',
+    );
+  }
+
+  it('조각이 쓰는 색이 여럿이면 행도 여럿이 선택된다', () => {
+    const { container } = renderEditor();
+    expect(selectedTokens(container)).toEqual([]);
+
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+    fireEvent.click(screen.getByTestId('theme-preview-node'));
+
+    // 노드 조각은 다섯 색을 쓴다 — 첫 하나만 고르면 나머지 넷은 찾을 길이 없다.
+    // 표 안의 순서는 카테고리 배열이 정하므로 집합으로 견준다.
+    expect([...selectedTokens(container)].sort()).toEqual(
+      [
+        '--color-bg-surface',
+        '--color-bg-sunken',
+        '--color-border-default',
+        '--color-text-primary',
+        '--color-text-muted',
+      ].sort(),
+    );
+  });
+
+  it('표 위를 지나도 고른 조각이 지워지지 않는다', () => {
+    // 둘을 한 상태로 묶으면 고른 직후 표로 커서를 옮기는 것만으로 선택이 사라진다.
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+    fireEvent.click(screen.getByTestId('theme-preview-edge'));
+    expect(selectedTokens(container)).toEqual(['--color-flow-edge']);
+
+    const otherRow = container.querySelector('tr[data-token="--color-bg-primary"]');
+    fireEvent.mouseEnter(otherRow!);
+    fireEvent.mouseLeave(otherRow!);
+    expect(selectedTokens(container)).toEqual(['--color-flow-edge']);
+  });
+
+  it('고른 조각은 미리보기에서도 표시가 남는다', () => {
+    renderEditor();
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+    fireEvent.click(screen.getByTestId('theme-preview-edge'));
+    expect(screen.getByTestId('theme-preview-edge').dataset.selected).toBe('true');
+  });
+
+  it('다른 조각을 고르면 선택이 그쪽으로 옮겨 간다', () => {
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+    fireEvent.click(screen.getByTestId('theme-preview-edge'));
+    fireEvent.click(screen.getByTestId('theme-preview-shell'));
+
+    expect(screen.getByTestId('theme-preview-edge').dataset.selected).toBe('false');
+    expect([...selectedTokens(container)].sort()).toEqual(
+      [
+        '--color-bg-primary',
+        '--color-bg-secondary',
+        '--color-text-primary',
+        '--color-border-subtle',
+      ].sort(),
+    );
+  });
+
+  it('고른 조각이 없는 화면으로 옮기면 화면이 바뀌고 선택이 비워진다', () => {
+    // 종전에는 선택이 화면을 못으로 박아 탭을 눌러도 화면이 바뀌지 않았다.
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+    fireEvent.click(screen.getByTestId('theme-preview-node'));
+    expect(selectedTokens(container).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByTestId('theme-preview-tab-schedule'));
+
+    expect(screen.getByTestId('theme-preview').dataset.area).toBe('schedule');
+    expect(selectedTokens(container)).toEqual([]);
+    expect(screen.queryByTestId('theme-preview-node')).toBeNull();
+  });
+
+  it('어느 화면에나 있는 조각을 골랐으면 화면을 옮겨도 선택이 남는다', () => {
+    // 앱 셸은 어느 탭에서나 보이므로 비울 이유가 없다.
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByTestId('theme-preview-shell'));
+    const before = selectedTokens(container);
+    expect(before.length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByTestId('theme-preview-tab-list'));
+
+    expect(screen.getByTestId('theme-preview').dataset.area).toBe('list');
+    expect(selectedTokens(container)).toEqual(before);
+    expect(screen.getByTestId('theme-preview-shell').dataset.selected).toBe('true');
+  });
+
+  it('같은 화면 안의 조각이면 탭을 눌러도 선택이 남는다', () => {
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+    fireEvent.click(screen.getByTestId('theme-preview-edge'));
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+
+    expect(selectedTokens(container)).toEqual(['--color-flow-edge']);
+  });
+
+  it('목록·스케줄·노드를 골라도 그 화면에 머문다', () => {
+    // 셋 다 첫 토큰이 `bg-surface` 라, 선택이 화면 따라가기를 타면 모두 대시보드로
+    // 끌려갔다. 고른 조각은 이미 지금 화면에 있으므로 옮길 이유가 없다.
+    renderEditor();
+    for (const [tab, partId] of [
+      ['list', 'list-rows'],
+      ['schedule', 'schedule-rows'],
+      ['flow', 'node'],
+    ] as const) {
+      fireEvent.click(screen.getByTestId(`theme-preview-tab-${tab}`));
+      fireEvent.click(screen.getByTestId(`theme-preview-${partId}`));
+      expect(screen.getByTestId('theme-preview').dataset.area, partId).toBe(tab);
+      expect(screen.getByTestId(`theme-preview-${partId}`).dataset.selected).toBe('true');
+    }
+  });
+});
+
+// --- 고르는 것은 누르는 일이다 (커서 따라가기는 옵션) ---
+
+describe('표에서 색을 고르는 길', () => {
+  function row(container: HTMLElement, cssVar: string): HTMLElement {
+    const el = container.querySelector(`tr[data-token="${cssVar}"]`);
+    expect(el, `${cssVar} 행이 없다`).not.toBeNull();
+    return el as HTMLElement;
+  }
+  function litTokens(container: HTMLElement): string[] {
+    return [...container.querySelectorAll('tr[data-lit="true"]')].map(
+      (el) => el.getAttribute('data-token') ?? '',
+    );
+  }
+
+  it('커서가 지나가기만 하면 아무 일도 없다 — 기본', () => {
+    // 표를 훑어보는 동안 미리보기가 쉬지 않고 바뀌면 읽으려던 사람이 멀미를 한다.
+    const { container } = renderEditor();
+    fireEvent.mouseEnter(row(container, '--color-flow-edge'));
+
+    expect(litTokens(container)).toEqual([]);
+    expect(screen.getByTestId('theme-preview').dataset.area).toBe('dashboard');
+  });
+
+  it('행을 누르면 고른 색이 되고 미리보기가 그 화면으로 간다', () => {
+    const { container } = renderEditor();
+    fireEvent.click(row(container, '--color-flow-edge'));
+
+    expect(litTokens(container)).toEqual(['--color-flow-edge']);
+    expect(screen.getByTestId('theme-preview').dataset.area).toBe('flow');
+    expect(screen.getByTestId('theme-preview-edge').dataset.lit).toBe('true');
+  });
+
+  it('커서 따라가기를 켜면 지나가기만 해도 따라온다', () => {
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByTestId('palette-follow-cursor'));
+    fireEvent.mouseEnter(row(container, '--color-flow-edge'));
+
+    expect(litTokens(container)).toEqual(['--color-flow-edge']);
+    expect(screen.getByTestId('theme-preview').dataset.area).toBe('flow');
+  });
+
+  it('따라가기를 켜도 커서가 떠나면 누른 것이 돌아온다', () => {
+    const { container } = renderEditor();
+    fireEvent.click(row(container, '--color-flow-edge'));
+    fireEvent.click(screen.getByTestId('palette-follow-cursor'));
+
+    const other = row(container, '--color-bg-sunken');
+    fireEvent.mouseEnter(other);
+    expect(litTokens(container)).toEqual(['--color-bg-sunken']);
+
+    fireEvent.mouseLeave(other);
+    expect(litTokens(container)).toEqual(['--color-flow-edge']);
+  });
+
+  it('행을 누르면 미리보기의 조각 선택이 지워진다 — 둘이 함께 고정되지 않는다', () => {
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+    fireEvent.click(screen.getByTestId('theme-preview-node'));
+    expect(screen.getByTestId('theme-preview-node').dataset.selected).toBe('true');
+
+    fireEvent.click(row(container, '--color-flow-edge'));
+    expect(screen.getByTestId('theme-preview-node').dataset.selected).toBe('false');
+    expect(litTokens(container)).toEqual(['--color-flow-edge']);
+  });
+});
+
+// --- 팔레트 탭을 바꾸면 미리보기가 그 자리에서 바뀐다 ---
+
+describe('팔레트 전환이 미리보기에 곧바로 닿는다', () => {
+  it('다크 탭을 누르면 미리보기 변수가 그 자리에서 night 값이 된다', () => {
+    renderEditor('day');
+    const box = () => screen.getByTestId('theme-preview');
+    expect(box().style.getPropertyValue('--color-bg-surface')).toBe(
+      DAY_PRESET['--color-bg-surface'],
+    );
+
+    fireEvent.click(screen.getByTestId('palette-tab-night'));
+
+    expect(box().dataset.target).toBe('night');
+    expect(box().style.getPropertyValue('--color-bg-surface')).toBe(
+      NIGHT_PRESET['--color-bg-surface'],
+    );
+    expect(box().className).toContain('dark');
+  });
+
+  it('미리보기 상자 자신이 테마 배경을 칠한다', () => {
+    // 안쪽 상자에만 칠하면 화면 고르기 탭 줄과 바깥 여백이 설정 페이지 배경 위에
+    // 떠 있게 되어, 팔레트를 바꿔도 그 띠만 밝은 채로 남는다.
+    renderEditor('day');
+    const box = screen.getByTestId('theme-preview');
+    expect(box.style.background, '미리보기 상자에 배경이 없다').not.toBe('');
+
+    // 탭 줄이 그 배경 **안**에 있어야 한다 — 밖에 있으면 띠가 따로 논다.
+    expect(box.contains(screen.getByTestId('theme-preview-tab-flow'))).toBe(true);
+  });
+
+  it('탭을 바꾸면 미리보기 안의 색 항목도 그 팔레트를 따른다', () => {
+    renderEditor('day');
+    fireEvent.click(screen.getByTestId('palette-tab-night'));
+    // 표의 색 칸도 같은 팔레트를 보여야 한다 — 표와 미리보기가 다른 말을 하면
+    // 어느 쪽을 믿을지 알 수 없다.
+    expect(screen.getByLabelText('기본 배경')).toHaveStyle({
+      backgroundColor: NIGHT_PRESET['--color-bg-primary']!,
+    });
   });
 });

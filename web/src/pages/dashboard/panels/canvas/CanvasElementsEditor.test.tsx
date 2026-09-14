@@ -33,7 +33,7 @@
 // 개별 컨트롤은 aria-label 이 아니라 `data-testid` 로 집는다(스텁 t 는 `{index}` 를
 // 채워 주지 않는다).
 //
-// `ColorSwatchButton` 은 실물을 쓴다 — 색 칸이 실제로 열리는지가 아니라 편집기가 그
+// `ColorPicker` 는 실물을 쓴다 — 색 칸이 실제로 열리는지가 아니라 편집기가 그
 // 계약(`color`/`onChange`/`ariaLabel`/`testId`)을 지키는지를 보려는 것이고, 스텁으로
 // 바꾸면 그 계약이 검사되지 않는다. 다만 그 컴포넌트도 `useTranslation` 을 쓰므로 위
 // 스텁이 함께 덮는다.
@@ -923,7 +923,7 @@ describe('CanvasElementsEditor — 빈 칸은 부재다', () => {
   it('색 칸에서 고른 색이 스타일 키가 되고, "미설정"은 그 키를 지운다', () => {
     const spy = setup(cfg([rect()]));
 
-    // 실물 ColorSwatchButton 을 쓴다 — 스와치를 열고 팔레트에서 고르는 경로가
+    // 실물 ColorPicker 를 쓴다 — 스와치를 열고 팔레트에서 고르는 경로가
     // 편집기가 지키는 계약(color/onChange/ariaLabel/testId)을 실제로 검사한다.
     fireEvent.click(testid('canvas-element-fill-0'));
     fireEvent.click(screen.getByLabelText('#3b82f6'));
@@ -942,7 +942,7 @@ describe('CanvasElementsEditor — 빈 칸은 부재다', () => {
   it('배경색 스와치의 "미설정"은 background 를 지운다', () => {
     const spy = setup(cfg([], { background: '#101010' }));
     fireEvent.click(testid('canvas-panel-background'));
-    fireEvent.click(screen.getByLabelText('dashboard.colorSwatch.defaultAria'));
+    fireEvent.click(screen.getByTestId('colorpicker-clear'));
     expect(lastPatch(spy)).toEqual({ background: undefined });
   });
 

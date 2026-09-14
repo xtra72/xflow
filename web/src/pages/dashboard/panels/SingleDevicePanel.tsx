@@ -3,6 +3,7 @@
 
 import { Activity, HardDrive, Moon } from 'lucide-react';
 
+import { withAlpha } from '@/components/common/colorpicker/colorFormat';
 import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
 import { useDeviceRealtime } from '@/hooks/useDevice';
 import { useTranslation } from '@/lib/i18n';
@@ -107,7 +108,7 @@ export default function SingleDevicePanel({
           >
             {title}
           </span>
-          <span className="text-xs text-(--color-text-muted)" style={acColor('labels') ? { color: `${acColor('labels')}80` } : undefined}>{device.protocol.toUpperCase()}</span>
+          <span className="text-xs text-(--color-text-muted)" style={acColor('labels') ? { color: withAlpha(acColor('labels'), 0x80 / 255) } : undefined}>{device.protocol.toUpperCase()}</span>
         </div>
         <span className={cn(
           'inline-flex items-center gap-1 rounded-full px-2 py-1',

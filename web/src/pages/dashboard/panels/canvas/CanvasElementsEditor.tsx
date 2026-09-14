@@ -54,7 +54,7 @@ import { FieldHelp } from '@/components/property/FieldHelp';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
-import ColorSwatchButton from '../../colorSwatchPalette';
+import ColorPicker from '@/components/common/colorpicker/ColorPicker';
 import {
   storeSeriesId,
   storeSeriesLabel,
@@ -228,7 +228,7 @@ const ICON_BUTTON_CLASS =
  */
 const ORDER_BUTTON_CLASS =
   'inline-flex shrink-0 items-center gap-0.5 rounded border border-(--color-border-default) ' +
-  'px-1.5 py-0.5 text-xs text-(--color-text-secondary) hover:bg-(--color-bg-hover) ' +
+  'px-1.5 py-0.5 text-xs text-(--color-text-secondary) hover:bg-(--color-bg-elevated) ' +
   'disabled:cursor-not-allowed disabled:opacity-40';
 
 /** 소구획 제목 클래스. 칸의 이름이므로 본문과 같은 크기다. */
@@ -1189,8 +1189,10 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
       {/* 패널 축 — 배경색과 기본 트윈. 요소가 덮어쓸 수 있는 값들이다. */}
       <div className="flex flex-wrap items-center gap-2">
         <span className={GROUP_LABEL_CLASS}>{t('dashboard.canvas.elements.panelBackground')}</span>
-        <ColorSwatchButton
-          color={cfg.background}
+        <ColorPicker
+          alpha
+          clearable
+          value={cfg.background}
           onChange={(c) => onConfigChange({ background: c })}
           ariaLabel={t('dashboard.canvas.elements.panelBackgroundAria')}
           testId="canvas-panel-background"
@@ -1603,16 +1605,20 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                               요소에서는 이 칸이 텍스트 탭에 선다 — 없는 도형의 색을 "도형" 이라
                               부르면 화면이 거짓말을 한다. */}
                           {el.kind !== 'text' && (
-                            <ColorSwatchButton
-                              color={el.style.fill}
+                            <ColorPicker
+                              alpha
+                              clearable
+                              value={el.style.fill}
                               onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'fill', c) })}
                               ariaLabel={withIndex(t('dashboard.canvas.elements.fillAria'), idx)}
                               testId={`canvas-element-fill-${idx}`}
                             />
                           )}
 
-                          <ColorSwatchButton
-                            color={el.style.stroke}
+                          <ColorPicker
+                            alpha
+                            clearable
+                            value={el.style.stroke}
                             onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'stroke', c) })}
                             ariaLabel={withIndex(t('dashboard.canvas.elements.strokeAria'), idx)}
                             testId={`canvas-element-stroke-${idx}`}
@@ -1797,8 +1803,10 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                             <option value="right">{t('dashboard.canvas.elements.alignRight')}</option>
                           </select>
 
-                          <ColorSwatchButton
-                            color={el.style.textColor}
+                          <ColorPicker
+                            alpha
+                            clearable
+                            value={el.style.textColor}
                             onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'textColor', c) })}
                             ariaLabel={withIndex(t('dashboard.canvas.elements.textColorAria'), idx)}
                             testId={`canvas-element-text-color-${idx}`}
@@ -1806,8 +1814,10 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                           {/* 텍스트 요소의 `fill` 은 글자색 폴백이다 — 그래서 글자색 **바로 옆**에
                               선다(위 도형 묶음의 주석 참조). */}
                           {el.kind === 'text' && (
-                            <ColorSwatchButton
-                              color={el.style.fill}
+                            <ColorPicker
+                              alpha
+                              clearable
+                              value={el.style.fill}
                               onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'fill', c) })}
                               ariaLabel={withIndex(t('dashboard.canvas.elements.fillAria'), idx)}
                               testId={`canvas-element-fill-${idx}`}

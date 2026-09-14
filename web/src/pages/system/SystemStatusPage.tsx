@@ -159,7 +159,7 @@ export function SystemStatusPage() {
       {/* 향후 영역: 업데이트 이력 / changelog / 백업 정보 */}
       <section
         data-testid="system-status-future"
-        className="rounded-lg border border-dashed border-(--color-border) p-6 text-center text-sm text-(--color-text-muted)"
+        className="rounded-lg border border-dashed border-(--color-border-default) p-6 text-center text-sm text-(--color-text-muted)"
       >
         {t('system.status.futurePlaceholder')}
       </section>
@@ -176,14 +176,14 @@ function LoadingSkeleton() {
   return (
     <div
       data-testid="system-status-loading"
-      className="space-y-3 rounded-lg border border-(--color-border) bg-(--color-bg-elevated) p-6"
+      className="space-y-3 rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) p-6"
       aria-busy="true"
       aria-label={t('system.info.loadingAria')}
     >
-      <div className="h-5 w-1/3 animate-pulse rounded bg-(--color-bg-hover)" />
-      <div className="h-10 w-1/2 animate-pulse rounded bg-(--color-bg-hover)" />
-      <div className="h-4 w-2/3 animate-pulse rounded bg-(--color-bg-hover)" />
-      <div className="h-4 w-1/2 animate-pulse rounded bg-(--color-bg-hover)" />
+      <div className="h-5 w-1/3 animate-pulse rounded bg-(--color-bg-sunken)" />
+      <div className="h-10 w-1/2 animate-pulse rounded bg-(--color-bg-sunken)" />
+      <div className="h-4 w-2/3 animate-pulse rounded bg-(--color-bg-sunken)" />
+      <div className="h-4 w-1/2 animate-pulse rounded bg-(--color-bg-sunken)" />
     </div>
   );
 }

@@ -75,7 +75,8 @@ describe('필드 편집 (AC-17)', () => {
 
   it('색을 바꾸면 font_color 로 저장한다', () => {
     const { onChange } = open('value');
-    fireEvent.change(screen.getByTestId('stat-style-value-color'), {
+    fireEvent.click(screen.getByTestId('stat-style-value-color'));
+    fireEvent.change(screen.getByTestId('colorpicker-hex'), {
       target: { value: '#123456' },
     });
     expect(onChange).toHaveBeenCalledWith({ font_color: '#123456' });
@@ -120,7 +121,8 @@ describe('변화량은 방향별 3색을 편집한다 (AC-19 / D4)', () => {
 
   it('증가 색을 바꾸면 delta_display 쪽으로 간다', () => {
     const { onChange, onDeltaColorChange } = open('delta');
-    fireEvent.change(screen.getByTestId('stat-style-delta-up'), {
+    fireEvent.click(screen.getByTestId('stat-style-delta-up'));
+    fireEvent.change(screen.getByTestId('colorpicker-hex'), {
       target: { value: '#123456' },
     });
     expect(onDeltaColorChange).toHaveBeenCalledWith({ up_color: '#123456' });
@@ -128,10 +130,17 @@ describe('변화량은 방향별 3색을 편집한다 (AC-19 / D4)', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('변화 없음 기본색은 CSS 변수라 색 입력에 중립 회색을 넣는다', () => {
-    open('delta');
-    // var(--color-text-muted) 를 그대로 주면 브라우저가 검정으로 떨어뜨린다.
-    expect(screen.getByTestId('stat-style-delta-flat')).toHaveValue('#9ca3af');
+  it('변화 없음 기본색은 CSS 변수라 검정이 아니라 중립 회색으로 연다', () => {
+    const { onDeltaColorChange } = open('delta');
+    const trigger = screen.getByTestId('stat-style-delta-flat');
+    // 저장된 값은 그대로 둔다 — 색 입력이 아니므로 떨어뜨릴 이유가 없다.
+    expect(trigger).toHaveStyle({ backgroundColor: 'var(--color-text-muted)' });
+
+    // 열어도 검정(색상 0)으로 시작하지 않는다. 중립 회색 #9ca3af 의 색상은 218 이다.
+    fireEvent.click(trigger);
+    expect(screen.getByTestId('colorpicker-hue')).toHaveValue('218');
+    // 여는 것만으로는 아무것도 저장되지 않는다.
+    expect(onDeltaColorChange).not.toHaveBeenCalled();
   });
 
   it('본값·구간 통계에는 3색이 없다', () => {

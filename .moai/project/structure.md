@@ -322,14 +322,31 @@ xflow/
 │   │   │   ├── Dashboard/      # 대시보드 위젯
 │   │   │   ├── NodePalette/    # 노드 팔레트 (드래그 소스)
 │   │   │   ├── PropertyPanel/  # 노드 속성 편집 패널
-│   │   │   └── common/         # 공통 UI 컴포넌트
-│   │   │       ├── ImportDialog.tsx    # 공용 Import 모달 컴포넌트 (파일 선택, 드래그 앤 드롭, JSON/YAML 파싱, 미리보기)
-│   │   │       └── PanelSettingsDropdown.tsx  # 패널 설정 드롭다운 컴포넌트 (패널 제목/컬럼 구성)
+│   │   │   ├── common/         # 공통 UI 컴포넌트
+│   │   │   │   ├── ImportDialog.tsx    # 공용 Import 모달 컴포넌트 (파일 선택, 드래그 앤 드롭, JSON/YAML 파싱, 미리보기)
+│   │   │   │   └── colorpicker/        # 통합 색 고르개 (SPEC-COLOR-001) — 색을 고르는 유일한 자리
+│   │   │   │       ├── ColorPicker.tsx      # 조립부. 트리거 단추 + body 포털 팝오버
+│   │   │   │       ├── SaturationField.tsx  # 채도·명도 2D 판
+│   │   │   │       ├── SwatchGrid.tsx       # 팔레트·최근색 격자 (role=listbox)
+│   │   │   │       ├── colorFormat.ts       # 자릿수를 아는 유일한 자리 (정규화 · withAlpha · HSV 변환)
+│   │   │   │       ├── palette.ts           # UNIFIED_PALETTE 28색 — 프리셋의 유일한 정본
+│   │   │   │       ├── recentColors.ts      # 최근 쓴 색 MRU 12칸 (localStorage)
+│   │   │   │       ├── popoverPlacement.ts  # 팝오버 배치 산술 (컴포넌트 밖 순수 함수)
+│   │   │   │       └── singleSource.test.ts # 갈라짐 재발 방지 CI 가드 4종
+│   │   │   ├── theme/          # 테마 팔레트 편집 (SPEC-THEME-001)
+│   │   │   │   ├── ThemePaletteEditor.tsx # 토큰 표 — 프리셋 탭 · 색 칸 · 내보내기/가져오기
+│   │   │   │   ├── ThemePreview.tsx       # 축소 화면 미리보기. 편집 중인 프리셋을 그린다
+│   │   │   │   └── themePreviewParts.ts   # 조각-토큰 대응의 유일한 정본 (양방향 강조가 읽는다)
+│   │   │   └── flow/           # 플로우 편집기 부품 (색은 전부 토큰 — DebugPanel 만 예외)
+│   │   │       └── flowColorShift.ts      # 토큰화로 색이 어디로 움직였는지 적은 표
 │   │   ├── pages/               # 페이지 컴포넌트
 │   │   │   ├── FlowEditorPage/ # 플로우 편집 페이지
 │   │   │   ├── DashboardPage/  # 대시보드 페이지
 │   │   │   ├── SettingsPage/   # 설정 페이지
 │   │   │   └── LoginPage/      # 로그인 페이지
+│   │   ├── lib/theme/           # 테마 토큰 정본
+│   │   │   ├── tokens.ts        # 29토큰 · 6카테고리 · day/night 프리셋. index.css 와 대조 시험으로 묶여 있다
+│   │   │   └── contrast.ts      # WCAG 대비 · oklch→sRGB — "읽히는가" 를 눈이 아니라 수로 판정한다
 │   │   ├── hooks/               # 커스텀 React 훅
 │   │   ├── stores/              # 상태 관리 (Zustand)
 │   │   ├── services/            # API 클라이언트

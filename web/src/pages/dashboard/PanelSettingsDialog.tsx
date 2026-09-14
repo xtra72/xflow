@@ -8,7 +8,7 @@ import { inertQueryClient } from '@/hooks/inertQueryClient';
 import { getMetrics } from '@/services/api/monitorService';
 import * as flowService from '@/services/api/flowService';
 import type { FlowInfo } from '@/types/flow';
-import { ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Gauge, Maximize2, Minimize2, Minus, Pipette, Plus, RotateCcw, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Gauge, Maximize2, Minimize2, Minus, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import {
   Area,
   Bar,
@@ -29,7 +29,6 @@ import {
   type DeviceListColumnKey,
 } from '@/hooks/useDeviceColumns';
 import { cn } from '@/lib/utils/cn';
-import { PANEL_COLORS } from './panelColorPresets';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
 
 import { useAgents } from '@/hooks/useAgent';
@@ -276,8 +275,8 @@ import { useFloorPlanAspect } from './panels/heatmap/useFloorPlanAspect';
 import { gridCellSize, gridHeightForAspect, panelPixelAspect } from './gridGeometry';
 import { PanelChromeProvider } from './PanelChromeProvider';
 import type { PanelTitleFont } from './panelChromeContext';
-import ColorSwatchButton from './colorSwatchPalette';
-import { COLOR_PALETTE } from './colorPalette';
+import ColorPicker from '@/components/common/colorpicker/ColorPicker';
+import { UNIFIED_PALETTE } from '@/components/common/colorpicker/palette';
 import {
   StatChartSection,
   LineChartSection,
@@ -377,20 +376,6 @@ const MODBUS_AREA_COLUMNS_PANEL_TYPES = new Set([
   'modbus-shared-registers',
   'modbus-device-registers',
 ]);
-
-/** 패널 색상 프리셋 */
-const COLOR_PRESETS = [
-  '#3b82f6', // blue
-  '#10b981', // emerald
-  '#f59e0b', // amber
-  '#ef4444', // red
-  '#8b5cf6', // violet
-  '#ec4899', // pink
-  '#06b6d4', // cyan
-  '#f97316', // orange
-  '#64748b', // slate
-  '#0f172a', // dark
-];
 
 /** 컬럼 라벨 i18n 키 매핑 (기존 dashboard.col.* 재사용) */
 const FLOW_COLUMN_LABEL_KEYS: Record<FlowColumnKey, string> = {
@@ -2584,7 +2569,7 @@ function HeatmapSettingsSection({
   };
   const addColorStop = () => {
     const stop = colorTable.length === 0 ? 0 : 1;
-    commitColorTable([...colorTable, { stop, color: COLOR_PALETTE[0]! }]);
+    commitColorTable([...colorTable, { stop, color: UNIFIED_PALETTE[0]! }]);
   };
   const updateColorStop = (idx: number, patch: Partial<ColorStop>) => {
     commitColorTable(colorTable.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
@@ -2841,9 +2826,10 @@ function HeatmapSettingsSection({
         <div className="space-y-1.5">
           {colorTable.map((stop, idx) => (
             <div key={idx} className="flex items-center gap-1.5">
-              <ColorSwatchButton
-                color={stop.color}
-                onChange={(c) => updateColorStop(idx, { color: c ?? COLOR_PALETTE[0]! })}
+              <ColorPicker
+                clearable
+                value={stop.color}
+                onChange={(c) => updateColorStop(idx, { color: c ?? UNIFIED_PALETTE[0]! })}
                 ariaLabel={t('dashboard.settings.heatmapColorStopAria').replace('{index}', String(idx + 1))}
               />
               <input
@@ -2979,7 +2965,7 @@ function HeatmapSettingsSection({
                       title={t('dashboard.settings.heatmapLayerMoveUp')}
                       disabled={idx === 0}
                       onClick={() => moveLayer(idx, -1)}
-                      className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-hover) disabled:opacity-30"
+                      className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-30"
                     >
                       <ChevronUp className="h-3.5 w-3.5" />
                     </button>
@@ -2990,7 +2976,7 @@ function HeatmapSettingsSection({
                       title={t('dashboard.settings.heatmapLayerMoveDown')}
                       disabled={idx === layers.length - 1}
                       onClick={() => moveLayer(idx, 1)}
-                      className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-hover) disabled:opacity-30"
+                      className="rounded p-0.5 text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated) disabled:opacity-30"
                     >
                       <ChevronDown className="h-3.5 w-3.5" />
                     </button>
@@ -3300,8 +3286,10 @@ function HeatmapSettingsSection({
               <span className="text-[11px] text-(--color-text-muted)">
                 {t('dashboard.settings.heatmapContourLineColor')}
               </span>
-              <ColorSwatchButton
-                color={contourCfg?.line.color}
+              <ColorPicker
+                alpha
+                clearable
+                value={contourCfg?.line.color}
                 onChange={(color) => setContourLine({ color })}
                 ariaLabel={t('dashboard.settings.heatmapContourLineColorAria')}
               />
@@ -3462,12 +3450,12 @@ function HeatmapSettingsSection({
                     }
                   />
                   {legendCfg?.font_color !== undefined && (
-                    <input
-                      type="color"
+                    <ColorPicker
+                      alpha
                       value={legendCfg.font_color}
-                      data-testid="heatmap-legend-font-color"
-                      onChange={(e) => setLegend({ font_color: e.target.value })}
-                      className="h-7 w-10 cursor-pointer rounded border border-(--color-border-default) bg-transparent"
+                      onChange={(c) => setLegend({ font_color: c })}
+                      ariaLabel={t('dashboard.settings.heatmapLegendFontColor')}
+                      testId="heatmap-legend-font-color"
                     />
                   )}
                 </div>
@@ -3942,13 +3930,14 @@ function ValueColorRules({
             onChange={(e) => onChange(rules.map((r, i) => (i === index ? { ...r, value: e.target.value } : r)))}
             className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-sunken) px-1.5 py-0.5 text-xs text-(--color-text-primary)"
           />
-          <input
-            type="color"
+          <ColorPicker
+            alpha
             value={rule.color}
-            data-testid={`${testIdPrefix}-color-${index}`}
-            aria-label={t('dashboard.settings.propertiesGridOpt.valueColors')}
-            onChange={(e) => onChange(rules.map((r, i) => (i === index ? { ...r, color: e.target.value } : r)))}
-            className="h-6 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+            testId={`${testIdPrefix}-color-${index}`}
+            ariaLabel={t('dashboard.settings.propertiesGridOpt.valueColors')}
+            onChange={(c) =>
+              onChange(rules.map((r, i) => (i === index ? { ...r, color: c ?? r.color } : r)))
+            }
           />
           <button
             type="button"
@@ -4150,13 +4139,13 @@ function PropertyOverrideFields({
         <span className="flex-1 text-xs text-(--color-text-muted)">
           {t('dashboard.settings.propertiesGridOpt.tileBackground')}
         </span>
-        <input
-          type="color"
-          value={(override.bg as string | undefined) ?? '#1f2937'}
-          data-testid={`property-bg-${propertyKey}`}
-          aria-label={t('dashboard.settings.propertiesGridOpt.tileBackground')}
-          onChange={(e) => onChange({ ...override, bg: e.target.value })}
-          className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+        <ColorPicker
+          alpha
+          value={override.bg as string | undefined}
+          inheritedColor="#1f2937"
+          testId={`property-bg-${propertyKey}`}
+          ariaLabel={t('dashboard.settings.propertiesGridOpt.tileBackground')}
+          onChange={(c) => onChange({ ...override, bg: c })}
         />
         <button
           type="button"
@@ -4700,13 +4689,14 @@ function TileGridEditor<T extends string>({
                       <span className="flex-1 text-xs text-(--color-text-muted)">
                         {t('dashboard.settings.listPanel.tileBackground')}
                       </span>
-                      <input
-                        type="color"
-                        value={design.bg ?? '#3b82f6'}
-                        data-testid={`${testIdPrefix}-bg-${item}`}
-                        aria-label={t('dashboard.settings.listPanel.tileBackground')}
-                        onChange={(e) => patchDesign({ ...design, bg: e.target.value })}
-                        className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+                      {/* 알파를 켜지 않는다 — `tileSelection` 의 헥스 관문이 여덟
+                          자리를 떨어뜨려 배경이 통째로 사라진다(감사표 18행). */}
+                      <ColorPicker
+                        value={design.bg}
+                        inheritedColor="#3b82f6"
+                        testId={`${testIdPrefix}-bg-${item}`}
+                        ariaLabel={t('dashboard.settings.listPanel.tileBackground')}
+                        onChange={(c) => patchDesign({ ...design, bg: c })}
                       />
                       <button
                         type="button"
@@ -4871,13 +4861,13 @@ function TileListEditor<T extends string>({
                     <span className="flex-1 text-xs text-(--color-text-muted)">
                       {t('dashboard.settings.listPanel.tileBackground')}
                     </span>
-                    <input
-                      type="color"
-                      value={font.bg ?? '#3b82f6'}
-                      data-testid={`${testIdPrefix}-bg-${item}`}
-                      aria-label={t('dashboard.settings.listPanel.tileBackground')}
-                      onChange={(e) => patchFont(item, { ...font, bg: e.target.value })}
-                      className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+                    {/* 감사표 18행 — 알파 끔. */}
+                    <ColorPicker
+                      value={font.bg}
+                      inheritedColor="#3b82f6"
+                      testId={`${testIdPrefix}-bg-${item}`}
+                      ariaLabel={t('dashboard.settings.listPanel.tileBackground')}
+                      onChange={(c) => patchFont(item, { ...font, bg: c })}
                     />
                     <button
                       type="button"
@@ -4950,13 +4940,13 @@ function TileDesignFields({
         <span className="flex-1 text-xs text-(--color-text-muted)">
           {t('dashboard.settings.propertiesGridOpt.tileBackground')}
         </span>
-        <input
-          type="color"
-          value={design.bg ?? '#1f2937'}
-          data-testid={`${testIdPrefix}-bg`}
-          aria-label={t('dashboard.settings.propertiesGridOpt.tileBackground')}
-          onChange={(e) => onChange({ ...design, bg: e.target.value })}
-          className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+        {/* 감사표 18행 — 알파 끔. */}
+        <ColorPicker
+          value={design.bg}
+          inheritedColor="#1f2937"
+          testId={`${testIdPrefix}-bg`}
+          ariaLabel={t('dashboard.settings.propertiesGridOpt.tileBackground')}
+          onChange={(c) => onChange({ ...design, bg: c })}
         />
         <button
           type="button"
@@ -5173,13 +5163,13 @@ function CardDesignPopoverBody({
           <span className="flex-1 text-xs text-(--color-text-muted)">
             {t('dashboard.settings.propertiesGridOpt.tileBackground')}
           </span>
-          <input
-            type="color"
-            value={(config?.tileBg as string | undefined) ?? '#1f2937'}
-            data-testid="properties-grid-tile-bg"
-            aria-label={t('dashboard.settings.propertiesGridOpt.tileBackground')}
-            onChange={(e) => onConfigChange({ tileBg: e.target.value })}
-            className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+          {/* 감사표 20행 — `tileSelection` 이 여덟 자리를 거부한다. 알파 끔. */}
+          <ColorPicker
+            value={config?.tileBg as string | undefined}
+            inheritedColor="#1f2937"
+            testId="properties-grid-tile-bg"
+            ariaLabel={t('dashboard.settings.propertiesGridOpt.tileBackground')}
+            onChange={(c) => onConfigChange({ tileBg: c })}
           />
           <button
             type="button"
@@ -6176,12 +6166,13 @@ function SysMetricsOptionFields({
               {t('sysmetrics.settings.valueColor')}
             </label>
             <div className="flex items-center gap-1">
-              <input
-                type="color"
-                data-testid={`${testIdPrefix}-value-color`}
-                value={value.valueColor ?? placeholder?.valueColor ?? '#3b82f6'}
-                onChange={(e) => onChange({ valueColor: e.target.value })}
-                className="h-7 w-9 cursor-pointer rounded border border-(--color-border-default)"
+              <ColorPicker
+                alpha
+                testId={`${testIdPrefix}-value-color`}
+                value={value.valueColor}
+                inheritedColor={placeholder?.valueColor ?? '#3b82f6'}
+                onChange={(c) => onChange({ valueColor: c })}
+                ariaLabel={t('sysmetrics.settings.valueColor')}
               />
               {/* 색을 지운다 = 기본 글자색으로 되돌린다. 되돌릴 방법이 없으면 갇힌다. */}
               <button
@@ -6600,9 +6591,6 @@ const COLOR_THEME_PRESETS = [
   { id: 'cyan-blue', labelKey: 'dashboard.settings.colorThemes.cyanBlue' },
 ].map((t) => ({ ...t, colors: GAUGE_COLOR_THEMES[t.id] ?? [] }));
 
-/** 서브 속성용 색상 프리셋 (흰/검 포함) */
-const SUB_COLOR_PRESETS = ['#ffffff', '#000000', ...COLOR_PRESETS];
-
 /** 라운드 프리셋 — labelKey 는 i18n 키 */
 const RADIUS_PRESETS = [
   { value: '0', labelKey: 'dashboard.settings.radiusPresets.sharp' },
@@ -6621,7 +6609,6 @@ function SubColorRow({
   color: string | undefined;
   onColorChange: (c: string | undefined) => void;
 }) {
-  const { t } = useTranslation();
   return (
     <div>
       <div className="mb-1 flex items-center gap-1.5">
@@ -6633,57 +6620,16 @@ function SubColorRow({
           />
         )}
       </div>
-      <div className="space-y-1.5">
-        <div className="flex items-center gap-1.5">
-          {SUB_COLOR_PRESETS.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => onColorChange(c)}
-              className={cn(
-                'relative h-5 w-5 rounded-full transition-transform hover:scale-110',
-                c === '#ffffff' && color !== c && 'ring-1 ring-(--color-border-strong)',
-              )}
-              style={{ backgroundColor: c }}
-              aria-label={`${label} ${c}`}
-            >
-              {color === c && <Check className={cn('absolute inset-0 m-auto h-3 w-3 drop-shadow', c === '#ffffff' ? 'text-(--color-text-secondary)' : 'text-white')} />}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => onColorChange(undefined)}
-            className={cn(
-              'flex h-5 w-5 items-center justify-center rounded-full border-2 transition-transform hover:scale-110',
-              !color
-                ? 'border-blue-500 bg-(--color-bg-surface) text-(--color-text-secondary)'
-                : 'border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-muted)',
-            )}
-            title={t('dashboard.settings.accent.default')}
-          >
-            <X className="h-2.5 w-2.5" />
-          </button>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <label className="relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md bg-(--color-bg-elevated) transition-colors hover:bg-(--color-border-default)">
-            <Pipette className="h-3.5 w-3.5 text-(--color-text-muted)" />
-            <input
-              type="color"
-              value={color ?? '#3b82f6'}
-              onChange={(e) => onColorChange(e.target.value)}
-              className="absolute inset-0 cursor-pointer opacity-0"
-            />
-          </label>
-          <div className="flex h-6 items-center gap-px rounded-md bg-(--color-bg-elevated) px-1.5 text-[11px] font-mono text-(--color-text-secondary)">
-            <span className="text-(--color-text-muted)">#</span>
-            <input type="text" value={(color ?? '#3b82f6').replace('#', '').toUpperCase()}
-              onChange={(e) => { const v = e.target.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 6); if (v.length === 6) onColorChange(`#${v}`); }}
-              className="w-14 bg-transparent text-center outline-none" maxLength={6} />
-            <span className="mx-1 h-3 w-px bg-(--color-border-default)" />
-            <span className="text-(--color-text-muted)">100%</span>
-          </div>
-        </div>
-      </div>
+      {/* 프리셋 열두 칸 · 비우기 · 스포이트 흉내 · 16진 칸 · 고정된 "100%" 표시가
+          각각 서 있던 자리다. 다섯 다 공용 고르개 안에 있고, 불투명도는 이제 고정
+          문구가 아니라 실제로 움직이는 슬라이더다. */}
+      <ColorPicker
+        alpha
+        clearable
+        value={color}
+        onChange={onColorChange}
+        ariaLabel={label}
+      />
     </div>
   );
 }
@@ -6716,32 +6662,17 @@ function PanelColorRow({
       <span className="mb-2 block text-xs font-medium text-(--color-text-muted)">
         {t('dashboard.settings.accent.panelColor')}
       </span>
+      {/* 프리셋 여덟 칸 · 자유 입력 · 되돌리기가 각각 서 있던 자리다. 셋 다 공용
+          고르개 안에 있다. */}
       <div className="flex flex-wrap items-center gap-1.5">
-        {PANEL_COLORS.map((color) => (
-          <button
-            key={color}
-            type="button"
-            data-testid={`panel-color-${color}`}
-            aria-label={color}
-            aria-pressed={panelColor === color}
-            onClick={() => onChange(color)}
-            className={cn(
-              'h-5 w-5 rounded-full border-2 transition-transform hover:scale-110',
-              panelColor === color ? 'border-white ring-2 ring-blue-500' : 'border-transparent',
-            )}
-            style={{ backgroundColor: color }}
-          />
-        ))}
-        {panelColor && (
-          <button
-            type="button"
-            data-testid="panel-color-reset"
-            onClick={() => onChange(undefined)}
-            className="ml-1 rounded px-2 py-0.5 text-xs text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated)"
-          >
-            {t('dashboard.settings.panelColorReset')}
-          </button>
-        )}
+        <ColorPicker
+          alpha
+          clearable
+          value={panelColor}
+          onChange={onChange}
+          ariaLabel={t('dashboard.settings.accent.panelColor')}
+          testId="panel-color"
+        />
       </div>
     </div>
   );
@@ -6878,33 +6809,16 @@ function AccentGroupControls({
         </div>
       ) : isEnabled ? (
         <div className="space-y-1.5">
-          <div className="flex items-center gap-1.5">
-            {COLOR_PRESETS.map((color) => (
-              <button key={color} type="button" onClick={() => setColor(color)}
-                className="relative h-5 w-5 rounded-full transition-transform hover:scale-110"
-                style={{ backgroundColor: color }} aria-label={`${selectedLabel} ${color}`}>
-                {gc === color && <Check className="absolute inset-0 m-auto h-3 w-3 text-white drop-shadow" />}
-              </button>
-            ))}
-            <button type="button" onClick={() => setColor(undefined)}
-              className={cn('flex h-5 w-5 items-center justify-center rounded-full border-2 transition-transform hover:scale-110',
-                !gc ? 'border-blue-500 bg-(--color-bg-surface) text-(--color-text-secondary)' : 'border-(--color-border-default) bg-(--color-bg-surface) text-(--color-text-muted)')}
-              title={t('dashboard.settings.accent.panelColor')}><X className="h-2.5 w-2.5" /></button>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <label className="relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md bg-(--color-bg-elevated) transition-colors hover:bg-(--color-border-default)">
-              <Pipette className="h-3.5 w-3.5 text-(--color-text-muted)" />
-              <input type="color" value={gc ?? inheritedColor ?? '#3b82f6'} onChange={(e) => setColor(e.target.value)} className="absolute inset-0 cursor-pointer opacity-0" />
-            </label>
-            <div className="flex h-6 items-center gap-px rounded-md bg-(--color-bg-elevated) px-1.5 text-[11px] font-mono text-(--color-text-secondary)">
-              <span className="text-(--color-text-muted)">#</span>
-              <input type="text" value={(gc ?? inheritedColor ?? '#3b82f6').replace('#', '').toUpperCase()}
-                onChange={(e) => { const v = e.target.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 6); if (v.length === 6) setColor(`#${v}`); }}
-                className="w-14 bg-transparent text-center outline-none" maxLength={6} />
-              <span className="mx-1 h-3 w-px bg-(--color-border-default)" />
-              <span className="text-(--color-text-muted)">100%</span>
-            </div>
-          </div>
+          {/* 위 `SubColorRow` 와 같은 접기다. 비우면 패널 색을 그대로 물려받으므로
+              상속색을 미리보기로 넘긴다 — 저장되는 값은 아니다. */}
+          <ColorPicker
+            alpha
+            clearable
+            value={gc}
+            inheritedColor={inheritedColor}
+            onChange={setColor}
+            ariaLabel={selectedLabel}
+          />
         </div>
       ) : null}
     </div>
@@ -6978,13 +6892,13 @@ function GaugeTextStyleFields({
         aria-label={`${label} ${t('dashboard.chart.fontSize')}`}
         className="w-14 shrink-0 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-center text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
       />
-      <input
-        type="color"
-        value={color ?? '#9ca3af'}
-        onChange={(e) => onConfigChange({ [colorKey]: e.target.value })}
-        data-testid={`${testIdPrefix}-color`}
-        aria-label={`${label} ${t('dashboard.chart.fontColor')}`}
-        className="h-7 w-7 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+      {/* 감사표 26행 — `resolveFontColor` 가 여덟 자리를 거부한다. 알파 끔. */}
+      <ColorPicker
+        value={color}
+        inheritedColor="#9ca3af"
+        onChange={(c) => onConfigChange({ [colorKey]: c })}
+        testId={`${testIdPrefix}-color`}
+        ariaLabel={`${label} ${t('dashboard.chart.fontColor')}`}
       />
       {color !== undefined && (
         <button
@@ -7363,19 +7277,13 @@ function GaugeSection({
             <span>{t('dashboard.settings.gaugeSection.needleColor')}</span>
           </label>
           {needleColor !== '' && (
-            <label className="relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover:opacity-80">
-              <span
-                className="h-4 w-4 rounded-sm border border-(--color-border-default)"
-                style={{ backgroundColor: needleColor }}
-              />
-              <input
-                type="color"
-                value={needleColor}
-                onChange={(e) => onConfigChange({ needle_color: e.target.value })}
-                data-testid="gauge-needle-color"
-                className="absolute inset-0 cursor-pointer opacity-0"
-              />
-            </label>
+            <ColorPicker
+              alpha
+              value={needleColor}
+              onChange={(c) => onConfigChange({ needle_color: c ?? '' })}
+              testId="gauge-needle-color"
+              ariaLabel={t('dashboard.settings.gaugeSection.needleColor')}
+            />
           )}
         </div>
       )}
@@ -7543,19 +7451,13 @@ function GaugeSection({
             <span>{t('dashboard.settings.gaugeSection.baseColor')}</span>
           </label>
           {baseColor !== '' && (
-            <label className="relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover:opacity-80">
-              <span
-                className="h-4 w-4 rounded-sm border border-(--color-border-default)"
-                style={{ backgroundColor: baseColor }}
-              />
-              <input
-                type="color"
-                value={baseColor}
-                onChange={(e) => onConfigChange({ base_color: e.target.value })}
-                data-testid="gauge-base-color"
-                className="absolute inset-0 cursor-pointer opacity-0"
-              />
-            </label>
+            <ColorPicker
+              alpha
+              value={baseColor}
+              onChange={(c) => onConfigChange({ base_color: c ?? '' })}
+              testId="gauge-base-color"
+              ariaLabel={t('dashboard.settings.gaugeSection.baseColor')}
+            />
           )}
         </div>
 
@@ -7563,18 +7465,15 @@ function GaugeSection({
           <div className="space-y-1.5">
             {thresholds.map((th, idx) => (
               <div key={idx} className="flex w-full items-center gap-1.5">
-                <label className="relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover:opacity-80">
-                  <span
-                    className="h-4 w-4 rounded-sm border border-(--color-border-default)"
-                    style={{ backgroundColor: th.color }}
-                  />
-                  <input
-                    type="color"
-                    value={th.color}
-                    onChange={(e) => updateThreshold(idx, { color: e.target.value })}
-                    className="absolute inset-0 cursor-pointer opacity-0"
-                  />
-                </label>
+                <ColorPicker
+                  alpha
+                  value={th.color}
+                  onChange={(c) => updateThreshold(idx, { color: c ?? th.color })}
+                  ariaLabel={t('dashboard.settings.gaugeSection.thresholdColorAria').replace(
+                    '{index}',
+                    String(idx + 1),
+                  )}
+                />
                 <input
                   type="text"
                   value={th.name}
@@ -8177,7 +8076,7 @@ function PanelSettingsShell({
               data-testid="panel-settings-preview-expand"
               aria-label={t('dashboard.settings.previewExpandAria')}
               title={t('dashboard.settings.previewExpandAria')}
-              className="order-1 flex w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+              className="order-1 flex w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-(--color-border-default) bg-(--color-bg-elevated) text-(--color-text-muted) hover:bg-(--color-bg-sunken) hover:text-(--color-text-primary)"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
@@ -8248,7 +8147,7 @@ function PanelSettingsShell({
                   data-testid="panel-settings-preview-zoom-out"
                   aria-label={t('dashboard.settings.zoomOutAria')}
                   title={t('dashboard.settings.zoomOutTitle')}
-                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default) disabled:opacity-40"
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary) disabled:opacity-40"
                 >
                   <Minus className="h-3 w-3" />
                 </button>
@@ -8258,7 +8157,7 @@ function PanelSettingsShell({
                   data-testid="panel-settings-preview-zoom-reset"
                   aria-label={t('dashboard.settings.zoomResetAria')}
                   title={t('dashboard.settings.zoomResetTitle')}
-                  className="min-w-10 rounded px-1 text-[10px] font-medium tabular-nums text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+                  className="min-w-10 rounded px-1 text-[10px] font-medium tabular-nums text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
                 >
                   {Math.round(previewZoom * 100)}%
                 </button>
@@ -8269,7 +8168,7 @@ function PanelSettingsShell({
                   data-testid="panel-settings-preview-zoom-in"
                   aria-label={t('dashboard.settings.zoomInAria')}
                   title={t('dashboard.settings.zoomInTitle')}
-                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default) disabled:opacity-40"
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary) disabled:opacity-40"
                 >
                   <Plus className="h-3 w-3" />
                 </button>
@@ -8289,7 +8188,7 @@ function PanelSettingsShell({
                       ? t('dashboard.settings.previewModeFillAria')
                       : t('dashboard.settings.previewModeFitAria')
                   }
-                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
                 >
                   {previewFillMode === 'fill' ? (
                     <Maximize2 className="h-3 w-3" />
@@ -8309,7 +8208,7 @@ function PanelSettingsShell({
                       data-testid="panel-settings-preview-reset-layout"
                       aria-label={t('dashboard.settings.previewResetLayout')}
                       title={t('dashboard.settings.previewResetLayout')}
-                      className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+                      className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
                     >
                       <RotateCcw className="h-3 w-3" />
                     </button>
@@ -8322,7 +8221,7 @@ function PanelSettingsShell({
                   data-testid="panel-settings-preview-collapse"
                   aria-label={t('dashboard.settings.previewCollapseAria')}
                   title={t('dashboard.settings.previewCollapseAria')}
-                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-default)"
+                  className="flex h-5 w-5 items-center justify-center rounded text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-primary)"
                 >
                   <ChevronLeft className="h-3.5 w-3.5" />
                 </button>

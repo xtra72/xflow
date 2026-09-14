@@ -490,9 +490,7 @@
       "settingsAria": "패널 설정",
       "titleLabel": "타이틀",
       "maxLinesLabel": "최대 라인 수",
-      "panelColor": "패널 컬러",
-      "pickCustom": "직접 선택",
-      "reset": "초기화"
+      "panelColor": "패널 컬러"
     },
     "hvacControl": {
       "stopped": "정지",
@@ -540,11 +538,6 @@
       "closeAria": "닫기",
       "nameLabel": "대시보드 이름",
       "namePlaceholder": "새 대시보드"
-    },
-    "colorSwatch": {
-      "paletteAria": "{label} 팔레트",
-      "defaultAria": "기본값(미설정)",
-      "unsetTitle": "미설정"
     },
     "scope": {
       "aria": "대시보드 스코프",
@@ -750,7 +743,6 @@
       "heatmapLegendTickCount": "눈금 개수 (2~10)",
       "thresholds": "임계값",
       "style": "스타일",
-      "panelColorReset": "초기화",
       "previewExpandAria": "미리보기 펼치기",
       "splitterAria": "설정/미리보기 너비 조절",
       "previewSplitterAria": "미리보기/데이터소스 높이 조절",
@@ -842,6 +834,7 @@
         "baseColor": "기본색 (테두리 안쪽 채움)",
         "showThresholdZones": "임계값 영역 표시",
         "thresholdNamePlaceholder": "이름",
+        "thresholdColorAria": "임계값 {index} 색",
         "deleteThresholdAria": "임계값 삭제",
         "addThreshold": "임계값 추가",
         "thresholdNormal": "정상",
@@ -1508,6 +1501,7 @@
       "add": "추가",
       "ruleHint": "값 ≥ {min} → {color}",
       "deleteRuleAria": "규칙 삭제",
+      "ruleColorAria": "규칙 {index} 색",
       "collapseAria": "접기",
       "expandAria": "펼치기",
       "dragOrderTitle": "드래그하여 순서 변경",
@@ -2237,6 +2231,8 @@
       "subtitle": "지금 쓰는 팔레트의 색을 직접 고칩니다. 바꾼 값은 곧바로 화면에 적용됩니다.",
       "systemHint": "시스템 설정을 따르는 중입니다. 라이트·다크 팔레트를 각각 고칠 수 있습니다.",
       "active": "적용 중",
+      "preview": "미리보기",
+      "followCursor": "커서 따라가기",
       "export": "내보내기",
       "import": "가져오기",
       "imported": "팔레트를 가져왔습니다",
@@ -3280,6 +3276,10 @@
     }
   },
   "panel": {
+    "color": {
+      "custom": "사용자 지정 색상",
+      "hex": "16진 색상 값"
+    },
     "settings": {
       "aria": "패널 설정",
       "title": "타이틀",
@@ -4938,5 +4938,16 @@
       "rate": "증가량",
       "total": "누적값"
     }
+  },
+  "colorPicker": {
+    "ariaDialog": "{label} 색 고르개",
+    "custom": "선택한 색",
+    "hex": "16진 색값",
+    "hue": "색상",
+    "opacity": "불투명도",
+    "eyedropper": "화면에서 색 집기",
+    "presets": "기본 제공 색",
+    "recent": "최근 사용한 색",
+    "clear": "색 지우기"
   }
 }
