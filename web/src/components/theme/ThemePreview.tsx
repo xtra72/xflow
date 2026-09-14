@@ -95,19 +95,19 @@ export function ThemePreview({
       data-target={target}
       // `.dark` 를 조건부로 붙인다. 이것이 없으면 토큰은 야간인데 `dark:` 유틸리티는
       // 주간으로 그려져, 방금 고친 결함과 **같은 어긋남**이 미리보기 안에 재현된다.
-      className={cn('rounded-lg border p-3', target === 'night' && 'dark')}
+      className={cn('rounded-lg border p-4', target === 'night' && 'dark')}
       style={{ ...tokenStyle(target, overrides), borderColor: v('border-default') }}
     >
-      <div className="flex flex-col gap-2" style={{ background: v('bg-primary') }}>
+      <div className="flex flex-col gap-3" style={{ background: v('bg-primary') }}>
         {/* 앱 셸 — 사이드바 + 헤더 */}
         {part(
           'shell',
-          'flex items-stretch gap-1 rounded-md p-1',
+          'flex items-stretch gap-1.5 rounded-md p-1.5',
           { background: v('bg-primary') },
           <>
-            <span className="w-8 rounded-sm" style={{ background: v('bg-secondary') }} />
+            <span className="w-12 rounded-sm" style={{ background: v('bg-secondary') }} />
             <span
-              className="flex-1 rounded-sm px-2 py-1 text-[10px] font-semibold"
+              className="flex-1 rounded-sm px-2.5 py-1.5 text-xs font-semibold"
               style={{
                 background: v('bg-secondary'),
                 color: v('text-primary'),
@@ -122,37 +122,37 @@ export function ThemePreview({
         {/* 편집기 캔버스 — 점격자 + 영역 상자 + 노드 + 연결선 */}
         {part(
           'canvas',
-          'relative flex h-20 items-center gap-2 overflow-hidden rounded-md p-2',
+          'relative flex h-32 items-center gap-3 overflow-hidden rounded-md p-3',
           {
             background: v('bg-secondary'),
             // 점격자. 실제 캔버스와 같은 토큰을 쓴다.
             backgroundImage: `radial-gradient(${v('flow-dot')} 1px, transparent 1px)`,
-            backgroundSize: '8px 8px',
+            backgroundSize: '12px 12px',
           },
           <>
             <span
-              className="absolute inset-x-8 inset-y-2 rounded-md border-2 border-dashed"
+              className="absolute inset-x-10 inset-y-3 rounded-md border-2 border-dashed"
               style={{ borderColor: `color-mix(in srgb, ${v('flow-area')} 70%, transparent)` }}
             />
             {part(
               'node',
-              'relative z-10 flex items-center gap-1.5 rounded-md border px-1.5 py-1',
+              'relative z-10 flex items-center gap-2 rounded-md border px-2.5 py-2',
               { background: v('bg-surface'), borderColor: v('border-default') },
               <>
-                <span className="h-4 w-4 rounded-sm" style={{ background: v('bg-sunken') }} />
+                <span className="h-6 w-6 rounded-md" style={{ background: v('bg-sunken') }} />
                 <span className="flex flex-col leading-none">
-                  <span className="text-[9px] font-medium" style={{ color: v('text-primary') }}>
+                  <span className="text-xs font-medium" style={{ color: v('text-primary') }}>
                     switch
                   </span>
-                  <span className="text-[8px]" style={{ color: v('text-muted') }}>
+                  <span className="text-[10px]" style={{ color: v('text-muted') }}>
                     switch
                   </span>
                 </span>
               </>,
             )}
-            {part('edge', 'relative z-10 h-px w-6', { background: v('flow-edge') }, null)}
+            {part('edge', 'relative z-10 h-0.5 w-10 rounded-full', { background: v('flow-edge') }, null)}
             <span
-              className="relative z-10 h-3 w-3 rounded-full"
+              className="relative z-10 h-4 w-4 rounded-full"
               style={{ background: v('bg-surface'), border: `2px solid ${v('border-default')}` }}
             />
           </>,
@@ -162,13 +162,13 @@ export function ThemePreview({
           {/* 대시보드 패널 */}
           {part(
             'panel',
-            'flex-1 rounded-md border p-2',
+            'flex-1 rounded-md border p-3',
             { background: v('bg-surface'), borderColor: v('border-default') },
             <>
-              <span className="block text-[8px]" style={{ color: v('text-secondary') }}>
+              <span className="block text-[10px]" style={{ color: v('text-secondary') }}>
                 온도
               </span>
-              <span className="block text-sm font-semibold" style={{ color: v('text-primary') }}>
+              <span className="block text-lg font-semibold" style={{ color: v('text-primary') }}>
                 42.5 °C
               </span>
             </>,
@@ -181,14 +181,14 @@ export function ThemePreview({
             { background: v('bg-elevated') },
             <>
               <span
-                className="flex justify-between px-1.5 py-1 text-[8px]"
+                className="flex justify-between px-2 py-1.5 text-[10px]"
                 style={{ background: v('bg-sunken'), color: v('text-secondary') }}
               >
                 <span>이름</span>
                 <span>값</span>
               </span>
               <span
-                className="flex justify-between px-1.5 py-1 text-[8px]"
+                className="flex justify-between px-2 py-1.5 text-[10px]"
                 style={{ color: v('text-muted'), borderTop: `1px solid ${v('border-subtle')}` }}
               >
                 <span>node-1</span>
@@ -201,29 +201,29 @@ export function ThemePreview({
         {/* 단추 · 상태 */}
         {part(
           'controls',
-          'flex flex-wrap items-center gap-1.5 rounded-md p-1',
+          'flex flex-wrap items-center gap-2 rounded-md p-1.5',
           { background: v('bg-primary') },
           <>
             <span
-              className="rounded px-1.5 py-0.5 text-[8px] font-medium"
+              className="rounded px-2 py-1 text-[10px] font-medium"
               style={{ background: v('interactive-primary'), color: v('text-inverse') }}
             >
               기본
             </span>
             <span
-              className="rounded px-1.5 py-0.5 text-[8px]"
+              className="rounded px-2 py-1 text-[10px]"
               style={{ background: v('interactive-hover'), color: v('text-inverse') }}
             >
               호버
             </span>
             <span
-              className="rounded px-1.5 py-0.5 text-[8px]"
+              className="rounded px-2 py-1 text-[10px]"
               style={{ background: v('interactive-muted'), color: v('interactive-active') }}
             >
               선택
             </span>
             <span
-              className="rounded border px-1.5 py-0.5 text-[8px]"
+              className="rounded border px-2 py-1 text-[10px]"
               style={{ borderColor: v('border-strong'), color: v('text-secondary') }}
             >
               보조
@@ -237,8 +237,8 @@ export function ThemePreview({
                 ['status-info', '안내'],
               ] as const
             ).map(([token, label]) => (
-              <span key={token} className="flex items-center gap-0.5 text-[8px]">
-                <span className="h-1.5 w-1.5 rounded-full" style={{ background: v(token) }} />
+              <span key={token} className="flex items-center gap-1 text-[10px]">
+                <span className="h-2 w-2 rounded-full" style={{ background: v(token) }} />
                 <span style={{ color: v('text-muted') }}>{label}</span>
               </span>
             ))}

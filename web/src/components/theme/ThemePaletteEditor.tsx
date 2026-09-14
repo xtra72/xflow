@@ -170,8 +170,8 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
 
       {/* 컬러 테이블 — 카테고리를 tbody 로 묶어 하나의 표로 그린다.
           카테고리마다 표를 따로 두면 각자 폭을 계산해 컬럼이 어긋난다. */}
-      <div className="flex flex-col gap-4 p-4 xl:flex-row">
-      <div className="min-w-0 flex-1 overflow-x-auto">
+      <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-start">
+      <div className="min-w-0 flex-1 overflow-x-auto lg:basis-1/2">
         <table className="w-full min-w-[560px] table-fixed border-collapse text-sm">
           {/* 컬럼 폭 고정 — 모든 카테고리가 같은 격자를 쓴다 */}
           <colgroup>
@@ -275,7 +275,7 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
         {/* 미리보기 — **편집 중인** 프리셋을 그린다. 표에서 고치는 색이 실제 화면에서
             어떻게 보일지는 이 자리 말고는 볼 곳이 없다: 비활성 프리셋을 고치면 바깥
             화면은 아무것도 바뀌지 않기 때문이다. */}
-        <aside className="w-full shrink-0 xl:w-80">
+        <aside className="w-full min-w-0 flex-1 lg:basis-1/2 lg:sticky lg:top-4">
           <h3 className="mb-2 text-xs font-medium text-(--color-text-muted)">
             {t('settings.palette.preview')}
           </h3>
