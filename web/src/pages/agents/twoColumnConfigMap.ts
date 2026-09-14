@@ -72,6 +72,11 @@ export const TWO_COL_CONFIG: Record<string, { left: Set<string>; leftLabelKey: s
     leftLabelKey: 'agents.detail.config.transport',
     rightLabelKey: 'agents.detail.config.operation',
   },
+  lg_hvacr03: {
+    left: new Set(['transport_type', 'serial_port', 'baud_rate', 'data_bits', 'stop_bits', 'parity', 'tcp_host', 'tcp_port', 'slave_id', 'request_timeout', 'reconnect_interval', 'max_reconnect_backoff']),
+    leftLabelKey: 'agents.detail.config.transport',
+    rightLabelKey: 'agents.detail.config.operation',
+  },
   // samsung_hvacr01: 생성 팝업(CreateAgentModal)에서 연결(좌)|운영(우) 2분할로 렌더한다.
   // 상세 패널(AgentDetailPanel)은 HVACR_QUADRANT_AGENT_TYPES 체크가 우선하므로 4-분면을 유지한다.
   // 좌(연결) = 전송(serial/tcp/mirror-mqtt/mirror-message) + 미러 MQTT/보안, 우(운영) = 상태확인/상태보고/미러 제어·ack·스냅샷.

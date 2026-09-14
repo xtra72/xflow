@@ -723,10 +723,12 @@ func TestMQTTRegistry_MQTTPublisher(t *testing.T) {
 // SPEC-CHIRPSTACK-001 에서 chirpstack-in 노드 1종 추가하여 71개.
 // SPEC-CHIRPSTACK-002 에서 chirpstack-control / chirpstack-status 2종 추가하여 73개.
 // storage-write / storage-write 를 storage-write 1종으로 통합하여 72개.
+// SPEC-LG-HVACR-003 에서 lg-hvacr03 / -status / -control 3종 + `_` 별칭 3종을
+// 추가하여 79개. 노드 구현은 lg-hvacr02 와 공유하고 타입 이름만 분리한다.
 func TestMQTTRegistry_TotalBuiltins(t *testing.T) {
 	r := NewRegistry()
 	types := r.Types()
-	assert.Equal(t, 73, len(types))
+	assert.Equal(t, 79, len(types))
 }
 
 // ===========================================================================

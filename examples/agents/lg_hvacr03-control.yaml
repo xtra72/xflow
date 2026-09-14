@@ -1,0 +1,90 @@
+# LG HVACR-03 — PMBUSB00A Modbus 게이트웨이 (제어 활성)
+#
+# 읽기 전용 구성은 lg_hvacr03-rtu.yaml 을 참고한다. 이 예제는 제어를 켜고
+# 시리얼-이더넷 컨버터를 거쳐 접속하는 구성이다.
+#
+# 제어 명령 (기본 5종):
+#   set_power           - 전원 ON/OFF            → FC05 Coil N×16+0
+#   set_mode            - 운전 모드              → FC06 Holding N×20+0
+#   set_fan_speed       - 풍량                   → FC06 Holding N×20+1
+#   target_temperature  - 설정 온도 (16~30℃)     → FC06 Holding N×20+2
+#   set_multiple        - 모드+풍량+온도 일괄     → FC16 Holding N×20+0..2
+#
+# 제어 명령 (확장 7종):
+#   set_swing           - 자동 풍향 스윙 (에어컨)  → FC05 Coil N×16+1
+#   clear_filter_alarm  - 필터 알람 해제          → FC05 Coil N×16+2
+#   set_lock            - 리모컨 잠금 5종         → FC05 Coil N×16+3..7
+#   set_temp_limit      - 설정 온도 상·하한       → FC16 Holding N×20+3..4
+#   set_erv_mode        - 환기 운전 모드 (ERV)    → FC06 Holding N×20+5
+#   set_erv_rapid       - 급속 환기 (ERV)        → FC05 Coil N×16+8
+#   set_erv_eco         - 에너지 절약 (ERV)      → FC05 Coil N×16+9
+#
+# 제어 시 알아둘 것:
+#
+#   1. 쓰기는 즉시 반영되지 않는다. 게이트웨이가 명령을 내부 버스로 중계하고
+#      실내기가 수락하기까지 수 초가 걸리므로, 에이전트는 control_verify_delay
+#      이후에 read-back 하여 반영 여부를 응답에 담는다.
+#
+#   2. 모드만 바꾸면 온도가 함께 바뀐다. 에어컨은 모드별로 마지막 온도·풍량을
+#      기억하기 때문이다. 모드·온도·풍량을 함께 지정할 때는 반드시 set_multiple
+#      을 쓴다 — 단일 FC16 트랜잭션으로 나가 중간 상태가 생기지 않는다.
+#
+#   3. 잠금이 걸린 항목은 쓰기가 조용히 무시된다. 게이트웨이는 정상 에코를
+#      돌려주고 값만 버린다. 제어가 먹지 않으면 응답의 locked_by 필드를 본다.
+#
+#   4. 미설치 실내기에 쓰면 예외 없이 무시된다. 에이전트가 쓰기 전에 연결
+#      상태를 확인하여 차단한다.
+#
+# 사용법:
+#   xflow agent import -f examples/agents/lg_hvacr03-control.yaml
+
+name: "lg_hvacr03-control"
+type: "lg_hvacr03"
+
+config:
+  # ── 전송: 시리얼-이더넷 컨버터 경유 ──
+  # 컨버터는 broadcast 모드로 설정한다. unicast 기본값은 다중 클라이언트 환경에서
+  # 스트림을 쪼개 프레임 desync 를 일으킨다.
+  transport_type: "tcp-client"
+  tcp_host: "192.168.0.50"
+  tcp_port: 502
+
+  # 게이트웨이 DIP 스위치(SW_02M) 주소
+  slave_id: 1
+
+  # ── 폴링 ──
+  poll_interval: "10s"
+  scan_interval: "30s"
+  request_timeout: "1s"
+  offline_timeout: "30s"
+
+  # ── 현장 실측으로 교정하는 값 (lg_hvacr03-rtu.yaml 주석 참고) ──
+  temp_scale: 10
+  address_base: 0
+  fan_auto_code: 4
+
+  # ── 디바이스 관리 ──
+  auto_discovery: true
+  report_interval: "60s"
+  event_temp_threshold: 1.0
+
+  devices:
+    - address: "0"
+      name: "거실"
+    - address: "3"
+      name: "침실"
+
+  # ── 제어 ──
+  control_enabled: true
+
+  # 쓰기 후 read-back 까지 대기하는 시간. 반영이 느린 현장에서 verified 가
+  # 계속 false 로 나오면 이 값을 5s 정도로 늘린다.
+  control_verify_delay: "3s"
+
+  # ── 로그 ──
+  # 제어를 처음 붙일 때는 log_messages 를 켜 두면 실제로 나간 PDU 를 확인할 수
+  # 있다. 동작을 확인한 뒤에는 끈다 (폴링마다 출력되어 로그가 폭주한다).
+  log_messages: false
+  log_state_updates: false
+  log_decode_errors: true
+  log_drops: false

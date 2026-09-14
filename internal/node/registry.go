@@ -112,6 +112,13 @@ func (r *Registry) registerBuiltins() {
 		{"lg-hvacr02-status", NewLGHvacr02StatusNode, "io", "LG HVACR-02 (LG ICP-02) 디바이스 상태 조회"},
 		{"lg-hvacr02-control", NewLGHvacr02ControlNode, "io", "LG HVACR-02 (LG ICP-02) 디바이스 제어"},
 		{"lg-hvacr02", NewLGHvacr02Node, "io", "LG HVACR-02 (LG ICP-02) 상태 조회 + 제어 통합"},
+		// SPEC-LG-HVACR-003: lg_hvacr03 (PMBUSB00A Modbus 게이트웨이) 은 lg-hvacr02 와
+		// 명령 집합·device_state 형식이 같아 같은 노드 구현을 공유한다. 별도 타입으로
+		// 등록하는 이유는 플로우에서 에이전트 계열과 노드 이름이 어긋나 보이지 않게
+		// 하기 위함이다 (구현 공유, 이름은 분리).
+		{"lg-hvacr03-status", NewLGHvacr02StatusNode, "io", "LG HVACR-03 (PMBUSB00A Modbus) 디바이스 상태 조회"},
+		{"lg-hvacr03-control", NewLGHvacr02ControlNode, "io", "LG HVACR-03 (PMBUSB00A Modbus) 디바이스 제어"},
+		{"lg-hvacr03", NewLGHvacr02Node, "io", "LG HVACR-03 (PMBUSB00A Modbus) 상태 조회 + 제어 통합"},
 		{"lg-hvacr01-status", NewLGHvacr01StatusNode, "io", "LG HVACR-01 (LG ICP-01) 디바이스 상태 조회"},
 		{"lg-hvacr01-control", NewLGHvacr01ControlNode, "io", "LG HVACR-01 (LG ICP-01) 디바이스 제어 (미지원)"},
 		{"lg-hvacr01", NewLGHvacr01Node, "io", "LG HVACR-01 (LG ICP-01) 상태 조회 + 제어 통합"},
@@ -166,6 +173,9 @@ var deprecatedHVACAliases = map[string]string{
 	"lg_hvacr02":              "lg-hvacr02",
 	"lg_hvacr02_status":       "lg-hvacr02-status",
 	"lg_hvacr02_control":      "lg-hvacr02-control",
+	"lg_hvacr03":              "lg-hvacr03",
+	"lg_hvacr03_status":       "lg-hvacr03-status",
+	"lg_hvacr03_control":      "lg-hvacr03-control",
 	"century_hvacr01":         "century-hvacr01",
 	"century_hvacr01_status":  "century-hvacr01-status",
 	"century_hvacr01_control": "century-hvacr01-control",

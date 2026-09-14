@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -223,9 +224,13 @@ func (nb *lgHvacr02NodeBase) initAgent(ctx context.Context) error {
 		return ErrLGHvacr02AgentNotLGHvacr02
 	}
 
+	// SPEC-LG-HVACR-003: lg_hvacr03 (PMBUSB00A Modbus 게이트웨이) 도 이 노드를
+	// 그대로 쓴다. 노드는 agent.Agent 인터페이스로 Process() 만 호출하고 주소를
+	// 파싱하지 않으므로, 두 에이전트의 명령 집합(조회 9종 + 제어)과 device_state
+	// 페이로드 형식이 같은 한 구현을 공유할 수 있다.
 	underlyingAgent := accessor.UnderlyingAgent()
 	switch underlyingAgent.(type) {
-	case *lg.Hvacr02Agent:
+	case *lg.Hvacr02Agent, *lg.Hvacr03Agent:
 		nb.agent = underlyingAgent
 	default:
 		return ErrLGHvacr02AgentNotLGHvacr02
@@ -592,8 +597,20 @@ type lgHvacr02BulkFrame struct {
 
 // lgHvacr02MatchAddressing 는 payload 의 unit_id 가 cfg 의 어드레싱과 매칭되는지
 // 확인한다. cfg.UnitID 가 비어있으면 true (필터 없음).
+//
+// 주소 표기가 프로토콜마다 다르므로 두 단계로 비교한다.
+//
+//	1단계 — 정규화 문자열 일치: lg_hvacr02 는 8자리 hex("44550067"), lg_hvacr03 은
+//	        10진("3", "15") 를 쓴다. 어느 쪽이든 표기가 같으면 여기서 일치한다.
+//	2단계 — hex byte 동치: "0x58" 과 "58" 처럼 표기만 다른 1~2자리 hex 를 같은
+//	        값으로 인정하는 기존 관용 동작을 보존한다.
+//
+// 1단계가 필요한 이유: hexByteEqual 은 parseHexByte(1~2 digit, 8-bit) 기반이라
+// 8자리 LGCP 주소와 10진 두 자리(N=10~15) 를 모두 처리하지 못한다. 전자는 파싱
+// 실패로 필터가 모든 프레임을 걸러내고, 후자는 "10" 을 0x10(16) 으로 읽어 조용히
+// 빗나간다.
 func lgHvacr02MatchAddressing(payload map[string]any, cfg LGHvacr02NodeConfig) bool {
-	if cfg.UnitID == "" {
+	if strings.TrimSpace(cfg.UnitID) == "" {
 		return true
 	}
 	raw, ok := payload["unit_id"]
@@ -604,7 +621,20 @@ func lgHvacr02MatchAddressing(payload map[string]any, cfg LGHvacr02NodeConfig) b
 	if !ok {
 		return false
 	}
+	if normalizeUnitID(got) == normalizeUnitID(cfg.UnitID) {
+		return true
+	}
 	return hexByteEqual(got, cfg.UnitID)
+}
+
+// normalizeUnitID 는 unit_id 문자열을 비교 가능한 형태로 정규화한다.
+// 앞뒤 공백과 "0x" 접두를 제거하고 소문자로 맞춘다. 10진 주소에는 접두가 없으므로
+// 사실상 공백 제거 + 대소문자 통일로 동작한다.
+func normalizeUnitID(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "0x")
+	s = strings.TrimPrefix(s, "0X")
+	return strings.ToLower(s)
 }
 
 // Process 는 입력 메시지를 받아 상태 조회를 수행하고 결과를 반환한다.
