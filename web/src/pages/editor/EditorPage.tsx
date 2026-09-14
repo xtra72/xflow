@@ -207,10 +207,10 @@ function EditorPageInner() {
       .filter((n) => (n.data as Record<string, unknown>)?.nodeType === 'flow-node')
       .map((n) => n.id)
       .sort()
-      .join(' '),
+      .join('\0'),
   );
   const flowNodeIds = useMemo(
-    () => (flowNodeIdsKey === '' ? [] : flowNodeIdsKey.split(' ')),
+    () => (flowNodeIdsKey === '' ? [] : flowNodeIdsKey.split('\0')),
     [flowNodeIdsKey],
   );
 
