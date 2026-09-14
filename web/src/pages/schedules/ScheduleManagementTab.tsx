@@ -352,14 +352,14 @@ export default function ScheduleManagementTab() {
   if (hasError && nodeEntries.length === 0) {
     return (
       <div
-        className="rounded-md border border-red-200 bg-red-50 p-6 text-center dark:border-red-800 dark:bg-red-900/20"
+        className="rounded-md border border-(--color-status-error)/30 bg-(--color-status-error)/10 p-6 text-center"
         data-testid="schedule-error"
       >
-        <p className="text-sm text-red-700 dark:text-red-400">스케줄을 불러오지 못했습니다.</p>
+        <p className="text-sm text-(--color-status-error-text)">스케줄을 불러오지 못했습니다.</p>
         <button
           type="button"
           onClick={refetch}
-          className="mt-3 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600"
+          className="mt-3 rounded-md bg-(--color-status-error) px-4 py-2 text-sm font-medium text-white transition-colors hover:opacity-90"
         >
           다시 시도
         </button>
@@ -375,7 +375,7 @@ export default function ScheduleManagementTab() {
           type="button"
           onClick={openCreate}
           data-testid="schedule-add-rule"
-          className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700"
+          className="inline-flex items-center gap-1 rounded-md bg-(--color-interactive-primary) px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-(--color-interactive-hover)"
         >
           <Plus className="h-3.5 w-3.5" /> 규칙 추가
         </button>
@@ -413,7 +413,7 @@ export default function ScheduleManagementTab() {
       {/* 부분 실패 통지(AC-18): 성공 행은 유지하고 배너만 노출. */}
       {failedCount > 0 && (
         <div
-          className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-400"
+          className="flex items-center gap-2 rounded-md border border-(--color-status-warning)/30 bg-(--color-status-warning)/10 px-3 py-2 text-xs text-(--color-status-warning-text)"
           data-testid="schedule-partial-failure"
         >
           <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -524,7 +524,7 @@ export default function ScheduleManagementTab() {
                             className={cn(
                               'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-50',
                               rule.enabled
-                                ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/40 dark:text-green-400'
+                                ? 'bg-(--color-status-running)/15 text-(--color-status-running-text) hover:opacity-80'
                                 : 'bg-(--color-bg-sunken) text-(--color-text-muted) hover:bg-(--color-bg-sunken)',
                             )}
                           >
@@ -535,7 +535,7 @@ export default function ScheduleManagementTab() {
                         <td className="px-2 py-2">
                           {rule.target ? (
                             <div className="flex flex-col gap-0.5">
-                              <span className="inline-flex w-fit items-center rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                              <span className="inline-flex w-fit items-center rounded-full bg-(--color-status-info)/15 px-1.5 py-0.5 text-[10px] font-medium text-(--color-status-info-text)">
                                 {targetKindLabel(rule.target.kind)}
                               </span>
                               <span className="text-[11px] text-(--color-text-secondary)">
@@ -596,7 +596,7 @@ export default function ScheduleManagementTab() {
                               data-testid={`schedule-edit-${flowId}-${nodeId}-${rule.index}`}
                               onClick={() => openEdit(row)}
                               aria-label="편집"
-                              className="rounded p-1 text-(--color-text-muted) transition-colors hover:text-blue-600"
+                              className="rounded p-1 text-(--color-text-muted) transition-colors hover:text-(--color-interactive-primary)"
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </button>
@@ -606,7 +606,7 @@ export default function ScheduleManagementTab() {
                               onClick={() => handleDelete(row)}
                               aria-label="삭제"
                               disabled={saving}
-                              className="rounded p-1 text-(--color-text-muted) transition-colors hover:text-red-500 disabled:opacity-50"
+                              className="rounded p-1 text-(--color-text-muted) transition-colors hover:text-(--color-status-error-text) disabled:opacity-50"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>

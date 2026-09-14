@@ -35,7 +35,7 @@ export interface PreviewPart {
 /**
  * 조각 목록.
  *
- * 하한은 "24토큰이 최소 한 번씩 나타난다"(AC-05) — 나타나지 않는 토큰은 미리보기로
+ * 하한은 "**모든** 토큰이 최소 한 번씩 나타난다"(AC-05) — 나타나지 않는 토큰은 미리보기로
  * 고를 수 없다. 탭이 넷이므로 그 하한은 **탭 전체의 합집합**에 대해 성립한다.
  */
 export const PREVIEW_PARTS: readonly PreviewPart[] = [
@@ -119,6 +119,11 @@ export const PREVIEW_PARTS: readonly PreviewPart[] = [
       'status-running',
       'status-stopped',
       'status-error',
+      // 배지의 글자는 칠과 다른 값을 쓴다 — 칠용 값은 점을 칠하라고 고른 것이라
+      // 글자로 쓰면 밝은 테마에서 AA 를 넘지 못한다.
+      'status-running-text',
+      'status-stopped-text',
+      'status-error-text',
     ],
   },
 
@@ -137,6 +142,9 @@ export const PREVIEW_PARTS: readonly PreviewPart[] = [
       'interactive-muted',
       'interactive-active',
       'status-warning',
+      'status-warning-text',
+      'status-info',
+      'status-info-text',
     ],
   },
 ];

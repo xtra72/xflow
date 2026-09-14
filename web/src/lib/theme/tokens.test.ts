@@ -163,12 +163,31 @@ describe('flow 카테고리', () => {
     }
   });
 
-  it('토큰 총수가 21 에서 24 로 늘었고, 기존 21개의 이름이 그대로다 (불변식 I2)', () => {
-    expect(ALL_TOKEN_VARS).toHaveLength(24);
-    // 기존 카테고리 다섯의 토큰 수는 그대로여야 한다 — 새 토큰이 기존 칸을
-    // 밀어내지 않았다는 뜻이다.
-    const legacy = TOKEN_CATEGORIES.filter((c) => c.category !== 'flow');
-    expect(legacy.flatMap((c) => c.tokens)).toHaveLength(21);
+  it('토큰이 21 → 29 로 늘었고, 기존 21개의 이름이 그대로다 (불변식 I2)', () => {
+    // 21(원래) + 3(flow) + 5(글자용 상태색) = 29.
+    expect(ALL_TOKEN_VARS).toHaveLength(29);
+
+    // 기존 21개가 이름 그대로 살아 있다 — 새 토큰이 기존 칸을 밀어내지 않았다.
+    const legacyNames = [
+      'bg-primary', 'bg-secondary', 'bg-surface', 'bg-elevated', 'bg-sunken',
+      'text-primary', 'text-secondary', 'text-muted', 'text-inverse',
+      'border-default', 'border-subtle', 'border-strong',
+      'status-running', 'status-stopped', 'status-error', 'status-warning', 'status-info',
+      'interactive-primary', 'interactive-hover', 'interactive-active', 'interactive-muted',
+    ];
+    const present = new Set(ALL_TOKEN_VARS);
+    for (const n of legacyNames) expect(present.has(`--color-${n}`), n).toBe(true);
+    expect(legacyNames).toHaveLength(21);
+  });
+
+  it('글자용 상태색 다섯이 칠용 다섯과 짝을 이룬다', () => {
+    // 짝이 어긋나면 "이 상태에는 글자색이 없다" 는 자리가 생기고, 그 자리만 박힌
+    // 색으로 되돌아간다.
+    for (const n of ['running', 'stopped', 'error', 'warning', 'info']) {
+      expect(DAY_PRESET[`--color-status-${n}`], n).toMatch(/^#[0-9a-f]{6}$/);
+      expect(DAY_PRESET[`--color-status-${n}-text`], `${n}-text`).toMatch(/^#[0-9a-f]{6}$/);
+      expect(NIGHT_PRESET[`--color-status-${n}-text`], `${n}-text night`).toMatch(/^#[0-9a-f]{6}$/);
+    }
   });
 
   it('day · night 프리셋 양쪽에 세 값이 다 있다', () => {

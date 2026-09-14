@@ -52,6 +52,11 @@
   --color-status-error: var(--color-status-error);
   --color-status-warning: var(--color-status-warning);
   --color-status-info: var(--color-status-info);
+  --color-status-running-text: var(--color-status-running-text);
+  --color-status-stopped-text: var(--color-status-stopped-text);
+  --color-status-error-text: var(--color-status-error-text);
+  --color-status-warning-text: var(--color-status-warning-text);
+  --color-status-info-text: var(--color-status-info-text);
 
   /* 시맨틱 컬러 토큰 — 인터랙티브 */
   --color-interactive-primary: var(--color-interactive-primary);
@@ -99,6 +104,13 @@
   --color-status-warning: #ca8a04; /* yellow-600 */
   --color-status-info: #2563eb; /* blue-600 */
 
+  /* 글자용 상태색 (SPEC-THEME-001) */
+  --color-status-running-text: #166534;
+  --color-status-stopped-text: #4b5563;
+  --color-status-error-text: #b91c1c;
+  --color-status-warning-text: #92400e;
+  --color-status-info-text: #1d4ed8;
+
   /* 인터랙티브 */
   --color-interactive-primary: #2563eb; /* blue-600 */
   --color-interactive-hover: #1d4ed8; /* blue-700 */
@@ -140,6 +152,13 @@
   --color-status-error: #f87171; /* red-400 */
   --color-status-warning: #facc15; /* yellow-400 */
   --color-status-info: #60a5fa; /* blue-400 */
+
+  /* 글자용 상태색 (SPEC-THEME-001) */
+  --color-status-running-text: #4ade80;
+  --color-status-stopped-text: #d1d5db;
+  --color-status-error-text: #fca5a5;
+  --color-status-warning-text: #fbbf24;
+  --color-status-info-text: #93c5fd;
 
   /* 인터랙티브 */
   --color-interactive-primary: #3b82f6; /* blue-500 */

@@ -82,7 +82,7 @@ describe('미리보기는 편집기를 적재하지 않는다 (AC-07 · I7)', ()
 });
 
 describe('조각과 토큰이 서로를 가리킨다 (AC-05 · AC-08)', () => {
-  it('24토큰이 모두 최소 한 조각에 나타난다 — 탭 전체의 합집합 기준', () => {
+  it('모든 토큰이 최소 한 조각에 나타난다 — 탭 전체의 합집합 기준', () => {
     const uncovered = ALL_TOKEN_VARS.filter((v) => partsUsingToken(v).length === 0);
     // 나타나지 않는 토큰은 미리보기로 고를 수 없다.
     expect(uncovered).toEqual([]);

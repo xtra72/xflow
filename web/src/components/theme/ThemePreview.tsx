@@ -348,9 +348,16 @@ export function ThemePreview({
                     }}
                   >
                     <span style={{ color: v('text-primary') }}>{name}</span>
-                    <span className="flex items-center gap-1">
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5"
+                      style={{
+                        // 실제 배지와 같은 짜임 — 옅은 칠 위에 글자용 색.
+                        background: `color-mix(in srgb, ${v(token)} 15%, transparent)`,
+                        color: v(`${token}-text`),
+                      }}
+                    >
                       <span className="h-2 w-2 rounded-full" style={{ background: v(token) }} />
-                      <span style={{ color: v('text-secondary') }}>{label}</span>
+                      {label}
                     </span>
                   </span>
                 ))}
@@ -390,6 +397,15 @@ export function ThemePreview({
                   >
                     {enabled ? '활성' : '비활성'}
                   </span>
+                  <span
+                    className="rounded-full px-1.5 py-0.5 font-medium"
+                    style={{
+                      background: `color-mix(in srgb, ${v('status-info')} 15%, transparent)`,
+                      color: v('status-info-text'),
+                    }}
+                  >
+                    디바이스
+                  </span>
                   <span className="w-16 text-right" style={{ color: v('text-secondary') }}>
                     {plan}
                   </span>
@@ -406,7 +422,7 @@ export function ThemePreview({
                   className="h-2 w-2 rounded-full"
                   style={{ background: v('status-warning') }}
                 />
-                <span style={{ color: v('text-muted') }}>다음 실행까지 3시간</span>
+                <span style={{ color: v('status-warning-text') }}>다음 실행까지 3시간</span>
               </span>
             </>,
           )}

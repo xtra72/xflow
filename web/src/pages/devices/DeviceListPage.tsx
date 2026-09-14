@@ -369,14 +369,14 @@ export default function DeviceListPage({
   if (error) {
     return (
       <div className="space-y-6">
-        <div className="rounded-md border border-red-200 bg-red-50 p-6 text-center dark:border-red-800 dark:bg-red-900/20">
-          <p className="text-sm text-red-700 dark:text-red-400">
+        <div className="rounded-md border border-(--color-status-error)/30 bg-(--color-status-error)/10 p-6 text-center">
+          <p className="text-sm text-(--color-status-error-text)">
             {t('devices.loadError')}
           </p>
           <button
             type="button"
             onClick={() => refetch()}
-            className="mt-3 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600"
+            className="mt-3 rounded-md bg-(--color-status-error) px-4 py-2 text-sm font-medium text-white transition-colors hover:opacity-90"
           >
             {t('common.retry')}
           </button>
@@ -412,7 +412,7 @@ export default function DeviceListPage({
             type="button"
             permission="device.create"
             onClick={() => setShowAddDialog(true)}
-            className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+            className="inline-flex items-center gap-2 rounded-md bg-(--color-interactive-primary) px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-(--color-interactive-hover)"
           >
             <Plus className="h-4 w-4" />
             {t('devices.addDevice')}
@@ -446,7 +446,7 @@ export default function DeviceListPage({
               type="button"
               permission="device.create"
               onClick={() => setShowAddDialog(true)}
-              className="mt-4 inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+              className="mt-4 inline-flex items-center gap-2 rounded-md bg-(--color-interactive-primary) px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-(--color-interactive-hover)"
             >
               <Plus className="h-4 w-4" />
               {t('devices.addDevice')}
@@ -462,7 +462,7 @@ export default function DeviceListPage({
               <select
                 value={pageSize}
                 onChange={(e) => handlePageSizeChange(Number(e.target.value))}
-                className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 text-sm text-(--color-text-primary) focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="rounded-md border border-(--color-border-strong) bg-(--color-bg-surface) px-2 py-1 text-sm text-(--color-text-primary) focus:border-(--color-interactive-primary) focus:outline-none focus:ring-1 focus:ring-(--color-interactive-primary)"
               >
                 {PAGE_SIZE_OPTIONS.map((size) => (
                   <option key={size} value={size}>
@@ -666,7 +666,7 @@ function ColumnsSettingButton({
                   checked={checked}
                   disabled={lastOne}
                   onChange={() => toggle(key)}
-                  className="h-4 w-4 rounded border-(--color-border-strong) text-blue-600 focus:ring-blue-500"
+                  className="h-4 w-4 rounded border-(--color-border-strong) text-(--color-interactive-primary) focus:ring-(--color-interactive-primary)"
                 />
                 <span className="text-sm text-(--color-text-primary)">
                   {t(DEVICE_COLUMN_LABELS[key])}
@@ -749,7 +749,7 @@ function DeviceRow({
                   e.stopPropagation();
                   onDelete();
                 }}
-                className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950"
+                className="rounded p-1 text-(--color-text-muted) transition-colors hover:bg-(--color-status-error)/10 hover:text-(--color-status-error-text) disabled:opacity-50"
                 title={t('devices.list.deleteTooltip')}
                 aria-label={t('devices.list.deleteTooltip')}
               >

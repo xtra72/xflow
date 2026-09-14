@@ -82,6 +82,15 @@ export const TOKEN_CATEGORIES: TokenCategory[] = [
       { name: 'status-error', cssVar: '--color-status-error', label: '오류', hint: '실패 · 위험' },
       { name: 'status-warning', cssVar: '--color-status-warning', label: '경고', hint: '주의' },
       { name: 'status-info', cssVar: '--color-status-info', label: '정보', hint: '안내' },
+      // 아래 다섯은 **글자용**이다. 위 다섯은 점·막대를 칠하라고 고른 값이라 글자로
+      // 쓰면 밝은 테마에서 AA(4.5:1)를 넘지 못한다 — 실측으로 `status-running` 이
+      // 3.21, `status-warning` 이 2.86 이었다. 점의 대비 기준과 글자의 대비 기준은
+      // 다르므로 한 값으로 둘을 다 하려 하면 어느 한쪽이 진다.
+      { name: 'status-running-text', cssVar: '--color-status-running-text', label: '실행 글자', hint: '배지 · 상태 글자' },
+      { name: 'status-stopped-text', cssVar: '--color-status-stopped-text', label: '정지 글자', hint: '배지 · 상태 글자' },
+      { name: 'status-error-text', cssVar: '--color-status-error-text', label: '오류 글자', hint: '배지 · 경고 글자' },
+      { name: 'status-warning-text', cssVar: '--color-status-warning-text', label: '경고 글자', hint: '배지 · 주의 글자' },
+      { name: 'status-info-text', cssVar: '--color-status-info-text', label: '정보 글자', hint: '배지 · 안내 글자' },
     ],
   },
   {
@@ -159,6 +168,14 @@ export const DAY_PRESET: ThemeTokens = {
   '--color-status-warning': '#ca8a04', // yellow-600
   '--color-status-info': '#2563eb', // blue-600
 
+  // 글자용 상태색 — 칠(위 다섯) 위에서도, 표면 위에서도 AA 를 넘도록 계산해 골랐다.
+  // day 최저 대비 4.99(오류 글자 · 15% 칠 위).
+  '--color-status-running-text': '#166534', // green-800
+  '--color-status-stopped-text': '#4b5563', // gray-600
+  '--color-status-error-text': '#b91c1c', // red-700
+  '--color-status-warning-text': '#92400e', // amber-800
+  '--color-status-info-text': '#1d4ed8', // blue-700
+
   // 인터랙티브
   '--color-interactive-primary': '#2563eb', // blue-600
   '--color-interactive-hover': '#1d4ed8', // blue-700
@@ -203,6 +220,13 @@ export const NIGHT_PRESET: ThemeTokens = {
   '--color-status-error': '#f87171', // red-400
   '--color-status-warning': '#facc15', // yellow-400
   '--color-status-info': '#60a5fa', // blue-400
+
+  // 글자용 상태색 — night 최저 대비 5.42(경고 글자 · 20% 칠 위).
+  '--color-status-running-text': '#4ade80', // green-400
+  '--color-status-stopped-text': '#d1d5db', // gray-300
+  '--color-status-error-text': '#fca5a5', // red-300
+  '--color-status-warning-text': '#fbbf24', // amber-400
+  '--color-status-info-text': '#93c5fd', // blue-300
 
   // 인터랙티브
   '--color-interactive-primary': '#3b82f6', // blue-500
