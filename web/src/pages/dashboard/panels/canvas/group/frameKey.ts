@@ -20,7 +20,14 @@
 //
 // **이 모듈은 DOM 을 모른다.** 순수 함수뿐이다.
 //
-// @spec SPEC-CANVAS-004 REQ-03
+// ## 만드는 자리와 푸는 자리는 **같은 파일**이다 (SPEC-CANVAS-009 M2)
+//
+// 009 가 선택 상태를 이 복합 키로 넓히면서 키를 **되읽는** 쪽이 생겼다. 그 분해를
+// 소비 측에 맡기면(`key.split('/')`) 구분자 상수가 여럿이 되고, 그중 하나가 갈라지는 날
+// 조용히 어긋난다. 그래서 역함수(`parseFrameKey`)와 판별(`isPartKey`)이 구분자 상수 바로
+// 옆에 선다 — `groupTypes.isGroup` 이 "판별의 유일한 자리" 로 선 것과 같은 규율이다.
+//
+// @spec SPEC-CANVAS-004 REQ-03 · SPEC-CANVAS-009 REQ-01
 
 import type { CanvasElement } from '../canvasConfig';
 import { isGroup, type CanvasNode, type GroupElement } from './groupTypes';
@@ -36,6 +43,40 @@ const PART_SEPARATOR = '/';
  */
 export function frameKey(nodeId: string, partId?: string): string {
   return partId === undefined ? nodeId : `${nodeId}${PART_SEPARATOR}${partId}`;
+}
+
+/** `parseFrameKey` 가 내는 것 — 키를 다시 두 조각으로 편 결과. */
+export interface ParsedFrameKey {
+  nodeId: string;
+  /** 최상위 키면 `undefined`. 부품 키에서만 값이 있다. */
+  partId?: string;
+}
+
+/**
+ * `frameKey` 의 **역함수**. 만드는 자리와 푸는 자리가 같은 파일에 있어야 구분자가
+ * 갈라지지 않는다(SPEC-CANVAS-009 M2).
+ *
+ * **첫 구분자에서 한 번만 쪼갠다**(`indexOf`). 뒤에서 쪼개거나(`lastIndexOf`) 전부
+ * 쪼개면(`split`) 부품 id 에 구분자가 들어 있는 순간 `nodeId` 가 오염되고, 그 오염은
+ * 예외가 아니라 **"어떤 그룹만 선택이 안 된다"** 로만 보인다. `nextElementId` 는 `el-N` 을
+ * 내므로 오늘의 최상위 id 에는 구분자가 없지만, 부품 id 는 카탈로그·가져오기가 짓는 이름
+ * 이라 그 보장이 없다.
+ */
+export function parseFrameKey(key: string): ParsedFrameKey {
+  const at = key.indexOf(PART_SEPARATOR);
+  if (at < 0) return { nodeId: key };
+  return { nodeId: key.slice(0, at), partId: key.slice(at + PART_SEPARATOR.length) };
+}
+
+/**
+ * 이 키가 부품을 가리키는가. **판별의 유일한 자리**다.
+ *
+ * 소비 측이 저마다 `key.includes('/')` 를 적으면 그 판정이 여럿이 되고, 그중 하나가 다른
+ * 구분자를 쓰는 날 "어떤 화면에서는 부품인데 어떤 화면에서는 아니다" 가 시작된다 —
+ * `isGroup` 을 판별의 유일한 자리로 둔 것과 같은 이유다(`groupTypes.ts`).
+ */
+export function isPartKey(key: string): boolean {
+  return key.includes(PART_SEPARATOR);
 }
 
 /** 2단 순회가 내는 한 항목 — 그릴 요소 하나와 그것이 프레임 상태에서 쓰는 키. */

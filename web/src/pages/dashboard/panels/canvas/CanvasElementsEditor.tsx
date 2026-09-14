@@ -606,6 +606,7 @@ function GroupNodeRow({
   t,
   onToggle,
   onSelect,
+  onChange,
   onMove,
   onRemove,
   rowRef,
@@ -620,6 +621,8 @@ function GroupNodeRow({
   onToggle: () => void;
   /** 부품 행을 눌렀을 때 — **그룹**을 고른다. 선택 키는 여전히 `nodeId` 하나다. */
   onSelect: () => void;
+  /** 그룹 자신을 갈아 끼운다(SPEC-CANVAS-009 M1 — 투명도 편집). */
+  onChange: (next: GroupElement) => void;
   onMove: (delta: -1 | 1) => void;
   onRemove: () => void;
   rowRef: (el: HTMLDivElement | null) => void;
@@ -707,6 +710,50 @@ function GroupNodeRow({
           <Trash2 className="h-3 w-3" />
         </button>
       </div>
+
+      {/* 그룹 자신의 겉모습 — **부품 목록 위**에 선다(SPEC-CANVAS-009 M1 · REQ-06).
+
+          부품보다 먼저 오는 것에 뜻이 있다: 이 값은 아래 부품 **전부**에 걸리는 값이고,
+          그 사실을 자리로 말한다. 아래에 두면 마지막 부품의 설정처럼 읽힌다.
+
+          **새 컨트롤을 짓지 않는다**(가정 A6). 요소 행의 불투명도 칸과 같은 `<input>` ·
+          같은 `clamp01` · 같은 `parseOptionalNumber` · 같은 i18n 키를 쓴다. 여기서 제
+          나름의 파싱을 적으면 "요소에서는 1.5 가 1 로 죄이는데 그룹에서는 그대로 들어간다"
+          가 표현 가능해지고, 그 어긋남은 저장 왕복을 견딘다.
+
+          aria 문구도 요소 행의 그것(`요소 {index} 불투명도`)을 그대로 쓴다 — `{index}` 는
+          **노드 배열의 자리**라 그룹 행과 요소 행이 같은 번호를 가질 수 없고, 따라서 새 키를
+          짓지 않아도 가리키는 것이 하나다(plan.md M1 §2 "새 키를 만들지 않는다"). */}
+      {open && (
+        <div className="space-y-1.5 pl-4" data-testid={`canvas-group-row-style-${idx}`}>
+          <FieldGroup
+            label={t('dashboard.canvas.elements.shapeStyleLabel')}
+            testId={`canvas-group-row-shape-style-${idx}`}
+          >
+            <input
+              type="number"
+              step="any"
+              min={0}
+              max={1}
+              value={node.style?.opacity ?? ''}
+              onChange={(e) =>
+                onChange({
+                  ...node,
+                  style: setStyleField(
+                    node.style ?? {},
+                    'opacity',
+                    clamp01(parseOptionalNumber(e.target.value)),
+                  ),
+                })
+              }
+              placeholder={t('dashboard.canvas.elements.opacityPlaceholder')}
+              aria-label={withIndex(t('dashboard.canvas.elements.opacityAria'), idx)}
+              data-testid={`canvas-group-opacity-${idx}`}
+              className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
+            />
+          </FieldGroup>
+        </div>
+      )}
 
       {open && (
         <div className="space-y-1 pl-4" data-testid={`canvas-group-row-parts-${idx}`}>
@@ -1059,8 +1106,18 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
   // 조용히 사라진다. 자리(index)도 그래서 노드 배열의 자리 그대로다.
   const emit = (next: CanvasNode[]): void => onConfigChange({ elements: next });
 
+  /**
+   * 최상위 노드 하나를 갈아 끼운다. **그룹 행도 이 입구를 쓴다**(SPEC-CANVAS-009 M1).
+   *
+   * `replaceAt` 이 이 함수로 좁혀 부르는 것이 요점이다 — 쓰기 규칙이 둘이 되면 "요소를
+   * 고칠 때와 그룹을 고칠 때 배열이 다르게 만들어진다" 가 표현 가능해진다.
+   */
+  const replaceNodeAt = (idx: number, node: CanvasNode): void => {
+    emit(elements.map((e, i) => (i === idx ? node : e)));
+  };
+
   const replaceAt = (idx: number, el: CanvasElement): void => {
-    emit(elements.map((e, i) => (i === idx ? el : e)));
+    replaceNodeAt(idx, el);
   };
 
   /**
@@ -1267,6 +1324,7 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                   t={t}
                   onToggle={() => toggleExpanded(el.id)}
                   onSelect={() => selectNode(el.id)}
+                  onChange={(next) => replaceNodeAt(idx, next)}
                   onMove={(delta) => moveAt(idx, delta)}
                   onRemove={() => removeAt(idx)}
                   rowRef={(node) => {
