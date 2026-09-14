@@ -166,3 +166,71 @@ describe('ThemePaletteEditor', () => {
     expect(useUIStore.getState().notifications.at(-1)?.type).toBe('warning');
   });
 });
+
+// --- 미리보기에서 고르면 표가 따라온다 (AC-08) ---
+
+describe('미리보기에서 조각을 고르면 그 색 항목들이 표에서 선택된다', () => {
+  /** 지금 선택 표시가 붙어 있는 토큰 행들. */
+  function selectedTokens(container: HTMLElement): string[] {
+    return [...container.querySelectorAll('tr[data-selected="true"]')].map(
+      (el) => el.getAttribute('data-token') ?? '',
+    );
+  }
+
+  it('조각이 쓰는 색이 여럿이면 행도 여럿이 선택된다', () => {
+    const { container } = renderEditor();
+    expect(selectedTokens(container)).toEqual([]);
+
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+    fireEvent.click(screen.getByTestId('theme-preview-node'));
+
+    // 노드 조각은 다섯 색을 쓴다 — 첫 하나만 고르면 나머지 넷은 찾을 길이 없다.
+    // 표 안의 순서는 카테고리 배열이 정하므로 집합으로 견준다.
+    expect([...selectedTokens(container)].sort()).toEqual(
+      [
+        '--color-bg-surface',
+        '--color-bg-sunken',
+        '--color-border-default',
+        '--color-text-primary',
+        '--color-text-muted',
+      ].sort(),
+    );
+  });
+
+  it('표 위를 지나도 고른 조각이 지워지지 않는다', () => {
+    // 둘을 한 상태로 묶으면 고른 직후 표로 커서를 옮기는 것만으로 선택이 사라진다.
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+    fireEvent.click(screen.getByTestId('theme-preview-edge'));
+    expect(selectedTokens(container)).toEqual(['--color-flow-edge']);
+
+    const otherRow = container.querySelector('tr[data-token="--color-bg-primary"]');
+    fireEvent.mouseEnter(otherRow!);
+    fireEvent.mouseLeave(otherRow!);
+    expect(selectedTokens(container)).toEqual(['--color-flow-edge']);
+  });
+
+  it('고른 조각은 미리보기에서도 표시가 남는다', () => {
+    renderEditor();
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+    fireEvent.click(screen.getByTestId('theme-preview-edge'));
+    expect(screen.getByTestId('theme-preview-edge').dataset.selected).toBe('true');
+  });
+
+  it('다른 조각을 고르면 선택이 그쪽으로 옮겨 간다', () => {
+    const { container } = renderEditor();
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
+    fireEvent.click(screen.getByTestId('theme-preview-edge'));
+    fireEvent.click(screen.getByTestId('theme-preview-shell'));
+
+    expect(screen.getByTestId('theme-preview-edge').dataset.selected).toBe('false');
+    expect([...selectedTokens(container)].sort()).toEqual(
+      [
+        '--color-bg-primary',
+        '--color-bg-secondary',
+        '--color-text-primary',
+        '--color-border-subtle',
+      ].sort(),
+    );
+  });
+});

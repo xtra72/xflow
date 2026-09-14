@@ -34,6 +34,11 @@ export interface ThemePreviewProps {
   overrides: ThemeTokens;
   /** 표에서 고른 토큰 — 그 토큰을 쓰는 조각에 윤곽선을 두른다. */
   highlightToken?: string | undefined;
+  /**
+   * 지금 골라 둔 조각. 커서가 표를 떠나도 표시가 남아 있어야, 무엇을 고쳤는지
+   * 보인다.
+   */
+  selectedPart?: string | undefined;
   /** 조각을 눌렀을 때. 표를 그 토큰 행으로 데려간다. */
   onPickPart?: (partId: string) => void;
 }
@@ -55,6 +60,7 @@ export function ThemePreview({
   target,
   overrides,
   highlightToken,
+  selectedPart,
   onPickPart,
 }: ThemePreviewProps): React.ReactElement {
   const [picked, setPicked] = useState<Exclude<PreviewArea, 'always'>>('dashboard');
@@ -94,9 +100,15 @@ export function ThemePreview({
             pick(e);
           }
         }}
+        data-selected={selectedPart === id ? 'true' : 'false'}
         className={cn(
           'relative cursor-pointer text-left transition-shadow',
+          // 강조(표를 스쳐 갈 때)는 실선, 선택(눌러 둔 것)은 점선이다. 둘이 같은
+          // 모양이면 "지금 무엇이 고정되어 있는가" 를 구분할 수 없다.
           lit.includes(id) && 'outline outline-2 outline-offset-2 outline-blue-500',
+          !lit.includes(id) &&
+            selectedPart === id &&
+            'outline outline-2 outline-offset-2 outline-dashed outline-blue-400',
           className,
         )}
         style={style}

@@ -44,8 +44,38 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
 
   /** 편집 대상 팔레트. 기본은 지금 적용 중인 쪽. */
   const [target, setTarget] = useState<PresetId>(activePreset);
-  /** 표에서 고른 토큰. 미리보기의 어느 조각이 그것을 쓰는지 윤곽선으로 알린다. */
-  const [highlight, setHighlight] = useState<string | undefined>(undefined);
+  /**
+   * 표 위를 스쳐 가는 커서가 가리키는 토큰. **머무르지 않는다.**
+   *
+   * 선택(`selectedPart`)과 가르는 이유는, 둘을 한 상태로 묶으면 미리보기에서 조각을
+   * 고른 직후 표 위로 커서를 옮기는 것만으로 그 선택이 지워지기 때문이다.
+   */
+  const [hovered, setHovered] = useState<string | undefined>(undefined);
+  /** 미리보기에서 고른 조각. 그 조각이 쓰는 토큰 행들이 표에서 함께 표시된다. */
+  const [selectedPart, setSelectedPart] = useState<string | undefined>(undefined);
+  /** 선택된 조각이 쓰는 토큰 집합 — 행 표시에 쓴다. */
+  const selectedTokens = new Set(selectedPart === undefined ? [] : tokensOfPart(selectedPart));
+  /** 미리보기에 넘길 강조 토큰. 커서가 우선이고, 없으면 고른 조각의 첫 토큰. */
+  const highlight =
+    hovered ?? (selectedPart === undefined ? undefined : tokensOfPart(selectedPart)[0]);
+  /** 행 스크롤용 — 조각을 고르면 첫 토큰 행을 화면 안으로 데려온다. */
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
+
+  /**
+   * 미리보기에서 조각을 골랐을 때.
+   *
+   * 표를 그 조각의 첫 토큰 행으로 데려간다. 표가 24행이라 고른 조각의 색이 화면 밖에
+   * 있으면 "골랐다" 는 사실이 아무 데도 보이지 않는다.
+   */
+  const pickPart = (partId: string): void => {
+    setSelectedPart(partId);
+    setHovered(undefined);
+    const first = tokensOfPart(partId)[0];
+    if (first === undefined) return;
+    const row = rowRefs.current.get(first);
+    // jsdom 에는 `scrollIntoView` 가 없다. 없으면 스크롤만 건너뛴다 — 선택 자체는 선다.
+    row?.scrollIntoView?.({ block: 'nearest' });
+  };
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const overrides = themeOverrides[target] ?? {};
@@ -207,14 +237,22 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
                 return (
                   <tr
                     key={token.cssVar}
+                    ref={(el) => {
+                      if (el === null) rowRefs.current.delete(token.cssVar);
+                      else rowRefs.current.set(token.cssVar, el);
+                    }}
                     data-token={token.cssVar}
                     data-lit={highlight === token.cssVar ? 'true' : 'false'}
-                    // 행을 고르면 미리보기에서 그 토큰이 칠하는 조각이 강조된다.
+                    data-selected={selectedTokens.has(token.cssVar) ? 'true' : 'false'}
+                    // 행 위를 지나면 미리보기에서 그 토큰이 칠하는 조각이 강조된다.
                     // 이름만 보고 "이 토큰이 어디에 쓰이는가" 를 아는 사람은 없다.
-                    onMouseEnter={() => setHighlight(token.cssVar)}
-                    onFocus={() => setHighlight(token.cssVar)}
+                    onMouseEnter={() => setHovered(token.cssVar)}
+                    onMouseLeave={() => setHovered(undefined)}
+                    onFocus={() => setHovered(token.cssVar)}
                     className={cn(
                       'align-middle',
+                      // 고른 조각이 쓰는 색은 여럿이므로 행 여럿이 함께 표시된다.
+                      selectedTokens.has(token.cssVar) && 'bg-(--color-interactive-muted)',
                       highlight === token.cssVar && 'bg-(--color-interactive-muted)',
                     )}
                   >
@@ -283,7 +321,8 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
             target={target}
             overrides={overrides}
             highlightToken={highlight}
-            onPickPart={(partId) => setHighlight(tokensOfPart(partId)[0])}
+            selectedPart={selectedPart}
+            onPickPart={pickPart}
           />
         </aside>
       </div>
