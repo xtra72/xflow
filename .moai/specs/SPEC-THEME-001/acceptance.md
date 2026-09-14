@@ -4,6 +4,7 @@
 
 | 일자 | 버전 | 변경 | 작성자 |
 |------|------|------|--------|
+| 2026-09-14 | 0.3.0 | spec.md 0.3.0 에 맞춰 새 토큰 이름을 `flow-canvas` → `flow-dot` 으로 고쳤다. 캔버스 판은 이미 토큰이었고, 박혀 있던 것은 점격자였다 | xtra |
 | 2026-09-14 | 0.2.0 | spec.md 0.2.0 의 REQ-08 개정에 맞춰 **AC-02 를 다시 썼다**. "색이 같다"를 재는 대신 **이동량과 대비 변화**를 잰다 — 전자는 성립하지 않는 요구였다 | xtra |
 | 2026-09-14 | 0.1.0 | 최초 작성. spec.md 0.1.0 에 대응 | xtra |
 
@@ -63,7 +64,7 @@ oklch 이므로 sRGB 로 환산한다)
 **Then** 대비가 내려간 자리는 그 값이 표에 적힌다 — 11:1 이 10:1 이 되는 것은 회귀가
 아니지만, **적히지 않은 채** 내려가는 것은 회귀다.
 
-**When** 새 토큰 셋(`flow-canvas`·`flow-edge`·`flow-area`)의 값을 본다
+**When** 새 토큰 셋(`flow-dot`·`flow-edge`·`flow-area`)의 값을 본다
 **Then** day · night 모두 **오늘 값과 정확히 같다** — 이 셋의 ΔL 은 **0**이다(I5).
 
 > **왜 클래스 문자열을 세지 않는가**: `text-zinc-400` → `text-(--color-text-muted)` 는
@@ -75,7 +76,7 @@ oklch 이므로 sRGB 로 환산한다)
 ## AC-03 — 새 토큰 셋 (REQ-02 · 불변식 I2)
 
 **Given** `tokens.ts`
-**Then** `--color-flow-canvas` · `--color-flow-edge` · `--color-flow-area` 가 있다.
+**Then** `--color-flow-dot` · `--color-flow-edge` · `--color-flow-area` 가 있다.
 **Then** 셋이 `flow` 카테고리에 속하며, 카테고리는 `label` 과 토큰별 `hint` 를 갖는다.
 **Then** 토큰 총수가 21 → **24**다.
 **Then** `DAY_PRESET` · `NIGHT_PRESET` 양쪽에 셋 다 값이 있다.

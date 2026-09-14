@@ -72,7 +72,7 @@ spec.md §불변식 I1~I10. 그중 기계 검사가 어려운 둘을 여기서 �
 
 **M2. 토큰 셋 + `flow` 카테고리**
 
-- `tokens.ts` 에 `--color-flow-canvas` · `--color-flow-edge` · `--color-flow-area` 추가.
+- `tokens.ts` 에 `--color-flow-dot` · `--color-flow-edge` · `--color-flow-area` 추가.
   `DAY_PRESET` · `NIGHT_PRESET` 에 M1 이 잰 값.
 - `index.css` 의 `@theme` · `:root` · `[data-theme="night"]` 세 곳에 같은 값
   (`tokens.cssParity.test.ts` 가 어긋남을 잡는다).
@@ -124,7 +124,7 @@ acceptance.md AC 전수.
 ## 커밋 분할 시 주의 (기존 교훈)
 
 경로 휴리스틱과 import grep 만으로는 중간 커밋의 빌드를 보장하지 못한다. M2 가 M3 보다
-**반드시 먼저** 커밋되어야 한다 — 토큰이 없는 상태에서 `bg-(--color-flow-canvas)` 를
+**반드시 먼저** 커밋되어야 한다 — 토큰이 없는 상태에서 `bg-(--color-flow-dot)` 를
 쓰면 `index.tokens.test.ts` 가드가 붉어지고, 화면은 **아무 배경도 없이** 그려진다.
 
 M5 의 미리보기는 M3 이 끝난 뒤 커밋한다. 먼저 커밋하면 미리보기가 실제 화면과 다른

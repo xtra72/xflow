@@ -16,6 +16,7 @@ import {
   resolveTokens,
   serializeThemeFile,
   THEME_FILE_SCHEMA,
+  TOKEN_CATEGORIES,
 } from './tokens';
 
 describe('resolveTokens', () => {
@@ -137,5 +138,48 @@ describe('테마 파일 내보내기 / 가져오기', () => {
     });
     const parsed = parseThemeFile(noPreset);
     expect(parsed.ok && parsed.preset).toBe('day');
+  });
+});
+
+// --- 플로우 편집기 토큰 (SPEC-THEME-001 AC-03) ---
+
+describe('flow 카테고리', () => {
+  const flow = TOKEN_CATEGORIES.find((c) => c.category === 'flow');
+
+  it('카테고리가 있고 세 토큰을 담는다', () => {
+    expect(flow, 'flow 카테고리가 없다').toBeDefined();
+    expect(flow!.tokens.map((t) => t.cssVar)).toEqual([
+      '--color-flow-dot',
+      '--color-flow-edge',
+      '--color-flow-area',
+    ]);
+  });
+
+  it('라벨과 힌트가 비어 있지 않다 — 표에서 무엇인지 읽혀야 한다', () => {
+    expect(flow!.label).not.toBe('');
+    for (const t of flow!.tokens) {
+      expect(t.label, t.cssVar).not.toBe('');
+      expect(t.hint, t.cssVar).not.toBe('');
+    }
+  });
+
+  it('토큰 총수가 21 에서 24 로 늘었고, 기존 21개의 이름이 그대로다 (불변식 I2)', () => {
+    expect(ALL_TOKEN_VARS).toHaveLength(24);
+    // 기존 카테고리 다섯의 토큰 수는 그대로여야 한다 — 새 토큰이 기존 칸을
+    // 밀어내지 않았다는 뜻이다.
+    const legacy = TOKEN_CATEGORIES.filter((c) => c.category !== 'flow');
+    expect(legacy.flatMap((c) => c.tokens)).toHaveLength(21);
+  });
+
+  it('day · night 프리셋 양쪽에 세 값이 다 있다', () => {
+    for (const t of flow!.tokens) {
+      expect(DAY_PRESET[t.cssVar], `day ${t.cssVar}`).toMatch(/^#[0-9a-f]{6}$/);
+      expect(NIGHT_PRESET[t.cssVar], `night ${t.cssVar}`).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+
+  it('점격자는 야간에 밝은 채로 남지 않는다 — 신고된 증상이 그것이다', () => {
+    // day 와 night 이 같은 값이면 어두운 바탕에 밝은 점이 그대로 남는다.
+    expect(NIGHT_PRESET['--color-flow-dot']).not.toBe(DAY_PRESET['--color-flow-dot']);
   });
 });

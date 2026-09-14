@@ -58,6 +58,11 @@
   --color-interactive-hover: var(--color-interactive-hover);
   --color-interactive-active: var(--color-interactive-active);
   --color-interactive-muted: var(--color-interactive-muted);
+
+  /* 시맨틱 컬러 토큰 — 플로우 편집기 (SPEC-THEME-001) */
+  --color-flow-dot: var(--color-flow-dot);
+  --color-flow-edge: var(--color-flow-edge);
+  --color-flow-area: var(--color-flow-area);
 }
 
 /* ---------------------------------------------------------------------------
@@ -99,6 +104,11 @@
   --color-interactive-hover: #1d4ed8; /* blue-700 */
   --color-interactive-active: #1e40af; /* blue-800 */
   --color-interactive-muted: #dbeafe; /* blue-100 — 선택 행 배경 */
+
+  /* 플로우 편집기 — 오늘 값 그대로(SPEC-THEME-001 불변식 I5) */
+  --color-flow-dot: #d1d5db;
+  --color-flow-edge: #d4d4d8;
+  --color-flow-area: #d4d4d8;
 }
 
 /* ---------------------------------------------------------------------------
@@ -136,6 +146,12 @@
   --color-interactive-hover: #60a5fa; /* blue-400 */
   --color-interactive-active: #93c5fd; /* blue-300 */
   --color-interactive-muted: #1e3a8a; /* blue-900 — 선택 행 배경 */
+
+  /* 플로우 편집기 — 점격자만 오늘 값과 다르다. 오늘은 day 값이 야간에도 그대로
+     쓰여 어두운 바탕 위에 밝은 점이 남았다(사용자 신고). */
+  --color-flow-dot: #52525c;
+  --color-flow-edge: #52525c;
+  --color-flow-area: #52525c;
 }
 
 /*
