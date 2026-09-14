@@ -353,6 +353,32 @@ export function partInCanvasUnits(
   return { ...el, id: frameKey(groupId, partId) };
 }
 
+// --- 부품 쓰기 (SPEC-CANVAS-009 M4) ----------------------------------------
+
+/**
+ * 부품 하나를 갈아 끼운다 — **부품 쓰기의 유일한 문**이다.
+ *
+ * 기하든 겉모습이든 부품이 바뀌는 길은 이 함수 하나이며, 그래서 형제 노드·형제 부품의
+ * 참조 유지 규율(004 `patchNodeGeometry` 의 그것)이 한 자리에만 적힌다. 두 벌이 되면
+ * "기하를 고칠 때는 형제가 유지되는데 색을 고칠 때는 전부 새로 난다" 가 표현 가능해지고,
+ * 그 차이는 리렌더 폭으로만 드러난다.
+ *
+ * 바꿀 것이 없으면(찾지 못했거나 같은 참조를 되돌려 준 경우) **받은 배열 그 참조**를
+ * 돌려준다.
+ */
+export function replacePart(
+  nodes: readonly CanvasNode[],
+  groupId: string,
+  partId: string,
+  next: CanvasElement,
+): readonly CanvasNode[] {
+  const found = findPart(nodes, groupId, partId);
+  if (found === undefined || next === found.part) return nodes;
+  const parts = found.group.parts.map((p, i) => (i === found.partIndex ? next : p));
+  const group: GroupElement = { ...found.group, parts };
+  return nodes.map((n, i) => (i === found.groupIndex ? group : n));
+}
+
 // --- 부품 기하 쓰기 (SPEC-CANVAS-009 M4) -----------------------------------
 
 /**
@@ -381,15 +407,14 @@ export function patchPartGeometry(
 ): readonly CanvasNode[] {
   const found = findPart(nodes, groupId, partId);
   if (found === undefined) return nodes;
-
-  const nextPart = withGeometry(found.part, found.group.geometry, toLocalGeometry, nextAbsolute);
-  // 형상이 맞지 않아 `withGeometry` 가 받은 요소를 그대로 돌려준 경우다. 새 배열을 짓지
-  // 않는다 — 한 글자도 바뀌지 않았음을 참조가 말한다.
-  if (nextPart === found.part) return nodes;
-
-  const parts = found.group.parts.map((p, i) => (i === found.partIndex ? nextPart : p));
-  const group: GroupElement = { ...found.group, parts };
-  return nodes.map((n, i) => (i === found.groupIndex ? group : n));
+  // 형상이 맞지 않으면 `withGeometry` 가 **받은 요소를 그대로** 돌려주고, 그 참조가
+  // `replacePart` 에서 곧 "쓸 일이 없다" 로 읽힌다 — 판정이 한 자리에 남는다.
+  return replacePart(
+    nodes,
+    groupId,
+    partId,
+    withGeometry(found.part, found.group.geometry, toLocalGeometry, nextAbsolute),
+  );
 }
 
 // --- 부품 분리 (SPEC-CANVAS-009 M6) ----------------------------------------

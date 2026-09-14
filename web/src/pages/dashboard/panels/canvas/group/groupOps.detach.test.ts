@@ -17,11 +17,14 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { CanvasElement } from '../canvasConfig';
+import type { CanvasElement, RuleRow } from '../canvasConfig';
 import { detachPart, rulesLostByDetach, rulesLostByUngroup, ungroupNode } from './groupOps';
 import { GROUP_LOCAL_EXTENT, isGroup, type CanvasNode, type GroupElement } from './groupTypes';
 
 const BOX = { x: 100, y: 100, w: 200, h: 200 } as const;
+
+/** `nodata` 행 하나. 파서가 `value` 를 0 으로 정규화하므로 여기서도 그 형상을 따른다. */
+const NODATA_ROW: RuleRow = { op: 'nodata', value: 0, patch: {} };
 const HALF = GROUP_LOCAL_EXTENT / 2;
 
 function part(id: string, over: Partial<CanvasElement> = {}): CanvasElement {
@@ -131,15 +134,15 @@ describe('겉모습이 보존된다 (AC-27 · AC-28)', () => {
     g.parts[1]!.style = { opacity: 0.5 };
     const out = detachPart(nodes(g), 'grp-1', 'b');
     const lifted = out.nodes.find((n) => n.id === out.liftedIds[0])!;
-    expect(lifted.style.opacity).toBeCloseTo(0.25, 10);
+    expect(lifted.style?.opacity).toBeCloseTo(0.25, 10);
   });
 
   it('그룹 바인딩과 트윈은 부품이 적지 않았을 때만 내려온다', () => {
     const g = group(['a', 'b', 'c'], {
-      binding: { series: 's-group' },
-      tween: { duration_ms: 300 },
+      binding: { series: 's-group', agg: 'last' },
+      tween: { duration_ms: 300, easing: 'linear' },
     });
-    g.parts[1]!.binding = { series: 's-part' };
+    g.parts[1]!.binding = { series: 's-part', agg: 'last' };
     const out = detachPart(nodes(g), 'grp-1', 'b');
     const lifted = out.nodes.find((n) => n.id === out.liftedIds[0])!;
     expect(lifted.binding?.series).toBe('s-part');
@@ -147,7 +150,7 @@ describe('겉모습이 보존된다 (AC-27 · AC-28)', () => {
   });
 
   it('남은 그룹의 저술은 그대로다 — 하나를 빼도 그룹이 제 값을 잃지 않는다', () => {
-    const g = group(['a', 'b', 'c'], { style: { fill: 'red' }, rules: [{ op: 'nodata', patch: {} }] });
+    const g = group(['a', 'b', 'c'], { style: { fill: 'red' }, rules: [NODATA_ROW] });
     const out = detachPart(nodes(g), 'grp-1', 'b');
     expect(groupIn(out.nodes)!.style).toEqual({ fill: 'red' });
     expect(groupIn(out.nodes)!.rules).toHaveLength(1);
@@ -217,10 +220,7 @@ describe('분리와 풀기가 같은 함수를 쓴다 (AC-33)', () => {
 
 describe('규칙 손실을 알린다 (AC-31 · REQ-05-c)', () => {
   it('잃게 될 규칙 수가 `rulesLostByUngroup` 의 값과 일치한다', () => {
-    const rules = [
-      { op: 'gt' as const, value: 1, patch: {} },
-      { op: 'nodata' as const, patch: {} },
-    ];
+    const rules: RuleRow[] = [{ op: 'gt', value: 1, patch: {} }, NODATA_ROW];
     const g = group(['a', 'b', 'c'], { rules });
     const list = nodes(g);
     expect(rulesLostByDetach(list, 'grp-1', 'b')).toBe(rulesLostByUngroup(g));
@@ -232,7 +232,7 @@ describe('규칙 손실을 알린다 (AC-31 · REQ-05-c)', () => {
   });
 
   it('없는 그룹·없는 부품이면 0 이다', () => {
-    const list = nodes(group(['a', 'b', 'c'], { rules: [{ op: 'nodata', patch: {} }] }));
+    const list = nodes(group(['a', 'b', 'c'], { rules: [NODATA_ROW] }));
     expect(rulesLostByDetach(list, 'nope', 'b')).toBe(0);
     expect(rulesLostByDetach(list, 'grp-1', 'nope')).toBe(0);
     expect(rulesLostByDetach(list, 'before', 'b')).toBe(0);

@@ -165,7 +165,19 @@ import { CanvasEditDockBody } from './CanvasEditDock';
 import { CanvasWorkspaceZoomField } from './CanvasWorkspaceZoomField';
 import { marqueeCandidates, marqueeRect, marqueeSelection } from './canvasMarquee';
 import { CanvasGroupTools } from './group/CanvasGroupTools';
-import { groupNodes, rulesLostByUngroup, ungroupNode, type GroupRefusal } from './group/groupOps';
+import { frameKey, isPartKey, parseFrameKey } from './group/frameKey';
+import {
+  detachPart,
+  findPart,
+  groupNodes,
+  partInCanvasUnits,
+  patchPartGeometry,
+  replacePart,
+  rulesLostByDetach,
+  rulesLostByUngroup,
+  ungroupNode,
+  type GroupRefusal,
+} from './group/groupOps';
 import { isGroup, type CanvasNode } from './group/groupTypes';
 import {
   DEFAULT_FONT_SIZE,
@@ -707,6 +719,79 @@ function patchNodeFontSize(
   );
 }
 
+// --- 복합 키 분배 (SPEC-CANVAS-009 M3 · M4) --------------------------------
+//
+// 009 부터 선택 상태에는 최상위 id 와 **부품 복합 키**가 함께 담긴다. 아래 셋은 그 키를
+// 받아 갈래를 고르는 유일한 자리다 — 소비 측이 저마다 갈래를 적으면 "끌 때는 부품이
+// 움직이는데 방향키로는 안 움직인다" 같은 부분 마비가 생긴다.
+//
+// **분해는 `parseFrameKey` 하나가 한다**(구분자 리터럴이 이 파일에 없다 — AC-04).
+
+/**
+ * 키가 가리키는 노드. 부품이면 **캔버스 단위 의사 노드**이고, 최상위면 그 노드 자신이다.
+ *
+ * 그래서 윤곽 상자 · 8핸들 · 드래그 상태가 부품에 대해서도 **한 글자도 바뀌지 않고**
+ * 걸린다(009 가 004 의 A18 을 뒤집는 방식이 이것이다). 없는 키(지워진 요소 · 없는 부품)는
+ * `undefined` 이고 예외가 아니다(REQ-07 · AC-40).
+ */
+function nodeForKey(elements: readonly CanvasNode[], key: string): CanvasNode | undefined {
+  const { nodeId, partId } = parseFrameKey(key);
+  if (partId === undefined) return elements.find((el) => el.id === nodeId);
+  return partInCanvasUnits(elements, nodeId, partId);
+}
+
+/** 고른 것들을 노드로 푼다. 가리킬 것이 없는 키는 조용히 빠진다. */
+function selectedNodes(
+  elements: readonly CanvasNode[],
+  selection: CanvasSelection,
+): CanvasNode[] {
+  const out: CanvasNode[] = [];
+  for (const key of selection) {
+    const node = nodeForKey(elements, key);
+    if (node !== undefined) out.push(node);
+  }
+  return out;
+}
+
+/**
+ * 기하 쓰기의 **분배기**. 최상위 키는 004 의 통로로, 부품 키는 `groupOps` 의 통로로 간다.
+ *
+ * `canvasEditGeometry` 는 `parts` 를 여전히 모른다(AC-17) — 부품 쓰기는 저 모듈을 지나지
+ * 않고 `groupOps` 안에서 끝난다. 역투영을 부르는 자리도 늘지 않는다(AC-16).
+ */
+function patchGeometryByKey(
+  nodes: readonly CanvasNode[],
+  key: string,
+  geometry: Geometry,
+): CanvasNode[] {
+  const { nodeId, partId } = parseFrameKey(key);
+  if (partId === undefined) return patchNodeGeometry(nodes, nodeId, geometry);
+  return [...patchPartGeometry(nodes, nodeId, partId, geometry)];
+}
+
+/**
+ * 글자 크기 쓰기의 분배기. **기하가 아니므로 위 통로를 지나지 않는다**(004 의 그 구분 그대로).
+ *
+ * 부품 갈래를 두지 않으면 문구 부품의 글자 크기 손잡이가 **보이는데 잡히지 않는** 손잡이가
+ * 된다 — 이 파일이 `handleDragState` 머리말에서 이름 적어 둔 바로 그 결함이다.
+ */
+function patchFontSizeByKey(
+  nodes: readonly CanvasNode[],
+  key: string,
+  fontSize: number,
+): CanvasNode[] {
+  const { nodeId, partId } = parseFrameKey(key);
+  if (partId === undefined) return patchNodeFontSize(nodes, nodeId, fontSize);
+  const found = findPart(nodes, nodeId, partId);
+  if (found === undefined || found.part.kind !== 'text') return [...nodes];
+  return [
+    ...replacePart(nodes, nodeId, partId, {
+      ...found.part,
+      style: { ...found.part.style, fontSize },
+    }),
+  ];
+}
+
 /**
  * 한 축의 축척. 화면 길이 ÷ 스테이지 길이다.
  *
@@ -965,7 +1050,7 @@ export default function CanvasEditOverlay({
         const delta = snap ? snapDelta(raw, drag.anchor, step) : raw;
         let next: CanvasNode[] = [...els];
         for (const base of drag.bases) {
-          next = patchNodeGeometry(next, base.nodeId, moveGeometry(base.geometry, delta));
+          next = patchGeometryByKey(next, base.nodeId, moveGeometry(base.geometry, delta));
         }
         emit(next);
         return;
@@ -974,20 +1059,20 @@ export default function CanvasEditOverlay({
         const box = resizeBox(drag.geometry, drag.handle, pointer, {
           preserveAspect: pending.shift,
         });
-        emit(patchNodeGeometry(els, drag.nodeId, box));
+        emit(patchGeometryByKey(els, drag.nodeId, box));
         return;
       }
       case 'line': {
         const line = resizeLine(drag.geometry, drag.endpoint, pointer, {
           constrainAngle: pending.shift,
         });
-        emit(patchNodeGeometry(els, drag.nodeId, line));
+        emit(patchGeometryByKey(els, drag.nodeId, line));
         return;
       }
       default: {
         // 유일하게 기하 통로를 지나지 않는 쓰기다. 델타가 px 인 것은 글자 크기가 **화면
         // 양**이기 때문이다 — 캔버스 단위로 재면 캔버스가 클수록 손이 더 가야 같은 크기가 된다.
-        emit(patchNodeFontSize(els, drag.nodeId, resizeFontSize(drag.fontSize, px)));
+        emit(patchFontSizeByKey(els, drag.nodeId, resizeFontSize(drag.fontSize, px)));
       }
     }
   }, []);
@@ -1110,25 +1195,41 @@ export default function CanvasEditOverlay({
     // 고른 사람과 키보드로 옮기려는 사람이 같은 사람이다(T15 · REQ-01).
     host.focus();
 
-    // 위 `additive` 로 갈린다 — 그 상태로 끌리면 무리에 넣으려다 배치가 흐트러진다.
-    const picked = nextSelection(selection, hit.nodeId, additive);
+    // **히트가 부품이면 선택 키는 복합 키다**(SPEC-CANVAS-009 REQ-01). 히트 테스트는
+    // 004 부터 이미 `partId` 를 돌려주고 있었고, 009 가 바꾼 것은 그 값을 **버리지 않는
+    // 것** 하나다. 최상위 요소에서는 `frameKey` 가 `nodeId` 를 **그대로** 돌려주므로 이
+    // 줄은 004 와 바이트 동일한 문자열을 낸다(불변식 G11 · AC-06).
+    const key = frameKey(hit.nodeId, hit.partId);
+
+    // **부품 선택은 언제나 하나이고, 그 그룹과 함께 서지 않는다**(REQ-01-a · REQ-01-b).
+    // modifier 를 여기서 흘려보내는 것에 뜻이 있다: 부품을 무리에 더할 수 있게 하면
+    // "서로 다른 그룹의 부품 둘" 이라는 뜻이 정의되지 않은 상태가 만들어지고(A1), 8핸들이
+    // 두 상자에 서는 화면이 그 뒤를 따른다.
+    const picked = hit.partId === undefined
+      ? nextSelection(selection, key, additive)
+      : new Set([key]);
     if (picked !== selection) setSelection(picked);
-    if (additive) return;
+    if (additive && hit.partId === undefined) return;
 
     if (!(stage.width > 0) || !(stage.height > 0)) return;
 
     // 무리 이동: 같은 캔버스 단위 델타를 선택된 **모든** 요소에 더한다. 상한이 없으므로
     // `clampGroupDelta` 는 쓰지 않는다 — 아무 일도 하지 않는 호출은 읽는 사람에게
     // 상한이 있다고 거짓말한다(spec.md §드래그 기구).
-    const bases: DragBase[] = elements
-      .filter((el) => picked.has(el.id))
-      .map((el) => ({ nodeId: el.id, geometry: el.geometry }));
+    //
+    // 부품은 `selectedNodes` 가 **캔버스 단위 의사 노드**로 풀어 주므로, 잡는 순간의 기하도
+    // 이동 산술도 최상위 요소와 한 글자도 다르지 않다. 갈리는 자리는 쓰기 하나뿐이다
+    // (`patchGeometryByKey`).
+    const bases: DragBase[] = selectedNodes(elements, picked).map((el) => ({
+      nodeId: el.id,
+      geometry: el.geometry,
+    }));
     if (bases.length === 0) return;
 
-    // 히트는 `elements` 를 훑어 나온 id 이므로 그 요소는 반드시 있다(`canvasHitTest` 는
+    // 히트는 `elements` 를 훑어 나온 키이므로 그 노드는 반드시 있다(`canvasHitTest` 는
     // 배열 밖의 id 를 만들지 않는다). 없을 수 없는 경우에 가드를 두면 그 가드는 검증되지
     // 않은 채 남아 읽는 사람에게 "없을 수도 있다" 고 거짓말한다.
-    const anchorEl = elements.find((el) => el.id === hit.nodeId)!;
+    const anchorEl = nodeForKey(elements, key)!;
 
     dragRef.current = {
       mode: 'move',
@@ -1359,14 +1460,14 @@ export default function CanvasEditOverlay({
    * 쓰기는 곧 헛된 렌더 프레임이다(AC-E4).
    */
   const nudgeSelection = (delta: CanvasDelta): boolean => {
+    // **드래그와 같은 해석기를 지난다**(`selectedNodes`). 부품이 골라져 있으면 여기서도
+    // 캔버스 단위 의사 노드가 나오므로, 끌었을 때와 방향키로 옮겼을 때가 갈라질 수 없다.
+    const targets = selectedNodes(elements, selection);
+    if (targets.length === 0) return false;
     let next: CanvasNode[] = [...elements];
-    let moved = false;
-    for (const el of elements) {
-      if (!selection.has(el.id)) continue;
-      next = patchNodeGeometry(next, el.id, moveGeometry(el.geometry, delta));
-      moved = true;
+    for (const el of targets) {
+      next = patchGeometryByKey(next, el.id, moveGeometry(el.geometry, delta));
     }
-    if (!moved) return false;
     onElementsChange(next);
     return true;
   };
@@ -1690,6 +1791,45 @@ export default function CanvasEditOverlay({
     setSelection(new Set(outcome.liftedIds));
   };
 
+  /**
+   * 분리할 부품 — **정확히 하나를 골랐고 그것이 부품일 때만** 있다(SPEC-CANVAS-009 M6).
+   *
+   * `selectedGroup` 과 **같은 형상**이다: 한 함수가 단추의 활성 여부 · 안내가 뜰지 · 실제로
+   * 무엇을 빼는지를 모두 소유한다. 셋을 따로 지으면 "단추는 켜졌는데 눌러도 아무 일이
+   * 없다" 가 표현 가능해진다.
+   *
+   * 배열에 실재하는지까지 여기서 가린다 — 없는 부품 키가 선택에 남아 있어도(지워진 그룹)
+   * 단추가 켜지지 않는다(REQ-07).
+   */
+  const selectedPart = (): { groupId: string; partId: string } | undefined => {
+    if (selection.size !== 1) return undefined;
+    const key = [...selection][0]!;
+    if (!isPartKey(key)) return undefined;
+    const { nodeId, partId } = parseFrameKey(key);
+    if (partId === undefined || findPart(elements, nodeId, partId) === undefined) return undefined;
+    return { groupId: nodeId, partId };
+  };
+
+  /**
+   * 고른 부품 하나를 그룹 밖으로 뺀다 — 확인은 **컨트롤이 이미 받았다**(REQ-05-c).
+   *
+   * `applyUngroup` 과 같은 형상이고, 실제로 같은 자리에서 갈린다: 남을 부품이 1 개 이하면
+   * `detachPart` 자신이 `ungroupNode` 를 부른다(M6). 이 층은 그 갈래를 **알지 못한다** —
+   * 알면 조건이 두 자리가 되고, 둘이 어긋나는 날 "빼면 그룹이 남는다고 했는데 사라졌다"
+   * 가 된다.
+   */
+  const applyDetach = (): void => {
+    const target = selectedPart();
+    if (target === undefined) return;
+    const outcome = detachPart(elements, target.groupId, target.partId);
+    if (outcome.refusal !== undefined) return;
+    setGroupRefusal(null);
+    onElementsChange([...outcome.nodes]);
+    // 올라온 것이 선택으로 남는다 — 풀기가 같은 이유로 같은 일을 한다(방금 뺀 것을 곧바로
+    // 끌 수 있어야 한다).
+    setSelection(new Set(outcome.liftedIds));
+  };
+
   // 편집이 꺼져 있으면 DOM 에 아무것도 남기지 않는다(표시 전용).
   if (!enabled) return null;
 
@@ -1699,12 +1839,18 @@ export default function CanvasEditOverlay({
    * 그 id 가 남고 배열에는 없다.
    */
   const handleHost =
-    selection.size === 1 ? elements.find((el) => selection.has(el.id)) : undefined;
+    selection.size === 1 ? nodeForKey(elements, [...selection][0]!) : undefined;
 
   /** 정렬은 **맞출 상대가 있어야** 뜻이 있다 — 하나만 골라 놓고 맞출 곳은 없다. */
   const canAlign = selection.size >= 2;
-  /** 순서 이동은 하나만 골라도 뜻이 있다. */
-  const canOrder = selection.size >= 1;
+  /**
+   * 순서 이동은 하나만 골라도 뜻이 있다 — 다만 **최상위 원소**여야 한다.
+   *
+   * z-order 는 최상위 배열의 자리이고 부품에는 그 자리가 없다(부품 순서 바꾸기는 009 의
+   * 범위 밖이다). 세는 자를 `selection.size` 로 두면 부품만 고른 상태에서 단추가 켜지고,
+   * 눌러도 `bringToFront` 가 아무것도 찾지 못해 **눌러도 아무 일이 없는 단추**가 된다.
+   */
+  const canOrder = elements.some((el) => selection.has(el.id));
 
   /**
    * 묶을 수 있는가 — **둘 이상**이다(REQ-07 · AC-12). `canAlign` 과 같은 자다.
@@ -1726,15 +1872,30 @@ export default function CanvasEditOverlay({
    */
   const ungroupRulesAtRisk = rulesLostByUngroup(ungroupTarget);
 
+  /** 뺄 수 있는 부품(없으면 단추가 꺼진다 — SPEC-CANVAS-009 M6). */
+  const detachTarget = selectedPart();
+
+  /**
+   * 분리가 **버릴** 규칙 행의 수. 위 `ungroupRulesAtRisk` 와 **같은 규율**이다 — 판정은
+   * `groupOps` 의 순수 함수 하나가 소유하고 이 층은 그 수를 나를 뿐이다(REQ-05-c).
+   */
+  const detachRulesAtRisk =
+    detachTarget === undefined
+      ? 0
+      : rulesLostByDetach(elements, detachTarget.groupId, detachTarget.partId);
+
   /** 두 표면이 **같은 컴포넌트**를 그린다 — 그것이 I23 을 형상으로 만드는 유일한 길이다. */
   const groupTools = (
     <CanvasGroupTools
       canGroup={canGroup}
       canUngroup={ungroupTarget !== undefined}
       rulesAtRisk={ungroupRulesAtRisk}
+      canDetach={detachTarget !== undefined}
+      detachRulesAtRisk={detachRulesAtRisk}
       refusal={groupRefusal}
       onGroup={applyGroup}
       onUngroup={applyUngroup}
+      onDetach={applyDetach}
     />
   );
 
@@ -2020,8 +2181,13 @@ export default function CanvasEditOverlay({
           </CanvasScratchpadDropContext>,
           dockHost,
         )}
-      {elements.map((el) => {
-        if (!selection.has(el.id)) return null;
+      {/* 선택 윤곽 — **해석기를 지난 노드**를 두른다(SPEC-CANVAS-009 M3).
+
+          `elements` 를 직접 돌면 부품 키는 어느 원소와도 만나지 못해 골라도 테두리가 서지
+          않는다. `selectedNodes` 는 부품을 캔버스 단위 의사 노드로 풀어 주므로 `outlineBox`
+          가 한 글자도 바뀌지 않고 걸리고, 판정하는 상자와 보이는 상자가 여전히 같은
+          함수에서 나온다(위험 R1). */}
+      {selectedNodes(elements, selection).map((el) => {
         const box = outlineBox(el, projection, textWidths);
         return (
           <div

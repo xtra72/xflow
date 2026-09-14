@@ -1227,6 +1227,8 @@
         "groupUngroupAsk": "Ungrouping discards {rows} group rule row(s). Coordinates and styling stay on the parts, but the rule table cannot be restored. Continue?",
         "groupUngroupYes": "Discard rules and ungroup",
         "groupUngroupNo": "Keep the group",
+        "groupDetach": "Detach part",
+        "groupDetachAsk": "Detaching stops {rows} group rule row(s) from applying to this part. Coordinates and styling stay with it, but the rules do not follow. Continue?",
         "groupRefusalNested": "The selection already contains a group, so nothing was grouped. Groups are never nested.",
         "groupRefusalTooFew": "Select two or more elements to group them.",
         "gridStepPartial": "A {width} x {height} canvas is not divisible by a spacing of {step}, so the last cell is clipped. Grid, snapping and Shift+arrow still work in {step}-unit steps. Enter a value that divides both axes to fill the canvas evenly.",
