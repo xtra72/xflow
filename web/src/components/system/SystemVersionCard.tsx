@@ -169,7 +169,7 @@ export function SystemVersionCard({
     <section
       data-testid="system-version-card"
       className={cn(
-        'rounded-lg border border-(--color-border) bg-(--color-bg-elevated) p-6 shadow-sm',
+        'rounded-lg border border-(--color-border-default) bg-(--color-bg-elevated) p-6 shadow-sm',
       )}
     >
       <header className="mb-4 flex items-baseline justify-between gap-2">
@@ -311,8 +311,8 @@ export function SystemVersionCard({
           disabled={isChecking}
           className={cn(
             'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors',
-            'border-(--color-border) bg-(--color-bg-base) text-(--color-text-primary)',
-            'hover:bg-(--color-bg-hover)',
+            'border-(--color-border-default) bg-(--color-bg-primary) text-(--color-text-primary)',
+            'hover:bg-(--color-bg-elevated)',
             'disabled:cursor-not-allowed disabled:opacity-50',
           )}
         >

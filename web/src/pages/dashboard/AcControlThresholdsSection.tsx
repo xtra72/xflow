@@ -13,7 +13,7 @@ import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
-import ColorSwatchButton from './colorSwatchPalette';
+import ColorPicker from '@/components/common/colorpicker/ColorPicker';
 import type { ValueColorConfig, ValueColorRange } from './panels/acControlColors';
 
 export interface AcControlThresholdsSectionProps {
@@ -103,8 +103,10 @@ export default function AcControlThresholdsSection({
               {ranges.map((r, idx) => (
                 <div key={idx} className="flex w-full items-center gap-1.5">
                   <span className="shrink-0">
-                    <ColorSwatchButton
-                      color={r.color}
+                    <ColorPicker
+                      alpha
+                      clearable
+                      value={r.color}
                       onChange={(c) => updateRange(idx, { color: c ?? '#3b82f6' })}
                       ariaLabel={t('dashboard.thresholds.colorAria').replace('{index}', String(idx + 1))}
                     />

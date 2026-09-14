@@ -227,7 +227,7 @@ export function UpdateProgressStepper({
                     'h-0.5 flex-1 rounded',
                     state === 'complete'
                       ? 'bg-emerald-300 dark:bg-emerald-600'
-                      : 'bg-(--color-border)',
+                      : 'bg-(--color-border-default)',
                   )}
                   aria-hidden="true"
                 />
@@ -305,7 +305,7 @@ function StepBadge({ state, index }: { state: StepState; index: number }) {
     <span
       className={cn(
         base,
-        'border-(--color-border) bg-(--color-bg-base) text-(--color-text-muted)',
+        'border-(--color-border-default) bg-(--color-bg-primary) text-(--color-text-muted)',
       )}
       aria-label={t('system.update.stepper.pending')}
     >

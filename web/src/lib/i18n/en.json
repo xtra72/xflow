@@ -490,9 +490,7 @@
       "settingsAria": "Panel settings",
       "titleLabel": "Title",
       "maxLinesLabel": "Max lines",
-      "panelColor": "Panel color",
-      "pickCustom": "Pick custom",
-      "reset": "Reset"
+      "panelColor": "Panel color"
     },
     "hvacControl": {
       "stopped": "Stopped",
@@ -540,11 +538,6 @@
       "closeAria": "Close",
       "nameLabel": "Dashboard name",
       "namePlaceholder": "New dashboard"
-    },
-    "colorSwatch": {
-      "paletteAria": "{label} palette",
-      "defaultAria": "Default (unset)",
-      "unsetTitle": "Unset"
     },
     "scope": {
       "aria": "Dashboard scope",
@@ -750,7 +743,6 @@
       "heatmapLegendTickCount": "Tick count (2-10)",
       "thresholds": "Thresholds",
       "style": "Style",
-      "panelColorReset": "Reset",
       "previewExpandAria": "Expand preview",
       "splitterAria": "Adjust settings/preview width",
       "previewSplitterAria": "Adjust preview/data-source height",
@@ -842,6 +834,7 @@
         "baseColor": "Base color (fill inside outline)",
         "showThresholdZones": "Show threshold zones",
         "thresholdNamePlaceholder": "Name",
+        "thresholdColorAria": "Threshold {index} color",
         "deleteThresholdAria": "Delete threshold",
         "addThreshold": "Add threshold",
         "thresholdNormal": "Normal",
@@ -1508,6 +1501,7 @@
       "add": "Add",
       "ruleHint": "Value ≥ {min} → {color}",
       "deleteRuleAria": "Delete rule",
+      "ruleColorAria": "Rule {index} color",
       "collapseAria": "Collapse",
       "expandAria": "Expand",
       "dragOrderTitle": "Drag to reorder",
@@ -2237,6 +2231,8 @@
       "subtitle": "Edit the colors of the palette in use. Changes apply to the screen immediately.",
       "systemHint": "Following the system setting. You can edit the light and dark palettes separately.",
       "active": "In use",
+      "preview": "Preview",
+      "followCursor": "Follow cursor",
       "export": "Export",
       "import": "Import",
       "imported": "Palette imported",
@@ -3280,6 +3276,10 @@
     }
   },
   "panel": {
+    "color": {
+      "custom": "Custom color",
+      "hex": "Hex color value"
+    },
     "settings": {
       "aria": "Panel settings",
       "title": "Title",
@@ -4938,5 +4938,16 @@
       "rate": "Rate",
       "total": "Total"
     }
+  },
+  "colorPicker": {
+    "ariaDialog": "{label} color picker",
+    "custom": "Selected color",
+    "hex": "Hex color value",
+    "hue": "Hue",
+    "opacity": "Opacity",
+    "eyedropper": "Pick a color from the screen",
+    "presets": "Preset colors",
+    "recent": "Recently used colors",
+    "clear": "Clear color"
   }
 }

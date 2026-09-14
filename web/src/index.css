@@ -1,6 +1,21 @@
 @import "tailwindcss";
 
 /*
+ * `dark:` 를 OS 설정이 아니라 **앱이 고른 테마**에 건다.
+ *
+ * Tailwind v4 에서 `dark:` 의 기본값은 `prefers-color-scheme` 미디어쿼리다. 이 선언이
+ * 없으면 `useTheme` 이 `<html>` 에 붙이는 `.dark` 클래스가 아무것도 선택하지 못하고,
+ * 화면에 진실이 둘 생긴다 — 배경 같은 토큰(`--color-*`)은 앱의 선택을 따르는데 글자
+ * 같은 `dark:` 유틸리티는 OS 를 따른다. 둘이 어긋나는 조합(OS 밝음 + 앱 야간)에서
+ * 어두운 카드 위에 밝은 모드용 검은 글자가 남아 읽히지 않았다.
+ *
+ * `:where()` 로 감싸는 것은 명시도를 0 으로 두기 위해서다. 감싸지 않으면 `dark:` 유틸
+ * 하나가 클래스 둘 몫의 무게를 얻어, 같은 속성을 정하는 다른 유틸리티를 순서와 무관하게
+ * 이긴다.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
  * XFlow 앱 셸 커스텀 속성.
  * 사이드바 너비, 헤더 높이 등 레이아웃 관련 변수를 정의한다.
  *
@@ -37,12 +52,22 @@
   --color-status-error: var(--color-status-error);
   --color-status-warning: var(--color-status-warning);
   --color-status-info: var(--color-status-info);
+  --color-status-running-text: var(--color-status-running-text);
+  --color-status-stopped-text: var(--color-status-stopped-text);
+  --color-status-error-text: var(--color-status-error-text);
+  --color-status-warning-text: var(--color-status-warning-text);
+  --color-status-info-text: var(--color-status-info-text);
 
   /* 시맨틱 컬러 토큰 — 인터랙티브 */
   --color-interactive-primary: var(--color-interactive-primary);
   --color-interactive-hover: var(--color-interactive-hover);
   --color-interactive-active: var(--color-interactive-active);
   --color-interactive-muted: var(--color-interactive-muted);
+
+  /* 시맨틱 컬러 토큰 — 플로우 편집기 (SPEC-THEME-001) */
+  --color-flow-dot: var(--color-flow-dot);
+  --color-flow-edge: var(--color-flow-edge);
+  --color-flow-area: var(--color-flow-area);
 }
 
 /* ---------------------------------------------------------------------------
@@ -79,11 +104,23 @@
   --color-status-warning: #ca8a04; /* yellow-600 */
   --color-status-info: #2563eb; /* blue-600 */
 
+  /* 글자용 상태색 (SPEC-THEME-001) */
+  --color-status-running-text: #166534;
+  --color-status-stopped-text: #4b5563;
+  --color-status-error-text: #b91c1c;
+  --color-status-warning-text: #92400e;
+  --color-status-info-text: #1d4ed8;
+
   /* 인터랙티브 */
   --color-interactive-primary: #2563eb; /* blue-600 */
   --color-interactive-hover: #1d4ed8; /* blue-700 */
   --color-interactive-active: #1e40af; /* blue-800 */
   --color-interactive-muted: #dbeafe; /* blue-100 — 선택 행 배경 */
+
+  /* 플로우 편집기 — 오늘 값 그대로(SPEC-THEME-001 불변식 I5) */
+  --color-flow-dot: #d1d5db;
+  --color-flow-edge: #d4d4d8;
+  --color-flow-area: #d4d4d8;
 }
 
 /* ---------------------------------------------------------------------------
@@ -116,11 +153,24 @@
   --color-status-warning: #facc15; /* yellow-400 */
   --color-status-info: #60a5fa; /* blue-400 */
 
+  /* 글자용 상태색 (SPEC-THEME-001) */
+  --color-status-running-text: #4ade80;
+  --color-status-stopped-text: #d1d5db;
+  --color-status-error-text: #fca5a5;
+  --color-status-warning-text: #fbbf24;
+  --color-status-info-text: #93c5fd;
+
   /* 인터랙티브 */
   --color-interactive-primary: #3b82f6; /* blue-500 */
   --color-interactive-hover: #60a5fa; /* blue-400 */
   --color-interactive-active: #93c5fd; /* blue-300 */
   --color-interactive-muted: #1e3a8a; /* blue-900 — 선택 행 배경 */
+
+  /* 플로우 편집기 — 점격자만 오늘 값과 다르다. 오늘은 day 값이 야간에도 그대로
+     쓰여 어두운 바탕 위에 밝은 점이 남았다(사용자 신고). */
+  --color-flow-dot: #52525c;
+  --color-flow-edge: #52525c;
+  --color-flow-area: #52525c;
 }
 
 /*

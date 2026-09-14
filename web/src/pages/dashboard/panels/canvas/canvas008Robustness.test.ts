@@ -28,6 +28,13 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  actualCanvasIdentifiers,
+  actualCanvasImports,
+  allowedCanvasIdentifiers,
+  allowedCanvasImports,
+} from '@/test/panelSettingsDialogCanvasSurface';
+
+import {
   DEFAULT_CANVAS_SIZE,
   parseCanvasConfig,
   type CanvasElement,
@@ -433,16 +440,35 @@ describe('불변식 J10 — `CanvasProjection` 은 두 칸이다', () => {
   });
 });
 
-describe('불변식 J12 — `PanelSettingsDialog.tsx` 는 자라지 않는다 (006 I7)', () => {
-  it('행 수가 spec.md 가 실측해 적은 8,371 그대로다', () => {
-    const src = fs.readFileSync(
-      path.resolve(CANVAS_DIR, '../../PanelSettingsDialog.tsx'),
-      'utf8',
-    );
-    // `split('\n').length` 는 끝의 개행 때문에 한 줄을 더 센다. `wc -l` 과 같은 셈으로
-    // 맞춘다 — spec.md 가 적은 수가 그 셈의 값이기 때문이다.
-    const lines = src.split('\n').length - (src.endsWith('\n') ? 1 : 0);
-    expect(lines).toBe(8371);
+describe('불변식 J12 — 캔버스 작업이 `PanelSettingsDialog.tsx` 로 새지 않는다 (006 I7)', () => {
+  // **행 수 등식을 걷어냈다(0.3.0).** 이 자리가 오래 들고 있던 자는 `toBe(8371)` →
+  // `toBe(8373)` 이었다. 그 수는 불변식이 아니라 **대리**다 — 막으려는 것은 캔버스 작업이
+  // 이 파일로 새는 것인데, 등식은 캔버스와 무관한 편집에도(그리고 **줄이는** 편집에도)
+  // 울린다. 실제로 패널 색상 자유 입력 두 줄(import 1 + JSX 1)에 울렸고, 다음 사람은 왜
+  // 울렸는지 보는 대신 수를 고쳤다. **재기준되어야 하는 가드는 보호처럼 보이는 소음이다.**
+  //
+  // 대신 불변식을 **직접** 잰다. 자는 `src/test/panelSettingsDialogCanvasSurface.ts` 에 있고
+  // 007 K13 과 **같은 자를 나눠 쓴다**(허용목록이 두 벌이면 갈라진다 — 지금 SPEC 과 시험이
+  // 갈라진 것이 바로 그 부류의 사고다).
+  it('`panels/canvas/` 에서 들이는 모듈과 이름이 허용목록 그대로다', () => {
+    expect(
+      actualCanvasImports(),
+      '006 I7 이 깨졌다 — 다이얼로그의 캔버스 수입이 허용목록과 다르다.\n' +
+        '늘었다면 캔버스 작업이 다이얼로그로 샌 것이다: 그 코드를 `panels/canvas/` 안으로 옮겨라.\n' +
+        '다이얼로그만 펼 수 있는 자리라면(도크 자리처럼) `src/test/panelSettingsDialogCanvasSurface.ts` 의\n' +
+        '`ALLOWED_CANVAS_IMPORTS` 에 적고, **왜 그 코드가 캔버스 밖에 사는지**를 SPEC 에 남겨라.',
+    ).toEqual(allowedCanvasImports());
+  });
+
+  it('수입 없이 펴 넣은 캔버스 코드도 없다 — `Canvas…` 이름이 허용목록에서만 나온다', () => {
+    // 수입 허용목록이 못 보는 한 가지가 **인라인**이다. 그 자리를 등식이 막고 있었으므로,
+    // 등식을 걷는 대신 같은 구멍을 **파생**으로 막는다 — 고정 열거가 아니라 허용목록에서
+    // 뽑으므로, 새로 이름 붙인 캔버스 표면(`CanvasScratchpad` 든 `CanvasFoo` 든)도 걸린다.
+    expect(
+      actualCanvasIdentifiers(),
+      '허용목록에 없는 `Canvas…` 이름이 다이얼로그 본문에 서 있다 — 수입하지 않고 펴 넣은 캔버스 코드다.\n' +
+        '캔버스 어휘를 쓰는 코드는 `panels/canvas/` 에 산다. 그리로 옮기고 여기서는 수입만 해라.',
+    ).toEqual(allowedCanvasIdentifiers());
   });
 
   it('008 이 그 파일에 심은 것은 도크 자리 하나뿐이다 — 카탈로그도 서랍도 들어가지 않았다', () => {

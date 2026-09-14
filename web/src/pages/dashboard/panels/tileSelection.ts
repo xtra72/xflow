@@ -6,11 +6,18 @@
 
 import type { CSSProperties } from 'react';
 
+import { withAlpha } from '@/components/common/colorpicker/colorFormat';
+
 import { resolvePanelTitleStyle } from '../panelChromeContext';
 import { resolveValueColor, type ValueColorRule } from './propertiesGridStyle';
 
-/** 배경 틴트의 알파(16진 2자리) — 글자색과 같은 색을 옅게 깐다. */
-export const TILE_TINT_ALPHA = '20';
+/**
+ * 타일 배경 틴트의 불투명도. 옛 16진 두 자리 `'20'` 과 같은 값을 **수**로 든다.
+ *
+ * 문자열이던 시절에는 색 뒤에 그대로 이어붙였고, 그래서 색이 8자리면 10자리 무효
+ * 문자열이 되어 선언이 조용히 버려졌다. 이제 `withAlpha` 가 접는다.
+ */
+export const TILE_TINT_ALPHA = 0x20 / 255;
 
 /**
  * 그릴 타일과 그 순서.
@@ -77,7 +84,10 @@ export function resolveTileStyle(
   }
 
   const merged: CSSProperties = { ...(base ?? {}), ...own };
-  if (own?.color) merged.backgroundColor = `${own.color}${TILE_TINT_ALPHA}`;
+  // 접을 수 없는 색이면 틴트를 아예 만들지 않는다 — 옛 이어붙이기는 무효 문자열을
+  // 넣고 `hasOwnBackground` 만 켜서, 배경이 없는데 기본 클래스까지 죽는 상태를 만들었다.
+  const tint = withAlpha(own?.color as string | undefined, TILE_TINT_ALPHA);
+  if (tint) merged.backgroundColor = tint;
   if (bg) merged.backgroundColor = bg;
 
   return { style: merged, hasOwnBackground: merged.backgroundColor !== undefined };

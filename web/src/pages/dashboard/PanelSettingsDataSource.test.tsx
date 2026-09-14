@@ -910,7 +910,10 @@ describe('REQ-18/19/20/21 — 선택 행 인라인 펼침 세부 정보', () => 
     const detail = within(select).getByTestId('store-row-detail-k1');
     // 색상 전용 행 라벨 + 색상 입력이 존재하고, 편집 시 series[i].color 로 반영된다.
     expect(within(detail).getByText('dashboard.settings.seriesDetailsColor')).toBeInTheDocument();
-    fireEvent.change(within(detail).getByTestId('chart-store-series-color-0'), {
+    // 색 칸은 팝오버를 여는 단추다 — 값은 팝오버 안의 16진 칸으로 들어간다.
+    // 팝오버는 `document.body` 로 포털하므로 `detail` 안에서 찾지 않는다.
+    fireEvent.click(within(detail).getByTestId('chart-store-series-color-0'));
+    fireEvent.change(screen.getByTestId('colorpicker-hex'), {
       target: { value: '#123456' },
     });
     const patch = onConfigChange.mock.calls.at(-1)![0] as {

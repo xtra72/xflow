@@ -1120,8 +1120,9 @@ describe('TsdbSourceSection — 시리즈별 개별 이름', () => {
     );
     const swatch = await screen.findByTestId('chart-tsdb-registered-color-0');
     fireEvent.click(swatch);
-    // 팔레트에서 아무 색이나 고르면 그 색이 항목에 붙는다.
-    const swatches = screen.getAllByRole('button', { name: /#/ });
+    // 팔레트에서 아무 색이나 고르면 그 색이 항목에 붙는다. 칸은 목록상자의
+    // `option` 이며 접근성 이름이 hex 문자열 자체다.
+    const swatches = screen.getAllByRole('option', { name: /#/ });
     fireEvent.click(swatches[0]!);
     await waitFor(() => expect(lastSeries(patches)[0]!.color).toBeTruthy());
   });
@@ -1150,7 +1151,7 @@ describe('TsdbSourceSection — 시리즈별 개별 이름', () => {
     expect(screen.queryByTestId('chart-tsdb-registered-color-0')).toBeNull();
 
     fireEvent.click(await screen.findByTestId('chart-tsdb-registered-group-color-0-1'));
-    fireEvent.click(screen.getAllByRole('button', { name: /#/ })[0]!);
+    fireEvent.click(screen.getAllByRole('option', { name: /#/ })[0]!);
     await waitFor(() => expect(lastSeries(patches)[0]!.group_color?.['B']).toBeTruthy());
     // 다른 조합은 건드리지 않는다.
     expect(lastSeries(patches)[0]!.group_color?.['A']).toBeUndefined();

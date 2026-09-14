@@ -22,7 +22,7 @@ import {
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
-import ColorSwatchButton from './colorSwatchPalette';
+import ColorPicker from '@/components/common/colorpicker/ColorPicker';
 import {
   AC_MODE_KEYS,
   FAN_SPEED_KEYS,
@@ -73,7 +73,7 @@ function SimpleStyleRow({
         {icon}
         {label}
       </span>
-      <ColorSwatchButton color={color} onChange={onChange} ariaLabel={label} />
+      <ColorPicker alpha clearable value={color} onChange={onChange} ariaLabel={label} />
     </div>
   );
 }
@@ -155,8 +155,10 @@ function ControlButtonColorEditor({
         {/* 미선택 */}
         <div className="flex items-center justify-between">
           <span className="text-[11px] text-(--color-text-secondary)">{t('dashboard.acStyle.unselected')}</span>
-          <ColorSwatchButton
-            color={cfg.unselected}
+          <ColorPicker
+            alpha
+            clearable
+            value={cfg.unselected}
             onChange={setUnselected}
             ariaLabel={t('dashboard.acStyle.unselectedColorAria')}
           />
@@ -197,8 +199,10 @@ function ControlButtonColorEditor({
         {mode === 'unified' && (
           <div className="flex items-center justify-between pl-2">
             <span className="text-[10px] text-(--color-text-muted)">{t('dashboard.acStyle.selectedColor')}</span>
-            <ColorSwatchButton
-              color={cfg.selectedColor}
+            <ColorPicker
+              alpha
+              clearable
+              value={cfg.selectedColor}
               onChange={setSelectedColor}
               ariaLabel={t('dashboard.acStyle.selectedColorAria')}
             />
@@ -214,8 +218,10 @@ function ControlButtonColorEditor({
                 <span className="text-[11px] text-(--color-text-secondary)">
                   {t(AC_MODE_LABEL_KEYS[key])}
                 </span>
-                <ColorSwatchButton
-                  color={cfg.perButton?.[key]}
+                <ColorPicker
+                  alpha
+                  clearable
+                  value={cfg.perButton?.[key]}
                   onChange={(c) => setPerButton(key, c)}
                   ariaLabel={t('dashboard.acStyle.modeColorAria').replace('{label}', t(AC_MODE_LABEL_KEYS[key]))}
                 />
@@ -252,8 +258,10 @@ function FanLevelColorEditor({
       <div className="space-y-1">
         <div className="flex items-center justify-between">
           <span className="text-[11px] text-(--color-text-secondary)">{t('dashboard.acStyle.unselected')}</span>
-          <ColorSwatchButton
-            color={cfg.unselected}
+          <ColorPicker
+            alpha
+            clearable
+            value={cfg.unselected}
             onChange={setUnselected}
             ariaLabel={t('dashboard.acStyle.fanUnselectedAria')}
           />
@@ -264,8 +272,10 @@ function FanLevelColorEditor({
             <span className="text-[11px] text-(--color-text-secondary)">
               {t(FAN_SPEED_LABEL_KEYS[key])}
             </span>
-            <ColorSwatchButton
-              color={cfg.perLevel?.[key]}
+            <ColorPicker
+              alpha
+              clearable
+              value={cfg.perLevel?.[key]}
               onChange={(c) => setLevel(key, c)}
               ariaLabel={t('dashboard.acStyle.fanLevelColorAria').replace('{label}', t(FAN_SPEED_LABEL_KEYS[key]))}
             />

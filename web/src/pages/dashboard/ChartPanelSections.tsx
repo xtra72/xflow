@@ -12,6 +12,7 @@ import type { PanelConfig } from '@/stores/uiStore';
 import { useAgents } from '@/hooks/useAgent';
 import { useStoreKeysWithTags, useStoreTagPairs } from '@/services/api/store';
 import { useTranslation } from '@/lib/i18n';
+import ColorPicker from '@/components/common/colorpicker/ColorPicker';
 
 import type {
   TableColumn,
@@ -1772,13 +1773,13 @@ export function SeriesDetailEditor({
         <label className="shrink-0 text-sm font-medium text-(--color-text-muted)">
           {t('dashboard.settings.seriesDetailsColor')}
         </label>
-        <input
-          type="color"
-          value={series.color ?? pickSeriesColor(index)}
-          onChange={(e) => onPatch({ color: e.target.value })}
-          aria-label={t('dashboard.chart.storeSeriesColorAria').replace('{key}', series.key)}
-          data-testid={`chart-store-series-color-${index}`}
-          className="h-7 w-9 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+        <ColorPicker
+          alpha
+          value={series.color}
+          inheritedColor={pickSeriesColor(index)}
+          onChange={(c) => onPatch({ color: c })}
+          ariaLabel={t('dashboard.chart.storeSeriesColorAria').replace('{key}', series.key)}
+          testId={`chart-store-series-color-${index}`}
         />
       </div>
       {positionEditor}
@@ -1811,20 +1812,19 @@ function DeltaColorSwatch({
   onChange: (color: string) => void;
 }): React.ReactElement {
   return (
-    <label className="flex items-center gap-1.5 text-[11px] text-(--color-text-muted)">
-      <span
-        className="h-4 w-4 shrink-0 rounded-sm border border-(--color-border-default)"
-        style={{ backgroundColor: value ?? fallback }}
+    <span className="flex items-center gap-1.5 text-[11px] text-(--color-text-muted)">
+      <ColorPicker
+        alpha
+        value={value}
+        inheritedColor={fallback}
+        onChange={(c) => {
+          if (c !== undefined) onChange(c);
+        }}
+        ariaLabel={label}
+        testId={testId}
       />
       {label}
-      <input
-        type="color"
-        data-testid={testId}
-        value={value ?? fallback}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-0 w-0 opacity-0"
-      />
-    </label>
+    </span>
   );
 }
 
@@ -2101,18 +2101,14 @@ export function StatChartSection({
                 placeholder="min"
                 className="w-20 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-xs text-(--color-text-primary) outline-none focus:border-blue-500"
               />
-              <label className="relative flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md">
-                <span
-                  className="h-4 w-4 rounded-sm border border-(--color-border-default)"
-                  style={{ backgroundColor: r.color }}
-                />
-                <input
-                  type="color"
-                  value={r.color}
-                  onChange={(e) => updateRule(i, { color: e.target.value })}
-                  className="absolute inset-0 cursor-pointer opacity-0"
-                />
-              </label>
+              <ColorPicker
+                alpha
+                value={r.color}
+                onChange={(c) => {
+                  if (c !== undefined) updateRule(i, { color: c });
+                }}
+                ariaLabel={t('dashboard.chart.ruleColorAria').replace('{index}', String(i + 1))}
+              />
               <span className="flex-1 text-[11px] text-(--color-text-muted)">
                 {t('dashboard.chart.ruleHint')
                   .replace('{min}', String(r.min))
@@ -2408,12 +2404,12 @@ function AxisFontRow({
         aria-label={`${label} ${t('dashboard.chart.fontSize')}`}
         className="w-14 rounded border border-(--color-border-default) bg-(--color-bg-elevated) px-1.5 py-1 text-center text-[11px] text-(--color-text-primary) outline-none focus:border-blue-500"
       />
-      <input
-        type="color"
-        value={font?.color ?? '#9ca3af'}
-        onChange={(e) => onChange({ color: e.target.value })}
-        aria-label={`${label} ${t('dashboard.chart.fontColor')}`}
-        className="h-6 w-6 shrink-0 cursor-pointer rounded border border-(--color-border-default) bg-transparent p-0"
+      <ColorPicker
+        alpha
+        value={font?.color}
+        inheritedColor="#9ca3af"
+        onChange={(c) => onChange({ color: c })}
+        ariaLabel={`${label} ${t('dashboard.chart.fontColor')}`}
       />
       <button
         type="button"
@@ -2424,7 +2420,7 @@ function AxisFontRow({
         className={`h-6 w-6 shrink-0 rounded border text-[11px] font-bold transition-colors ${
           isBold
             ? 'border-blue-500 bg-blue-500/10 text-blue-500'
-            : 'border-(--color-border-default) text-(--color-text-muted) hover:bg-(--color-bg-hover)'
+            : 'border-(--color-border-default) text-(--color-text-muted) hover:bg-(--color-bg-elevated)'
         }`}
       >
         B
@@ -3070,21 +3066,13 @@ export function LineChartSection({
                   placeholder={t('dashboard.chart.boundaryValuePlaceholder')}
                   aria-label={t('dashboard.chart.boundaryValueAria')}
                 />
-                <span
-                  className="h-5 w-5 shrink-0 cursor-pointer rounded ring-1 ring-(--color-border-default)"
-                  style={{ backgroundColor: th.color }}
-                  title={t('dashboard.chart.colorChangeTitle')}
-                  onClick={() => {
-                    document.getElementById(`th-color-${idx}`)?.click();
-                  }}
-                />
-                <input
-                  id={`th-color-${idx}`}
-                  type="color"
+                <ColorPicker
+                  alpha
                   value={th.color}
-                  onChange={(e) => patchThreshold(idx, { color: e.target.value })}
-                  className="invisible absolute h-0 w-0"
-                  tabIndex={-1}
+                  onChange={(c) => {
+                    if (c !== undefined) patchThreshold(idx, { color: c });
+                  }}
+                  ariaLabel={t('dashboard.chart.colorChangeTitle')}
                 />
                 <select
                   value={th.fill_direction ?? ''}

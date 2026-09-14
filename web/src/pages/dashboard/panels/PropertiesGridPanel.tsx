@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import { Activity, HardDrive, Moon } from 'lucide-react';
 
+import { withAlpha } from '@/components/common/colorpicker/colorFormat';
 import { useDeviceDetailTarget } from '@/hooks/useDetailTargets';
 import { useDeviceRealtime } from '@/hooks/useDevice';
 import { useTranslation } from '@/lib/i18n';
@@ -451,7 +452,7 @@ function PropertyCard({
       )}
       style={{
         ...(background ? { backgroundColor: background } : undefined),
-        ...(borderColor ? { borderColor: `${borderColor}30` } : undefined),
+        ...(borderColor ? { borderColor: withAlpha(borderColor, 0x30 / 255) } : undefined),
         ...(area
           ? { gridColumn: `${area.x} / span ${area.w}`, gridRow: `${area.y} / span ${area.h}` }
           : undefined),

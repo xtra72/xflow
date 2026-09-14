@@ -34,7 +34,7 @@ import {
   type TsdbSeriesEnumResult,
 } from '@/services/api/tsdbSeriesEnum';
 import { SeriesSelectTable, type SeriesRow } from '@/pages/agents/SeriesSelectTable';
-import ColorSwatchButton from './colorSwatchPalette';
+import ColorPicker from '@/components/common/colorpicker/ColorPicker';
 import { FillPreviousLimitField } from './FillPreviousLimitField';
 import { SeriesNameFormatField } from './SeriesNameFormatField';
 import { SeriesRangeField } from './SeriesRangeField';
@@ -702,8 +702,10 @@ export function TsdbSourceSection({
             }}
             className="min-w-0 flex-1 rounded border border-(--color-border-default) bg-(--color-bg-surface) px-1 py-0.5 text-[11px]"
           />
-          <ColorSwatchButton
-            color={color}
+          <ColorPicker
+            alpha
+            clearable
+            value={color}
             testId={colorTestId}
             ariaLabel={t('dashboard.chart.tsdbRegisteredColor')}
             onChange={(next) =>
@@ -1329,7 +1331,7 @@ export function TsdbSourceSection({
               onClick={() => {
                 void refresh();
               }}
-              className="rounded border border-(--color-border) px-2 py-0.5 text-xs disabled:opacity-50"
+              className="rounded border border-(--color-border-default) px-2 py-0.5 text-xs disabled:opacity-50"
             >
               {refreshing
                 ? t('dashboard.chart.tsdbGroupPreviewLoading')
@@ -1385,7 +1387,7 @@ export function TsdbSourceSection({
             type="button"
             data-testid="chart-tsdb-registered-clear"
             onClick={() => applySelection([])}
-            className="rounded border border-(--color-border) px-1.5 py-0.5 text-[11px] text-(--color-text-muted)"
+            className="rounded border border-(--color-border-default) px-1.5 py-0.5 text-[11px] text-(--color-text-muted)"
           >
             {t('dashboard.chart.tsdbRegisteredClear')}
           </button>
@@ -1461,7 +1463,7 @@ export function FillStrategyField({
             aria-label={t('dashboard.chart.tsdbFillWhy')}
             title={t('dashboard.chart.tsdbFillWhy')}
             onClick={() => setWhyOpen((v) => !v)}
-            className="rounded-full border border-(--color-border) px-1 text-[10px] leading-none text-(--color-text-muted)"
+            className="rounded-full border border-(--color-border-default) px-1 text-[10px] leading-none text-(--color-text-muted)"
           >
             ?
           </button>

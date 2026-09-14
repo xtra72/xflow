@@ -53,7 +53,7 @@ export function LinkIndicator({
         'nodrag cursor-pointer',
         active
           ? 'border-blue-400 bg-blue-100 text-blue-700 dark:border-blue-500 dark:bg-blue-900/40 dark:text-blue-300'
-          : 'border-zinc-200 bg-zinc-50 text-zinc-500 hover:border-blue-300 hover:text-blue-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400',
+          : 'border-(--color-border-default) bg-(--color-bg-secondary) text-(--color-text-muted) hover:border-blue-300 hover:text-blue-600',
       )}
     >
       <Link2 className="h-2 w-2" />

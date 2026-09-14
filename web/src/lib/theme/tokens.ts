@@ -82,6 +82,15 @@ export const TOKEN_CATEGORIES: TokenCategory[] = [
       { name: 'status-error', cssVar: '--color-status-error', label: '오류', hint: '실패 · 위험' },
       { name: 'status-warning', cssVar: '--color-status-warning', label: '경고', hint: '주의' },
       { name: 'status-info', cssVar: '--color-status-info', label: '정보', hint: '안내' },
+      // 아래 다섯은 **글자용**이다. 위 다섯은 점·막대를 칠하라고 고른 값이라 글자로
+      // 쓰면 밝은 테마에서 AA(4.5:1)를 넘지 못한다 — 실측으로 `status-running` 이
+      // 3.21, `status-warning` 이 2.86 이었다. 점의 대비 기준과 글자의 대비 기준은
+      // 다르므로 한 값으로 둘을 다 하려 하면 어느 한쪽이 진다.
+      { name: 'status-running-text', cssVar: '--color-status-running-text', label: '실행 글자', hint: '배지 · 상태 글자' },
+      { name: 'status-stopped-text', cssVar: '--color-status-stopped-text', label: '정지 글자', hint: '배지 · 상태 글자' },
+      { name: 'status-error-text', cssVar: '--color-status-error-text', label: '오류 글자', hint: '배지 · 경고 글자' },
+      { name: 'status-warning-text', cssVar: '--color-status-warning-text', label: '경고 글자', hint: '배지 · 주의 글자' },
+      { name: 'status-info-text', cssVar: '--color-status-info-text', label: '정보 글자', hint: '배지 · 안내 글자' },
     ],
   },
   {
@@ -92,6 +101,17 @@ export const TOKEN_CATEGORIES: TokenCategory[] = [
       { name: 'interactive-hover', cssVar: '--color-interactive-hover', label: '호버 상호작용', hint: '마우스 오버' },
       { name: 'interactive-active', cssVar: '--color-interactive-active', label: '활성 상호작용', hint: '눌림 · 선택' },
       { name: 'interactive-muted', cssVar: '--color-interactive-muted', label: '비활성 상호작용', hint: '선택 배경 · 비활성' },
+    ],
+  },
+  {
+    // 플로우 편집기 전용. 셋 다 기존 21개로는 표현할 수 없어서 새로 만든 것이며,
+    // 그 근거는 SPEC-THEME-001 §결정 1 에 자리마다 적혀 있다.
+    category: 'flow',
+    label: '플로우 편집기',
+    tokens: [
+      { name: 'flow-dot', cssVar: '--color-flow-dot', label: '캔버스 점격자', hint: '편집기 바탕의 점' },
+      { name: 'flow-edge', cssVar: '--color-flow-edge', label: '연결선', hint: '노드와 노드를 잇는 선' },
+      { name: 'flow-area', cssVar: '--color-flow-area', label: '영역 상자', hint: '점선으로 묶은 영역' },
     ],
   },
 ];
@@ -148,11 +168,26 @@ export const DAY_PRESET: ThemeTokens = {
   '--color-status-warning': '#ca8a04', // yellow-600
   '--color-status-info': '#2563eb', // blue-600
 
+  // 글자용 상태색 — 칠(위 다섯) 위에서도, 표면 위에서도 AA 를 넘도록 계산해 골랐다.
+  // day 최저 대비 4.99(오류 글자 · 15% 칠 위).
+  '--color-status-running-text': '#166534', // green-800
+  '--color-status-stopped-text': '#4b5563', // gray-600
+  '--color-status-error-text': '#b91c1c', // red-700
+  '--color-status-warning-text': '#92400e', // amber-800
+  '--color-status-info-text': '#1d4ed8', // blue-700
+
   // 인터랙티브
   '--color-interactive-primary': '#2563eb', // blue-600
   '--color-interactive-hover': '#1d4ed8', // blue-700
   '--color-interactive-active': '#1e40af', // blue-800
   '--color-interactive-muted': '#dbeafe', // blue-100 — 선택 행 배경
+
+  // --- 플로우 편집기 (SPEC-THEME-001) ---
+  // 셋 다 **오늘 값 그대로**다. 토큰화는 닿을 수 있게 만드는 일이지 다시 칠하는 일이
+  // 아니며, 둘을 같은 커밋에서 하면 회귀가 재배색에 묻힌다(불변식 I5).
+  '--color-flow-dot': '#d1d5db', // EditorPage 에 박혀 있던 값
+  '--color-flow-edge': '#d4d4d8', // zinc-300 — stroke-zinc-300
+  '--color-flow-area': '#d4d4d8', // zinc-300 — border-zinc-300/70 의 기색
 };
 
 // ---------------------------------------------------------------------------
@@ -186,11 +221,26 @@ export const NIGHT_PRESET: ThemeTokens = {
   '--color-status-warning': '#facc15', // yellow-400
   '--color-status-info': '#60a5fa', // blue-400
 
+  // 글자용 상태색 — night 최저 대비 5.42(경고 글자 · 20% 칠 위).
+  '--color-status-running-text': '#4ade80', // green-400
+  '--color-status-stopped-text': '#d1d5db', // gray-300
+  '--color-status-error-text': '#fca5a5', // red-300
+  '--color-status-warning-text': '#fbbf24', // amber-400
+  '--color-status-info-text': '#93c5fd', // blue-300
+
   // 인터랙티브
   '--color-interactive-primary': '#3b82f6', // blue-500
   '--color-interactive-hover': '#60a5fa', // blue-400
   '--color-interactive-active': '#93c5fd', // blue-300
   '--color-interactive-muted': '#1e3a8a', // blue-900 — 선택 행 배경
+
+  // --- 플로우 편집기 (SPEC-THEME-001) ---
+  // 점격자만 오늘 값과 다르다. 오늘은 day 와 같은 `#d1d5db` 한 값이 야간에도 그대로
+  // 쓰여 어두운 바탕 위에 밝은 점이 남았다 — 사용자가 신고한 그 무늬다. 야간 값은
+  // 연결선과 같은 단(zinc-600)으로 내린다.
+  '--color-flow-dot': '#52525c', // zinc-600
+  '--color-flow-edge': '#52525c', // zinc-600 — dark:stroke-zinc-600
+  '--color-flow-area': '#52525c', // zinc-600 — dark:border-zinc-600/60 의 기색
 };
 
 /** 프리셋 식별자 -> 기본 팔레트 */

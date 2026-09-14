@@ -256,7 +256,7 @@ export function UpdateDialog({ open, onClose, version, isAdmin = false }: Update
         onClick={(e) => e.stopPropagation()}
       >
         {/* 헤더 */}
-        <header className="flex items-center justify-between border-b border-(--color-border) px-5 py-3">
+        <header className="flex items-center justify-between border-b border-(--color-border-default) px-5 py-3">
           <h2 id="update-dialog-title" className="text-base font-semibold">
             {t('system.update.title')}
           </h2>
@@ -313,7 +313,7 @@ export function UpdateDialog({ open, onClose, version, isAdmin = false }: Update
         </div>
 
         {/* 푸터 — 단계별 액션 버튼 */}
-        <footer className="flex items-center justify-end gap-2 border-t border-(--color-border) px-5 py-3">
+        <footer className="flex items-center justify-end gap-2 border-t border-(--color-border-default) px-5 py-3">
           {step === 'info' ? (
             <>
               <FooterButton
@@ -388,7 +388,7 @@ function InfoStep({ version }: { version: VersionInfo }) {
     <div data-testid="update-dialog-step-info" className="space-y-3 text-sm">
       <p className="text-(--color-text-muted)">{t('system.update.info.desc')}</p>
 
-      <dl className="grid grid-cols-2 gap-3 rounded border border-(--color-border) bg-(--color-bg-base) p-3 text-sm">
+      <dl className="grid grid-cols-2 gap-3 rounded border border-(--color-border-default) bg-(--color-bg-primary) p-3 text-sm">
         <div>
           <dt className="text-xs uppercase tracking-wide text-(--color-text-muted)">
             {t('system.update.info.currentVersion')}
@@ -482,7 +482,7 @@ function ConfirmStep({
 
       {/* v0.2.0 (M9): admin 전용 target dropdown — xflowd / xflow-agent / xflow 선택. */}
       {isAdmin ? (
-        <label className="flex items-center gap-2 rounded-md border border-(--color-border) bg-(--color-bg-base) p-3 text-xs">
+        <label className="flex items-center gap-2 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-3 text-xs">
           <span className="font-medium text-(--color-text-primary)">
             {t('system.update.confirm.targetLabel')}
           </span>
@@ -495,7 +495,7 @@ function ConfirmStep({
               )
             }
             className={cn(
-              'rounded-md border border-(--color-border) bg-(--color-bg-surface) px-2 py-1 text-xs',
+              'rounded-md border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 text-xs',
               'text-(--color-text-primary)',
             )}
           >
@@ -516,7 +516,7 @@ function ConfirmStep({
       <label
         className={cn(
           'flex items-start gap-2 rounded-md border p-3 text-xs',
-          'border-(--color-border) bg-(--color-bg-base) text-(--color-text-primary)',
+          'border-(--color-border-default) bg-(--color-bg-primary) text-(--color-text-primary)',
           autoRestartDisabled && 'opacity-60',
         )}
       >
@@ -631,7 +631,7 @@ function StatusLabel({ status }: { status: OperationStatus }) {
   // 상태별 라벨은 system.update.statusLabel.<status> 키로 해석한다.
   return (
     <p
-      className="rounded border border-(--color-border) bg-(--color-bg-base) px-3 py-2 text-xs font-medium"
+      className="rounded border border-(--color-border-default) bg-(--color-bg-primary) px-3 py-2 text-xs font-medium"
       aria-live="polite"
     >
       {t(`system.update.statusLabel.${status}`)}
@@ -805,7 +805,7 @@ function FooterButton({
         'disabled:cursor-not-allowed disabled:opacity-50',
         variant === 'primary'
           ? 'bg-yellow-500 text-white hover:bg-yellow-600 dark:bg-yellow-600 dark:hover:bg-yellow-700'
-          : 'border border-(--color-border) bg-(--color-bg-base) text-(--color-text-primary) hover:bg-(--color-bg-hover)',
+          : 'border border-(--color-border-default) bg-(--color-bg-primary) text-(--color-text-primary) hover:bg-(--color-bg-elevated)',
       )}
     >
       {children}

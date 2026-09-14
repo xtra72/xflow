@@ -158,7 +158,7 @@ export function CustomEdge({
           // 강조 시 파란색, 그 외 회색.
           emphasized
             ? '!stroke-blue-500'
-            : '!stroke-zinc-300 dark:!stroke-zinc-600',
+            : '!stroke-(--color-flow-edge)',
         )}
         style={{
           strokeWidth: emphasized ? 2.5 : virtualShownDotted ? 1.25 : 1.5,
