@@ -172,7 +172,14 @@ export function ThemePreview({
       // `.dark` 를 조건부로 붙인다. 이것이 없으면 토큰은 야간인데 `dark:` 유틸리티는
       // 주간으로 그려져, 방금 고친 결함과 **같은 어긋남**이 미리보기 안에 재현된다.
       className={cn('rounded-lg border p-4', target === 'night' && 'dark')}
-      style={{ ...tokenStyle(target, overrides), borderColor: v('border-default') }}
+      // 배경을 **여기서** 칠한다. 안쪽 상자에만 칠하면 화면 고르기 탭 줄과 바깥
+      // 여백이 설정 페이지의 배경 위에 떠 있게 되어, 팔레트를 다크로 바꿔도 그
+      // 띠만 밝은 채로 남는다 — "전환이 즉시 적용되지 않는다" 로 보이던 자리다.
+      style={{
+        ...tokenStyle(target, overrides),
+        background: v('bg-primary'),
+        borderColor: v('border-default'),
+      }}
     >
       {/* 화면 고르기 */}
       <div className="mb-3 flex flex-wrap gap-1">
@@ -203,7 +210,7 @@ export function ThemePreview({
         ))}
       </div>
 
-      <div className="flex flex-col gap-3" style={{ background: v('bg-primary') }}>
+      <div className="flex flex-col gap-3">
         {/* 앱 셸 — 어느 화면에나 있다 */}
         {part(
           'shell',

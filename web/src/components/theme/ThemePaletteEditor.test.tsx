@@ -353,3 +353,44 @@ describe('표에서 색을 고르는 길', () => {
     expect(litTokens(container)).toEqual(['--color-flow-edge']);
   });
 });
+
+// --- 팔레트 탭을 바꾸면 미리보기가 그 자리에서 바뀐다 ---
+
+describe('팔레트 전환이 미리보기에 곧바로 닿는다', () => {
+  it('다크 탭을 누르면 미리보기 변수가 그 자리에서 night 값이 된다', () => {
+    renderEditor('day');
+    const box = () => screen.getByTestId('theme-preview');
+    expect(box().style.getPropertyValue('--color-bg-surface')).toBe(
+      DAY_PRESET['--color-bg-surface'],
+    );
+
+    fireEvent.click(screen.getByTestId('palette-tab-night'));
+
+    expect(box().dataset.target).toBe('night');
+    expect(box().style.getPropertyValue('--color-bg-surface')).toBe(
+      NIGHT_PRESET['--color-bg-surface'],
+    );
+    expect(box().className).toContain('dark');
+  });
+
+  it('미리보기 상자 자신이 테마 배경을 칠한다', () => {
+    // 안쪽 상자에만 칠하면 화면 고르기 탭 줄과 바깥 여백이 설정 페이지 배경 위에
+    // 떠 있게 되어, 팔레트를 바꿔도 그 띠만 밝은 채로 남는다.
+    renderEditor('day');
+    const box = screen.getByTestId('theme-preview');
+    expect(box.style.background, '미리보기 상자에 배경이 없다').not.toBe('');
+
+    // 탭 줄이 그 배경 **안**에 있어야 한다 — 밖에 있으면 띠가 따로 논다.
+    expect(box.contains(screen.getByTestId('theme-preview-tab-flow'))).toBe(true);
+  });
+
+  it('탭을 바꾸면 미리보기 안의 색 항목도 그 팔레트를 따른다', () => {
+    renderEditor('day');
+    fireEvent.click(screen.getByTestId('palette-tab-night'));
+    // 표의 색 칸도 같은 팔레트를 보여야 한다 — 표와 미리보기가 다른 말을 하면
+    // 어느 쪽을 믿을지 알 수 없다.
+    expect(screen.getByLabelText('기본 배경')).toHaveStyle({
+      backgroundColor: NIGHT_PRESET['--color-bg-primary']!,
+    });
+  });
+});
