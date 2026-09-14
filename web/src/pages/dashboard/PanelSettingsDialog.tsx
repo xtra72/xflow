@@ -29,8 +29,6 @@ import {
   type DeviceListColumnKey,
 } from '@/hooks/useDeviceColumns';
 import { cn } from '@/lib/utils/cn';
-import PanelColorFreeInput from '@/components/common/PanelColorFreeInput';
-import { PANEL_COLORS } from './panelColorPresets';
 import { useTranslation, type TranslationFn } from '@/lib/i18n';
 
 import { useAgents } from '@/hooks/useAgent';
@@ -278,7 +276,7 @@ import { gridCellSize, gridHeightForAspect, panelPixelAspect } from './gridGeome
 import { PanelChromeProvider } from './PanelChromeProvider';
 import type { PanelTitleFont } from './panelChromeContext';
 import ColorPicker from '@/components/common/colorpicker/ColorPicker';
-import { COLOR_PALETTE } from './colorPalette';
+import { UNIFIED_PALETTE } from '@/components/common/colorpicker/palette';
 import {
   StatChartSection,
   LineChartSection,
@@ -2571,7 +2569,7 @@ function HeatmapSettingsSection({
   };
   const addColorStop = () => {
     const stop = colorTable.length === 0 ? 0 : 1;
-    commitColorTable([...colorTable, { stop, color: COLOR_PALETTE[0]! }]);
+    commitColorTable([...colorTable, { stop, color: UNIFIED_PALETTE[0]! }]);
   };
   const updateColorStop = (idx: number, patch: Partial<ColorStop>) => {
     commitColorTable(colorTable.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
@@ -2831,7 +2829,7 @@ function HeatmapSettingsSection({
               <ColorPicker
                 clearable
                 value={stop.color}
-                onChange={(c) => updateColorStop(idx, { color: c ?? COLOR_PALETTE[0]! })}
+                onChange={(c) => updateColorStop(idx, { color: c ?? UNIFIED_PALETTE[0]! })}
                 ariaLabel={t('dashboard.settings.heatmapColorStopAria').replace('{index}', String(idx + 1))}
               />
               <input
@@ -6664,33 +6662,17 @@ function PanelColorRow({
       <span className="mb-2 block text-xs font-medium text-(--color-text-muted)">
         {t('dashboard.settings.accent.panelColor')}
       </span>
+      {/* 프리셋 여덟 칸 · 자유 입력 · 되돌리기가 각각 서 있던 자리다. 셋 다 공용
+          고르개 안에 있다. */}
       <div className="flex flex-wrap items-center gap-1.5">
-        {PANEL_COLORS.map((color) => (
-          <button
-            key={color}
-            type="button"
-            data-testid={`panel-color-${color}`}
-            aria-label={color}
-            aria-pressed={panelColor === color}
-            onClick={() => onChange(color)}
-            className={cn(
-              'h-5 w-5 rounded-full border-2 transition-transform hover:scale-110',
-              panelColor === color ? 'border-white ring-2 ring-blue-500' : 'border-transparent',
-            )}
-            style={{ backgroundColor: color }}
-          />
-        ))}
-        <PanelColorFreeInput value={panelColor} onChange={onChange} />
-        {panelColor && (
-          <button
-            type="button"
-            data-testid="panel-color-reset"
-            onClick={() => onChange(undefined)}
-            className="ml-1 rounded px-2 py-0.5 text-xs text-(--color-text-muted) transition-colors hover:bg-(--color-bg-elevated)"
-          >
-            {t('dashboard.settings.panelColorReset')}
-          </button>
-        )}
+        <ColorPicker
+          alpha
+          clearable
+          value={panelColor}
+          onChange={onChange}
+          ariaLabel={t('dashboard.settings.accent.panelColor')}
+          testId="panel-color"
+        />
       </div>
     </div>
   );

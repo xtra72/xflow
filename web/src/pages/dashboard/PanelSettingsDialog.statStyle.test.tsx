@@ -58,6 +58,7 @@ vi.mock('@/services/api/store', () => ({
 }));
 
 import PanelSettingsDialog from './PanelSettingsDialog';
+import { pickColorByTestId } from '@/test/pickColor';
 
 beforeEach(() => {
   storeMock.updatePanelConfig.mockReset();
@@ -114,32 +115,37 @@ describe('AC-02 보강 — 패널 색상은 패널 옵션에 있고 모든 타�
 });
 
 describe('SPEC-CHART-003 AC-02 / AC-28 — 패널 색상은 한 줄로 편집된다', () => {
-  it('스와치를 누르면 panelColor 가 그 색으로 저장된다', () => {
+  it('프리셋 칸을 누르면 panelColor 가 그 색으로 저장된다', () => {
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
     expect(screen.getByTestId('panel-color-row')).toBeInTheDocument();
 
-    // 고르기 단계 없이 곧바로 색을 바꾼다(U1-3).
-    fireEvent.click(screen.getByTestId('panel-color-#8b5cf6'));
+    // 고르기 단계 없이 곧바로 색을 바꾼다(U1-3). 색 칸 하나를 열고 팔레트에서 고른다.
+    fireEvent.click(screen.getByTestId('panel-color'));
+    fireEvent.click(screen.getByLabelText('#8b5cf6'));
     fireEvent.click(screen.getByText('dashboard.settings.apply'));
 
     const [, cfg] = storeMock.updatePanelConfig.mock.calls[0]!;
     expect((cfg as Record<string, unknown>).panelColor).toBe('#8b5cf6');
   });
 
-  it('저장된 색이 있으면 초기화로 지울 수 있다', () => {
+  it('저장된 색이 있으면 비우기로 지울 수 있다', () => {
     storeMock.panel = { id: 'p1', type: 'stat', title: 's', config: { panelColor: '#ef4444' } };
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
 
-    fireEvent.click(screen.getByTestId('panel-color-reset'));
+    fireEvent.click(screen.getByTestId('panel-color'));
+    fireEvent.click(screen.getByTestId('colorpicker-clear'));
     fireEvent.click(screen.getByText('dashboard.settings.apply'));
 
     const [, cfg] = storeMock.updatePanelConfig.mock.calls[0]!;
     expect((cfg as Record<string, unknown>).panelColor).toBeUndefined();
   });
 
-  it('색이 지정되지 않았으면 초기화 버튼을 내지 않는다', () => {
+  it('색이 지정되지 않았으면 색 칸이 비어 보인다', () => {
+    // 비우기 단추는 이제 고르개 안에 늘 있다 — "되돌릴 것이 없다" 는 사실은 단추의
+    // 부재가 아니라 **칸이 칠해져 있지 않다**는 것으로 드러난다.
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
-    expect(screen.queryByTestId('panel-color-reset')).toBeNull();
+    expect(screen.getByTestId('panel-color')).not.toHaveStyle({ backgroundColor: '#ef4444' });
+    expect(screen.getByTestId('panel-color').getAttribute('style')).toBeNull();
   });
 });
 
@@ -153,7 +159,8 @@ describe('SPEC-CHART-003 AC-03 — 저장된 accentElements 는 손대지 않는
     };
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
 
-    fireEvent.click(screen.getByTestId('panel-color-#06b6d4'));
+    fireEvent.click(screen.getByTestId('panel-color'));
+    fireEvent.click(screen.getByLabelText('#06b6d4'));
     fireEvent.click(screen.getByText('dashboard.settings.apply'));
 
     const [, cfg] = storeMock.updatePanelConfig.mock.calls[0]!;
@@ -209,13 +216,14 @@ describe('패널 색상 — 프리셋 밖의 색도 고를 수 있다', () => {
   it('패널 색상 한 줄에 자유 입력이 함께 놓인다', () => {
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
     expect(screen.getByTestId('panel-color-row')).toBeInTheDocument();
-    expect(screen.getByTestId('panel-color-free')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('panel-color'));
+    expect(screen.getByTestId('colorpicker-hex')).toBeInTheDocument();
   });
 
   it('프리셋에 없는 헥스를 쳐서 저장할 수 있다', () => {
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
 
-    fireEvent.change(screen.getByTestId('panel-color-hex'), { target: { value: '#123abc' } });
+    pickColorByTestId('panel-color', '#123abc');
     fireEvent.click(screen.getByText('dashboard.settings.apply'));
 
     const [, cfg] = storeMock.updatePanelConfig.mock.calls[0]!;
@@ -226,7 +234,7 @@ describe('패널 색상 — 프리셋 밖의 색도 고를 수 있다', () => {
     storeMock.panel = { id: 'p1', type: 'stat', title: 's', config: { panelColor: '#ef4444' } };
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
 
-    fireEvent.change(screen.getByTestId('panel-color-hex'), { target: { value: 'red' } });
+    pickColorByTestId('panel-color', 'red');
     fireEvent.click(screen.getByText('dashboard.settings.apply'));
 
     const [, cfg] = storeMock.updatePanelConfig.mock.calls[0]!;
@@ -234,11 +242,12 @@ describe('패널 색상 — 프리셋 밖의 색도 고를 수 있다', () => {
     expect((cfg as Record<string, unknown>).panelColor).toBe('#ef4444');
   });
 
-  it('프리셋 스와치는 종전대로 동작한다', () => {
+  it('프리셋 칸은 종전대로 동작한다', () => {
     storeMock.panel = { id: 'p1', type: 'stat', title: 's', config: {} };
     render(<PanelSettingsDialog panelId="p1" onClose={() => {}} />);
 
-    fireEvent.click(screen.getByTestId('panel-color-#10b981'));
+    fireEvent.click(screen.getByTestId('panel-color'));
+    fireEvent.click(screen.getByLabelText('#10b981'));
     fireEvent.click(screen.getByText('dashboard.settings.apply'));
 
     const [, cfg] = storeMock.updatePanelConfig.mock.calls[0]!;

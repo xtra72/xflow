@@ -490,9 +490,7 @@
       "settingsAria": "패널 설정",
       "titleLabel": "타이틀",
       "maxLinesLabel": "최대 라인 수",
-      "panelColor": "패널 컬러",
-      "pickCustom": "직접 선택",
-      "reset": "초기화"
+      "panelColor": "패널 컬러"
     },
     "hvacControl": {
       "stopped": "정지",
@@ -540,11 +538,6 @@
       "closeAria": "닫기",
       "nameLabel": "대시보드 이름",
       "namePlaceholder": "새 대시보드"
-    },
-    "colorSwatch": {
-      "paletteAria": "{label} 팔레트",
-      "defaultAria": "기본값(미설정)",
-      "unsetTitle": "미설정"
     },
     "scope": {
       "aria": "대시보드 스코프",
@@ -750,7 +743,6 @@
       "heatmapLegendTickCount": "눈금 개수 (2~10)",
       "thresholds": "임계값",
       "style": "스타일",
-      "panelColorReset": "초기화",
       "previewExpandAria": "미리보기 펼치기",
       "splitterAria": "설정/미리보기 너비 조절",
       "previewSplitterAria": "미리보기/데이터소스 높이 조절",

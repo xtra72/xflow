@@ -490,9 +490,7 @@
       "settingsAria": "Panel settings",
       "titleLabel": "Title",
       "maxLinesLabel": "Max lines",
-      "panelColor": "Panel color",
-      "pickCustom": "Pick custom",
-      "reset": "Reset"
+      "panelColor": "Panel color"
     },
     "hvacControl": {
       "stopped": "Stopped",
@@ -540,11 +538,6 @@
       "closeAria": "Close",
       "nameLabel": "Dashboard name",
       "namePlaceholder": "New dashboard"
-    },
-    "colorSwatch": {
-      "paletteAria": "{label} palette",
-      "defaultAria": "Default (unset)",
-      "unsetTitle": "Unset"
     },
     "scope": {
       "aria": "Dashboard scope",
@@ -750,7 +743,6 @@
       "heatmapLegendTickCount": "Tick count (2-10)",
       "thresholds": "Thresholds",
       "style": "Style",
-      "panelColorReset": "Reset",
       "previewExpandAria": "Expand preview",
       "splitterAria": "Adjust settings/preview width",
       "previewSplitterAria": "Adjust preview/data-source height",
