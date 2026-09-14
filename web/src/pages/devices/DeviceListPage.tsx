@@ -50,13 +50,13 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50];
  * Samsung HVACR / LGAP / LG ICP-01 / LG ICP-02 가 디바이스 삭제를 지원한다
  * (Century/system/modbus 미지원).
  */
-const REMOVABLE_AGENT_TYPES = new Set(['samsung_hvacr01', 'lgap', 'lg_hvacr01', 'lg_hvacr02']);
+const REMOVABLE_AGENT_TYPES = new Set(['samsung_hvacr01', 'lgap', 'lg_hvacr01', 'lg_hvacr02', 'lg_hvacr03']);
 
 /**
  * `set_device` exec 를 지원하는 에이전트 타입 집합 (디바이스별 상태 전송 on/off).
  * Samsung HVACR / LGAP / LG ICP-01 / LG ICP-02 가 디바이스별 report_enabled 게이트를 지원한다.
  */
-const REPORT_TOGGLE_AGENT_TYPES = new Set(['samsung_hvacr01', 'lgap', 'lg_hvacr01', 'lg_hvacr02']);
+const REPORT_TOGGLE_AGENT_TYPES = new Set(['samsung_hvacr01', 'lgap', 'lg_hvacr01', 'lg_hvacr02', 'lg_hvacr03']);
 
 /** 디바이스 목록 페이지 props. */
 interface DeviceListPageProps {

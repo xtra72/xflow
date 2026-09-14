@@ -1576,6 +1576,71 @@ export const NODE_TYPE_META: Record<string, NodeTypeDetailMeta> = {
     },
   },
 
+  // --- SPEC-LG-HVACR-003: LG HVACR-03 (PMBUSB00A Modbus) ---
+  // lg-hvacr02 와 노드 구현을 공유하지만, 주소 체계(10진)와 노출 상태가 달라
+  // 팔레트 설명은 별도로 둔다.
+  'lg-hvacr03-status': {
+    description:
+      'LG HVACR-03 에이전트(PMBUSB00A Modbus 게이트웨이)에 연결하여 실내기 상태를 수신하는 노드입니다. 에이전트가 실내기를 주기 폴링하며, 상태 변경 시 push 받습니다. 전원·모드·풍량·온도에 더해 에러 코드, 알람, 필터 알람, 리모컨 잠금 상태를 함께 제공합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '상태 조회 트리거 (push 모델이라 보통 불필요)' },
+      { name: 'out', direction: 'output', description: '디바이스 상태 출력 (device_state)' },
+      { name: 'error', direction: 'error', description: '에이전트 통신 실패 시 출력' },
+    ],
+    configFields: [
+      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LG HVACR-03 에이전트의 이름 또는 ID' },
+      { name: 'unit_id', type: 'string', required: false, description: '실내기 중앙 주소 필터 (10진, 예: 3). 미지정 시 전체 수신' },
+      { name: 'inactivity_timeout', type: 'string', required: false, description: '무수신 시 request_state 를 보내는 임계값', default: '90s' },
+      { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
+    ],
+    configExample: {
+      agent_ref: 'lg-pmbus-gateway',
+      unit_id: '3',
+      inactivity_timeout: '90s',
+    },
+  },
+
+  'lg-hvacr03-control': {
+    description:
+      'PMBUSB00A Modbus 게이트웨이로 실내기를 제어하는 노드입니다. 전원·모드·풍량·온도에 더해 스윙, 필터 알람 해제, 리모컨 잠금, 온도 상하한, ERV 명령을 지원합니다. control_enabled 가 활성화된 LG HVACR-03 에이전트가 필요합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '제어 명령 입력. payload: {address, command, ...params}' },
+      { name: 'out', direction: 'output', description: '제어 결과 출력. verified / expected / actual 포함, 잠금 시 locked_by 동반' },
+      { name: 'error', direction: 'error', description: '제어 실패 시 출력' },
+    ],
+    configFields: [
+      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LG HVACR-03 에이전트 (control_enabled 필요)' },
+      { name: 'default_address', type: 'string', required: false, description: '기본 실내기 주소 (10진, 예: 3)' },
+      { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
+    ],
+    configExample: {
+      agent_ref: 'lg_hvacr03-control',
+      default_address: '3',
+      timeout: '5s',
+    },
+  },
+
+  'lg-hvacr03': {
+    description:
+      'LG HVACR-03 (PMBUSB00A Modbus) 실내기 상태 조회 + 제어 통합 노드입니다. 입력 메시지에 제어 키(power, temperature, fan_speed, mode)가 있으면 제어, 없으면 상태 조회로 동작합니다.',
+    ports: [
+      { name: 'in', direction: 'input', description: '상태 조회 또는 제어 명령. 제어 키 유무에 따라 자동 분기' },
+      { name: 'out', direction: 'output', description: '상태 또는 제어 결과 출력' },
+      { name: 'error', direction: 'error', description: '에러 시 출력' },
+    ],
+    configFields: [
+      { name: 'agent_ref', type: 'string', required: true, description: '연결할 LG HVACR-03 에이전트' },
+      { name: 'default_address', type: 'string', required: false, description: '기본 실내기 주소 (10진)' },
+      { name: 'poll_interval', type: 'string', required: false, description: '자동 폴링 주기', default: '30s' },
+      { name: 'timeout', type: 'string', required: false, description: 'Agent Process 타임아웃', default: '5s' },
+    ],
+    configExample: {
+      agent_ref: 'lg-pmbus-gateway',
+      default_address: '3',
+      poll_interval: '15s',
+    },
+  },
+
   'lg-hvacr01-status': {
     description:
       'LG ICP-01 프로토콜로 에어컨 상태를 push 수신하는 노드입니다. 에이전트가 NotifyInterval 마다 TYPE-A(ODU)/TYPE-B(IDU) 프레임을 emit, 노드는 ring buffer drain. 무수신 임계 시간(inactivity_timeout) 초과 시 request_state 자동 전송. unit_id(STX hex)로 ODU/IDU 단독 필터링 가능.',

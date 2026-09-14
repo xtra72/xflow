@@ -1,0 +1,100 @@
+# LG HVACR-03 — PMBUSB00A Modbus 게이트웨이 (읽기 전용)
+#
+# PMBUSB00A 는 LG 시스템 에어컨의 실외기 중앙제어 버스를 표준 Modbus RTU 로
+# 변환하는 LG 공식 게이트웨이 모듈이다. lg_hvacr02 (LG ICP-02 역공학 패시브 캡처)
+# 와 달리 능동 폴링 마스터로 동작한다.
+#
+# 통신 사양 (제조사 고정):
+#   - Modbus RTU over RS-485, 9600-8N1
+#   - CRC-16/MODBUS (poly 0xA001, init 0xFFFF) — LG ICP-02 의 XMODEM 과 다르다
+#   - 모듈 1개당 실내기 최대 16대 (Master + Slave 3개 조합 시 64대)
+#   - 지원 기기: MULTI V 5 / MULTI V S / ERV(환기) / THERMA V(하이드로킷)
+#
+# 이 예제는 제어를 끈 읽기 전용 구성이다. 제어가 필요하면
+# lg_hvacr03-control.yaml 을 참고한다.
+#
+# 사용법:
+#   xflow agent import -f examples/agents/lg_hvacr03-rtu.yaml
+
+name: "lg_hvacr03-rtu"
+type: "lg_hvacr03"
+
+config:
+  # ── 전송 (rtu | tcp-client) ──
+  # 시리얼-이더넷 컨버터를 거쳐 붙일 때는 tcp-client 를 쓴다. 이때 컨버터는
+  # 반드시 broadcast 모드로 둔다 — unicast 기본값은 다중 클라이언트 환경에서
+  # 스트림을 쪼개 프레임 desync 를 일으킨다.
+  transport_type: "rtu"
+  serial_port: "/dev/ttyUSB0"
+
+  # 통신 파라미터 — PMBUSB00A 사양 고정값이므로 바꿀 일이 없다.
+  baud_rate: 9600
+  data_bits: 8
+  stop_bits: 1
+  parity: "none"
+
+  # 게이트웨이 슬레이브 주소. 보드의 4비트 DIP 스위치(SW_02M)로 설정한 값이며
+  # 공장 출하 기본값은 1 이다. 4모듈을 조합할 때 각 모듈에 1~4 를 부여한다.
+  slave_id: 1
+
+  # ── 폴링 ──
+  # 9,600 bps 에서 실내기 16대를 4종 영역 모두 폴링하면 한 사이클에 2~4초가
+  # 걸린다. 5초보다 빠르게 돌리면 게이트웨이가 응답을 거르기 시작하므로
+  # poll_interval 은 5s 미만으로 설정할 수 없다.
+  poll_interval: "10s"
+
+  # 연결 상태 전체 스캔 주기. 1 트랜잭션으로 실내기 16대의 연결·알람·필터
+  # 비트를 모두 읽으므로, 대수가 늘어도 비용이 일정하다.
+  scan_interval: "30s"
+
+  request_timeout: "1s"
+  offline_timeout: "30s"
+  reconnect_interval: "5s"
+  max_reconnect_backoff: "5m"
+
+  # ── 현장 실측으로 교정하는 값 ──
+  # 아래 세 값은 LG 매뉴얼 기준의 기본값이다. 게이트웨이 설치 직후 확인하고,
+  # 실측이 다르면 여기만 고치면 된다 (재빌드 불필요).
+  #
+  #   temp_scale   : 리모컨으로 24℃ 설정 후 설정온도 레지스터를 읽어
+  #                  240 이면 10, 24 면 1 로 둔다.
+  #   address_base : 실내기 1대만 전원을 넣고 스캔해 어느 번호로 잡히는지 본다.
+  #                  0번으로 잡히면 0, 1번이면 1.
+  #   fan_auto_code: 풍량에 4 를 쓰고 리모컨 표시를 본다. "자동"이면 4 그대로,
+  #                  "초강"이면 5 로 바꾼다 (LGCP 는 5단계 체계를 쓴다).
+  temp_scale: 10
+  address_base: 0
+  fan_auto_code: 4
+
+  # ── 디바이스 관리 ──
+  auto_discovery: true
+  report_interval: "60s"
+
+  # 실내 온도는 센서 노이즈로 매 폴링마다 0.1℃씩 흔들린다. 이 임계값 미만의
+  # 온도 변화만 있는 경우 change 이벤트를 억제한다.
+  event_temp_threshold: 1.0
+
+  # 사전 등록 디바이스 (선택). 여기 적은 실내기는 스캔에서 미발견되어도
+  # 목록에서 사라지지 않고 오프라인으로 표시된다.
+  #
+  # device_type 은 ERV / 하이드로킷에만 필요하다. 하이드로킷은 목표 온도 기준이
+  # "물"로 관측되면 자동 판별되지만, ERV 는 프로토콜에 구분 신호가 없어 여기서
+  # 지정해야 환기 전용 명령이 노출된다.
+  # devices:
+  #   - address: "0"
+  #     name: "거실"
+  #   - address: "3"
+  #     name: "침실"
+  #   - address: "7"
+  #     name: "전열교환기"
+  #     device_type: "HVACR.ERV"
+
+  # ── 제어 ──
+  # 이 예제는 읽기 전용이다.
+  control_enabled: false
+
+  # ── 로그 (진단용, 운영 환경에서는 모두 false 권장) ──
+  log_messages: false        # Modbus TX/RX PDU hex
+  log_state_updates: false   # 상태 갱신마다 읽은 레지스터
+  log_decode_errors: false   # 응답 파싱 실패
+  log_drops: false           # 버퍼 가득 참으로 인한 이벤트 드롭
