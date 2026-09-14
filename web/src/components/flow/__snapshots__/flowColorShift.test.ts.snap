@@ -1,0 +1,48 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`어느 자리도 읽기 어려워지지 않는다 (불변식 I5b · AC-04) > 이동표가 대비 변화를 수로 남긴다 — 내려간 자리도 적혀 있어야 한다 1`] = `
+[
+  {
+    "day": "#18181b→#111827",
+    "dayContrast": "17.26→17.28",
+    "night": "#f4f4f5→#f3f4f6",
+    "nightContrast": "13.35→13.34",
+    "where": "노드 제목 · 툴바 강조 글자",
+  },
+  {
+    "day": "#27272a→#111827",
+    "dayContrast": "14.51→17.28",
+    "night": "#f4f4f5→#f3f4f6",
+    "nightContrast": "13.35→13.34",
+    "where": "패널 제목 · 툴바 제목",
+  },
+  {
+    "day": "#3f3f46→#374151",
+    "dayContrast": "10.17→10.04",
+    "night": "#e4e4e7→#d1d5db",
+    "nightContrast": "11.57→9.96",
+    "where": "본문 · 라벨",
+  },
+  {
+    "day": "#52525c→#374151",
+    "dayContrast": "7.52→10.04",
+    "night": "#d4d4d8→#d1d5db",
+    "nightContrast": "9.93→9.96",
+    "where": "아이콘 · 보조 글자",
+  },
+  {
+    "day": "#71717b→#6b7280",
+    "dayContrast": "4.7→4.71",
+    "night": "#9f9fa9→#9ca3af",
+    "nightContrast": "5.6→5.78",
+    "where": "흐린 글자 · 부가 정보",
+  },
+  {
+    "day": "#9f9fa9→#6b7280",
+    "dayContrast": "2.56→4.71",
+    "night": "#9f9fa9→#9ca3af",
+    "nightContrast": "5.6→5.78",
+    "where": "노드 부제(노드 타입) · 비활성 글자",
+  },
+]
+`;
