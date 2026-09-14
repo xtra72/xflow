@@ -14,7 +14,13 @@ import { fileURLToPath } from 'node:url';
 import { ALL_TOKEN_VARS, DAY_PRESET, NIGHT_PRESET } from '@/lib/theme/tokens';
 
 import { ThemePreview } from './ThemePreview';
-import { PREVIEW_PARTS, partsUsingToken, tokensOfPart } from './themePreviewParts';
+import {
+  PREVIEW_PARTS,
+  PREVIEW_TABS,
+  areaForToken,
+  partsUsingToken,
+  tokensOfPart,
+} from './themePreviewParts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -76,30 +82,60 @@ describe('미리보기는 편집기를 적재하지 않는다 (AC-07 · I7)', ()
 });
 
 describe('조각과 토큰이 서로를 가리킨다 (AC-05 · AC-08)', () => {
-  it('24토큰이 모두 최소 한 조각에 나타난다', () => {
+  it('24토큰이 모두 최소 한 조각에 나타난다 — 탭 전체의 합집합 기준', () => {
     const uncovered = ALL_TOKEN_VARS.filter((v) => partsUsingToken(v).length === 0);
     // 나타나지 않는 토큰은 미리보기로 고를 수 없다.
     expect(uncovered).toEqual([]);
   });
 
-  it('일곱 조각이 모두 그려진다', () => {
+  it('탭을 옮기면 그 화면의 조각이 다 그려진다', () => {
     render(<ThemePreview target="day" overrides={{}} />);
-    for (const p of PREVIEW_PARTS) {
-      expect(screen.getByTestId(`theme-preview-${p.id}`), p.id).toBeInTheDocument();
+    for (const tab of PREVIEW_TABS) {
+      fireEvent.click(screen.getByTestId(`theme-preview-tab-${tab.id}`));
+      const expected = PREVIEW_PARTS.filter((p) => p.area === tab.id || p.area === 'always');
+      for (const p of expected) {
+        expect(screen.getByTestId(`theme-preview-${p.id}`), `${tab.id}/${p.id}`).toBeInTheDocument();
+      }
+      // 다른 화면의 조각은 그 탭에서 보이지 않는다.
+      const others = PREVIEW_PARTS.filter((p) => p.area !== tab.id && p.area !== 'always');
+      for (const p of others) {
+        expect(screen.queryByTestId(`theme-preview-${p.id}`), `${tab.id}/${p.id}`).toBeNull();
+      }
     }
   });
 
   it('표에서 고른 토큰을 쓰는 조각만 강조된다', () => {
     render(<ThemePreview target="day" overrides={{}} highlightToken="--color-flow-edge" />);
-    const lit = PREVIEW_PARTS.filter(
-      (p) => screen.getByTestId(`theme-preview-${p.id}`).dataset.lit === 'true',
-    ).map((p) => p.id);
+    const lit = PREVIEW_PARTS.filter((p) => {
+      const el = screen.queryByTestId(`theme-preview-${p.id}`);
+      return el !== null && el.dataset.lit === 'true';
+    }).map((p) => p.id);
     expect(lit).toEqual(['edge']);
+  });
+
+  it('짚은 색이 다른 화면에 있으면 그 화면으로 따라간다', () => {
+    // 따라가지 않으면 강조가 아무 데도 나타나지 않고, 사용자는 "이 색은 아무 데도
+    // 안 쓰이나" 로 읽는다.
+    const { rerender } = render(<ThemePreview target="day" overrides={{}} />);
+    expect(screen.getByTestId('theme-preview').dataset.area).toBe('dashboard');
+
+    rerender(<ThemePreview target="day" overrides={{}} highlightToken="--color-flow-edge" />);
+    expect(screen.getByTestId('theme-preview').dataset.area).toBe('flow');
+    expect(screen.getByTestId('theme-preview-edge')).toBeInTheDocument();
+  });
+
+  it('어느 화면에나 있는 조각만 쓰는 색은 탭을 옮기지 않는다', () => {
+    // `text-inverse` 는 단추 줄에만 있고 단추 줄은 항상 보인다.
+    expect(areaForToken('--color-text-inverse')).toBeUndefined();
+    render(<ThemePreview target="day" overrides={{}} highlightToken="--color-text-inverse" />);
+    expect(screen.getByTestId('theme-preview').dataset.area).toBe('dashboard');
+    expect(screen.getByTestId('theme-preview-controls').dataset.lit).toBe('true');
   });
 
   it('조각을 누르면 그 조각의 식별자를 낸다', () => {
     const onPickPart = vi.fn();
     render(<ThemePreview target="day" overrides={{}} onPickPart={onPickPart} />);
+    fireEvent.click(screen.getByTestId('theme-preview-tab-flow'));
     fireEvent.click(screen.getByTestId('theme-preview-node'));
     expect(onPickPart).toHaveBeenCalledWith('node');
   });
@@ -117,5 +153,18 @@ describe('조각과 토큰이 서로를 가리킨다 (AC-05 · AC-08)', () => {
     const known = new Set(ALL_TOKEN_VARS);
     const unknown = PREVIEW_PARTS.flatMap((p) => tokensOfPart(p.id)).filter((v) => !known.has(v));
     expect(unknown).toEqual([]);
+  });
+});
+
+describe('미리보기가 플로우 한 화면에 갇히지 않는다', () => {
+  it('네 화면이 각자 조각을 갖는다', () => {
+    for (const tab of PREVIEW_TABS) {
+      const own = PREVIEW_PARTS.filter((p) => p.area === tab.id);
+      expect(own.length, `${tab.id} 화면에 조각이 없다`).toBeGreaterThan(0);
+    }
+  });
+
+  it('탭 목록이 대시보드 · 플로우 · 목록 · 스케줄 넷이다', () => {
+    expect(PREVIEW_TABS.map((t) => t.id)).toEqual(['dashboard', 'flow', 'list', 'schedule']);
   });
 });
