@@ -1402,7 +1402,7 @@
         "groupMoveDownAria": "Move group {index} down",
         "groupDeleteAria": "Delete group {index} — its {count} parts go with it",
         "groupPartAria": "Group {index} part {part} — pressing selects the group",
-        "groupPartsHint": "Part numbers read in canvas units. The coordinates actually stored on a part live on the group's inner grid and never surface here. To lift one part out, select it on the canvas and press Detach part.",
+        "groupPartsHint": "Part numbers read in canvas units. The coordinates actually stored on a part live on the group's inner grid and never surface here. On the canvas a single click selects the group; a double click steps inside to the part.",
         "groupPartsEmpty": "No parts."
       },
       "rules": {

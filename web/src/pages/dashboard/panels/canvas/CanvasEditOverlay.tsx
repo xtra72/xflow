@@ -727,6 +727,88 @@ function patchNodeFontSize(
 //
 // **분해는 `parseFrameKey` 하나가 한다**(구분자 리터럴이 이 파일에 없다 — AC-04).
 
+// --- 그룹 진입 (SPEC-CANVAS-009 0.3.0) -------------------------------------
+//
+// 0.2.0 은 "부품 위를 누르면 그 부품을 고른다" 로 못박았고, 그 결과 **그룹을 클릭으로
+// 고를 길이 사라졌다.** 004 의 히트 테스트는 그룹을 제 상자가 아니라 **부품 잉크**로만
+// 잡으므로(빈 상자를 잡으면 밸브 심볼의 빈 공간에서 뒤 요소가 영영 안 잡힌다), 부품이
+// 선택을 가져가는 순간 그룹은 아무 데서도 잡히지 않는다.
+//
+// 그래서 그림 도구의 관용구를 들인다 — **단일 클릭은 그룹, 더블클릭은 그 안.**
+//
+// ## "안에 있는가" 를 상태로 들지 않는다
+//
+// Figma 처럼 한 번 들어가면 그 그룹 안에서는 단일 클릭도 부품을 고른다. 그 "안에 있음" 을
+// 별도 상태로 들면 선택과 어긋난 중간 상태가 생기고("부품이 골라져 있는데 밖에 있다")
+// 그것을 되돌릴 경로가 화면에 없다. 대신 **선택에서 파생시킨다**: 지금 골라진 것이 그
+// 그룹의 부품이면 안에 있는 것이다. `canvasAutoExpandedId` 가 자동 펼침을 선택에서
+// 파생시킨 것과 같은 규율이며, 빈 곳·다른 요소를 누르면 선택이 갈리므로 **빠져나오는
+// 일도 공짜로 따라온다.**
+
+/**
+ * 두 번째 누름이 첫 번째와 **같은 몸짓**으로 읽히는 시간(ms).
+ *
+ * macOS·Windows 의 기본 더블클릭 속도가 대략 이 값이다. 더 좁히면 손이 느린 사용자가
+ * 그룹 안으로 못 들어가고, 그 실패는 "더블클릭이 가끔 안 먹는다" 로만 보고된다.
+ */
+const DOUBLE_PRESS_MS = 500;
+/** 그 사이 손이 이만큼 넘게 움직였으면 다른 자리를 누른 것이다(스테이지 px). */
+const DOUBLE_PRESS_SLOP_PX = 5;
+
+/** 직전 누름 — 더블클릭 판정에만 쓴다. */
+interface LastPress {
+  at: number;
+  point: PxPoint;
+  /** 그때 눌린 히트의 키. 같은 것을 두 번 눌러야 진입이다. */
+  key: string;
+}
+
+/**
+ * 이번 누름이 **같은 자리를 두 번째로** 누른 것인가.
+ *
+ * 시각·좌표·대상 셋을 모두 본다. `PointerEvent.detail` 에 기대지 않는 것에 뜻이 있다 —
+ * 그 값은 입력 장치와 브라우저에 따라 채워지지 않으며, 채워지지 않으면 진입이 **조용히**
+ * 죽는다(손가락으로는 되는데 펜으로는 안 되는 부류의 결함이다).
+ */
+function isSecondPress(prev: LastPress | null, now: number, point: PxPoint, key: string): boolean {
+  if (prev === null || prev.key !== key) return false;
+  if (now - prev.at > DOUBLE_PRESS_MS) return false;
+  return (
+    Math.abs(point.x - prev.point.x) <= DOUBLE_PRESS_SLOP_PX &&
+    Math.abs(point.y - prev.point.y) <= DOUBLE_PRESS_SLOP_PX
+  );
+}
+
+/** 지금 선택이 이 그룹 **안**을 가리키는가 — 즉 그 그룹의 부품이 골라져 있는가. */
+function isInsideGroup(selection: CanvasSelection, groupId: string): boolean {
+  for (const key of selection) {
+    const { nodeId, partId } = parseFrameKey(key);
+    if (partId !== undefined && nodeId === groupId) return true;
+  }
+  return false;
+}
+
+/**
+ * 이번 누름이 선택에 넣을 키.
+ *
+ * **순수 함수로 떼어 둔 것이 요점이다.** 이 갈래는 화면에서만 드러나는 종류의 규칙이라
+ * (눌러 봐야 안다) 시험이 직접 겨눌 수 있어야 한다.
+ *
+ * - 최상위 요소 → 제 id 그대로(004 와 바이트 동일).
+ * - 부품 위, 밖에서 첫 누름 → **그룹**을 고른다.
+ * - 부품 위, 두 번째 누름 → **그 부품**으로 진입한다.
+ * - 부품 위, 이미 그 그룹 안 → 단일 누름도 부품을 고른다(머무름).
+ */
+function pressTargetKey(
+  hit: { nodeId: string; partId?: string },
+  selection: CanvasSelection,
+  secondPress: boolean,
+): string {
+  if (hit.partId === undefined) return hit.nodeId;
+  const enter = secondPress || isInsideGroup(selection, hit.nodeId);
+  return enter ? frameKey(hit.nodeId, hit.partId) : hit.nodeId;
+}
+
 /**
  * 키가 가리키는 노드. 부품이면 **캔버스 단위 의사 노드**이고, 최상위면 그 노드 자신이다.
  *
@@ -986,6 +1068,14 @@ export default function CanvasEditOverlay({
 
   const rootRef = useRef<HTMLDivElement>(null);
 
+  /**
+   * 직전 누름 — **더블클릭 판정에만** 쓴다(SPEC-CANVAS-009 0.3.0 §그룹 진입).
+   *
+   * `useRef` 인 것에 뜻이 있다. 이 값은 화면에 아무것도 그리지 않으므로 상태로 들면
+   * 누를 때마다 렌더가 한 번씩 더 돌고, 001 이 지은 유휴 정지가 그만큼 흔들린다.
+   */
+  const lastPressRef = useRef<LastPress | null>(null);
+
   const dragRef = useRef<DragState | null>(null);
   /** 아직 반영하지 않은 마지막 포인터 상태(스테이지 로컬 px + 보조키). */
   const pendingRef = useRef<PendingPointer | null>(null);
@@ -1181,6 +1271,10 @@ export default function CanvasEditOverlay({
       // 않은 몸짓에서 조용히 사라진다. 비운 그 값이 곧 합집합의 좌변이므로 규칙도 하나다.
       const base = additive ? selection : EMPTY_SELECTION;
       if (base !== selection) setSelection(base);
+      // 빈 자리를 누르면 **연타 사슬이 끊긴다**(SPEC-CANVAS-009 0.3.0). 끊지 않으면 빈
+      // 곳을 거쳐 같은 부품을 다시 누른 것이 더블클릭으로 읽혀, 사용자가 한 번도 겹쳐
+      // 누르지 않았는데 그룹 안으로 들어간다.
+      lastPressRef.current = null;
       setMarquee({ pointerId: event.pointerId, frame, origin: point, point, base });
       host.setPointerCapture?.(event.pointerId);
       return;
@@ -1195,21 +1289,30 @@ export default function CanvasEditOverlay({
     // 고른 사람과 키보드로 옮기려는 사람이 같은 사람이다(T15 · REQ-01).
     host.focus();
 
-    // **히트가 부품이면 선택 키는 복합 키다**(SPEC-CANVAS-009 REQ-01). 히트 테스트는
-    // 004 부터 이미 `partId` 를 돌려주고 있었고, 009 가 바꾼 것은 그 값을 **버리지 않는
-    // 것** 하나다. 최상위 요소에서는 `frameKey` 가 `nodeId` 를 **그대로** 돌려주므로 이
-    // 줄은 004 와 바이트 동일한 문자열을 낸다(불변식 G11 · AC-06).
-    const key = frameKey(hit.nodeId, hit.partId);
+    // **단일 클릭은 그룹, 더블클릭은 그 안**(SPEC-CANVAS-009 0.3.0 · REQ-01).
+    //
+    // 히트 테스트는 004 부터 `{ nodeId, partId }` 를 돌려주고 있었고, 무엇을 고를지는
+    // `pressTargetKey` 한 함수가 정한다. 최상위 요소에서는 `frameKey` 가 `nodeId` 를
+    // **그대로** 돌려주므로 그 경로는 004 와 바이트 동일하다(불변식 G11 · AC-06).
+    //
+    // 판정에 쓸 직전 누름은 **대상 키까지** 함께 본다. 그래서 서로 다른 두 부품을 빠르게
+    // 연달아 누르는 것은 더블클릭이 아니다 — 그때 사용자가 한 일은 "이것, 그리고 저것"
+    // 이지 "이 안으로" 가 아니다.
+    const hitKey = frameKey(hit.nodeId, hit.partId);
+    const second = isSecondPress(lastPressRef.current, event.timeStamp, point, hitKey);
+    lastPressRef.current = { at: event.timeStamp, point, key: hitKey };
+
+    const key = pressTargetKey(hit, selection, second);
+    const enteredPart = isPartKey(key);
 
     // **부품 선택은 언제나 하나이고, 그 그룹과 함께 서지 않는다**(REQ-01-a · REQ-01-b).
-    // modifier 를 여기서 흘려보내는 것에 뜻이 있다: 부품을 무리에 더할 수 있게 하면
+    // modifier 를 부품 경로에서 흘려보내는 것에 뜻이 있다: 부품을 무리에 더할 수 있게 하면
     // "서로 다른 그룹의 부품 둘" 이라는 뜻이 정의되지 않은 상태가 만들어지고(A1), 8핸들이
-    // 두 상자에 서는 화면이 그 뒤를 따른다.
-    const picked = hit.partId === undefined
-      ? nextSelection(selection, key, additive)
-      : new Set([key]);
+    // 두 상자에 서는 화면이 그 뒤를 따른다. 그룹을 고르는 경로는 최상위 원소와 같으므로
+    // modifier 가 종전 그대로 산다.
+    const picked = enteredPart ? new Set([key]) : nextSelection(selection, key, additive);
     if (picked !== selection) setSelection(picked);
-    if (additive && hit.partId === undefined) return;
+    if (additive && !enteredPart) return;
 
     if (!(stage.width > 0) || !(stage.height > 0)) return;
 

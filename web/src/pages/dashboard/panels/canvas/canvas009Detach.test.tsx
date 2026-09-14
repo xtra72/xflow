@@ -115,6 +115,16 @@ function click(p: { x: number; y: number }): void {
   fireEvent(overlayRoot(), new MouseEvent('pointerup', at(p)));
 }
 
+/**
+ * 그룹 안으로 들어간다 — 부품을 고르는 몸짓은 **더블클릭**이다(SPEC-CANVAS-009 0.3.0).
+ *
+ * 단일 클릭은 그룹을 고르므로, 분리 단추를 켜려면 먼저 안으로 들어가야 한다.
+ */
+function enterPart(p: { x: number; y: number }): void {
+  click(p);
+  click(p);
+}
+
 function marqueeSelect(from: { x: number; y: number }, to: { x: number; y: number }): void {
   fireEvent(overlayRoot(), new MouseEvent('pointerdown', at(from)));
   fireEvent(overlayRoot(), new MouseEvent('pointermove', at(to)));
@@ -149,7 +159,7 @@ describe('분리 단추는 부품이 골라졌을 때만 켜진다', () => {
 
   it('부품을 고르면 켜진다', () => {
     setup();
-    click(AT.body);
+    enterPart(AT.body);
     expect(detachButton()).toBeEnabled();
   });
 
@@ -157,6 +167,13 @@ describe('분리 단추는 부품이 골라졌을 때만 켜진다', () => {
     setup();
     click(AT.sibling);
     expect(detachButton()).toBeDisabled();
+  });
+
+  it('부품 위를 **한 번만** 누르면 꺼진 채다 — 그때 골라진 것은 그룹이다', () => {
+    setup();
+    click(AT.body);
+    expect(detachButton()).toBeDisabled();
+    expect(ungroupButton()).toBeEnabled();
   });
 
   it('그룹을 고르면 꺼진다 — 그때 켜지는 것은 그룹 해제다', () => {
@@ -169,7 +186,7 @@ describe('분리 단추는 부품이 골라졌을 때만 켜진다', () => {
   it('둘이 **함께 켜지지 않는다** — 한 선택에서 다루는 범위는 하나다', () => {
     setup();
     for (const step of [
-      () => click(AT.body),
+      () => enterPart(AT.body),
       () => marqueeSelect(AT.aboveGroup, { x: 80, y: 50 }),
       () => click(AT.sibling),
       () => click(AT.empty),
@@ -186,7 +203,7 @@ describe('분리 단추는 부품이 골라졌을 때만 켜진다', () => {
 describe('누르면 부품이 최상위로 올라온다', () => {
   it('그룹의 부품이 하나 줄고 새 요소가 **그룹 바로 뒤**에 선다', () => {
     const emit = setup();
-    click(AT.body);
+    enterPart(AT.body);
     emit.mockClear();
     fireEvent.click(detachButton());
 
@@ -202,7 +219,7 @@ describe('누르면 부품이 최상위로 올라온다', () => {
 
   it('올라온 요소의 기하가 **캔버스 절대 좌표**다 — 자리가 움직이지 않는다', () => {
     const emit = setup();
-    click(AT.body);
+    enterPart(AT.body);
     emit.mockClear();
     fireEvent.click(detachButton());
 
@@ -212,7 +229,7 @@ describe('누르면 부품이 최상위로 올라온다', () => {
 
   it('뺀 것이 선택으로 남는다 — 방금 뺀 것을 곧바로 끌 수 있어야 한다', () => {
     const emit = setup();
-    click(AT.body);
+    enterPart(AT.body);
     fireEvent.click(detachButton());
 
     const liftedId = (emit.mock.calls[emit.mock.calls.length - 1]![0] as CanvasNode[])[1]!.id;
@@ -225,7 +242,7 @@ describe('누르면 부품이 최상위로 올라온다', () => {
 describe('규칙이 걸린 그룹에서는 **먼저 묻는다** (AC-31 · REQ-05-c)', () => {
   it('규칙이 없으면 묻지 않고 곧바로 뺀다', () => {
     const emit = setup();
-    click(AT.body);
+    enterPart(AT.body);
     emit.mockClear();
     fireEvent.click(detachButton());
 
@@ -235,7 +252,7 @@ describe('규칙이 걸린 그룹에서는 **먼저 묻는다** (AC-31 · REQ-05
 
   it('규칙이 있으면 확인을 띄우고 **아직 빼지 않는다**', () => {
     const emit = setup([group({ rules: [NODATA_ROW] }), sibling()]);
-    click(AT.body);
+    enterPart(AT.body);
     emit.mockClear();
     fireEvent.click(detachButton());
 
@@ -245,7 +262,7 @@ describe('규칙이 걸린 그룹에서는 **먼저 묻는다** (AC-31 · REQ-05
 
   it('확인하면 뺀다', () => {
     const emit = setup([group({ rules: [NODATA_ROW] }), sibling()]);
-    click(AT.body);
+    enterPart(AT.body);
     emit.mockClear();
     fireEvent.click(detachButton());
     fireEvent.click(screen.getByTestId('canvas-group-ungroup-yes'));
@@ -256,7 +273,7 @@ describe('규칙이 걸린 그룹에서는 **먼저 묻는다** (AC-31 · REQ-05
 
   it('거절하면 아무 일도 없고 확인이 사라진다', () => {
     const emit = setup([group({ rules: [NODATA_ROW] }), sibling()]);
-    click(AT.body);
+    enterPart(AT.body);
     emit.mockClear();
     fireEvent.click(detachButton());
     fireEvent.click(screen.getByTestId('canvas-group-ungroup-no'));
@@ -267,7 +284,7 @@ describe('규칙이 걸린 그룹에서는 **먼저 묻는다** (AC-31 · REQ-05
 
   it('확인 중에 선택이 바뀌면 확인이 거둬진다 — 묻지 않은 것이 빠지면 안 된다', () => {
     const emit = setup([group({ rules: [NODATA_ROW] }), sibling()]);
-    click(AT.body);
+    enterPart(AT.body);
     fireEvent.click(detachButton());
     expect(screen.getByTestId('canvas-group-detach-ask')).not.toBeNull();
 
@@ -278,7 +295,7 @@ describe('규칙이 걸린 그룹에서는 **먼저 묻는다** (AC-31 · REQ-05
 
   it('확인 줄은 **하나뿐**이다 — 해제 확인과 분리 확인이 함께 뜨지 않는다', () => {
     setup([group({ rules: [NODATA_ROW] }), sibling()]);
-    click(AT.body);
+    enterPart(AT.body);
     fireEvent.click(detachButton());
     expect(screen.queryByTestId('canvas-group-ungroup-ask')).toBeNull();
     expect(screen.queryByTestId('canvas-group-detach-ask')).not.toBeNull();
@@ -298,7 +315,7 @@ describe('남을 부품이 하나뿐이면 그룹째 풀린다', () => {
       group({ parts: [rect('body', { x: 1000, y: 1000, w: 4000, h: 4000 }), rect('head', { x: 5000, y: 5000, w: 4000, h: 4000 })] }),
       sibling(),
     ]);
-    click(AT.body);
+    enterPart(AT.body);
     emit.mockClear();
     fireEvent.click(detachButton());
 

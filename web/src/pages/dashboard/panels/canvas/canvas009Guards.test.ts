@@ -175,16 +175,25 @@ describe('그룹 안에 그룹이 오지 않는다 (AC-44 — 004 A6)', () => {
 // --- AC-46: 뒤집힌 시험 옆에 근거가 남는다 ---------------------------------
 
 describe('뒤집힌 단언에 009 를 가리키는 주석이 있다 (AC-46)', () => {
+  // 0.3.0 에서 **둘로 줄었다.** 0.2.0 은 캔버스 단일 클릭까지 뒤집어 셋이었으나, 그
+  // 뒤집힘이 그룹을 클릭으로 고를 길을 없앤다는 사용자 보고가 들어와 되돌렸다
+  // (단일 클릭은 004 와 같이 그룹, 더블클릭이 그 안). 그래서 `CanvasEditOverlay.delete`
+  // 는 더는 뒤집힌 시험이 아니다 — 그 파일의 주석이 되돌린 경위를 대신 든다.
   const inverted: ReadonlyArray<readonly [file: string, marker: string]> = [
     ['canvas004GroupRows.test.tsx', '뒤집힌 단언 ①'],
     ['canvas004GroupRows.test.tsx', '뒤집힌 단언 ②'],
-    ['CanvasEditOverlay.delete.test.tsx', '고르는 몸짓이 SPEC-CANVAS-009 에서 뒤집혔다'],
   ];
 
   it.each(inverted)('%s 에 근거 주석이 있다 (%s)', (file, marker) => {
     const raw = fs.readFileSync(path.join(CANVAS_DIR, file), 'utf8');
     expect(raw).toContain(marker);
     expect(raw).toContain('SPEC-CANVAS-009');
+  });
+
+  it('되돌린 자리에도 경위가 남는다 — 0.2.0 이 뒤집었다가 0.3.0 이 되돌린 곳', () => {
+    const raw = fs.readFileSync(path.join(CANVAS_DIR, 'CanvasEditOverlay.delete.test.tsx'), 'utf8');
+    expect(raw).toContain('SPEC-CANVAS-009 0.3.0');
+    expect(raw).toContain('단일 클릭은 그룹');
   });
 
   it('뒤집힌 시험이 **삭제되지 않았다** — 같은 자리에 새 단언이 섰다', () => {

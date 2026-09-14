@@ -1,11 +1,14 @@
-// 부품 선택과 핸들 — 히트테스트의 `partId` 가 선택까지 살아 온다 (SPEC-CANVAS-009 M3).
+// 그룹 진입과 부품 핸들 — 단일 클릭은 그룹, 더블클릭은 그 안 (SPEC-CANVAS-009 M3).
 //
 // ## 이 파일이 겨누는 이음매
 //
 // 004 는 히트 테스트에서 **이미** `{ nodeId, partId }` 를 돌려주고 있었고, 오버레이가 그
-// `partId` 를 **버렸다**. 009 가 바꾼 것은 그 한 줄이지만, 그 한 줄이 살아나는 것만으로는
-// 아무것도 보이지 않는다 — 선택에 든 복합 키를 윤곽선도 핸들도 드래그도 읽을 수 있어야
-// 비로소 화면이 달라진다. 그 넷을 층을 건너 잰다.
+// `partId` 를 **버렸다**. 009 가 그 값을 살렸지만, 0.2.0 은 그것을 **단일 클릭**에 걸어
+// 두어 그룹을 클릭으로 고를 길을 없애 버렸다(사용자 보고: "그룹핑 객체가 선택되지 않음").
+//
+// 0.3.0 은 그림 도구의 관용구로 옮긴다 — **단일 클릭은 그룹, 더블클릭은 그 안.** 한 번
+// 들어간 뒤에는 그 그룹 안에서 단일 클릭도 부품을 고르고(머무름), 빈 곳이나 다른 요소를
+// 누르면 빠져나온다. "안에 있음" 은 별도 상태가 아니라 **선택에서 파생**된다.
 //
 // ## 고정 입력의 산술
 //
@@ -134,6 +137,17 @@ function click(p: { x: number; y: number }): void {
   fireEvent(overlayRoot(), new MouseEvent('pointerup', at(p)));
 }
 
+/**
+ * 같은 자리를 연달아 두 번 누른다 — **그룹 안으로 들어가는 몸짓**이다.
+ *
+ * 두 누름이 같은 프레임 안에서 일어나므로 판정 창(400ms) 안이고 좌표도 같다. 실제
+ * 브라우저에서도 두 번의 빠른 누름이 곧 더블클릭이므로, 이 하네스가 지어낸 몸짓이 아니다.
+ */
+function doubleClick(p: { x: number; y: number }): void {
+  click(p);
+  click(p);
+}
+
 /** 빈 자리에서 사각형을 그어 **최상위 원소**를 고른다(그룹 자신을 고르는 유일한 몸짓). */
 function marqueeSelect(from: { x: number; y: number }, to: { x: number; y: number }): void {
   press(overlayRoot(), from);
@@ -175,17 +189,96 @@ afterEach(() => {
 
 // --- 선택 (AC-05 ~ AC-09) --------------------------------------------------
 
-describe('부품을 누르면 부품이 골라진다 (AC-05)', () => {
-  it('선택 상태에 복합 키가 들어간다', () => {
+describe('단일 클릭은 **그룹**을 고른다 (AC-05 · 사용자 보고 재현)', () => {
+  it('부품 위를 한 번 누르면 그룹이 골라진다 — 부품이 아니다', () => {
     setup();
     click(AT.body);
+    expect(selected()).toEqual(['grp-1']);
+  });
+
+  it('어느 부품 위를 누르든 같다 — 그룹은 부품 잉크로 잡히지만 고르는 것은 그룹이다', () => {
+    setup();
+    click(AT.head);
+    expect(selected()).toEqual(['grp-1']);
+  });
+
+  it('그룹을 고른 뒤 끌면 **그룹 전체**가 옮겨진다 — 부품 좌표는 그대로다', () => {
+    const emit = setup();
+    press(overlayRoot(), AT.body);
+    fireEvent(overlayRoot(), new MouseEvent('pointermove', at({ x: AT.body.x + 4, y: AT.body.y })));
+    fireEvent(overlayRoot(), new MouseEvent('pointerup', at({ x: AT.body.x + 4, y: AT.body.y })));
+
+    const nodes = lastNodes(emit);
+    const g = nodes.find((n) => n.id === 'grp-1') as GroupElement;
+    // 캔버스 4px → 10 단위. 그룹 상자만 움직인다.
+    expect(g.geometry).toEqual({ x: 60, y: 40, w: 100, h: 80 });
+    expect(g.parts[0]!.geometry).toEqual({ x: 1000, y: 1000, w: 4000, h: 4000 });
+  });
+});
+
+describe('더블클릭은 **그 부품**으로 들어간다 (AC-05)', () => {
+  it('두 번 누르면 선택 상태에 복합 키가 들어간다', () => {
+    setup();
+    doubleClick(AT.body);
     expect(selected()).toEqual(['grp-1/body']);
   });
 
-  it('다른 부품을 누르면 그 부품이 골라진다 — 그룹이 아니라 **부품**이 갈린다', () => {
+  it('다른 부품을 더블클릭하면 그 부품이 골라진다', () => {
     setup();
+    doubleClick(AT.head);
+    expect(selected()).toEqual(['grp-1/head']);
+  });
+
+  it('최상위 요소의 더블클릭은 아무것도 바꾸지 않는다 — 들어갈 안이 없다', () => {
+    setup();
+    doubleClick(AT.sibling);
+    expect(selected()).toEqual(['el-3']);
+  });
+
+  it('서로 다른 부품을 빠르게 연달아 누른 것은 더블클릭이 아니다', () => {
+    // 사용자가 한 일은 "이것, 그리고 저것" 이지 "이 안으로" 가 아니다. 판정이 시각과
+    // 좌표만 본다면 이 둘이 진입으로 읽힌다.
+    setup();
+    click(AT.body);
+    click(AT.head);
+    expect(selected()).toEqual(['grp-1']);
+  });
+
+  it('빈 곳을 거치면 연타 사슬이 끊긴다', () => {
+    setup();
+    click(AT.body);
+    click(AT.empty);
+    click(AT.body);
+    expect(selected()).toEqual(['grp-1']);
+  });
+});
+
+describe('한 번 들어가면 그 그룹 안에 **머무른다**', () => {
+  it('부품이 골라진 동안에는 단일 클릭도 같은 그룹의 부품을 고른다', () => {
+    setup();
+    doubleClick(AT.body);
+    expect(selected()).toEqual(['grp-1/body']);
     click(AT.head);
     expect(selected()).toEqual(['grp-1/head']);
+  });
+
+  it('그룹 밖을 누르면 빠져나온다', () => {
+    setup();
+    doubleClick(AT.body);
+    click(AT.sibling);
+    expect(selected()).toEqual(['el-3']);
+    // 빠져나온 뒤에는 단일 클릭이 다시 그룹을 고른다.
+    click(AT.body);
+    expect(selected()).toEqual(['grp-1']);
+  });
+
+  it('빈 곳을 누르면 빠져나온다', () => {
+    setup();
+    doubleClick(AT.body);
+    click(AT.empty);
+    expect(selected()).toEqual([]);
+    click(AT.head);
+    expect(selected()).toEqual(['grp-1']);
   });
 });
 
@@ -203,42 +296,42 @@ describe('최상위 선택 키가 004 와 바이트 동일하다 (AC-06)', () =>
     marqueeSelect(AT.aboveGroup, { x: 80, y: 50 });
     expect(selected()).toEqual(['grp-1']);
   });
+
+  it('단일 클릭으로 고른 그룹의 키도 평평하다 — 진입 전에는 복합 키가 없다', () => {
+    setup();
+    click(AT.body);
+    expect(selected()).toEqual(['grp-1']);
+    expect(selected()[0]).not.toContain('/');
+  });
 });
 
 describe('부품과 그룹이 동시에 선택되지 않는다 (AC-07)', () => {
   it('부품이 골라지면 그 그룹의 id 는 선택에 없다', () => {
     setup();
-    click(AT.body);
+    doubleClick(AT.body);
     expect(selected()).not.toContain('grp-1');
   });
 
-  it('그룹이 골라져 있다가 부품을 누르면 그룹이 빠진다', () => {
+  it('그룹이 골라져 있다가 더블클릭으로 들어가면 그룹이 빠진다', () => {
     setup();
     marqueeSelect(AT.aboveGroup, { x: 80, y: 50 });
     expect(selected()).toEqual(['grp-1']);
-    click(AT.head);
+    doubleClick(AT.head);
     expect(selected()).toEqual(['grp-1/head']);
   });
 });
 
 describe('부품 선택은 하나뿐이다 (AC-08)', () => {
-  it('다른 부품을 누르면 부품 키가 정확히 하나 남는다', () => {
+  it('안에서 다른 부품을 누르면 부품 키가 정확히 하나 남는다', () => {
     setup();
-    click(AT.body);
+    doubleClick(AT.body);
     click(AT.head);
     expect(selected()).toEqual(['grp-1/head']);
   });
 
-  it('Shift 를 누른 채 눌러도 더해지지 않는다 — 부품 다중 선택은 뜻이 정의되지 않았다', () => {
+  it('안에서는 Shift 를 눌러도 더해지지 않는다 — 부품 다중 선택은 뜻이 정의되지 않았다', () => {
     setup();
-    click(AT.body);
-    press(overlayRoot(), AT.head);
-    fireEvent(overlayRoot(), new MouseEvent('pointerup', { ...at(AT.head), shiftKey: true }));
-    // 누름에 Shift 를 실어도 결과가 같아야 한다.
-    cleanup();
-
-    setup();
-    click(AT.body);
+    doubleClick(AT.body);
     fireEvent(overlayRoot(), new MouseEvent('pointerdown', { ...at(AT.head), shiftKey: true }));
     fireEvent(overlayRoot(), new MouseEvent('pointerup', { ...at(AT.head), shiftKey: true }));
     expect(selected()).toEqual(['grp-1/head']);
@@ -266,7 +359,7 @@ describe('그룹 상자의 빈 곳은 부품을 선택하지 않는다 (AC-09 ·
 describe('선택된 부품에 핸들이 선다 (AC-10)', () => {
   it('여덟 자리가 **부품의 투영 상자**에 놓인다', () => {
     setup();
-    click(AT.body);
+    doubleClick(AT.body);
     expect(handleIds()).toHaveLength(8);
     // body 의 투영 상자는 px 24..40 × 12..20 이다.
     expect(handleAt('nw')).toEqual({ x: 24, y: 12 });
@@ -275,7 +368,7 @@ describe('선택된 부품에 핸들이 선다 (AC-10)', () => {
 
   it('그룹 상자가 아니다 — 두 상자가 한 모서리도 겹치지 않는 고정 입력이다', () => {
     setup();
-    click(AT.body);
+    doubleClick(AT.body);
     // 그룹 상자는 px 20..60 × 10..30 이다. 그 모서리가 나오면 선택을 잘못 읽은 것이다.
     expect(handleAt('nw')).not.toEqual({ x: 20, y: 10 });
     expect(handleAt('se')).not.toEqual({ x: 60, y: 30 });
@@ -295,7 +388,7 @@ describe('그룹만 선택되면 핸들은 그룹 상자에 선다 (AC-11)', () 
 describe('핸들이 두 상자에 동시에 서지 않는다 (AC-12)', () => {
   it('어떤 선택 상태에서든 한 벌만 나온다', () => {
     setup();
-    for (const step of [() => click(AT.body), () => click(AT.head), () => click(AT.sibling)]) {
+    for (const step of [() => doubleClick(AT.body), () => click(AT.head), () => click(AT.sibling)]) {
       step();
       const ids = handleIds();
       expect(new Set(ids).size, ids.join(',')).toBe(ids.length);
@@ -315,7 +408,7 @@ describe('핸들이 두 상자에 동시에 서지 않는다 (AC-12)', () => {
 describe('부품을 고르면 목록이 **그 그룹 행**을 펼친다', () => {
   it('자동 펼침 id 가 그룹 id 다 — 복합 키를 그대로 내려보내면 어느 행과도 만나지 못한다', () => {
     setup();
-    click(AT.body);
+    doubleClick(AT.body);
     expect(screen.getByTestId('auto-expanded').textContent).toBe('grp-1');
   });
 
@@ -332,6 +425,7 @@ describe('부품을 끌면 **저장 좌표**가 바뀐다 (히트 → 선택 →
   it('가로 4px 이동이 로컬 격자에서 1000 만큼이다', () => {
     // px 4 → 캔버스 4 / 0.4 = 10 단위 → 로컬 10 / 100 × 10000 = 1000.
     const emit = setup();
+    doubleClick(AT.body); // 먼저 그룹 안으로 들어간다
     press(overlayRoot(), AT.body);
     fireEvent(overlayRoot(), new MouseEvent('pointermove', at({ x: AT.body.x + 4, y: AT.body.y })));
     fireEvent(overlayRoot(), new MouseEvent('pointerup', at({ x: AT.body.x + 4, y: AT.body.y })));
@@ -344,6 +438,7 @@ describe('부품을 끌면 **저장 좌표**가 바뀐다 (히트 → 선택 →
 
   it('그룹 상자는 한 자리도 바뀌지 않는다 (AC-14 · 004 A16)', () => {
     const emit = setup();
+    doubleClick(AT.body);
     press(overlayRoot(), AT.body);
     fireEvent(overlayRoot(), new MouseEvent('pointermove', at({ x: AT.body.x + 4, y: AT.body.y })));
     fireEvent(overlayRoot(), new MouseEvent('pointerup', at({ x: AT.body.x + 4, y: AT.body.y })));
@@ -354,7 +449,7 @@ describe('부품을 끌면 **저장 좌표**가 바뀐다 (히트 → 선택 →
 
   it('방향키도 같은 통로를 지난다 — 끌었을 때와 갈리지 않는다', () => {
     const emit = setup();
-    click(AT.body);
+    doubleClick(AT.body);
     emit.mockClear();
     fireEvent.keyDown(overlayRoot(), { key: 'ArrowRight' });
 
@@ -400,7 +495,7 @@ describe('견고성 — 없는 것을 가리켜도 예외가 아니다 (REQ-07)'
       left: 0, top: 0, width: STAGE.width, height: STAGE.height,
       right: STAGE.width, bottom: STAGE.height, x: 0, y: 0, toJSON: () => ({}),
     } as DOMRect);
-    click(AT.body);
+    doubleClick(AT.body);
     expect(selected()).toEqual(['grp-1/body']);
 
     // 부품이 사라진 배열로 다시 그린다 — 선택에는 `grp-1/body` 가 남아 있다.
@@ -419,7 +514,7 @@ describe('견고성 — 없는 것을 가리켜도 예외가 아니다 (REQ-07)'
       left: 0, top: 0, width: STAGE.width, height: STAGE.height,
       right: STAGE.width, bottom: STAGE.height, x: 0, y: 0, toJSON: () => ({}),
     } as DOMRect);
-    click(AT.head);
+    doubleClick(AT.head);
     expect(() => rerender(<Harness elements={[sibling()]} onElementsChange={emit} />)).not.toThrow();
     expect(handleIds()).toEqual([]);
   });

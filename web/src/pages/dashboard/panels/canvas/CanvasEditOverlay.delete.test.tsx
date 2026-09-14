@@ -137,29 +137,6 @@ function pick(emit: ReturnType<typeof vi.fn>, at: { x: number; y: number }, addi
   emit.mockClear();
 }
 
-/**
- * 빈 자리에서 사각형을 그어 **최상위 원소들**을 고른다(SPEC-CANVAS-010 의 맨손 마키).
- *
- * 부품 위의 누름이 부품을 고르게 된 뒤(SPEC-CANVAS-009 REQ-01), 캔버스에서 **그룹 자신**을
- * 고르는 몸짓이 이것이다 — 마키는 최상위 배열만 훑기 때문이다.
- */
-function marqueeSelect(
-  emit: ReturnType<typeof vi.fn>,
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-): void {
-  const at = (p: { x: number; y: number }): MouseEventInit => ({
-    clientX: p.x,
-    clientY: p.y,
-    bubbles: true,
-    cancelable: true,
-  });
-  fireEvent(overlayRoot(), new MouseEvent('pointerdown', at(from)));
-  fireEvent(overlayRoot(), new MouseEvent('pointermove', at(to)));
-  fireEvent(overlayRoot(), new MouseEvent('pointerup', at(to)));
-  emit.mockClear();
-}
-
 function selectionText(): string {
   return screen.getByTestId('selection').textContent ?? '';
 }
@@ -221,11 +198,10 @@ describe('고른 것을 지운다 (Delete · Backspace)', () => {
     // SPEC-CANVAS-004 0.4.0 이 일부러 고른 형상이다. 부품은 최상위 배열이 아니라 그룹
     // 항목 **안**에 살므로, 항목을 빼는 것 말고 따로 할 일이 없다.
     //
-    // **고르는 몸짓이 SPEC-CANVAS-009 에서 뒤집혔다.** 004 에서는 부품 위를 누르면
-    // **그룹**이 골라졌고 그래서 이 시험이 클릭 한 번으로 끝났다. 009 REQ-01 이 그
-    // 조항을 뒤집어 부품 위의 누름은 **그 부품**을 고른다 — 그러므로 그룹을 고르려면
-    // 최상위 원소를 고르는 몸짓, 즉 **영역 선택**을 써야 한다. 아래 §부품 위의 누름이
-    // 그 뒤집힘 자체를 따로 잰다.
+    // **고르는 몸짓은 004 와 같다**(SPEC-CANVAS-009 0.3.0). 009 0.2.0 은 부품 위의
+    // 누름을 부품 선택에 걸어 그룹을 클릭으로 고를 길을 없앴고, 0.3.0 이 그것을 그림
+    // 도구의 관용구로 되돌렸다 — **단일 클릭은 그룹, 더블클릭은 그 안.** 그래서 이
+    // 시험은 004 때처럼 클릭 한 번으로 그룹을 고른다. 아래 §더블클릭이 진입 쪽을 잰다.
     const group: GroupElement = {
       id: 'g',
       kind: 'group',
@@ -236,9 +212,7 @@ describe('고른 것을 지운다 (Delete · Backspace)', () => {
       parts: [rect('p1', { x: 0, y: 0, w: GROUP_LOCAL_EXTENT, h: GROUP_LOCAL_EXTENT })],
     };
     const emit = setup([group, rect('z', { x: 400, y: 320, w: 100, h: 60 })]);
-    // 그룹의 px 상자는 20..60 × 10..30, `z` 는 160..200 × 80..95 다. 아래 사각형은
-    // 그룹만 온전히 감싸고 `z` 에는 닿지 않는다.
-    marqueeSelect(emit, { x: 5, y: 5 }, { x: 80, y: 50 });
+    pick(emit, CENTER.a); // 그룹의 상자는 `a` 와 같은 자리다
     expect(selectionText()).toBe('g');
 
     fireEvent.keyDown(overlayRoot(), { key: 'Delete' });
@@ -246,9 +220,9 @@ describe('고른 것을 지운다 (Delete · Backspace)', () => {
     expect(emittedIds(emit)).toEqual(['z']);
   });
 
-  it('부품 위를 누르면 **부품**이 골라지고 Delete 는 아무것도 지우지 않는다 (SPEC-CANVAS-009 REQ-01)', () => {
-    // 004 는 여기서 그룹을 골랐다. 009 가 그 조항을 뒤집었고, 그 귀결로 **부품을 고른
-    // 상태의 Delete 는 무동작**이다 — 부품 삭제는 009 의 범위가 아니며(빼는 길은 분리
+  it('더블클릭으로 들어가면 **부품**이 골라지고 Delete 는 아무것도 지우지 않는다 (SPEC-CANVAS-009 0.3.0)', () => {
+    // 단일 클릭은 그룹을 고르고(위 시험), **더블클릭**이 그 안으로 들어간다. 들어간
+    // 뒤의 Delete 는 **무동작**이다 — 부품 삭제는 009 의 범위가 아니며(빼는 길은 분리
     // 단추다), 조용히 그룹째 지우는 것은 사용자가 가리킨 것과 다른 것을 없애는 일이다.
     const group: GroupElement = {
       id: 'g',
@@ -258,6 +232,8 @@ describe('고른 것을 지운다 (Delete · Backspace)', () => {
     };
     const emit = setup([group, rect('z', { x: 400, y: 320, w: 100, h: 60 })]);
     pick(emit, CENTER.a);
+    expect(selectionText(), '전제 — 첫 누름은 그룹을 고른다').toBe('g');
+    pick(emit, CENTER.a); // 두 번째 누름 = 진입
     expect(selectionText()).toBe('g/p1');
 
     fireEvent.keyDown(overlayRoot(), { key: 'Delete' });
