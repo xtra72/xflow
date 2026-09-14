@@ -34,16 +34,15 @@ export function FlowPortPanel({ onClose }: FlowPortPanelProps) {
   return (
     <div
       className={cn(
-        'flex w-64 flex-col rounded-lg border border-zinc-200 bg-(--color-bg-surface) shadow-lg',
+        'flex w-64 flex-col rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) shadow-lg',
         // 배경은 팔레트(--color-bg-surface)가 정한다.
-        'dark:border-zinc-700',
       )}
       role="dialog"
       aria-label={t('editor.port.panelAria')}
     >
       {/* 헤더 */}
-      <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-2 dark:border-zinc-700">
-        <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+      <div className="flex items-center justify-between border-b border-(--color-border-default) px-3 py-2">
+        <span className="text-sm font-semibold text-(--color-text-primary)">
           {t('editor.toolbar.portPanel')}
         </span>
         <button
@@ -51,7 +50,7 @@ export function FlowPortPanel({ onClose }: FlowPortPanelProps) {
           onClick={onClose}
           title={t('common.close')}
           aria-label={t('editor.port.closeAria')}
-          className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800"
+          className="rounded p-0.5 text-(--color-text-muted) hover:bg-(--color-bg-sunken) hover:text-(--color-text-secondary)"
         >
           <X className="h-4 w-4" />
         </button>
@@ -119,7 +118,7 @@ function PortSection({
       </div>
 
       {ports.length === 0 ? (
-        <div className="px-1 py-0.5 text-xs italic text-zinc-400">
+        <div className="px-1 py-0.5 text-xs italic text-(--color-text-muted)">
           {t('editor.port.empty')}
         </div>
       ) : (
@@ -207,9 +206,8 @@ function PortRow({ port, onRename, onRemove }: PortRowProps) {
           aria-label={t('editor.port.nameAria')}
           className={cn(
             'w-full rounded border border-blue-400 bg-(--color-bg-surface) px-1.5 py-0.5 text-xs',
-            'text-zinc-900 outline-none focus:ring-1 focus:ring-blue-400',
+            'text-(--color-text-primary) outline-none focus:ring-1 focus:ring-blue-400',
             // 입력창 배경도 팔레트(--color-bg-surface)를 따른다.
-            'dark:text-zinc-100',
           )}
         />
       </li>
@@ -220,7 +218,7 @@ function PortRow({ port, onRename, onRemove }: PortRowProps) {
     <li
       className={cn(
         'group flex items-center justify-between gap-1 rounded px-1.5 py-1',
-        'bg-zinc-50 text-xs text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200',
+        'bg-(--color-bg-secondary) text-xs text-(--color-text-secondary)',
       )}
     >
       <button
@@ -237,7 +235,7 @@ function PortRow({ port, onRename, onRemove }: PortRowProps) {
           onClick={startEditing}
           title={t('editor.port.rename')}
           aria-label={t('editor.port.renameAria').replace('{name}', port.name)}
-          className="rounded p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-700"
+          className="rounded p-0.5 text-(--color-text-muted) hover:bg-(--color-bg-elevated) hover:text-(--color-text-secondary)"
         >
           <Pencil className="h-3 w-3" />
         </button>
@@ -246,7 +244,7 @@ function PortRow({ port, onRename, onRemove }: PortRowProps) {
           onClick={onRemove}
           title={t('common.delete')}
           aria-label={t('editor.port.deleteAria').replace('{name}', port.name)}
-          className="rounded p-0.5 text-zinc-400 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/40"
+          className="rounded p-0.5 text-(--color-text-muted) hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/40"
         >
           <Trash2 className="h-3 w-3" />
         </button>

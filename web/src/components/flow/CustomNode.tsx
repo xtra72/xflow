@@ -421,17 +421,15 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
       data-tapped={isTapped ? 'true' : 'false'}
       className={cn(
         'relative flex flex-col rounded-lg border bg-(--color-bg-surface) px-3 py-2 shadow-sm',
-        // 배경은 팔레트(--color-bg-surface)가 단일 원천이다. night 전용 배경
-        // 덮어쓰기가 남아 있어 카드가 캔버스보다 어두워지는 역전을 만들었으므로
-        // 제거했다. 테두리는 아직 토큰화 대상이 아니라 그대로 둔다.
-        'dark:border-zinc-700',
+        // 배경도 테두리도 팔레트가 단일 원천이다. 종전에는 테두리만 zinc 로 남아
+        // 있어 팔레트를 고쳐도 카드 윤곽이 따라오지 않았다.
         // 2026-05-31: min-h 로 카드 크기를 고정하고 포트 row 들이 vertical center
         // 정렬되도록 한다. 1 port 와 2 port 노드의 첫 포트 위치가 시각적으로
         // 일치 — 헤더 바로 아래가 아니라 카드의 center 영역에서 균등 분포.
         'min-h-[88px] min-w-[160px] transition-shadow duration-150',
         selected
           ? 'ring-2 ring-blue-500 border-blue-500 shadow-md'
-          : 'border-zinc-200 hover:shadow-md',
+          : 'border-(--color-border-default) hover:shadow-md',
         // 관찰 중인 노드는 subtle sky ring 으로 시각화 (선택 상태가 우선).
         !selected && isTapped && 'ring-2 ring-sky-400/70 dark:ring-sky-500/60',
         // 필수 설정이 누락된 경우 호박색 테두리로 시각화 (선택 상태가 우선)
@@ -449,7 +447,8 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
           className={cn(
             'absolute -top-1.5 -left-1.5 flex h-4 w-4 items-center justify-center rounded-full',
             'bg-amber-400 text-white shadow-sm dark:bg-amber-500',
-            'ring-1 ring-white dark:ring-zinc-800',
+            // 테가 카드 배경과 같아야 배지가 카드에서 오려 낸 것처럼 보인다.
+            'ring-1 ring-(--color-bg-surface)',
           )}
           title={validationTooltip}
           aria-label={validationTooltip}
@@ -460,11 +459,11 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
 
       {/* 아이콘 + 라벨 */}
       <div className="flex items-center gap-2">
-        <div className="flex-shrink-0 rounded-md bg-zinc-100 p-1.5 dark:bg-zinc-800">
-          <Icon className="h-4 w-4 text-zinc-600 dark:text-zinc-300" />
+        <div className="flex-shrink-0 rounded-md bg-(--color-bg-sunken) p-1.5">
+          <Icon className="h-4 w-4 text-(--color-text-secondary)" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
+          <p className="truncate text-sm font-medium text-(--color-text-primary)">
             {nodeData.label}
           </p>
           {/* 노드 타입 + (flow-node 원격 브릿지) 라이브 상태 점.
@@ -472,7 +471,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
               (`xagent04.Serial`)에 들어가므로 중복이다. 브릿지 연결 상태는 노드
               타입 텍스트 바로 뒤에 작은 상태 점(실행 중) 또는 Radio 아이콘으로
               보존한다. data-remote-bridge/title/aria-label(접근성·테스트)은 유지. */}
-          <div className="flex items-center gap-1 text-[10px] text-zinc-400">
+          <div className="flex items-center gap-1 text-[10px] text-(--color-text-muted)">
             <span className="truncate">{nodeData.nodeType}</span>
             {isFlowNode && isRemoteBridge && (
               <span
@@ -553,7 +552,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
               'flex-shrink-0 rounded-md p-1 transition-colors',
               outputEnabled
                 ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-400 dark:hover:bg-emerald-900/60'
-                : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-500 dark:hover:bg-zinc-700',
+                : 'bg-(--color-bg-sunken) text-(--color-text-muted) hover:bg-(--color-bg-elevated)',
             )}
             title={outputEnabled ? t('editor.node.outputOnTitle') : t('editor.node.outputOffTitle')}
             aria-label={outputEnabled ? t('editor.node.outputDisable') : t('editor.node.outputEnable')}
@@ -577,7 +576,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
               'flex-shrink-0 rounded-md p-1 transition-colors',
               isTapped
                 ? 'bg-sky-100 text-sky-700 ring-1 ring-sky-400 hover:bg-sky-200 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-600 dark:hover:bg-sky-900/60'
-                : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-500 dark:hover:bg-zinc-700',
+                : 'bg-(--color-bg-sunken) text-(--color-text-muted) hover:bg-(--color-bg-elevated)',
             )}
             title={isTapped ? t('editor.node.tapOnTitle') : t('editor.node.tapOffTitle')}
             aria-label={isTapped ? t('editor.node.tapStop') : t('editor.node.tapStart')}
@@ -597,10 +596,10 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
           flex-1 + justify-center 로 row 들을 카드의 남은 vertical 공간 안에서
           center 정렬 — 포트 수와 무관하게 시각적으로 균형 잡힘. */}
       {(inputPorts.length > 0 || rightPorts.length > 0 || stats) && (
-        <div className="mt-1.5 flex flex-1 flex-col justify-center border-t border-zinc-100 pt-1.5 dark:border-zinc-700">
+        <div className="mt-1.5 flex flex-1 flex-col justify-center border-t border-(--color-border-subtle) pt-1.5">
           {/* 노드 단위 누계 통계 — 포트별 통계 표시 비활성 시에만 노출 */}
           {stats && !displaySettings.showPortStats && (
-            <div className="mb-1 flex items-center gap-2 text-[10px] text-zinc-400">
+            <div className="mb-1 flex items-center gap-2 text-[10px] text-(--color-text-muted)">
               <span className="inline-flex items-center gap-0.5" title={t('editor.node.inTooltip')}>
                 <ArrowDownToLine className="h-2.5 w-2.5" />
                 {stats.inMessages.toLocaleString()}
@@ -639,7 +638,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                           id={inPort.name}
                           label={inPort.name}
                         />
-                        <span className="inline-flex items-center gap-1.5 text-[9px] leading-none text-zinc-500 dark:text-zinc-400">
+                        <span className="inline-flex items-center gap-1.5 text-[9px] leading-none text-(--color-text-muted)">
                           {displaySettings.showPortNames && (
                             <span className="font-medium">{inPort.name}</span>
                           )}
@@ -715,7 +714,7 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
                             'inline-flex items-center gap-1.5 text-[9px] leading-none',
                             isErrorRow
                               ? 'text-red-500 dark:text-red-400'
-                              : 'text-zinc-500 dark:text-zinc-400',
+                              : 'text-(--color-text-muted)',
                           )}
                         >
                           {!isErrorRow &&

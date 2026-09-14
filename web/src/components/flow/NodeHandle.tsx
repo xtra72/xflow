@@ -44,7 +44,8 @@ export function NodeHandle({ type, position, id, label, isError, offset }: NodeH
       title={label}
       style={style}
       className={cn(
-        '!w-3 !h-3 !rounded-full !border-2 !border-white dark:!border-zinc-800',
+        // 테가 카드 배경과 같아야 핸들이 카드에서 오려 낸 것처럼 보인다.
+        '!w-3 !h-3 !rounded-full !border-2 !border-(--color-bg-surface)',
         'transition-colors duration-150',
         isError
           ? '!bg-red-500 hover:!bg-red-400'

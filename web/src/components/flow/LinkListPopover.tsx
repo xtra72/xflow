@@ -73,18 +73,18 @@ export const LinkListPopover = forwardRef<HTMLDivElement, LinkListPopoverProps>(
           className={cn(
             'nodrag nowheel min-w-[180px] max-w-[260px] rounded-md border bg-(--color-bg-surface) p-1 shadow-lg',
             // 배경은 팔레트(--color-bg-surface)가 정한다.
-            'border-zinc-200 dark:border-zinc-700',
-            'text-zinc-700 dark:text-zinc-200',
+            'border-(--color-border-default)',
+            'text-(--color-text-secondary)',
           )}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
           {/* 헤더: 방향 + 포트 이름 */}
           <div className="flex items-center justify-between gap-2 px-1.5 pb-1 pt-0.5">
-            <span className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400">
+            <span className="text-[10px] font-semibold text-(--color-text-muted)">
               {header}
             </span>
-            <span className="max-w-[120px] truncate text-[10px] text-zinc-400">
+            <span className="max-w-[120px] truncate text-[10px] text-(--color-text-muted)">
               {port}
             </span>
           </div>
@@ -117,7 +117,7 @@ export const LinkListPopover = forwardRef<HTMLDivElement, LinkListPopoverProps>(
                       'transition-colors duration-100',
                       highlighted
                         ? 'bg-blue-100 dark:bg-blue-900/40'
-                        : 'hover:bg-zinc-100 dark:hover:bg-zinc-800',
+                        : 'hover:bg-(--color-bg-sunken)',
                     )}
                   >
                     {/* 링크 이름 */}
@@ -126,7 +126,7 @@ export const LinkListPopover = forwardRef<HTMLDivElement, LinkListPopoverProps>(
                         'truncate text-[11px] font-medium',
                         highlighted
                           ? 'text-blue-700 dark:text-blue-300'
-                          : 'text-zinc-700 dark:text-zinc-200',
+                          : 'text-(--color-text-secondary)',
                       )}
                     >
                       {display}
@@ -136,7 +136,7 @@ export const LinkListPopover = forwardRef<HTMLDivElement, LinkListPopoverProps>(
                       {entry.counterparts.map((cp) => (
                         <span
                           key={cp.edgeId}
-                          className="truncate text-[9px] leading-tight text-zinc-400"
+                          className="truncate text-[9px] leading-tight text-(--color-text-muted)"
                         >
                           {isOutput
                             ? `→ ${cp.nodeLabel}:${cp.port}`

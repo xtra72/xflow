@@ -117,7 +117,7 @@ function MenuItem({ icon: Icon, label, onClick, danger }: MenuItemProps) {
         'flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors',
         danger
           ? 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/30'
-          : 'text-(--color-text-primary) hover:bg-zinc-100 dark:hover:bg-zinc-700',
+          : 'text-(--color-text-primary) hover:bg-(--color-bg-sunken)',
       )}
     >
       <Icon className="h-4 w-4 shrink-0" />

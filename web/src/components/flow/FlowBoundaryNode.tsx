@@ -67,7 +67,7 @@ export function FlowBoundaryNode({ data, isConnectable }: NodeProps) {
       </div>
 
       {ports.length === 0 ? (
-        <div className="px-1 py-0.5 text-[11px] italic text-zinc-400">
+        <div className="px-1 py-0.5 text-[11px] italic text-(--color-text-muted)">
           {emptyHint}
         </div>
       ) : (
@@ -77,7 +77,7 @@ export function FlowBoundaryNode({ data, isConnectable }: NodeProps) {
               key={portName}
               className={cn(
                 'relative flex items-center rounded px-1.5 py-1 text-xs',
-                'bg-zinc-50 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200',
+                'bg-(--color-bg-secondary) text-(--color-text-secondary)',
                 // 입력 경계는 라벨을 좌측, 핸들을 우측. 출력 경계는 반대.
                 isInput ? 'justify-start pr-3' : 'justify-end pl-3',
               )}
@@ -94,7 +94,7 @@ export function FlowBoundaryNode({ data, isConnectable }: NodeProps) {
                 // 노드의 isConnectable 을 그대로 전달해 항상 연결 가능하게 한다.
                 isConnectable={isConnectable}
                 className={cn(
-                  '!h-3 !w-3 !rounded-full !border-2 !border-white dark:!border-zinc-800',
+                  '!h-3 !w-3 !rounded-full !border-2 !border-(--color-bg-surface)',
                   isInput
                     ? '!bg-blue-500 hover:!bg-blue-400'
                     : '!bg-emerald-500 hover:!bg-emerald-400',

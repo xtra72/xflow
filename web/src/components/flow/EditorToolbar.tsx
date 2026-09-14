@@ -73,7 +73,7 @@ import { FlowSettingsDialog } from './FlowSettingsDialog';
 
 /** 상태별 배지 스타일 매핑 */
 const STATUS_BADGE_STYLES: Record<FlowStatus, string> = {
-  stored: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+  stored: 'bg-(--color-bg-sunken) text-(--color-text-secondary)',
   loaded: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
   running: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
   stopped: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300',
@@ -284,7 +284,7 @@ export function EditorToolbar({
 
   return (
     // 배경은 팔레트(--color-bg-surface)가 정한다. night 전용 덮어쓰기는 제거했다.
-    <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-(--color-bg-surface) px-2 py-1 shadow-sm dark:border-zinc-700">
+    <div className="flex items-center gap-1 rounded-lg border border-(--color-border-default) bg-(--color-bg-surface) px-2 py-1 shadow-sm">
       {/* 서브플로우 "돌아가기" — 들어가기로 진입한 플로우에서만(백 스택 비어있지 않을 때)
           표시되며, 직전(부모) 플로우로 되돌아간다. 중첩(A→B→C) 을 지원한다. */}
       <SubflowBackButton />
@@ -505,7 +505,7 @@ function FlowTitle({ flowId }: FlowTitleProps) {
         aria-label={t('editor.title.ariaLabel')}
         className={cn(
           'max-w-[220px] truncate px-2 py-0.5 text-sm font-semibold',
-          'text-zinc-800 dark:text-zinc-100',
+          'text-(--color-text-primary)',
         )}
       >
         {name || t('editor.title.untitled')}
@@ -716,13 +716,13 @@ function FocusDepthStepper({ depth, onChange, enabled }: FocusDepthStepperProps)
       aria-label={title}
       className={cn(
         'inline-flex items-center gap-0.5 rounded-md border px-1 py-0.5',
-        'border-zinc-200 dark:border-zinc-700',
+        'border-(--color-border-default)',
         enabled
-          ? 'text-zinc-600 dark:text-zinc-300'
+          ? 'text-(--color-text-secondary)'
           : 'pointer-events-none opacity-40',
       )}
     >
-      <Layers className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+      <Layers className="h-3.5 w-3.5 shrink-0 text-(--color-text-muted)" />
       <button
         type="button"
         onClick={decrement}
@@ -730,7 +730,7 @@ function FocusDepthStepper({ depth, onChange, enabled }: FocusDepthStepperProps)
         aria-label={t('editor.focusDepth.decrease')}
         className={cn(
           'inline-flex h-4 w-4 items-center justify-center rounded',
-          'hover:bg-zinc-100 dark:hover:bg-zinc-800',
+          'hover:bg-(--color-bg-sunken)',
           'disabled:pointer-events-none disabled:opacity-30',
         )}
       >
@@ -753,7 +753,7 @@ function FocusDepthStepper({ depth, onChange, enabled }: FocusDepthStepperProps)
         aria-label={t('editor.focusDepth.increase')}
         className={cn(
           'inline-flex h-4 w-4 items-center justify-center rounded',
-          'hover:bg-zinc-100 dark:hover:bg-zinc-800',
+          'hover:bg-(--color-bg-sunken)',
           'disabled:pointer-events-none disabled:opacity-30',
         )}
       >
@@ -794,7 +794,7 @@ function ToolbarButton({ icon: Icon, label, onClick, disabled, badge, active, ti
         'transition-colors duration-100',
         active
           ? 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/40 dark:text-blue-300 dark:hover:bg-blue-900/60'
-          : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100',
+          : 'text-(--color-text-secondary) hover:bg-(--color-bg-sunken) hover:text-(--color-text-primary)',
         'disabled:pointer-events-none disabled:opacity-40',
       )}
     >
@@ -808,7 +808,7 @@ function ToolbarButton({ icon: Icon, label, onClick, disabled, badge, active, ti
 
 /** 수직 구분선 */
 function Separator() {
-  return <div className="mx-0.5 h-5 w-px bg-zinc-200 dark:bg-zinc-700" />;
+  return <div className="mx-0.5 h-5 w-px bg-(--color-bg-elevated)" />;
 }
 
 // ---- 원격 타깃 전용 서브컴포넌트 ----
@@ -882,7 +882,7 @@ function RemoteTitleBlock({ instanceId, nodeLabel, nodeTitle, flowName }: Remote
         {nodeLabel}
       </span>
       <span
-        className="max-w-[200px] truncate px-1 text-sm font-semibold text-zinc-800 dark:text-zinc-100"
+        className="max-w-[200px] truncate px-1 text-sm font-semibold text-(--color-text-primary)"
         title={flowName || t('remote.editor.untitled')}
       >
         {flowName || t('remote.editor.untitled')}

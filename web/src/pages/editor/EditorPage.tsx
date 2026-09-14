@@ -668,8 +668,8 @@ function EditorPageInner() {
   // 옅은 파랑으로 구분해 실제 노드(회색)가 미니맵에 보이도록 한다.
   const miniMapNodeColor = useCallback((node: Node) => {
     if (node.type === FLOW_AREA_NODE_TYPE) return 'transparent';
-    if (node.type === FLOW_BOUNDARY_NODE_TYPE) return '#93c5fd';
-    return '#6b7280';
+    if (node.type === FLOW_BOUNDARY_NODE_TYPE) return 'var(--color-interactive-primary)';
+    return 'var(--color-text-muted)';
   }, []);
 
   // 영역 표시 노드는 미니맵에서 테두리도 투명 처리해 완전히 가려지지 않게 한다.
@@ -821,7 +821,9 @@ function EditorPageInner() {
             <MiniMap
               nodeColor={miniMapNodeColor}
               nodeStrokeColor={miniMapNodeStrokeColor}
-              maskColor="rgba(0, 0, 0, 0.1)"
+              // 마스크는 미니맵 밖 영역을 덮는 반투명 층이다. 야간에 검정을 덮으면
+              // 이미 어두운 바탕 위라 거의 보이지 않으므로 페이지 바탕을 쓴다.
+              maskColor="color-mix(in srgb, var(--color-bg-primary) 55%, transparent)"
               // 배경·테두리 모두 팔레트 토큰이 단일 원천이다.
               // night 전용 덮어쓰기는 제거했다.
               className="!bg-(--color-bg-surface) !border-(--color-border-default)"
@@ -831,7 +833,7 @@ function EditorPageInner() {
               variant={BackgroundVariant.Dots}
               gap={editorSnapGridSize}
               size={1}
-              color="#d1d5db"
+              color="var(--color-flow-dot)"
             />
           </ReactFlow>
           </RuntimeStatsContext.Provider>
