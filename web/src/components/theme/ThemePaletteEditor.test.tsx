@@ -270,4 +270,20 @@ describe('미리보기에서 조각을 고르면 그 색 항목들이 표에서 
 
     expect(selectedTokens(container)).toEqual(['--color-flow-edge']);
   });
+
+  it('목록·스케줄·노드를 골라도 그 화면에 머문다', () => {
+    // 셋 다 첫 토큰이 `bg-surface` 라, 선택이 화면 따라가기를 타면 모두 대시보드로
+    // 끌려갔다. 고른 조각은 이미 지금 화면에 있으므로 옮길 이유가 없다.
+    renderEditor();
+    for (const [tab, partId] of [
+      ['list', 'list-rows'],
+      ['schedule', 'schedule-rows'],
+      ['flow', 'node'],
+    ] as const) {
+      fireEvent.click(screen.getByTestId(`theme-preview-tab-${tab}`));
+      fireEvent.click(screen.getByTestId(`theme-preview-${partId}`));
+      expect(screen.getByTestId('theme-preview').dataset.area, partId).toBe(tab);
+      expect(screen.getByTestId(`theme-preview-${partId}`).dataset.selected).toBe('true');
+    }
+  });
 });

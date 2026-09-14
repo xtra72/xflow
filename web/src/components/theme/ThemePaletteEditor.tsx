@@ -55,9 +55,14 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
   const [selectedPart, setSelectedPart] = useState<string | undefined>(undefined);
   /** 선택된 조각이 쓰는 토큰 집합 — 행 표시에 쓴다. */
   const selectedTokens = new Set(selectedPart === undefined ? [] : tokensOfPart(selectedPart));
-  /** 미리보기에 넘길 강조 토큰. 커서가 우선이고, 없으면 고른 조각의 첫 토큰. */
-  const highlight =
-    hovered ?? (selectedPart === undefined ? undefined : tokensOfPart(selectedPart)[0]);
+  /**
+   * 미리보기에 넘길 강조 토큰 — **커서가 가리키는 것뿐이다.**
+   *
+   * 고른 조각의 첫 토큰을 여기 얹으면 미리보기가 그 토큰이 처음 쓰이는 화면으로
+   * 따라가 버린다. `bg-surface` 를 첫 토큰으로 가진 목록·스케줄·노드가 모두
+   * 대시보드로 튀던 자리다. 선택은 표시(§`selectedTokens`)로만 드러낸다.
+   */
+  const highlight = hovered;
   /** 행 스크롤용 — 조각을 고르면 첫 토큰 행을 화면 안으로 데려온다. */
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
 
@@ -320,7 +325,7 @@ export function ThemePaletteEditor({ activePreset }: ThemePaletteEditorProps) {
           <ThemePreview
             target={target}
             overrides={overrides}
-            highlightToken={highlight}
+            hoveredToken={highlight}
             selectedPart={selectedPart}
             onPickPart={pickPart}
             onClearSelection={() => {
