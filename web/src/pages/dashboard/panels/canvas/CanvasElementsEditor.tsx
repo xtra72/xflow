@@ -47,7 +47,9 @@ import {
   ChevronsUp,
   ChevronUp,
   Group,
+  Link2,
   Trash2,
+  Unlink,
 } from 'lucide-react';
 
 import { FieldHelp } from '@/components/property/FieldHelp';
@@ -86,9 +88,23 @@ import {
   type TweenEasing,
   type TweenSpec,
 } from './canvasConfig';
-import { bringToFront, moveElementTo, removeNodes, sendToBack } from './canvasEditArrange';
+import {
+  bringToFront,
+  moveElementTo,
+  removeNodesWithConnectors,
+  sendToBack,
+} from './canvasEditArrange';
 import { isGroup, type CanvasNode, type GroupElement } from './group/groupTypes';
-import { isConnector } from './connector/connectorTypes';
+import {
+  isConnector,
+  type ConnectorElement,
+  type ConnectorRoute,
+} from './connector/connectorTypes';
+// SPEC-CANVAS-011 M12 — 끊긴 연결을 **묻는** 자리다. 답은 `resolveConnector` 한 함수에서
+// 오고(AC-45), 끝을 가르는 판정도 그 모듈이 든다(`isAttachedEnd`) — 목록이 제 손으로
+// 참조를 풀거나 끝을 가르면 "그려지는 자리와 목록이 말하는 자리가 다르다" 가 시작된다.
+import { isAttachedEnd, resolveConnector } from './connector/resolveConnector';
+import type { CanvasProjection } from './canvasGeometry';
 import { frameKey, parseFrameKey } from './group/frameKey';
 import { partInCanvasUnits, writePartFromCanvasUnits } from './group/groupOps';
 import {
@@ -1542,6 +1558,270 @@ function GroupNodeRow({
 }
 
 /**
+ * 목록이 끊김을 물을 때 넘기는 **빈 글자 폭 장부** (SPEC-CANVAS-011 M12).
+ *
+ * 목록에는 캔버스가 없으므로 잰 글자 폭도 없다. 비어 있어도 묻는 답이 흔들리지 않는 근거는
+ * 아래 `BROKEN_QUERY_PROJECTION` 주석에 함께 적었다 — 장부는 앵커 **자리**에만 쓰이고,
+ * 끊김은 그 지도에 **이름이 있는가**로 정해진다.
+ *
+ * 모듈 상수 하나로 두는 것은 렌더마다 새 객체를 짓지 않기 위해서다.
+ */
+const NO_TEXT_WIDTHS: Readonly<Record<string, number>> = Object.freeze({});
+
+/**
+ * 그리는 법 → 목록이 읽는 이름 (SPEC-CANVAS-011 M12).
+ *
+ * **표로 두는 것이 요점이다**(`KIND_LABEL_KEY` 와 같은 규율). `Record<ConnectorRoute, …>`
+ * 이므로 다섯째 갈래가 생기면 컴파일러가 이 자리를 가리킨다 — `if/else` 로 적으면 새
+ * 갈래가 **빈 칸**으로 조용히 떨어져 행이 제 그리는 법을 말하지 못한다.
+ *
+ * 도구 단추의 이름(`edit.toolStraight` …)을 그대로 쓰지 않는 것에 뜻이 있다. 그쪽은
+ * "직선으로 잇기" 처럼 **시키는 말**이라 다 그은 선을 가리키는 자리에서는 어긋난다.
+ */
+const CONNECTOR_ROUTE_LABEL_KEY: Readonly<Record<ConnectorRoute, string>> = {
+  straight: 'dashboard.canvas.elements.connectorRouteStraight',
+  elbow: 'dashboard.canvas.elements.connectorRouteElbow',
+  curve: 'dashboard.canvas.elements.connectorRouteCurve',
+  free: 'dashboard.canvas.elements.connectorRouteFree',
+};
+
+/**
+ * 연결선의 한 끝을 **한 줄로** 말한다 — 붙은 자리이거나 캔버스 위의 좌표다.
+ *
+ * 가르는 일은 `isAttachedEnd` 한 함수가 한다(011 이 그 갈림을 한 자리에 묶었다). 여기서
+ * `'el' in` 을 한 번 더 적으면 판정이 둘이 되고, 그중 하나가 갈라지는 날 목록이 말하는
+ * 끝과 화면에 그려지는 끝이 달라진다.
+ */
+function connectorEndText(
+  end: ConnectorElement['from'],
+  t: TranslationFn,
+): string {
+  return isAttachedEnd(end)
+    ? fillTokens(t('dashboard.canvas.elements.connectorEndAttached'), {
+        element: end.el,
+        anchor: end.a,
+      })
+    : fillTokens(t('dashboard.canvas.elements.connectorEndFree'), { x: end.x, y: end.y });
+}
+
+/**
+ * 연결선 한 줄 — **두 끝과 그리는 법을 말하고, 끊겼으면 그 사실을 말하는 행**
+ * (SPEC-CANVAS-011 REQ-07 · REQ-08 · AC-78).
+ *
+ * ## 왜 이 행이 있어야 하는가
+ *
+ * 없는 동안 목록은 연결선을 **말없이 건너뛰었다**(M4 가 그 자리에 남긴 주석). 저술이
+ * 사라지지는 않았지만 — 파서가 읽고 쓰기가 보존한다 — 참조가 끊긴 선은 **그려지지도
+ * 않고 목록에도 없어서**, 사용자가 볼 수 있는 자리가 한 군데도 없었다. 그리지 않되
+ * 버리지 않는다는 REQ-08 의 절반은 그렇게 지켜도 나머지 절반("화면이 그 사실을 말한다")
+ * 이 지켜지지 않으면 결국 조용히 사라지는 저술과 구별되지 않는다.
+ *
+ * ## 이 행이 **칸을 내놓지 않는** 이유
+ *
+ * 요소 행의 몸통(기하 묶음 · 도형 스타일 · 글자 탭 · 숫자 스위치)은 전부 `CanvasElement`
+ * 위에 서 있고, 연결선에는 그 자리에 넣을 값이 없다(`geometry` 가 없다 — M4). 그렇다고
+ * 연결선 전용 편집 칸을 여기서 짓지도 않는다:
+ *
+ *   - **두 끝과 꺾임**은 캔버스의 손잡이가 이미 소유한다(M9 · M10). 같은 값에 살아 있는
+ *     컨트롤이 둘이면 안 된다(006 불변식 I24).
+ *   - **`binding` · `rules` · `tween`** 은 자료형에는 있으나 **화면에 닿지 않는다.**
+ *     `CanvasPanel.buildCanvasFrame` 과 `CanvasSurface` 가 연결선을 건너뛰며 그 사실을
+ *     제자리에 적어 두었고, 011 의 어느 마일스톤도 그것을 세우지 않는다. 닿지 않는 값에
+ *     칸을 내면 그 칸은 **거짓말하는 컨트롤**이다 — 값을 넣어도 아무 일도 일어나지 않고,
+ *     그 침묵에는 아무 표시가 없다(004 가 그룹에서 겪은 그 자리다).
+ *
+ * 그래서 몸통은 **읽는 자리**다. 말할 수 있는 것만 말하고, 지키지 못할 약속을 하지 않는
+ * 다는 이 파일의 규율이 여기서도 같게 적용된 것이다.
+ *
+ * ## 이 행이 **다시 만들지 않는** 것
+ *
+ * 순서 이동·삭제는 최상위 배열 조작이므로 요소 행·그룹 행과 **같은 함수**(`moveAt` ·
+ * `removeAt`)를 받아서 부른다. 고르기도 `toggleExpanded` 한 규칙을 지난다.
+ */
+function ConnectorNodeRow({
+  node,
+  idx,
+  count,
+  open,
+  picked,
+  broken,
+  t,
+  onToggle,
+  onMove,
+  onRemove,
+  rowRef,
+}: {
+  node: ConnectorElement;
+  idx: number;
+  /** 최상위 노드의 총수. 끝자리에서 바깥쪽 이동을 잠근다(요소 행과 같은 규칙). */
+  count: number;
+  open: boolean;
+  picked: boolean;
+  /**
+   * 참조가 풀리지 않는가 — **묻는 쪽이 아니라 받는 쪽이다.**
+   *
+   * 판정을 이 컴포넌트가 하지 않는 것에 뜻이 있다: 답은 `resolveConnector` 한 함수에서
+   * 와야 하고(AC-45), 그 함수는 노드 목록 전체를 본다. 행이 제 노드만 들고 답을 지으면
+   * 그것은 두 번째 판정이다.
+   */
+  broken: boolean;
+  t: TranslationFn;
+  onToggle: () => void;
+  onMove: (delta: -1 | 1) => void;
+  onRemove: () => void;
+  rowRef: (el: HTMLDivElement | null) => void;
+}) {
+  const pointCount = node.points?.length ?? 0;
+  return (
+    <div
+      ref={rowRef}
+      data-testid={`canvas-connector-row-${idx}`}
+      data-element-id={node.id}
+      data-selected={picked ? 'true' : undefined}
+      data-broken={broken ? 'true' : undefined}
+      className={cn(
+        'space-y-1.5 rounded-md border p-1.5',
+        picked ? 'border-blue-500' : 'border-(--color-border-default)',
+      )}
+    >
+      {/* 머리줄 — 요소 행·그룹 행과 **같은 차례**다(순번 · 요약 · 순서 · 삭제). */}
+      <div className="flex w-full items-center gap-1.5">
+        <span
+          className={ORDER_BADGE_CLASS}
+          data-testid={`canvas-connector-row-order-${idx}`}
+        >
+          {idx + 1}
+        </span>
+
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          aria-label={withIndex(t('dashboard.canvas.elements.connectorDetailsAria'), idx)}
+          data-testid={`canvas-connector-row-toggle-${idx}`}
+          className="flex min-w-0 flex-1 items-center gap-1 rounded text-left text-xs text-(--color-text-muted) hover:text-(--color-text-secondary)"
+        >
+          {open ? (
+            <ChevronDown className="h-3 w-3 shrink-0" />
+          ) : (
+            <ChevronRight className="h-3 w-3 shrink-0" />
+          )}
+          {/* 끊긴 선은 **아이콘부터** 다르다 — 접힌 목록을 훑는 눈이 글자를 읽기 전에
+              무엇이 잘못됐는지 알아야 한다. 아이콘만으로는 못 보는 사람에게 아무 말도
+              하지 않으므로, 바로 뒤 배지가 같은 말을 글자로 한 번 더 한다. */}
+          {broken ? (
+            <Unlink className="h-3 w-3 shrink-0 text-red-500" aria-hidden="true" />
+          ) : (
+            <Link2 className="h-3 w-3 shrink-0" aria-hidden="true" />
+          )}
+          <span className="truncate">
+            {[
+              t('dashboard.canvas.elements.connectorLabel'),
+              node.id,
+              t(CONNECTOR_ROUTE_LABEL_KEY[node.route]),
+            ].join(' · ')}
+          </span>
+          {broken && (
+            <span
+              data-testid={`canvas-connector-row-broken-${idx}`}
+              className="shrink-0 rounded bg-red-500/15 px-1 text-[11px] text-red-500"
+            >
+              {t('dashboard.canvas.elements.connectorBroken')}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onMove(-1)}
+          disabled={idx === 0}
+          className={ICON_BUTTON_CLASS}
+          aria-label={withIndex(t('dashboard.canvas.elements.connectorMoveUpAria'), idx)}
+          data-testid={`canvas-connector-row-move-up-${idx}`}
+        >
+          <ChevronUp className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          onClick={() => onMove(1)}
+          disabled={idx === count - 1}
+          className={ICON_BUTTON_CLASS}
+          aria-label={withIndex(t('dashboard.canvas.elements.connectorMoveDownAria'), idx)}
+          data-testid={`canvas-connector-row-move-down-${idx}`}
+        >
+          <ChevronDown className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="shrink-0 text-(--color-text-muted) hover:text-red-500"
+          aria-label={withIndex(t('dashboard.canvas.elements.connectorDeleteAria'), idx)}
+          data-testid={`canvas-connector-row-delete-${idx}`}
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      </div>
+
+      {open && (
+        <div className="space-y-1.5 pl-4" data-testid={`canvas-connector-row-body-${idx}`}>
+          {/* 끊김 안내가 **맨 위**에 선다. 아래 두 끝 가운데 어느 쪽이 풀리지 않는지는
+              이 행이 알지 못한다 — 아는 것은 "이 선이 서지 못한다" 하나이고(한 함수가
+              내는 답이 그것이다), 모르는 것을 아는 척하지 않는다. 대신 고치는 길을
+              문구가 말한다. */}
+          {broken && (
+            <p
+              className={HINT_CLASS}
+              data-testid={`canvas-connector-row-broken-hint-${idx}`}
+            >
+              {t('dashboard.canvas.elements.connectorBrokenHint')}
+            </p>
+          )}
+
+          <FieldGroup
+            label={t('dashboard.canvas.elements.connectorFromLabel')}
+            testId={`canvas-connector-row-from-${idx}`}
+          >
+            <span className="min-w-0 truncate text-xs text-(--color-text-secondary)">
+              {connectorEndText(node.from, t)}
+            </span>
+          </FieldGroup>
+
+          <FieldGroup
+            label={t('dashboard.canvas.elements.connectorToLabel')}
+            testId={`canvas-connector-row-to-${idx}`}
+          >
+            <span className="min-w-0 truncate text-xs text-(--color-text-secondary)">
+              {connectorEndText(node.to, t)}
+            </span>
+          </FieldGroup>
+
+          {/* 꺾임점은 **수만** 말한다. 좌표를 줄줄이 늘어놓으면 자유선 한 줄이 목록을
+              통째로 덮고(상한이 256 이다), 그 수치는 어차피 여기서 고칠 수 없다 —
+              고치는 손잡이는 캔버스에 있다(M10). */}
+          <FieldGroup
+            label={t('dashboard.canvas.elements.connectorPointsLabel')}
+            testId={`canvas-connector-row-points-${idx}`}
+          >
+            <span className="text-xs tabular-nums text-(--color-text-secondary)">
+              {fillTokens(t('dashboard.canvas.elements.connectorPointsSummary'), {
+                count: pointCount,
+              })}
+            </span>
+          </FieldGroup>
+
+          {/* 이 행이 읽는 자리라는 사실을 **화면이 말한다.** 없으면 사용자는 고치는 칸을
+              찾다가 없는 것을 결함으로 읽는다 — 어디서 고치는지를 함께 말하는 것이
+              빈자리를 안내로 바꾸는 유일한 길이다. */}
+          <p className={HINT_CLASS} data-testid={`canvas-connector-row-hint-${idx}`}>
+            {t('dashboard.canvas.elements.connectorReadOnlyHint')}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * 기하 좌표 한 칸. 축 이름을 눈에 보이게 붙여 어느 칸이 무엇인지 알 수 있게 한다.
  *
  * **정수 칸이다**(`step=1`). 좌표계가 정수이므로 화살표 한 번이 곧 저장되는 한 단위이며,
@@ -1742,6 +2022,43 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
   const liveSeriesOptions = useCanvasLiveSeries();
   const seriesOptions = liveSeriesOptions.length > 0 ? liveSeriesOptions : configSeriesOptions;
 
+  /**
+   * 끊김을 **묻기 위한** 투영 (SPEC-CANVAS-011 M12 · AC-78).
+   *
+   * ## 스테이지가 없다 — 그래서 1:1 이다
+   *
+   * `CanvasProjection` 은 "잰 스테이지 CSS px" 와 "저술된 캔버스 단위" 한 쌍이다. 목록에는
+   * 캔버스가 없으므로 잰 스테이지가 없고, 없는 값을 지어낼 수는 없다. 그래서 스테이지를
+   * 캔버스 크기와 **같게** 둔다 — 1 단위 = 1 px 인 항등 투영이라, 지어낸 배율이 없다.
+   *
+   * ## 그래도 답이 흔들리지 않는 근거
+   *
+   * 여기서 읽는 것은 `resolveConnector` 의 **부재 여부 하나**이고, 그 부재는 투영에
+   * 딸리지 않는다: 끊김은 `anchorPoints` 가 낸 지도에 **그 이름이 있는가**로 정해지는데,
+   * 그 지도의 **키 집합**은 고정 아홉 + 저장된 임의 앵커 id 라 상자를 어떻게 재든 같다.
+   * 투영과 글자 폭 장부가 정하는 것은 각 이름이 **어디에** 앉는가뿐이며, 이 파일은 그
+   * 좌표를 한 자리도 읽지 않는다(가드가 소스에서 그것을 붙든다).
+   *
+   * 그러므로 여기 있는 것은 두 번째 측정이 아니라 **한 함수에 묻기 위한 통행증**이다.
+   * 판정을 제 손으로 적는 길(참조 id 를 배열에서 찾아보는 길)을 고르지 않은 것이 요점이다 —
+   * 그러면 끊김의 정의가 둘이 되고, 그중 하나(예: 없는 앵커 이름)가 빠지는 날 목록은
+   * 멀쩡하다고 말하는데 화면에는 아무것도 그려지지 않는다.
+   */
+  const brokenQueryProjection: CanvasProjection = useMemo(
+    () => ({ stage: { ...cfg.canvas }, canvas: cfg.canvas }),
+    [cfg.canvas],
+  );
+
+  /**
+   * 이 연결선의 참조가 풀리지 않는가 — **답은 `resolveConnector` 한 함수에서 온다**(AC-45).
+   *
+   * 끊기는 경우 넷(지워진 요소 · 부품 복합 키 · 연결선 참조 · 없는 앵커 이름)을 여기서
+   * 세지 않는다. 세는 순간 그 목록이 두 벌이 되고, 그리는 쪽이 넷째를 더한 날 목록만
+   * 옛 셋을 아는 상태가 된다.
+   */
+  const isBrokenConnector = (connector: ConnectorElement): boolean =>
+    resolveConnector(connector, elements, brokenQueryProjection, NO_TEXT_WIDTHS) === undefined;
+
   /** **사용자가 손으로** 펼쳐 둔 요소의 id 집합. 기본은 전부 접힘이다. */
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -1877,11 +2194,16 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
   };
 
   /**
-   * 행 하나를 지운다 — **규칙은 `canvasEditArrange.removeNodes` 한 곳에 있다**.
+   * 행 하나를 지운다 — **규칙은 `canvasEditArrange.removeNodesWithConnectors` 한 곳에
+   * 있다**.
    *
    * 캔버스의 Delete·Backspace(SPEC-CANVAS-010)도 같은 함수를 지나므로, "목록에서
    * 눌렀는가 캔버스에서 눌렀는가" 에 따라 결과가 달라질 수 없다 — 바로 아래 `moveAt` 이
    * 순서 이동에 대해 하는 그 일과 같은 모양이다(자리로 받아 `nodeId` 로 넘긴다).
+   *
+   * **그 요소를 가리키던 연결선도 함께 간다**(SPEC-CANVAS-011 REQ-08). 한쪽 입구만
+   * 연동하면 "캔버스에서 지우면 선이 따라가는데 목록에서 지우면 끊긴 선이 남는다" 가
+   * 되고, 그 차이는 저장된 뒤에야 드러난다.
    *
    * 뺄 것이 없으면 그 함수가 받은 배열을 그대로(같은 참조) 돌려주고, 그 참조 비교가 곧
    * "쓸 일이 없다" 다.
@@ -1889,7 +2211,7 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
   const removeAt = (idx: number): void => {
     const el = elements[idx];
     if (el === undefined) return;
-    const next = removeNodes(elements, new Set([el.id]));
+    const next = removeNodesWithConnectors(elements, new Set([el.id]));
     if (next === elements) return;
     emit([...next]);
   };
@@ -2100,19 +2422,37 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                 />
               );
             }
-            // **연결선은 아직 행을 갖지 않는다**(SPEC-CANVAS-011 M12 가 이 줄을 걷어낸다).
+            // SPEC-CANVAS-011 M12 — 연결선도 제 행을 갖는다. 건너뛰던 동안 참조가 끊긴
+            // 선은 **그려지지도 않고 목록에도 없어**, 사용자가 그것을 볼 수 있는 자리가
+            // 한 군데도 없었다(REQ-08 의 나머지 절반).
             //
-            // 아래 행은 통째로 요소의 형상 위에 서 있다 — 기하 묶음 · 도형 스타일 · 글자
-            // 탭 · 숫자 스위치가 전부 `CanvasElement` 를 받는다. 연결선을 그 통로에 태우면
-            // 상자 좌표 칸이 빈 채로 서고 그 칸에 적은 값이 갈 곳이 없다. 연결선의 행은
-            // 그것들이 아니라 **두 끝과 그리는 법**을 말해야 하고(REQ-07), 무엇보다 참조가
-            // 끊겼다는 사실을 말해야 한다(REQ-08) — 그 행은 M12 가 짓는다.
+            // 아래 요소 행을 태우지 않는 것은 그대로다: 그 행은 통째로 `CanvasElement`
+            // 위에 서 있고(기하 묶음 · 도형 스타일 · 글자 탭 · 숫자 스위치) 연결선에는 그
+            // 자리에 넣을 값이 없다. 그래서 제 행을 따로 짓되, 그 행은 **말하는 행**이다
+            // (`ConnectorNodeRow` 머리말).
             //
-            // 건너뛰어도 저술은 사라지지 않는다: 파서가 읽고 쓰기가 보존하므로 config 에
-            // 그대로 남는다. `idx` 가 **노드 배열의 자리** 그대로인 것도 지금 그대로다
-            // (위 `emit` 주석) — 행 하나가 비어도 순서 단추와 삭제가 가리키는 자리는
-            // 옮겨지지 않는다.
-            if (isConnector(el)) return null;
+            // **자리(index)는 노드 배열의 자리 그대로다** — 위 `emit` 주석의 그 이유다.
+            if (isConnector(el)) {
+              return (
+                <ConnectorNodeRow
+                  key={el.id}
+                  node={el}
+                  idx={idx}
+                  count={elements.length}
+                  open={isExpanded(el.id)}
+                  picked={selection.has(el.id)}
+                  broken={isBrokenConnector(el)}
+                  t={t}
+                  onToggle={() => toggleExpanded(el.id)}
+                  onMove={(delta) => moveAt(idx, delta)}
+                  onRemove={() => removeAt(idx)}
+                  rowRef={(node) => {
+                    if (node === null) rowRefs.current.delete(el.id);
+                    else rowRefs.current.set(el.id, node);
+                  }}
+                />
+              );
+            }
 
             const bindingOptions = bindingOptionsFor(seriesOptions, el.binding?.series);
             const unbound = el.binding === undefined;

@@ -215,7 +215,7 @@ describe('팔레트의 오늘이 그대로 있다 (AC-E10 · 회귀 · SPEC-CANV
     const all = [...dock.querySelectorAll('[data-testid^="canvas-palette-add-"]')];
     expect(all).toEqual(buttons);
 
-    // **뒤집힌 단언 (011 REQ-01 · AC-01).** 008 에서는 카탈로그 묶음 셋이 모두 접혀 있었다.
+    // **뒤집힌 단언 (SPEC-CANVAS-011 REQ-01 · AC-01).** 008 에서는 카탈로그 묶음 셋이 모두 접혀 있었다.
     // 011 이 원시형 넷을 `기본` 으로 옮기면서 그 묶음이 펼쳐진 채로 태어난다 — 008 이 위험
     // R10 의 답으로 세운 "자주 쓰는 넷이 열자마자 보인다" 를 자리만 옮겨 지키는 것이다.
     expect(screen.getByTestId('canvas-palette-group-basic').getAttribute('aria-expanded')).toBe(
@@ -228,7 +228,7 @@ describe('팔레트의 오늘이 그대로 있다 (AC-E10 · 회귀 · SPEC-CANV
         screen.getByTestId(`canvas-palette-group-${group.id}`).getAttribute('aria-expanded'),
       ).toBe('false');
     }
-    // **뒤집힌 단언 (011 REQ-01 · AC-01).** 008 의 `원시형` 묶음은 **없다.**
+    // **뒤집힌 단언 (SPEC-CANVAS-011 REQ-01 · AC-01).** 008 의 `원시형` 묶음은 **없다.**
     expect(screen.queryByTestId('canvas-palette-group-primitive')).toBeNull();
 
     // 접힌 묶음은 자식을 **아예 그리지 않는다** — 열릴 때 만들어지는 미리보기가 `기본` 몫뿐이다.

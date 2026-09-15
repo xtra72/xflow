@@ -261,7 +261,7 @@ import {
   CANVAS_GRID_STEP_UNITS,
   alignDeltas,
   bringToFront,
-  removeNodes,
+  removeNodesWithConnectors,
   sendToBack,
   snapDelta,
   type AlignAxis,
@@ -2344,9 +2344,10 @@ export default function CanvasEditOverlay({
   };
 
   /**
-   * 고른 것들을 지운다 — **규칙은 `canvasEditArrange.removeNodes` 한 곳에 있다**
-   * (SPEC-CANVAS-010). 목록 편집기의 휴지통이 같은 함수를 지나므로 "목록에서 지웠는가
-   * 캔버스에서 지웠는가" 에 따라 결과가 갈릴 수 없다.
+   * 고른 것들을 지운다 — **규칙은 `canvasEditArrange.removeNodesWithConnectors` 한 곳에
+   * 있다** (SPEC-CANVAS-010 · 011 M12). 목록 편집기의 휴지통이 같은 함수를 지나므로
+   * "목록에서 지웠는가 캔버스에서 지웠는가" 에 따라 결과가 갈릴 수 없다 — 지워지는 요소를
+   * 가리키던 연결선이 함께 가는 일(REQ-08)도 그래서 두 입구에서 같다.
    *
    * **한 번만 방출한다.** 고른 것마다 한 번씩 부르면 중간 배열이 프레임마다 화면에 서고
    * config 쓰기가 N 번이 된다(AC-E4 의 규율). 그 함수가 집합 하나를 받는 것이 그래서다.
@@ -2365,7 +2366,7 @@ export default function CanvasEditOverlay({
    * 돌려주는 값은 **지웠는가** 다. 지우지 않았으면 이벤트를 소비하지 않는다.
    */
   const deleteSelection = (): boolean => {
-    const next = removeNodes(elements, selection);
+    const next = removeNodesWithConnectors(elements, selection);
     if (next === elements) return false;
     onElementsChange([...next]);
     setSelection(EMPTY_SELECTION);

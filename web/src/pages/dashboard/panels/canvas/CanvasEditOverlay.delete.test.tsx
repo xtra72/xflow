@@ -464,10 +464,18 @@ describe('지우는 규칙은 **한 함수**다 (목록 편집기의 휴지통�
     // 순서 이동 가드는 그 구멍을 eslint(`no-unused-vars`, error)에 맡겼고 실제로 잡히지만
     // — 확인했다 — 그러면 **이 시험 자체는 아무것도 말하지 못한다**. 부르는 자리까지
     // 보면 시험 하나가 제 힘으로 문을 막는다(돌연변이로 확인했다).
+    //
+    // **이름이 옮겨 갔다 (SPEC-CANVAS-011 M12).** 지워지는 요소를 가리키던 연결선까지
+    // 걷어내야 하므로 두 입구가 `removeNodesWithConnectors` 를 지나고, 그 함수가 지울
+    // 이름을 넓혀 `removeNodes` 를 **한 번** 부른다. 거르는 규칙은 여전히 한 함수이며,
+    // 이 가드가 지키는 성질("두 입구가 같은 길")도 그대로다 — 가리키는 이름만 바뀌었다.
     for (const name of ['CanvasEditOverlay.tsx', 'CanvasElementsEditor.tsx']) {
       const source = readFileSync(join(__dirname, name), 'utf-8');
-      expect(source, `${name}: 들여오기`).toMatch(/removeNodes[,\s}]/);
-      expect(source, `${name}: 부르는 자리`).toMatch(/removeNodes\(/);
+      expect(source, `${name}: 들여오기`).toMatch(/removeNodesWithConnectors[,\s}]/);
+      expect(source, `${name}: 부르는 자리`).toMatch(/removeNodesWithConnectors\(/);
+      // 옛 이름을 **직접** 부르면 그 입구만 연결선을 남긴다 — 한쪽만 연동한 상태가
+      // 정확히 이 형상이고, 그 차이는 저장된 뒤에야 드러난다.
+      expect(source, `${name}: 옛 이름 직접 호출`).not.toMatch(/\bremoveNodes\(/);
     }
   });
 

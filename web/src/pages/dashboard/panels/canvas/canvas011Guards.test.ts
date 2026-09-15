@@ -64,6 +64,8 @@ const EDIT = 'connector/connectorEdit.ts';
 const GEOMETRY = 'canvasGeometry.ts';
 /** 노드를 **만드는** 유일한 모듈 — M8 이 연결선 입구를 여기 세웠다. */
 const FACTORY = 'canvasElementFactory.ts';
+/** 목록 편집기 — M12 가 연결선 행을 여기 세웠다(끊김을 **묻는** 넷째 자리). */
+const LIST = 'CanvasElementsEditor.tsx';
 
 describe('그물이 성기지 않다', () => {
   it('제품 파일이 실제로 여럿 잡히고 오버레이가 그 안에 있다', () => {
@@ -504,15 +506,44 @@ describe('참조를 푸는 자리가 `resolveConnector.ts` 하나뿐이다 (AC-4
     expect(text.includes("'el' in ")).toBe(false);
   });
 
-  it('①의 셋이 **모두** 그 함수를 부른다 — 하나라도 빠지면 자리가 갈린다', () => {
+  it('①의 셋에 **넷째가 이름으로** 더해졌다 — 목록 행 (M12)', () => {
     // 위 셋을 따로 재면 "셋이 전부인가" 를 아무도 묻지 않는다. 부르는 제품 파일을
     // **세어서** 적는 것이 011 이 가드에 대해 정한 그 규율이다(§009 의 좌표 변환 가드를
-    // 넓힌다). 넷째가 생기는 날 그 자리가 정말 필요한지부터 따져야 한다.
+    // 넓힌다). 그래서 M12 가 넷째를 들이는 날 이 줄이 빨개졌고, 지우는 대신 **이름과
+    // 까닭을 적어** 넓힌다.
+    //
+    // **넷째 — `CanvasElementsEditor.tsx`(M12 · AC-78).** 목록의 연결선 행이 "이 선이
+    // 끊겼는가" 를 말해야 하고(REQ-08), 그 답은 이 함수의 **부재 여부**다. 판정을 제 손으로
+    // 적는 길(참조 id 를 배열에서 찾아보는 길)을 고르면 끊김의 정의가 둘이 되고, 그중
+    // 하나가 네 갈래(지워진 요소 · 부품 복합 키 · 연결선 참조 · 없는 앵커 이름) 가운데
+    // 하나를 잃는 날 목록은 멀쩡하다고 말하는데 화면에는 아무것도 그려지지 않는다.
+    //
+    // 넷째가 **읽는 것은 답뿐**이라는 사실은 아래 두 시험이 붙든다. 다섯째가 생기면 그
+    // 자리가 정말 필요한지부터 따져야 한다.
     const callers = productSources()
       .filter(({ name, text }) => name !== RESOLVE && /\bresolveConnector\(/.test(text))
       .map(({ name }) => name)
       .sort();
-    expect(callers).toEqual([OVERLAY, 'canvasHitTest.ts', 'drawElement.ts'].sort());
+    expect(callers).toEqual([OVERLAY, LIST, 'canvasHitTest.ts', 'drawElement.ts'].sort());
+  });
+
+  it('넷째는 그 함수의 **답만** 읽는다 — 좌표를 한 자리도 쓰지 않는다', () => {
+    // 목록에는 스테이지가 없어 1:1 투영을 넘긴다. 그 투영으로 나온 **좌표**를 읽으면
+    // 그것은 화면의 값이 아닌 수를 화면에 내놓는 일이 되고, 그 어긋남은 캔버스와 목록을
+    // 나란히 놓고 봐야만 보인다. 그래서 부르는 문형 자체를 못박는다: 이 파일에서
+    // `resolveConnector(` 는 **언제나** `=== undefined` 비교로 끝난다.
+    const text = source(LIST);
+    const calls = text.match(/resolveConnector\([\s\S]*?\)\s*===\s*undefined/g) ?? [];
+    expect(calls).toHaveLength(countOf(text, /\bresolveConnector\(/g));
+    expect(calls).toHaveLength(1);
+  });
+
+  it('넷째가 넘기는 투영은 **1:1** 이다 — 지어낸 배율이 없다', () => {
+    // 스테이지를 캔버스와 **같게** 두는 것이 항등 투영이다. 다른 수를 적으면 그것은
+    // 아무도 잰 적 없는 배율이고, 그런 수가 한 번 들어오면 다음 사람은 그것을 잰 값으로
+    // 읽는다.
+    const text = source(LIST);
+    expect(text).toContain('stage: { ...cfg.canvas }, canvas: cfg.canvas');
   });
 });
 
@@ -655,6 +686,28 @@ describe('011 이 더한 문구가 ko · en 양쪽에 있다', () => {
     'dashboard.canvas.edit.connectorHandleFrom',
     'dashboard.canvas.edit.connectorHandleTo',
     'dashboard.canvas.edit.connectorHandleMid',
+    // M12 가 더한 열여덟 — **목록의 연결선 행**이 말하는 것 전부다(AC-78 · REQ-07).
+    // 행 하나가 더한 수치고 많지만, 그 행이 말해야 하는 것이 그만큼이다: 종류 이름 ·
+    // 그리는 법 넷 · 두 끝의 이름과 그 내용 · 꺾임점 · 끊김 표시와 고치는 길 · 읽는
+    // 자리라는 안내 · 접근성 이름 넷. 세어서 적는 것이 011 의 규율이다.
+    'dashboard.canvas.elements.connectorLabel',
+    'dashboard.canvas.elements.connectorRouteStraight',
+    'dashboard.canvas.elements.connectorRouteElbow',
+    'dashboard.canvas.elements.connectorRouteCurve',
+    'dashboard.canvas.elements.connectorRouteFree',
+    'dashboard.canvas.elements.connectorFromLabel',
+    'dashboard.canvas.elements.connectorToLabel',
+    'dashboard.canvas.elements.connectorPointsLabel',
+    'dashboard.canvas.elements.connectorEndAttached',
+    'dashboard.canvas.elements.connectorEndFree',
+    'dashboard.canvas.elements.connectorPointsSummary',
+    'dashboard.canvas.elements.connectorBroken',
+    'dashboard.canvas.elements.connectorBrokenHint',
+    'dashboard.canvas.elements.connectorReadOnlyHint',
+    'dashboard.canvas.elements.connectorDetailsAria',
+    'dashboard.canvas.elements.connectorMoveUpAria',
+    'dashboard.canvas.elements.connectorMoveDownAria',
+    'dashboard.canvas.elements.connectorDeleteAria',
   ];
 
   const lookup = (tree: unknown, key: string): unknown =>
@@ -698,6 +751,38 @@ describe('011 이 더한 문구가 ko · en 양쪽에 있다', () => {
     for (const tree of [ko, en]) {
       const text = lookup(tree, 'dashboard.canvas.edit.anchorRefusalNotBoxed') as string;
       expect(text.length).toBeGreaterThan(30);
+    }
+  });
+
+  it('끊김 안내도 **고치는 길**까지 말한다 (M12 · AC-78)', () => {
+    // 위 거절 문구와 같은 잣대다. "끊겼습니다" 만 남기면 사용자는 그것이 제 실수인지
+    // 고장인지, 무엇을 해야 되돌아오는지를 화면 어디에서도 알 수 없다.
+    for (const tree of [ko, en]) {
+      const text = lookup(tree, 'dashboard.canvas.elements.connectorBrokenHint') as string;
+      expect(text.length).toBeGreaterThan(60);
+    }
+  });
+
+  it('행이 쓰는 치환자가 **양쪽 로케일에** 그대로 있다 (M12)', () => {
+    // 로케일 기본값이 ko 라 en 쪽 누락이 특히 조용히 지나간다. 빠지면 "요소의 자리" 를
+    // 말해야 하는 줄이 요소 이름 없이 뜬다.
+    const TOKENS: readonly (readonly [string, readonly string[]])[] = [
+      ['dashboard.canvas.elements.connectorEndAttached', ['{element}', '{anchor}']],
+      ['dashboard.canvas.elements.connectorEndFree', ['{x}', '{y}']],
+      ['dashboard.canvas.elements.connectorPointsSummary', ['{count}']],
+      ['dashboard.canvas.elements.connectorDetailsAria', ['{index}']],
+      ['dashboard.canvas.elements.connectorMoveUpAria', ['{index}']],
+      ['dashboard.canvas.elements.connectorMoveDownAria', ['{index}']],
+      ['dashboard.canvas.elements.connectorDeleteAria', ['{index}']],
+    ];
+    for (const [key, tokens] of TOKENS) {
+      for (const [name, tree] of [
+        ['ko', ko],
+        ['en', en],
+      ] as const) {
+        const text = lookup(tree, key) as string;
+        for (const token of tokens) expect(text, `${name}:${key}`).toContain(token);
+      }
     }
   });
 });

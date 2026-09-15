@@ -47,12 +47,54 @@
 //
 // **이 모듈은 DOM 도 React 도 모른다.** 노드 목록과 투영과 글자 폭 장부만 받는다.
 //
+// ## 끝을 **가르는** 일도 여기 산다 (M12)
+//
+// 참조를 푸는 일만이 아니라 "이 끝이 요소에 붙었는가" 를 묻는 일도 이 파일의 몫이다
+// (`isAttachedEnd`). 그 갈림이 흩어지면 푸는 쪽과 말하는 쪽이 서로 다른 답을 낼 수 있고,
+// 가드가 소스에서 그것을 세고 있다. 그 위에 얹힌 `connectorTargets` 는 **푸는 것이 아니라
+// 세는 것**이라 노드 목록도 투영도 받지 않는다 — 지우기 경로(M12)가 그 가벼움을 쓴다.
+//
 // @spec SPEC-CANVAS-011 REQ-03-a · REQ-08
 
 import type { CanvasPoint, CanvasProjection } from '../canvasGeometry';
 import type { CanvasNode, OutlinedNode } from '../group/groupTypes';
 import { anchorPoints, type AnchorId } from './anchors';
 import { isConnector, type ConnectorElement, type ConnectorEnd } from './connectorTypes';
+
+/**
+ * 이 끝이 **요소에 붙어 있는가** — 붙은 끝과 자유 끝을 가르는 **유일한 자리**다.
+ *
+ * 011 은 그 갈림을 한 자리에 묶기로 했고 가드가 소스에서 그것을 세고 있다(`'el' in` 이
+ * 적힌 제품 파일이 이 파일 하나다). 판정을 함수로 **내보내는 것**이 그 규율을 지키면서
+ * 다른 층이 끝을 말할 수 있게 하는 길이다: 목록 행이 "시작은 어디에 붙었는가" 를 말하려면
+ * 그 갈림이 필요한데, 거기서 `'el' in` 을 한 번 더 적으면 판정이 둘이 되고 그 둘은
+ * 언젠가 갈라진다 — `isConnector` 가 `kind` 판정에 대해 세운 그 규율과 같은 자다.
+ *
+ * 좁히는 타입을 `ConnectorEnd` 의 갈래 그대로 적는 것에도 뜻이 있다. 부르는 쪽은 이
+ * 함수를 지나는 것만으로 `el`·`a` 를 읽을 수 있으므로 자료형 이름을 따로 들일 필요가 없다.
+ */
+export function isAttachedEnd(end: ConnectorEnd): end is { el: string; a: string } {
+  return 'el' in end;
+}
+
+/**
+ * 이 연결선이 **붙어 있는 요소 id** 들 — 없거나(양 끝이 자유) 하나이거나 둘이다.
+ *
+ * 푸는 것이 아니라 **가리키는 이름을 세는** 함수다. 그래서 노드 목록도 투영도 받지 않고,
+ * 지워진 요소를 참조하는 연결선을 걷어내는 쪽(`canvasEditArrange.removeNodesWithConnectors`)
+ * 이 이것만으로 답을 얻는다 — 지우는 길에서 상자를 재게 하면 지우기가 글자 폭 장부를
+ * 요구하게 되고, 목록 편집기에는 그런 것이 없다.
+ *
+ * 같은 요소를 두 끝이 가리키면 그 id 가 **두 번** 들어온다. 부르는 쪽이 집합으로 받으므로
+ * 접지 않는다 — 여기서 접으면 "몇 자리가 붙어 있는가" 를 묻는 다음 사람이 답을 잃는다.
+ */
+export function connectorTargets(connector: ConnectorElement): readonly string[] {
+  const out: string[] = [];
+  for (const end of [connector.from, connector.to]) {
+    if (isAttachedEnd(end)) out.push(end.el);
+  }
+  return out;
+}
 
 /**
  * 연결선의 점 목록을 **캔버스 단위**로 낸다 — `[시작, …중간점, 끝]`.
@@ -84,7 +126,7 @@ export function resolveConnector(
 
   const resolveEnd = (end: ConnectorEnd): CanvasPoint | undefined => {
     // 자유 끝점은 제 좌표 그대로다 — 다른 요소가 무엇을 하든 움직이지 않는다(AC-42).
-    if (!('el' in end)) return { x: end.x, y: end.y };
+    if (!isAttachedEnd(end)) return { x: end.x, y: end.y };
     const node = nodes.find((candidate) => candidate.id === end.el);
     if (node === undefined || isConnector(node)) return undefined;
     return anchorsOf(node).get(end.a);

@@ -1871,12 +1871,22 @@ describe('순서 이동 규칙은 한 곳에만 있다 (REQ-04)', () => {
     // 지어져 있다 — 그래서 네 동작이 지나는 규칙은 여전히 하나다.
     //
     // SPEC-CANVAS-010 이 **지우기**를 같은 모듈로 올리면서 이름이 넷이 됐다. 캔버스의
-    // Delete·Backspace 가 같은 `removeNodes` 를 지나므로, 순서 이동에 대해 세운 이 규율이
-    // 지우기에도 그대로 걸린다.
+    // Delete·Backspace 가 같은 함수를 지나므로, 순서 이동에 대해 세운 이 규율이 지우기에도
+    // 그대로 걸린다.
+    //
+    // SPEC-CANVAS-011 M12 가 그 넷째 이름을 `removeNodesWithConnectors` 로 옮겼다(지워지는
+    // 요소를 가리키던 연결선까지 걷어낸다). 이름이 길어져 한 줄에 들지 않으므로 **줄 수에
+    // 기대지 않고** 이름 넷을 각각 센다 — 재는 성질("넷이 다 이 모듈에서 온다")은 그대로다.
     const source = readFileSync(join(__dirname, 'CanvasElementsEditor.tsx'), 'utf-8');
-    expect(source).toMatch(
-      /import \{ bringToFront, moveElementTo, removeNodes, sendToBack \} from '\.\/canvasEditArrange'/,
-    );
+    const importBlock =
+      /import \{([^}]*)\} from '\.\/canvasEditArrange';/.exec(source)?.[1] ?? '';
+    expect(
+      importBlock
+        .split(',')
+        .map((name) => name.trim())
+        .filter((name) => name !== '')
+        .sort(),
+    ).toEqual(['bringToFront', 'moveElementTo', 'removeNodesWithConnectors', 'sendToBack']);
     // 배열을 여기서 직접 자르지 않는다 — 두 번째 정렬 규칙이 생기는 자리가 그것이다.
     expect(source).not.toMatch(/\.splice\(/);
     // 같은 이유로 **직접 걸러 내지도 않는다** — 두 번째 지우기 규칙이 생기는 자리다.
