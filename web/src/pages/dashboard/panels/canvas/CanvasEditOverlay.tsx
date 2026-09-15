@@ -211,12 +211,16 @@ import {
   removePointAt,
 } from './connector/connectorEdit';
 import { resolveConnector } from './connector/resolveConnector';
+// SPEC-CANVAS-011 M11 — 자유선의 궤적. 받는 일도 줄이는 일도 그 모듈이 하고, 이 층은
+// 포인터가 온 자리를 캔버스 단위로 넘길 뿐이다(허용 오차도 상한도 여기에 적히지 않는다).
+import { freehandPoints, ROUTE_TRACES_TRAIL, takeFreehandSample } from './connector/freehand';
 import {
   type BoxGeometry,
   type CanvasElement,
   type CanvasPrimitiveKind,
   type Geometry,
   type LineGeometry,
+  type PointGeometry,
 } from './canvasConfig';
 import {
   appendConnector,
@@ -1342,6 +1346,19 @@ export default function CanvasEditOverlay({
   const lastPressRef = useRef<LastPress | null>(null);
 
   const dragRef = useRef<DragState | null>(null);
+  /**
+   * 자유선이 긋는 동안 쌓는 **궤적**(캔버스 단위 정수 — SPEC-CANVAS-011 M11 · REQ-06).
+   *
+   * **`ConnectorDraw` 안이 아니라 `useRef` 다.** 그 상태는 미리보기를 그리므로 렌더에
+   * 참여해야 하지만, 궤적은 화면에 아무것도 그리지 않는다(미리보기는 누른 앵커에서 지금
+   * 손까지의 곧은 줄 하나다). 상태에 실으면 포인터 사건마다 렌더가 한 번 더 도는데,
+   * 그 렌더가 바꾸는 픽셀은 한 점도 없다 — `lastPressRef` 가 같은 문장으로 같은 결정을
+   * 했다.
+   *
+   * 몸짓이 시작·끝·취소될 때마다 비운다. 남겨 두면 다음에 그은 자유선이 **앞 몸짓의 손짓**
+   * 을 물려받고, 그 선은 사용자가 그은 적 없는 자리를 지난다.
+   */
+  const trailRef = useRef<readonly PointGeometry[]>([]);
   /** 아직 반영하지 않은 마지막 포인터 상태(스테이지 로컬 px + 보조키). */
   const pendingRef = useRef<PendingPointer | null>(null);
   /** 예약된 합류 프레임. `null` 이면 예약 없음. */
@@ -1554,6 +1571,7 @@ export default function CanvasEditOverlay({
       frameRef.current = null;
       dragRef.current = null;
       pendingRef.current = null;
+      trailRef.current = [];
     },
     [],
   );
@@ -1587,6 +1605,10 @@ export default function CanvasEditOverlay({
    */
   const finishConnectorDraw = (draw: ConnectorDraw, at: PxPoint): void => {
     setConnectorDraw(null);
+    // 궤적은 **이 몸짓의 것**이므로 여기서 거둔다 — 아래 어느 갈래로 빠지든(같은 앵커에서
+    // 놓아 아무것도 만들지 않는 갈래까지) 다음 몸짓에 넘어가지 않는다.
+    const trail = trailRef.current;
+    trailRef.current = [];
     const landed = anchorHitAt(anchorHosts, at, projection, textWidths, ANCHOR_PICK_SLOP_PX);
     if (landed?.ref.el === draw.from.el && landed?.ref.a === draw.from.a) return;
     // 참조든 자유 끝점이든 **캔버스 단위**다 — `anchorHitAt` 이 가리키는 자리도,
@@ -1595,8 +1617,24 @@ export default function CanvasEditOverlay({
     //
     // 정수로 죄는 일은 **만드는 모듈**이 한다(`freeConnectorEnd`). 이 층이 제 손으로
     // 반올림하면 파서의 규칙과 두 벌이 되고, 갈리는 날 저장 왕복에 끝점이 옮겨 앉는다.
-    const to = landed?.ref ?? freeConnectorEnd(unprojectPoint(at, projection));
-    const { next, created } = appendConnector(elements, draw.from, to, draw.route);
+    // 놓은 자리를 **캔버스 단위로 한 번만** 낸다. 앵커 위면 집는 함수가 이미 잰 그 자리이고
+    // (`AnchorHit.at`), 아니면 포인터를 되돌린 자리다. 끝을 짓는 쪽과 궤적을 다듬는 쪽이
+    // 저마다 셈하면 "선이 끝나는 자리" 가 두 벌이 된다.
+    const landedAt = landed?.at ?? unprojectPoint(at, projection);
+    const to = landed?.ref ?? freeConnectorEnd(landedAt);
+    // 자유선만 궤적을 싣는다(M11 — `ROUTE_TRACES_TRAIL`). 나머지 셋은 궤적을 쌓은 적이
+    // 없으므로 빈 목록이 지나가고, 그때 `points` 키는 아예 서지 않는다(`appendConnector`).
+    //
+    // **줄이는 일은 여기서 하지 않는다.** 허용 오차도 상한도 그 모듈의 것이며, 이 층이
+    // 제 손으로 오차를 고르면 "어느 화면에서 그었느냐" 가 config 에 남는다. 두 끝을
+    // 넘기는 것은 끝점에 겹치는 표본을 걷어내기 위함이다(그 함수의 §끝점과 겹치는 앞뒤 표본).
+    const { next, created } = appendConnector(
+      elements,
+      draw.from,
+      to,
+      draw.route,
+      freehandPoints(trail, unprojectPoint(draw.origin, projection), landedAt),
+    );
     onElementsChange(next);
     setSelection(new Set([created.id]));
   };
@@ -1751,6 +1789,9 @@ export default function CanvasEditOverlay({
         // **연타 사슬을 끊는다.** 끊지 않으면 앵커 위에서 연달아 그은 두 몸짓의 둘째 누름이
         // 첫째와 짝을 지어 더블클릭으로 읽힌다 — 앵커 갈래가 같은 한 줄을 같은 이유로 쓴다.
         lastPressRef.current = null;
+        // **궤적을 비우고 시작한다**(M11). 취소·언마운트가 이미 비우지만, 시작하는 쪽이
+        // 제 전제를 스스로 세우지 않으면 "어떤 경로로 들어왔느냐" 에 따라 첫 점이 달라진다.
+        trailRef.current = [];
         setConnectorDraw({
           pointerId: event.pointerId,
           frame,
@@ -2103,10 +2144,17 @@ export default function CanvasEditOverlay({
     // `CanvasSurface` 가 받는 props 가 그대로이고, 001 이 지은 유휴 정지가 유지된다.
     if (connectorDraw !== null && event.pointerId === connectorDraw.pointerId) {
       event.preventDefault();
-      setConnectorDraw({
-        ...connectorDraw,
-        point: stagePoint(event.clientX, event.clientY, connectorDraw.frame),
-      });
+      const point = stagePoint(event.clientX, event.clientY, connectorDraw.frame);
+      // **자유선만 궤적을 받는다**(M11 · REQ-06). 표를 보고 갈리므로 갈래가 하나 늘면
+      // 컴파일러가 그 표를 가리킨다. 상한에 닿으면 그 함수가 받은 배열을 그대로 돌려주고,
+      // 몸짓은 이 줄을 지나 끝까지 이어진다(AC-77).
+      if (ROUTE_TRACES_TRAIL[connectorDraw.route]) {
+        trailRef.current = takeFreehandSample(
+          trailRef.current,
+          unprojectPoint(point, projection),
+        );
+      }
+      setConnectorDraw({ ...connectorDraw, point });
       return;
     }
     // **영역 선택이 그다음이다.** 둘은 배타적이므로(마키는 히트가 없을 때만, 이동 드래그는
@@ -2249,6 +2297,8 @@ export default function CanvasEditOverlay({
     if (connectorDraw !== null && event.pointerId === connectorDraw.pointerId) {
       releaseCapture(event.currentTarget, event.pointerId);
       setConnectorDraw(null);
+      // 끊긴 몸짓의 궤적도 함께 버린다 — 남기면 다음 자유선이 이 손짓을 물려받는다.
+      trailRef.current = [];
       return;
     }
     // 이동 드래그의 취소가 **마지막 유효 위치를 확정하는** 것과 같은 규칙이다 — 되돌리면

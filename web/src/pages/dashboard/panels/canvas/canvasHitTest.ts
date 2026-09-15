@@ -163,8 +163,19 @@ function hitsEllipse(box: PxBox, point: PxPoint, pad: number): boolean {
  * 뿐이다 — 판정은 이 파일의 것이고 자리는 그 파일의 것이라는 머리말의 그 구분이다. 꺾임을
  * 끼워 넣는 쪽(M10)이 **같은 자리**를 새 점으로 쓰므로, 잡히는 자리와 점이 놓이는 자리가
  * 두 벌로 갈라질 수 없다(위험 R1).
+ *
+ * **내보내는 이유**(SPEC-CANVAS-011 M11): 자유선의 간소화가 점을 버릴지 정할 때 재는 것이
+ * 바로 이 양이다. 그쪽이 제 손으로 같은 산술을 적으면 이 저장소에 점–선분 거리가 두 벌이
+ * 되고, 둘이 갈라지는 날 "그은 대로 잡히지 않는" 자리가 열린다 — 머리말이 금지한 두 번째
+ * 측정원이다. `closestPointOnSegment` 를 직접 부르는 자리는 여전히 **이름으로 적은 둘**
+ * 뿐이므로(M10 의 허용목록) 이 문을 여는 값은 거기에 닿지 않는다.
+ *
+ * 인자 이름이 `Px…` 인 것은 **역사이지 제약이 아니다.** 이 산술에는 화면 고유의 것이 한
+ * 줄도 없고(정사영을 구간에 가두는 일이 전부다), 캔버스 단위의 점을 넘겨도 같은 뜻의 값이
+ * 나온다. 다만 두 자료형이 구조적으로 같아 타입이 공간 혼동을 잡아 주지 못하므로, 넘기는
+ * 쪽이 제가 어느 공간에 있는지 주석으로 밝히는 것이 이 문의 대가다.
  */
-function distanceToSegment(line: PxLine, point: PxPoint): number {
+export function distanceToSegment(line: PxLine, point: PxPoint): number {
   const on = closestPointOnSegment(line, point);
   return Math.hypot(point.x - on.x, point.y - on.y);
 }

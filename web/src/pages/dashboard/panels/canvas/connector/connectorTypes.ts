@@ -27,9 +27,11 @@
 // 들이지 않는 것이 그 규율의 값이다(그쪽은 투영과 윤곽 상자를 지나 `canvasConfig` 에
 // 도로 닿는다).
 //
-// **이 모듈은 DOM 도 산술도 모른다.** 자료형과 판별뿐이다.
+// **이 모듈은 DOM 도 산술도 모른다.** 자료형과 판별과 상수뿐이다 — 상한 하나가 여기
+// 사는 것은 008 이 `MAX_PATH_COMMANDS` 를 `shapes/pathTypes` 에 둔 그 자리 규율 그대로다
+// (어휘를 적은 파일이 그 어휘의 상한도 든다).
 //
-// @spec SPEC-CANVAS-011 REQ-03 · REQ-04
+// @spec SPEC-CANVAS-011 REQ-03 · REQ-04 · REQ-06
 
 import type {
   ElementBinding,
@@ -39,6 +41,10 @@ import type {
   TweenSpec,
 } from '../canvasConfig';
 import type { CanvasNode } from '../group/groupTypes';
+// SPEC-CANVAS-011 M11 — 중간점 상한을 008 의 명령 상한에서 **파생**시킨다(아래
+// `MAX_CONNECTOR_POINTS`). `shapes/pathTypes` 는 아무것도 들이지 않는 잎이라 이 값
+// 하나를 들여도 고리가 생기지 않는다 — `anchorTypes` 가 격자에서 쓴 그 형상이다.
+import { MAX_PATH_COMMANDS } from '../shapes/pathTypes';
 
 /**
  * 연결선 노드의 `kind`. **이 문자열이 적히는 자리는 이 파일뿐이다**(AC-39).
@@ -49,6 +55,20 @@ import type { CanvasNode } from '../group/groupTypes';
  * 하나에 대해 쓴 그 규율과 같다.
  */
 export const CONNECTOR_KIND = 'connector';
+
+/**
+ * 한 연결선이 들 수 있는 **중간점 수의 상한** (SPEC-CANVAS-011 REQ-06).
+ *
+ * **값을 베끼지 않고 008 의 명령 상한에서 파생시킨다.** `ANCHOR_LOCAL_EXTENT` 가 격자에서
+ * 쓴 그 근거를 그대로 쓴다 — 둘은 같은 개념("한 도형이 들 수 있는 점의 수")이고, 값을
+ * 따로 적으면 언젠가 한쪽만 바뀐다. 그래서 이 줄에 숫자 리터럴이 **없는 것**이 요구다.
+ *
+ * **이 한 값이 저술과 파싱 양쪽에 선다.** 받는 쪽(자유선 궤적 — `connector/freehand.ts`)과
+ * 읽는 쪽(`canvasConfig.parseConnectorPoints`)이 같은 상수를 보므로 두 수가 갈릴 수 없다.
+ * 갈리면 저술에서는 통과한 궤적이 저장 왕복에서 조용히 잘리고, 그 어긋남은 다음에 파일을
+ * 읽는 순간에야 **화면에서만** 드러난다 — 011 이 가장 싫어하는 부류다.
+ */
+export const MAX_CONNECTOR_POINTS = MAX_PATH_COMMANDS;
 
 /**
  * 연결선의 한 끝 — 요소에 **붙었거나**(참조) 캔버스에 **떠 있거나**(자유).

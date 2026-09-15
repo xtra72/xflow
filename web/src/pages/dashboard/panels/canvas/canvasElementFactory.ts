@@ -416,24 +416,37 @@ export function freeConnectorEnd(at: PointGeometry): ConnectorEnd {
  * 끝에 붙는 것은 여전히 뜻이 있다 — 배열 순서가 001 의 유일한 z-order 이므로 **방금 그은
  * 선이 맨 위에 온다.** 그어 놓고 도형 밑에 깔리면 사용자는 다시 긋는다.
  *
- * ## 중간점을 심지 않는다
+ * ## 중간점을 **지어내지** 않는다
  *
- * `points` 를 아예 두지 않는다(빈 배열도 아니다). 점이 없는 네 갈래는 **같은 그림**이므로
- * (REQ-04-b · AC-50) 빈 배열은 그리기에 아무것도 더하지 않으면서 저장 형상만 넓힌다 —
- * 011 이 "쓰지 않은 키는 생기지 않는다" 로 지킨 그 성질이다(AC-25 와 같은 방향).
+ * 점은 몸짓에서만 온다. 자유선(M11)은 궤적에서 줄여 낸 목록을 넘기고, 나머지 셋은 아무것도
+ * 넘기지 않는다 — 그리고 넘긴 것이 없으면 `points` 키가 **아예 서지 않는다**(빈 배열도
+ * 아니다). 점이 없는 네 갈래는 **같은 그림**이므로(REQ-04-b · AC-50) 빈 배열은 그리기에
+ * 아무것도 더하지 않으면서 저장 형상만 넓힌다 — 011 이 "쓰지 않은 키는 생기지 않는다" 로
+ * 지킨 그 성질이다(AC-25 와 같은 방향).
+ *
+ * 받은 점은 **정수로 죈다.** 끝점(`freeConnectorEnd`)과 꺾임(`insertPointAt`)이 지나는 그
+ * 함수를 여기서도 지난다 — 죄지 않고 소수를 실으면 다음에 파일을 읽는 순간 파서의
+ * `Math.round` 가 사용자의 선을 반 칸 옮긴다. 넘겨주는 쪽이 이미 죄어 왔더라도 이 문은
+ * 닫아 둔다: 만드는 모듈이 무엇을 저장하는지에 대한 책임은 부르는 쪽 사정에 달릴 수 없다.
  */
 export function appendConnector(
   elements: readonly CanvasNode[],
   from: ConnectorEnd,
   to: ConnectorEnd,
   route: ConnectorRoute,
+  points: readonly PointGeometry[] = [],
 ): { next: CanvasNode[]; created: ConnectorElement } {
+  const mid: PointGeometry[] = points.map((at) => ({
+    x: coordinate(at.x, 0),
+    y: coordinate(at.y, 0),
+  }));
   const created: ConnectorElement = {
     id: nextElementId(elements),
     kind: CONNECTOR_KIND,
     from,
     to,
     route,
+    ...(mid.length > 0 ? { points: mid } : {}),
     style: connectorSeedStyle(),
   };
   return { next: [...elements, created], created };

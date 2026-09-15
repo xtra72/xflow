@@ -51,6 +51,7 @@ import {
   CONNECTOR_KIND,
   DEFAULT_CONNECTOR_ROUTE,
   isConnectorKind,
+  MAX_CONNECTOR_POINTS,
   type ConnectorElement,
   type ConnectorEnd,
   type ConnectorRoute,
@@ -1002,6 +1003,10 @@ function parseConnectorEnd(raw: unknown): ConnectorEnd | null {
  * 상한은 008 의 경로 명령과 **같은 수**를 쓴다. 두 값은 같은 개념("한 도형이 들 수 있는
  * 점의 수")이고, 자유선(M11)이 궤적을 받는 쪽이므로 상한 없이 두면 손이 움직인 만큼
  * config 가 자란다. 넘치면 **앞에서부터** 살린다 — 전부 버리면 선이 사라진다.
+ *
+ * M11 부터 그 수를 이름으로 든다(`MAX_CONNECTOR_POINTS`). 값은 한 자리도 달라지지 않지만,
+ * 궤적을 **받는** 쪽이 같은 이름을 보므로 저술의 상한과 파싱의 상한이 갈릴 수 없다 —
+ * 갈리면 그어 놓은 선이 저장 왕복에서 조용히 잘린다.
  */
 function parseConnectorPoints(raw: unknown): PointGeometry[] | undefined {
   if (!Array.isArray(raw)) return undefined;
@@ -1010,7 +1015,7 @@ function parseConnectorPoints(raw: unknown): PointGeometry[] | undefined {
     const point = parseAbsolutePoint(item);
     if (!point) continue;
     out.push(point);
-    if (out.length >= MAX_PATH_COMMANDS) break;
+    if (out.length >= MAX_CONNECTOR_POINTS) break;
   }
   return out.length > 0 ? out : undefined;
 }
