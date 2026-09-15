@@ -58,6 +58,8 @@ function countOf(text: string, re: RegExp): number {
 const OVERLAY = 'CanvasEditOverlay.tsx';
 const RESOLVE = 'connector/resolveConnector.ts';
 const HIT_TEST = 'canvasHitTest.ts';
+/** 노드를 **만드는** 유일한 모듈 — M8 이 연결선 입구를 여기 세웠다. */
+const FACTORY = 'canvasElementFactory.ts';
 
 describe('그물이 성기지 않다', () => {
   it('제품 파일이 실제로 여럿 잡히고 오버레이가 그 안에 있다', () => {
@@ -69,7 +71,9 @@ describe('그물이 성기지 않다', () => {
     expect(names).toContain('connector/canvasTools.ts');
     expect(names).toContain('connector/CanvasAnchorTools.tsx');
     expect(names).toContain('connector/connectorTypes.ts');
+    expect(names).toContain('connector/CanvasConnectorTools.tsx');
     expect(names).toContain(RESOLVE);
+    expect(names).toContain(FACTORY);
   });
 });
 
@@ -202,8 +206,56 @@ describe('앵커 도구를 짓는 자리가 **하나**다 (AC-61 · 불변식 I2
 
   it('도구 상태가 도크로 내려가지 않는다 — 도크가 없는 표면에서도 도구가 산다', () => {
     const dock = source('CanvasEditDock.tsx');
-    for (const name of ['CanvasTool', 'TOOL_ANCHOR_GESTURE', 'TOOL_SHOWS_ANCHORS', 'toggleTool']) {
+    for (const name of [
+      'CanvasTool',
+      'TOOL_ANCHOR_GESTURE',
+      'TOOL_SHOWS_ANCHORS',
+      'TOOL_CONNECTOR_ROUTE',
+      'toggleTool',
+    ]) {
       expect(dock.includes(name), name).toBe(false);
+    }
+  });
+});
+
+// --- AC-61: 연결선 도구도 두 표면에 함께 선다 (M8) ---------------------------
+
+describe('연결선 도구를 짓는 자리가 **하나**다 (AC-61 · 불변식 I24)', () => {
+  // 앵커 도구의 그 절과 **한 글자도 다르지 않은 규율**이다. 되풀이하는 것에 뜻이 있다:
+  // 006 이 배달한 결함은 "컨트롤이 도크에만 있었다" 하나였고, 그 결함은 새 도구가 설
+  // 때마다 새로 심을 수 있다. 가드가 도구마다 서지 않으면 다음 도구가 조용히 도크에만
+  // 선다.
+  it('컴포넌트를 쓰는 제품 파일이 오버레이 하나뿐이다', () => {
+    for (const { name, text } of productSources()) {
+      if (name === 'connector/CanvasConnectorTools.tsx') continue;
+      expect(text.includes('<CanvasConnectorTools'), name).toBe(name === OVERLAY);
+    }
+  });
+
+  it('오버레이가 그것을 **한 번 짓고 두 자리에서 그린다**', () => {
+    const text = source(OVERLAY);
+    expect(countOf(text, /<CanvasConnectorTools\b/g)).toBe(1);
+    // 앵커 묶음과 같은 셈이다: 선언 하나 + 떠 있는 줄 하나 + 도크의
+    // `connectorTools={connectorTools}` 둘.
+    expect(countOf(text, /\bconnectorTools\b/g)).toBe(4);
+    expect(text).toContain('connectorTools={connectorTools}');
+  });
+
+  it('도크는 **자리와 이름만** 더한다 — 컨트롤을 스스로 짓지 않는다', () => {
+    const dock = source('CanvasEditDock.tsx');
+    expect(dock).toContain('connectorTools: React.ReactNode');
+    expect(dock.includes('<CanvasConnectorTools')).toBe(false);
+  });
+
+  it('단추 넷을 **손으로 적지 않았다** — 표에서 파생한다', () => {
+    // 목록을 손으로 적으면 다섯째 도구가 단추 **없이** 켜지기만 하고, 화면은
+    // "도구는 켜졌는데 아무것도 그어지지 않는다" 만 말한다.
+    const text = source('connector/CanvasConnectorTools.tsx');
+    expect(text).toContain('CANVAS_TOOLS.map');
+    expect(text).toContain('TOOL_CONNECTOR_ROUTE[id]');
+    // 네 이름이 나오는 자리는 아이콘 표 **한 곳**뿐이다(`Record<ConnectorRoute, …>`).
+    for (const route of ['straight', 'elbow', 'curve', 'free']) {
+      expect(countOf(text, new RegExp(`\\b${route}\\b`, 'g')), route).toBe(1);
     }
   });
 });
@@ -281,10 +333,15 @@ describe('참조를 푸는 자리가 `resolveConnector.ts` 하나뿐이다 (AC-4
     }
   });
 
-  it('`ConnectorEnd` 를 **타입으로** 들이는 제품 파일이 셋뿐이다', () => {
-    // 짓는 자리(자료형) · 읽어 들이는 자리(파서) · 푸는 자리. 넷째가 생기면 그 파일이
-    // 끝점의 **속**을 들여다보기 시작한 것이다.
-    const allowed = [CONNECTOR_TYPES, 'canvasConfig.ts', RESOLVE].sort();
+  it('`ConnectorEnd` 를 **타입으로** 들이는 제품 파일이 넷뿐이다', () => {
+    // 자료형을 적는 자리 · 읽어 들이는 자리(파서) · 푸는 자리, 그리고 M8 이 더한 **만드는**
+    // 자리(`appendConnector`). 구멍을 조용히 지나가지 않고 늘어난 자리를 **세어서** 적는
+    // 것이 011 이 가드에 대해 정한 규율이다(§009 의 좌표 변환 가드를 넓힌다).
+    //
+    // 넷째가 **읽는** 자리가 아니라는 사실은 아래 두 단언이 붙든다: 속을 가르는 `'el' in`
+    // 은 여전히 `resolveConnector` 하나뿐이고(바로 위 시험), 그 파일은 끝을 **인자로 받아
+    // 그대로 싣기만** 한다. 다섯째가 생기면 그 자리가 정말 필요한지부터 따져야 한다.
+    const allowed = [CONNECTOR_TYPES, 'canvasConfig.ts', RESOLVE, FACTORY].sort();
     const seen = productSources()
       .filter(({ text }) => /\bConnectorEnd\b/.test(text))
       .map(({ name }) => name)
@@ -441,6 +498,12 @@ describe('011 이 더한 문구가 ko · en 양쪽에 있다', () => {
     'dashboard.canvas.edit.toolSelect',
     'dashboard.canvas.edit.toolAnchor',
     'dashboard.canvas.edit.anchorRefusalNotBoxed',
+    // M8 이 더한 다섯 — 묶음 이름 하나 + 도구 이름 넷.
+    'dashboard.canvas.edit.dockConnector',
+    'dashboard.canvas.edit.toolStraight',
+    'dashboard.canvas.edit.toolElbow',
+    'dashboard.canvas.edit.toolCurve',
+    'dashboard.canvas.edit.toolFree',
   ];
 
   const lookup = (tree: unknown, key: string): unknown =>

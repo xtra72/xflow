@@ -1,4 +1,4 @@
-// 캔버스 편집 도구 — **오늘 둘, M8 에서 여섯** (SPEC-CANVAS-011 M3').
+// 캔버스 편집 도구 — **여섯** (SPEC-CANVAS-011 M3' · M8).
 //
 // ## 왜 모듈 하나를 세우는가
 //
@@ -20,25 +20,37 @@
 // "도구를 켰는데 아무 일도 없다" 만 말한다. `CanvasGroupTools` 의 `REFUSAL_KEY` 와
 // 오버레이의 `HANDLE_ARIA_KEYS` 가 이미 세운 관용구다.
 //
-// **`TOOL_SHOWS_ANCHORS` 와 `TOOL_ANCHOR_GESTURE` 가 오늘 같은 값을 갖는 것은 우연이다.**
-// 둘은 다른 물음이고 M8 에서 **갈라진다**: 연결선 도구 넷은 앵커를 **보여야** 하고
-// (REQ-02-b — 앵커에서 눌러 앵커에서 놓는 것이 그 도구의 몸짓이다), 그 넷의 더블클릭은
-// 앵커를 더하는 것이 **아니다**(REQ-05 — 선 위의 더블클릭은 중간점이다). 두 물음을 한 표로
-// 접으면 그날 한쪽을 위해 표를 쪼개야 하고, 쪼개는 사람은 두 뜻이 언제 갈렸는지 모른다.
+// ## 표가 **넷**이고, 둘은 M8 에서 **실제로 갈라졌다**
 //
-// **이 모듈은 DOM 도 React 도 모른다.** 유니온 하나 · 표 셋 · 순수 함수 하나뿐이다.
+// M3'b 는 `TOOL_SHOWS_ANCHORS` 와 `TOOL_ANCHOR_GESTURE` 가 같은 값을 갖는 것이 **우연**
+// 이라 적고, M8 에서 갈라진다고 예고했다. 갈라졌다: 연결선 도구 넷은 앵커를 **보여야**
+// 하고(REQ-02-b — 앵커에서 눌러 앵커에서 놓는 것이 그 도구의 몸짓이다), 그 넷의
+// 더블클릭은 앵커를 더하는 것이 **아니다**(REQ-05 — 선 위의 더블클릭은 중간점이다 · M10).
+// 두 물음을 한 표로 접었다면 오늘 그 표를 쪼개야 했고, 쪼개는 사람은 두 뜻이 언제
+// 갈렸는지 모른 채 한쪽을 골랐을 것이다.
+//
+// M8 이 더하는 넷째 표(`TOOL_CONNECTOR_ROUTE`)는 앞의 셋과 같은 규율이다 — 이 도구가
+// 연결선을 긋는가, 긋는다면 어떤 `route` 로 긋는가를 **한 자리**에서 답한다. 오버레이가
+// `tool === 'straight' || tool === 'elbow' || …` 를 적으면 다섯째 도구가 늘 때 그 자리가
+// 조용히 빠지고, 화면은 "도구는 켜졌는데 그어지지 않는다" 만 말한다.
+//
+// **이 모듈은 DOM 도 React 도 모른다.** 유니온 하나 · 표 넷 · 순수 함수 하나뿐이다.
 // 상태 칸(`useState`)은 오버레이가 든다 — 값을 드는 자리와 값의 뜻을 적는 자리는 다르다.
 //
-// @spec SPEC-CANVAS-011 REQ-02 · REQ-02'
+// @spec SPEC-CANVAS-011 REQ-02 · REQ-02' · REQ-03
+
+import type { ConnectorRoute } from './connectorTypes';
 
 /**
  * 도구 목록. **배열이 먼저이고 유니온이 그 파생이다** — 손으로 적은 유니온과 따로 적은
  * 목록은 언젠가 갈라지고, 그 갈라짐은 "도구는 켜지는데 단추가 없다"(또는 그 반대)로만
  * 보인다. `FIXED_ANCHOR_IDS` 가 `BOX_HANDLE_IDS` 에서 파생한 그 규율이다.
  *
- * M8 이 여기에 `'straight' | 'elbow' | 'curve' | 'free'` 넷을 더해 **여섯**이 된다.
+ * 뒤의 넷은 **`ConnectorRoute` 와 같은 이름**이다(M8). 베낀 것이 아니라 아래
+ * `TOOL_CONNECTOR_ROUTE` 가 그 둘을 이어 붙이며, 그 표가 `Record<CanvasTool, …>` 이자
+ * 값이 `ConnectorRoute | null` 이므로 이름이 어긋나면 컴파일러가 먼저 운다.
  */
-export const CANVAS_TOOLS = ['select', 'anchor'] as const;
+export const CANVAS_TOOLS = ['select', 'anchor', 'straight', 'elbow', 'curve', 'free'] as const;
 
 /** 지금 손에 쥔 도구. 언제나 **정확히 하나**다. */
 export type CanvasTool = (typeof CANVAS_TOOLS)[number];
@@ -56,6 +68,10 @@ export const DEFAULT_CANVAS_TOOL: CanvasTool = 'select';
 export const TOOL_LABEL_KEYS: Readonly<Record<CanvasTool, string>> = {
   select: 'dashboard.canvas.edit.toolSelect',
   anchor: 'dashboard.canvas.edit.toolAnchor',
+  straight: 'dashboard.canvas.edit.toolStraight',
+  elbow: 'dashboard.canvas.edit.toolElbow',
+  curve: 'dashboard.canvas.edit.toolCurve',
+  free: 'dashboard.canvas.edit.toolFree',
 };
 
 /**
@@ -71,6 +87,12 @@ export const TOOL_LABEL_KEYS: Readonly<Record<CanvasTool, string>> = {
 export const TOOL_SHOWS_ANCHORS: Readonly<Record<CanvasTool, boolean>> = {
   select: false,
   anchor: true,
+  // 연결선 도구 넷은 앵커를 **보여야** 한다 — 앵커에서 눌러 앵커에서 놓는 것이 그
+  // 도구의 몸짓 자체이므로, 보이지 않으면 어디를 눌러야 할지 화면이 말하지 않는다.
+  straight: true,
+  elbow: true,
+  curve: true,
+  free: true,
 };
 
 /**
@@ -86,13 +108,44 @@ export const TOOL_SHOWS_ANCHORS: Readonly<Record<CanvasTool, boolean>> = {
 export const TOOL_ANCHOR_GESTURE: Readonly<Record<CanvasTool, boolean>> = {
   select: false,
   anchor: true,
+  // **여기가 위 표와 갈리는 자리다**(M3'b 가 예고한 그 갈라짐). 연결선 도구의 더블클릭은
+  // 앵커가 아니라 **선 위의 중간점**이다(REQ-05 · M10). 참으로 두면 잇는 손이 두 번째
+  // 누름마다 도형 위에 앵커를 흩뿌린다.
+  straight: false,
+  elbow: false,
+  curve: false,
+  free: false,
+};
+
+/**
+ * 이 도구가 **연결선을 긋는가**, 긋는다면 어떤 `route` 로 긋는가 (REQ-03 · REQ-04).
+ *
+ * `null` 은 "긋지 않는다" 이며, 그래서 도구 여섯이 **둘로 갈린다** — 긋는 넷과 긋지 않는
+ * 둘. 오버레이는 이 표 하나만 보고 갈래를 타므로 `tool === 'straight' || …` 같은 목록이
+ * 그쪽에 생기지 않는다. 그런 목록은 다섯째 연결선 도구가 늘 때 **조용히** 빠지고, 그때
+ * 화면은 "도구는 켜지는데 아무것도 그어지지 않는다" 만 말한다.
+ *
+ * 값이 도구 이름과 **같은 문자열**인 것은 우연이 아니라 설계다(§`CANVAS_TOOLS`). 그래도
+ * `tool as ConnectorRoute` 로 줄여 적지 않는다 — `as` 는 두 이름이 갈라지는 날에도 조용히
+ * 통과하고, 표는 그날 컴파일러를 부른다.
+ *
+ * 그리는 법이 넷이어도 **만드는 몸짓은 하나**다(M8). 중간점이 없는 동안 넷은 같은 그림이며
+ * (REQ-04-b · AC-50), 점을 만드는 몸짓이 갈리는 것은 M10 · M11 의 몫이다.
+ */
+export const TOOL_CONNECTOR_ROUTE: Readonly<Record<CanvasTool, ConnectorRoute | null>> = {
+  select: null,
+  anchor: null,
+  straight: 'straight',
+  elbow: 'elbow',
+  curve: 'curve',
+  free: 'free',
 };
 
 /**
  * 도구 단추를 눌렀을 때의 다음 도구.
  *
  * 켜져 있는 것을 다시 누르면 **고르기로 돌아온다.** 끄는 길을 따로 두지 않는 것이 요점이다 —
- * 도구가 여섯이 되면 "끄기" 단추는 여섯 자리에 각각 서거나 한 자리에 따로 서야 하고, 어느
+ * 도구가 여섯인 지금 "끄기" 단추는 여섯 자리에 각각 서거나 한 자리에 따로 서야 하고, 어느
  * 쪽이든 켜는 단추와 끄는 단추가 두 벌이 된다.
  */
 export function toggleTool(current: CanvasTool, pressed: CanvasTool): CanvasTool {

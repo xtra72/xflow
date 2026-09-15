@@ -25,6 +25,7 @@ import {
   DEFAULT_POINT_GEOMETRY,
   type CanvasElement,
   type CanvasPrimitiveKind,
+  coordinate,
   type ElementStyle,
   type LineGeometry,
   type PathElement,
@@ -35,6 +36,15 @@ import {
 // (`created` 의 타입이 그 사실을 든다) 새 입구도 늘지 않았다 — 008 불변식 J9 그대로다.
 // 넓히지 않았다면 팔레트로 도형 하나를 놓는 순간 손으로 저술한 그룹이 배열에서 떨어진다.
 import type { CanvasNode } from './group/groupTypes';
+// SPEC-CANVAS-011 M8 — **연결선을 만드는 입구가 이 모듈에 선다**(아래 `appendConnector`).
+// 값 하나(`CONNECTOR_KIND`)를 들이지만 그 모듈은 `import type` 만 하는 잎이라 실행 시각
+// 순환이 생기지 않는다(`connectorTypes` 머리말 §모듈 자리).
+import {
+  CONNECTOR_KIND,
+  type ConnectorElement,
+  type ConnectorEnd,
+  type ConnectorRoute,
+} from './connector/connectorTypes';
 import type { PathCommand } from './shapes/pathTypes';
 
 // --- 씨앗 상수 -----------------------------------------------------------
@@ -334,6 +344,94 @@ export function appendPathElement(
     commands,
     elements.length,
   );
+  return { next: [...elements, created], created };
+}
+
+// --- 연결선 (SPEC-CANVAS-011 M8) ------------------------------------------
+
+/**
+ * 연결선이 입고 나오는 씨앗 스타일 — **열린 경로의 그 씨앗 그대로**다.
+ *
+ * `closedSeedStyle(false)` 를 지나므로 새 상수도, 두 번째 규칙도 생기지 않는다. 그 함수가
+ * 내는 값은 `newElement('line')` 이 심는 것과 같고(§`closedSeedStyle`), 그래서 손으로 그은
+ * 선과 두 도형을 이은 선이 목록에서 **구별할 이유 없는 차이**를 갖지 않는다.
+ *
+ * ## 색만으로는 그려지지 않는다 — 두께를 **함께** 심는다
+ *
+ * 이것이 이 함수가 존재하는 이유의 전부다. `drawElement.paintStroke` 는 `style.stroke` 와
+ * **양수 `strokeWidth`** 가 **둘 다** 있을 때만 칠하고, 하나라도 없으면 경로를 다 지어
+ * 놓고도 조용히 지나간다(`drawConnector` §채우지 않는다 — "기본 색을 지어내지 않는다").
+ * 씨앗이 `{}` 인 연결선은 그래서 **배열에는 있는데 화면에는 없는** 선이 되고, 사용자는
+ * 그것을 "가끔 안 그어진다" 로 읽는다.
+ *
+ * 001 이 이 결함을 한 번 배달했고(빈 스타일로 만든 요소가 아무것도 그리지 않았다) 그때
+ * 고친 자리가 바로 이 모듈이다 — 렌더가 색을 지어내는 쪽은 옳지 않으므로, 저술 시점에
+ * 심는다. M8 은 같은 함정을 같은 자리에서 같은 방법으로 피한다.
+ */
+export function connectorSeedStyle(): ElementStyle {
+  return closedSeedStyle(false);
+}
+
+/**
+ * 앵커에 붙지 않은 끝 하나 — **캔버스 단위 정수**로 죈다 (M8 · REQ-03).
+ *
+ * 죄는 자가 파서의 그 함수(`coordinate`)인 것이 요점이다. 저술하는 쪽과 읽어 들이는 쪽이
+ * 다른 규칙으로 죄면 **저장 왕복에 값이 달라진다** — 파서는 `Math.round` 를 지나므로,
+ * 여기서 죄지 않고 소수를 실으면 다음에 파일을 읽는 순간 사용자가 놓은 끝이 조용히 반 칸
+ * 옮겨 앉는다. 예외도 경고도 없이 화면에서만 드러나는 그 부류이며, AC-36("저장 왕복에
+ * 값이 바뀌지 않는다")이 금지한 바로 그것이다.
+ *
+ * 붙은 끝에는 이런 자가 필요 없다 — 그쪽은 좌표가 아니라 **이름**이기 때문이다.
+ */
+export function freeConnectorEnd(at: PointGeometry): ConnectorEnd {
+  return { x: coordinate(at.x, 0), y: coordinate(at.y, 0) };
+}
+
+/**
+ * 연결선을 배열 끝에 붙인 결과 — **연결선을 만드는 유일한 입구**다.
+ *
+ * ## 왜 이 모듈인가
+ *
+ * 연결선은 `CanvasElement` 가 아니므로 `appendElement` 를 지날 수 없고(그 함수는
+ * `CanvasPrimitiveKind` 만 받는다), 그래서 제 입구가 필요하다. 그 입구를 **여기** 두는
+ * 근거는 `appendPathElement` 를 여기 둔 그 근거와 같다: id 규칙(`nextElementId`)과 씨앗
+ * 스타일 규칙(`closedSeedStyle`)이 **둘 다 이 모듈에 있다.** 오버레이가 제 손으로 두 줄을
+ * 조립하면 그 조립이 곧 갈라질 수 있는 두 번째 지점이 되고(§`appendElement`), 그때
+ * "팔레트로 놓은 선과 이어서 그은 선의 id 규칙이 다르다" 가 표현 가능해진다.
+ *
+ * 그래서 **종류마다 입구 하나**라는 규율은 그대로다 — 원시형 넷은 `appendElement`,
+ * 카탈로그 경로는 `appendPathElement`, 가져온 그림은 `appendImportedElements`, 연결선은
+ * 이것. 넷 다 같은 세 줄(끝에 붙이고 · id 를 발급하고 · 만든 것을 함께 돌려준다)이다.
+ *
+ * ## 계단 오프셋이 없다
+ *
+ * 연결선에는 **놓을 자리가 없다.** 두 끝이 이미 사용자가 고른 자리이므로 겹침을 피해
+ * 어긋나게 할 좌표 자체가 없다(`seedOffset` 은 씨앗 기하를 미는 값이고, 여기에는 씨앗
+ * 기하가 없다). 억지로 밀면 사용자가 앵커에서 놓은 선이 앵커에서 시작하지 않는다.
+ *
+ * 끝에 붙는 것은 여전히 뜻이 있다 — 배열 순서가 001 의 유일한 z-order 이므로 **방금 그은
+ * 선이 맨 위에 온다.** 그어 놓고 도형 밑에 깔리면 사용자는 다시 긋는다.
+ *
+ * ## 중간점을 심지 않는다
+ *
+ * `points` 를 아예 두지 않는다(빈 배열도 아니다). 점이 없는 네 갈래는 **같은 그림**이므로
+ * (REQ-04-b · AC-50) 빈 배열은 그리기에 아무것도 더하지 않으면서 저장 형상만 넓힌다 —
+ * 011 이 "쓰지 않은 키는 생기지 않는다" 로 지킨 그 성질이다(AC-25 와 같은 방향).
+ */
+export function appendConnector(
+  elements: readonly CanvasNode[],
+  from: ConnectorEnd,
+  to: ConnectorEnd,
+  route: ConnectorRoute,
+): { next: CanvasNode[]; created: ConnectorElement } {
+  const created: ConnectorElement = {
+    id: nextElementId(elements),
+    kind: CONNECTOR_KIND,
+    from,
+    to,
+    route,
+    style: connectorSeedStyle(),
+  };
   return { next: [...elements, created], created };
 }
 

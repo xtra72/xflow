@@ -346,3 +346,93 @@ export function anchorGestureAt(
 
   return { kind: 'add', at: unprojectPoint(at, proj) };
 }
+
+// --- 한 점이 집어내는 앵커 (M8 · REQ-03) ------------------------------------
+
+/**
+ * 앵커 한 자리를 가리키는 **참조** — 최상위 노드 id + 그 안의 자리 이름.
+ *
+ * `ConnectorEnd` 의 붙은 갈래와 **모양이 같다**(M4). 그런데도 그 타입을 여기서 들이지
+ * 않는 것에 뜻이 있다: `connectorTypes` 는 산술도 투영도 모르는 **잎 모듈**이고, 이 파일은
+ * `canvasGeometry` → `group/groupTypes` → `canvasConfig` 를 지난다. 들이는 방향이 반대가
+ * 되면 그 잎이 잎이기를 그만둔다(`anchorTypes` 가 같은 이유로 떨어져 나온 그 규율이다).
+ *
+ * 구조가 같으므로 이 값은 그대로 끝점이 된다 — 그 조립은 **만드는 자리**
+ * (`canvasElementFactory.appendConnector`)가 제 서명으로 받는다.
+ */
+export interface AnchorRef {
+  /** 최상위 노드 id. */
+  el: string;
+  /** 그 노드 안의 자리 이름 — 고정 아홉이거나 임의 앵커 id. */
+  a: AnchorId;
+}
+
+/**
+ * 한 점이 집어낸 앵커 — **참조와 그 자리를 함께** 낸다.
+ *
+ * 자리를 함께 내는 것에 뜻이 있다: 집는 일은 이미 지도를 한 벌 짓고 모든 자리를 견주므로,
+ * 부르는 쪽이 자리를 다시 물으면 **상자를 한 번 더 재게 된다.** 011 은 그 두 번째 측정을
+ * AC-33 으로 금지했고, 가드 하나가 `anchorPoints` 를 부르는 제품 파일을 이름으로 세어
+ * 붙들고 있다 — 이 필드가 없으면 그 가드가 곧바로 운다.
+ *
+ * `ref` 를 안쪽에 두고 평평하게 펴지 않은 것도 같은 규율이다. 평평하면 이 객체가 그대로
+ * 연결선의 끝점으로 흘러 들어가 **저장되지 않아야 할 좌표가 config 에 실린다** — 붙은 끝이
+ * 좌표가 아니라 참조인 것이 011 의 전부인데(`connectorTypes` 머리말), 그 좌표를 함께 적으면
+ * 참조된 도형을 옮겼을 때 둘이 어긋난다.
+ */
+export interface AnchorHit {
+  ref: AnchorRef;
+  /** 그 자리의 **캔버스 단위** 좌표. 그리는 쪽이 투영해 쓴다. */
+  at: CanvasPoint;
+}
+
+/**
+ * 화면의 한 점(스테이지 px)이 가리키는 앵커. 오차 밖이면 부재다.
+ *
+ * ## 왜 `anchorGestureAt` 과 따로인가
+ *
+ * 저쪽은 **한 노드 안**에서 임의 앵커만 본다(고정 아홉은 뺄 수 없으므로 볼 이유가 없다).
+ * 이쪽은 **여러 노드에 걸쳐** 아홉과 임의를 **함께** 본다 — 잇는 몸짓은 어느 자리에서든
+ * 시작할 수 있기 때문이다. 둘을 한 함수로 접으면 인자에 "어느 쪽 뜻인가" 를 알리는
+ * 불리언이 하나 붙고, 그 불리언은 읽는 자리마다 다시 해석된다.
+ *
+ * ## 견주는 일은 **px 에서** 한다
+ *
+ * 앵커가 그려지는 자리가 px 이고 오차도 px 이다. 캔버스 단위로 옮겨 재면 축척이 가로·세로로
+ * 다른 화면에서 "보이는 원" 이 판정에서는 타원이 된다 — `anchorGestureAt` 이 같은 이유로
+ * 같은 공간을 골랐다.
+ *
+ * ## 연결선은 **타입으로** 걸러진다 (A6 · REQ-03-b)
+ *
+ * 인자가 `OutlinedNode[]` 이므로 연결선을 넘기는 것이 컴파일되지 않는다. 그래서 이 함수에
+ * `isConnector` 가 없다 — 없는 입력을 막는 검사는 죽은 코드이고, 죽은 코드는 다음 사람에게
+ * "연결선이 여기 올 수 있다" 고 거짓말한다(`anchorPoints` 머리말과 같은 규율).
+ *
+ * ## 동점은 **뒤에 온 것이 이긴다**
+ *
+ * `anchorGestureAt` 의 `<=` 와 같다. 배열 뒤가 곧 z-order 위이므로(001), 겹친 두 점 중
+ * 사용자가 보는 것은 나중에 그려진 위쪽 점이다.
+ */
+export function anchorHitAt(
+  hosts: readonly OutlinedNode[],
+  at: PxPoint,
+  proj: CanvasProjection,
+  textWidths: Readonly<Record<string, number>>,
+  slopPx: number,
+): AnchorHit | undefined {
+  let best: AnchorHit | undefined;
+  let bestDistance = slopPx * slopPx;
+  for (const host of hosts) {
+    for (const [id, point] of anchorPoints(host, proj, textWidths)) {
+      const px = projectPoint(point, proj);
+      const dx = px.x - at.x;
+      const dy = px.y - at.y;
+      const distance = dx * dx + dy * dy;
+      if (distance <= bestDistance) {
+        bestDistance = distance;
+        best = { ref: { el: host.id, a: id }, at: point };
+      }
+    }
+  }
+  return best;
+}
