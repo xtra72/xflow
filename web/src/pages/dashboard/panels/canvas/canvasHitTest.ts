@@ -25,6 +25,7 @@ import {
   type CanvasElement,
 } from './canvasConfig';
 import {
+  closestPointOnSegment,
   ellipseParams,
   projectBox,
   projectBoxIn,
@@ -154,15 +155,18 @@ function hitsEllipse(box: PxBox, point: PxPoint, pad: number): boolean {
   return nx * nx + ny * ny <= 1;
 }
 
-/** 점–선분 거리. 두 끝점이 같은 퇴화 선분은 점 거리로 떨어진다. */
+/**
+ * 점–선분 거리. 두 끝점이 같은 퇴화 선분은 점 거리로 떨어진다.
+ *
+ * **자리는 여기서 셈하지 않는다**(SPEC-CANVAS-011 M10). 가장 가까운 자리를 내는 산술은
+ * `canvasGeometry.closestPointOnSegment` 한 곳에 있고, 이 함수는 그 자리까지의 거리를 잴
+ * 뿐이다 — 판정은 이 파일의 것이고 자리는 그 파일의 것이라는 머리말의 그 구분이다. 꺾임을
+ * 끼워 넣는 쪽(M10)이 **같은 자리**를 새 점으로 쓰므로, 잡히는 자리와 점이 놓이는 자리가
+ * 두 벌로 갈라질 수 없다(위험 R1).
+ */
 function distanceToSegment(line: PxLine, point: PxPoint): number {
-  const dx = line.x2 - line.x1;
-  const dy = line.y2 - line.y1;
-  const lengthSq = dx * dx + dy * dy;
-  if (lengthSq === 0) return Math.hypot(point.x - line.x1, point.y - line.y1);
-  const raw = ((point.x - line.x1) * dx + (point.y - line.y1) * dy) / lengthSq;
-  const t = raw < 0 ? 0 : raw > 1 ? 1 : raw;
-  return Math.hypot(point.x - (line.x1 + t * dx), point.y - (line.y1 + t * dy));
+  const on = closestPointOnSegment(line, point);
+  return Math.hypot(point.x - on.x, point.y - on.y);
 }
 
 /**

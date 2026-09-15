@@ -18,6 +18,7 @@ import {
   TOOL_ANCHOR_GESTURE,
   TOOL_CONNECTOR_ROUTE,
   TOOL_LABEL_KEYS,
+  TOOL_POINT_GESTURE,
   TOOL_SHOWS_ANCHORS,
   toggleTool,
 } from './canvasTools';
@@ -61,11 +62,13 @@ describe('도구 목록', () => {
   });
 });
 
-describe('표 셋이 도구 목록과 **정확히** 같은 키를 갖는다', () => {
+describe('표 다섯이 도구 목록과 **정확히** 같은 키를 갖는다', () => {
   const TABLES = [
     ['TOOL_LABEL_KEYS', TOOL_LABEL_KEYS],
     ['TOOL_SHOWS_ANCHORS', TOOL_SHOWS_ANCHORS],
     ['TOOL_ANCHOR_GESTURE', TOOL_ANCHOR_GESTURE],
+    // M10 이 더한 다섯째 — 더블클릭이 **선 위의 중간점**을 뜻하는가(REQ-05).
+    ['TOOL_POINT_GESTURE', TOOL_POINT_GESTURE],
     ['TOOL_CONNECTOR_ROUTE', TOOL_CONNECTOR_ROUTE],
   ] as const;
 
@@ -73,8 +76,41 @@ describe('표 셋이 도구 목록과 **정확히** 같은 키를 갖는다', ()
     expect(Object.keys(table).sort(), name).toEqual([...CANVAS_TOOLS].sort());
   });
 
-  it('네 표를 손으로 센다 — 순회가 비면 위 단언들이 무조건 통과한다', () => {
-    expect(TABLES).toHaveLength(4);
+  it('다섯 표를 손으로 센다 — 순회가 비면 위 단언들이 무조건 통과한다', () => {
+    // 표가 하나 늘 때마다 이 수를 함께 올린다. 올리지 않으면 새 표는 키 검사를 **한 번도**
+    // 받지 않은 채 산다 — 011 이 가드에 대해 정한 그 규율(늘어난 자리를 세어서 적는다)이다.
+    expect(TABLES).toHaveLength(5);
+  });
+});
+
+describe('더블클릭의 뜻은 **표 둘**이 나눠 답한다 (M10 · REQ-05 · REQ-05-c)', () => {
+  it('앵커 도구만 앵커를 뜻하고, 나머지 다섯은 선 위의 점을 뜻한다', () => {
+    for (const tool of CANVAS_TOOLS) {
+      const anchor = TOOL_ANCHOR_GESTURE[tool];
+      const point = TOOL_POINT_GESTURE[tool];
+      // 한 몸짓에 두 뜻이 동시에 서면 무엇이 일어날지 화면이 답하지 못한다.
+      expect(anchor && point, tool).toBe(false);
+      expect(anchor || point, `${tool}: 어느 쪽도 아니면 그 도구의 더블클릭은 죽은 몸짓이다`).toBe(
+        true,
+      );
+    }
+  });
+
+  it('고르기 도구에서도 참이다 — 009 의 그룹 진입과 **대상**으로 갈린다', () => {
+    // 여기서 거짓으로 두면 "선을 고른 뒤 도구를 갈아 끼워야 꺾을 수 있다" 가 된다.
+    expect(TOOL_POINT_GESTURE.select).toBe(true);
+    expect(TOOL_ANCHOR_GESTURE.select).toBe(false);
+  });
+
+  it('앵커 도구에서는 거짓이다 — 그 도구가 더블클릭을 통째로 가져간다', () => {
+    expect(TOOL_POINT_GESTURE.anchor).toBe(false);
+  });
+
+  it('연결선 도구 넷에서 참이다 — 그 도구의 더블클릭이 중간점이라던 그 예고다', () => {
+    for (const tool of CANVAS_TOOLS) {
+      if (TOOL_CONNECTOR_ROUTE[tool] === null) continue;
+      expect(TOOL_POINT_GESTURE[tool], tool).toBe(true);
+    }
   });
 });
 

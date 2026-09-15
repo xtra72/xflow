@@ -181,6 +181,7 @@ import {
   DEFAULT_CANVAS_TOOL,
   TOOL_ANCHOR_GESTURE,
   TOOL_CONNECTOR_ROUTE,
+  TOOL_POINT_GESTURE,
   TOOL_SHOWS_ANCHORS,
   toggleTool,
   type CanvasTool,
@@ -204,6 +205,11 @@ import {
   type ConnectorElement,
   type ConnectorRoute,
 } from './connector/connectorTypes';
+import {
+  connectorPointGestureAt,
+  insertPointAt,
+  removePointAt,
+} from './connector/connectorEdit';
 import { resolveConnector } from './connector/resolveConnector';
 import {
   type BoxGeometry,
@@ -1642,6 +1648,69 @@ export default function CanvasEditOverlay({
     onElementsChange(elements.map((el) => (el === node ? next : el)));
   };
 
+  /**
+   * 이번 누름이 **같은 자리를 두 번째로** 누른 것인가 — 그리고 그 사실을 장부에 적는다.
+   *
+   * **판정을 부르는 자리가 여기 하나다**(AC-28 · AC-72). 누름은 두 문으로 들어온다:
+   * 루트의 몸통 누름(아래 `handlePointerDown`)과 연결선 손잡이의 누름
+   * (`startConnectorHandleDrag` — 손잡이는 진짜 단추라 이벤트를 제가 먹는다). 둘이 저마다
+   * `isSecondPress` 를 부르면 판정은 여전히 한 함수이지만 **장부를 적는 자리가 둘**이 되고,
+   * 그때 한쪽만 고쳐지는 날 "선 위에서는 되는데 점 위에서는 가끔 안 된다" 가 시작된다 —
+   * AC-28 이 막는 형상이 그것이다. 그래서 묻는 일과 적는 일을 한 함수에 묶는다.
+   *
+   * 키는 **겨눈 것**이다(M9 가 세운 그 규율). 두 문이 같은 연결선을 겨누면 같은 키를 적으므로,
+   * 첫 누름이 잉크에 닿고 둘째 누름이 손잡이에 닿아도 짝이 유지된다 — 손잡이는 중간점 위에
+   * 서 있고 연타 오차(5px)는 손잡이보다 좁으므로 실제로 일어나는 일이다.
+   */
+  const pressedTwice = (at: PxPoint, key: string, now: number): boolean => {
+    const second = isSecondPress(lastPressRef.current, now, at, key);
+    lastPressRef.current = { at: now, point: at, key };
+    return second;
+  };
+
+  /**
+   * 선 위의 **두 번째 누름** 하나를 처리한다 — 점을 끼워 넣거나 뺀다 (REQ-05 · M10).
+   *
+   * **판정을 여기서 다시 짓지 않는다.** 더하기인지 빼기인지, 더한다면 목록의 어느 자리인지는
+   * `connectorPointGestureAt` 하나가 정하고(`connector/connectorEdit.ts`), 이 층은 그 답을
+   * 배열에 옮길 뿐이다 — `applyAnchorGesture` 가 앵커에 대해 지키는 그 규율이다.
+   *
+   * 선의 자리도 **여기서 다시 풀지 않는다** — 그리는 쪽·잡는 쪽·손잡이가 지나는 그
+   * `resolveConnector` 를 부른다(AC-45). 끊긴 연결이면 목록이 부재이고, 그 부재는 그대로
+   * 넘어가 아무 뜻도 없는 누름이 된다(REQ-08 — 예외가 아니다).
+   *
+   * 선택을 건드리지 않는 것에도 뜻이 있다. 첫 누름이 이미 그 연결선을 골라 두었고(REQ-05 의
+   * "선택된 연결선" 이 그렇게 성립한다), 점을 찍는 일은 고른 것을 바꾸는 일이 아니다.
+   */
+  /**
+   * 고친 연결선을 배열에 옮긴다 — **두 문이 같은 한 줄을 지난다**(잉크 갈래와 손잡이 갈래).
+   *
+   * 순수 함수들은 할 일이 없으면 **받은 것을 그대로** 돌려준다. 그때 배열을 새로 흘리면 값이
+   * 한 자리도 달라지지 않은 채 패널이 다시 그려지므로(AC-E4 의 규율), 그 판정도 여기 한
+   * 줄에 둔다 — 두 문에 나눠 적으면 한쪽만 빠지는 날 그 헛된 렌더가 조용히 돌아온다.
+   */
+  const commitConnector = (connector: ConnectorElement, next: ConnectorElement): void => {
+    if (next === connector) return;
+    onElementsChange(elements.map((el) => (el === connector ? next : el)));
+  };
+
+  const applyConnectorPointGesture = (connector: ConnectorElement, at: PxPoint): void => {
+    const gesture = connectorPointGestureAt(
+      resolveConnector(connector, elements, projection, textWidths),
+      connector.route,
+      at,
+      projection,
+      ANCHOR_PICK_SLOP_PX,
+    );
+    if (gesture === undefined) return;
+    commitConnector(
+      connector,
+      gesture.kind === 'remove'
+        ? removePointAt(connector, gesture.index)
+        : insertPointAt(connector, gesture.index, gesture.at),
+    );
+  };
+
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
     if (!enabled) return;
     const host = event.currentTarget;
@@ -1807,8 +1876,7 @@ export default function CanvasEditOverlay({
     // 떨어지고, 009 의 그룹 진입은 한 글자도 바뀌지 않는다(AC-26 · AC-27).
     const hitKey =
       overAnchor === undefined ? frameKey(hit.nodeId, hit.partId) : frameKey(gestureNodeId);
-    const second = isSecondPress(lastPressRef.current, event.timeStamp, point, hitKey);
-    lastPressRef.current = { at: event.timeStamp, point, key: hitKey };
+    const second = pressedTwice(point, hitKey, event.timeStamp);
 
     // **앵커 도구가 켜진 동안 두 번째 누름은 언제나 앵커다**(REQ-02' · AC-17 · AC-23).
     //
@@ -1832,6 +1900,27 @@ export default function CanvasEditOverlay({
       // **겨눈 것**에 건다 — 위 `gestureNodeId` 다. 잉크가 이겼으면 종전과 같은
       // `hit.nodeId` 이고, 앵커가 이겼으면 그 앵커를 든 요소다.
       applyAnchorGesture(gestureNodeId, point);
+      return;
+    }
+
+    // **선 위의 두 번째 누름은 중간점이다**(REQ-05 · AC-67 · AC-71 · M10).
+    //
+    // 판정은 위 `second` 하나다 — 이 갈래도 그 값을 **읽을 뿐** 시각도 거리도 다시 재지
+    // 않는다(AC-72). 앞 갈래와 나란히 서는 것에 뜻이 있다: 한 몸짓(두 번째 누름)의 뜻을
+    // 가르는 답이 **표 둘**에 적혀 있고, 그 표는 도구마다 빠짐없이 답을 갖는다
+    // (`TOOL_ANCHOR_GESTURE` · `TOOL_POINT_GESTURE`). 조건을 즉석에서 적으면 일곱째 도구가
+    // 조용히 한쪽으로 떨어진다.
+    //
+    // **그룹 부품 위의 더블클릭은 여전히 그룹 진입이다**(REQ-05-c · AC-73). 여기서 갈리는
+    // 잣대는 **대상**이며, 부품 위의 누름은 그 그룹을 겨누므로 `hitNode` 가 연결선이 아니다 —
+    // 아래 `pressTargetKey` 가 009 그대로 진입을 처리한다. 두 몸짓은 대상이 다르므로 섞이지
+    // 않고, 그래서 어느 쪽도 상대의 갈래를 알 필요가 없다.
+    if (second && TOOL_POINT_GESTURE[tool] && hitNode !== undefined && isConnector(hitNode)) {
+      // **몸짓을 먹었으면 연타 사슬을 끊는다**(앵커 갈래가 쓰는 그 한 줄이다). 끊지 않으면
+      // 셋째 누름이 둘째와 다시 짝을 지어 방금 찍은 점을 빼고, 넷째가 그것을 도로 찍는다 —
+      // 더하기·빼기를 오가는 몸짓에는 그룹 진입이 가진 멱등성이 없다.
+      lastPressRef.current = null;
+      applyConnectorPointGesture(hitNode, point);
       return;
     }
 
@@ -1941,10 +2030,39 @@ export default function CanvasEditOverlay({
 
     const host = rootRef.current!;
     const frame = pointerFrameOf(host.getBoundingClientRect(), stage);
+    const origin = stagePoint(event.clientX, event.clientY, frame);
+
+    // **중간점 손잡이의 두 번째 누름은 그 점을 뺀다**(REQ-05-b · AC-71).
+    //
+    // 이 갈래가 여기 있는 까닭은 손잡이가 **진짜 단추**이기 때문이다(REQ-01). 단추는 제
+    // 누름을 먹으므로 루트의 그 갈래가 이 자리를 영영 보지 못하고, 그러면 화면에 서 있는
+    // 점을 뺄 길이 없다 — 도구가 있는데 닿지 못하는 자리가 있는 것이 그 자체로 결함이다
+    // (M9 가 "선이 걸린 앵커를 뺄 수 없다" 를 같은 문장으로 고쳤다).
+    //
+    // 그렇다고 여기서 **판정을 새로 짓지 않는다.** 묻는 일도 적는 일도 위 `pressedTwice`
+    // 하나를 지나며, 키는 그 연결선이다 — 첫 누름이 잉크에 닿고 둘째가 손잡이에 닿아도
+    // (연타 오차 5px 은 손잡이보다 좁다) 두 누름이 같은 키를 적으므로 짝이 유지된다.
+    //
+    // 대상으로 가르지 않고 **표**를 보는 것도 루트 갈래와 같은 규율이다. 오늘 앵커 도구는
+    // 손잡이에서 포인터를 걷어 두므로(아래 렌더 §앵커 도구가 켜진 동안) 이 자리에 닿지
+    // 않지만, 닿는 날 두 갈래가 서로 다른 답을 내면 "빼기는 되는데 만들기는 안 된다" 가 된다.
+    //
+    // 묻는 일은 **조건보다 먼저**다. 뒤에 두면 끝점 손잡이의 누름이 장부에 적히지 않아,
+    // 그 누름을 사이에 둔 두 누름이 서로 짝을 짓는다 — 이 표면이 본 누름은 전부 장부를
+    // 지나야 그 뒤섞임이 없다(루트 갈래가 같은 차례로 적는다).
+    const second = pressedTwice(origin, frameKey(connector.id), event.timeStamp);
+    if (second && TOOL_POINT_GESTURE[tool] && handle.kind === 'mid') {
+      // 루트 갈래와 같은 이유로 사슬을 끊는다 — 빼기와 찍기를 오가는 몸짓은 멱등이 아니다.
+      lastPressRef.current = null;
+      commitConnector(connector, removePointAt(connector, handle.index));
+      // 뺀 점을 끌 수는 없다. 드래그를 시작하지 않고 돌아간다.
+      return;
+    }
+
     dragRef.current = {
       mode: 'connectorPoint',
       pointerId: event.pointerId,
-      origin: stagePoint(event.clientX, event.clientY, frame),
+      origin,
       frame,
       nodeId: connector.id,
       handle,

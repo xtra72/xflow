@@ -58,6 +58,10 @@ function countOf(text: string, re: RegExp): number {
 const OVERLAY = 'CanvasEditOverlay.tsx';
 const RESOLVE = 'connector/resolveConnector.ts';
 const HIT_TEST = 'canvasHitTest.ts';
+/** 꺾임을 끼워 넣고 빼는 산술 — M10 이 세운 모듈. */
+const EDIT = 'connector/connectorEdit.ts';
+/** 자리 산술이 사는 자리 — 점–선분의 가장 가까운 자리가 여기 하나다. */
+const GEOMETRY = 'canvasGeometry.ts';
 /** 노드를 **만드는** 유일한 모듈 — M8 이 연결선 입구를 여기 세웠다. */
 const FACTORY = 'canvasElementFactory.ts';
 
@@ -73,6 +77,7 @@ describe('그물이 성기지 않다', () => {
     expect(names).toContain('connector/connectorTypes.ts');
     expect(names).toContain('connector/CanvasConnectorTools.tsx');
     expect(names).toContain(RESOLVE);
+    expect(names).toContain(EDIT);
     expect(names).toContain(FACTORY);
   });
 });
@@ -143,6 +148,91 @@ describe('009 의 `isSecondPress` 가 유일한 더블클릭 판정이다 (AC-28
     const dotTag = text.match(/<(\w+)[^>]*canvas-anchor-dot-/);
     expect(dotTag?.[1]).toBe('div');
     expect(text).toContain("'pointer-events-none absolute h-2 w-2");
+  });
+});
+
+// --- AC-72: 점 몸짓도 **그 판정 하나**를 읽는다 -------------------------------
+
+describe('꺾임 편집이 두 번째 판정을 짓지 않았다 (AC-72 · M10)', () => {
+  // AC-28 의 그 절과 **한 규율**이다. 되풀이하는 것에 뜻이 있다: M10 은 더블클릭을 받는
+  // 문을 하나 더 열었고(연결선 손잡이 — 진짜 단추라 제 누름을 먹는다), 문이 둘이 되는 순간
+  // "판정은 하나인데 장부가 둘" 이라는 새 형상이 열린다. 그 형상에서는 두 문이 서로의 누름을
+  // 보지 못해 "선 위에서는 되는데 점 위에서는 가끔 안 된다" 가 된다 — 화면에서만 드러난다.
+
+  it('묻고 적는 일을 **한 함수**가 한다 — 정의 하나 · 호출 둘', () => {
+    const text = source(OVERLAY);
+    expect(countOf(text, /const pressedTwice = /g)).toBe(1);
+    // 화살표 함수라 정의는 위 줄이 세고, 이 줄은 **부르는 자리**만 센다 — 두 문에서 하나씩.
+    expect(countOf(text, /\bpressedTwice\(/g)).toBe(2);
+  });
+
+  it('직전 누름을 **적는 자리**가 하나다 — 장부가 둘이 되지 않았다', () => {
+    // `= null`(사슬 끊기)은 여럿이어도 좋다. 둘이 되면 안 되는 것은 **기록**이다.
+    const text = source(OVERLAY);
+    expect(countOf(text, /lastPressRef\.current = \{/g)).toBe(1);
+  });
+
+  it('점 갈래도 그 판정의 **결과를 읽을 뿐**이다', () => {
+    // 앵커 갈래의 그 줄과 나란한 형상이다. 사라지면 점 몸짓이 제 문턱을 갖기 시작한 것이다.
+    expect(source(OVERLAY)).toContain('if (second && TOOL_POINT_GESTURE[tool]');
+  });
+
+  it('손잡이 갈래도 표를 보고 갈린다 — 조건을 즉석에서 적지 않았다', () => {
+    const text = source(OVERLAY);
+    expect(countOf(text, /TOOL_POINT_GESTURE\[tool\]/g)).toBe(2);
+  });
+
+  it('점 몸짓을 정하는 자리가 `connectorEdit.ts` 하나다', () => {
+    // 오버레이가 제 손으로 "어느 자리인가" 를 셈하기 시작하면 그 산술이 두 벌이 된다.
+    for (const { name, text } of productSources()) {
+      if (name === EDIT) continue;
+      expect(text.includes('connectorPointGestureAt('), name).toBe(name === OVERLAY);
+    }
+    expect(countOf(source(EDIT), /export function connectorPointGestureAt\b/g)).toBe(1);
+  });
+
+  it('그 모듈은 시각도 연타도 모른다 — 몸짓은 오버레이의 것이다', () => {
+    const text = source(EDIT);
+    for (const banned of ['timeStamp', 'isSecondPress', 'DOUBLE_PRESS', 'PointerEvent']) {
+      expect(text.includes(banned), banned).toBe(false);
+    }
+  });
+});
+
+// --- AC-55 의 짝: 자리를 내는 산술도 하나다 ------------------------------------
+
+describe('점–선분의 가장 가까운 자리가 **한 함수**다 (위험 R1 · M10)', () => {
+  it('그 산술이 `canvasGeometry.ts` 에 한 번 정의된다', () => {
+    expect(countOf(source(GEOMETRY), /export function closestPointOnSegment\b/g)).toBe(1);
+  });
+
+  it('부르는 제품 파일이 **이름으로 적은 둘**뿐이다', () => {
+    // 잡는 쪽(거리 판정)과 찍는 쪽(새 점의 자리). 셋째가 늘면 그 자리가 제 손으로 선 위를
+    // 셈하기 시작한 것이며, 그때 "잡히는 자리와 점이 놓이는 자리가 다르다" 가 열린다.
+    const allowed = new Set([HIT_TEST, EDIT]);
+    for (const { name, text } of productSources()) {
+      if (name === GEOMETRY) continue;
+      expect(/\bclosestPointOnSegment\(/.test(text), name).toBe(allowed.has(name));
+    }
+  });
+
+  it('히트 층의 거리 판정이 그 자리를 **지나서** 잰다 — 산술을 두 벌 들지 않는다', () => {
+    const text = source(HIT_TEST);
+    expect(countOf(text, /function distanceToSegment\b/g)).toBe(1);
+    // 투영 계수(내적을 길이 제곱으로 나누는 그 줄)가 이 파일에 남아 있으면 옛 산술이
+    // 그대로 살아 있는 것이다.
+    expect(/lengthSq/.test(text)).toBe(false);
+  });
+
+  it('끼워 넣는 쪽은 **평탄화를 재사용**한다 — 곡선 거리를 새로 적지 않았다 (AC-55)', () => {
+    const text = source(EDIT);
+    expect(/from '[^']*pathFlatten'/.test(text)).toBe(true);
+    expect(text.includes('flattenPath(')).toBe(true);
+    // 모양은 그리는 쪽과 같은 함수에서 온다.
+    expect(text.includes('connectorPath(')).toBe(true);
+    for (const banned of ['curveSegments', 'flattenCubic', 'TWO_THIRDS', 'bezierCurveTo']) {
+      expect(text.includes(banned), banned).toBe(false);
+    }
   });
 });
 

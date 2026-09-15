@@ -79,6 +79,30 @@ export type ConnectorRoute = 'straight' | 'elbow' | 'curve' | 'free';
 export const DEFAULT_CONNECTOR_ROUTE: ConnectorRoute = 'straight';
 
 /**
+ * 이 갈래가 **중간점을 들 수 있는가** (SPEC-CANVAS-011 M10 · REQ-04 · REQ-05).
+ *
+ * `straight` 만 거짓이고, 그것이 이 표의 전부다. 위 §`route` 표가 "직선은 중간점이 없다" 로
+ * 적은 것은 관례가 아니라 **그리기의 전제**다 — `connectorPath` 는 `curve` 가 아닌 갈래를
+ * 점 목록 그대로 이어 그리므로, 직선에 점이 하나라도 들면 그 선은 폴리라인으로 그려지고
+ * REQ-04 의 "두 끝을 직선으로 이어야 한다" 가 그 순간 거짓이 된다. 막는 자리를 하나 두지
+ * 않으면 그 거짓은 저술에서 조용히 만들어진다.
+ *
+ * `free` 가 참인 것에도 뜻이 있다. 그 갈래의 점은 손이 그은 궤적에서 나지만(M11) 난 뒤에는
+ * `elbow` 의 점과 **구별할 이유가 없다** — 그리는 법이 같고(위 §`route`), 그러므로 고치는
+ * 법도 같아야 한다. 출처가 다르다는 이유로 편집을 막으면 자유선은 그은 순간 굳는다.
+ *
+ * 표로 적는 것이 요점이다. 갈래가 하나 늘면 컴파일러가 이 자리를 가리킨다 —
+ * `route !== 'straight'` 로 적으면 다섯째 갈래가 **조용히** 점을 들게 되고, 그 갈래가
+ * 점을 들 수 있는지 아무도 묻지 않은 채 지나간다.
+ */
+export const ROUTE_TAKES_POINTS: Readonly<Record<ConnectorRoute, boolean>> = {
+  straight: false,
+  elbow: true,
+  curve: true,
+  free: true,
+};
+
+/**
  * 연결선 노드 — 두 자리를 잇는 하나의 선.
  *
  * **`geometry` 가 없는 것이 이 자료형의 절반이다.** 연결선에는 늘릴 상자가 없고(REQ-07),
