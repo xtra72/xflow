@@ -55,3 +55,16 @@ export interface CustomAnchor {
   x: number;
   y: number;
 }
+
+/**
+ * 임의 앵커를 놓지 못한 까닭 (SPEC-CANVAS-011 M3'b · REQ-02'-d · AC-24).
+ *
+ * **거절은 조용하지 않다.** 선·문구 위에서 앵커 도구로 더블클릭하면 `addAnchorAt` 이
+ * 받은 노드를 그대로 돌려주므로 화면은 한 픽셀도 달라지지 않고, 사용자는 그것을 "도구가
+ * 가끔 안 먹는다" 로 읽는다. 004 가 묶기 거절에서 같은 결론에 도달했고(`GroupRefusal`),
+ * 그래서 사유를 이름 있는 값으로 두고 컨트롤이 그것을 말한다.
+ *
+ * 갈래가 하나뿐인 유니온인 것에 뜻이 있다 — `boolean` 으로 두면 사유가 둘이 되는 날
+ * 표가 아니라 `if` 가 자라고, 새 사유는 조용히 빈 안내로 떨어진다.
+ */
+export type AnchorRefusal = 'notBoxed';

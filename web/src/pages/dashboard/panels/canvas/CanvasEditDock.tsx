@@ -366,6 +366,16 @@ export interface CanvasEditDockBodyProps {
    * 도크가 더하는 것은 **자리와 이름**뿐이다.
    */
   groupTools: React.ReactNode;
+  /**
+   * 앵커 도구(SPEC-CANVAS-011 REQ-02 · AC-61).
+   *
+   * `groupTools` 와 **같은 규율**이다 — 노드를 통째로 받고, 도크가 더하는 것은 자리와
+   * 이름뿐이다. 같은 컨트롤이 대시보드의 떠 있는 줄에도 서야 하므로 짓는 자리는 두
+   * 표면을 모두 가진 오버레이 하나다(불변식 I24). 도구 상태(`CanvasTool`)를 여기로
+   * 내리지 않는 것도 그 때문이다: 상태가 도크에 있으면 도크가 없는 대시보드에서 도구가
+   * 통째로 사라진다 — 006 이 배달한 그 결함의 형상이다.
+   */
+  anchorTools: React.ReactNode;
 }
 
 /**
@@ -397,6 +407,7 @@ export function CanvasEditDockBody({
   onScratchpadPlace,
   onSvgImport,
   groupTools,
+  anchorTools,
 }: CanvasEditDockBodyProps): React.ReactElement {
   const { t } = useTranslation();
   // 묶음 넷의 접힘 상태. 기기 지역에 남되 읽지 못해도 기능이 성립한다(REQ-06).
@@ -408,6 +419,7 @@ export function CanvasEditDockBody({
   const alignId = useId();
   const orderId = useId();
   const groupId = useId();
+  const anchorId = useId();
   const suggestId = useId();
   const partialId = useId();
   const scratchpadId = useId();
@@ -678,6 +690,23 @@ export function CanvasEditDockBody({
           {t('dashboard.canvas.edit.dockGroup')}
         </p>
         <div className="flex flex-wrap items-center gap-1">{groupTools}</div>
+      </section>
+
+      {/* 앵커 — 그룹 절 바로 뒤다(SPEC-CANVAS-011 REQ-02).
+
+          자리의 근거: 앵커 도구는 **선택 위에서 도는 연산이 아니다**(고른 것이 없어도 켜지고,
+          켜진 동안 최상위 전부가 앵커를 보인다). 그래서 정렬 · 순서 · 그룹 셋의 뒤에 서되
+          재료를 들여오는 절(가져오기 · 서랍) 앞이다 — 앞 셋이 "고른 것에 무엇을 할 수
+          있는가" 라면 이 절은 "지금 손이 무엇을 하는 중인가" 이고, 그 물음은 재료보다
+          먼저 온다.
+
+          **묶음 안의 컨트롤은 이 파일이 짓지 않는다**(`anchorTools` prop) — `groupTools` 와
+          한 글자도 다르지 않은 규율이다(불변식 I23 · I24). */}
+      <section role="group" aria-labelledby={anchorId} className="flex flex-col gap-0.5">
+        <p id={anchorId} className={SECTION_TITLE_CLASS}>
+          {t('dashboard.canvas.edit.dockAnchor')}
+        </p>
+        <div className="flex flex-wrap items-center gap-1">{anchorTools}</div>
       </section>
 
       {/* 가져오기 — 순서 절과 스크래치패드 사이다(SPEC-CANVAS-007 REQ-04).

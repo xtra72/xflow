@@ -165,6 +165,22 @@ import { CanvasEditDockBody } from './CanvasEditDock';
 import { CanvasWorkspaceZoomField } from './CanvasWorkspaceZoomField';
 import { marqueeCandidates, marqueeRect, marqueeSelection } from './canvasMarquee';
 import { CanvasGroupTools } from './group/CanvasGroupTools';
+import { CanvasAnchorTools } from './connector/CanvasAnchorTools';
+import type { AnchorRefusal } from './connector/anchorTypes';
+import {
+  addAnchorAt,
+  anchorGestureAt,
+  anchorPoints,
+  nextAnchorId,
+  removeAnchor,
+} from './connector/anchors';
+import {
+  DEFAULT_CANVAS_TOOL,
+  TOOL_ANCHOR_GESTURE,
+  TOOL_SHOWS_ANCHORS,
+  toggleTool,
+  type CanvasTool,
+} from './connector/canvasTools';
 import { frameKey, isPartKey, parseFrameKey } from './group/frameKey';
 import {
   detachPart,
@@ -232,6 +248,7 @@ import type { ImportedShapeSpec, ImportedTextSpec } from './svgimport/svgImportP
 import { useCanvasStageGrid } from './canvasStageGrid';
 import { DEFAULT_WORKSPACE_ZOOM } from './canvasWorkspace';
 import {
+  projectPoint,
   stageLattice,
   unprojectBox,
   unprojectPoint,
@@ -519,6 +536,31 @@ const HANDLE_CLASS =
   'border border-white bg-blue-500 shadow focus:outline-none focus:ring-2 focus:ring-blue-300';
 
 /**
+ * 앵커 점의 지름(스테이지 px). `h-2 w-2` 가 그리는 그 크기를 **수로도** 적는다.
+ *
+ * 한 벌뿐인 값이 아니라 **두 자리에서 읽히는 값**이라 상수가 필요하다: 그리는 크기와
+ * 집는 오차가 같은 수에서 나와야, 눈에 보이는 점보다 좁게 집히거나 한참 멀리서 집히는
+ * 일이 생기지 않는다. 클래스 문자열과 이 수가 갈라지면 그 어긋남은 화면에서만 보인다.
+ */
+const ANCHOR_DOT_PX = 8;
+
+/**
+ * 앵커 점. **단추가 아니다**(AC-28 · REQ-02'-c).
+ *
+ * 임의 앵커를 제 요소를 눌러 빼게 만들면 더블클릭 판정이 **둘**이 된다 — 하나는 도형
+ * 위의 것, 하나는 점 위의 것. 그 둘은 문턱도 대상 키도 따로 들게 되고, 갈리는 날
+ * "도형에서는 되는데 점에서는 가끔 안 된다" 가 시작된다. 그래서 점은 **표식**이고
+ * (`pointer-events-none`), 빼는 일은 여전히 오버레이의 그 한 판정(`isSecondPress`)이
+ * 결정하며 **자리로만** 갈린다(`anchorGestureAt`).
+ *
+ * 8핸들과 칠을 달리한다 — 파랑 네모는 이 화면에서 이미 "잡아서 크기를 바꾸는 것" 을
+ * 뜻한다. 앵커는 잡히지 않으므로 같은 옷을 입으면 안 된다.
+ */
+const ANCHOR_DOT_CLASS =
+  'pointer-events-none absolute h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full ' +
+  'border border-white bg-emerald-500 shadow-sm';
+
+/**
  * 방향키 한 번의 **미세 이동**(캔버스 단위).
  *
  * 좌표계가 정수가 되면서 이 값이 1 CSS px 에서 **1 캔버스 단위**로 바뀌었다. 정수
@@ -674,6 +716,27 @@ function patchNodeFontSize(
 const DOUBLE_PRESS_MS = 500;
 /** 그 사이 손이 이만큼 넘게 움직였으면 다른 자리를 누른 것이다(스테이지 px). */
 const DOUBLE_PRESS_SLOP_PX = 5;
+
+/**
+ * 앵커를 집는 오차(스테이지 px). **두 기존 수에서 파생시킨다** — 새 눈금이 아니다.
+ *
+ *   보이는 반지름 `ANCHOR_DOT_PX / 2` = 4
+ * + 더블클릭이 **이미 허락한** 손 떨림 `DOUBLE_PRESS_SLOP_PX` = 5
+ *
+ * 앞의 항이 없으면 점 위를 정확히 눌러도 빠지지 않는다 — 보이는 것보다 좁게 집히는
+ * 컨트롤은 고장으로 읽힌다. 뒤의 항이 없으면 더 나쁘다: `isSecondPress` 는 두 누름이
+ * 5px 까지 어긋나도 더블클릭으로 읽으므로, 오차가 4 뿐이면 **판정은 더블클릭인데 자리는
+ * 빗나가** 빼려던 손이 바로 옆에 앵커를 하나 더 만든다. 한 몸짓 안에서 두 규칙이 서로
+ * 다른 여유를 갖는 그 상태가 "가끔 지워지고 가끔 늘어난다" 의 형상이다.
+ *
+ * 더 키우지 않는 까닭은 반대쪽이다 — 오차가 크면 이미 있는 앵커 **곁에** 새 앵커를 놓을
+ * 길이 사라진다. 9px 은 점 지름의 한 배 남짓이라, 눈으로 "떨어진 자리" 로 보이는 곳은
+ * 여전히 더하기가 된다.
+ *
+ * **이 값은 더블클릭 판정이 아니다.** 판정은 위 `isSecondPress` 하나가 하고(AC-28), 이
+ * 수는 그 판정이 이미 "두 번째 누름" 이라고 말한 뒤에 **어느 자리인가**만 가른다.
+ */
+const ANCHOR_PICK_SLOP_PX = ANCHOR_DOT_PX / 2 + DOUBLE_PRESS_SLOP_PX;
 
 /** 직전 누름 — 더블클릭 판정에만 쓴다. */
 interface LastPress {
@@ -877,6 +940,31 @@ export default function CanvasEditOverlay({
    * 뒤에도 남아 있으면 지금 고른 것을 두고 하는 말로 읽힌다.
    */
   const [groupRefusal, setGroupRefusal] = useState<GroupRefusal | null>(null);
+
+  /**
+   * 지금 손에 쥔 도구 (SPEC-CANVAS-011 REQ-02 · M3'b).
+   *
+   * **이 층의 첫 도구 상태다.** 011 이전의 `useState` 일곱은 전부 그리는 것과 진행 중인
+   * 몸짓을 들었고(드롭 존 · 거절 · 드롭 강조 · 붙임 · 간격 · 배율 · 마키), 포인터 경로는
+   * 언제나 "고르기" 한 뜻으로만 돌았다.
+   *
+   * 불리언이 아니라 **갈래 하나를 드는 값**인 까닭은 `connector/canvasTools.ts` 머리말에
+   * 적혀 있다 — M8 이 넷을 더해 여섯이 되고, 불리언이면 그때 "둘이 함께 켜져 있다" 가
+   * 형상으로 가능해진다.
+   *
+   * 선택·붙임과 같이 **저장하지 않는 런타임 상태**다(가정 A4). config 스키마를 넓히지
+   * 않으며, 패널을 다시 열면 고르기로 돌아온다.
+   */
+  const [tool, setTool] = useState<CanvasTool>(DEFAULT_CANVAS_TOOL);
+
+  /**
+   * 마지막 앵커 거절 사유 (REQ-02'-d · AC-24).
+   *
+   * `groupRefusal` 과 **같은 자리·같은 규율**이다: 상태를 컨트롤 안에 두면 표면을 갈아
+   * 끼울 때 함께 사라지고, 사유를 말하지 않으면 선·문구 위의 더블클릭은 "도구가 가끔
+   * 안 먹는다" 로 읽힌다.
+   */
+  const [anchorRefusal, setAnchorRefusal] = useState<AnchorRefusal | null>(null);
 
   /** 끌던 손이 드롭 존 위에 있는가. **강조는 드롭 존 자신이 입는다**(REQ-07 · I23). */
   const [dropActive, setDropActive] = useState(false);
@@ -1126,6 +1214,13 @@ export default function CanvasEditOverlay({
   // 보게 된다. `null` 은 상수라 이미 비어 있으면 React 가 재렌더를 건너뛴다.
   useEffect(() => setGroupRefusal(null), [selection]);
 
+  // 도구가 바뀌면 앵커 거절 안내를 거둔다(SPEC-CANVAS-011 REQ-02'-d).
+  //
+  // 위 묶기 거절과 **같은 규율**이고 매달리는 것만 다르다: 묶기 안내는 그 **선택**에 대한
+  // 말이고, 앵커 안내는 그 **도구**에 대한 말이다("이 도구로는 선·문구에 놓을 수 없다").
+  // 도구를 끈 뒤에도 남아 있으면 지금 하는 일을 두고 하는 말로 읽힌다.
+  useEffect(() => setAnchorRefusal(null), [tool]);
+
   // 언마운트 정리 — 예약된 합류 프레임을 남기지 않는다.
   useEffect(
     () => () => {
@@ -1136,6 +1231,48 @@ export default function CanvasEditOverlay({
     },
     [],
   );
+
+  /**
+   * 앵커 도구가 켜진 채로 온 **두 번째 누름** 하나를 처리한다 (REQ-02' · REQ-02'-c · AC-24).
+   *
+   * **판정을 여기서 다시 짓지 않는다.** 더하기인지 빼기인지 거절인지는 `anchorGestureAt`
+   * 하나가 정하고(`connector/anchors.ts`), 이 층은 그 답을 배열에 옮길 뿐이다 —
+   * `applyGroup` 이 `groupNodes` 에 대해 지키는 그 규율이다. 둘이 되면 "단추는 눌렸는데
+   * 아무 일도 없다" 와 "안내는 떴는데 실제로는 놓였다" 가 함께 가능해진다.
+   *
+   * 앵커 자리도 **여기서 다시 셈하지 않는다** — 화면에 점을 찍은 `anchorPoints` 와 같은
+   * 함수를 부른다. 두 벌이 되면 보이는 점과 집히는 점이 갈리고, 그 어긋남은 화면에서만
+   * 드러난다(위험 R1).
+   *
+   * 선택을 건드리지 않는 것에도 뜻이 있다. 첫 누름이 이미 그 요소(부품이면 그 그룹)를
+   * 골라 두었고, 앵커를 놓는 일은 고른 것을 바꾸는 일이 아니다.
+   */
+  const applyAnchorGesture = (nodeId: string, at: PxPoint): void => {
+    const node = elements.find((el) => el.id === nodeId);
+    if (node === undefined) return;
+
+    const gesture = anchorGestureAt(
+      node,
+      anchorPoints(node, projection, textWidths),
+      at,
+      projection,
+      ANCHOR_PICK_SLOP_PX,
+    );
+    if (gesture.kind === 'refuse') {
+      setAnchorRefusal(gesture.reason);
+      return;
+    }
+    setAnchorRefusal(null);
+
+    const next =
+      gesture.kind === 'remove'
+        ? removeAnchor(node, gesture.id)
+        : addAnchorAt(node, gesture.at, nextAnchorId(node));
+    // 순수 함수 둘은 할 일이 없으면 **받은 노드를 그대로** 돌려준다. 그때 배열을 새로
+    // 흘리면 값이 한 자리도 달라지지 않은 채 패널이 다시 그려진다(AC-E4 의 규율).
+    if (next === node) return;
+    onElementsChange(elements.map((el) => (el === node ? next : el)));
+  };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
     if (!enabled) return;
@@ -1221,6 +1358,29 @@ export default function CanvasEditOverlay({
     const hitKey = frameKey(hit.nodeId, hit.partId);
     const second = isSecondPress(lastPressRef.current, event.timeStamp, point, hitKey);
     lastPressRef.current = { at: event.timeStamp, point, key: hitKey };
+
+    // **앵커 도구가 켜진 동안 두 번째 누름은 언제나 앵커다**(REQ-02' · AC-17 · AC-23).
+    //
+    // 판정은 바로 위 `second` 하나다 — 이 갈래는 그 값을 **읽을 뿐** 시각도 거리도 다시
+    // 재지 않는다(AC-28). 갈리는 것은 그 누름의 **뜻**이지 판정이 아니며, 그 뜻을 가르는
+    // 것은 대상이 아니라 **도구**다(`TOOL_ANCHOR_GESTURE`). 대상으로 가르면(도형이면
+    // 앵커 · 부품이면 진입) 같은 손짓이 무엇을 할지 눌러 봐야 알게 되고, 그것이 REQ-05-c
+    // 가 "두 몸짓은 섞이지 않는다" 로 막으려는 바로 그 상태다.
+    //
+    // 그래서 대상은 `hit.nodeId` 다: 부품 위였어도 앵커는 **그 그룹**에 선다(부품은 앵커를
+    // 내지 않는다 — A3). 도구가 꺼져 있으면 이 줄은 지나가고 009 의 그룹 진입이 한 글자도
+    // 바뀌지 않은 채 아래에서 돈다(AC-26 · AC-27).
+    if (second && TOOL_ANCHOR_GESTURE[tool]) {
+      // **몸짓을 먹었으면 연타 사슬을 끊는다**(빈 자리 누름이 쓰는 그 한 줄이다).
+      //
+      // 끊지 않으면 셋째 누름이 둘째와 다시 짝을 지어 방금 더한 앵커를 빼고, 넷째가 그것을
+      // 도로 더한다 — 손가락 네 번에 결과가 홀짝으로 갈린다. 009 의 그룹 진입이 이 사슬을
+      // 끊지 않고도 멀쩡했던 것은 진입이 **멱등**이기 때문이고(같은 부품으로 두 번 들어가면
+      // 같은 자리다), 더하기·빼기를 오가는 몸짓에는 그 성질이 없다.
+      lastPressRef.current = null;
+      applyAnchorGesture(hit.nodeId, point);
+      return;
+    }
 
     const key = pressTargetKey(hit, selection, second);
     const enteredPart = isPartKey(key);
@@ -1922,6 +2082,35 @@ export default function CanvasEditOverlay({
     />
   );
 
+  /**
+   * 앵커 도구도 **한 번 짓고 두 자리에서 그린다** — `groupTools` 와 같은 값이다(AC-61).
+   *
+   * 그룹 도구가 두 표면에 서는 근거(가정 A21 · 불변식 I23)가 여기에는 한 걸음 더 곧게
+   * 적용된다: 앵커는 **조건 없이 그려지는 표시 층**이다(도구가 켜진 동안 최상위 전부에
+   * 점이 선다). 컨트롤을 도크에만 두면 대시보드에 놓인 패널에서는 그 층을 켤 수도 끌
+   * 수도 없고, 그것이 006 이 배달한 그 결함의 형상이다.
+   */
+  const anchorTools = (
+    <CanvasAnchorTools
+      active={tool === 'anchor'}
+      onToggle={() => setTool((prev) => toggleTool(prev, 'anchor'))}
+      refusal={anchorRefusal}
+    />
+  );
+
+  /**
+   * 지금 앵커를 보일 노드들 — **최상위 전부**다(REQ-02-b · 도구가 켜진 동안에만).
+   *
+   * 고른 것에만 세우지 않는 까닭은 M8 이다: 잇는 일은 요소 **둘** 사이에서 일어나므로,
+   * 출발 앵커를 고르는 순간 도착 앵커가 사라지는 화면이 된다. 지금 고쳐 두지 않으면
+   * M8 이 이 결정을 되돌려야 한다.
+   *
+   * 도구가 꺼져 있으면 **빈 배열**이라 아래 `map` 이 DOM 에 아무것도 남기지 않는다.
+   * 편집이 꺼진 표면에는 이 층 자체가 서지 않으므로 표시 전용 패널에도 앵커가 없다
+   * (위 `if (!enabled) return null`) — AC-60 은 그 한 줄이 이미 참으로 만든다.
+   */
+  const anchorHosts: readonly CanvasNode[] = TOOL_SHOWS_ANCHORS[tool] ? elements : [];
+
   return (
     <div
       ref={rootRef}
@@ -2149,6 +2338,19 @@ export default function CanvasEditOverlay({
           >
             {groupTools}
           </div>
+          {/* **앵커 도구도 이 줄에 선다**(SPEC-CANVAS-011 AC-61 · 불변식 I23 · I24).
+
+              그룹 묶음과 같은 자리·같은 이유이고, 근거는 한 걸음 더 곧다: 앵커 점은 도구가
+              켜진 동안 **조건 없이** 그려지는 표시 층이므로, 켜고 끄는 손잡이가 그 층이
+              그려지는 표면에 있어야 한다. 제 이름을 가진 묶음을 따로 두어 듣는 사람에게
+              "보기 배율 줄 → 그룹 → …, 앵커 → …" 로 읽히게 한다. */}
+          <div
+            role="group"
+            aria-label={t('dashboard.canvas.edit.dockAnchor')}
+            className="flex items-center gap-1"
+          >
+            {anchorTools}
+          </div>
         </div>
       )}
       {/*
@@ -2200,6 +2402,9 @@ export default function CanvasEditOverlay({
               // 그룹 묶음. 떠 있는 줄이 그리는 **그 컴포넌트**를 도크도 그린다 — 도크는
               // 자리를 주고 이름을 달 뿐이다(SPEC-CANVAS-004 REQ-08).
               groupTools={groupTools}
+              // 앵커 묶음. 그룹과 **같은 규율**이다 — 짓는 자리는 이 층 하나이고 도크는
+              // 자리와 이름만 더한다(SPEC-CANVAS-011 AC-61).
+              anchorTools={anchorTools}
             />
           </CanvasScratchpadDropContext>,
           dockHost,
@@ -2227,6 +2432,37 @@ export default function CanvasEditOverlay({
             }}
           />
         );
+      })}
+      {/* **앵커 점** — 선이 붙는 자리(SPEC-CANVAS-011 REQ-02 · M3 · M3').
+
+          손잡이 **앞에** 그린다. 둘은 겹칠 수 있고(모서리 앵커와 모서리 핸들은 같은
+          자리다), 그때 위에 있어야 하는 것은 **잡히는 쪽**이다 — 점은 표식이라 가려져도
+          잃는 것이 없지만, 손잡이가 가려지면 크기 조절이 죽는다.
+
+          자리는 `anchorPoints` **한 함수**에서 나온다(REQ-02). 빼기 판정이 쓰는 것도 같은
+          함수이므로(`applyAnchorGesture`), 보이는 점과 집히는 점이 갈릴 수 없다(위험 R1).
+
+          좌표계는 선택 윤곽선·손잡이와 같다: 스테이지 로컬 px 을 `left`/`top` 에 그대로
+          쓰고 `-translate-*-1/2` 로 중심을 맞춘다.
+
+          **장식이다**(`aria-hidden`). 무엇이 어디에 붙을 수 있는지는 도구 단추의 이름이
+          알리고(`toolAnchor`), 점 하나하나는 듣는 사람에게 읽을 것이 없는 좌표다 —
+          아홉 × 요소 수만큼의 이름을 읽히면 그것은 알림이 아니라 소음이다. 그래서 위험
+          R8 의 가드에 **걸린 채** `pointer-events-none` 을 갖는다. */}
+      {anchorHosts.map((el) => {
+        const points = anchorPoints(el, projection, textWidths);
+        return [...points].map(([id, point]) => {
+          const px = projectPoint(point, projection);
+          return (
+            <div
+              key={`${el.id}/${id}`}
+              data-testid={`canvas-anchor-dot-${el.id}-${id}`}
+              aria-hidden="true"
+              className={ANCHOR_DOT_CLASS}
+              style={{ left: px.x, top: px.y }}
+            />
+          );
+        });
       })}
       {handleHost !== undefined &&
         handlePositions(handleHost, projection, {

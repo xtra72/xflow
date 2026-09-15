@@ -308,16 +308,31 @@ describe('고정 앵커가 저장되지 않는다 (AC-14 · A1)', () => {
     }
   });
 
-  it('내보내는 함수가 셋뿐이다 — 읽기 하나와 임의 앵커 쓰기 둘', () => {
-    // M3 에서는 이 목록이 하나였다. M3′ 가 **임의 앵커**(A10 — 저장한다)의 더하기·빼기를
-    // 더하면서 둘이 늘었고, 목록이 닫혀 있다는 성질은 그대로다: 넷째가 생기면 빨개진다.
-    // 고정 아홉이 저장되지 않는다는 A1 은 아래 두 단언이 대신 붙든다.
+  it('내보내는 함수가 다섯뿐이다 — 읽기 하나 · 쓰기 둘 · 몸짓 둘', () => {
+    // M3 에서는 이 목록이 하나였다. M3′ 가 **임의 앵커**(A10 — 저장한다)의 더하기·빼기로
+    // 둘을 더했고, M3′b 가 **몸짓의 산술** 둘을 더했다(`nextAnchorId` · `anchorGestureAt`).
+    //
+    // 뒤엣둘이 이 파일에 사는 근거는 하나다: 그 둘이 보는 앵커 자리는 `anchorPoints` 가
+    // 낸 **그 지도**여야 한다. 오버레이에 두면 화면에 점을 찍는 함수와 그 점을 집는 함수가
+    // 갈라지고, 그 어긋남은 예외도 경고도 없이 화면에서만 보인다(위험 R1).
+    //
+    // 목록이 닫혀 있다는 성질은 그대로다: 여섯째가 생기면 빨개진다. 고정 아홉이 저장되지
+    // 않는다는 A1 은 아래 두 단언이 대신 붙든다.
     const fns = anchorsSource().match(/export function (\w+)/g) ?? [];
     expect(fns).toEqual([
       'export function anchorPoints',
       'export function addAnchorAt',
       'export function removeAnchor',
+      'export function nextAnchorId',
+      'export function anchorGestureAt',
     ]);
+  });
+
+  it('몸짓 둘이 상자를 **다시 재지 않는다** — `outlineBox` 는 여전히 한 번이다 (AC-33)', () => {
+    // `anchorGestureAt` 이 지도를 **인자로 받는** 까닭이 이것이다. 제 손으로 불렀다면 이
+    // 파일의 호출이 둘이 되고, 그 둘이 다른 상자를 낼 수 있는 상태가 열린다.
+    const calls = anchorsSource().match(/outlineBox\(/g) ?? [];
+    expect(calls).toHaveLength(1);
   });
 
   it('쓰기 둘이 만지는 필드가 `anchors` 하나뿐이다', () => {

@@ -59,17 +59,19 @@
 
 import { isBoxGeometry, type PointGeometry } from '../canvasConfig';
 import {
+  projectPoint,
   unprojectBox,
   unprojectPoint,
   type CanvasBox,
   type CanvasPoint,
   type CanvasProjection,
+  type PxPoint,
 } from '../canvasGeometry';
 import { BOX_HANDLE_FACTORS, BOX_HANDLE_IDS } from '../canvasEditGeometry';
 import { outlineBox } from '../canvasOutline';
 import { toAbsolutePointExact, toLocalPoint, widenDegenerateBox } from '../group/groupCoords';
 import type { CanvasNode } from '../group/groupTypes';
-import { ANCHOR_SNAP_LOCAL, type CustomAnchor } from './anchorTypes';
+import { ANCHOR_SNAP_LOCAL, type AnchorRefusal, type CustomAnchor } from './anchorTypes';
 
 /** 중심 앵커의 이름. 011 이 새로 짓는 자리 이름은 **이 하나뿐**이다(AC-11). */
 export const ANCHOR_CENTER_ID = 'c';
@@ -242,4 +244,97 @@ export function removeAnchor<T extends CanvasNode>(node: T, id: string): T {
     return rest as T;
   }
   return { ...node, anchors: kept } as T;
+}
+
+// --- 더블클릭 한 번이 무엇을 뜻하는가 (M3'b · REQ-02'-c) ---------------------
+//
+// 도구 층(오버레이)은 **몸짓만** 안다: 앵커 도구가 켜진 채로 두 번째 누름이 왔다. 그
+// 누름이 더하기인지 빼기인지 거절인지는 **자리의 산술**이고, 그 산술은 여기 산다. 갈라
+// 두면 오버레이가 앵커 좌표를 제 손으로 다시 셈하게 되고, 그때 "보이는 점" 과 "판정하는
+// 점" 이 두 함수에서 나온다 — 위험 R1 의 그 형상이다.
+//
+// **상자를 다시 재지 않는다.** 이 함수는 `anchorPoints` 가 이미 낸 지도를 **받는다**.
+// 그래서 이 파일의 `outlineBox` 호출은 여전히 하나뿐이다(AC-33).
+//
+// **오차는 인자다.** 그 값은 그려지는 점의 크기와 더블클릭이 이미 허락한 손 떨림에서
+// 나오며, 둘 다 표시 층의 값이다(오버레이 §앵커 점). 여기에 숫자를 적으면 그리는 크기를
+// 바꾼 날 판정만 옛 값에 남는다.
+
+/** 임의 앵커 id 의 앞자리. 고정 아홉의 이름(`nw`…`w`·`c`)과 부딪히지 않는 글자다. */
+const CUSTOM_ANCHOR_PREFIX = 'a';
+
+/** 고정 아홉의 이름 집합 — 가려진 임의 앵커를 걸러내는 데만 쓴다. */
+const FIXED_ANCHOR_ID_SET: ReadonlySet<string> = new Set<string>(FIXED_ANCHOR_IDS);
+
+/**
+ * 한 누름이 뜻하는 것.
+ *
+ * `undefined` 를 쓰지 않고 `refuse` 를 두는 것에 뜻이 있다 — "아무 일도 없다" 와 "여기엔
+ * 놓을 수 없다" 는 사용자에게 다른 사실이고, 앞의 것으로 뭉뚱그리면 화면이 그 차이를
+ * 말할 방법을 잃는다(AC-24).
+ */
+export type AnchorGesture =
+  | { kind: 'add'; at: CanvasPoint }
+  | { kind: 'remove'; id: string }
+  | { kind: 'refuse'; reason: AnchorRefusal };
+
+/**
+ * 이 요소에서 아직 쓰지 않은 가장 작은 임의 앵커 id.
+ *
+ * **요소 안에서만** 유일하면 된다(연결선이 `{ el, a }` 로 가리키므로 — `anchorTypes`).
+ * 그래서 전역 계수기도 난수도 두지 않는다: 둘 다 저장 왕복에 값이 달라져 시험이 자리를
+ * 고정하지 못하게 만들고, 난수는 그 위에 "같은 입력에 같은 config" 까지 잃는다.
+ */
+export function nextAnchorId(node: CanvasNode): string {
+  const taken = new Set((node.anchors ?? []).map((anchor) => anchor.id));
+  for (let n = 1; ; n += 1) {
+    const id = `${CUSTOM_ANCHOR_PREFIX}${n}`;
+    if (!taken.has(id)) return id;
+  }
+}
+
+/**
+ * 화면의 한 점(스테이지 px)이 뜻하는 앵커 몸짓.
+ *
+ * 순서가 규칙의 전부다: **상자형이 아니면 거절**(A11 · AC-24) → **오차 안에 임의 앵커가
+ * 있으면 빼기**(REQ-02'-c · AC-23) → **아니면 그 자리에 더하기**(REQ-02' · AC-17).
+ *
+ * 견주는 일을 **px 에서** 한다. 앵커가 그려지는 자리가 px 이고 오차도 px 이므로, 캔버스
+ * 단위로 옮겨 재면 축척이 가로·세로로 다른 화면에서 "보이는 원" 이 판정에서는 타원이 된다.
+ * 그리고 견주는 그 점은 화면에 실제로 찍힌 그 점이다(같은 지도에서 나온다).
+ *
+ * **고정 이름에 가려진 임의 앵커는 고르지 않는다.** 이름이 부딪히면 지도에는 고정이 남고
+ * (위 `anchorPoints`), 그 임의 앵커는 **그려지지 않는다.** 그것을 여기서 빼면 눈에 보이던
+ * 점은 그대로 있는데 무언가가 사라진 config 가 되고, 화면은 "아무 일도 없었다" 고 말한다.
+ */
+export function anchorGestureAt(
+  node: CanvasNode,
+  points: ReadonlyMap<AnchorId, CanvasPoint>,
+  at: PxPoint,
+  proj: CanvasProjection,
+  slopPx: number,
+): AnchorGesture {
+  if (anchorBox(node) === undefined) return { kind: 'refuse', reason: 'notBoxed' };
+
+  const limit = slopPx * slopPx;
+  let best: string | undefined;
+  let bestDistance = limit;
+  for (const anchor of node.anchors ?? []) {
+    if (FIXED_ANCHOR_ID_SET.has(anchor.id)) continue;
+    const point = points.get(anchor.id);
+    if (point === undefined) continue;
+    const px = projectPoint(point, proj);
+    const dx = px.x - at.x;
+    const dy = px.y - at.y;
+    const distance = dx * dx + dy * dy;
+    // `<=` 다 — 뒤에 온 것이 이긴다. 두 앵커가 **정확히** 같은 거리에 있는 일은 겹쳐
+    // 놓았을 때뿐이고, 그때 사용자가 보는 것은 나중에 그려진 위쪽 점이다.
+    if (distance <= bestDistance) {
+      bestDistance = distance;
+      best = anchor.id;
+    }
+  }
+  if (best !== undefined) return { kind: 'remove', id: best };
+
+  return { kind: 'add', at: unprojectPoint(at, proj) };
 }
