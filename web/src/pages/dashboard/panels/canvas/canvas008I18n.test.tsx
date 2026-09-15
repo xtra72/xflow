@@ -87,7 +87,13 @@ const ELEMENT_KEYS: readonly string[] = ['dashboard.canvas.elements.kindPath'];
 /** 카탈로그 이름 30종 — **목록에서 유도한다**(도형이 늘면 가드도 늘어난다). */
 const CATALOG_NAME_KEYS: readonly string[] = SHAPE_CATALOG.map((s) => s.nameKey);
 
-/** 묶음 제목 넷 — 코드가 든 그 표에서 유도한다. */
+/**
+ * 묶음 제목 셋 — 코드가 든 그 표에서 유도한다.
+ *
+ * **뒤집힌 수 (SPEC-CANVAS-011 REQ-01).** 008 에서는 넷이었다. 011 이 `원시형` 묶음을
+ * 걷어내 셋이 되었다. 그 키(`paletteGroupPrimitive`)는 **소비처만 사라지고 로케일 파일에는
+ * 남으므로** 위 `EDIT_KEYS` 에서는 빠지지 않는다 — 남긴 키가 조용히 지워지면 여기가 운다.
+ */
 const GROUP_TITLE_KEYS: readonly string[] = PALETTE_GROUP_IDS.map(
   (id) => PALETTE_GROUP_TITLE_KEYS[id],
 );
@@ -131,6 +137,15 @@ function lookup(tree: unknown, key: string): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+/**
+ * 묶음 하나를 **편다**. 이미 펴져 있으면 아무 일도 하지 않는다 — 011 이 `기본` 을 펼친 채로
+ * 태어나게 했으므로(REQ-01) 무조건 누르는 몸짓은 그 묶음을 **닫는다**.
+ */
+function openGroup(id: string): void {
+  const head = screen.getByTestId(`canvas-palette-group-${id}`);
+  if (head.getAttribute('aria-expanded') === 'false') fireEvent.click(head);
+}
+
 /** 문구 안의 `{…}` 치환자 다중 집합. 정렬해 두어 비교가 순서에 흔들리지 않는다. */
 function tokensOf(text: string): string[] {
   return [...text.matchAll(/\{[a-zA-Z0-9_]+\}/g)].map((m) => m[0]).sort();
@@ -141,7 +156,7 @@ function tokensOf(text: string): string[] {
 describe('008 이 더한 문구는 ko · en 양쪽에 있다 (REQ-06 · 품질 게이트 Unified)', () => {
   it('키 전량이 양쪽 로케일에서 **비어 있지 않은 문자열**로 잡힌다', () => {
     // 켜져 있음을 먼저 단언한다 — 목록이 비면 아래 순회가 0회 돌고 초록이 된다.
-    expect(ALL_008_KEYS.length).toBeGreaterThanOrEqual(23 + 1 + 30 + 4);
+    expect(ALL_008_KEYS.length).toBeGreaterThanOrEqual(23 + 1 + 30 + 3);
 
     const missing: string[] = [];
     for (const key of ALL_008_KEYS) {
@@ -266,7 +281,8 @@ describe('`en` 로케일에서도 치환이 두 자리 모두 일어난다 (D7 �
   it('카탈로그 칸의 접근성 이름에 벌거벗은 `{shape}` 가 남지 않는다', () => {
     useLocale('en');
     render(<Harness initial={[]} />);
-    fireEvent.click(screen.getByTestId('canvas-palette-group-basic'));
+    // 011 이후 `기본` 은 펼쳐진 채로 태어난다 — 무조건 누르면 닫힌다(REQ-01).
+    openGroup('basic');
 
     const cell = screen.getByTestId('canvas-catalog-add-cloud');
     const label = cell.getAttribute('aria-label') ?? '';
@@ -310,7 +326,8 @@ describe('`en` 로케일에서도 치환이 두 자리 모두 일어난다 (D7 �
     expect(text.split(String(SCRATCHPAD_MAX_ENTRIES))).toHaveLength(3);
   });
 
-  it('묶음 머리 넷이 en 번역을 보이고 원문 키가 뜨지 않는다', () => {
+  // **뒤집힌 수 (SPEC-CANVAS-011 REQ-01 · AC-01).** 008 의 묶음은 넷이었다.
+  it('묶음 머리 셋이 en 번역을 보이고 원문 키가 뜨지 않는다', () => {
     useLocale('en');
     render(<Harness initial={[]} />);
     for (const id of PALETTE_GROUP_IDS) {
@@ -325,7 +342,7 @@ describe('`en` 로케일에서도 치환이 두 자리 모두 일어난다 (D7 �
 
 describe('도크 안의 008 표면에 원문 키도 벌거벗은 치환자도 없다 (양쪽 로케일)', () => {
   for (const locale of ['ko', 'en'] as const) {
-    it(`${locale}: 묶음 넷을 모두 펴고 서랍에 항목을 하나 둔 상태에서도 없다`, () => {
+    it(`${locale}: 묶음 셋을 모두 펴고 서랍에 항목을 하나 둔 상태에서도 없다`, () => {
       useLocale(locale);
       useScratchpadStore.setState({
         entries: [
@@ -435,7 +452,7 @@ describe('드롭 존 · 목록 · 단추의 이름과 역할 (M11 · WCAG 2.5.3 
 
   it('장식은 이름을 나르지 않는다 — 008 이 그린 그림 전량이 `aria-hidden` 이다', () => {
     render(<Harness initial={[]} />);
-    fireEvent.click(screen.getByTestId('canvas-palette-group-basic'));
+    openGroup('basic');
 
     // **008 이 소유한 자리만 잰다.** 도크 전체로 넓히면 008 이 만들지 않은 공용 부품
     // (`components/property/FieldHelp.tsx` 의 물음표 아이콘 — `aria-hidden` 이 없다)이

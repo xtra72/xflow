@@ -1,8 +1,12 @@
-// 팔레트 묶음의 접힘 상태 (SPEC-CANVAS-008 M7 · REQ-06).
+// 팔레트 묶음의 접힘 상태 (SPEC-CANVAS-008 M7 · REQ-06 · SPEC-CANVAS-011 REQ-01).
 //
 // 도크 폭은 `w-44` 고정이고 카탈로그는 30칸이다. 넷을 한 목록으로 펴면 자주 쓰는 원시형이
-// 스크롤 아래로 밀리므로(위험 R10), 카탈로그 묶음 셋은 **기본으로 접혀** 있고 원시형 묶음만
-// 펼쳐진다. 006 이 배율 칸을 도크의 맨 앞에 둔 것과 같은 판단이다.
+// 스크롤 아래로 밀리므로(위험 R10) 묶음을 접어 둔다.
+//
+// **011 이 묶음을 셋으로 줄였다.** 원시형 넷은 제 묶음을 잃고 `기본` 묶음 몸통의 맨 앞에
+// 선다. 그래서 `기본` 이 펼쳐진 채로 태어난다 — 008 이 위험 R10 의 답으로 세운 "자주 쓰는
+// 넷이 열자마자 보인다" 를 자리만 옮겨 지키는 것이다. 접힌 `일반` 머리 한 줄 아래이므로
+// 스크롤은 여전히 필요 없다. 옮기는 것은 자리이지 근거가 아니다.
 //
 // **접힌 묶음은 자식을 아예 그리지 않는다**(`hidden` 이 아니라 미마운트). 그래서 도크가
 // 열릴 때 만들어지는 미리보기 `<canvas>` 가 0개이고, 사용자가 묶음을 편 그 순간에만 그
@@ -22,33 +26,40 @@ import { useState } from 'react';
 
 import type { ShapeGroupId } from './shapeCatalog';
 
-/** 팔레트 묶음 넷 — 원시형 하나와 카탈로그 셋. */
-export type PaletteGroupId = 'primitive' | ShapeGroupId;
+/**
+ * 팔레트 묶음 셋 — 곧 카탈로그 묶음 셋이다(011 REQ-01).
+ *
+ * 이름을 남겨 두는 것에 뜻이 있다: 팔레트가 묶음을 어떻게 세는지는 카탈로그의 관심이 아니고,
+ * 언젠가 카탈로그 아닌 묶음이 다시 생기면 그 자리가 여기여야 한다.
+ */
+export type PaletteGroupId = ShapeGroupId;
 
 /**
- * 화면 차례. 원시형이 맨 앞인 것에 뜻이 있다 — 오늘 쓰이는 넷이 어제와 같은 자리에 있어야
- * 이 변경이 회귀가 아니다(AC-E10).
+ * 화면 차례. `shapeCatalog.SHAPE_GROUPS` 의 차례와 **같아야 한다** — 같은 것을 두 자리에서
+ * 다른 순서로 내면 사용자가 두 목록을 따로 외운다.
+ *
+ * **011 은 이 차례를 건드리지 않았다.** 원시형 넷이 `기본` 묶음 **안**으로 들어갔을 뿐이고,
+ * REQ-01 이 규정하는 것은 묶음이 셋이라는 사실과 그 넷이 `기본` 몸통의 맨 앞이라는 것이다.
+ * 자주 쓰는 넷이 열자마자 보인다는 008 위험 R10 의 답은 아래 `DEFAULT_COLLAPSED` 가 든다.
  */
-export const PALETTE_GROUP_IDS: readonly PaletteGroupId[] = [
-  'primitive',
-  'general',
-  'basic',
-  'arrow',
-];
+export const PALETTE_GROUP_IDS: readonly PaletteGroupId[] = ['general', 'basic', 'arrow'];
 
 /** 묶음 제목의 i18n 키. 리터럴 맵이라 어떤 키가 쓰이는지 검색으로 확인된다. */
 export const PALETTE_GROUP_TITLE_KEYS: Readonly<Record<PaletteGroupId, string>> = {
-  primitive: 'dashboard.canvas.edit.paletteGroupPrimitive',
   general: 'dashboard.canvas.edit.paletteGroupGeneral',
   basic: 'dashboard.canvas.edit.paletteGroupBasic',
   arrow: 'dashboard.canvas.edit.paletteGroupArrow',
 };
 
-/** 처음 열었을 때의 모습 — 원시형만 펼침. */
+/**
+ * 처음 열었을 때의 모습 — `기본` 만 펼침.
+ *
+ * 008 은 "원시형만 펼침" 으로 위험 R10(자주 쓰는 넷이 스크롤 아래로 밀림)에 답했다. 011 이
+ * 그 넷을 `기본` 으로 옮겼으므로 답도 그 자리로 함께 옮긴다(SPEC-CANVAS-011 REQ-01).
+ */
 export const DEFAULT_COLLAPSED: Readonly<Record<PaletteGroupId, boolean>> = {
-  primitive: false,
   general: true,
-  basic: true,
+  basic: false,
   arrow: true,
 };
 
@@ -60,6 +71,9 @@ export type PaletteCollapseState = Record<PaletteGroupId, boolean>;
 /**
  * 저장된 접힘 상태. **관용적으로 읽는다** — 저장소의 내용은 사용자가 손으로 고칠 수 있는
  * 값이므로, 모르는 키는 버리고 불리언이 아닌 값은 기본값으로 떨어뜨린다(001 파서와 같은 규율).
+ *
+ * 011 이 `primitive` 묶음을 걷어냈어도 여기에 더할 코드가 **한 줄도 없다** — 아는 키만
+ * 살리는 이 규율이 옛 키를 이미 버린다(011 REQ-01-a).
  */
 export function readCollapsed(): PaletteCollapseState {
   const next: PaletteCollapseState = { ...DEFAULT_COLLAPSED };

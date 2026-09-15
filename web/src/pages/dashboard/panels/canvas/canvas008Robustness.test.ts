@@ -385,6 +385,8 @@ describe('팔레트 접힘 상태도 손으로 고쳐질 수 있다 — 관용 �
     ['null 이다', 'null'],
     ['값이 불리언이 아니다', '{"general":"yes","basic":1,"arrow":null}'],
     ['모르는 키가 섞였다', '{"general":false,"hologram":true}'],
+    // 011 이 걷어낸 옛 묶음의 키. 저장소에는 남아 있는 사람이 있다(011 REQ-01-a · AC-04).
+    ['011 이전의 `primitive` 키가 남아 있다', '{"primitive":false}'],
   ];
 
   for (const [name, raw] of cases) {
@@ -394,7 +396,7 @@ describe('팔레트 접힘 상태도 손으로 고쳐질 수 있다 — 관용 �
       expect(() => {
         state = readCollapsed();
       }, name).not.toThrow();
-      // 키 집합은 언제나 넷이다 — 저장 자료가 그 집합을 넓히지 못한다.
+      // 키 집합은 언제나 셋이다(011 REQ-01) — 저장 자료가 그 집합을 넓히지 못한다.
       expect(Object.keys(state).sort(), name).toEqual([...PALETTE_GROUP_IDS].sort());
       for (const v of Object.values(state)) expect(typeof v, name).toBe('boolean');
     });
@@ -406,6 +408,21 @@ describe('팔레트 접힘 상태도 손으로 고쳐질 수 있다 — 관용 �
     expect(state.general).toBe(false); // 저장된 값
     expect(state.basic).toBe(DEFAULT_COLLAPSED.basic); // 읽히지 않아 기본값
     expect(state.arrow).toBe(DEFAULT_COLLAPSED.arrow);
+  });
+
+  it('옛 `primitive` 키만 남은 저장소는 **통째로 기본값**이 된다 (011 REQ-01-a · AC-04)', () => {
+    // 011 이 묶음을 셋으로 줄이며 이 자리에 더한 코드는 **한 줄도 없다.** 아는 키만 살리는
+    // 위 규율이 옛 키를 이미 버리므로, 여기서 재는 것은 "새 코드가 맞는가" 가 아니라
+    // "새 코드가 필요 없었는가" 다.
+    globalThis.localStorage.setItem(PALETTE_STORAGE_KEY, '{"primitive":false}');
+    let state!: PaletteCollapseState;
+    expect(() => {
+      state = readCollapsed();
+    }).not.toThrow();
+    expect(state).toEqual(DEFAULT_COLLAPSED);
+    expect(Object.keys(state)).not.toContain('primitive');
+    // 그래서 `기본` 은 옛 저장소 앞에서도 펼쳐진 채로 태어난다(011 AC-03).
+    expect(state.basic).toBe(false);
   });
 });
 

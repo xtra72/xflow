@@ -206,16 +206,26 @@ export interface CanvasShapeCatalogProps {
   onToggle: (id: PaletteGroupId) => void;
   /** 카탈로그 도형을 놓는다. 만드는 일은 `canvasElementFactory` 한 입구가 한다. */
   onPlace: (entry: ShapeCatalogEntry) => void;
+  /**
+   * `기본` 묶음 몸통의 **맨 앞**에 서는 것. 도크가 원시형 넷의 줄 버튼을 여기로 건넨다
+   * (SPEC-CANVAS-011 REQ-01).
+   *
+   * 넷을 카탈로그 항목으로 바꾸지 않고 **자리만** 내주는 것에 뜻이 있다 — 그 넷은 미리보기도
+   * 격자 칸도 아닌 줄 버튼이고, 그 형상이 008 이전부터 오늘까지 같다(AC-E10). 격자에 섞으면
+   * 자리가 바뀐 것이 아니라 생김새가 바뀐 것이 된다.
+   */
+  leading?: ReactNode;
 }
 
 /**
- * 카탈로그 묶음 셋. 원시형 넷은 여기 없다 — 그 넷은 도크가 제 줄 버튼으로 내며, 자리도
- * 이름도 순서도 이 변경 전과 같다(AC-E10).
+ * 카탈로그 묶음 셋. 원시형 넷은 카탈로그가 아니지만 `기본` 묶음의 몸통 맨 앞을 빌려 선다
+ * (011 REQ-01) — 도크가 `leading` 으로 건넨 그것이다.
  */
 export function CanvasShapeCatalog({
   collapsed,
   onToggle,
   onPlace,
+  leading,
 }: CanvasShapeCatalogProps): React.ReactElement {
   const { t } = useTranslation();
   // 치환자가 **두 번** 나오는 문구다. `replace` 는 첫 자리만 바꾸므로 뒤쪽에 `{shape}` 가
@@ -233,6 +243,7 @@ export function CanvasShapeCatalog({
           collapsed={collapsed[group.id]}
           onToggle={onToggle}
         >
+          {group.id === 'basic' && leading}
           <div className={GRID_CLASS}>
             {group.entries.map((shape) => {
               const name = t(shape.nameKey);

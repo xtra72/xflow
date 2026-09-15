@@ -77,7 +77,7 @@ import { CanvasSvgImport } from './svgimport/CanvasSvgImport';
 import type { ImportedShapeSpec, ImportedTextSpec } from './svgimport/svgImportPlan';
 import type { ScratchpadDropPoint } from './scratchpad/canvasScratchpadDrop';
 import type { ScratchpadEntry } from './scratchpad/scratchpadTypes';
-import { CanvasPaletteGroup, CanvasShapeCatalog } from './shapes/CanvasShapeCatalog';
+import { CanvasShapeCatalog } from './shapes/CanvasShapeCatalog';
 import { usePaletteCollapse } from './shapes/paletteGroups';
 import type { ShapeCatalogEntry } from './shapes/shapeCatalog';
 
@@ -486,38 +486,47 @@ export function CanvasEditDockBody({
         />
       </section>
 
-      {/* 도형 — 목록 하나에서 **접히는 묶음 넷**으로 바뀐 절이다(REQ-02 · REQ-06).
+      {/* 도형 — 목록 하나에서 **접히는 묶음 셋**으로 바뀐 절이다(REQ-02 · REQ-06 · 011 REQ-01).
 
-          바뀌지 않은 것을 먼저 적는다: 원시형 넷의 `data-testid` · 이름 · 차례는 그대로이고,
-          그 묶음은 **기본으로 펼쳐진다.** 카탈로그 30칸을 한 목록으로 펴면 도크 폭이 `w-44`
-          고정이라 자주 쓰는 넷이 스크롤 아래로 밀리므로(위험 R10), 카탈로그 묶음 셋은 기본
-          으로 접힌다 — 006 이 배율 칸을 도크 맨 앞에 둔 것과 같은 판단이다. */}
+          바뀌지 않은 것을 먼저 적는다: 원시형 넷의 `data-testid` · 이름 · 차례 · 생김새는
+          그대로이고, 넷이 서 있는 묶음은 **기본으로 펼쳐진다.** 카탈로그 30칸을 한 목록으로
+          펴면 도크 폭이 `w-44` 고정이라 자주 쓰는 넷이 스크롤 아래로 밀리므로(위험 R10),
+          나머지 묶음 둘은 접힌 채로 태어난다.
+
+          바뀐 것은 자리 하나다: 011 이 원시형 묶음을 걷어내고 그 넷을 `기본` 묶음 몸통의
+          맨 앞에 세웠다. 그 넷을 카탈로그가 그리는 것이 아니라 **도크가 그린 것을 카탈로그가
+          제 몸통에 받아 놓는다** — 넷의 생김새(줄 버튼)와 그 클릭이 부르는 `onPlace` 가
+          카탈로그의 관심이 아니기 때문이다. */}
       <section role="group" aria-labelledby={shapesId} className="flex flex-col gap-0.5">
         <p id={shapesId} className={SECTION_TITLE_CLASS}>
           {t('dashboard.canvas.edit.dockShapes')}
         </p>
-        <CanvasPaletteGroup id="primitive" collapsed={collapsed.primitive} onToggle={toggle}>
-          <div className="flex flex-col gap-0.5">
-            {PALETTE_KINDS.map((kind) => {
-              const Icon = PALETTE_ICONS[kind];
-              return (
-                <button
-                  key={kind}
-                  type="button"
-                  data-testid={`canvas-palette-add-${kind}`}
-                  aria-label={t(PALETTE_ARIA_KEYS[kind])}
-                  title={t(PALETTE_ARIA_KEYS[kind])}
-                  className={ROW_BUTTON_CLASS}
-                  onClick={() => onPlace(kind)}
-                >
-                  <Icon className={ICON_CLASS} aria-hidden="true" />
-                  <span>{t(PALETTE_NAME_KEYS[kind])}</span>
-                </button>
-              );
-            })}
-          </div>
-        </CanvasPaletteGroup>
-        <CanvasShapeCatalog collapsed={collapsed} onToggle={toggle} onPlace={onPlaceShape} />
+        <CanvasShapeCatalog
+          collapsed={collapsed}
+          onToggle={toggle}
+          onPlace={onPlaceShape}
+          leading={
+            <div className="flex flex-col gap-0.5">
+              {PALETTE_KINDS.map((kind) => {
+                const Icon = PALETTE_ICONS[kind];
+                return (
+                  <button
+                    key={kind}
+                    type="button"
+                    data-testid={`canvas-palette-add-${kind}`}
+                    aria-label={t(PALETTE_ARIA_KEYS[kind])}
+                    title={t(PALETTE_ARIA_KEYS[kind])}
+                    className={ROW_BUTTON_CLASS}
+                    onClick={() => onPlace(kind)}
+                  >
+                    <Icon className={ICON_CLASS} aria-hidden="true" />
+                    <span>{t(PALETTE_NAME_KEYS[kind])}</span>
+                  </button>
+                );
+              })}
+            </div>
+          }
+        />
       </section>
 
       <section role="group" aria-labelledby={gridId} className="flex flex-col gap-1">

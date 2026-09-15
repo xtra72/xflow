@@ -37,7 +37,10 @@ import { PATH_LOCAL_EXTENT, type PathCommand } from './pathTypes';
 
 // --- 묶음 -------------------------------------------------------------
 
-/** 카탈로그 묶음 셋. 원시형 넷은 카탈로그가 아니므로 여기 없다(팔레트가 따로 낸다). */
+/**
+ * 카탈로그 묶음 셋. 원시형 넷은 카탈로그가 아니므로 여기 없다 — 011 이 그 넷을 `basic`
+ * 묶음의 몸통 맨 앞에 세우되, **카탈로그 항목으로 만들지는 않았다**(도형 30종은 그대로 30종).
+ */
 export type ShapeGroupId = 'general' | 'basic' | 'arrow';
 
 /** 카탈로그 도형 하나. */
@@ -451,7 +454,17 @@ function entry(id: string, group: ShapeGroupId, path: PathCommand[]): ShapeCatal
 
 /**
  * 카탈로그 묶음 셋. **화면 차례가 곧 이 배열의 차례다** — 같은 것을 두 자리에서 다른
- * 순서로 내면 사용자가 두 목록을 따로 외워야 한다.
+ * 순서로 내면 사용자가 두 목록을 따로 외워야 한다. 차례는
+ * `paletteGroups.PALETTE_GROUP_IDS` 와 **같아야 한다**.
+ *
+ * **011 은 이 차례를 건드리지 않았다.** 원시형 넷은 `기본` 묶음의 **몸통 안**으로 들어갔을
+ * 뿐이고(REQ-01 · AC-02 는 그 묶음 **안의** 차례만 규정한다), 묶음끼리의 앞뒤는 008 그대로다.
+ *
+ * 건드리지 않는 근거는 이 배열이 **재는 자의 입력**이기 때문이다. `SHAPE_CATALOG` 는 이
+ * 배열을 편 것이고, `canvas008Robustness.test.ts` 의 AC-E5 실측은 그 편 목록을 **첨자로**
+ * 골라 표본을 만든다(`POLYGONAL[i % length]`). 묶음 차례를 바꾸면 뽑히는 표본이 달라져
+ * 출시된 실측 수가 함께 움직인다 — 명령 수가 자란 것도 아닌데 우는 그 소음은, 같은 파일의
+ * J12 가 행 수 등식을 걷어내며 이름 적어 둔 바로 그 결함이다.
  */
 export const SHAPE_GROUPS: readonly ShapeCatalogGroup[] = Object.freeze([
   Object.freeze({
