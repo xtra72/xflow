@@ -57,6 +57,7 @@ function countOf(text: string, re: RegExp): number {
 
 const OVERLAY = 'CanvasEditOverlay.tsx';
 const RESOLVE = 'connector/resolveConnector.ts';
+const HIT_TEST = 'canvasHitTest.ts';
 
 describe('그물이 성기지 않다', () => {
   it('제품 파일이 실제로 여럿 잡히고 오버레이가 그 안에 있다', () => {
@@ -323,8 +324,8 @@ describe('참조를 푸는 자리가 `resolveConnector.ts` 하나뿐이다 (AC-4
   });
 
   it('①-그리기: 렌더 층이 `resolveConnector` 를 지난다 (M6)', () => {
-    // AC-45 ①의 **셋 중 첫째**다. 히트(M7)·손잡이(M9)는 아직 서지 않았으므로 아래 `todo`
-    // 가 그 둘의 자리를 비워 둔 채 남는다 — 셋을 한꺼번에 초록으로 만들지 않는다.
+    // AC-45 ①의 **셋 중 첫째**다. 손잡이(M9)는 아직 서지 않았으므로 아래 `todo` 가 그
+    // 자리를 비워 둔 채 남는다 — 셋을 한꺼번에 초록으로 만들지 않는다.
     //
     // 재는 것은 둘이다: 렌더 층이 그 함수를 **부르고**, 앵커를 **제 손으로 찾지 않는다**.
     // 둘째가 없으면 "부르기도 하고 따로 풀기도 한다" 가 지나간다.
@@ -335,7 +336,81 @@ describe('참조를 푸는 자리가 `resolveConnector.ts` 하나뿐이다 (AC-4
     expect(text.includes("'el' in ")).toBe(false);
   });
 
-  it.todo('①-나머지: 히트(M7) · 손잡이(M9)도 `resolveConnector` 를 지난다 — 둘이 선 뒤에 잰다');
+  it('①-히트: 히트 층이 `resolveConnector` 를 지난다 (M7)', () => {
+    // 셋 중 **둘째**다. 재는 잣대는 위 그리기와 글자 그대로 같다.
+    const text = source(HIT_TEST);
+    expect(/\bresolveConnector\(/.test(text)).toBe(true);
+    expect(/from '[^']*resolveConnector'/.test(text)).toBe(true);
+    expect(text.includes('anchorPoints')).toBe(false);
+    expect(text.includes("'el' in ")).toBe(false);
+  });
+
+  it.todo('①-나머지: 손잡이(M9)도 `resolveConnector` 를 지난다 — 그것이 선 뒤에 잰다');
+});
+
+// --- AC-55: 곡선 거리 판정이 평탄화를 지난다 ----------------------------------
+
+describe('곡선 거리 산술을 **새로 적지 않았다** (AC-55)', () => {
+  /** 이름 붙은 함수 하나의 몸통 — 다음 최상위 `}` 까지다. */
+  function bodyOf(text: string, name: string): string {
+    const from = text.indexOf(`function ${name}(`);
+    expect(from, name).toBeGreaterThanOrEqual(0);
+    const to = text.indexOf('\n}', from);
+    expect(to, name).toBeGreaterThan(from);
+    return text.slice(from, to);
+  }
+
+  it('연결선 갈래가 `flattenPath` 를 지난다', () => {
+    const text = source(HIT_TEST);
+    expect(/from '[^']*pathFlatten'/.test(text)).toBe(true);
+    const body = bodyOf(text, 'hitsConnector');
+    expect(body.includes('flattenPath(')).toBe(true);
+    // 모양은 그리는 쪽과 **같은 함수**에서 온다 — 곡선을 여기서 다시 짓지 않는다.
+    expect(body.includes('connectorPath(')).toBe(true);
+    expect(body.includes('curveSegments')).toBe(false);
+  });
+
+  it('연결선 갈래에 **상자 판정이 없다** (REQ-07-b)', () => {
+    // 빠른 걸러내기로도 두지 않는다 — 있으면 다음 사람이 그것을 판정으로 키운다.
+    const body = bodyOf(source(HIT_TEST), 'hitsConnector');
+    for (const banned of ['hitsBox', 'hitsEllipse', 'outlineBox', 'projectBox']) {
+      expect(body.includes(banned), banned).toBe(false);
+    }
+    // 열린 선에는 안쪽이 없다.
+    expect(body.includes('isInsidePath')).toBe(false);
+  });
+
+  it('베지어 산술이 사는 자리가 **하나도 늘지 않았다**', () => {
+    // 3차 이등분(`flattenCubic`)은 008 의 평탄화 한 파일에만 있다. 히트가 곡선 거리를
+    // 제 손으로 재기 시작하면 그 이름이나 그 산술이 여기 아닌 어딘가에 한 벌 더 생긴다.
+    const subdividing = productSources()
+      .filter(({ text }) => /\bflattenCubic\b/.test(text))
+      .map(({ name }) => name)
+      .sort();
+    expect(subdividing).toEqual(['shapes/pathFlatten.ts']);
+
+    // 2차→3차 환산(`2/3`)이 사는 자리는 **둘이고 둘 다 011 이전부터 있었다**: 연결선의
+    // 곡선(M6)과 SVG 들이기의 `Q` 명령. 둘은 시각이 다르다 — 앞은 그릴 때마다, 뒤는 한 번
+    // 읽어 들일 때. 셋째가 생기는 날이 011 이 금지한 그 자리다(AC-55).
+    const converting = productSources()
+      .filter(({ text }) => /2 \/ 3|TWO_THIRDS/.test(text))
+      .map(({ name }) => name)
+      .sort();
+    expect(converting).toEqual(['connector/connectorCurve.ts', 'svgimport/svgPathData.ts']);
+
+    const hit = source(HIT_TEST);
+    expect(/\bflattenCubic\b|TWO_THIRDS|2 \/ 3|bezierCurveTo/.test(hit)).toBe(false);
+  });
+
+  it('모양을 정하는 자리가 `connectorPath.ts` **하나**다', () => {
+    // 그리는 쪽과 잡는 쪽이 각각 `route` 를 가르면 "그려진 곡선과 잡히는 곡선이 다르다" 가
+    // 시작된다. `route === 'curve'` 를 적는 제품 파일은 그 모듈 하나여야 한다.
+    const branching = productSources()
+      .filter(({ text }) => /route === 'curve'/.test(text))
+      .map(({ name }) => name);
+    expect(branching).toEqual(['connector/connectorPath.ts']);
+    expect(countOf(source('connector/connectorPath.ts'), /export function connectorPath\b/g)).toBe(1);
+  });
 });
 
 // --- M4: 앞의 두 이름을 넓히지 않았다 ---------------------------------------

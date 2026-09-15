@@ -42,7 +42,9 @@ import {
 import { TEXT_BASELINE } from './drawElement';
 import { frameKey } from './group/frameKey';
 import { isGroup, type CanvasNode, type GroupElement } from './group/groupTypes';
-import { isConnector } from './connector/connectorTypes';
+import { connectorPath } from './connector/connectorPath';
+import { isConnector, type ConnectorElement } from './connector/connectorTypes';
+import { resolveConnector } from './connector/resolveConnector';
 import {
   FLATTEN_TOLERANCE_PX,
   flattenPath,
@@ -192,7 +194,23 @@ function hitsPath(
   pad: number,
 ): boolean {
   if (isInsidePath(subpaths, point)) return true;
-  const threshold = Math.max(strokeWidth / 2, pad);
+  return hitsEdges(subpaths, point, Math.max(strokeWidth / 2, pad));
+}
+
+/**
+ * 평탄화한 부분 경로의 **어느 변까지의 거리**가 임계 안인가 — 위 `hitsPath` 의 뒷절반이자,
+ * 연결선(SPEC-CANVAS-011 M7)이 쓰는 판정의 **전부**다.
+ *
+ * 따로 이름을 갖는 까닭은 연결선에 **안쪽이 없기** 때문이다. 연결선은 두 자리를 잇는 열린
+ * 선이라 내부라는 개념이 없고, 그래서 `isInsidePath` 를 지나지 않는다. 그렇다고 변 순회를
+ * 저쪽에 한 벌 더 적으면 이 파일 안에 자가 둘이 생긴다 — 머리말이 금지한 그 "두 번째
+ * 측정원" 이 바깥이 아니라 **안쪽**에 서는 꼴이다. 그러니 나누되 **복사하지 않는다.**
+ */
+function hitsEdges(
+  subpaths: readonly FlatSubpath[],
+  point: PxPoint,
+  threshold: number,
+): boolean {
   for (const sub of subpaths) {
     const { points, closed } = sub;
     if (points.length === 1) {
@@ -331,11 +349,13 @@ export function hitTest(
   // 맞지 않음" 과 구분되지 않으므로, 들어오는 자리에서 한 번에 끊는다.
   if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return undefined;
   for (const node of [...elements].reverse()) {
-    // **연결선은 아직 잡히지 않는다**(SPEC-CANVAS-011 M7 이 이 줄을 `hitsConnector` 로
-    // 바꾼다). 지금 뜻 없이 통과시키면 `node.style` 이 없는 노드가 아래 가시성 판정에
-    // 닿는다. 연결선은 상자가 아니라 **잉크와의 거리**로 잡혀야 하고(REQ-07-b), 그 판정은
-    // 끝점 해석(M5)이 서기 전에는 적을 수 없다 — 잡을 자리를 아직 아무도 모른다.
-    if (isConnector(node)) continue;
+    // 연결선은 **잉크와의 거리**로 잡힌다(SPEC-CANVAS-011 REQ-07-b). 갈래가 여기 먼저 서는
+    // 것은 `node.style` 이 **없을 수 있는** 유일한 노드이기 때문이다 — 아래 가시성 판정에
+    // 닿으면 그 자리에서 던진다. 가시성도 두께도 `hitsConnector` 안에서 본다.
+    if (isConnector(node)) {
+      if (hitsConnector(node, point, elements, proj, textWidths)) return { nodeId: node.id };
+      continue;
+    }
     if (isGroup(node)) {
       const hit = hitsGroup(node, point, proj, textWidths);
       if (hit !== undefined) return hit;
@@ -386,4 +406,62 @@ function hitsGroup(
     }
   }
   return undefined;
+}
+
+// --- 연결선 판정 (SPEC-CANVAS-011 M7) -------------------------------------
+
+/**
+ * 연결선에 점이 드는가 — **잉크와의 거리**다(REQ-07-b · AC-53).
+ *
+ * ## 상자 판정이 **한 줄도 없다**
+ *
+ * 빠른 걸러내기로도 두지 않는다. 크게 꺾인 연결선의 윤곽 상자는 **거의 전부 빈 공간**이라
+ * (AC-54 가 재는 그 자리) 걸러내기가 실제로 걸러 주는 것이 거의 없고, 대신 다음 사람에게
+ * "여기 상자 판정이 이미 있다" 는 발판을 남긴다. 그 발판 위에서 걸러내기가 판정으로 자라는
+ * 것이 이 파일이 `hitsEllipse`·`hitsPath`·`hitsGroup` 세 자리에 걸쳐 막아 온 그 결함이다.
+ *
+ * ## 그린 곡선과 **같은 곡선**을 잡는다
+ *
+ * 점 목록은 M5 의 `resolveConnector` 에서, 그 점들이 이루는 모양은 M6 과 **같은**
+ * `connectorPath` 에서 온다. 잡는 쪽이 제 손으로 참조를 풀거나 제 손으로 곡선을 지으면
+ * "그려진 자리와 잡히는 자리가 다르다" 가 시작된다(002 위험 R1). 곡선은 008 의
+ * `flattenPath` 로 폴리라인이 되고 그 다음은 요소가 쓰는 그 변 거리 판정을 그대로 지난다 —
+ * **베지어 거리 산술을 새로 적지 않는다**(AC-55).
+ *
+ * `isInsidePath` 는 부르지 않는다. 연결선은 열린 선이라 안쪽이라는 개념이 없고,
+ * `flattenPath` 도 `closed:false` 로 낸다 — 불러도 늘 거짓인 판정을 두느니 갈래를 두지
+ * 않는다(위 `hitsEdges` 가 그래서 따로 섰다).
+ *
+ * ## 끊긴 연결은 **잡히지 않는다** (AC-56)
+ *
+ * `resolveConnector` 가 `undefined` 를 내면 그대로 거짓이다. 그리는 쪽이 아무것도 그리지
+ * 않았으므로(AC-52) 잡을 잉크도 없다 — 없는 선이 잡히면 사용자는 **보이지 않는 것**을
+ * 손에 쥔다. 던지지도 않는다.
+ *
+ * ## `visible:false` 와 두께는 **저술된 값**으로 본다
+ *
+ * 그리지 않는 것은 잡히지 않는다 — 요소가 `node.style.visible` 로 지켜 온 그 규율이고,
+ * `drawConnector` 가 그 값에서 바로 되돌아가는 그 값이다. 규칙 캐스케이드가 덮은 결과가
+ * 아니라 **저술된** 값을 보는 것도 요소와 같다: 이 모듈은 스타일 맵을 받지 않으며, 받게
+ * 두면 히트가 프레임마다 달라져 "가끔 안 잡힌다" 가 된다.
+ *
+ * 두께의 임계도 `line` 과 **같은 식**이다(`max(두께/2, 여유)`) — 같은 두께인데 종류에 따라
+ * 다르게 잡히면 손과 그림이 어긋난다.
+ */
+function hitsConnector(
+  connector: ConnectorElement,
+  point: PxPoint,
+  nodes: readonly CanvasNode[],
+  proj: CanvasProjection,
+  textWidths: Readonly<Record<string, number>>,
+): boolean {
+  if (connector.style?.visible === false) return false;
+  const points = resolveConnector(connector, nodes, proj, textWidths);
+  if (points === undefined) return false;
+  const subpaths = flattenPath(connectorPath(points, connector.route, proj), FLATTEN_TOLERANCE_PX);
+  const threshold = Math.max(
+    resolveStrokeWidth(connector.style?.strokeWidth) / 2,
+    HIT_TOLERANCE_PX,
+  );
+  return hitsEdges(subpaths, point, threshold);
 }

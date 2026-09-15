@@ -52,7 +52,7 @@ import {
   type PxPoint,
 } from './canvasGeometry';
 import type { ResolvedStyle } from './canvasRules';
-import { curveSegments } from './connector/connectorCurve';
+import { connectorPath } from './connector/connectorPath';
 import type { ConnectorElement, ConnectorRoute } from './connector/connectorTypes';
 import { resolveConnector } from './connector/resolveConnector';
 import { isConnectorDrawable, walkDrawables } from './group/frameKey';
@@ -378,9 +378,17 @@ function drawMeasuredElement(
 // --- 연결선 그리기 (SPEC-CANVAS-011 M6) ----------------------------------
 
 /**
- * 해석된 연결선 하나를 그린다 — 점 목록은 **캔버스 단위**이고, 여기서 투영한다.
+ * 해석된 연결선 하나를 그린다 — 점 목록은 **캔버스 단위**이고, 투영은 `connectorPath` 안이다.
  *
- * ## `route` 는 **그리기만** 가른다
+ * ## `route` 는 **그리기만** 가른다 — 그리고 그 갈래는 **여기 없다**
+ *
+ * 모양을 정하는 일은 `connector/connectorPath` **한 함수**의 몫이다(M7 이 그리로 옮겼다).
+ * 여기가 하는 일은 그 명령 목록을 context 호출로 **옮겨 적는 것**뿐이며, 잡는 쪽(M7)은 같은
+ * 목록을 `flattenPath` 에 넘긴다 — 그래서 그려진 곡선과 잡히는 곡선이 **같은 하나**다.
+ * 갈래를 여기 한 벌 더 두면 한쪽만 고쳐지는 날 그 둘이 갈라지고, 그 갈라짐은 002 가 위험 R1
+ * 로 이름 적어 둔 그대로 화면에서만 드러난다.
+ *
+ * 아래 남은 것은 그 모듈의 성질이다:
  *
  * `straight` · `elbow` · `free` 는 셋이 **같은 코드**를 지난다. 다른 것은 점이 어디서
  * 왔는가 뿐이며(사람이 찍었는가, 손이 그은 궤적인가), 그 출처는 그리기에 닿지 않는다.
@@ -388,8 +396,8 @@ function drawMeasuredElement(
  * 같은 모양으로만 보인다.
  *
  * `curve` 만 갈라지되, 중간점이 없으면 **그 갈래도 같은 길로 떨어진다**(AC-50) —
- * `curveSegments` 가 빈 목록을 내므로 아래 폴리라인이 그대로 걸린다. 네 갈래의 호출
- * 기록이 동일해야 한다는 REQ-04-b 가 조건문이 아니라 **구조**로 지켜진다.
+ * `curveSegments` 가 빈 목록을 내므로 폴리라인이 그대로 걸린다. 네 갈래의 호출 기록이
+ * 동일해야 한다는 REQ-04-b 가 조건문이 아니라 **구조**로 지켜진다.
  *
  * ## 채우지 않는다
  *
@@ -413,27 +421,28 @@ export function drawConnector(
 ): void {
   // 요소와 같은 규율이다 — `visible:false` 는 `save`/`restore` 조차 하지 않는다.
   if (style.visible === false) return;
-  const px = points.map((point) => projectPoint(point, proj));
-  // `resolveConnector` 는 늘 `[시작, …중간점, 끝]` 을 내므로 점이 둘 이상이지만, 그 사실은
-  // 타입에 없다. 손으로 지은 목록이 들어와도 던지지 않는 쪽을 고른다 — 빈 목록에 대해
-  // `moveTo(undefined, undefined)` 를 부르면 진짜 context 는 조용히 무시하고, 그 침묵이
-  // "어떤 선만 안 그려진다" 로 돌아온다.
-  const start = px[0];
-  if (start === undefined) return;
+  // 빈 목록이면 **아무 호출도 내지 않는다.** `moveTo(undefined, undefined)` 를 부르면 진짜
+  // context 는 조용히 무시하고, 그 침묵이 "어떤 선만 안 그려진다" 로 돌아온다.
+  const cmds = connectorPath(points, route, proj);
+  if (cmds.length === 0) return;
 
   ctx.save();
   try {
     ctx.globalAlpha = resolveAlpha(style.opacity);
     ctx.beginPath();
-    ctx.moveTo(start.x, start.y);
-    // 곡선은 **투영한 뒤에** 편다. 투영은 축마다 상수를 곱할 뿐이라 어느 쪽에서 펴도 같은
-    // 곡선이지만, 이쪽이면 AC-48 이 재는 제어점이 곧 `bezierCurveTo` 에 들어간 그 값이다.
-    const segments = route === 'curve' ? curveSegments(px) : [];
-    if (segments.length === 0) {
-      for (const point of px.slice(1)) ctx.lineTo(point.x, point.y);
-    } else {
-      for (const seg of segments) {
-        ctx.bezierCurveTo(seg.c1.x, seg.c1.y, seg.c2.x, seg.c2.y, seg.to.x, seg.to.y);
+    // 명령 하나에 호출 하나. 여기에 판단이 없는 것이 요점이다 — 판단은 `connectorPath` 에
+    // 있고, 잡는 쪽도 그 판단을 지난다.
+    for (const cmd of cmds) {
+      switch (cmd.c) {
+        case 'M':
+          ctx.moveTo(cmd.x, cmd.y);
+          break;
+        case 'L':
+          ctx.lineTo(cmd.x, cmd.y);
+          break;
+        case 'C':
+          ctx.bezierCurveTo(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.x, cmd.y);
+          break;
       }
     }
     paintStroke(ctx, style);
