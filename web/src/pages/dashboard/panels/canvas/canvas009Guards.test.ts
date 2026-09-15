@@ -91,15 +91,74 @@ describe('복합 키의 분해는 `frameKey.ts` 바깥에 없다 (AC-04)', () =>
 });
 
 // --- AC-16: 역투영 자리가 늘지 않았다 --------------------------------------
+//
+// ## 011 AC-32 가 이 가드를 **넓혔다**
+//
+// 009 는 이름 넷(`toLocalGeometry` · `toAbsoluteGeometry` · `toLocalBox` · `toAbsoluteBox`)을
+// 보았고 허용 호출자는 `groupOps.ts` 하나였다. 011 의 임의 앵커가 점 환산을 쓰는데 그것은
+// 009 의 목록에 **없어서** 새 호출자가 조용히 지나갔다 — 가드가 있는데 잡지 못하는 것이
+// 가장 나쁘다.
+//
+// 그래서 011 은 목록을 **합집합 일곱**으로 넓히고 허용 호출자를 이름으로 적는다. AC-32 의
+// 문장은 넷만 이름 짓지만 그대로 바꿔 적으면 009 가 보던 `toLocalBox` · `toAbsoluteBox` 가
+// **빠진다** — 넓히는 것이지 걷어내는 것이 아니므로 합집합이 옳다.
+//
+// 일곱인 까닭은 점 되돌림이 **한 쌍**이기 때문이다(`…Rounded` 는 저장되는 기하로,
+// `…Exact` 는 파생되는 자리로 간다 — `groupCoords.ts` 의 그 산문). 쌍 가운데 하나만 적어
+// 두면 나머지 하나로 들어온 호출자가 통과하고, 그것이 011 이 애초에 이 가드를 넓힌 이유와
+// **똑같은 구멍**이다.
+//
+// **넷째 호출자가 생기면 다시 운다.** 그것이 이 가드가 하는 일의 전부다.
 
-describe('좌표 변환을 부르는 자리가 `groupOps.ts` 안에만 있다 (AC-16)', () => {
-  it('`toLocalGeometry` · `toAbsoluteGeometry` 의 호출자는 `groupOps.ts` 하나다', () => {
+/** 그룹 로컬 환산의 이름 — 009 의 넷 ∪ 011 이 더한 셋(`toLocalPoint` + 되돌림 한 쌍). */
+const COORD_CONVERTERS = [
+  'toLocalGeometry',
+  'toAbsoluteGeometry',
+  'toLocalBox',
+  'toAbsoluteBox',
+  'toLocalPoint',
+  'toAbsolutePointRounded',
+  'toAbsolutePointExact',
+] as const;
+
+/** 그 이름들을 적어도 되는 제품 파일. 정의 자리 하나 + 호출자 둘이다. */
+const COORD_CALLERS = ['group/groupCoords.ts', 'group/groupOps.ts', 'connector/anchors.ts'];
+
+describe('좌표 변환을 부르는 자리가 이름으로 적힌 둘뿐이다 (AC-32 — 009 AC-16 을 넓힌 것)', () => {
+  it('허용 호출자 밖에서는 일곱 이름이 한 번도 나오지 않는다', () => {
     for (const { name, text } of productSources()) {
-      if (name === 'group/groupOps.ts' || name === 'group/groupCoords.ts') continue;
-      for (const fn of ['toLocalGeometry', 'toAbsoluteGeometry', 'toLocalBox', 'toAbsoluteBox']) {
+      if (COORD_CALLERS.includes(name)) continue;
+      for (const fn of COORD_CONVERTERS) {
         expect(`${name}:${text.includes(fn)}`, `${name} ${fn}`).toBe(`${name}:false`);
       }
     }
+  });
+
+  it('허용 호출자 셋이 실제로 그 자리에 있다', () => {
+    // 목록이 오타로 헛돌면 위 단언이 무조건 초록이 된다 — 이름이 실재함을 먼저 잰다.
+    const names = productSources().map((s) => s.name);
+    for (const caller of COORD_CALLERS) {
+      expect(names, caller).toContain(caller);
+    }
+  });
+
+  it('011 이 더한 이름을 실제로 쓰는 자리가 `connector/anchors.ts` 다', () => {
+    const text = source('connector', 'anchors.ts');
+    // 앵커는 **파생 자리**이므로 정확 쪽을 쓴다. 정수화 쪽을 쓰면 꼭지점에서 반 단위 밀린다.
+    expect(text).toContain('toAbsolutePointExact(');
+    expect(text).not.toContain('toAbsolutePointRounded');
+    // 반대 방향은 한 벌뿐이다 — 로컬 좌표는 저장되는 값이라 정수화를 유지한다.
+    expect(text).toContain('toLocalPoint(');
+  });
+
+  it('되돌림 한 쌍의 정수화 쪽은 **저장되는 기하**로만 간다', () => {
+    // `toAbsolutePointRounded` 를 부르는 자리는 `toAbsoluteGeometry` 하나이고, 그것은
+    // `withGeometry` 를 지나 `el.geometry` 에만 쓰인다. 파생 소비자가 이쪽으로 새면
+    // 004 의 정수 규율이 파생값에 잘못 걸린다.
+    const text = source('group', 'groupCoords.ts');
+    const calls = text.match(/toAbsolutePointRounded\(/g) ?? [];
+    // 정의 1 + `toAbsoluteGeometry` 갈래 1.
+    expect(calls).toHaveLength(2);
   });
 
   it('`groupOps.ts` 에서 그 둘을 넘기는 자리가 `withGeometry` 하나다', () => {

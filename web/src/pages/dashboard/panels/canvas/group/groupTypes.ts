@@ -27,6 +27,7 @@
 // @spec SPEC-CANVAS-004
 
 import { PATH_LOCAL_EXTENT } from '../shapes/pathTypes';
+import type { CustomAnchor } from '../connector/anchorTypes';
 import type {
   BoxGeometry,
   CanvasElement,
@@ -106,6 +107,16 @@ export interface GroupElement {
   tween?: TweenSpec;
   /** 출처 기록. 렌더는 읽지 않는다. */
   symbol?: SymbolStamp;
+  /**
+   * 임의 앵커(SPEC-CANVAS-011 A10 · A11). 좌표는 **그룹 상자의 로컬 정수 격자**다.
+   *
+   * 011 A11 은 상자형을 `rect · ellipse · path · group` 넷으로 적었는데, 그 SPEC 본문은
+   * "`CanvasElementBase` 에 더한다" 고만 적혀 있다. 그룹은 `CanvasElement` 가 아니므로
+   * 그 한 줄로는 넷째가 빠진다 — 그래서 여기에도 **같은 이름의 같은 필드**를 둔다.
+   * 그룹 크기 조절이 부품 저장 좌표를 바꾸지 않는 성질(A17)과 정확히 같은 성질이며,
+   * 그래서 여기에도 크기 변경에 딸린 코드가 한 줄도 없다.
+   */
+  anchors?: CustomAnchor[];
 }
 
 /** 최상위 배열의 원소. 001~008 의 요소 다섯 종에 그룹 하나를 더한 것이다. */

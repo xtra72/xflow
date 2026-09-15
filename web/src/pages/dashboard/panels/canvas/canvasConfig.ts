@@ -43,6 +43,8 @@ import {
   MAX_PATH_COMMANDS,
   type PathCommand,
 } from './shapes/pathTypes';
+// 임의 앵커의 자료형. 잎 모듈(`shapes/pathTypes` 밖을 들이지 않는다)이라 순환이 없다.
+import type { CustomAnchor } from './connector/anchorTypes';
 // 타입만 가져온다 — 런타임 의존이 없으므로 `group/groupTypes.ts` 와의 순환이 생기지
 // 않는다(저쪽도 이 파일에서 타입만 가져간다).
 import type { CanvasNode, GroupElement, SymbolStamp } from './group/groupTypes';
@@ -186,6 +188,22 @@ export interface PointGeometry {
 export type Geometry = BoxGeometry | LineGeometry | PointGeometry;
 
 /**
+ * 기하가 **저장된 상자**인가 — 011 A11("임의 앵커는 상자형에만 선다")의 판정이다.
+ *
+ * 코드베이스의 관용은 `'w' in geo` 를 쓰는 자리에 바로 적는 것이고, 여기만 이름을 갖는
+ * 데에는 이유가 둘 있다. 하나는 A11 이 **하나의 규칙**이라 이름이 있어야 쓰기 경로와
+ * 파서가 같은 것을 말한다고 보일 수 있다는 것. 다른 하나는 `connector/anchors.ts` 가
+ * 자리 이름 리터럴을 `'c'` 하나로 못박은 가드(AC-11) 아래 있어 그 파일 안에서는
+ * `'w'` 라는 **글자**를 적을 수 없다는 것이다 — 가드를 피하려고 이름을 짓는 것이 아니라,
+ * 가드가 그 파일을 자리 이름 전용으로 못박아 두었으므로 형상 판정은 밖에 산다.
+ *
+ * 문구(`PointGeometry`)와 선(`LineGeometry`)이 여기서 떨어지는 것이 A11 의 전부다.
+ */
+export function isBoxGeometry(geo: Geometry): geo is BoxGeometry {
+  return 'w' in geo;
+}
+
+/**
  * 요소의 기본 스타일. 모든 필드가 옵셔널이며, 미지정은 "렌더측 기본" 을 뜻한다
  * (히트맵 `ContourLineStyle` 선례). 파서는 미지정 필드를 만들어 채우지 않는다 —
  * 채우면 "지정 안 함" 과 "값이 우연히 기본값과 같음" 이 구분되지 않는다.
@@ -267,6 +285,17 @@ export interface CanvasElementBase {
   rules?: RuleRow[];
   /** 패널 기본 트윈을 덮어쓴다. */
   tween?: TweenSpec;
+  /**
+   * 임의 앵커. 좌표는 **요소 로컬 정수 격자**(0..`ANCHOR_LOCAL_EXTENT`)다(A10).
+   *
+   * **상자형(rect · ellipse · path)에만 선다**(A11). 선에는 상자가 없고, 문구의 상자는
+   * 글자를 재어 나온 값이라 그 위에 저술값을 얹으면 앵커가 측정에 딸려 조용히 미끄러진다.
+   * 그런데 이 필드는 공통 베이스에 있으므로 **타입으로는 선·문구에도 앉는다** — 그
+   * 구멍을 파서(`parseElement` 의 상자형 갈래에서만 붙인다)와 쓰기 경로
+   * (`addAnchorAt` 의 상자 판정)가 **양쪽에서** 막는다. 한쪽만 막으면 다른 쪽으로 들어온
+   * 값이 한 번은 그려지고 다음 읽기에서 사라진다.
+   */
+  anchors?: CustomAnchor[];
 }
 
 /** 사각형 요소. */
@@ -700,6 +729,50 @@ function parsePathCommands(raw: unknown): PathCommand[] {
   return out[0]?.c === 'M' ? out : seedPath();
 }
 
+/**
+ * 임의 앵커 1건. 성립하지 않으면 `null`(그 **항목만** 버린다 — AC-29).
+ *
+ * 좌표 규율은 경로 명령과 같다(`localCoordinate`): 손상 좌표에는 채울 기본값이 없으므로
+ * 지어내지 않고 항목을 뺀다. 0 으로 채우면 앵커가 상자 왼쪽 위 모서리로 조용히 이사하고,
+ * 그 자리에 붙은 연결선은 예외 없이 엉뚱한 곳을 가리킨다.
+ *
+ * `id` 는 정체성이다. 없으면 연결선이 가리킬 수 없으므로 그 항목은 뜻이 없다.
+ */
+function parseCustomAnchor(raw: unknown): CustomAnchor | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const a = raw as Record<string, unknown>;
+  const id = optionalString(a.id);
+  if (id === undefined) return null;
+  const x = localCoordinate(a.x);
+  const y = localCoordinate(a.y);
+  if (x === null || y === null) return null;
+  return { id, x, y };
+}
+
+/**
+ * 임의 앵커 목록. **예외를 던지지 않으며 요소를 버리지도 않는다**(REQ-07 규율).
+ *
+ * 배열이 아니면 미지정이고, 손상 항목은 그것만 빠지며(AC-29), id 중복은 **먼저 온 것이
+ * 이긴다**(AC-30 — `parseElements` 와 같은 규율이다. 연결선이 id 로 앵커를 지목하므로
+ * 중복이 남으면 어느 쪽을 가리키는지 정할 수 없다).
+ *
+ * 살아남은 항목이 없으면 **미지정으로 떨어뜨린다.** `[]` 를 남기면 "쓴 적 없음" 과
+ * "다 지웠음" 이 구분되지 않고, 저장 왕복에 `anchors` 키가 새로 생긴다(AC-25).
+ */
+function parseCustomAnchors(raw: unknown): CustomAnchor[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: CustomAnchor[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const anchor = parseCustomAnchor(item);
+    if (!anchor) continue;
+    if (seen.has(anchor.id)) continue;
+    seen.add(anchor.id);
+    out.push(anchor);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 /** 요소 1건. 정체성(id · kind)이 성립하지 않으면 버린다(null). */
 function parseElement(raw: unknown): CanvasElement | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -745,11 +818,18 @@ function parseElement(raw: unknown): CanvasElement | null {
     ...(tween !== undefined ? { tween } : {}),
   };
 
+  // 임의 앵커는 **상자형 갈래에서만** 붙는다(A11 · AC-24). 선·문구 갈래에 이 조각이
+  // 없는 것이 그 금지의 전부이며, 손으로 고친 config 가 문구에 `anchors` 를 적어 두어도
+  // 읽는 순간 사라진다 — 남겨 두면 그 값이 한 번은 그려지고 글자 폭이 바뀌는 날 조용히
+  // 미끄러진다.
+  const anchors = parseCustomAnchors(e.anchors);
+  const withAnchors = anchors !== undefined ? { anchors } : {};
+
   switch (kind) {
     case 'rect':
-      return { ...base, kind, geometry: parseBoxGeometry(e.geometry) };
+      return { ...base, kind, geometry: parseBoxGeometry(e.geometry), ...withAnchors };
     case 'ellipse':
-      return { ...base, kind, geometry: parseBoxGeometry(e.geometry) };
+      return { ...base, kind, geometry: parseBoxGeometry(e.geometry), ...withAnchors };
     case 'line':
       return { ...base, kind, geometry: parseLineGeometry(e.geometry) };
     case 'path': {
@@ -763,6 +843,7 @@ function parseElement(raw: unknown): CanvasElement | null {
         geometry: parseBoxGeometry(e.geometry),
         path: parsePathCommands(e.path),
         ...(catalogId !== undefined ? { catalog_id: catalogId } : {}),
+        ...withAnchors,
       };
     }
     default:
@@ -839,12 +920,17 @@ function parseGroup(e: Record<string, unknown>): GroupElement | null {
   const rules = parseRules(e.rules);
   const tween = parseTween(e.tween);
   const symbol = parseSymbolStamp(e.symbol);
+  // 그룹도 상자형이다(A11) — `geometry` 가 저장된 상자이므로 로컬 격자가 그대로 성립한다.
+  // 그룹은 `CanvasElement` 가 아니라서 위 `parseElement` 의 조각이 닿지 않으므로 여기서
+  // **같은 파서**를 부른다(앵커 파서가 둘이 되지 않는다).
+  const anchors = parseCustomAnchors(e.anchors);
 
   return {
     id,
     kind: 'group',
     geometry: parseBoxGeometry(e.geometry),
     parts: parseElements(e.parts),
+    ...(anchors !== undefined ? { anchors } : {}),
     ...(binding !== undefined ? { binding } : {}),
     ...(style !== undefined ? { style } : {}),
     ...(rules !== undefined ? { rules } : {}),

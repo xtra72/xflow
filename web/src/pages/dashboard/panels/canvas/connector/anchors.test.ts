@@ -22,7 +22,13 @@ import type { CanvasElement } from '../canvasConfig';
 import { unprojectPoint, type CanvasPoint, type CanvasProjection } from '../canvasGeometry';
 import { BOX_HANDLE_IDS, handlePositions } from '../canvasEditGeometry';
 import type { CanvasNode, GroupElement } from '../group/groupTypes';
-import { anchorPoints, ANCHOR_CENTER_ID, FIXED_ANCHOR_IDS } from './anchors';
+import {
+  addAnchorAt,
+  anchorPoints,
+  ANCHOR_CENTER_ID,
+  FIXED_ANCHOR_IDS,
+  removeAnchor,
+} from './anchors';
 
 const PROJ: CanvasProjection = {
   stage: { width: 200, height: 100 },
@@ -302,9 +308,29 @@ describe('고정 앵커가 저장되지 않는다 (AC-14 · A1)', () => {
     }
   });
 
-  it('`anchors.ts` 에 쓰기 경로가 없다 — 내보내는 함수가 `anchorPoints` 하나다', () => {
+  it('내보내는 함수가 셋뿐이다 — 읽기 하나와 임의 앵커 쓰기 둘', () => {
+    // M3 에서는 이 목록이 하나였다. M3′ 가 **임의 앵커**(A10 — 저장한다)의 더하기·빼기를
+    // 더하면서 둘이 늘었고, 목록이 닫혀 있다는 성질은 그대로다: 넷째가 생기면 빨개진다.
+    // 고정 아홉이 저장되지 않는다는 A1 은 아래 두 단언이 대신 붙든다.
     const fns = anchorsSource().match(/export function (\w+)/g) ?? [];
-    expect(fns).toEqual(['export function anchorPoints']);
+    expect(fns).toEqual([
+      'export function anchorPoints',
+      'export function addAnchorAt',
+      'export function removeAnchor',
+    ]);
+  });
+
+  it('쓰기 둘이 만지는 필드가 `anchors` 하나뿐이다', () => {
+    // A1 의 관측 가능한 뜻이 이것이다 — 쓰기 경로가 생겨도 아홉은 여전히 파생이고,
+    // 기하도 종류도 스타일도 그 경로를 지나 바뀌지 않는다.
+    const added = addAnchorAt(RECT, { x: 100, y: 120 }, 'a1');
+    expect({ ...added, anchors: undefined }).toEqual({ ...RECT, anchors: undefined });
+    expect(removeAnchor(added, 'a1')).toEqual(RECT);
+  });
+
+  it('저장된 앵커에 고정 아홉의 이름이 섞이지 않는다', () => {
+    const added = addAnchorAt(RECT, { x: 100, y: 120 }, 'a1');
+    expect(added.anchors?.map((a) => a.id)).toEqual(['a1']);
   });
 });
 
