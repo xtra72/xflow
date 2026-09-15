@@ -402,7 +402,62 @@ describe('참조를 푸는 자리가 `resolveConnector.ts` 하나뿐이다 (AC-4
     expect(text.includes("'el' in ")).toBe(false);
   });
 
-  it.todo('①-나머지: 손잡이(M9)도 `resolveConnector` 를 지난다 — 그것이 선 뒤에 잰다');
+  it('①-손잡이: 오버레이가 `resolveConnector` 를 지난다 (M9)', () => {
+    // 셋 중 **셋째**이자 마지막이다 — 이로써 AC-45 ①이 온전해진다. 재는 잣대는 위 둘과
+    // 글자 그대로 같을 수 없다: 오버레이는 앵커를 **그리는** 층이기도 해서 `anchorPoints`
+    // 를 둘 곳에서 부르고(위 §보이는 점과 집히는 점), 그 둘은 이 가드가 겨누는 대상이
+    // 아니다. 그래서 여기서 재는 것은 "그 함수를 부르고, 끝점 자료형을 **제 손으로 가르지
+    // 않는다**" 둘이다.
+    const text = source(OVERLAY);
+    expect(/\bresolveConnector\(/.test(text)).toBe(true);
+    expect(/from '[^']*resolveConnector'/.test(text)).toBe(true);
+    expect(text.includes("'el' in ")).toBe(false);
+  });
+
+  it('①의 셋이 **모두** 그 함수를 부른다 — 하나라도 빠지면 자리가 갈린다', () => {
+    // 위 셋을 따로 재면 "셋이 전부인가" 를 아무도 묻지 않는다. 부르는 제품 파일을
+    // **세어서** 적는 것이 011 이 가드에 대해 정한 그 규율이다(§009 의 좌표 변환 가드를
+    // 넓힌다). 넷째가 생기는 날 그 자리가 정말 필요한지부터 따져야 한다.
+    const callers = productSources()
+      .filter(({ name, text }) => name !== RESOLVE && /\bresolveConnector\(/.test(text))
+      .map(({ name }) => name)
+      .sort();
+    expect(callers).toEqual([OVERLAY, 'canvasHitTest.ts', 'drawElement.ts'].sort());
+  });
+});
+
+// --- AC-63: 연결선에 8핸들이 서지 않는다 (M9) -------------------------------
+
+describe('연결선 손잡이가 8핸들의 이름 공간을 **쓰지 않는다** (AC-63)', () => {
+  it('`CanvasHandleId` 가 한 글자도 넓어지지 않았다', () => {
+    // 넓히면 `HANDLE_ARIA_KEYS` · `HANDLE_CURSOR` 두 `Record` 가 뜻 없는 항목을 하나씩
+    // 갖는다 — 중간점은 개수가 저술마다 다르므로 그 닫힌 집합에 넣을 고정 이름이 없다.
+    const text = source('canvasEditGeometry.ts');
+    const union = /export type CanvasHandleId =([^;]*);/.exec(text);
+    expect(union).not.toBeNull();
+    expect(union?.[1]?.trim()).toBe('BoxHandleId | LineHandleId | TextHandleId');
+  });
+
+  it('두 표가 여전히 `Record<CanvasHandleId, …>` 다 — 갈래가 늘면 컴파일러가 운다', () => {
+    const text = source(OVERLAY);
+    expect(countOf(text, /Record<CanvasHandleId, string>/g)).toBe(2);
+  });
+
+  it('연결선 손잡이는 **제 이름 공간**을 쓴다', () => {
+    const text = source(OVERLAY);
+    expect(text).toContain('canvas-connector-handle-');
+    // 8핸들의 testid 를 짓는 자리는 여전히 하나뿐이다 — 둘이 되면 `canvas-handle-nw` 가
+    // 무엇을 가리키는지 이름만으로 답하지 못한다.
+    expect(countOf(text, /canvas-handle-\$\{/g)).toBe(1);
+  });
+
+  it('`handlePositions` 는 연결선을 **받지 못한다** — 타입이 그것을 막는다', () => {
+    // `OutlinedNode` 는 연결선을 제외한 합집합이다(M4). 서명이 그대로인 한 8핸들이
+    // 연결선에 서는 상태는 검사가 아니라 **형상**으로 불가능하다.
+    const text = source('canvasEditGeometry.ts');
+    expect(/export function handlePositions\(\s*el: OutlinedNode,/.test(text)).toBe(true);
+    expect(/export function handlesFor\(kind: OutlinedNodeKind\)/.test(text)).toBe(true);
+  });
 });
 
 // --- AC-55: 곡선 거리 판정이 평탄화를 지난다 ----------------------------------
@@ -504,6 +559,12 @@ describe('011 이 더한 문구가 ko · en 양쪽에 있다', () => {
     'dashboard.canvas.edit.toolElbow',
     'dashboard.canvas.edit.toolCurve',
     'dashboard.canvas.edit.toolFree',
+    // M9 가 더한 셋 — 연결선 손잡이의 이름. 끝점 둘과, **몇 번째인가**를 치환자로 받는
+    // 중간점 하나다. 8핸들의 `HANDLE_ARIA_KEYS` 에 섞지 않은 까닭은 그 표가
+    // `Record<CanvasHandleId, …>` 라 닫힌 이름 집합을 요구하기 때문이다(AC-63).
+    'dashboard.canvas.edit.connectorHandleFrom',
+    'dashboard.canvas.edit.connectorHandleTo',
+    'dashboard.canvas.edit.connectorHandleMid',
   ];
 
   const lookup = (tree: unknown, key: string): unknown =>
@@ -528,6 +589,19 @@ describe('011 이 더한 문구가 ko · en 양쪽에 있다', () => {
 
   it.each(ADDED)('%s 의 두 로케일이 서로 다르다 — 한쪽을 베껴 넣지 않았다', (key) => {
     expect(lookup(ko, key), key).not.toBe(lookup(en, key));
+  });
+
+  it('중간점 문구가 번호 치환자를 **양쪽 로케일에** 들고 있다', () => {
+    // 한쪽만 재면 다른 쪽에서 치환자가 빠진 것이 조용히 지나가고, 그때 점이 셋인 선의
+    // 손잡이 셋이 **구별 불가능한 이름**을 읽는다. 로케일 기본값이 ko 라 en 쪽이 특히
+    // 빠지기 쉬운 자리다.
+    for (const [name, tree] of [
+      ['ko', ko],
+      ['en', en],
+    ] as const) {
+      const text = lookup(tree, 'dashboard.canvas.edit.connectorHandleMid') as string;
+      expect(text, name).toContain('{index}');
+    }
   });
 
   it('거절 문구가 **무엇을 해야 하는지**까지 말한다 — 안 된다는 말만 남기지 않는다', () => {

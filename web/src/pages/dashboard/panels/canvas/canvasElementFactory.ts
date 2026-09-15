@@ -41,10 +41,14 @@ import type { CanvasNode } from './group/groupTypes';
 // 순환이 생기지 않는다(`connectorTypes` 머리말 §모듈 자리).
 import {
   CONNECTOR_KIND,
+  isConnector,
   type ConnectorElement,
   type ConnectorEnd,
   type ConnectorRoute,
 } from './connector/connectorTypes';
+// SPEC-CANVAS-011 M9 — 끝을 갈아 끼우는 자가 **집는 함수가 낸 참조**를 받는다
+// (아래 `repointConnector`). `import type` 이므로 실행 시각에는 아무것도 남지 않는다.
+import type { AnchorRef } from './connector/anchors';
 import type { PathCommand } from './shapes/pathTypes';
 
 // --- 씨앗 상수 -----------------------------------------------------------
@@ -433,6 +437,80 @@ export function appendConnector(
     style: connectorSeedStyle(),
   };
   return { next: [...elements, created], created };
+}
+
+/**
+ * 연결선의 두 끝 중 어느 쪽인가 (SPEC-CANVAS-011 M9).
+ *
+ * 필드 이름을 그대로 쓴다 — `'start' | 'end'` 같은 두 번째 어휘를 두면 쓰는 자리마다
+ * 그 이름을 필드로 옮기는 표가 하나씩 필요해지고, 그 표는 늘 한쪽만 고쳐진다.
+ */
+export type ConnectorSide = 'from' | 'to';
+
+/**
+ * 연결선의 한 끝을 **갈아 끼운다** — 앵커 위면 참조로, 아니면 자유 끝점으로 (M9 · REQ-07-a).
+ *
+ * ## 왜 이 모듈인가
+ *
+ * 끝을 **짓는** 규칙이 이미 여기 둘 있다 — 붙은 끝은 `appendConnector` 가 인자로 받아
+ * 그대로 싣고, 자유 끝은 `freeConnectorEnd` 가 파서와 같은 규칙으로 죈다. 갈아 끼우는
+ * 일은 그 둘을 한 번 더 쓰는 일이므로, 오버레이가 제 손으로 `{ el, a }` 를 조립하면
+ * 그 조립이 곧 갈라질 수 있는 두 번째 지점이 된다(§`appendConnector` 와 같은 근거).
+ *
+ * 그래서 이 함수는 **`AnchorRef` 를 받는다** — 끝점 자료형이 아니다. 오버레이는 집는
+ * 함수(`anchorHitAt`)가 낸 참조를 그대로 넘기고, 끝을 짓는 일은 여기서만 일어난다.
+ * `ConnectorEnd` 를 읽고 쓰는 제품 파일이 넷으로 유지되는 것이 그 규율의 값이다.
+ *
+ * 놓은 자리가 앵커가 아니면(`landed === undefined`) 그 끝은 **자유 끝점**이 된다 —
+ * 그은 몸짓이 빈 곳에서 끝났을 때와 같다(AC-58). 붙어 있던 선을 떼는 길이 그것이며,
+ * 붙이는 길과 떼는 길이 **한 몸짓**인 것에 뜻이 있다.
+ */
+export function repointConnector(
+  elements: readonly CanvasNode[],
+  connectorId: string,
+  side: ConnectorSide,
+  landed: AnchorRef | undefined,
+  at: PointGeometry,
+): CanvasNode[] {
+  const end: ConnectorEnd =
+    landed === undefined ? freeConnectorEnd(at) : { el: landed.el, a: landed.a };
+  const replace = (node: ConnectorElement): ConnectorElement =>
+    side === 'from' ? { ...node, from: end } : { ...node, to: end };
+  return elements.map((node) =>
+    node.id === connectorId && isConnector(node) ? replace(node) : node,
+  );
+}
+
+/**
+ * 중간점 하나를 옮긴다 — **그 자리 하나만** 쓴다 (M9 · AC-65).
+ *
+ * 이웃을 **같은 객체 그대로** 지나 보낸다(`map` 이 손대지 않은 원소는 참조가 같다).
+ * 새 객체로 베껴 담으면 값은 같아도 되돌리기 장부와 렌더 비교가 "달라졌다" 고 읽고,
+ * 그 차이는 점이 하나라도 있는 모든 선에서 매 프레임 쌓인다.
+ *
+ * 좌표는 **캔버스 단위 정수**로 죈다 — `freeConnectorEnd` 가 끝점에 대해 쓰는 그 함수를
+ * 지난다(A5). 죄지 않고 소수를 실으면 다음에 파일을 읽는 순간 파서의 `Math.round` 가
+ * 사용자가 찍어 둔 꺾임을 반 칸 옮겨 앉힌다(AC-36 이 금지한 그것이다).
+ *
+ * 범위 밖 `index` 는 **받은 노드를 그대로** 돌려준다. 손잡이는 해석된 점 목록에서만
+ * 나오므로 닿을 길이 없으나, 닿았다면 없는 자리를 지어내느니 아무 일도 하지 않는 편이
+ * 낫다(`handleDragState` 의 두 `null` 과 같은 규율).
+ */
+export function moveConnectorPoint(
+  elements: readonly CanvasNode[],
+  connectorId: string,
+  index: number,
+  at: PointGeometry,
+): CanvasNode[] {
+  const moved: PointGeometry = { x: coordinate(at.x, 0), y: coordinate(at.y, 0) };
+  const replace = (node: ConnectorElement): ConnectorElement => {
+    const points = node.points ?? [];
+    if (index < 0 || index >= points.length) return node;
+    return { ...node, points: points.map((point, i) => (i === index ? moved : point)) };
+  };
+  return elements.map((node) =>
+    node.id === connectorId && isConnector(node) ? replace(node) : node,
+  );
 }
 
 // --- 가져온 요소 ---------------------------------------------------------

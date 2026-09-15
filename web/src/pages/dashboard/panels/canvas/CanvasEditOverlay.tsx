@@ -199,7 +199,12 @@ import {
   type GroupRefusal,
 } from './group/groupOps';
 import { isGroup, type CanvasNode, type OutlinedNode } from './group/groupTypes';
-import { isConnector, type ConnectorRoute } from './connector/connectorTypes';
+import {
+  isConnector,
+  type ConnectorElement,
+  type ConnectorRoute,
+} from './connector/connectorTypes';
+import { resolveConnector } from './connector/resolveConnector';
 import {
   type BoxGeometry,
   type CanvasElement,
@@ -213,8 +218,11 @@ import {
   freeConnectorEnd,
   appendImportedElements,
   appendPathElement,
+  moveConnectorPoint,
   nextElementId,
+  repointConnector,
   seedOffset,
+  type ConnectorSide,
 } from './canvasElementFactory';
 import {
   CanvasScratchpadDropContext,
@@ -453,8 +461,42 @@ interface FontResizeDrag extends DragCommon {
   fontSize: number;
 }
 
+/**
+ * 연결선 손잡이 하나 — **끝점 둘**이거나 **중간점 하나**다 (SPEC-CANVAS-011 M9 · REQ-07).
+ *
+ * `CanvasHandleId` 를 넓히지 않는 것이 이 자료형이 있는 이유다. 저쪽은
+ * `HANDLE_ARIA_KEYS` · `HANDLE_CURSOR` 두 `Record` 가 **빠짐없이** 덮는 닫힌 이름 집합
+ * 인데, 중간점은 개수가 저술마다 다르므로 그 표에 넣을 고정된 이름이 없다. 억지로 넣으면
+ * 두 표가 뜻 없는 항목을 하나씩 갖고, 그때 "이 손잡이는 무엇을 하는가" 에 답이 없다.
+ *
+ * 그래서 M9 는 **별도 렌더 갈래**를 세운다(plan §M9 2). 그 갈래가 지나는 자리는
+ * `handlePositions` 도 `handleDragState` 도 아니며, 둘은 한 글자도 바뀌지 않는다.
+ */
+type ConnectorHandle = { kind: 'end'; side: ConnectorSide } | { kind: 'mid'; index: number };
+
+/**
+ * 연결선 손잡이 드래그 (SPEC-CANVAS-011 M9).
+ *
+ * **잡는 순간의 기하를 들지 않는다** — 다른 셋과 갈리는 자리다. 연결선에는 상자가 없고
+ * 끝점은 좌표가 아니라 참조이므로 "잡을 때의 값으로 매 프레임 다시 잡는다" 가 성립하지
+ * 않는다. 대신 매 프레임 **포인터 자리 그대로**를 쓴다: 중간점은 그 자리로 옮기고,
+ * 끝점은 그 자리가 어느 앵커 위인지 물어 참조를 갈아 끼운다.
+ *
+ * 그래서 프레임을 건너뛰어도 결과가 같다는 성질은 유지된다 — 누적하지 않기 때문이다.
+ */
+interface ConnectorPointDrag extends DragCommon {
+  mode: 'connectorPoint';
+  nodeId: string;
+  handle: ConnectorHandle;
+}
+
 /** 진행 중인 드래그. `null` 이면 유휴. */
-type DragState = MoveDrag | BoxResizeDrag | LineResizeDrag | FontResizeDrag;
+type DragState =
+  | MoveDrag
+  | BoxResizeDrag
+  | LineResizeDrag
+  | FontResizeDrag
+  | ConnectorPointDrag;
 
 /**
  * 아직 반영하지 않은 마지막 포인터 상태.
@@ -585,6 +627,30 @@ const HANDLE_CURSOR: Record<CanvasHandleId, string> = {
 const HANDLE_CLASS =
   'pointer-events-auto absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-sm ' +
   'border border-white bg-blue-500 shadow focus:outline-none focus:ring-2 focus:ring-blue-300';
+
+/**
+ * 연결선 손잡이의 `aria-label` i18n 키 (SPEC-CANVAS-011 M9).
+ *
+ * **표가 따로인 것이 요점이다.** `HANDLE_ARIA_KEYS` 는 `Record<CanvasHandleId, string>`
+ * 이라 이름 하나가 늘면 컴파일러가 그 표를 가리키는데, 중간점은 개수가 저술마다 달라
+ * 그 닫힌 집합에 넣을 고정 이름이 없다. 그래서 여기 셋만 둔다 — 끝점 둘과, **몇 번째인가**
+ * 를 치환자로 받는 중간점 하나.
+ *
+ * 중간점 문구가 번호를 말하는 것에 뜻이 있다. 한 선에 점이 셋이면 손잡이도 셋이고, 셋이
+ * 같은 이름을 읽으면 보조기기를 쓰는 사람에게는 **구별 불가능한 단추 셋**이 된다.
+ */
+const CONNECTOR_HANDLE_ARIA_KEYS: Readonly<Record<ConnectorSide | 'mid', string>> = {
+  from: 'dashboard.canvas.edit.connectorHandleFrom',
+  to: 'dashboard.canvas.edit.connectorHandleTo',
+  mid: 'dashboard.canvas.edit.connectorHandleMid',
+};
+
+/**
+ * 연결선 손잡이의 커서. **넷이 아니라 하나다** — 끝점도 중간점도 하는 일이 "이 점을 저기로
+ * 옮긴다" 하나이므로, 방향을 뜻하는 8핸들의 커서 어휘가 여기서는 거짓말이 된다. 선 끝점
+ * 핸들(`p1`·`p2`)이 같은 이유로 같은 커서를 쓴다.
+ */
+const CONNECTOR_HANDLE_CURSOR = 'cursor-move';
 
 /**
  * 앵커 점의 지름(스테이지 px). `h-2 w-2` 가 그리는 그 크기를 **수로도** 적는다.
@@ -726,6 +792,11 @@ const EDIT_KEY_SHORTCUTS =
  * 여덟 손잡이를 내주고 `handlePositions` 가 자리까지 잡아 주는데도 **드래그가 시작되지
  * 않는다** — 손잡이가 보이는데 잡히지 않는 도형이 되고, 그 증상은 화면에서만 드러난다.
  * 앞선 두 함수를 고치고 이 한 줄을 빠뜨리면 크기 조절이 그대로 죽어 있다.
+ *
+ * **연결선은 이 함수에 오지 않는다**(SPEC-CANVAS-011 M9). 맞춰 볼 이름도(손잡이 id 가
+ * 가변이라 `CanvasHandleId` 에 없다) 뜰 기하도(`geometry` 자체가 없다) 없으므로, 갈래를
+ * 더하면 두 `null` 이 셋이 되고 그 셋이 서로 다른 뜻을 갖는다. 대신 제 시작 함수를 따로
+ * 둔다(`startConnectorHandleDrag`).
  */
 function handleDragState(
   el: CanvasNode,
@@ -910,6 +981,69 @@ function nodeForKey(elements: readonly CanvasNode[], key: string): OutlinedNode 
     return node !== undefined && !isConnector(node) ? node : undefined;
   }
   return partInCanvasUnits(elements, nodeId, partId);
+}
+
+/**
+ * 키가 가리키는 **연결선** — 위 `nodeForKey` 가 조용히 떨어뜨리는 그 갈래를 받는다
+ * (SPEC-CANVAS-011 M9).
+ *
+ * 둘로 나눈 것이 요점이다. 저쪽의 반환이 `OutlinedNode` 인 것은 그 값을 받는 통로
+ * (`outlineBox` · `handlePositions` · `moveGeometry`)가 전부 **상자**를 요구하기 때문이고,
+ * 연결선에는 그 상자가 없다. 한 함수로 접어 합집합을 돌려주면 그 다섯 통로가 저마다
+ * "연결선은 건너뛴다" 를 한 줄씩 갖게 된다 — 004 가 그룹에서 치른 그 대가를 되풀이하는
+ * 일이다.
+ *
+ * 부품 키는 여기서도 부재다. 연결선은 최상위 노드이고(A4) 부품이 될 수 없으므로,
+ * 복합 키가 연결선을 가리키는 상태 자체가 없다.
+ */
+function connectorForKey(
+  elements: readonly CanvasNode[],
+  key: string,
+): ConnectorElement | undefined {
+  const { nodeId, partId } = parseFrameKey(key);
+  if (partId !== undefined) return undefined;
+  const node = elements.find((el) => el.id === nodeId);
+  return node !== undefined && isConnector(node) ? node : undefined;
+}
+
+/**
+ * 해석된 점 목록의 `index` 번째가 **어느 손잡이인가** (SPEC-CANVAS-011 M9).
+ *
+ * `resolveConnector` 가 내는 목록이 `[시작, …중간점, 끝]` 이므로 양 끝만 끝점이고 나머지는
+ * 중간점이다. 그 사실을 **여기 한 자리에서만** 읽는다 — 렌더와 드래그가 저마다 "0 은
+ * 시작이고 마지막은 끝" 을 적으면, 중간점이 늘거나 줄 때 한쪽만 고쳐진 채 손잡이가 엉뚱한
+ * 점을 쓰게 된다.
+ *
+ * 중간점의 `index` 는 **저장 배열의 자리**다(해석된 목록의 자리가 아니다). 쓰는 쪽
+ * (`moveConnectorPoint`)이 그 배열을 그대로 색인하므로, 여기서 1 을 빼 두지 않으면
+ * 끄는 손이 늘 이웃을 옮긴다.
+ */
+function connectorHandleAt(index: number, total: number): ConnectorHandle {
+  if (index === 0) return { kind: 'end', side: 'from' };
+  if (index === total - 1) return { kind: 'end', side: 'to' };
+  return { kind: 'mid', index: index - 1 };
+}
+
+/**
+ * 손잡이의 이름 — `data-testid` 와 React `key` 가 함께 쓴다.
+ *
+ * 8핸들의 이름 공간(`canvas-handle-*`)을 **쓰지 않는다.** 섞으면 `canvas-handle-nw` 가
+ * "상자 왼쪽 위" 인지 "연결선의 어떤 자리" 인지 이름만으로는 답하지 못하고, 8핸들이 서지
+ * 않았음을 재는 자리(AC-63)가 그 이름으로는 가려낼 것이 없어진다.
+ *
+ * 중간점이 **번호를 달고 나오는 것**에 뜻이 있다 — 점이 둘 이상이면 이름이 같은 단추가
+ * 여럿 서고, 그때 "그 점 하나만 움직였다"(AC-65)를 겨눌 수단이 사라진다.
+ */
+function connectorHandleName(handle: ConnectorHandle): string {
+  return handle.kind === 'end' ? handle.side : `mid-${handle.index}`;
+}
+
+/** 손잡이가 스크린 리더에 읽히는 문구. 중간점만 번호를 채워 넣는다. */
+function connectorHandleLabel(t: (key: string) => string, handle: ConnectorHandle): string {
+  if (handle.kind === 'end') return t(CONNECTOR_HANDLE_ARIA_KEYS[handle.side]);
+  // `replaceAll` 인 것은 문구가 번호를 두 번 말할 수도 있기 때문이다(svgimport 의 상한
+  // 안내가 이 저장소에서 이미 물린 자리다 — 위험 R14).
+  return t(CONNECTOR_HANDLE_ARIA_KEYS.mid).replaceAll('{index}', String(handle.index + 1));
 }
 
 /** 고른 것들을 노드로 푼다. 가리킬 것이 없는 키는 조용히 빠진다. */
@@ -1208,13 +1342,59 @@ export default function CanvasEditOverlay({
   const frameRef = useRef<number | null>(null);
 
   /**
+   * 지금 앵커를 보일 노드들 — **최상위 전부**다(REQ-02-b · 앵커를 보이는 도구가 켜진
+   * 동안에만).
+   *
+   * 고른 것에만 세우지 않는 까닭은 M8 이다: 잇는 일은 요소 **둘** 사이에서 일어나므로,
+   * 출발 앵커를 고르는 순간 도착 앵커가 사라지는 화면이 된다. M3' 가 미리 그렇게 정해
+   * 두었고, M8 은 그 결정을 되돌리지 않는다.
+   *
+   * 도구가 꺼져 있으면 **빈 배열**이라 아래 `map` 이 DOM 에 아무것도 남기지 않으며,
+   * 잇는 몸짓도 집을 점이 없어 시작되지 않는다(`anchorHitAt` 이 부재를 낸다). 편집이 꺼진
+   * 표면에는 이 층 자체가 서지 않으므로 표시 전용 패널에도 앵커가 없다(위
+   * `if (!enabled) return null`) — AC-60 은 그 한 줄이 이미 참으로 만든다.
+   *
+   * **그리는 자리와 집는 자리가 이 한 목록을 함께 본다.** 둘이 저마다 걸러 내면 "보이는
+   * 점인데 잡히지 않는다"(또는 그 반대)가 표현 가능해진다 — 위험 R1 의 그 형상이다.
+   * 그래서 이 값이 포인터 경로 **앞**에 선다.
+   */
+  // 연결선은 앵커를 내지 않는다(SPEC-CANVAS-011 M4 · A6) — 낼 윤곽 상자가 없다. 걸러 두면
+  // 선에 선을 붙이는 길이 애초에 열리지 않는다(`connector/anchors.ts` §연결선도 앵커를
+  // 내지 않는다). `anchorHitAt` 의 인자가 `OutlinedNode[]` 이므로 이 걸러냄이 빠지면
+  // **컴파일되지 않는다** — A6 을 붙드는 것은 검사가 아니라 타입이다.
+  const anchorHosts: readonly OutlinedNode[] = TOOL_SHOWS_ANCHORS[tool]
+    ? elements.filter((el) => !isConnector(el))
+    : [];
+
+  /**
    * 프레임 콜백이 늦게 실행될 때 **최신** props 를 보게 한다. 드래그 중에는 매 프레임
    * `elements` 가 새로 오므로, 예약 시점의 클로저를 그대로 쓰면 한 프레임 뒤처진 배열에
    * 기하를 써 넣게 된다.
+   *
+   * **M9 가 둘을 더한다**(`textWidths` · `anchorHosts`). 연결선 끝점 손잡이는 끄는 동안
+   * 매 프레임 "지금 손이 어느 앵커 위인가" 를 물어야 하고(REQ-07-a), 그 물음은 앵커를
+   * **그리는 그 목록**을 봐야 한다 — 여기서 제 손으로 다시 거르면 보이는 점과 붙는 점이
+   * 갈린다(위험 R1). 그래서 위 `anchorHosts` 가 이 줄보다 **앞에** 선다.
    */
-  const latestRef = useRef({ elements, projection, onElementsChange, snapToGrid, gridStep });
+  const latestRef = useRef({
+    elements,
+    projection,
+    onElementsChange,
+    snapToGrid,
+    gridStep,
+    textWidths,
+    anchorHosts,
+  });
   useEffect(() => {
-    latestRef.current = { elements, projection, onElementsChange, snapToGrid, gridStep };
+    latestRef.current = {
+      elements,
+      projection,
+      onElementsChange,
+      snapToGrid,
+      gridStep,
+      textWidths,
+      anchorHosts,
+    };
   });
 
   /**
@@ -1244,6 +1424,8 @@ export default function CanvasEditOverlay({
       onElementsChange: emit,
       snapToGrid: snap,
       gridStep: step,
+      textWidths: widths,
+      anchorHosts: hosts,
     } = latestRef.current;
     // 0 으로 나눈 이동량은 요소를 화면 밖으로 날린다.
     if (!(proj.stage.width > 0) || !(proj.stage.height > 0)) return;
@@ -1282,6 +1464,27 @@ export default function CanvasEditOverlay({
           constrainAngle: pending.shift,
         });
         emit(patchGeometryByKey(els, drag.nodeId, line));
+        return;
+      }
+      case 'connectorPoint': {
+        // **기하 통로를 지나지 않는 둘째 쓰기다.** 글자 크기(아래)가 첫째였고 그것은
+        // 기하가 아니라 스타일이기 때문인데, 여기는 이유가 다르다 — 연결선에 `geometry`
+        // 자체가 없다(A4). `patchGeometryByKey` 는 `Geometry` 를 받으므로 실을 값이 없고,
+        // 억지로 상자를 지어 넣으면 011 이 §여섯 번째 종류에서 기각한 그 형상이 된다.
+        if (drag.handle.kind === 'mid') {
+          // 중간점은 **그 자리 하나만** 쓴다(AC-65). 이웃은 쓰는 함수가 같은 객체 그대로
+          // 지나 보낸다.
+          emit(moveConnectorPoint(els, drag.nodeId, drag.handle.index, pointer));
+          return;
+        }
+        // 끝점은 **매 프레임 다시 묻는다** — 지금 손이 어느 앵커 위인가(REQ-07-a).
+        // 집는 자는 잇는 몸짓이 쓰는 그 함수 하나이고(`anchorHitAt`), 보는 목록도 점을
+        // 찍은 그 목록이다(`anchorHosts`) — 보이는 점과 붙는 점이 갈릴 수 없다(위험 R1).
+        //
+        // 오차 밖이면 **자유 끝점**이다. 그래서 붙이는 길과 떼는 길이 한 몸짓이며,
+        // 빈 곳에서 놓은 그은 선과 같은 규칙을 탄다(AC-58).
+        const landed = anchorHitAt(hosts, point, proj, widths, ANCHOR_PICK_SLOP_PX);
+        emit(repointConnector(els, drag.nodeId, drag.handle.side, landed?.ref, pointer));
         return;
       }
       default: {
@@ -1348,31 +1551,6 @@ export default function CanvasEditOverlay({
     },
     [],
   );
-
-  /**
-   * 지금 앵커를 보일 노드들 — **최상위 전부**다(REQ-02-b · 앵커를 보이는 도구가 켜진
-   * 동안에만).
-   *
-   * 고른 것에만 세우지 않는 까닭은 M8 이다: 잇는 일은 요소 **둘** 사이에서 일어나므로,
-   * 출발 앵커를 고르는 순간 도착 앵커가 사라지는 화면이 된다. M3' 가 미리 그렇게 정해
-   * 두었고, M8 은 그 결정을 되돌리지 않는다.
-   *
-   * 도구가 꺼져 있으면 **빈 배열**이라 아래 `map` 이 DOM 에 아무것도 남기지 않으며,
-   * 잇는 몸짓도 집을 점이 없어 시작되지 않는다(`anchorHitAt` 이 부재를 낸다). 편집이 꺼진
-   * 표면에는 이 층 자체가 서지 않으므로 표시 전용 패널에도 앵커가 없다(위
-   * `if (!enabled) return null`) — AC-60 은 그 한 줄이 이미 참으로 만든다.
-   *
-   * **그리는 자리와 집는 자리가 이 한 목록을 함께 본다.** 둘이 저마다 걸러 내면 "보이는
-   * 점인데 잡히지 않는다"(또는 그 반대)가 표현 가능해진다 — 위험 R1 의 그 형상이다.
-   * 그래서 이 값이 포인터 경로 **앞**에 선다.
-   */
-  // 연결선은 앵커를 내지 않는다(SPEC-CANVAS-011 M4 · A6) — 낼 윤곽 상자가 없다. 걸러 두면
-  // 선에 선을 붙이는 길이 애초에 열리지 않는다(`connector/anchors.ts` §연결선도 앵커를
-  // 내지 않는다). `anchorHitAt` 의 인자가 `OutlinedNode[]` 이므로 이 걸러냄이 빠지면
-  // **컴파일되지 않는다** — A6 을 붙드는 것은 검사가 아니라 타입이다.
-  const anchorHosts: readonly OutlinedNode[] = TOOL_SHOWS_ANCHORS[tool]
-    ? elements.filter((el) => !isConnector(el))
-    : [];
 
   /**
    * 잇는 몸짓을 **끝낸다** — 놓은 자리가 앵커면 참조로, 아니면 자유 끝점으로 (REQ-03).
@@ -1589,7 +1767,46 @@ export default function CanvasEditOverlay({
     // 판정에 쓸 직전 누름은 **대상 키까지** 함께 본다. 그래서 서로 다른 두 부품을 빠르게
     // 연달아 누르는 것은 더블클릭이 아니다 — 그때 사용자가 한 일은 "이것, 그리고 저것"
     // 이지 "이 안으로" 가 아니다.
-    const hitKey = frameKey(hit.nodeId, hit.partId);
+    // **앵커 도구가 켜진 동안 앵커가 잉크를 이긴다**(SPEC-CANVAS-011 M9).
+    //
+    // M8 이 붙들어 둔 사실이 이 자리의 결함이었다: 연결선의 끝은 **정확히 그 앵커 자리**
+    // 이므로 그 점을 누르면 히트가 잉크라고 답하고(REQ-07-b · 배열 뒤가 곧 위다), 대상이
+    // 연결선이면 앵커 갈래가 아무 일도 하지 않는다 — 선이 걸린 앵커는 앵커 도구로 뺄 수
+    // 없었다. 도구가 있는데 닿지 못하는 자리가 있는 것이 그 자체로 결함이다.
+    //
+    // 고치는 근거는 M3'b 가 이미 세웠다: 몸짓의 뜻을 가르는 것은 **대상이 아니라 도구**다
+    // ("앵커 도구가 켜진 동안 더블클릭은 언제나 앵커다 — 그룹 부품 위에서도"). 앵커에 무엇이
+    // 붙어 있다는 이유로 그 앵커에 닿지 못하는 것은 그 규칙의 구멍이다.
+    //
+    // **도구에 매인 우선순위다.** 그리기 순서는 한 글자도 바뀌지 않고(배열 순서가 여전히
+    // 유일한 z-order), 도구가 꺼져 있거나 고르기 도구일 때의 평범한 고르기에서는 잉크가
+    // 종전대로 이긴다 — 연결선을 눌러 고르는 길이 막히면 M9 의 손잡이 자체가 설 수 없다.
+    const hitNode = elements.find((el) => el.id === hit.nodeId);
+    const overAnchor =
+      TOOL_ANCHOR_GESTURE[tool] && hitNode !== undefined && isConnector(hitNode)
+        ? anchorHitAt(anchorHosts, point, projection, textWidths, ANCHOR_PICK_SLOP_PX)
+        : undefined;
+
+    /** 이 누름이 **겨누는** 것. 앵커가 이겼으면 그 앵커를 든 요소다. */
+    const gestureNodeId = overAnchor?.ref.el ?? hit.nodeId;
+
+    // **연타 짝짓기에 쓰는 키는 겨눈 것의 키다** — 히트의 키가 아니다.
+    //
+    // 두 누름이 같은 몸짓으로 읽히려면 첫 누름이 적은 키를 둘째 누름이 **다시 적어야**
+    // 한다. 잉크를 기준으로 적으면 그 조건이 잉크의 경계에서 깨진다: 같은 앵커를 겨눈 두
+    // 누름이라도 하나는 선 위(연결선 키)이고 하나는 그 곁(요소 키)일 수 있고 — 집는 오차
+    // 9px 은 연타 오차 5px 보다 넓으므로 실제로 일어난다 — 그때 키가 갈려 둘째 누름이
+    // 짝을 잃는다. 사용자에게는 "더블클릭이 가끔 안 먹는다" 로만 보이는 그 부류다.
+    //
+    // 겨눈 것을 적으면 두 누름 모두 그 요소를 적으므로 짝이 유지된다. 반대로 정말 다른
+    // 것을 겨눈 두 누름(선 위의 아무 곳 · 그 곁의 앵커)은 키가 갈려 짝지어지지 않으며,
+    // 그것이 옳다 — 009 가 "서로 다른 두 부품을 빠르게 연달아 누르는 것은 더블클릭이
+    // 아니다" 로 세운 그 규칙과 같은 문장이다.
+    //
+    // 도구가 꺼져 있으면 `overAnchor` 가 언제나 부재이므로 이 줄은 `frameKey(hit…)` 로
+    // 떨어지고, 009 의 그룹 진입은 한 글자도 바뀌지 않는다(AC-26 · AC-27).
+    const hitKey =
+      overAnchor === undefined ? frameKey(hit.nodeId, hit.partId) : frameKey(gestureNodeId);
     const second = isSecondPress(lastPressRef.current, event.timeStamp, point, hitKey);
     lastPressRef.current = { at: event.timeStamp, point, key: hitKey };
 
@@ -1612,7 +1829,9 @@ export default function CanvasEditOverlay({
       // 끊지 않고도 멀쩡했던 것은 진입이 **멱등**이기 때문이고(같은 부품으로 두 번 들어가면
       // 같은 자리다), 더하기·빼기를 오가는 몸짓에는 그 성질이 없다.
       lastPressRef.current = null;
-      applyAnchorGesture(hit.nodeId, point);
+      // **겨눈 것**에 건다 — 위 `gestureNodeId` 다. 잉크가 이겼으면 종전과 같은
+      // `hit.nodeId` 이고, 앵커가 이겼으면 그 앵커를 든 요소다.
+      applyAnchorGesture(gestureNodeId, point);
       return;
     }
 
@@ -1695,6 +1914,41 @@ export default function CanvasEditOverlay({
     if (next === null) return;
 
     dragRef.current = next;
+    pendingRef.current = null;
+    host.setPointerCapture?.(event.pointerId);
+  };
+
+  /**
+   * 연결선 손잡이에서 시작하는 드래그 (SPEC-CANVAS-011 M9 · REQ-07).
+   *
+   * 위 `startHandleDrag` 와 **같은 세 줄**을 지킨다 — 이벤트를 여기서 끊고(끊지 않으면
+   * 루트의 몸통 히트 테스트가 이어서 돌아 손잡이 뒤의 것을 새로 고르거나 빈 자리의
+   * 사각형을 세운다), 좌표의 원점은 루트이며, 선택은 건드리지 않는다(손잡이는 이미
+   * 골라진 연결선에만 뜬다).
+   *
+   * 갈리는 것은 `handleDragState` 를 지나지 않는다는 점 하나다. 그 함수는 **종류와 핸들
+   * 이름을 맞춰 보고 잡는 순간의 기하를 뜬다** — 연결선에는 맞춰 볼 이름도(고정 표에 없다)
+   * 뜰 기하도(`geometry` 가 없다) 없으므로, 그 함수에 연결선 갈래를 더하면 두 `null` 이
+   * 세 개가 되고 그 셋은 서로 다른 뜻을 갖는다.
+   */
+  const startConnectorHandleDrag = (
+    connector: ConnectorElement,
+    handle: ConnectorHandle,
+    event: React.PointerEvent<HTMLButtonElement>,
+  ): void => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const host = rootRef.current!;
+    const frame = pointerFrameOf(host.getBoundingClientRect(), stage);
+    dragRef.current = {
+      mode: 'connectorPoint',
+      pointerId: event.pointerId,
+      origin: stagePoint(event.clientX, event.clientY, frame),
+      frame,
+      nodeId: connector.id,
+      handle,
+    };
     pendingRef.current = null;
     host.setPointerCapture?.(event.pointerId);
   };
@@ -2292,8 +2546,33 @@ export default function CanvasEditOverlay({
    * `find` 가 비는 것은 실제로 일어난다 — 골라 둔 요소를 목록 편집기에서 지우면 선택에는
    * 그 id 가 남고 배열에는 없다.
    */
-  const handleHost =
-    selection.size === 1 ? nodeForKey(elements, [...selection][0]!) : undefined;
+  /** 하나만 골랐을 때의 그 키. 손잡이는 **한 요소만 골랐을 때만** 뜬다(§크기 조절). */
+  const soleKey = selection.size === 1 ? [...selection][0]! : undefined;
+  const handleHost = soleKey === undefined ? undefined : nodeForKey(elements, soleKey);
+
+  /**
+   * 손잡이를 세울 **연결선** (SPEC-CANVAS-011 M9 · REQ-07).
+   *
+   * 위 `handleHost` 와 **배타적**이다 — `nodeForKey` 는 연결선을 조용히 떨어뜨리고
+   * `connectorForKey` 는 그것만 받으므로, 한 키가 둘 다를 채우는 상태가 없다. 그래서
+   * "연결선에 8핸들이 선다"(AC-63)가 검사가 아니라 **형상**으로 불가능하다.
+   */
+  const connectorHost = soleKey === undefined ? undefined : connectorForKey(elements, soleKey);
+
+  /**
+   * 그 연결선의 점들 — **그린 그 함수**가 낸 목록이다(AC-45 ①의 셋째 소비자).
+   *
+   * 여기서 참조를 다시 풀지 않는 것이 요점이다. 그리는 쪽·잡는 쪽과 다른 자리에서 풀면
+   * "보이는 선과 잡는 손잡이가 다른 자리에 있다" 가 표현 가능해진다 — 002 가 위험 R1 로
+   * 이름 적어 둔 그 결함이며, 011 은 그것을 막으려고 해석을 한 함수로 못박았다.
+   *
+   * 끊긴 연결이면 `undefined` 이고, 그때 손잡이는 **하나도 서지 않는다**(REQ-08).
+   * 그려지지 않는 선에 손잡이가 서면 사용자는 보이지 않는 것을 끌게 된다.
+   */
+  const connectorPoints =
+    connectorHost === undefined
+      ? undefined
+      : resolveConnector(connectorHost, elements, projection, textWidths);
 
   /** 정렬은 **맞출 상대가 있어야** 뜻이 있다 — 하나만 골라 놓고 맞출 곳은 없다. */
   const canAlign = selection.size >= 2;
@@ -2772,6 +3051,50 @@ export default function CanvasEditOverlay({
             onPointerDown={(event) => startHandleDrag(handleHost, handle.id, event)}
           />
         ))}
+      {/* **연결선 손잡이** — 끝점 둘 + 중간점마다 (SPEC-CANVAS-011 M9 · REQ-07).
+
+          **8핸들과 이름 공간이 다르다**(`canvas-connector-handle-*`). 섞으면
+          `canvas-handle-nw` 가 "상자 왼쪽 위" 인지 "연결선의 어떤 자리" 인지 이름만으로는
+          답하지 못하고, 연결선에 8핸들이 서지 않았음을 재는 자리가 가려낼 것을 잃는다.
+
+          갯수가 저술마다 다르므로 `CanvasHandleId` 를 넓히지 않고 **별도 갈래**로 둔다
+          (plan §M9 2) — 넓히면 `HANDLE_ARIA_KEYS` · `HANDLE_CURSOR` 두 표가 뜻 없는 항목을
+          하나씩 갖고, 그 항목에는 답할 문장이 없다.
+
+          자리는 `resolveConnector` **한 함수**에서 온다 — 그리는 쪽·잡는 쪽이 보는 그
+          목록이다. 끊긴 연결이면 목록 자체가 부재이므로 손잡이도 서지 않고 예외도 없다
+          (REQ-08). `connectorHost` 와 `handleHost` 는 배타적이라 이 갈래와 위 갈래가
+          함께 서는 일이 없다.
+
+          좌표계는 8핸들과 같다: 투영된 점을 `left`/`top` 에 그대로 두고 `-translate-*-1/2`
+          로 중심을 맞춘다. 반 칸을 미리 빼면 그 산술이 곧 두 번째 투영이 된다(AC-E2).
+
+          **앵커 도구가 켜진 동안에는 포인터를 먹지 않는다.** 끝 손잡이는 제가 붙은 앵커와
+          **정확히 같은 자리**에 서므로(그 점이 곧 그 끝이다), 먹으면 그 앵커를 겨눈 누름을
+          손잡이가 가로챈다 — 위 §앵커가 잉크를 이긴다가 히트 층에서 막은 바로 그 구멍이
+          DOM 층에서 되살아나는 형상이다. 도구가 몸짓의 뜻을 갈아 끼우는 동안 이 표면은
+          앵커의 것이고, 그래서 앵커 점이 표식인 것과 **같은 이유로** 손잡이도 물러선다. */}
+      {connectorHost !== undefined &&
+        connectorPoints?.map((point, index) => {
+          const handle = connectorHandleAt(index, connectorPoints.length);
+          const name = connectorHandleName(handle);
+          const px = projectPoint(point, projection);
+          return (
+            <button
+              key={name}
+              type="button"
+              data-testid={`canvas-connector-handle-${name}`}
+              aria-label={connectorHandleLabel(t, handle)}
+              className={cn(
+                HANDLE_CLASS,
+                CONNECTOR_HANDLE_CURSOR,
+                TOOL_ANCHOR_GESTURE[tool] && 'pointer-events-none',
+              )}
+              style={{ left: px.x, top: px.y }}
+              onPointerDown={(event) => startConnectorHandleDrag(connectorHost, handle, event)}
+            />
+          );
+        })}
       {/* **마키 사각형** — 지금 감싸고 있는 영역(SPEC-CANVAS-009 결정 5).
 
           **표시 층이 아니다**(불변식 I23). I23 이 막는 결함의 형상은 "**조건 없이** 그려지는

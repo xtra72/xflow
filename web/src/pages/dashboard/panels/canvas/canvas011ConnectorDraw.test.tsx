@@ -835,38 +835,71 @@ describe("임의 앵커를 빼면 그 연결선이 **끊긴 연결**이 된다 (
   });
 });
 
-// --- 닿지 않는 자리 (오늘 관측된 사실 · M9 · M12 의 몫) ----------------------
+// --- 닿지 않던 자리 — **M9 가 열었다** ---------------------------------------
+//
+// M8 은 이 두 단언을 "오늘 관측된 사실" 로 붙들어 두고, 고치는 자리가 M9 라고 적었다:
+// "연결선을 고르고 그 손잡이를 다루는 일이 M9 의 몫이고, 그때 잉크 위의 누름이 무엇을
+// 겨누는가가 한 번에 정해진다. 그 결정이 서면 이 단언은 뒤집히며, 뒤집히는 것이 옳다."
+//
+// **M9 가 그 결정을 세웠다**: 앵커 도구가 켜진 동안 오차 안의 앵커가 잉크를 이긴다
+// (`CanvasEditOverlay` §앵커 도구가 켜진 동안 앵커가 잉크를 이긴다). 근거는 M3'b 가
+// 이미 세운 문장이다 — 몸짓의 뜻을 가르는 것은 대상이 아니라 **도구**이고, 앵커에 무엇이
+// 붙어 있다는 이유로 그 앵커에 닿지 못하는 것은 그 규칙의 구멍이다.
+//
+// 그래서 절 이름과 첫 단언을 **뒤집는다.** 시험을 지우지 않는 것에 뜻이 있다: 지우면
+// "선이 걸린 앵커도 뺄 수 있다" 를 재는 자리가 아무 데도 없어지고, 이 성질은 히트 순서가
+// 바뀌는 날 조용히 되돌아간다(009 가 004 의 두 단언에 대해 한 그대로다).
 
-describe('연결선이 걸린 임의 앵커는 **앵커 도구로 뺄 수 없다** (오늘의 사실)', () => {
-  it('그 자리의 더블클릭은 앵커가 아니라 **연결선**을 겨눈다', () => {
-    // 왜: 연결선의 끝은 **정확히 그 앵커 자리**이므로, 그 점을 누르면 히트 판정이 잉크
-    // 위라고 답한다(REQ-07-b · 배열 뒤가 곧 위다). 앵커 갈래는 그 히트의 `nodeId` 를
-    // 대상으로 삼고(M3'b), 대상이 연결선이면 `applyAnchorGesture` 가 아무 일도 하지
-    // 않는다(M4 — 연결선은 앵커를 낼 상자가 없다).
-    //
-    // **이 시험은 성질을 축복하는 것이 아니라 붙들어 두는 것이다.** 고치는 자리는 M8 이
-    // 아니다: 연결선을 고르고 그 손잡이를 다루는 일이 M9 의 몫이고, 그때 "잉크 위의 누름이
-    // 무엇을 겨누는가" 가 한 번에 정해진다. 그 결정이 서면 이 단언은 뒤집히며, 뒤집히는
-    // 것이 옳다 — 지금 조용히 두면 그 자리에 물음이 있다는 사실 자체가 사라진다.
-    const { anchorId, connectorId } = connectedScene();
+describe('연결선이 걸린 임의 앵커도 **앵커 도구로 뺀다** (M9 가 뒤집은 단언)', () => {
+  it('그 자리의 더블클릭은 잉크가 아니라 **앵커**를 겨눈다', () => {
+    const { connectorId } = connectedScene();
     fireEvent.click(anchorToolButton());
-    // 먼저 그 누름이 실제로 연결선을 맞힘을 확인한다 — 빗나간 좌표로 "안 빠졌다" 를
-    // 재면 이 시험은 틀린 이유로 초록이 된다.
+    // **잉크를 맞힌다는 전제는 그대로 참이다.** 달라진 것은 히트가 아니라 그 히트를
+    // 무엇으로 읽는가이며, 그 전제가 깨지면 이 시험은 틀린 이유로 초록이 된다.
     expect(hitTest(live, AT.r1Body, PROJ, {})?.nodeId, 'precondition: 잉크를 맞혔다').toBe(
       connectorId,
     );
 
     doubleClick(AT.r1Body);
-    expect(anchorsOfR1().map((a) => a.id)).toEqual([anchorId]);
+    expect(anchorsOfR1()).toEqual([]);
   });
 
-  it('연결선이 없으면 같은 자리에서 그대로 빠진다 — 가리는 것은 잉크뿐이다', () => {
+  it('그래도 **연결선은 버려지지 않는다** — 끊긴 연결이 될 뿐이다 (REQ-08)', () => {
+    // 뺐다고 선을 함께 지우지 않는다. 조용히 사라지는 저술이 008 이 이름 적은 가장 나쁜
+    // 실패이고, 앵커를 도로 세우면 그 선은 다시 그려진다(위 §끊긴 뒤).
+    const { connectorId } = connectedScene();
+    fireEvent.click(anchorToolButton());
+    doubleClick(AT.r1Body);
+
+    expect(anchorsOfR1()).toEqual([]);
+    expect(connectors().map((c) => c.id)).toEqual([connectorId]);
+    expect(resolveConnector(connectors()[0]!, live, PROJ, {})).toBeUndefined();
+  });
+
+  it('연결선이 없어도 같은 자리에서 그대로 빠진다 — 잉크가 가리지 않던 길도 산다', () => {
     setup();
     fireEvent.click(anchorToolButton());
     doubleClick(AT.r1Body);
     expect(anchorsOfR1()).toHaveLength(1);
     doubleClick(AT.r1Body);
     expect(anchorsOfR1()).toEqual([]);
+  });
+
+  it('**고르기 도구에서는 잉크가 종전대로 이긴다** — 우선순위는 도구에 매여 있다', () => {
+    // 도구를 켜지 않은 채 같은 자리를 누르면 골라지는 것은 연결선이다. 이 단언이 없으면
+    // M9 의 우선순위가 도구와 무관하게 퍼졌는지 알 길이 없고, 그때 연결선을 눌러 고르는
+    // 길이 막혀 손잡이 자체가 설 수 없다.
+    const { connectorId } = connectedScene();
+    // `connectedScene` 은 직선 도구를 켠 채로 끝난다. 끄지 않으면 앵커 위의 누름이 **긋는
+    // 몸짓**으로 읽혀 이 시험이 재려는 갈래에 닿지도 않는다.
+    fireEvent.click(toolButton('straight'));
+    expect(toolButton('straight').getAttribute('aria-pressed'), 'precondition: 도구가 꺼졌다').toBe(
+      'false',
+    );
+
+    doubleClick(AT.r1Body);
+    expect(selected()).toEqual([connectorId]);
+    expect(anchorsOfR1()).toHaveLength(1);
   });
 });
 
