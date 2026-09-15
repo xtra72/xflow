@@ -41,6 +41,14 @@
 // 않는다 — 없는 입력을 막는 검사는 죽은 코드이고, 죽은 코드는 다음 사람에게 "부품이 여기
 // 올 수 있다" 고 거짓말한다.
 //
+// ## 연결선도 앵커를 내지 않는다 (M4)
+//
+// 인자가 `CanvasNode` 가 아니라 `OutlinedNode` 인 것이 그 사실이다. 아홉 자리는 전부
+// `outlineBox` 에서 나오는데 연결선에는 낼 상자가 없고(`connectorTypes` 머리말), 두 끝을
+// 감싸는 상자를 지어 주면 **선에 선을 붙이는 길**이 열린다 — 그러면 참조가 참조를 가리키고
+// 끝점 해석(M5)이 고리를 돌 수 있게 되며, 그 고리를 막는 검사가 해석·그리기·히트 셋에
+// 각각 필요해진다. 타입으로 막아 두면 그 검사가 셋 다 없어도 된다.
+//
 // ## 좌표는 **캔버스 단위**다
 //
 // 이 코드베이스는 캔버스 단위로 저술하고 그리는 자리에서만 투영한다. 앵커도 그 규율을
@@ -70,7 +78,7 @@ import {
 import { BOX_HANDLE_FACTORS, BOX_HANDLE_IDS } from '../canvasEditGeometry';
 import { outlineBox } from '../canvasOutline';
 import { toAbsolutePointExact, toLocalPoint, widenDegenerateBox } from '../group/groupCoords';
-import type { CanvasNode } from '../group/groupTypes';
+import type { OutlinedNode } from '../group/groupTypes';
 import { ANCHOR_SNAP_LOCAL, type AnchorRefusal, type CustomAnchor } from './anchorTypes';
 
 /** 중심 앵커의 이름. 011 이 새로 짓는 자리 이름은 **이 하나뿐**이다(AC-11). */
@@ -125,7 +133,7 @@ export type AnchorId = FixedAnchorId | string;
  * 붙어 있던 연결선에서만 드러난다. 먼저 온 것이 이기는 파서 규율과 같은 방향이다.
  */
 export function anchorPoints(
-  node: CanvasNode,
+  node: OutlinedNode,
   proj: CanvasProjection,
   textWidths: Readonly<Record<string, number>>,
 ): Map<AnchorId, CanvasPoint> {
@@ -163,7 +171,7 @@ export function anchorPoints(
 // 하든 이 산술은 화면도 상태도 모른다.
 
 /** 상자형 노드의 캔버스 단위 상자. 상자형이 아니면 부재다(A11). */
-function anchorBox(node: CanvasNode): CanvasBox | undefined {
+function anchorBox(node: OutlinedNode): CanvasBox | undefined {
   const geo = node.geometry;
   if (!isBoxGeometry(geo)) return undefined;
   return { x: geo.x, y: geo.y, w: geo.w, h: geo.h };
@@ -179,7 +187,7 @@ function anchorBox(node: CanvasNode): CanvasBox | undefined {
  * 제어점(`C` 의 `x1·y1 · x2·y2`)은 보지 않는다 — 곡선 위의 점이 아니므로 거기 붙이면
  * 앵커가 그려지는 윤곽에서 떨어져 앉는다. `Z` 는 좌표가 없어 저절로 빠진다.
  */
-function snapToPathVertex(node: CanvasNode, local: PointGeometry): PointGeometry {
+function snapToPathVertex(node: OutlinedNode, local: PointGeometry): PointGeometry {
   if (!('path' in node)) return local;
   const limit = ANCHOR_SNAP_LOCAL * ANCHOR_SNAP_LOCAL;
   let best = local;
@@ -209,7 +217,7 @@ function snapToPathVertex(node: CanvasNode, local: PointGeometry): PointGeometry
  * 쪽이라 0 인 축에서 모든 자리가 한 점으로 내려앉고, 그 결함은 예외 없이 저장 왕복을
  * 견디며 화면으로만 드러난다(004 가 같은 함정에서 같은 결론에 도달했다).
  */
-export function addAnchorAt<T extends CanvasNode>(node: T, at: CanvasPoint, id: string): T {
+export function addAnchorAt<T extends OutlinedNode>(node: T, at: CanvasPoint, id: string): T {
   const box = anchorBox(node);
   if (box === undefined) return node;
   if (id.trim() === '') return node;
@@ -233,7 +241,7 @@ export function addAnchorAt<T extends CanvasNode>(node: T, at: CanvasPoint, id: 
  * 떨어뜨리는 것과 같은 규율이며, 두 규율이 갈리면 화면에서는 보이지 않는 차이가 config
  * 에만 남는다.
  */
-export function removeAnchor<T extends CanvasNode>(node: T, id: string): T {
+export function removeAnchor<T extends OutlinedNode>(node: T, id: string): T {
   const existing = node.anchors;
   if (existing === undefined) return node;
 
@@ -285,7 +293,7 @@ export type AnchorGesture =
  * 그래서 전역 계수기도 난수도 두지 않는다: 둘 다 저장 왕복에 값이 달라져 시험이 자리를
  * 고정하지 못하게 만들고, 난수는 그 위에 "같은 입력에 같은 config" 까지 잃는다.
  */
-export function nextAnchorId(node: CanvasNode): string {
+export function nextAnchorId(node: OutlinedNode): string {
   const taken = new Set((node.anchors ?? []).map((anchor) => anchor.id));
   for (let n = 1; ; n += 1) {
     const id = `${CUSTOM_ANCHOR_PREFIX}${n}`;
@@ -308,7 +316,7 @@ export function nextAnchorId(node: CanvasNode): string {
  * 점은 그대로 있는데 무언가가 사라진 config 가 되고, 화면은 "아무 일도 없었다" 고 말한다.
  */
 export function anchorGestureAt(
-  node: CanvasNode,
+  node: OutlinedNode,
   points: ReadonlyMap<AnchorId, CanvasPoint>,
   at: PxPoint,
   proj: CanvasProjection,

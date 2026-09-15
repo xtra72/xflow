@@ -21,7 +21,7 @@ import {
   type CanvasProjection,
   type PxBox,
 } from './canvasGeometry';
-import type { CanvasNode } from './group/groupTypes';
+import type { OutlinedNode } from './group/groupTypes';
 
 /** 유효한 글자 크기(px). `canvasHitTest.resolveFontSize` 와 같은 판정이다. */
 export function resolveFontSize(size: number | undefined): number {
@@ -48,9 +48,15 @@ export function resolveMeasuredWidth(width: number | undefined): number {
  * **경로는 rect 와 같은 상자다.** 종전의 `default:` 는 경로의 상자 기하를 문구 기준점으로
  * 읽어(구조적으로 대입된다 — 가정 A6) 외곽선을 실측 글자 폭 0 · 기본 글자 크기의 작은
  * 상자로 그렸다. 컴파일러가 울지 않던 자리이므로 갈래를 이름으로 적는다.
+ *
+ * **연결선은 여기 오지 않는다**(SPEC-CANVAS-011 M4). 인자가 `CanvasNode` 가 아니라
+ * `OutlinedNode` 인 것이 그 금지의 전부다 — 연결선에는 `geometry` 가 없어 낼 상자가 없고,
+ * 두 끝을 감싸는 상자를 지어 돌려주면 그 상자가 곧 8핸들이 잡는 상자이자 마키가 재는
+ * 상자가 된다(REQ-07 이 금지한 그것). 뜻 없는 값을 돌려주느니 **타입이 "여기 올 수 없다"
+ * 고 말하게 두는 편**이 낫고, 그러면 부르는 쪽이 건너뛰기를 잊는 것이 불가능해진다.
  */
 export function outlineBox(
-  el: CanvasNode,
+  el: OutlinedNode,
   proj: CanvasProjection,
   textWidths: Readonly<Record<string, number>>,
 ): PxBox {

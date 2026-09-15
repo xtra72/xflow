@@ -75,6 +75,34 @@ describe('walkDrawables — 그리기 순서는 2단이다 (AC-E4)', () => {
     expect([...walkDrawables(nodes)].every((d) => d.element.kind !== ('group' as string))).toBe(true);
   });
 
+  it('연결선은 **아직** 나오지 않는다 — 그러나 이웃의 차례는 흔들리지 않는다', () => {
+    // SPEC-CANVAS-011 M4. 연결선은 최상위 노드이지만 그릴 법이 M6 에서야 선다. 그 전까지는
+    // 순회에서 빠지며, 이 단언이 그 사실을 **값으로** 붙든다 — M6 이 이 줄을 뒤집을 때
+    // 그것이 의도된 변경임이 드러난다.
+    //
+    // 함께 재는 것이 하나 더 있다: 연결선이 섞여 있어도 **나머지의 키가 한 글자도 달라지지
+    // 않는다**(G11). 키가 흔들리면 트윈 장부와 글자 폭 장부가 함께 어긋난다.
+    const withConnector: CanvasNode[] = [
+      rect('rect-A'),
+      {
+        id: 'c1',
+        kind: 'connector',
+        from: { el: 'rect-A', a: 'e' },
+        to: { el: 'rect-B', a: 'w' },
+        route: 'straight',
+      },
+      group('grp-1', ['p1', 'p2']),
+      rect('rect-B'),
+    ];
+    expect([...walkDrawables(withConnector)].map((d) => d.key)).toEqual([
+      'rect-A',
+      'grp-1/p1',
+      'grp-1/p2',
+      'rect-B',
+    ]);
+    expect([...walkDrawables(withConnector)].some((d) => d.element.id === 'c1')).toBe(false);
+  });
+
   it('부품 항목은 제 그룹을 들고 나오고 최상위 항목은 들지 않는다', () => {
     const visits = [...walkDrawables(nodes)];
     expect(visits[0]?.group).toBeUndefined();

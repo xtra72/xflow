@@ -42,6 +42,7 @@ import {
 import { TEXT_BASELINE } from './drawElement';
 import { frameKey } from './group/frameKey';
 import { isGroup, type CanvasNode, type GroupElement } from './group/groupTypes';
+import { isConnector } from './connector/connectorTypes';
 import {
   FLATTEN_TOLERANCE_PX,
   flattenPath,
@@ -330,6 +331,11 @@ export function hitTest(
   // 맞지 않음" 과 구분되지 않으므로, 들어오는 자리에서 한 번에 끊는다.
   if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return undefined;
   for (const node of [...elements].reverse()) {
+    // **연결선은 아직 잡히지 않는다**(SPEC-CANVAS-011 M7 이 이 줄을 `hitsConnector` 로
+    // 바꾼다). 지금 뜻 없이 통과시키면 `node.style` 이 없는 노드가 아래 가시성 판정에
+    // 닿는다. 연결선은 상자가 아니라 **잉크와의 거리**로 잡혀야 하고(REQ-07-b), 그 판정은
+    // 끝점 해석(M5)이 서기 전에는 적을 수 없다 — 잡을 자리를 아직 아무도 모른다.
+    if (isConnector(node)) continue;
     if (isGroup(node)) {
       const hit = hitsGroup(node, point, proj, textWidths);
       if (hit !== undefined) return hit;

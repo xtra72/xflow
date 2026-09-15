@@ -44,6 +44,7 @@ import {
   type CanvasElement,
   type CanvasSize,
 } from '../canvasConfig';
+import { isConnector } from '../connector/connectorTypes';
 import {
   appendImportedElements,
   SEED_COLOR,
@@ -281,7 +282,10 @@ describe('캔버스가 담지 못하면 경로로 남는다', () => {
     const reopened = parseCanvasConfig(
       JSON.parse(JSON.stringify({ canvas: CANVAS, elements: els })) as unknown,
     );
-    expect(reopened.elements[0]!.geometry).not.toEqual(DEFAULT_LINE_GEOMETRY);
+    const reopenedFirst = reopened.elements[0]!;
+    // 넣은 것이 경로 하나뿐이라 연결선이 나올 수 없다(SPEC-CANVAS-011 M4).
+    if (isConnector(reopenedFirst)) throw new Error('연결선이 나올 수 없다');
+    expect(reopenedFirst.geometry).not.toEqual(DEFAULT_LINE_GEOMETRY);
   });
 
   it('길이가 0 인 <line> 도 같다 — 점 하나는 선이 아니다', () => {

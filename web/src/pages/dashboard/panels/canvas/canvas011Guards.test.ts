@@ -1,4 +1,4 @@
-// 011 이 지키기로 한 **형상**을 소스에서 잰다 (SPEC-CANVAS-011 M3'b · AC-28 · AC-61).
+// 011 이 지키기로 한 **형상**을 소스에서 잰다 (SPEC-CANVAS-011 M3'b · M4 · AC-28 · AC-39 · AC-61).
 //
 // ## 왜 소스를 읽는가
 //
@@ -10,7 +10,7 @@
 // **주석은 걷어내고 읽는다.** 산문에 적힌 금지어가 가드를 헛되이 울리면 다음 사람이 주석을
 // 고치는 것으로 가드를 지나가게 되고, 그때 가드는 이미 죽은 것이다(009 가 세운 그 규율).
 //
-// @spec SPEC-CANVAS-011 AC-28 · AC-61
+// @spec SPEC-CANVAS-011 AC-28 · AC-39 · AC-61
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -66,6 +66,7 @@ describe('그물이 성기지 않다', () => {
     expect(names).toContain('connector/anchors.ts');
     expect(names).toContain('connector/canvasTools.ts');
     expect(names).toContain('connector/CanvasAnchorTools.tsx');
+    expect(names).toContain('connector/connectorTypes.ts');
   });
 });
 
@@ -192,6 +193,74 @@ describe('앵커 도구를 짓는 자리가 **하나**다 (AC-61 · 불변식 I2
     for (const name of ['CanvasTool', 'TOOL_ANCHOR_GESTURE', 'TOOL_SHOWS_ANCHORS', 'toggleTool']) {
       expect(dock.includes(name), name).toBe(false);
     }
+  });
+});
+
+// --- AC-39: 연결선 판별이 **한 자리**다 -------------------------------------
+
+const CONNECTOR_TYPES = 'connector/connectorTypes.ts';
+
+describe('`kind === \'connector\'` 가 `isConnector` 바깥에 없다 (AC-39)', () => {
+  it('그 문자열이 적힌 제품 파일이 `connectorTypes.ts` 하나뿐이다', () => {
+    // 주석은 걷고 읽으므로(위 `stripComments`) 산문에 적힌 예시는 걸리지 않는다.
+    for (const { name, text } of productSources()) {
+      expect(text.includes("'connector'"), name).toBe(name === CONNECTOR_TYPES);
+    }
+  });
+
+  it('그 파일에서도 **상수 선언 한 줄**에만 적힌다', () => {
+    const text = source(CONNECTOR_TYPES);
+    expect(countOf(text, /'connector'/g)).toBe(1);
+    expect(text).toContain("export const CONNECTOR_KIND = 'connector';");
+  });
+
+  it('`kind` 를 그 문자열과 **직접** 견주는 자리가 어디에도 없다', () => {
+    // 상수를 두었으므로 리터럴 비교는 한 자리도 남지 않는다. 이 단언이 빨개진다는 것은
+    // 누군가 판별을 제 손으로 다시 적기 시작했다는 뜻이다.
+    for (const { name, text } of productSources()) {
+      expect(/===\s*'connector'/.test(text), name).toBe(false);
+    }
+  });
+
+  it('비교하는 함수 둘이 그 파일 안에 있고, 둘 다 **같은 상수**를 본다', () => {
+    const text = source(CONNECTOR_TYPES);
+    // 노드를 받는 판별 하나와, 파싱 전 날것 `kind` 를 받는 문 하나다. 파서는 아직 노드가
+    // 아닌 것을 들고 있어 앞의 것을 쓸 수 없으므로 갈래가 둘이지만, 보는 상수는 하나다.
+    expect(countOf(text, /export function isConnector\b/g)).toBe(1);
+    expect(countOf(text, /export function isConnectorKind\b/g)).toBe(1);
+    expect(countOf(text, /=== CONNECTOR_KIND/g)).toBe(2);
+  });
+
+  it('연결선을 건너뛰는 자리는 전부 그 함수를 지난다', () => {
+    // "연결선은 건너뛴다" 가 여러 자리에 붙는 것은 004 가 그룹에서 치른 대가 그대로다.
+    // 그 자리들이 **한 함수**를 지나는 한 판별은 하나로 남는다.
+    const users = productSources().filter(({ text }) => /\bisConnector\(/.test(text));
+    expect(users.length).toBeGreaterThan(3);
+    for (const { name, text } of users) {
+      expect(text.includes("from './connector/connectorTypes'") ||
+        text.includes("from '../connector/connectorTypes'") ||
+        name === CONNECTOR_TYPES, name).toBe(true);
+    }
+  });
+});
+
+// --- M4: 앞의 두 이름을 넓히지 않았다 ---------------------------------------
+
+describe('연결선은 `CanvasElement` 가 아니다 (AC-34)', () => {
+  it('요소 파서의 `kind` 화이트리스트에 연결선이 없다', () => {
+    // 출시된 가드 둘(`canvasElementKind.test.tsx` · `canvas007Regression.test.tsx`)이
+    // 유니온의 원소를 세고, 이 줄은 **파서 쪽**에서 같은 사실을 못박는다. 셋이 함께
+    // 빨개져야 "요소 종류가 늘었다" 는 변경이 조용히 지나가지 못한다.
+    const text = source('canvasConfig.ts');
+    const whitelist = /function parseElement\(raw: unknown\)[\s\S]*?switch \(kind\)/.exec(text);
+    expect(whitelist).not.toBeNull();
+    expect(whitelist?.[0].includes('CONNECTOR_KIND')).toBe(false);
+  });
+
+  it('파서가 갈라지는 자리는 `parseNode` **한 함수**뿐이다', () => {
+    const text = source('canvasConfig.ts');
+    expect(countOf(text, /\bisConnectorKind\(/g)).toBe(1);
+    expect(countOf(text, /\bparseConnector\(/g)).toBe(2); // 정의 한 번 + 호출 한 번
   });
 });
 

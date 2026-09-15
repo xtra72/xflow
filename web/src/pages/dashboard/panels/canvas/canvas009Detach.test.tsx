@@ -21,11 +21,21 @@ vi.mock('@/lib/i18n', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 
-import type { BoxGeometry, CanvasElement, CanvasSize, RuleRow } from './canvasConfig';
+import type { BoxGeometry, CanvasElement, CanvasSize, Geometry, RuleRow } from './canvasConfig';
 import CanvasEditOverlay from './CanvasEditOverlay';
 import { CanvasEditSelectionContext, useCanvasEditSelectionState } from './canvasEditContext';
 import type { CanvasProjection, StageSize } from './canvasGeometry';
 import { isGroup, type CanvasNode, type GroupElement } from './group/groupTypes';
+import { isConnector } from './connector/connectorTypes';
+
+/**
+ * 노드의 기하. 연결선에는 기하가 없으므로(SPEC-CANVAS-011 M4) 좁혀 읽는다 — 이 시험의
+ * 장면에는 연결선이 오지 않으며, 그때는 `undefined` 라 단언이 조용히 통과하지 않는다.
+ */
+function geometryOf(node: CanvasNode): Geometry | undefined {
+  return isConnector(node) ? undefined : node.geometry;
+}
+
 
 // --- 고정 입력 -------------------------------------------------------------
 //
@@ -224,7 +234,7 @@ describe('누르면 부품이 최상위로 올라온다', () => {
     fireEvent.click(detachButton());
 
     // 로컬 (1000,1000)-(5000,5000) → 캔버스 (60,48)-(100,80).
-    expect(lastNodes(emit)[1]!.geometry).toEqual({ x: 60, y: 48, w: 40, h: 32 });
+    expect(geometryOf(lastNodes(emit)[1]!)).toEqual({ x: 60, y: 48, w: 40, h: 32 });
   });
 
   it('뺀 것이 선택으로 남는다 — 방금 뺀 것을 곧바로 끌 수 있어야 한다', () => {

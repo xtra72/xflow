@@ -21,7 +21,7 @@ import { describe, expect, it } from 'vitest';
 import type { CanvasElement } from '../canvasConfig';
 import { unprojectPoint, type CanvasPoint, type CanvasProjection } from '../canvasGeometry';
 import { BOX_HANDLE_IDS, handlePositions } from '../canvasEditGeometry';
-import type { CanvasNode, GroupElement } from '../group/groupTypes';
+import type { GroupElement, OutlinedNode } from '../group/groupTypes';
 import {
   addAnchorAt,
   anchorPoints,
@@ -101,7 +101,11 @@ const GROUP: GroupElement = {
 };
 
 /** 여섯 갈래 × 그 갈래를 살리는 장부. */
-const ALL_KINDS: ReadonlyArray<readonly [string, CanvasNode, Readonly<Record<string, number>>]> = [
+// SPEC-CANVAS-011 M4 — 표본의 타입이 `OutlinedNode` 다. 연결선은 앵커를 내지 않으므로
+// (낼 윤곽 상자가 없다) `anchorPoints` 가 애초에 받지 않는다.
+const ALL_KINDS: ReadonlyArray<
+  readonly [string, OutlinedNode, Readonly<Record<string, number>>]
+> = [
   ['rect', RECT, NO_WIDTHS],
   ['ellipse', ELLIPSE, NO_WIDTHS],
   ['line', LINE, NO_WIDTHS],
@@ -176,7 +180,7 @@ describe('여덟이 8핸들과 같은 자리다 (AC-10)', () => {
   // 캔버스 단위에서 견준다. 그 방향이 정확한 비교이기 때문이다: 양쪽이 같은
   // `unprojectPoint` 하나를 지나므로 상자 산술이 같기만 하면 값이 **비트 단위로** 같고,
   // 반대 방향(앵커를 다시 투영)은 왕복 부동소수 오차를 비교에 끌어들인다.
-  const boxKinds: ReadonlyArray<readonly [string, CanvasNode]> = [
+  const boxKinds: ReadonlyArray<readonly [string, OutlinedNode]> = [
     ['rect', RECT],
     ['ellipse', ELLIPSE],
     ['path', PATH],

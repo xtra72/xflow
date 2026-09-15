@@ -194,7 +194,8 @@ import {
   ungroupNode,
   type GroupRefusal,
 } from './group/groupOps';
-import { isGroup, type CanvasNode } from './group/groupTypes';
+import { isGroup, type CanvasNode, type OutlinedNode } from './group/groupTypes';
+import { isConnector } from './connector/connectorTypes';
 import {
   type BoxGeometry,
   type CanvasElement,
@@ -798,10 +799,26 @@ function pressTargetKey(
  * 그래서 윤곽 상자 · 8핸들 · 드래그 상태가 부품에 대해서도 **한 글자도 바뀌지 않고**
  * 걸린다(009 가 004 의 A18 을 뒤집는 방식이 이것이다). 없는 키(지워진 요소 · 없는 부품)는
  * `undefined` 이고 예외가 아니다(REQ-07 · AC-40).
+ *
+ * ## 연결선은 **아직** 여기서 나오지 않는다 (SPEC-CANVAS-011 M4)
+ *
+ * 이 해석기를 지난 값은 곧바로 `outlineBox` · `handlePositions` · `moveGeometry` 에
+ * 들어간다 — 전부 상자를 요구하는 통로이고, 연결선에는 그 상자가 없다. 그래서 반환이
+ * `OutlinedNode` 이고, 연결선 키는 **해석되지 않은 것과 같이** 조용히 빠진다: 지워진
+ * 요소의 키를 그렇게 다루는 그 자리와 같은 규율이며, 소비 측 다섯 곳에 건너뛰기를 한
+ * 줄씩 심지 않아도 된다.
+ *
+ * **009 의 선택 모델은 한 글자도 바뀌지 않는다.** 연결선은 최상위 노드이므로 선택 키는
+ * 평평한 `nodeId` 이고, 그 키가 선택 집합에 드는 것도 지금 그대로다 — 다만 그 키를 **상자
+ * 로** 푸는 길이 없을 뿐이다. 연결선의 손잡이(끝점·중간점)는 id 가 가변이라 8핸들 표를
+ * 지날 수 없으므로 M9 가 **별도 렌더 갈래**를 세우며, 그때 이 함수 옆에 제 해석기가 선다.
  */
-function nodeForKey(elements: readonly CanvasNode[], key: string): CanvasNode | undefined {
+function nodeForKey(elements: readonly CanvasNode[], key: string): OutlinedNode | undefined {
   const { nodeId, partId } = parseFrameKey(key);
-  if (partId === undefined) return elements.find((el) => el.id === nodeId);
+  if (partId === undefined) {
+    const node = elements.find((el) => el.id === nodeId);
+    return node !== undefined && !isConnector(node) ? node : undefined;
+  }
   return partInCanvasUnits(elements, nodeId, partId);
 }
 
@@ -809,8 +826,8 @@ function nodeForKey(elements: readonly CanvasNode[], key: string): CanvasNode | 
 function selectedNodes(
   elements: readonly CanvasNode[],
   selection: CanvasSelection,
-): CanvasNode[] {
-  const out: CanvasNode[] = [];
+): OutlinedNode[] {
+  const out: OutlinedNode[] = [];
   for (const key of selection) {
     const node = nodeForKey(elements, key);
     if (node !== undefined) out.push(node);
@@ -1250,6 +1267,11 @@ export default function CanvasEditOverlay({
   const applyAnchorGesture = (nodeId: string, at: PxPoint): void => {
     const node = elements.find((el) => el.id === nodeId);
     if (node === undefined) return;
+    // 연결선 위에서는 아무 일도 없다 — 앵커를 낼 상자가 없으므로 위 `anchorHosts` 에도
+    // 점이 찍히지 않았다(M4). 거절 안내를 띄우지 않는 것에 뜻이 있다: `notBoxed` 는
+    // "상자형이 아니어서 못 놓는다" 는 **도형**에 대한 사유이고, 선 위의 누름은 애초에
+    // 놓을 대상을 고른 적이 없다.
+    if (isConnector(node)) return;
 
     const gesture = anchorGestureAt(
       node,
@@ -1876,7 +1898,12 @@ export default function CanvasEditOverlay({
    * (맞출 상대가 없으면 빈 배열이다) 여기서 다시 세지 않는다 — 두 곳에서 세면 갈라진다.
    */
   const applyAlign = (axis: AlignAxis, mode: AlignMode): void => {
-    const picked = elements.filter((el) => selection.has(el.id));
+    // 연결선은 맞출 상자가 없으므로 빠진다(M4). 남겨 두면 `outlineBox` 가 받을 수 없는
+    // 노드가 되고, 억지로 상자를 지어 맞추면 "선을 왼쪽에 맞췄는데 아무 데도 안 붙는다"
+    // 가 된다 — 연결선의 자리는 제 좌표가 아니라 **두 끝이 가리키는 것**이 정한다.
+    const picked = elements
+      .filter((el) => !isConnector(el))
+      .filter((el) => selection.has(el.id));
     const deltas = alignDeltas(
       picked.map((el) => ({ nodeId: el.id, box: outlineBox(el, projection, textWidths) })),
       projection,
@@ -2109,7 +2136,12 @@ export default function CanvasEditOverlay({
    * 편집이 꺼진 표면에는 이 층 자체가 서지 않으므로 표시 전용 패널에도 앵커가 없다
    * (위 `if (!enabled) return null`) — AC-60 은 그 한 줄이 이미 참으로 만든다.
    */
-  const anchorHosts: readonly CanvasNode[] = TOOL_SHOWS_ANCHORS[tool] ? elements : [];
+  // 연결선은 앵커를 내지 않는다(SPEC-CANVAS-011 M4 · A6) — 낼 윤곽 상자가 없다. 걸러 두면
+  // 선에 선을 붙이는 길이 애초에 열리지 않는다(`connector/anchors.ts` §연결선도 앵커를
+  // 내지 않는다).
+  const anchorHosts: readonly OutlinedNode[] = TOOL_SHOWS_ANCHORS[tool]
+    ? elements.filter((el) => !isConnector(el))
+    : [];
 
   return (
     <div

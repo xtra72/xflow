@@ -17,9 +17,19 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { CanvasElement, RuleRow } from '../canvasConfig';
+import type { CanvasElement, Geometry, RuleRow } from '../canvasConfig';
 import { detachPart, rulesLostByDetach, rulesLostByUngroup, ungroupNode } from './groupOps';
 import { GROUP_LOCAL_EXTENT, isGroup, type CanvasNode, type GroupElement } from './groupTypes';
+import { isConnector } from '../connector/connectorTypes';
+
+/**
+ * 노드의 기하. 연결선에는 기하가 없으므로(SPEC-CANVAS-011 M4) 좁혀 읽는다 — 이 시험의
+ * 장면에는 연결선이 오지 않으며, 그때는 `undefined` 라 단언이 조용히 통과하지 않는다.
+ */
+function geometryOf(node: CanvasNode): Geometry | undefined {
+  return isConnector(node) ? undefined : node.geometry;
+}
+
 
 const BOX = { x: 100, y: 100, w: 200, h: 200 } as const;
 
@@ -116,7 +126,7 @@ describe('좌표가 절대 좌표로 환산된다 (AC-26)', () => {
   it('로컬 (0,0)-(5000,5000) 이 캔버스 (100,100)-(200,200) 이 된다 — 자리가 움직이지 않는다', () => {
     const out = detachPart(nodes(), 'grp-1', 'b');
     const lifted = out.nodes.find((n) => n.id === out.liftedIds[0])!;
-    expect(lifted.geometry).toEqual({ x: 100, y: 100, w: 100, h: 100 });
+    expect(geometryOf(lifted)).toEqual({ x: 100, y: 100, w: 100, h: 100 });
   });
 });
 
@@ -210,7 +220,7 @@ describe('분리와 풀기가 같은 함수를 쓴다 (AC-33)', () => {
     // 풀기가 낸 것들 가운데 같은 부품에서 나온 것(둘째)과 견준다.
     const counterpart = ungrouped.nodes[2]!;
 
-    expect(lifted.geometry).toEqual(counterpart.geometry);
+    expect(geometryOf(lifted)).toEqual(geometryOf(counterpart));
     expect(lifted.style).toEqual(counterpart.style);
     expect(lifted.kind).toBe(counterpart.kind);
   });

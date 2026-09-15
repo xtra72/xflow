@@ -30,11 +30,21 @@ vi.mock('@/lib/i18n', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 
-import type { BoxGeometry, CanvasElement, CanvasSize } from './canvasConfig';
+import type { BoxGeometry, CanvasElement, CanvasSize, Geometry } from './canvasConfig';
 import CanvasEditOverlay from './CanvasEditOverlay';
 import { CanvasEditSelectionContext, useCanvasEditSelectionState } from './canvasEditContext';
 import type { CanvasProjection, StageSize } from './canvasGeometry';
 import { type CanvasNode, type GroupElement } from './group/groupTypes';
+import { isConnector } from './connector/connectorTypes';
+
+/**
+ * 노드의 기하. 연결선에는 기하가 없으므로(SPEC-CANVAS-011 M4) 좁혀 읽는다 — 이 시험의
+ * 장면에는 연결선이 오지 않으며, 그때는 `undefined` 라 단언이 조용히 통과하지 않는다.
+ */
+function geometryOf(node: CanvasNode): Geometry | undefined {
+  return isConnector(node) ? undefined : node.geometry;
+}
+
 
 // --- 고정 입력 -------------------------------------------------------------
 
@@ -444,7 +454,7 @@ describe('부품을 끌면 **저장 좌표**가 바뀐다 (히트 → 선택 →
     fireEvent(overlayRoot(), new MouseEvent('pointerup', at({ x: AT.body.x + 4, y: AT.body.y })));
 
     const g = lastNodes(emit).find((n) => n.id === 'grp-1')!;
-    expect(g.geometry).toEqual({ x: 50, y: 40, w: 100, h: 80 });
+    expect(geometryOf(g)).toEqual({ x: 50, y: 40, w: 100, h: 80 });
   });
 
   it('방향키도 같은 통로를 지난다 — 끌었을 때와 갈리지 않는다', () => {

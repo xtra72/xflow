@@ -35,7 +35,8 @@ import {
   type LineGeometry,
   type PointGeometry,
 } from './canvasConfig';
-import type { CanvasNode, CanvasNodeKind } from './group/groupTypes';
+import type { CanvasNode, OutlinedNode, OutlinedNodeKind } from './group/groupTypes';
+import { isConnector } from './connector/connectorTypes';
 import {
   projectBox,
   projectLine,
@@ -251,8 +252,14 @@ export function handleRole(id: CanvasHandleId): CanvasHandleRole {
  * 하나뿐이라 기하 형상이 검사에 참여하지 않기 때문이다. 그래서 갈래를 이름으로 적는다:
  * `default:` 를 `case 'text':` 로 펴 두면 여섯 번째 종류가 들어올 때 컴파일러가 이 자리를
  * 가리킨다.
+ *
+ * **연결선은 이 표에 없다**(SPEC-CANVAS-011 REQ-07). 인자가 `CanvasNodeKind` 가 아니라
+ * `OutlinedNodeKind` 인 것이 그 금지다 — 연결선에는 늘릴 상자가 없고, 빈 배열을 돌려주는
+ * 갈래를 더하면 "손잡이가 없는 것" 과 "아직 안 지은 것" 이 같은 값이 되어 M9 가 제 갈래를
+ * 잊어도 화면이 조용하다. 연결선의 손잡이는 끝점과 중간점마다 서고 그 id 가 가변이므로
+ * `CanvasHandleId` 를 넓히지 않고 **별도 렌더 갈래**가 맡는다(M9).
  */
-export function handlesFor(kind: CanvasNodeKind): readonly CanvasHandleId[] {
+export function handlesFor(kind: OutlinedNodeKind): readonly CanvasHandleId[] {
   switch (kind) {
     // 그룹은 **제 상자**에 여덟 손잡이를 세운다(REQ-08). 부품에는 손잡이가 서지 않으므로
     // (가정 A18) 역방향 중첩 투영이 필요 없고, 그룹 상자는 `BoxGeometry` 라 크기 조절 ·
@@ -278,9 +285,12 @@ export function handlesFor(kind: CanvasNodeKind): readonly CanvasHandleId[] {
  * `text` 의 글자 크기 핸들은 글자 상자의 **오른쪽 아래 모서리**에 둔다. 상자의 세로
  * 중심이 기준점이므로(`drawElement.TEXT_BASELINE === 'middle'`) 아래 변은
  * `기준점 y + fontSize/2` 이며, 실측 폭이 아직 없으면 폭 0 으로 보아 기준점에 붙는다.
+ *
+ * 인자가 `OutlinedNode` 인 근거는 위 `handlesFor` 와 **같다** — 연결선은 이 통로를 지나지
+ * 않는다(REQ-07 · M9).
  */
 export function handlePositions(
-  el: CanvasNode,
+  el: OutlinedNode,
   proj: CanvasProjection,
   opts: HandleLayoutOptions = {},
 ): CanvasHandle[] {
@@ -569,6 +579,12 @@ export function patchNodeGeometry(
 ): CanvasNode[] {
   return elements.map((el): CanvasNode => {
     if (el.id !== nodeId) return el;
+
+    // **연결선은 그대로 둔다**(SPEC-CANVAS-011 M4). `geometry` 가 없으므로 쓸 자리가 없다 —
+    // 위 문단이 적은 "종류와 기하 형상이 어긋나면 그대로 둔다" 의 극단이며, 여기서 예외를
+    // 내거나 상자를 지어 넣으면 연결선이 조용히 도형이 된다. 연결선의 자리를 고치는 길은
+    // 끝점 참조와 중간점뿐이고, 그 통로는 M9·M10 이 제 손으로 낸다.
+    if (isConnector(el)) return el;
 
     switch (el.kind) {
       // **004 가 이 함수에 더한 것의 전부다.** 그룹은 rect 와 같은 상자 기하를 쓰므로

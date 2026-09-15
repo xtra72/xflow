@@ -38,14 +38,19 @@ import {
 } from '../canvasGeometry';
 import { patchNodeGeometry, resizeBox } from '../canvasEditGeometry';
 import { outlineBox } from '../canvasOutline';
-import { GROUP_LOCAL_EXTENT, type CanvasNode, type GroupElement } from '../group/groupTypes';
+import {
+  GROUP_LOCAL_EXTENT,
+  type GroupElement,
+  type OutlinedNode,
+} from '../group/groupTypes';
+import { isConnector } from './connectorTypes';
 import { PATH_LOCAL_EXTENT, type PathCommand } from '../shapes/pathTypes';
 import {
   toAbsolutePointExact,
   toAbsolutePointRounded,
 } from '../group/groupCoords';
 import { addAnchorAt, anchorPoints, removeAnchor } from './anchors';
-import { ANCHOR_LOCAL_EXTENT, ANCHOR_SNAP_LOCAL } from './anchorTypes';
+import { ANCHOR_LOCAL_EXTENT, ANCHOR_SNAP_LOCAL, type CustomAnchor } from './anchorTypes';
 
 /** 캔버스 한 단위 = 화면 2 px. 머리말 참조. */
 const PROJ: CanvasProjection = {
@@ -118,18 +123,33 @@ const STAR: PathElement = {
 };
 
 /** 경로 명령 하나가 **그려지는** 캔버스 단위 자리. 렌더가 지나는 그 산술이다. */
-function drawnAt(node: CanvasNode, local: { x: number; y: number }): CanvasPoint {
+function drawnAt(node: OutlinedNode, local: { x: number; y: number }): CanvasPoint {
   const px: PxBox = outlineBox(node, PROJ, NO_WIDTHS);
   return unprojectPoint(projectPointIn(local, px), PROJ);
 }
 
 /** 8핸들 크기 조절의 **실제 통로**. 몸짓만 빼면 손이 하는 일과 같은 경로다. */
-function resizeTo(node: CanvasNode, geometry: BoxGeometry): CanvasNode {
+function resizeTo(node: OutlinedNode, geometry: BoxGeometry): OutlinedNode {
   const resized = resizeBox(node.geometry as BoxGeometry, 'se', {
     x: geometry.x + geometry.w,
     y: geometry.y + geometry.h,
   });
-  return patchNodeGeometry([node], node.id, resized)[0]!;
+  const out = patchNodeGeometry([node], node.id, resized)[0]!;
+  // 통로는 받은 배열을 그대로 map 하므로 연결선이 나올 길이 없다(011 M4). 단언(`as`)
+  // 대신 던지는 것은 그 사실이 깨졌을 때 조용히 지나가지 않게 하려는 것이다.
+  if (isConnector(out)) throw new Error('상자 노드만 들어간다');
+  return out;
+}
+
+/**
+ * 파싱된 첫 노드의 임의 앵커. 연결선에는 그 필드가 없으므로(011 M4) 상자 노드만 읽는다.
+ *
+ * 헬퍼로 둔 것은 아래 셋이 같은 것을 재기 때문이다 — 좁히기를 자리마다 적으면 그중 하나가
+ * 다른 좁히기를 쓰는 날 같은 단언이 다른 것을 재기 시작한다.
+ */
+function parsedAnchors(raw: readonly unknown[]): CustomAnchor[] | undefined {
+  const node = parseNodes(raw)[0];
+  return node !== undefined && !isConnector(node) ? node.anchors : undefined;
 }
 
 // --- 격자를 파생시켰다 (A14 규율) -------------------------------------------
@@ -340,8 +360,8 @@ describe('늘려도 꼭지점에 남는다 (AC-22)', () => {
   ];
 
   /** 열 꼭지점 전부에 앵커를 붙인 뒤 주어진 크기로 늘린 노드. */
-  function starWithAnchorsResizedTo(geometry: BoxGeometry): CanvasNode {
-    let node: CanvasNode = STAR;
+  function starWithAnchorsResizedTo(geometry: BoxGeometry): OutlinedNode {
+    let node: OutlinedNode = STAR;
     STAR_VERTICES.forEach((vertex, i) => {
       node = addAnchorAt(node, drawnAt(STAR, vertex), `v${i}`);
     });
@@ -444,7 +464,8 @@ describe('선·문구에는 더할 수 없다 (AC-24 · A11)', () => {
       { id: 'r', kind: 'rect', geometry: { x: 0, y: 0, w: 9, h: 9 }, anchors: [{ id: 'a', x: 1, y: 2 }] },
       { id: 'g', kind: 'group', geometry: { x: 0, y: 0, w: 9, h: 9 }, anchors: [{ id: 'a', x: 1, y: 2 }] },
     ]);
-    const byId = new Map(nodes.map((n) => [n.id, n]));
+    // 연결선에는 `anchors` 가 없다(011 M4) — 이 시험이 재는 넷은 전부 상자를 가진 쪽이다.
+    const byId = new Map(nodes.filter((n) => !isConnector(n)).map((n) => [n.id, n]));
     expect(byId.get('l')?.anchors).toBeUndefined();
     expect(byId.get('t')?.anchors).toBeUndefined();
     expect(byId.get('r')?.anchors).toEqual([{ id: 'a', x: 1, y: 2 }]);
@@ -454,7 +475,7 @@ describe('선·문구에는 더할 수 없다 (AC-24 · A11)', () => {
   it('파서와 쓰기 경로가 **같은 넷**을 상자형으로 본다', () => {
     // A11 이 두 곳에 적혀 있으므로(파서의 갈래 · `addAnchorAt` 의 상자 판정) 둘이 갈릴 수
     // 있다. 갈리면 "더해지는데 저장되지 않는" 혹은 그 반대의 종류가 생긴다.
-    const samples: ReadonlyArray<readonly [string, CanvasNode, Record<string, unknown>]> = [
+    const samples: ReadonlyArray<readonly [string, OutlinedNode, Record<string, unknown>]> = [
       ['rect', BOX, { id: 'x', kind: 'rect', geometry: { x: 0, y: 0, w: 9, h: 9 } }],
       [
         'ellipse',
@@ -468,8 +489,7 @@ describe('선·문구에는 더할 수 없다 (AC-24 · A11)', () => {
     ];
     for (const [name, node, raw] of samples) {
       const writeAccepts = addAnchorAt(node, { x: 150, y: 150 }, 'a').anchors !== undefined;
-      const parseKeeps =
-        parseNodes([{ ...raw, anchors: [{ id: 'a', x: 1, y: 2 }] }])[0]?.anchors !== undefined;
+      const parseKeeps = parsedAnchors([{ ...raw, anchors: [{ id: 'a', x: 1, y: 2 }] }]) !== undefined;
       expect(`${name}:${writeAccepts}`, name).toBe(`${name}:${parseKeeps}`);
     }
   });
@@ -518,8 +538,7 @@ describe('쓰지 않으면 키가 생기지 않는다 (AC-25)', () => {
 
 describe('손상된 앵커 항목만 버린다 (AC-29)', () => {
   const parseRectAnchors = (anchors: unknown): unknown =>
-    parseNodes([{ id: 'r', kind: 'rect', geometry: { x: 0, y: 0, w: 9, h: 9 }, anchors }])[0]
-      ?.anchors;
+    parsedAnchors([{ id: 'r', kind: 'rect', geometry: { x: 0, y: 0, w: 9, h: 9 }, anchors }]);
 
   it('좌표가 손상된 항목만 빠지고 나머지는 남는다', () => {
     expect(
@@ -564,7 +583,7 @@ describe('손상된 앵커 항목만 버린다 (AC-29)', () => {
 
 describe('앵커 id 중복은 먼저 온 것이 이긴다 (AC-30)', () => {
   it('같은 id 가 둘이면 하나만 남는다', () => {
-    const parsed = parseNodes([
+    const anchors = parsedAnchors([
       {
         id: 'r',
         kind: 'rect',
@@ -574,8 +593,8 @@ describe('앵커 id 중복은 먼저 온 것이 이긴다 (AC-30)', () => {
           { id: 'a', x: 99, y: 99 },
         ],
       },
-    ])[0]!;
-    expect(parsed.anchors).toEqual([{ id: 'a', x: 1, y: 2 }]);
+    ]);
+    expect(anchors).toEqual([{ id: 'a', x: 1, y: 2 }]);
   });
 
   it('쓰기 경로도 같은 규율이다 — 이미 있는 id 는 더해지지 않는다', () => {

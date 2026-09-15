@@ -16,6 +16,9 @@
 //   - `CanvasElementKind`   — 요소가 가질 수 있는 **다섯**(008 그대로).
 //   - `CanvasNodeKind`      — 최상위 노드가 가질 수 있는 **여섯**(004 가 더한다).
 //
+// SPEC-CANVAS-011 이 같은 근거로 같은 자리에 **일곱째**(연결선)를 더했다. 앞의 두 이름은
+// 그때도 한 글자도 넓어지지 않았다 — 아래 `CanvasNode` · `CanvasNodeKind` 주석 참조.
+//
 // ## 그룹 안에 그룹은 오지 않는다 (가정 A6)
 //
 // `parts: CanvasElement[]` 이므로 그룹 중첩이 **타입으로** 불가능하다. 런타임 깊이 검사를
@@ -28,6 +31,7 @@
 
 import { PATH_LOCAL_EXTENT } from '../shapes/pathTypes';
 import type { CustomAnchor } from '../connector/anchorTypes';
+import type { ConnectorElement } from '../connector/connectorTypes';
 import type {
   BoxGeometry,
   CanvasElement,
@@ -119,16 +123,39 @@ export interface GroupElement {
   anchors?: CustomAnchor[];
 }
 
-/** 최상위 배열의 원소. 001~008 의 요소 다섯 종에 그룹 하나를 더한 것이다. */
-export type CanvasNode = CanvasElement | GroupElement;
+/**
+ * **윤곽 상자를 갖는** 노드 — 001~008 의 요소 다섯 종에 그룹 하나를 더한 것이다.
+ *
+ * 011 이 이 이름을 지었다. 그전까지 이것이 곧 `CanvasNode` 였는데, 연결선이 들어오면서
+ * 둘이 갈렸다: 연결선에는 `geometry` 가 없어 상자를 낼 수 없다(`connectorTypes` 머리말).
+ * 그래서 상자를 요구하는 통로(`outlineBox` · `handlePositions` · `anchorPoints`)는 넓어진
+ * `CanvasNode` 가 아니라 **이 이름**을 받는다 — 그 자리에 연결선을 넘기는 것이 타입으로
+ * 불가능해지고, "연결선에는 뜻 없는 상자" 라는 갈래를 지어 넣을 이유가 사라진다.
+ */
+export type OutlinedNode = CanvasElement | GroupElement;
 
 /**
- * 최상위 노드가 가질 수 있는 **여섯**. 앞의 두 이름을 넓히지 않고 **더한 셋째**다(A22).
+ * 최상위 배열의 원소. 상자를 가진 여섯에 **연결선**을 더한 것이다(SPEC-CANVAS-011 M4).
+ *
+ * 004 가 요소 다섯 위에 그룹을 얹었듯, 011 은 그 위에 연결선을 얹는다. `CanvasElement` 도
+ * `CanvasElementKind` 도 한 글자도 넓어지지 않는다 — 그것이 출시된 가드 둘을 무수정으로
+ * 살리는 값이다(`connectorTypes` 머리말).
+ */
+export type CanvasNode = OutlinedNode | ConnectorElement;
+
+/** 상자를 가진 노드의 종류 **여섯**. 손잡이와 윤곽이 정의되는 범위가 이것이다. */
+export type OutlinedNodeKind = CanvasElementKind | 'group';
+
+/**
+ * 최상위 노드가 가질 수 있는 **일곱**. 앞의 두 이름을 넓히지 않고 **더한 셋째**다(A22).
  *
  * `CanvasElementKind` 와 달리 이 이름은 `canvasConfig.ts` 바깥에 산다 — 그 파일의 소스
  * 텍스트를 읽는 출시된 가드가 그 유니온의 원소를 세고 있기 때문이다.
+ *
+ * 연결선의 이름을 리터럴로 적지 않고 **그 자료형에서 파생**시킨다. 그 문자열이 적히는
+ * 자리는 `connectorTypes` 하나뿐이어야 한다(AC-39).
  */
-export type CanvasNodeKind = CanvasElementKind | 'group';
+export type CanvasNodeKind = OutlinedNodeKind | ConnectorElement['kind'];
 
 /**
  * 이 노드가 그룹인가. **판별의 유일한 자리**다.

@@ -47,6 +47,7 @@ import { CanvasEditSelectionContext, useCanvasEditSelectionState } from './canva
 import type { CanvasProjection, StageSize } from './canvasGeometry';
 import { FIXED_ANCHOR_IDS } from './connector/anchors';
 import type { CanvasNode, GroupElement } from './group/groupTypes';
+import { isConnector } from './connector/connectorTypes';
 
 // --- 고정 입력 -------------------------------------------------------------
 
@@ -181,7 +182,11 @@ function node(id: string): CanvasNode {
 }
 
 function anchorsOf(id: string): readonly { id: string; x: number; y: number }[] {
-  return node(id).anchors ?? [];
+  const found = node(id);
+  // 연결선에는 `anchors` 가 없다(SPEC-CANVAS-011 M4). 이 시험의 장면에는 오지 않으므로
+  // 빈 목록이 아니라 던지기로 두어, 형상이 바뀌면 조용히 "앵커가 없다" 로 통과하지 않는다.
+  if (isConnector(found)) throw new Error(`${id} 는 앵커를 가질 수 없다`);
+  return found.anchors ?? [];
 }
 
 function selected(): string[] {

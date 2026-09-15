@@ -25,6 +25,7 @@ import {
   parseCanvasConfig,
   type CanvasElement,
   type ElementStyle,
+  type Geometry,
   type LineGeometry,
   type PathElement,
   type RuleRow,
@@ -36,6 +37,16 @@ import {
   ungroupNode,
 } from './groupOps';
 import { GROUP_LOCAL_EXTENT, isGroup, type CanvasNode, type GroupElement } from './groupTypes';
+import { isConnector } from '../connector/connectorTypes';
+
+/**
+ * 노드의 기하. 연결선에는 기하가 없으므로(SPEC-CANVAS-011 M4) 좁혀 읽는다 — 이 시험의
+ * 장면에는 연결선이 오지 않으며, 그때는 `undefined` 라 단언이 조용히 통과하지 않는다.
+ */
+function geometryOf(node: CanvasNode): Geometry | undefined {
+  return isConnector(node) ? undefined : node.geometry;
+}
+
 
 // --- 고정 입력 -------------------------------------------------------------
 
@@ -370,7 +381,7 @@ describe('가로선 둘을 묶어도 부품이 모서리에 찌부러지지 않�
     const grouped = groupNodes([l1, l2], pick('l1', 'l2')).nodes;
     const back = ungroupNode(grouped, onlyGroup(grouped).id).nodes;
     for (const el of back) {
-      const geo = el.geometry as LineGeometry;
+      const geo = geometryOf(el) as LineGeometry;
       expect(geo.y1).toBe(FLAT_Y);
       expect(geo.y2).toBe(FLAT_Y);
     }
@@ -476,9 +487,9 @@ describe('그룹을 푼다 (AC-13 · A19)', () => {
   it('기하가 **정수 캔버스 좌표**로 되돌아온다', () => {
     const nodes = dressed();
     const out = ungroupNode(nodes, onlyGroup(nodes).id);
-    expect(out.nodes[1]?.geometry).toEqual({ x: 73, y: 41, w: 100, h: 60 });
-    expect(out.nodes[2]?.geometry).toEqual({ x: 200, y: 120 });
-    expect(out.nodes[3]?.geometry).toEqual({ x: 290, y: 150, w: 100, h: 72 });
+    expect(geometryOf(out.nodes[1]!)).toEqual({ x: 73, y: 41, w: 100, h: 60 });
+    expect(geometryOf(out.nodes[2]!)).toEqual({ x: 200, y: 120 });
+    expect(geometryOf(out.nodes[3]!)).toEqual({ x: 290, y: 150, w: 100, h: 72 });
   });
 
   it('부품 id 가 최상위에서 유일하도록 **새로 발급**된다', () => {
@@ -623,9 +634,9 @@ describe('묶기 → 풀기 왕복과 그 상한 (AC-14 · E-G)', () => {
     const nodes = scene();
     const grouped = groupNodes(nodes, pick('a', 't', 'p')).nodes;
     const back = ungroupNode(grouped, onlyGroup(grouped).id).nodes;
-    expect(back[1]?.geometry).toEqual(A.geometry);
-    expect(back[2]?.geometry).toEqual(T.geometry);
-    expect(back[3]?.geometry).toEqual(P.geometry);
+    expect(geometryOf(back[1]!)).toEqual(A.geometry);
+    expect(geometryOf(back[2]!)).toEqual(T.geometry);
+    expect(geometryOf(back[3]!)).toEqual(P.geometry);
     // 배열 순서도 원본과 같다.
     expect(back.map((n) => n.kind)).toEqual(['rect', 'rect', 'text', 'path', 'ellipse']);
   });
@@ -653,11 +664,11 @@ describe('묶기 → 풀기 왕복과 그 상한 (AC-14 · E-G)', () => {
     expect(bound).toBe(5);
 
     // ① 같지 않다.
-    expect(back.map((n) => n.geometry)).not.toEqual(wide.map((n) => n.geometry));
+    expect(back.map(geometryOf)).not.toEqual(wide.map((n) => n.geometry));
     // ② 그러나 축마다의 차이가 상한 안이다.
     for (let i = 0; i < wide.length; i++) {
       const before = wide[i]!.geometry as unknown as Record<string, number>;
-      const after = back[i]!.geometry as unknown as Record<string, number>;
+      const after = geometryOf(back[i]!) as unknown as Record<string, number>;
       for (const k of Object.keys(before)) {
         expect(Math.abs(after[k]! - before[k]!), `${wide[i]!.id}.${k}`).toBeLessThanOrEqual(bound);
       }
@@ -665,7 +676,7 @@ describe('묶기 → 풀기 왕복과 그 상한 (AC-14 · E-G)', () => {
     // ③ 그리고 **적어도 한 축은 실제로 달라졌다** — ①이 빈 주장이 아니다.
     const changed = wide.some((el, i) => {
       const before = el.geometry as unknown as Record<string, number>;
-      const after = back[i]!.geometry as unknown as Record<string, number>;
+      const after = geometryOf(back[i]!) as unknown as Record<string, number>;
       return Object.keys(before).some((k) => after[k] !== before[k]);
     });
     expect(changed).toBe(true);

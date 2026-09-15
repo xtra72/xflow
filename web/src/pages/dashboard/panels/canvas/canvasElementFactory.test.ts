@@ -21,6 +21,7 @@ import {
   DEFAULT_POINT_GEOMETRY,
   type CanvasElement,
   type CanvasPrimitiveKind,
+  type Geometry,
 } from './canvasConfig';
 import {
   appendElement,
@@ -34,6 +35,16 @@ import {
   withElementText,
 } from './canvasElementFactory';
 import type { CanvasNode } from './group/groupTypes';
+import { isConnector } from './connector/connectorTypes';
+
+/**
+ * 노드의 기하. 연결선에는 기하가 없으므로(SPEC-CANVAS-011 M4) 좁혀 읽는다 — 이 시험의
+ * 장면에는 연결선이 오지 않으며, 그때는 `undefined` 라 단언이 조용히 통과하지 않는다.
+ */
+function geometryOf(node: CanvasNode): Geometry | undefined {
+  return isConnector(node) ? undefined : node.geometry;
+}
+
 
 // `newElement` 가 받는 것은 **원시형 넷**이다. 경로는 명령 목록 없이 만들어지지 않으므로
 // 이 목록에 오지 않는다(그 사실 자체를 아래 §원시형만 받는다 절이 형상으로 잰다).
@@ -182,13 +193,13 @@ describe('canvasElementFactory — appendElement', () => {
       style: {},
     };
     const { next } = appendElement([far], 'rect');
-    expect(next[0]!.geometry).toEqual({ x: -0.5, y: 2, w: 3, h: 4 });
+    expect(geometryOf(next[0]!)).toEqual({ x: -0.5, y: 2, w: 3, h: 4 });
   });
 
   it('연속으로 붙이면 자리가 겹치지 않는다 — 계단이 배열 길이를 보기 때문이다', () => {
     let els: CanvasNode[] = [];
     for (let i = 0; i < 3; i++) els = appendElement(els, 'rect').next;
-    const geos = els.map((e) => JSON.stringify(e.geometry));
+    const geos = els.map((e) => JSON.stringify(geometryOf(e)));
     expect(new Set(geos).size).toBe(3);
     expect(geos[0]).toBe(JSON.stringify({ x: 50, y: 40, w: 100, h: 80 }));
     expect(geos[1]).toBe(JSON.stringify({ x: 75, y: 65, w: 100, h: 80 }));
@@ -199,14 +210,14 @@ describe('canvasElementFactory — appendElement', () => {
     let els: CanvasNode[] = [];
     for (let i = 0; i < 9; i++) els = appendElement(els, 'rect').next;
     for (const el of els) {
-      const geo = el.geometry as unknown as Record<string, number>;
+      const geo = geometryOf(el) as unknown as Record<string, number>;
       expect(geo.x!).toBeGreaterThanOrEqual(0);
       expect(geo.y!).toBeGreaterThanOrEqual(0);
       expect(geo.x! + geo.w!).toBeLessThanOrEqual(DEFAULT_CANVAS_SIZE.width);
       expect(geo.y! + geo.h!).toBeLessThanOrEqual(DEFAULT_CANVAS_SIZE.height);
     }
     // 아홉 번째는 첫 번째 자리로 되감긴다(되감기 폭 8).
-    expect(els[8]!.geometry).toEqual(els[0]!.geometry);
+    expect(geometryOf(els[8]!)).toEqual(geometryOf(els[0]!));
   });
 });
 

@@ -47,9 +47,11 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_BOX_GEOMETRY,
   parseCanvasConfig,
+  type CanvasElement,
   type CanvasSize,
   type PathElement,
 } from '../canvasConfig';
+import { isConnector } from '../connector/connectorTypes';
 import { PATH_LOCAL_EXTENT } from '../shapes/pathTypes';
 
 import {
@@ -101,7 +103,11 @@ function roundTrip(box: { x: number; y: number; w: number; h: number }, path_: u
     }),
   ) as unknown;
   const parsed = parseCanvasConfig(raw);
-  return parsed.elements[0]!;
+  const node = parsed.elements[0]!;
+  // 넣은 것이 경로 요소 하나뿐이므로 그룹도 연결선도 나올 수 없다(SPEC-CANVAS-011 M4).
+  // 좁히기를 던지기로 두는 것은 그 사실이 깨졌을 때 조용히 지나가지 않게 하려는 것이다.
+  if (node.kind === 'group' || isConnector(node)) throw new Error(`요소가 아니다: ${node.kind}`);
+  return node satisfies CanvasElement;
 }
 
 describe('viewBox 가 로컬 격자에 앉는다 (AC-05 · E2 · 뮤테이션 1·2)', () => {

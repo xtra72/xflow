@@ -45,6 +45,16 @@ import {
 } from './shapes/pathTypes';
 // 임의 앵커의 자료형. 잎 모듈(`shapes/pathTypes` 밖을 들이지 않는다)이라 순환이 없다.
 import type { CustomAnchor } from './connector/anchorTypes';
+// 연결선의 자료형과 그 판별(SPEC-CANVAS-011 M4). 저쪽이 이 파일에서 **타입만** 가져가므로
+// 값(`CONNECTOR_KIND` · `isConnectorKind`)을 들여도 실행 시각 순환이 생기지 않는다.
+import {
+  CONNECTOR_KIND,
+  DEFAULT_CONNECTOR_ROUTE,
+  isConnectorKind,
+  type ConnectorElement,
+  type ConnectorEnd,
+  type ConnectorRoute,
+} from './connector/connectorTypes';
 // 타입만 가져온다 — 런타임 의존이 없으므로 `group/groupTypes.ts` 와의 순환이 생기지
 // 않는다(저쪽도 이 파일에서 타입만 가져간다).
 import type { CanvasNode, GroupElement, SymbolStamp } from './group/groupTypes';
@@ -889,12 +899,17 @@ function parseSymbolStamp(raw: unknown): SymbolStamp | undefined {
 }
 
 /**
- * 그룹의 기본 스타일. **빈 객체를 만들어 채우지 않는다** — `{}` 를 넣어 두면 "캐스케이드
- * 미사용" 과 "빈 캐스케이드" 가 구분되지 않고, 설정 UI 가 두 상태를 다르게 보여 사용자를
- * 혼란시킨다(§파서 생존). 001 의 `parseStyle` 을 **그대로 재사용**하고 결과가 비었을
- * 때만 미지정으로 떨어뜨린다 — 스타일 파서가 둘이 되지 않는다.
+ * **선택 필드로서의** 스타일. 그룹(004)과 연결선(011)이 함께 쓴다.
+ *
+ * **빈 객체를 만들어 채우지 않는다** — `{}` 를 넣어 두면 "캐스케이드 미사용" 과 "빈
+ * 캐스케이드" 가 구분되지 않고, 설정 UI 가 두 상태를 다르게 보여 사용자를 혼란시킨다
+ * (§파서 생존). 001 의 `parseStyle` 을 **그대로 재사용**하고 결과가 비었을 때만 미지정으로
+ * 떨어뜨린다 — 스타일 파서가 둘이 되지 않는다.
+ *
+ * 요소(001)와 갈리는 자리는 여기 하나뿐이다: 요소의 `style` 은 **언제나 있는** 필드라
+ * `parseStyle` 을 곧바로 부른다.
  */
-function parseGroupStyle(raw: unknown): ElementStyle | undefined {
+function parseOptionalStyle(raw: unknown): ElementStyle | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const style = parseStyle(raw);
   return Object.keys(style).length > 0 ? style : undefined;
@@ -916,7 +931,7 @@ function parseGroup(e: Record<string, unknown>): GroupElement | null {
   if (id === undefined) return null;
 
   const binding = parseBinding(e.binding);
-  const style = parseGroupStyle(e.style);
+  const style = parseOptionalStyle(e.style);
   const rules = parseRules(e.rules);
   const tween = parseTween(e.tween);
   const symbol = parseSymbolStamp(e.symbol);
@@ -940,17 +955,139 @@ function parseGroup(e: Record<string, unknown>): GroupElement | null {
 }
 
 /**
- * 최상위 노드 1건 — 그룹이면 그룹으로, 아니면 001 의 요소 파서로 보낸다.
+ * 자유 끝점 · 중간점 1건. 좌표 한쪽이라도 손상됐으면 `null`이다.
+ *
+ * 좌표 규율은 경로 명령(`localCoordinate`) · 임의 앵커(`parseCustomAnchor`)와 **같다**:
+ * 자리를 뜻하는 좌표에는 채울 기본값이 없으므로 지어내지 않는다. 0 으로 채우면 점이
+ * 캔버스 왼쪽 위 모서리로 조용히 이사하고, 사용자는 저술한 적 없는 꺾임을 보게 된다.
+ * 반올림은 `coordinate()` 를 지난다 — 유한성 관문 때문에 폴백 인자에는 닿지 않지만,
+ * **반올림 규율이 적히는 자리를 둘로 만들지 않는 것**이 이 재사용의 요점이다.
+ *
+ * 경로 명령과 달리 **로컬 격자가 아니라 캔버스 단위 절대 정수**다. 연결선에는 담을 상자가
+ * 없어 기준 삼을 로컬 격자가 없기 때문이다(`connectorTypes` §중간점이 절대 좌표인 이유).
+ */
+function parseAbsolutePoint(raw: unknown): PointGeometry | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const p = raw as Record<string, unknown>;
+  if (!isFiniteNumber(p.x) || !isFiniteNumber(p.y)) return null;
+  return { x: coordinate(p.x, 0), y: coordinate(p.y, 0) };
+}
+
+/**
+ * 연결선의 한 끝. 성립하지 않으면 `null`이고, 그때 **노드 자체가 버려진다**(AC-38).
+ *
+ * 끝이 없는 연결선은 잇는 것이 없으므로 뜻이 없다 — id 가 없는 요소를 버리는 001 의 규율
+ * 과 같은 자리다. 기본 끝점을 지어 넣지 않는 이유도 같다: 캔버스 어딘가에 사용자가 긋지
+ * 않은 선이 나타나고, 그것이 제 저술인지 파서가 지어낸 것인지 구분할 길이 없다.
+ *
+ * **붙은 끝을 먼저 본다.** 두 형태가 한 객체에 섞여 들어오면(`{el,a,x,y}`) 참조가 이긴다 —
+ * 참조는 사용자가 앵커를 골랐다는 사실이고 좌표는 그 결과의 흔적일 뿐이므로, 좌표를
+ * 택하면 붙여 둔 선이 저장 왕복 한 번에 떨어져 나온다.
+ */
+function parseConnectorEnd(raw: unknown): ConnectorEnd | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const e = raw as Record<string, unknown>;
+  const el = optionalString(e.el);
+  const a = optionalString(e.a);
+  if (el !== undefined && a !== undefined) return { el, a };
+  return parseAbsolutePoint(raw);
+}
+
+/**
+ * 중간점 목록. 손상 항목은 **그것만** 빠진다(경로 명령 · 임의 앵커와 같은 규율).
+ *
+ * 살아남은 점이 없으면 **미지정으로 떨어뜨린다.** `[]` 를 남기면 "찍은 적 없음" 과 "다
+ * 지웠음" 이 구분되지 않고, 저장 왕복에 없던 `points` 키가 생긴다(AC-25 와 같은 규율).
+ *
+ * 상한은 008 의 경로 명령과 **같은 수**를 쓴다. 두 값은 같은 개념("한 도형이 들 수 있는
+ * 점의 수")이고, 자유선(M11)이 궤적을 받는 쪽이므로 상한 없이 두면 손이 움직인 만큼
+ * config 가 자란다. 넘치면 **앞에서부터** 살린다 — 전부 버리면 선이 사라진다.
+ */
+function parseConnectorPoints(raw: unknown): PointGeometry[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: PointGeometry[] = [];
+  for (const item of raw) {
+    const point = parseAbsolutePoint(item);
+    if (!point) continue;
+    out.push(point);
+    if (out.length >= MAX_PATH_COMMANDS) break;
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * 그리는 법. 모르는 값은 **직선으로 떨어진다**(AC-37).
+ *
+ * 규칙 행의 미지 연산자나 경로의 미지 명령처럼 **버리지 않는** 것에 뜻이 있다: 여기서
+ * 노드를 버리면 사용자의 연결이 오타 하나에 사라지는데, 직선은 점이 없어도 그림이 완전한
+ * 유일한 갈래이므로 어떤 `points` 상태에서도 화면이 답을 낸다. 그리는 법은 사용자가
+ * 한 번 더 고르면 되지만 사라진 선은 되돌릴 길이 없다.
+ */
+function parseConnectorRoute(raw: unknown): ConnectorRoute {
+  return raw === 'elbow' || raw === 'curve' || raw === 'free' || raw === 'straight'
+    ? raw
+    : DEFAULT_CONNECTOR_ROUTE;
+}
+
+/**
+ * 연결선 1건. 정체성(`id` · 두 끝)이 성립하지 않으면 버린다.
+ *
+ * 요소 · 그룹보다 버리는 문턱이 하나 높다: 그 둘은 id 만 있으면 살지만 연결선은 **끝
+ * 둘**까지 있어야 산다(AC-38). 근거는 기하 손상 정책과 같은 자리에 있다 — 요소는 기하가
+ * 깨져도 기본 기하로 세워 두면 사용자가 화면에서 보고 고칠 수 있지만, 끝이 없는 연결선을
+ * 세우려면 두 자리를 **지어내야** 하고 그것은 저술한 적 없는 선이 된다.
+ *
+ * 스타일 · 규칙 · 바인딩 · 트윈은 001 의 파서를 **그대로** 부른다. 캐스케이드 파서가 둘이
+ * 되면 "요소에서는 먹는 규칙이 연결선에서는 안 먹는" 자리가 생긴다. `style` 은 그룹과
+ * 같이 빈 객체를 만들어 채우지 않는다(`parseOptionalStyle`).
+ */
+function parseConnector(e: Record<string, unknown>): ConnectorElement | null {
+  const id = optionalString(e.id);
+  if (id === undefined) return null;
+
+  const from = parseConnectorEnd(e.from);
+  const to = parseConnectorEnd(e.to);
+  if (from === null || to === null) return null;
+
+  const points = parseConnectorPoints(e.points);
+  const style = parseOptionalStyle(e.style);
+  const binding = parseBinding(e.binding);
+  const rules = parseRules(e.rules);
+  const tween = parseTween(e.tween);
+
+  return {
+    id,
+    kind: CONNECTOR_KIND,
+    from,
+    to,
+    route: parseConnectorRoute(e.route),
+    ...(points !== undefined ? { points } : {}),
+    ...(style !== undefined ? { style } : {}),
+    ...(binding !== undefined ? { binding } : {}),
+    ...(rules !== undefined ? { rules } : {}),
+    ...(tween !== undefined ? { tween } : {}),
+  };
+}
+
+/**
+ * 최상위 노드 1건 — 그룹이면 그룹으로, 연결선이면 연결선으로, 아니면 001 의 요소 파서로.
  *
  * **갈래가 `parseElement` 안이 아니라 그 위 한 층에 서는 것이 이 형상의 요점이다**
  * (§파서 생존). `parseElement` 는 `CanvasElement` 를 내는 계약이고 008 이 `'path'` 갈래를
  * 더하며 그 계약을 다시 못박았다. 그룹을 그 안에 넣으면 반환 타입이 넓어져 계약이 깨지고,
  * `parts` 안의 그룹을 **런타임으로** 걸러야 한다. 한 층 위에 두면 그 검사가 사라진다.
+ *
+ * **011 이 이 함수에 더한 것은 한 줄이다.** `parseElement` 는 한 글자도 바뀌지 않았고,
+ * 그래서 그 함수의 `kind` 화이트리스트를 세는 출시된 가드가 그대로 산다(AC-34 · AC-35).
+ * 같은 형상 덕에 `parts` 에 섞여 들어온 연결선도 **저절로** 버려진다 — 그룹 안에 연결선이
+ * 올 수 없다는 사실에 런타임 검사가 필요 없다(A3).
  */
 function parseNode(raw: unknown): CanvasNode | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const e = raw as Record<string, unknown>;
-  return e.kind === 'group' ? parseGroup(e) : parseElement(raw);
+  if (e.kind === 'group') return parseGroup(e);
+  if (isConnectorKind(e.kind)) return parseConnector(e);
+  return parseElement(raw);
 }
 
 /**

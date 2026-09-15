@@ -31,6 +31,7 @@
 
 import type { CanvasElement } from '../canvasConfig';
 import { isGroup, type CanvasNode, type GroupElement } from './groupTypes';
+import { isConnector } from '../connector/connectorTypes';
 
 /** 복합 키의 구분자. 요소 id 에 쓰이지 않는 글자를 고른다(`nextElementId` 는 `el-N` 을 낸다). */
 const PART_SEPARATOR = '/';
@@ -100,6 +101,17 @@ export interface FrameDrawable {
  */
 export function* walkDrawables(nodes: readonly CanvasNode[]): Generator<FrameDrawable> {
   for (const node of nodes) {
+    // **연결선은 아직 나오지 않는다**(SPEC-CANVAS-011 M6 가 이 줄을 걷어낸다).
+    //
+    // 011 M4 는 자료형과 파서까지만 세운다. 이 순회가 내는 것은 `CanvasElement` 이고
+    // 연결선은 그 합집합에 들지 않으므로, 여기서 억지로 내보내려면 뜻 없는 요소 형상을
+    // 지어야 한다 — 그 형상은 `drawElement` 가 그리려 드는 순간 `geometry` 를 찾다가
+    // 조용히 아무것도 그리지 않는 도형이 된다. 그래서 **지금은 건너뛰고**, 순회가 낼 수
+    // 있는 항목의 형상을 M6 이 함께 넓힌다(그리는 법이 있어야 낼 뜻이 생긴다).
+    //
+    // 순회는 그때도 **하나**다. 연결선을 위한 두 번째 순회를 만들면 키 집합이 갈라지고,
+    // 그 어긋남은 "어떤 선만 트윈되지 않는다" 로만 보인다.
+    if (isConnector(node)) continue;
     if (isGroup(node)) {
       for (const part of node.parts) {
         yield { key: frameKey(node.id, part.id), element: part, group: node };

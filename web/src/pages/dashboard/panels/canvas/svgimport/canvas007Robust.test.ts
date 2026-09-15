@@ -412,7 +412,11 @@ describe('퇴화 상자를 만들지 않는다 (REQ-06 · 가정 A15)', () => {
         expect(isDegenerateLine(el.geometry)).toBe(false);
         continue;
       }
-      expect(el.kind === 'rect' || el.kind === 'ellipse' || el.kind === 'path').toBe(true);
+      // 던지기로 좁힌다 — `expect` 는 타입을 좁히지 않으므로 아래 `el.geometry` 가
+      // 연결선 갈래(기하가 없다 — SPEC-CANVAS-011 M4)까지 보게 된다. 실패의 뜻은 같다.
+      if (el.kind !== 'rect' && el.kind !== 'ellipse' && el.kind !== 'path') {
+        throw new Error(`상자 도형이 아니다: ${el.kind}`);
+      }
       expect(el.geometry).not.toEqual(DEFAULT_BOX_GEOMETRY);
       const box = el.geometry as { w: number; h: number };
       expect(box.w).toBeGreaterThanOrEqual(MIN_ELEMENT_EXTENT);

@@ -63,6 +63,7 @@ vi.mock('@/lib/i18n', () => ({
 import type { StoreSourceConfig } from '../charts/chartChannelTypes';
 import type { CanvasElement, CanvasElementKind, CanvasPanelConfig } from './canvasConfig';
 import { DEFAULT_CANVAS_SIZE, parseCanvasConfig } from './canvasConfig';
+import { isConnector } from './connector/connectorTypes';
 import type { CanvasProjection } from './canvasGeometry';
 import { renderTextTemplate } from './canvasText';
 import { drawElements, type DrawContext2D } from './drawElement';
@@ -441,7 +442,10 @@ describe('CanvasElementsEditor — 기하 칸은 정수 칸이다', () => {
     const spy = setup(cfg([rect()]), { tab: 'arrange' });
     fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '10.4' } });
     const written = lastElements(spy)[0]!.geometry;
-    const reparsed = parseCanvasConfig(cfg(lastElements(spy))).elements[0]!.geometry;
+    // 넣은 것이 사각형 하나뿐이라 연결선이 나올 수 없다(SPEC-CANVAS-011 M4).
+    const reparsedNode = parseCanvasConfig(cfg(lastElements(spy))).elements[0]!;
+    if (isConnector(reparsedNode)) throw new Error('연결선이 나올 수 없다');
+    const reparsed = reparsedNode.geometry;
     expect(reparsed).toEqual(written);
   });
 

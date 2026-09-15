@@ -40,12 +40,22 @@ vi.mock('@/lib/i18n', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 
-import { DEFAULT_CANVAS_SIZE, type CanvasElement } from './canvasConfig';
+import { DEFAULT_CANVAS_SIZE, type CanvasElement, type Geometry } from './canvasConfig';
 import { CanvasEditDockRegion } from './CanvasEditDock';
 import CanvasEditOverlay from './CanvasEditOverlay';
 import { CanvasEditSelectionContext, useCanvasEditSelectionState } from './canvasEditContext';
 import type { CanvasProjection } from './canvasGeometry';
 import { GROUP_LOCAL_EXTENT, isGroup, type CanvasNode, type GroupElement } from './group/groupTypes';
+import { isConnector } from './connector/connectorTypes';
+
+/**
+ * 노드의 기하. 연결선에는 기하가 없으므로(SPEC-CANVAS-011 M4) 좁혀 읽는다 — 이 시험의
+ * 장면에는 연결선이 오지 않으며, 그때는 `undefined` 라 단언이 조용히 통과하지 않는다.
+ */
+function geometryOf(node: CanvasNode): Geometry | undefined {
+  return isConnector(node) ? undefined : node.geometry;
+}
+
 import { useScratchpadStore } from './scratchpad/scratchpadStore';
 
 afterEach(() => {
@@ -600,7 +610,7 @@ describe('묶었다가 곧바로 푸는 몸짓 (AC-14 의 화면 쪽 — 산술�
 
     const byKind = new Map(live.map((n) => [n.kind, n] as const));
     expect(live).toHaveLength(4);
-    expect(byKind.get('ellipse')!.geometry).toEqual(B.geometry);
-    expect(byKind.get('text')!.geometry).toEqual(T.geometry);
+    expect(geometryOf(byKind.get('ellipse')!)).toEqual(B.geometry);
+    expect(geometryOf(byKind.get('text')!)).toEqual(T.geometry);
   });
 });

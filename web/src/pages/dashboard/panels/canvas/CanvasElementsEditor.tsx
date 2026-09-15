@@ -88,6 +88,7 @@ import {
 } from './canvasConfig';
 import { bringToFront, moveElementTo, removeNodes, sendToBack } from './canvasEditArrange';
 import { isGroup, type CanvasNode, type GroupElement } from './group/groupTypes';
+import { isConnector } from './connector/connectorTypes';
 import { frameKey, parseFrameKey } from './group/frameKey';
 import { partInCanvasUnits, writePartFromCanvasUnits } from './group/groupOps';
 import {
@@ -2099,6 +2100,20 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                 />
               );
             }
+            // **연결선은 아직 행을 갖지 않는다**(SPEC-CANVAS-011 M12 가 이 줄을 걷어낸다).
+            //
+            // 아래 행은 통째로 요소의 형상 위에 서 있다 — 기하 묶음 · 도형 스타일 · 글자
+            // 탭 · 숫자 스위치가 전부 `CanvasElement` 를 받는다. 연결선을 그 통로에 태우면
+            // 상자 좌표 칸이 빈 채로 서고 그 칸에 적은 값이 갈 곳이 없다. 연결선의 행은
+            // 그것들이 아니라 **두 끝과 그리는 법**을 말해야 하고(REQ-07), 무엇보다 참조가
+            // 끊겼다는 사실을 말해야 한다(REQ-08) — 그 행은 M12 가 짓는다.
+            //
+            // 건너뛰어도 저술은 사라지지 않는다: 파서가 읽고 쓰기가 보존하므로 config 에
+            // 그대로 남는다. `idx` 가 **노드 배열의 자리** 그대로인 것도 지금 그대로다
+            // (위 `emit` 주석) — 행 하나가 비어도 순서 단추와 삭제가 가리키는 자리는
+            // 옮겨지지 않는다.
+            if (isConnector(el)) return null;
+
             const bindingOptions = bindingOptionsFor(seriesOptions, el.binding?.series);
             const unbound = el.binding === undefined;
             const open = isExpanded(el.id);
