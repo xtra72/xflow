@@ -52,7 +52,10 @@ import {
   type PxPoint,
 } from './canvasGeometry';
 import type { ResolvedStyle } from './canvasRules';
-import { walkDrawables } from './group/frameKey';
+import { curveSegments } from './connector/connectorCurve';
+import type { ConnectorElement, ConnectorRoute } from './connector/connectorTypes';
+import { resolveConnector } from './connector/resolveConnector';
+import { isConnectorDrawable, walkDrawables } from './group/frameKey';
 import type { CanvasNode, GroupElement } from './group/groupTypes';
 
 // --- 최소 context 인터페이스 ---------------------------------------------
@@ -372,6 +375,102 @@ function drawMeasuredElement(
   return measured;
 }
 
+// --- 연결선 그리기 (SPEC-CANVAS-011 M6) ----------------------------------
+
+/**
+ * 해석된 연결선 하나를 그린다 — 점 목록은 **캔버스 단위**이고, 여기서 투영한다.
+ *
+ * ## `route` 는 **그리기만** 가른다
+ *
+ * `straight` · `elbow` · `free` 는 셋이 **같은 코드**를 지난다. 다른 것은 점이 어디서
+ * 왔는가 뿐이며(사람이 찍었는가, 손이 그은 궤적인가), 그 출처는 그리기에 닿지 않는다.
+ * 셋을 따로 적으면 그 셋이 갈라질 자리가 생기고, 그 갈라짐은 "자유선만 굵기가 다르다"
+ * 같은 모양으로만 보인다.
+ *
+ * `curve` 만 갈라지되, 중간점이 없으면 **그 갈래도 같은 길로 떨어진다**(AC-50) —
+ * `curveSegments` 가 빈 목록을 내므로 아래 폴리라인이 그대로 걸린다. 네 갈래의 호출
+ * 기록이 동일해야 한다는 REQ-04-b 가 조건문이 아니라 **구조**로 지켜진다.
+ *
+ * ## 채우지 않는다
+ *
+ * 열린 경로의 `fill` 은 뜻이 없다 — `line` 이 001 이래 지켜 온 그 규율 그대로다.
+ * 색이 없거나 두께가 0 이면 `paintStroke` 가 아무것도 하지 않는다. **기본 색을 지어내지
+ * 않는다**(001): 저술이 없는 연결선은 잉크 없이 지나가고, 그래야 사용자가 "색을 지정하지
+ * 않음" 을 표현할 수 있다.
+ *
+ * ## 중심 앵커에서 물러나지 않는다 (AC-16 · A12)
+ *
+ * 받은 끝점을 **그대로** 잇는다. 경계 교점을 여기서 구해 선을 뒤로 물리면 종류마다 산술이
+ * 갈리고 `outlineBox` 와 어긋날 다섯 번째 자리가 생긴다. 도형에 가려지는 대가는 숨기지
+ * 않는다 — 그것이 A12 가 고른 것이다.
+ */
+export function drawConnector(
+  ctx: DrawContext2D,
+  points: readonly PointGeometry[],
+  route: ConnectorRoute,
+  style: ResolvedStyle,
+  proj: CanvasProjection,
+): void {
+  // 요소와 같은 규율이다 — `visible:false` 는 `save`/`restore` 조차 하지 않는다.
+  if (style.visible === false) return;
+  const px = points.map((point) => projectPoint(point, proj));
+  // `resolveConnector` 는 늘 `[시작, …중간점, 끝]` 을 내므로 점이 둘 이상이지만, 그 사실은
+  // 타입에 없다. 손으로 지은 목록이 들어와도 던지지 않는 쪽을 고른다 — 빈 목록에 대해
+  // `moveTo(undefined, undefined)` 를 부르면 진짜 context 는 조용히 무시하고, 그 침묵이
+  // "어떤 선만 안 그려진다" 로 돌아온다.
+  const start = px[0];
+  if (start === undefined) return;
+
+  ctx.save();
+  try {
+    ctx.globalAlpha = resolveAlpha(style.opacity);
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    // 곡선은 **투영한 뒤에** 편다. 투영은 축마다 상수를 곱할 뿐이라 어느 쪽에서 펴도 같은
+    // 곡선이지만, 이쪽이면 AC-48 이 재는 제어점이 곧 `bezierCurveTo` 에 들어간 그 값이다.
+    const segments = route === 'curve' ? curveSegments(px) : [];
+    if (segments.length === 0) {
+      for (const point of px.slice(1)) ctx.lineTo(point.x, point.y);
+    } else {
+      for (const seg of segments) {
+        ctx.bezierCurveTo(seg.c1.x, seg.c1.y, seg.c2.x, seg.c2.y, seg.to.x, seg.to.y);
+      }
+    }
+    paintStroke(ctx, style);
+  } catch {
+    // 손상된 선 하나가 프레임 전체를 무너뜨리지 않는다 — 요소 갈래와 같은 규율이다(REQ-05).
+  } finally {
+    ctx.restore();
+  }
+}
+
+/**
+ * 연결선 하나를 **풀어서** 그린다 — `drawElements` 의 연결선 갈래 본체다.
+ *
+ * 참조를 푸는 일은 `resolveConnector` **한 함수**의 몫이다. 그리는 쪽이 제 손으로 앵커를
+ * 찾으면 잡는 쪽(M7) · 손잡이(M9)와 갈라지고, 그때부터 "그려진 자리와 잡히는 자리가
+ * 다르다" 가 시작된다(002 위험 R1).
+ *
+ * `undefined` 는 **끊긴 연결**이며 그때 **캔버스 호출이 하나도 나지 않는다**(AC-52).
+ * 길이 0 인 선도, 아무것도 따르지 않는 `beginPath` 도 아니다 — 부재는 그릴 수 없다.
+ * 그 사실을 화면이 말하는 일은 목록 쪽의 몫이다(REQ-08 · M12).
+ *
+ * 저술이 없으면 빈 스타일로 간다. **기본 색을 지어내지 않으므로**(001) 그 선은 잉크 없이
+ * 지나가며, 예외도 나지 않는다.
+ */
+function drawResolvedConnector(
+  ctx: DrawContext2D,
+  connector: ConnectorElement,
+  nodes: readonly CanvasNode[],
+  style: ResolvedStyle | undefined,
+  proj: CanvasProjection,
+  textWidths: Readonly<Record<string, number>>,
+): void {
+  const points = resolveConnector(connector, nodes, proj, textWidths);
+  if (points === undefined) return;
+  drawConnector(ctx, points, connector.route, style ?? connector.style ?? {}, proj);
+}
+
 /**
  * 요소 목록을 **배열 순서대로** 그린다(뒤가 위, REQ-02). 돌려주는 값은 이 프레임에서
  * 실제로 잰 **글자 폭 장부**(`kind:'text'` 요소 id → CSS px)다.
@@ -393,6 +492,21 @@ function drawMeasuredElement(
  *
  * 측정 횟수는 001 과 같은 **프레임당 1회**다. 이 함수는 새로 재지 않고 이미 잰 값을 모으기만
  * 하므로 "스테이지의 두 번째 측정원을 만들지 않는다" 는 REQ-05 금지 조항이 지켜진다.
+ *
+ * ## `priorTextWidths` — 011 이 더한 인자 하나 (M6)
+ *
+ * **직전 프레임**이 잰 글자 폭 장부다. 연결선의 끝점을 푸는 데 필요하다 — 문구 요소의
+ * 윤곽 상자는 잰 폭에서 나오고, 그 상자에서 앵커 아홉이 파생되기 때문이다.
+ *
+ * 이 프레임이 쌓고 있는 장부를 쓰지 **않는** 것에 뜻이 있다. 그러면 같은 연결선이 배열의
+ * 어디에 있느냐에 따라 끝점이 달라진다 — 가리킨 문구가 앞에 있으면 폭을 알고 뒤에 있으면
+ * 모른다. 그 어긋남은 요소를 위아래로 옮기다가 **선이 튀는** 모양으로만 보인다.
+ *
+ * 직전 프레임의 장부는 잡는 쪽(`canvasHitTest`)과 오버레이가 이미 쓰고 있는 **그 장부**다
+ * (002 T3). 같은 값을 보므로 그려진 자리와 잡히는 자리가 갈라지지 않는다. 최악의 지연은
+ * 한 프레임이고 그 지연이 틀리게 할 수 있는 것은 문구 상자의 폭 하나뿐이다.
+ *
+ * 부재는 빈 장부다 — 연결선을 쓰지 않는 호출부는 **한 글자도 고치지 않는다**(REQ-09).
  */
 export function drawElements(
   ctx: DrawContext2D,
@@ -400,6 +514,7 @@ export function drawElements(
   styles: Record<string, ResolvedStyle>,
   texts: Record<string, string | undefined>,
   proj: CanvasProjection,
+  priorTextWidths: Readonly<Record<string, number>> = {},
 ): Record<string, number> {
   const textWidths: Record<string, number> = {};
   // 그룹 상자는 **그룹마다 한 번만** 잰다. 부품마다 다시 재면 같은 값을 부품 수만큼
@@ -412,7 +527,19 @@ export function drawElements(
   // 한 그룹의 모든 부품에 **같은 객체**를 실어 보내므로 참조 비교로도 캐시가 그대로 산다.
   let hostGroup: GroupElement | undefined;
   let hostBox: PxBox | undefined;
-  for (const { key, element, group } of walkDrawables(elements)) {
+  for (const item of walkDrawables(elements)) {
+    const { key } = item;
+    // **연결선은 제 배열 자리에서 그려진다**(AC-51). 앞의 도형 뒤, 뒤의 도형 앞이다 —
+    // 늘 위(또는 아래)에 두는 별도 층을 만들지 않는다. 그룹 상자 캐시는 건드리지 않는다:
+    // 연결선은 그룹에 담기지 않으므로(A8) 부품의 연속을 끊는 일이 없다.
+    if (isConnectorDrawable(item)) {
+      drawResolvedConnector(ctx, item.connector, elements, styles[key], proj, priorTextWidths);
+      // 글자 폭 장부에 **키를 더하지 않는다.** 이 장부는 `measureText` 를 지난 사실만
+      // 나르는데(002), 연결선은 잴 글자가 없다. 키를 더하면 받는 쪽이 "이 선에도 잡을 수
+      // 있는 글자 상자가 있다" 고 잘못 읽는다.
+      continue;
+    }
+    const { element, group } = item;
     if (group === undefined) {
       hostGroup = undefined;
       hostBox = undefined;

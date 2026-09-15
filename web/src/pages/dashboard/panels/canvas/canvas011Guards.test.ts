@@ -312,8 +312,8 @@ describe('참조를 푸는 자리가 `resolveConnector.ts` 하나뿐이다 (AC-4
   });
 
   it('부르는 자리는 **그 모듈에서 들여온다** — 이름만 같은 둘째가 없다', () => {
-    // 오늘 이 순회는 비어 있다(소비자가 아직 없다). M6 이 그리기를 세우는 순간부터
-    // 이름이 하나씩 들어오고, 그때 위 ②의 가드들이 그 파일을 이미 붙들고 있다.
+    // M6 이 그리기를 세우면서 이 순회에 첫 이름이 들어왔다(`drawElement.ts`). 위 ②의
+    // 가드들이 그 파일을 이미 붙들고 있다.
     for (const { name, text } of productSources()) {
       if (name === RESOLVE) continue;
       if (!/\bresolveConnector\(/.test(text)) continue;
@@ -322,7 +322,20 @@ describe('참조를 푸는 자리가 `resolveConnector.ts` 하나뿐이다 (AC-4
     expect(countOf(source(RESOLVE), /export function resolveConnector\b/g)).toBe(1);
   });
 
-  it.todo('①: 그리기(M6) · 히트(M7) · 손잡이(M9)가 모두 `resolveConnector` 를 지난다 — 셋이 선 뒤에 잰다');
+  it('①-그리기: 렌더 층이 `resolveConnector` 를 지난다 (M6)', () => {
+    // AC-45 ①의 **셋 중 첫째**다. 히트(M7)·손잡이(M9)는 아직 서지 않았으므로 아래 `todo`
+    // 가 그 둘의 자리를 비워 둔 채 남는다 — 셋을 한꺼번에 초록으로 만들지 않는다.
+    //
+    // 재는 것은 둘이다: 렌더 층이 그 함수를 **부르고**, 앵커를 **제 손으로 찾지 않는다**.
+    // 둘째가 없으면 "부르기도 하고 따로 풀기도 한다" 가 지나간다.
+    const text = source('drawElement.ts');
+    expect(/\bresolveConnector\(/.test(text)).toBe(true);
+    expect(/from '[^']*resolveConnector'/.test(text)).toBe(true);
+    expect(text.includes('anchorPoints')).toBe(false);
+    expect(text.includes("'el' in ")).toBe(false);
+  });
+
+  it.todo('①-나머지: 히트(M7) · 손잡이(M9)도 `resolveConnector` 를 지난다 — 둘이 선 뒤에 잰다');
 });
 
 // --- M4: 앞의 두 이름을 넓히지 않았다 ---------------------------------------

@@ -48,7 +48,7 @@ import { usePanelEditMode } from '../PanelEditToggle';
 import type { CanvasSize } from './canvasConfig';
 import { isNumericElement, parseCanvasConfig } from './canvasConfig';
 import { type CanvasNode } from './group/groupTypes';
-import { walkDrawables } from './group/frameKey';
+import { isConnectorDrawable, walkDrawables } from './group/frameKey';
 import { bakeStyle } from './group/groupOps';
 import {
   useCanvasLiveSeriesPublisher,
@@ -241,7 +241,21 @@ function buildCanvasFrame(
   // 갈라지고, 그 어긋남은 "어떤 부품만 스타일이 안 먹는다" 로만 보인다. 그룹 자신은 그릴
   // 도형이 없어 이 순회에 오지 않으므로, 그룹이 제 스타일도 문구도 내지 않는다는 004 의
   // 성질은 그대로 남는다.
-  for (const { key, element: el, group } of walkDrawables(elements)) {
+  for (const item of walkDrawables(elements)) {
+    // **연결선의 겉모습 캐스케이드는 아직 서지 않았다**(SPEC-CANVAS-011).
+    //
+    // M6 은 연결선을 **그리는 법**까지만 세운다. 그 그림은 `styles[key]` 가 없을 때
+    // `connector.style` 로 떨어지므로(`drawElement.drawResolvedConnector`) 정적 저술은
+    // 화면에 닿는다. 닿지 않는 것은 `binding` · `rules` — 여기서 그 둘을 평가해 목표
+    // 스타일을 내야 닿는다.
+    //
+    // 그 빈자리를 **말로 남긴다**. 004 가 그룹의 `style`/`rules`/`binding` 을 저장만 하고
+    // 렌더에 닿지 않은 채 M7 에서 멈췄을 때, 사용자가 본 것은 "값을 넣었는데 아무 일도
+    // 일어나지 않는다" 였고 그 침묵에는 아무 표시가 없었다. 여기 한 줄을 두어 같은 침묵이
+    // 다시 표시 없이 지나가지 않게 한다 — 011 의 plan·acceptance 어디에도 연결선 규칙
+    // 평가를 세우는 마일스톤이 없다.
+    if (isConnectorDrawable(item)) continue;
+    const { key, element: el, group } = item;
     const reading = el.binding ? readings.get(el.binding.series) : undefined;
     const numeric = isNumericElement(el);
     // 숫자로 읽지 않는 요소에는 **비교할 수가 없다**. 그래서 규칙 평가에 넘기는 값은

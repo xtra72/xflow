@@ -88,7 +88,7 @@ import { CanvasStageGridContext, type CanvasStageGrid } from './canvasStageGrid'
 import { beginTween, retargetTween, sampleTween, type TweenState } from './canvasTween';
 import { DEFAULT_WORKSPACE_ZOOM, workspaceBox } from './canvasWorkspace';
 import { clearSurface, drawElements, type DrawContext2D } from './drawElement';
-import { walkDrawables } from './group/frameKey';
+import { isConnectorDrawable, walkDrawables } from './group/frameKey';
 import type { CanvasNode } from './group/groupTypes';
 
 // --- 주입 지점 -----------------------------------------------------------
@@ -404,7 +404,18 @@ export default function CanvasSurface({
 
       // **그리는 쪽과 같은 순회**를 쓴다(`walkDrawables`). 순회가 둘이 되면 키 집합이
       // 갈라지고, 그 어긋남은 "어떤 부품만 트윈되지 않는다" 로만 보인다.
-      for (const { key, element: el } of walkDrawables(current.elements)) {
+      for (const item of walkDrawables(current.elements)) {
+        // **연결선은 아직 트윈되지 않는다**(SPEC-CANVAS-011).
+        //
+        // 트윈은 목표 스타일이 있어야 뜻이 있고, 연결선의 목표 스타일은
+        // `buildCanvasFrame` 이 아직 내지 않는다(그쪽의 같은 자리 주석 참조). 없는 목표를
+        // 향해 트윈하면 매 프레임 `el.style` 을 목표로 삼아 **첫 등장 갈래**만 반복하게
+        // 되고, 그것은 트윈이 아니라 장부만 늘리는 일이다.
+        //
+        // 여기서 건너뛰므로 `seen` 에도 들지 않고, 아래 정리 고리가 연결선 키를 남기지
+        // 않는다 — 장부에 죽은 키가 쌓이지 않는다.
+        if (isConnectorDrawable(item)) continue;
+        const { key, element: el } = item;
         seen.add(key);
         const target = current.targetStyles[key] ?? el.style;
         const live = tweens.get(key);
@@ -494,7 +505,19 @@ export default function CanvasSurface({
       );
       // 반환값은 이 프레임이 잰 글자 폭이다 — 재는 곳이 늘어난 것이 아니라, 원래 재던
       // 값을 오버레이 쪽으로 흘려보낼 뿐이다(측정은 여전히 프레임당 1회).
-      textWidthsRef.current = drawElements(ctx, els, styles, labels, { stage: size, canvas: units });
+      //
+      // 여섯째 인자는 **직전 프레임**의 그 장부다(011 M6). 연결선의 끝점을 푸는 데 문구
+      // 상자의 폭이 필요한데, 이번 프레임이 쌓는 중인 장부를 쓰면 같은 선이 배열의 어디에
+      // 있느냐에 따라 끝점이 달라진다. 잡는 쪽·오버레이가 이미 보고 있는 값과 **같은 값**을
+      // 그리기도 보므로 그려진 자리와 잡히는 자리가 갈라지지 않는다.
+      textWidthsRef.current = drawElements(
+        ctx,
+        els,
+        styles,
+        labels,
+        { stage: size, canvas: units },
+        textWidthsRef.current,
+      );
       return allDone;
     },
     [advance],
