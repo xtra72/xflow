@@ -48,12 +48,9 @@ import {
   AlignVerticalJustifyEnd,
   AlignVerticalJustifyStart,
   BringToFront,
-  Circle,
   Grid3x3,
-  Minus,
   SendToBack,
   Square,
-  Type,
 } from 'lucide-react';
 
 import { FieldHelp } from '@/components/property/FieldHelp';
@@ -77,7 +74,8 @@ import { CanvasSvgImport } from './svgimport/CanvasSvgImport';
 import type { ImportedShapeSpec, ImportedTextSpec } from './svgimport/svgImportPlan';
 import type { ScratchpadDropPoint } from './scratchpad/canvasScratchpadDrop';
 import type { ScratchpadEntry } from './scratchpad/scratchpadTypes';
-import { CanvasCellGlyph, CanvasShapeCatalog, CELL_CLASS } from './shapes/CanvasShapeCatalog';
+import { CanvasCellPreview, CanvasShapeCatalog, CELL_CLASS } from './shapes/CanvasShapeCatalog';
+import { primitivePreviewElement } from './shapes/previewElements';
 import { usePaletteCollapse } from './shapes/paletteGroups';
 import type { ShapeCatalogEntry } from './shapes/shapeCatalog';
 
@@ -165,23 +163,6 @@ const PALETTE_NAME_KEYS: Record<CanvasPrimitiveKind, string> = {
   ellipse: 'dashboard.canvas.edit.shapeEllipse',
   line: 'dashboard.canvas.edit.shapeLine',
   text: 'dashboard.canvas.edit.shapeText',
-};
-
-/**
- * 도형 아이콘의 크기. 도크의 다른 아이콘(`ICON_CLASS` — 16px)보다 한참 크다.
- *
- * 카탈로그 칸의 미리보기는 44×32 상자 안에 **26px 정사각**의 도형을 그린다. 그 옆에 16px
- * 글리프를 놓으면 같은 격자에서 한쪽만 티끌로 보인다 — 칸의 크기를 맞춰 놓고 그 안의 그림을
- * 맞추지 않으면 배치만 같고 눈에는 여전히 두 벌이다. 24px 은 그 26px 과 맞선다.
- */
-const PALETTE_ICON_CLASS = 'h-6 w-6 shrink-0';
-
-/** 도형 아이콘. */
-const PALETTE_ICONS: Record<CanvasPrimitiveKind, typeof Square> = {
-  rect: Square,
-  ellipse: Circle,
-  line: Minus,
-  text: Type,
 };
 
 /** 정렬 버튼 하나 — 축·방식·아이콘·라벨 키가 한 자리에 산다. */
@@ -502,16 +483,19 @@ export function CanvasEditDockBody({
           한 목록으로 펴면 도크 폭이 `w-44` 고정이라 자주 쓰는 넷이 스크롤 아래로 밀리므로
           (위험 R10), 나머지 묶음 둘은 접힌 채로 태어난다.
 
-          바뀐 것은 둘이다. ① 011 이 원시형 묶음을 걷어내고 그 넷을 `기본` 묶음으로 옮겼다.
+          바뀐 것은 셋이다. ① 011 이 원시형 묶음을 걷어내고 그 넷을 `기본` 묶음으로 옮겼다.
           ② 넷이 **줄 버튼이기를 그만두고 격자 칸이 되었다.** 자리만 옮기고 생김새를 두었더니
           한 묶음 몸통 안에 세로 줄 넷과 2열 격자 서른이 함께 서서, 옮긴 자리가 "같은 묶음"
-          으로 읽히지 않았다. 칸의 겉모습(`CELL_CLASS` · `CanvasCellGlyph`)은 카탈로그가
-          **내보낸 그것**을 쓴다 — 여기서 비슷한 클래스를 한 벌 더 적으면 두 생김새가 다시
-          갈라진다.
+          으로 읽히지 않았다. ③ 그 칸의 그림이 **lucide 글리프에서 실제 렌더 경로로** 바뀌었다.
+          칸 크기를 맞춰도 윤곽선 글리프와 파란 도형은 여전히 두 벌의 잉크였고, 이제 넷도
+          카탈로그 30종과 같은 `drawElements` 를 지난다 — 칸에 보이는 모습이 곧 눌렀을 때
+          놓이는 모습이다(REQ-06 이 카탈로그에 세운 그 규율이 넷에도 걸린다).
 
-          그 넷을 카탈로그가 그리지 않고 **도크가 그린 것을 카탈로그가 제 격자에 받아 놓는
-          것**은 그대로다 — 넷의 아이콘과 그 클릭이 부르는 `onPlace` 가 카탈로그의 관심이
-          아니기 때문이다. */}
+          칸의 겉모습(`CELL_CLASS`)도 그림(`CanvasCellPreview`)도 카탈로그가 **내보낸 그것**을
+          쓴다 — 여기서 비슷한 클래스나 두 번째 그리기를 적으면 두 생김새가 다시 갈라진다.
+
+          그래도 넷을 세우는 쪽은 도크다 — 이름·접근성 이름·클릭이 부르는 `onPlace` 가
+          카탈로그의 관심이 아니기 때문이다. */}
       <section role="group" aria-labelledby={shapesId} className="flex flex-col gap-0.5">
         <p id={shapesId} className={SECTION_TITLE_CLASS}>
           {t('dashboard.canvas.edit.dockShapes')}
@@ -520,25 +504,23 @@ export function CanvasEditDockBody({
           collapsed={collapsed}
           onToggle={toggle}
           onPlace={onPlaceShape}
-          leading={PALETTE_KINDS.map((kind) => {
-            const Icon = PALETTE_ICONS[kind];
-            return (
-              <button
-                key={kind}
-                type="button"
-                data-testid={`canvas-palette-add-${kind}`}
-                aria-label={t(PALETTE_ARIA_KEYS[kind])}
-                title={t(PALETTE_ARIA_KEYS[kind])}
-                className={CELL_CLASS}
-                onClick={() => onPlace(kind)}
-              >
-                <CanvasCellGlyph>
-                  <Icon className={PALETTE_ICON_CLASS} aria-hidden="true" />
-                </CanvasCellGlyph>
-                <span className="w-full truncate text-center">{t(PALETTE_NAME_KEYS[kind])}</span>
-              </button>
-            );
-          })}
+          leading={PALETTE_KINDS.map((kind) => (
+            <button
+              key={kind}
+              type="button"
+              data-testid={`canvas-palette-add-${kind}`}
+              aria-label={t(PALETTE_ARIA_KEYS[kind])}
+              title={t(PALETTE_ARIA_KEYS[kind])}
+              className={CELL_CLASS}
+              onClick={() => onPlace(kind)}
+            >
+              <CanvasCellPreview
+                testId={`canvas-palette-preview-${kind}`}
+                element={primitivePreviewElement(kind)}
+              />
+              <span className="w-full truncate text-center">{t(PALETTE_NAME_KEYS[kind])}</span>
+            </button>
+          ))}
         />
       </section>
 

@@ -123,8 +123,15 @@ function makeRecorder(): Recorder {
     beginPath() {
       calls.push(['beginPath']);
     },
-    rect() {},
-    ellipse() {},
+    // 011 이 이 셋을 **무동작에서 기록으로** 바꿨다. 카탈로그 30종은 전부 `kind:'path'` 라
+    // 세 함수를 한 번도 부르지 않으므로 기존 카탈로그 단언은 한 자도 달라지지 않고, 새로
+    // 들어온 원시형 넷(rect·ellipse·text)은 이 셋을 지나지 않으면 잴 수가 없다.
+    rect(x, y, w, h) {
+      calls.push(['rect', x, y, w, h]);
+    },
+    ellipse(cx, cy, rx, ry) {
+      calls.push(['ellipse', cx, cy, rx, ry]);
+    },
     moveTo(x, y) {
       calls.push(['moveTo', x, y]);
     },
@@ -143,7 +150,9 @@ function makeRecorder(): Recorder {
     fill() {
       calls.push(['fill']);
     },
-    fillText() {},
+    fillText(text, x, y) {
+      calls.push(['fillText', text, x, y]);
+    },
     measureText(text: string) {
       return { width: text.length * 10 };
     },
@@ -167,7 +176,11 @@ function stubPreviewContexts(): Map<string, Recorder> {
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (
     this: HTMLCanvasElement,
   ) {
-    const id = (this.dataset.testid ?? '').replace('canvas-catalog-preview-', '');
+    // 두 접두사를 모두 벗긴다 — 011 이후 원시형 넷도 같은 미리보기 부품을 쓰므로
+    // (`canvas-palette-preview-*`), 카탈로그만 벗기면 넷의 기록을 집을 수 없다.
+    const id = (this.dataset.testid ?? '')
+      .replace('canvas-catalog-preview-', '')
+      .replace('canvas-palette-preview-', '');
     const recorder = makeRecorder();
     byId.set(id, recorder);
     return recorder as unknown as CanvasRenderingContext2D;
@@ -270,6 +283,60 @@ describe('팔레트의 오늘이 그대로 있다 (AC-E10 · 회귀 · SPEC-CANV
     const primitive = screen.getByTestId('canvas-palette-add-rect');
     const catalog = screen.getByTestId('canvas-catalog-add-triangle');
     expect(primitive.className).toBe(catalog.className);
+  });
+
+  it('네 칸도 카탈로그 칸과 **같은 미리보기 캔버스**를 든다 — glyph 가 아니다 (011)', () => {
+    render(<Harness initial={[]} />);
+
+    const catalogCanvas = screen
+      .getByTestId('canvas-catalog-add-triangle')
+      .querySelector('canvas');
+    expect(catalogCanvas, '카탈로그 칸에 미리보기가 없다').not.toBeNull();
+
+    for (const kind of ['rect', 'ellipse', 'line', 'text']) {
+      const cell = screen.getByTestId(`canvas-palette-add-${kind}`);
+
+      // ① 그림이 `<canvas>` 다. 011 이전에는 lucide `<svg>` 였고, 그래서 한 격자 안에
+      //    윤곽선 글리프와 파란 도형이라는 두 벌의 잉크가 서 있었다.
+      const canvas = cell.querySelector('canvas');
+      expect(canvas, `${kind}: 미리보기 캔버스가 없다`).not.toBeNull();
+      expect(cell.querySelector('svg'), `${kind}: glyph 가 남아 있다`).toBeNull();
+
+      // ② 그 캔버스가 카탈로그의 것과 **같은 자리**다 — 뒷면 크기도 CSS 크기도.
+      expect(canvas?.getAttribute('width'), kind).toBe(catalogCanvas?.getAttribute('width'));
+      expect(canvas?.getAttribute('height'), kind).toBe(catalogCanvas?.getAttribute('height'));
+      expect(canvas?.getAttribute('style'), kind).toBe(catalogCanvas?.getAttribute('style'));
+
+      // ③ 장식은 이름을 나르지 않는다 — 008 의 a11y 가드가 훑는 그 속성이다.
+      expect(canvas?.getAttribute('aria-hidden'), kind).toBe('true');
+      expect(canvas?.getAttribute('data-testid'), kind).toBe(`canvas-palette-preview-${kind}`);
+    }
+  });
+
+  it('그 넷이 실제로 **무엇을 그린다** — 빈 캔버스가 아니다 (011 · 시험 규율 셋)', () => {
+    // 캔버스가 있다는 것만 재면 텅 빈 채로도 초록이다(이 파일 머리말의 함정 셋). 종류마다
+    // 제 그리기 갈래를 지났는지 **기록으로** 잰다.
+    const byId = stubPreviewContexts();
+    render(<Harness initial={[]} />);
+
+    const expected: Record<string, string> = {
+      rect: 'rect',
+      ellipse: 'ellipse',
+      line: 'lineTo',
+      text: 'fillText',
+    };
+    for (const [kind, call] of Object.entries(expected)) {
+      const rec = byId.get(kind);
+      expect(rec, `${kind} 미리보기가 그리지 않았다`).toBeDefined();
+      if (rec === undefined) continue;
+      const names = rec.calls.map((c) => c[0]);
+      expect(names, `${kind} 의 그리기 갈래`).toContain(call);
+    }
+
+    // 문구 칸은 `T` 하나를 칸 한가운데에 놓는다 — 로케일과 무관한 그림이다(011 사용자 결정).
+    const text = byId.get('text');
+    const fillText = text?.calls.find((c) => c[0] === 'fillText');
+    expect(fillText?.[1], '문구 미리보기가 그린 글자').toBe('T');
   });
 
   it('`기본` 묶음을 접으면 원시형 넷이 사라지고, 다시 펴면 넷이 돌아온다', () => {
