@@ -56,6 +56,7 @@ function countOf(text: string, re: RegExp): number {
 }
 
 const OVERLAY = 'CanvasEditOverlay.tsx';
+const RESOLVE = 'connector/resolveConnector.ts';
 
 describe('그물이 성기지 않다', () => {
   it('제품 파일이 실제로 여럿 잡히고 오버레이가 그 안에 있다', () => {
@@ -67,6 +68,7 @@ describe('그물이 성기지 않다', () => {
     expect(names).toContain('connector/canvasTools.ts');
     expect(names).toContain('connector/CanvasAnchorTools.tsx');
     expect(names).toContain('connector/connectorTypes.ts');
+    expect(names).toContain(RESOLVE);
   });
 });
 
@@ -142,11 +144,20 @@ describe('009 의 `isSecondPress` 가 유일한 더블클릭 판정이다 (AC-28
 // --- 앵커 자리를 셈하는 자리가 하나다 ---------------------------------------
 
 describe('보이는 점과 집히는 점이 **같은 함수**에서 나온다 (위험 R1)', () => {
-  it('`anchorPoints` 를 부르는 제품 파일이 오버레이 하나뿐이다', () => {
+  it('`anchorPoints` 를 부르는 제품 파일이 **이름으로 적은 둘**뿐이다', () => {
+    // 011 M5 가 이 목록을 하나 넓혔다. 구멍을 조용히 지나가지 않고 **세어서** 적는 것이
+    // SPEC 이 좌표 변환 가드에 대해 정한 그 규율이다(§009 의 좌표 변환 가드를 넓힌다).
+    //
+    //   - 오버레이 — 그리는 점과 집는 점이 같은 지도에서 나와야 한다(위험 R1).
+    //   - `connector/resolveConnector.ts` — 연결선의 끝점을 푸는 **한 함수**(AC-45).
+    //
+    // 셋째가 늘면 그 자리가 제 손으로 앵커를 셈하기 시작한 것이다. 여기에 이름을 적기
+    // 전에 그 자리가 정말 필요한지부터 따져야 한다.
+    const allowed = new Set([OVERLAY, RESOLVE]);
     for (const { name, text } of productSources()) {
       if (name === 'connector/anchors.ts') continue;
       const seen = countOf(text, /\banchorPoints\(/g);
-      expect(seen > 0, name).toBe(name === OVERLAY);
+      expect(seen > 0, name).toBe(allowed.has(name));
     }
   });
 
@@ -239,9 +250,79 @@ describe('`kind === \'connector\'` 가 `isConnector` 바깥에 없다 (AC-39)', 
     for (const { name, text } of users) {
       expect(text.includes("from './connector/connectorTypes'") ||
         text.includes("from '../connector/connectorTypes'") ||
+        // 같은 디렉터리의 이웃(`connector/resolveConnector.ts`)이 쓰는 형태다.
+        text.includes("from './connectorTypes'") ||
         name === CONNECTOR_TYPES, name).toBe(true);
     }
   });
+});
+
+// --- AC-45: 참조를 푸는 자리가 하나다 ---------------------------------------
+
+describe('참조를 푸는 자리가 `resolveConnector.ts` 하나뿐이다 (AC-45 — 오늘 잴 수 있는 절반)', () => {
+  // ## 이 절이 AC-45 의 **절반**인 까닭
+  //
+  // AC-45 는 둘을 요구한다.
+  //
+  //   ① 그리기 · 히트 · 손잡이가 **모두** `resolveConnector` 를 지난다.
+  //   ② 그 밖에 참조를 **제 손으로 푸는 자리가 없다.**
+  //
+  // ①의 세 소비자는 M6(`drawElement.ts`) · M7(`canvasHitTest.ts`) · M9(오버레이)가
+  // 세우므로 오늘은 잴 대상이 아예 없다 — 아래 마지막 `todo` 가 그 자리를 비워 둔다.
+  // 나머지는 전부 ②이고, ②는 **오늘부터** 짐을 진다: 세 소비자가 설 때 참조를 제 손으로
+  // 풀면 그 자리에서 빨개지고, `resolveConnector` 를 부르면 조용히 초록으로 지나간다.
+
+  it('붙은 끝과 자유 끝을 **가르는 자리**가 하나뿐이다', () => {
+    // `'el' in …` 이 그 판별이다. 파서는 아직 `ConnectorEnd` 가 아닌 날것 객체에서
+    // `optionalString(e.el)` 로 읽으므로 이 문형에 걸리지 않는다.
+    for (const { name, text } of productSources()) {
+      expect(text.includes("'el' in "), name).toBe(name === RESOLVE);
+    }
+  });
+
+  it('`ConnectorEnd` 를 **타입으로** 들이는 제품 파일이 셋뿐이다', () => {
+    // 짓는 자리(자료형) · 읽어 들이는 자리(파서) · 푸는 자리. 넷째가 생기면 그 파일이
+    // 끝점의 **속**을 들여다보기 시작한 것이다.
+    const allowed = [CONNECTOR_TYPES, 'canvasConfig.ts', RESOLVE].sort();
+    const seen = productSources()
+      .filter(({ text }) => /\bConnectorEnd\b/.test(text))
+      .map(({ name }) => name)
+      .sort();
+    expect(seen).toEqual(allowed);
+  });
+
+  it('그 함수 안에서 상자를 **다시 재지 않는다** (AC-33)', () => {
+    // 끝이 둘이어도 `anchorPoints` 호출은 **한 자리**이고, 그 함수 안의 `outlineBox` 도
+    // 하나다. 이 파일에 `outlineBox` 가 나타나면 두 번째 측정이 생긴 것이며, 그 갈라짐은
+    // 크기를 바꾼 뒤에야 화면에서만 보인다.
+    const text = source(RESOLVE);
+    expect(countOf(text, /\banchorPoints\(/g)).toBe(1);
+    expect(text.includes('outlineBox')).toBe(false);
+  });
+
+  it('복합 키를 **쪼개지 않는다** — 막는 것은 조회이지 검사가 아니다 (AC-44)', () => {
+    // 부품 키가 풀리지 않는 까닭은 최상위 목록에 그 id 가 **없기** 때문이다. 여기서
+    // 구분자를 적으면 009 AC-04(구분자 리터럴은 `frameKey.ts` 하나뿐)가 함께 빨개진다.
+    const text = source(RESOLVE);
+    expect(countOf(text, /['"]\/['"]/g)).toBe(0);
+    for (const re of [/\.split\(/, /\.indexOf\(/, /\.lastIndexOf\(/]) {
+      expect(re.test(text), String(re)).toBe(false);
+    }
+    expect(text.includes('frameKey')).toBe(false);
+  });
+
+  it('부르는 자리는 **그 모듈에서 들여온다** — 이름만 같은 둘째가 없다', () => {
+    // 오늘 이 순회는 비어 있다(소비자가 아직 없다). M6 이 그리기를 세우는 순간부터
+    // 이름이 하나씩 들어오고, 그때 위 ②의 가드들이 그 파일을 이미 붙들고 있다.
+    for (const { name, text } of productSources()) {
+      if (name === RESOLVE) continue;
+      if (!/\bresolveConnector\(/.test(text)) continue;
+      expect(/from '[^']*resolveConnector'/.test(text), name).toBe(true);
+    }
+    expect(countOf(source(RESOLVE), /export function resolveConnector\b/g)).toBe(1);
+  });
+
+  it.todo('①: 그리기(M6) · 히트(M7) · 손잡이(M9)가 모두 `resolveConnector` 를 지난다 — 셋이 선 뒤에 잰다');
 });
 
 // --- M4: 앞의 두 이름을 넓히지 않았다 ---------------------------------------
