@@ -133,8 +133,14 @@ export const BOX_CORNER_HANDLE_IDS = ['nw', 'ne', 'se', 'sw'] as const;
 export const CANVAS_FONT_SIZE_MIN = FONT_SIZE_MIN;
 export const CANVAS_FONT_SIZE_MAX = FONT_SIZE_MAX;
 
-/** 핸들 → 정규화된 px 박스 안의 상대 위치(0=시작 변, 1=끝 변). */
-const BOX_HANDLE_FACTORS: Record<BoxHandleId, readonly [number, number]> = {
+/**
+ * 핸들 → 정규화된 px 박스 안의 상대 위치(0=시작 변, 1=끝 변).
+ *
+ * **밖으로 열려 있다** — 011 의 고정 앵커 여덟이 같은 표를 지나야 하기 때문이다
+ * (`connector/anchors.ts` · AC-10). 베껴 적게 두면 표가 둘이 되고, 그중 하나가 바뀌는 날
+ * 손잡이가 선 자리와 선이 붙는 자리가 갈라진다.
+ */
+export const BOX_HANDLE_FACTORS: Record<BoxHandleId, readonly [number, number]> = {
   nw: [0, 0],
   n: [0.5, 0],
   ne: [1, 0],
