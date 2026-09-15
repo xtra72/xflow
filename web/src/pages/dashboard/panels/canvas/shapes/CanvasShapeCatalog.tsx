@@ -56,13 +56,45 @@ const GROUP_HEAD_CLASS =
  */
 const GRID_CLASS = 'grid grid-cols-2 gap-0.5 pt-0.5';
 
-/** 칸 하나 — 미리보기 위, 이름 아래. */
-const CELL_CLASS =
+/**
+ * 칸 하나 — 미리보기 위, 이름 아래.
+ *
+ * **내보내는 것에 뜻이 있다.** 011 이후 이 격자의 첫 네 칸은 도크가 그린다(원시형 넷).
+ * 도크가 비슷한 클래스를 제 자리에 한 벌 더 적으면 두 벌이 언젠가 갈라지고, 그 갈라짐은
+ * "한 묶음 안에 두 생김새" 로 화면에 나온다 — 011 이 방금 고친 그 결함이다.
+ */
+export const CELL_CLASS =
   'flex w-full flex-col items-center gap-0.5 rounded px-1 py-1 text-[11px] ' +
   'text-(--color-text-secondary) hover:bg-(--color-bg-elevated) hover:text-blue-500 ' +
   'focus:outline-none focus:ring-2 focus:ring-blue-300';
 
 const CHEVRON_CLASS = 'h-3 w-3 shrink-0';
+
+/**
+ * 칸의 그림 자리 — `CanvasShapePreview` 가 차지하는 것과 **같은 상자**(44×32 CSS px).
+ *
+ * 도크의 원시형 넷은 캔버스 미리보기가 아니라 lucide 글리프를 놓지만, 이 상자를 지나므로
+ * 칸 높이가 카탈로그 칸과 한 픽셀도 다르지 않다. 크기를 `PREVIEW` 에서 **파생**시키는 것이
+ * 이 부품의 전부다 — 숫자를 도크에 베껴 적으면 미리보기를 키우는 날 한쪽만 자란다.
+ *
+ * 그림은 이름을 나르지 않는다(`aria-hidden`) — 미리보기 `<canvas>` 와 같은 규율이다. 이
+ * 자리는 **넣는 것이 무엇이든** 장식이므로 상자가 스스로를 감춘다. 다만 008 의 a11y 가드
+ * (`canvas008I18n.test.tsx` — "장식은 이름을 나르지 않는다")는 묶음 안의 `svg`·`canvas` 를
+ * **직접** 훑으므로, 넣는 그림 자신도 `aria-hidden` 을 들어야 한다. 조상이 감추는 것으로
+ * 충분하다고 가드를 느슨하게 하지 않는다 — 배치를 고치는 김에 출시된 가드를 깎는 것이
+ * 이 변경이 할 일이 아니다.
+ */
+export function CanvasCellGlyph({ children }: { children: ReactNode }): React.ReactElement {
+  return (
+    <span
+      className="flex shrink-0 items-center justify-center"
+      style={{ width: PREVIEW.width, height: PREVIEW.height }}
+      aria-hidden="true"
+    >
+      {children}
+    </span>
+  );
+}
 
 // --- 미리보기 ------------------------------------------------------------
 
@@ -207,19 +239,22 @@ export interface CanvasShapeCatalogProps {
   /** 카탈로그 도형을 놓는다. 만드는 일은 `canvasElementFactory` 한 입구가 한다. */
   onPlace: (entry: ShapeCatalogEntry) => void;
   /**
-   * `기본` 묶음 몸통의 **맨 앞**에 서는 것. 도크가 원시형 넷의 줄 버튼을 여기로 건넨다
-   * (SPEC-CANVAS-011 REQ-01).
+   * `기본` 묶음 격자의 **첫 칸들**. 도크가 원시형 넷을 여기로 건넨다(SPEC-CANVAS-011 REQ-01).
    *
-   * 넷을 카탈로그 항목으로 바꾸지 않고 **자리만** 내주는 것에 뜻이 있다 — 그 넷은 미리보기도
-   * 격자 칸도 아닌 줄 버튼이고, 그 형상이 008 이전부터 오늘까지 같다(AC-E10). 격자에 섞으면
-   * 자리가 바뀐 것이 아니라 생김새가 바뀐 것이 된다.
+   * **격자 위가 아니라 격자 안이다.** 이 값은 `<div className={GRID_CLASS}>` 의 자식으로
+   * 들어가 카탈로그 칸들 **앞에** 흐르므로, 넘기는 쪽은 감싸는 상자가 아니라 `<button>`
+   * 조각을 주어야 한다. 상자로 감싸면 그 상자 하나가 칸 한 개를 차지하고 넷이 그 안에서
+   * 다시 쌓인다 — 한 묶음 안에 두 배치가 서는 그 결함이 정확히 그렇게 생긴다.
+   *
+   * 칸의 겉모습은 `CELL_CLASS` 와 `CanvasCellGlyph` 로 내보낸다. 넘기는 쪽이 제 클래스를
+   * 적지 않아야 두 생김새가 다시 갈라지지 않는다.
    */
   leading?: ReactNode;
 }
 
 /**
- * 카탈로그 묶음 셋. 원시형 넷은 카탈로그가 아니지만 `기본` 묶음의 몸통 맨 앞을 빌려 선다
- * (011 REQ-01) — 도크가 `leading` 으로 건넨 그것이다.
+ * 카탈로그 묶음 셋. 원시형 넷은 카탈로그가 아니지만 `기본` 묶음 **격자의 첫 네 칸**으로 선다
+ * (011 REQ-01) — 도크가 `leading` 으로 건넨 그것이다. 그래서 그 묶음의 몸통은 배치가 하나다.
  */
 export function CanvasShapeCatalog({
   collapsed,
@@ -243,8 +278,8 @@ export function CanvasShapeCatalog({
           collapsed={collapsed[group.id]}
           onToggle={onToggle}
         >
-          {group.id === 'basic' && leading}
           <div className={GRID_CLASS}>
+            {group.id === 'basic' && leading}
             {group.entries.map((shape) => {
               const name = t(shape.nameKey);
               return (

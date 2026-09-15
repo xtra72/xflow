@@ -243,9 +243,33 @@ describe('팔레트의 오늘이 그대로 있다 (AC-E10 · 회귀 · SPEC-CANV
       'canvas-palette-add-line',
       'canvas-palette-add-text',
     ]);
-    // 그 뒤가 카탈로그 12종이다 — 넷이 격자 칸으로 바뀐 것이 아니라 격자 **앞**에 선다.
+    // 그 뒤로 카탈로그 12종이 이어진다 — 넷은 격자 **위**가 아니라 격자의 첫 칸들이다.
     expect(ids).toHaveLength(4 + (SHAPE_GROUPS.find((g) => g.id === 'basic')?.entries.length ?? 0));
     expect(ids[4]).toBe('canvas-catalog-add-triangle');
+  });
+
+  it('그 네 칸이 카탈로그 칸과 **같은 격자의 자식**이다 — 한 묶음에 배치는 하나다', () => {
+    render(<Harness initial={[]} />);
+
+    // 차례만 재면 넷이 제 상자에 세로로 쌓여 있어도 통과한다 — 실제로 배달된 결함이 그것
+    // 이었다(줄 버튼 넷 위, 2열 격자 서른 아래). 여기서 재는 것은 **부모가 하나**라는 사실이다.
+    const body = screen.getByTestId('canvas-palette-group-body-basic');
+    const cells = [
+      ...body.querySelectorAll<HTMLElement>(
+        '[data-testid^="canvas-palette-add-"],[data-testid^="canvas-catalog-add-"]',
+      ),
+    ];
+    const parents = new Set(cells.map((node) => node.parentElement));
+    expect(parents.size, '칸들의 부모가 둘 이상이다 — 격자가 갈라졌다').toBe(1);
+
+    // 그 하나가 실제로 2열 격자다. 부모가 하나여도 그것이 세로 상자면 눈에는 여전히 줄이다.
+    const grid = cells[0]?.parentElement;
+    expect(grid?.className).toContain('grid-cols-2');
+
+    // 겉모습도 한 벌이다 — 원시형 칸과 카탈로그 칸이 같은 클래스를 든다(`CELL_CLASS` 공유).
+    const primitive = screen.getByTestId('canvas-palette-add-rect');
+    const catalog = screen.getByTestId('canvas-catalog-add-triangle');
+    expect(primitive.className).toBe(catalog.className);
   });
 
   it('`기본` 묶음을 접으면 원시형 넷이 사라지고, 다시 펴면 넷이 돌아온다', () => {

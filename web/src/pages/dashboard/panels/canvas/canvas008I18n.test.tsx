@@ -297,6 +297,43 @@ describe('`en` 로케일에서도 치환이 두 자리 모두 일어난다 (D7 �
     expect(label).toContain(name);
   });
 
+  // 로케일 순회를 `it` **밖**에 둔다 — `useLocale` 은 이름이 훅을 닮아서 함수 본문의
+  // 반복문 안에서 부르면 `react-hooks/rules-of-hooks` 가 운다(이 파일의 다른 순회와 같은 꼴).
+  for (const locale of ['ko', 'en'] as const) {
+    it(`${locale}: 원시형 네 칸도 접근성 이름이 보이는 이름을 품는다 (WCAG 2.5.3)`, () => {
+      // 011 이 넷을 카탈로그와 **같은 격자의 칸**으로 만들었으므로, 이웃한 서른 칸이 지키는
+      // 성질을 이 넷도 지키는지 잰다. 넷의 두 문구는 카탈로그와 달리 치환이 아니라 **따로
+      // 적힌 두 문장**이라(`paletteRect` 와 `shapeRect`) 포함이 저절로 성립하지 않는다.
+      //
+      // ko 는 글자 그대로 품는다("사각형" ⊂ "사각형 놓기"). en 은 **대소문자만** 어긋난다
+      // ("Rectangle" 대 "Place rectangle") — 그래서 접어서 잰다. WCAG 2.5.3 은 대소문자를
+      // 따지지 않으므로 이것으로 충족이지만, 그 어긋남이 있다는 사실 자체를 여기 적어 둔다.
+      // 011 이 만든 것이 아니라 008 이전부터 그랬고, 이 시험이 그것을 처음 고정한다.
+      const pairs: ReadonlyArray<readonly [kind: string, ariaKey: string, nameKey: string]> = [
+        ['rect', 'paletteRect', 'shapeRect'],
+        ['ellipse', 'paletteEllipse', 'shapeEllipse'],
+        ['line', 'paletteLine', 'shapeLine'],
+        ['text', 'paletteText', 'shapeText'],
+      ];
+
+      useLocale(locale);
+      render(<Harness initial={[]} />);
+      for (const [kind, ariaKey, nameKey] of pairs) {
+        const cell = screen.getByTestId(`canvas-palette-add-${kind}`);
+        const label = cell.getAttribute('aria-label') ?? '';
+        const name = lookup(LOCALES[locale], `${EDIT}.${nameKey}`) ?? '';
+        expect(name, `${locale}:${nameKey}`).not.toBe('');
+        expect(label, `${locale}:${ariaKey}`).toBe(lookup(LOCALES[locale], `${EDIT}.${ariaKey}`));
+        // 보이는 이름이 곧 칸의 글자다.
+        expect(cell.textContent, `${locale}:${kind} 의 보이는 이름`).toContain(name);
+        // 접근성 이름이 그것을 품는다(대소문자 접어서).
+        expect(label.toLowerCase(), `${locale}:${kind} 의 접근성 이름`).toContain(
+          name.toLowerCase(),
+        );
+      }
+    });
+  }
+
   it('한도 안내가 상한을 두 번 말하고 두 자리 모두 숫자다', () => {
     useLocale('en');
     const entries: ScratchpadEntry[] = Array.from(
