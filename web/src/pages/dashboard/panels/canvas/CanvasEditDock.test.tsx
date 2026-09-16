@@ -161,18 +161,22 @@ describe('도크는 패널 설정에서만 뜬다', () => {
 // 이 절이 지는 것은 **그릇 자체의 성질**이다.
 
 describe('도구 띠는 도크와 **함께** 나고 든다', () => {
-  it('자리를 내면 띠도 함께 서고, 절 일곱이 그 안에 있다', () => {
+  it('자리를 내면 띠도 함께 서고, 절 여덟이 그 안에 있다', () => {
     render(<Harness initial={[]} />);
 
     const band = screen.getByTestId('canvas-toolbar-panel');
     expect(screen.getByTestId('canvas-toolbar').contains(band)).toBe(true);
-    // 옮겨 온 일곱 절의 **대표 컨트롤**이 전부 띠 안이다. 하나라도 도크에 남아 있으면
-    // 도구 한 벌이 두 그릇에 흩어진 것이고, 그것은 옮김이 아니라 절반의 옮김이다.
+    // 절의 **대표 컨트롤**이 전부 띠 안이다. 하나라도 도크에 남아 있으면 도구 한 벌이 두
+    // 그릇에 흩어진 것이고, 그것은 옮김이 아니라 절반의 옮김이다.
+    //
+    // 일곱이 여덟이 된 것은 013 이 **변환** 절을 더했기 때문이다 — 옮겨 온 일곱에 새로
+    // 선 하나다. 세어서 적는 것이 이 목록의 규율이므로 수도 함께 고친다.
     for (const id of [
       'canvas-workspace-zoom',
       'canvas-grid-toggle',
       'canvas-align-left',
       'canvas-order-front',
+      'canvas-transform-flip-x',
       'canvas-group-create',
       'canvas-anchor-tool',
       'canvas-connector-tool-straight',

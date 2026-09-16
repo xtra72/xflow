@@ -1315,7 +1315,12 @@
         "importRefusedEmptyDocument": "그릴 것이 하나도 없는 문서입니다.",
         "importRefusedDegenerateViewBox": "문서의 크기를 정할 수 없습니다. viewBox 도 width/height 도 없고, 도형들이 한 줄에 놓여 있습니다.",
         "importRefusedTooManyElements": "요소 {actual}개는 상한 {limit}개를 넘습니다. {limit}개 이하로 줄여 주세요.",
-        "importRefusedTooManyCommands": "명령 {actual}개는 상한 {limit}개를 넘습니다. {limit}개 이하로 줄여 주세요."
+        "importRefusedTooManyCommands": "명령 {actual}개는 상한 {limit}개를 넘습니다. {limit}개 이하로 줄여 주세요.",
+        "dockTransform": "변환",
+        "transformFlipX": "좌우 뒤집기",
+        "transformFlipY": "상하 뒤집기",
+        "transformRotateLeft": "왼쪽으로 90도 돌리기",
+        "transformRotateRight": "오른쪽으로 90도 돌리기"
       },
       "elements": {
         "listTitle": "요소 목록",

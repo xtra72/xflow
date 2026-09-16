@@ -1315,7 +1315,12 @@
         "importRefusedEmptyDocument": "The document has nothing to draw.",
         "importRefusedDegenerateViewBox": "The document size cannot be determined. It has no viewBox and no width/height, and its shapes lie on a single line.",
         "importRefusedTooManyElements": "{actual} elements exceed the limit of {limit}. Reduce it to {limit} or fewer.",
-        "importRefusedTooManyCommands": "{actual} commands exceed the limit of {limit}. Reduce it to {limit} or fewer."
+        "importRefusedTooManyCommands": "{actual} commands exceed the limit of {limit}. Reduce it to {limit} or fewer.",
+        "dockTransform": "Transform",
+        "transformFlipX": "Flip horizontally",
+        "transformFlipY": "Flip vertically",
+        "transformRotateLeft": "Rotate 90° left",
+        "transformRotateRight": "Rotate 90° right"
       },
       "elements": {
         "listTitle": "Elements",

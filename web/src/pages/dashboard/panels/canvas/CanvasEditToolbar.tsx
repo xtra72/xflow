@@ -43,7 +43,11 @@ import {
   AlignVerticalJustifyEnd,
   AlignVerticalJustifyStart,
   BringToFront,
+  FlipHorizontal,
+  FlipVertical,
   Grid3x3,
+  RotateCcw,
+  RotateCw,
   SendToBack,
   Square,
 } from 'lucide-react';
@@ -63,6 +67,7 @@ import {
   type AlignAxis,
   type AlignMode,
 } from './canvasEditArrange';
+import type { TransformKind } from './canvasTransform';
 
 // --- 겉모습 --------------------------------------------------------------
 
@@ -188,6 +193,52 @@ const ALIGN_CONTROLS: readonly AlignControl[] = [
 
 // --- 도구 --------------------------------------------------------------
 
+/** 변환 버튼 하나 — 종류·아이콘·라벨 키가 한 자리에 산다(정렬 표와 같은 형상이다). */
+interface TransformControl {
+  id: string;
+  kind: TransformKind;
+  icon: typeof Square;
+  ariaKey: string;
+}
+
+/**
+ * 변환 버튼 **넷** — 뒤집기 둘 · 회전 둘 (SPEC-CANVAS-013 REQ-01 · REQ-02).
+ *
+ * **여덟이 아니다.** 사용자의 말은 "상/하/좌/우 뒤집기" 였지만 거울은 둘뿐이다 — 위로
+ * 뒤집는 것과 아래로 뒤집는 것은 **같은 가로축 거울**이다. 넷으로 가르면 눌러도 결과가
+ * 같은 단추가 둘 생기고, 그 부류는 이 저장소가 "화면이 지키지 못할 약속" 으로 이름 붙인
+ * 그것이다.
+ *
+ * 차례는 **뒤집기 먼저**다. 거울은 한 번에 끝나는 일이고 회전은 네 번에 한 바퀴라, 자주
+ * 쓰는 쪽이 앞에 선다.
+ */
+const TRANSFORM_CONTROLS: readonly TransformControl[] = [
+  {
+    id: 'flip-x',
+    kind: 'flipX',
+    icon: FlipHorizontal,
+    ariaKey: 'dashboard.canvas.edit.transformFlipX',
+  },
+  {
+    id: 'flip-y',
+    kind: 'flipY',
+    icon: FlipVertical,
+    ariaKey: 'dashboard.canvas.edit.transformFlipY',
+  },
+  {
+    id: 'rotate-ccw',
+    kind: 'rotateCCW',
+    icon: RotateCcw,
+    ariaKey: 'dashboard.canvas.edit.transformRotateLeft',
+  },
+  {
+    id: 'rotate-cw',
+    kind: 'rotateCW',
+    icon: RotateCw,
+    ariaKey: 'dashboard.canvas.edit.transformRotateRight',
+  },
+];
+
 export interface CanvasEditToolbarBodyProps {
   /** 격자 표시·붙임(하나의 토글이 둘을 함께 켠다 — T12). */
   snapToGrid: boolean;
@@ -219,6 +270,15 @@ export interface CanvasEditToolbarBodyProps {
   onAlign: (axis: AlignAxis, mode: AlignMode) => void;
   /** 참이면 맨 앞으로, 거짓이면 맨 뒤로. */
   onOrder: (toFront: boolean) => void;
+  /**
+   * 뒤집거나 돌릴 것이 있는가 — **하나만 골라도 참이다**(SPEC-CANVAS-013 REQ-05).
+   *
+   * `canAlign` 의 `>= 2` 와 **다른 자**다. 정렬은 맞출 상대가 있어야 뜻이 있지만, 거울은
+   * 제 상자 안에서 이미 뜻이 있다. 같은 자를 쓰면 하나 골라 놓고 뒤집으려는 사용자에게
+   * 꺼진 단추를 내밀게 된다.
+   */
+  canTransform: boolean;
+  onTransform: (kind: TransformKind) => void;
   /**
    * 그룹 · 그룹 해제 · 부품 분리 컨트롤(SPEC-CANVAS-004 REQ-08).
    *
@@ -271,6 +331,8 @@ export function CanvasEditToolbarBody({
   canOrder,
   onAlign,
   onOrder,
+  canTransform,
+  onTransform,
   groupTools,
   anchorTools,
   connectorTools,
@@ -281,6 +343,7 @@ export function CanvasEditToolbarBody({
   const gridId = useId();
   const alignId = useId();
   const orderId = useId();
+  const transformId = useId();
   const groupId = useId();
   const anchorId = useId();
   const connectorId = useId();
@@ -487,6 +550,41 @@ export function CanvasEditToolbarBody({
           <SendToBack className={ICON_CLASS} aria-hidden="true" />
           <span>{t('dashboard.canvas.edit.sendToBack')}</span>
         </button>
+      </section>
+
+      {/* 변환 — 순서 절 바로 뒤다(SPEC-CANVAS-013 §결정 8).
+
+          자리의 근거는 004 가 그룹 절을 순서 뒤에 둔 그것과 같다: 정렬 · 순서 · 변환 ·
+          그룹이 전부 **선택 위에서 도는 연산**이라 붙어 있어야 "고른 것에 무엇을 할 수
+          있는가" 가 한눈에 읽힌다.
+
+          단추는 **넷**이다 — 거울 둘, 회전 둘(위 `TRANSFORM_CONTROLS` 머리말). */}
+      <section role="group" aria-labelledby={transformId} className={SECTION_CLASS}>
+        <p id={transformId} className={SECTION_TITLE_CLASS}>
+          {t('dashboard.canvas.edit.dockTransform')}
+        </p>
+        <div className="flex items-center gap-1">
+          {TRANSFORM_CONTROLS.map((control) => {
+            const Icon = control.icon;
+            return (
+              <button
+                key={control.id}
+                type="button"
+                data-testid={`canvas-transform-${control.id}`}
+                aria-label={t(control.ariaKey)}
+                title={t(control.ariaKey)}
+                // 고른 것이 없으면 끈다 — 눌러도 화면이 그대로인 컨트롤은 고장으로 보인다
+                // (정렬 단추가 같은 이유로 같은 일을 한다). 다만 세는 **자가 다르다**:
+                // 정렬은 둘 이상, 변환은 하나 이상이다(REQ-05).
+                disabled={!canTransform}
+                className={cn(ICON_BUTTON_CLASS, DISABLED_CLASS)}
+                onClick={() => onTransform(control.kind)}
+              >
+                <Icon className={ICON_CLASS} aria-hidden="true" />
+              </button>
+            );
+          })}
+        </div>
       </section>
 
       {/* 그룹 — 순서 절 바로 뒤다(SPEC-CANVAS-004 REQ-08).

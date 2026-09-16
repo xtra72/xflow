@@ -276,6 +276,9 @@ import {
   type AlignAxis,
   type AlignMode,
 } from './canvasEditArrange';
+// 뒤집기·회전의 산술은 이 두 잎이 소유한다(SPEC-CANVAS-013). 이 파일은 넘길 뿐이다.
+import type { TransformKind } from './canvasTransform';
+import { transformNodes } from './canvasTransformNodes';
 import { useCanvasEditSelection, type CanvasSelection } from './canvasEditContext';
 import { useCanvasEditDockHost, useCanvasEditToolbarHost } from './canvasEditDockHost';
 import type { ImportedShapeSpec, ImportedTextSpec } from './svgimport/svgImportPlan';
@@ -3143,6 +3146,26 @@ export default function CanvasEditOverlay({
   };
 
   /**
+   * 뒤집기 · 90° 회전 (SPEC-CANVAS-013 REQ-01 · REQ-02).
+   *
+   * **규칙은 `canvasTransformNodes.transformNodes` 한 곳에 있다.** 이 층이 하는 일은 지금
+   * 선택과 투영과 글자 폭 장부를 넘기는 것뿐이다 — 산술을 여기 두면 "화면에서 뒤집은 것과
+   * 저장된 것이 다르다" 가 표현 가능해진다.
+   *
+   * **글자 폭 장부를 함께 넘기는 것이 요점이다.** 문구의 윤곽 상자는 실측 글자 폭에서
+   * 나오고, 뒤집기는 그 상자를 축으로 쓴다. 장부를 빼면 문구가 폭 0 인 상자로 읽혀
+   * 정렬에 따라 글자 폭만큼 어긋난 자리로 간다.
+   *
+   * 아무것도 바뀌지 않으면 그 모듈이 **받은 배열의 사본**을 돌려주므로 값으로 견준다 —
+   * `applyZOrder` 가 참조로 견주는 것과 다른 이유는 그쪽 모듈이 같은 참조를 돌려주기
+   * 때문이며, 두 규율을 한 이름으로 부르지 않는다.
+   */
+  const applyTransform = (kind: TransformKind): void => {
+    const next = transformNodes(kind, elements, selection, projection, textWidths);
+    onElementsChange(next);
+  };
+
+  /**
    * 풀 수 있는 그룹 — **정확히 하나를 골랐고 그것이 그룹일 때만** 있다.
    *
    * 핸들이 서는 규칙(`selection.size === 1`)과 같은 자를 쓴다. 둘 이상을 골라 놓고 "무엇을
@@ -3287,6 +3310,19 @@ export default function CanvasEditOverlay({
    * 눌러도 `bringToFront` 가 아무것도 찾지 못해 **눌러도 아무 일이 없는 단추**가 된다.
    */
   const canOrder = elements.some((el) => selection.has(el.id));
+
+  /**
+   * 뒤집거나 돌릴 것이 있는가 — **하나만 골라도 참이다**(SPEC-CANVAS-013 REQ-05).
+   *
+   * `canAlign` 의 `>= 2` 와 **다른 자**다. 정렬은 맞출 상대가 있어야 뜻이 있지만 거울은 제
+   * 상자 안에서 이미 뜻이 있고, 같은 자를 쓰면 하나 골라 놓고 뒤집으려는 사용자에게 꺼진
+   * 단추를 내민다.
+   *
+   * **연결선만 골라 놓으면 거짓이다.** 연결선에는 `geometry` 가 없어 윤곽 상자가 없고,
+   * 상자가 없으면 뒤집을 축이 없다 — 그 판정을 `selectionBox` 도 똑같이 내리므로(거기서는
+   * `undefined`), 단추의 활성과 실제 동작이 **같은 사실**을 본다.
+   */
+  const canTransform = elements.some((el) => selection.has(el.id) && !isConnector(el));
 
   /**
    * 묶을 수 있는가 — **둘 이상**이다(REQ-07 · AC-12). `canAlign` 과 같은 자다.
@@ -3705,6 +3741,8 @@ export default function CanvasEditOverlay({
             canAlign={canAlign}
             canOrder={canOrder}
             onAlign={applyAlign}
+          canTransform={canTransform}
+          onTransform={applyTransform}
             onOrder={applyZOrder}
             // 그룹 묶음. 떠 있는 줄이 그리는 **그 컴포넌트**를 띠도 그린다 — 띠는 자리를
             // 주고 이름을 달 뿐이다(SPEC-CANVAS-004 REQ-08 · 불변식 I24).
