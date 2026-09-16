@@ -93,7 +93,35 @@ export type ConnectorEnd =
  * 하나씩 찍었는가, 손이 그은 궤적에서 나왔는가. 그래서 둘을 한 이름으로 접지 않는다 —
  * 접으면 도구가 제 출처를 잃고, 자유선을 다시 편집하는 몸짓이 꺾은 선과 구분되지 않는다.
  */
-export type ConnectorRoute = 'straight' | 'elbow' | 'curve' | 'free';
+export type ConnectorRoute = 'straight' | 'elbow' | 'curve' | 'free' | 'ortho';
+
+/**
+ * 그리는 법 **전량** — 파서의 화이트리스트가 여기서 나온다 (SPEC-CANVAS-015).
+ *
+ * ## 왜 손으로 적은 `||` 를 걷었는가
+ *
+ * 015 가 다섯째 갈래를 더했을 때 `parseConnectorRoute` 의
+ * `raw === 'elbow' || raw === 'curve' || …` 사슬이 **조용히 낡았다.** 타입도 린트도 울지
+ * 않았고, 결과는 저장에 `ortho` 로 적힌 선이 **읽는 순간 직선으로 돌아가는** 것이었다 —
+ * 저장 왕복을 견디고 화면에서만 드러나는, 이 저장소가 가장 싫어하는 부류다.
+ *
+ * `satisfies Record<ConnectorRoute, true>` 가 그 부류를 **문법으로** 막는다: 여섯째 갈래가
+ * 생기면 이 객체가 컴파일되지 않고, 고친 사람은 그 길로 파서까지 함께 보게 된다.
+ *
+ * 값을 `Object.keys` 로 뽑는 것은 이름을 **두 번 적지 않기** 위해서다.
+ */
+export const CONNECTOR_ROUTES: readonly ConnectorRoute[] = Object.keys({
+  straight: true,
+  elbow: true,
+  ortho: true,
+  curve: true,
+  free: true,
+} satisfies Record<ConnectorRoute, true>) as readonly ConnectorRoute[];
+
+/** 날것의 값이 그리는 법인가 — **파서가 지나는 유일한 문**이다. */
+export function isConnectorRoute(value: unknown): value is ConnectorRoute {
+  return typeof value === 'string' && (CONNECTOR_ROUTES as readonly string[]).includes(value);
+}
 
 /** 모르는 `route` 가 떨어지는 자리(AC-37). 점이 없어도 그림이 완전한 유일한 갈래다. */
 export const DEFAULT_CONNECTOR_ROUTE: ConnectorRoute = 'straight';
@@ -145,6 +173,10 @@ export const ROUTE_POINT_HOST: Readonly<Record<ConnectorRoute, ConnectorRoute>> 
   elbow: 'elbow',
   curve: 'curve',
   free: 'free',
+  // **다섯째 갈래에게 물었다**(SPEC-CANVAS-015). 위 머리말이 "그 물음이 다섯째 갈래에게는
+  // 아무도 묻지 않은 채 지나간다" 고 적어 둔 그 자리다. 답은 **제 이름**이다 — 직각 선은
+  // 점을 들 수 있고, 점이 늘어도 여전히 직각이다.
+  ortho: 'ortho',
 };
 
 /**

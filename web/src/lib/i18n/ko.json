@@ -1321,7 +1321,8 @@
         "transformFlipY": "상하 뒤집기",
         "transformRotateLeft": "왼쪽으로 90도 돌리기",
         "transformRotateRight": "오른쪽으로 90도 돌리기",
-        "rotateHandle": "돌리기 — Shift 로 15도 눈금"
+        "rotateHandle": "돌리기 — Shift 로 15도 눈금",
+        "toolOrtho": "직각으로 잇기"
       },
       "elements": {
         "listTitle": "요소 목록",
@@ -1446,7 +1447,8 @@
         "strokeDashSolid": "실선",
         "strokeDashDash": "파선",
         "strokeDashDot": "점선",
-        "strokeDashDashDot": "일점쇄선"
+        "strokeDashDashDot": "일점쇄선",
+        "connectorRouteOrtho": "직각"
       },
       "rules": {
         "firstMatchWins": "위에서부터 처음 일치하는 행 하나만 적용됩니다. 순서를 바꾸면 우선순위가 바뀝니다.",

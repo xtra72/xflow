@@ -35,10 +35,24 @@ function lookup(tree: unknown, key: string): unknown {
 }
 
 describe('도구 목록', () => {
-  it('여섯이다 — 고르기 · 앵커 · 연결선 넷 (M8)', () => {
+  it('일곱이다 — 고르기 · 앵커 · 연결선 **다섯** (M8 · SPEC-CANVAS-015)', () => {
     // M3'b 는 이 수를 둘로 적고 "M8 이 넷을 더해 여섯이 된다" 고 예고했다. 더했고, 예고한
     // 대로 **이 수가 먼저 울었다** — 고친 사람은 그 길로 아래 네 표를 함께 보게 된다.
-    expect([...CANVAS_TOOLS]).toEqual(['select', 'anchor', 'straight', 'elbow', 'curve', 'free']);
+    //
+    // 015 가 직각을 더해 일곱이 되었고, **이 단언이 다시 먼저 울었다.** 세어서 적는 것이
+    // 이 파일의 규율이므로 수와 목록을 함께 고친다.
+    //
+    // 직각이 **꺾은선 바로 뒤**에 서는 것에도 뜻이 있다 — 둘은 같은 일을 하는 두 방식이고,
+    // 떨어뜨려 두면 사용자가 "꺾는 도구" 를 고를 때 두 자리를 오간다.
+    expect([...CANVAS_TOOLS]).toEqual([
+      'select',
+      'anchor',
+      'straight',
+      'elbow',
+      'ortho',
+      'curve',
+      'free',
+    ]);
   });
 
   it('뒤의 넷이 `ConnectorRoute` 와 **같은 이름**이다 — 표가 그 둘을 이어 붙인다', () => {
@@ -130,7 +144,7 @@ describe('표 둘은 **다른 물음**이다 — M8 에서 실제로 갈라졌�
 
   it('실제로 갈리는 도구가 **하나 이상** 있다 — 순회가 비면 위가 무조건 통과한다', () => {
     const split = CANVAS_TOOLS.filter((t) => TOOL_SHOWS_ANCHORS[t] !== TOOL_ANCHOR_GESTURE[t]);
-    expect([...split]).toEqual(['straight', 'elbow', 'curve', 'free']);
+    expect([...split]).toEqual(['straight', 'elbow', 'ortho', 'curve', 'free']);
   });
 
   it('고르기는 앵커를 보이지도 더하지도 않는다 — 011 이전의 뜻 그대로다', () => {
@@ -145,9 +159,9 @@ describe('표 둘은 **다른 물음**이다 — M8 에서 실제로 갈라졌�
     expect(TOOL_CONNECTOR_ROUTE.anchor).toBeNull();
   });
 
-  it('연결선을 긋는 도구가 정확히 넷이다', () => {
+  it('연결선을 긋는 도구가 정확히 **다섯**이다 (015)', () => {
     const drawing = CANVAS_TOOLS.filter((t) => TOOL_CONNECTOR_ROUTE[t] !== null);
-    expect([...drawing]).toEqual(['straight', 'elbow', 'curve', 'free']);
+    expect([...drawing]).toEqual(['straight', 'elbow', 'ortho', 'curve', 'free']);
   });
 });
 

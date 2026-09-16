@@ -127,8 +127,8 @@ describe('허용 오차는 집기 여유에서 **파생**한다', () => {
 });
 
 describe('궤적을 받는 갈래는 **자유선 하나**다 (REQ-06)', () => {
-  it('표가 네 갈래를 총망라한다', () => {
-    const routes: ConnectorRoute[] = ['straight', 'elbow', 'curve', 'free'];
+  it('표가 **다섯** 갈래를 총망라한다 (015)', () => {
+    const routes: ConnectorRoute[] = ['straight', 'elbow', 'ortho', 'curve', 'free'];
     expect(Object.keys(ROUTE_TRACES_TRAIL).sort()).toEqual([...routes].sort());
   });
 
@@ -137,6 +137,9 @@ describe('궤적을 받는 갈래는 **자유선 하나**다 (REQ-06)', () => {
     expect(ROUTE_TRACES_TRAIL.straight).toBe(false);
     expect(ROUTE_TRACES_TRAIL.elbow).toBe(false);
     expect(ROUTE_TRACES_TRAIL.curve).toBe(false);
+    // 직각도 손으로 긋는 갈래가 아니다 — 궤적에서 점을 뽑는 일은 자유선 하나의 몫이고,
+    // 직각은 두 끝에서 모서리를 **지어내는** 갈래다(015).
+    expect(ROUTE_TRACES_TRAIL.ortho).toBe(false);
   });
 });
 

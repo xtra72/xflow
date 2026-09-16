@@ -56,6 +56,7 @@ import type { CustomAnchor } from './connector/anchorTypes';
 import {
   CONNECTOR_KIND,
   DEFAULT_CONNECTOR_ROUTE,
+  isConnectorRoute,
   isConnectorKind,
   MAX_CONNECTOR_POINTS,
   routeHosting,
@@ -1088,9 +1089,10 @@ function parseConnectorPoints(raw: unknown): PointGeometry[] | undefined {
  * 한 번 더 고르면 되지만 사라진 선은 되돌릴 길이 없다.
  */
 function parseConnectorRoute(raw: unknown): ConnectorRoute {
-  return raw === 'elbow' || raw === 'curve' || raw === 'free' || raw === 'straight'
-    ? raw
-    : DEFAULT_CONNECTOR_ROUTE;
+  // **판별은 잎 모듈 한 자리다**(SPEC-CANVAS-015). 종전에는 이 자리에 이름 넷을 손으로 적은
+  // `||` 사슬이 있었고, 015 가 다섯째를 더했을 때 그 사슬이 **조용히 낡았다** — 저장에
+  // `ortho` 로 적힌 선이 읽는 순간 직선으로 돌아갔고, 타입도 린트도 울지 않았다.
+  return isConnectorRoute(raw) ? raw : DEFAULT_CONNECTOR_ROUTE;
 }
 
 /**

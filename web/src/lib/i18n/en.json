@@ -1321,7 +1321,8 @@
         "transformFlipY": "Flip vertically",
         "transformRotateLeft": "Rotate 90° left",
         "transformRotateRight": "Rotate 90° right",
-        "rotateHandle": "Rotate — hold Shift for 15° steps"
+        "rotateHandle": "Rotate — hold Shift for 15° steps",
+        "toolOrtho": "Connect with right angles"
       },
       "elements": {
         "listTitle": "Elements",
@@ -1446,7 +1447,8 @@
         "strokeDashSolid": "Solid",
         "strokeDashDash": "Dashed",
         "strokeDashDot": "Dotted",
-        "strokeDashDashDot": "Dash-dot"
+        "strokeDashDashDot": "Dash-dot",
+        "connectorRouteOrtho": "Right-angle"
       },
       "rules": {
         "firstMatchWins": "Only the first matching row from the top is applied. Reordering changes priority.",

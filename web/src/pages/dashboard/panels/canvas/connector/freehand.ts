@@ -94,6 +94,9 @@ export const FREEHAND_TOLERANCE = HIT_TOLERANCE_PX / 2;
 export const ROUTE_TRACES_TRAIL: Readonly<Record<ConnectorRoute, boolean>> = {
   straight: false,
   elbow: false,
+  // 직각은 **손으로 긋는 갈래가 아니다**(SPEC-CANVAS-015). 궤적에서 점을 뽑는 일은 자유선
+  // 하나의 몫이고, 직각은 두 끝에서 모서리를 **지어내는** 갈래다.
+  ortho: false,
   curve: false,
   free: true,
 };

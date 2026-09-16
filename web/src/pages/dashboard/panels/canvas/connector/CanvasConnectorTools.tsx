@@ -35,7 +35,7 @@
 
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
-import { PenLine, Slash, Spline, Waypoints, type LucideIcon } from 'lucide-react';
+import { CornerDownRight, PenLine, Slash, Spline, Waypoints, type LucideIcon } from 'lucide-react';
 
 import {
   CANVAS_TOOLS,
@@ -59,6 +59,9 @@ import type { ConnectorRoute } from './connectorTypes';
 const ROUTE_ICON: Readonly<Record<ConnectorRoute, LucideIcon>> = {
   straight: Slash,
   elbow: Waypoints,
+  // 직각(SPEC-CANVAS-015) — **꺾이는 모서리 하나**가 그림이다. 꺾은선(`Waypoints`)이 점
+  // 여럿을 그리는 것과 달리, 이 아이콘은 "직각으로 한 번 꺾는다" 를 말한다.
+  ortho: CornerDownRight,
   curve: Spline,
   free: PenLine,
 };

@@ -1593,6 +1593,7 @@ const NO_TEXT_WIDTHS: Readonly<Record<string, number>> = Object.freeze({});
 const CONNECTOR_ROUTE_LABEL_KEY: Readonly<Record<ConnectorRoute, string>> = {
   straight: 'dashboard.canvas.elements.connectorRouteStraight',
   elbow: 'dashboard.canvas.elements.connectorRouteElbow',
+  ortho: 'dashboard.canvas.elements.connectorRouteOrtho',
   curve: 'dashboard.canvas.elements.connectorRouteCurve',
   free: 'dashboard.canvas.elements.connectorRouteFree',
 };

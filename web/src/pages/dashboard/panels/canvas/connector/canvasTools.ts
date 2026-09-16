@@ -55,7 +55,17 @@ import type { ConnectorRoute } from './connectorTypes';
  * `TOOL_CONNECTOR_ROUTE` 가 그 둘을 이어 붙이며, 그 표가 `Record<CanvasTool, …>` 이자
  * 값이 `ConnectorRoute | null` 이므로 이름이 어긋나면 컴파일러가 먼저 운다.
  */
-export const CANVAS_TOOLS = ['select', 'anchor', 'straight', 'elbow', 'curve', 'free'] as const;
+export const CANVAS_TOOLS = [
+  'select',
+  'anchor',
+  'straight',
+  'elbow',
+  // 직각 꺾은선(SPEC-CANVAS-015). **꺾은선 바로 뒤가 자리다** — 둘은 같은 일을 하는 두 방식
+  // 이고, 떨어뜨려 두면 사용자가 "꺾는 도구" 를 고를 때 두 자리를 오간다.
+  'ortho',
+  'curve',
+  'free',
+] as const;
 
 /** 지금 손에 쥔 도구. 언제나 **정확히 하나**다. */
 export type CanvasTool = (typeof CANVAS_TOOLS)[number];
@@ -75,6 +85,7 @@ export const TOOL_LABEL_KEYS: Readonly<Record<CanvasTool, string>> = {
   anchor: 'dashboard.canvas.edit.toolAnchor',
   straight: 'dashboard.canvas.edit.toolStraight',
   elbow: 'dashboard.canvas.edit.toolElbow',
+  ortho: 'dashboard.canvas.edit.toolOrtho',
   curve: 'dashboard.canvas.edit.toolCurve',
   free: 'dashboard.canvas.edit.toolFree',
 };
@@ -96,6 +107,7 @@ export const TOOL_SHOWS_ANCHORS: Readonly<Record<CanvasTool, boolean>> = {
   // 도구의 몸짓 자체이므로, 보이지 않으면 어디를 눌러야 할지 화면이 말하지 않는다.
   straight: true,
   elbow: true,
+  ortho: true,
   curve: true,
   free: true,
 };
@@ -118,6 +130,7 @@ export const TOOL_ANCHOR_GESTURE: Readonly<Record<CanvasTool, boolean>> = {
   // 누름마다 도형 위에 앵커를 흩뿌린다.
   straight: false,
   elbow: false,
+  ortho: false,
   curve: false,
   free: false,
 };
@@ -154,6 +167,7 @@ export const TOOL_POINT_GESTURE: Readonly<Record<CanvasTool, boolean>> = {
   anchor: false,
   straight: true,
   elbow: true,
+  ortho: true,
   curve: true,
   free: true,
 };
@@ -161,8 +175,8 @@ export const TOOL_POINT_GESTURE: Readonly<Record<CanvasTool, boolean>> = {
 /**
  * 이 도구가 **연결선을 긋는가**, 긋는다면 어떤 `route` 로 긋는가 (REQ-03 · REQ-04).
  *
- * `null` 은 "긋지 않는다" 이며, 그래서 도구 여섯이 **둘로 갈린다** — 긋는 넷과 긋지 않는
- * 둘. 오버레이는 이 표 하나만 보고 갈래를 타므로 `tool === 'straight' || …` 같은 목록이
+ * `null` 은 "긋지 않는다" 이며, 그래서 도구 일곱이 **둘로 갈린다** — 긋는 다섯과 긋지 않는
+ * 둘(015 가 직각을 더해 넷이 다섯이 되었다). 오버레이는 이 표 하나만 보고 갈래를 타므로 `tool === 'straight' || …` 같은 목록이
  * 그쪽에 생기지 않는다. 그런 목록은 다섯째 연결선 도구가 늘 때 **조용히** 빠지고, 그때
  * 화면은 "도구는 켜지는데 아무것도 그어지지 않는다" 만 말한다.
  *
@@ -170,14 +184,19 @@ export const TOOL_POINT_GESTURE: Readonly<Record<CanvasTool, boolean>> = {
  * `tool as ConnectorRoute` 로 줄여 적지 않는다 — `as` 는 두 이름이 갈라지는 날에도 조용히
  * 통과하고, 표는 그날 컴파일러를 부른다.
  *
- * 그리는 법이 넷이어도 **만드는 몸짓은 하나**다(M8). 중간점이 없는 동안 넷은 같은 그림이며
- * (REQ-04-b · AC-50), 점을 만드는 몸짓이 갈리는 것은 M10 · M11 의 몫이다.
+ * 그리는 법이 다섯이어도 **만드는 몸짓은 하나**다(M8). 중간점이 없는 동안 **직선 · 꺾은선 ·
+ * 자유선 셋은** 같은 그림이며(REQ-04-b · AC-50), 점을 만드는 몸짓이 갈리는 것은 M10 · M11 의
+ * 몫이다.
+ *
+ * **직각은 그 셋에 끼지 않는다**(SPEC-CANVAS-015 §결정 1). 점이 하나도 없어도 두 끝을 세
+ * 구간으로 잇기 때문이며, 그것이 이 갈래를 더한 이유 그 자체다.
  */
 export const TOOL_CONNECTOR_ROUTE: Readonly<Record<CanvasTool, ConnectorRoute | null>> = {
   select: null,
   anchor: null,
   straight: 'straight',
   elbow: 'elbow',
+  ortho: 'ortho',
   curve: 'curve',
   free: 'free',
 };

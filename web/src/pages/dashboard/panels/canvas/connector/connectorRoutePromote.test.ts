@@ -78,8 +78,10 @@ function breaksInvariant(node: ConnectorElement): boolean {
 // --- 표 자신 ---------------------------------------------------------------
 
 describe('`ROUTE_POINT_HOST` 가 갈래 전량에 답한다', () => {
-  it('키가 갈래 넷과 정확히 같다 — 빠진 갈래도 남은 갈래도 없다', () => {
-    expect([...ROUTES].sort()).toEqual(['curve', 'elbow', 'free', 'straight']);
+  it('키가 갈래 **다섯**과 정확히 같다 — 빠진 갈래도 남은 갈래도 없다 (015)', () => {
+    // 015 가 직각을 더해 넷이 다섯이 되었다. 이 파일이 지키는 것은 수가 아니라 **표가
+    // 갈래 전량을 덮는다**는 사실이고, 그 사실은 갈래가 늘어도 그대로다.
+    expect([...ROUTES].sort()).toEqual(['curve', 'elbow', 'free', 'ortho', 'straight']);
   });
 
   it('가리키는 갈래는 **제 점을 들 수 있는** 갈래다 — 승격이 한 번에 끝난다', () => {
