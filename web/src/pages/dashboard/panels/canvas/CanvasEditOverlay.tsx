@@ -234,7 +234,6 @@ import {
 import {
   appendConnector,
   appendElement,
-  freeConnectorEnd,
   appendImportedElements,
   appendPathElement,
   moveConnectorPoint,
@@ -723,6 +722,15 @@ const ROTATE_HANDLE_CLASS = `${HANDLE_BODY_CLASS} rounded-full cursor-grab`;
  * 넉넉히 떨어뜨린다.
  */
 const ROTATE_HANDLE_GAP_PX = 20;
+
+/**
+ * 끝점을 **뗀 것으로 보는** 최소 움직임(CSS px) — SPEC-CANVAS-016 REQ-02.
+ *
+ * 이보다 덜 움직였으면 누름과 뗌이 같은 자리에서 일어난 것이고, 그것은 끈 것이 아니라
+ * **누른 것**이다. 값이 앵커 집기 오차(`ANCHOR_PICK_SLOP_PX`)와 다른 축인 것에 뜻이 있다 —
+ * 저쪽은 "이 자리가 앵커인가" 를 묻고 이쪽은 "손이 움직였는가" 를 묻는다.
+ */
+const ENDPOINT_DETACH_SLOP_PX = 2;
 
 /**
  * 연결선 손잡이의 `aria-label` i18n 키 (SPEC-CANVAS-011 M9).
@@ -1837,7 +1845,31 @@ export default function CanvasEditOverlay({
         // 오차 밖이면 **자유 끝점**이다. 그래서 붙이는 길과 떼는 길이 한 몸짓이며,
         // 빈 곳에서 놓은 그은 선과 같은 규칙을 탄다(AC-58).
         const landed = anchorHitAt(hosts, point, proj, widths, ANCHOR_PICK_SLOP_PX);
-        emit(repointConnector(els, drag.nodeId, drag.handle.side, landed?.ref, pointer));
+        // **앵커 밖에서 놓으면 그 선이 사라진다**(SPEC-CANVAS-016 REQ-02).
+        //
+        // 자리에 그대로 두는 안을 기각했다 — 그러면 사용자가 뗀 끝이 아무 일도 없이
+        // 제자리로 돌아가고, 화면은 "왜 안 떨어지는가" 에 답하지 못한다.
+        //
+        // **지우는 입구는 하나다**(§결정 2). 목록의 휴지통 · 캔버스의 Delete 와 같은 함수를
+        // 지나므로 "어디서 지웠느냐" 에 따라 결과가 달라질 수 없다.
+        if (landed === undefined) {
+          // **움직이지 않았으면 아무 일도 없다.**
+          //
+          // 누름과 뗌이 같은 자리에서 일어난 것은 **끈 것이 아니라 누른 것**이다 — 끝점
+          // 손잡이 위의 더블클릭이 그 형상이고(M10 이 그 몸짓을 쓴다), 거기서 선을 지우면
+          // 사용자는 점을 빼려다 선을 잃는다. 그은 몸짓이 "같은 앵커에서 놓으면 아무것도
+          // 만들지 않는다" 로 정한 그 판단을 떼는 몸짓에도 그대로 적용한다.
+          //
+          // **이 가드가 없을 때 무슨 일이 나는지는 출시된 시험이 말했다** — 016 을 붙이자
+          // `canvas011PointEdit` 의 끝점 더블클릭 시험이 곧바로 울었다.
+          const moved =
+            Math.abs(point.x - drag.origin.x) > ENDPOINT_DETACH_SLOP_PX ||
+            Math.abs(point.y - drag.origin.y) > ENDPOINT_DETACH_SLOP_PX;
+          if (!moved) return;
+          emit([...removeNodesWithConnectors(els, new Set([drag.nodeId]))]);
+          return;
+        }
+        emit(repointConnector(els, drag.nodeId, drag.handle.side, landed.ref, pointer));
         return;
       }
       case 'rotate': {
@@ -1959,6 +1991,16 @@ export default function CanvasEditOverlay({
     trailRef.current = [];
     const landed = anchorHitAt(anchorHosts, at, projection, textWidths, ANCHOR_PICK_SLOP_PX);
     if (landed?.ref.el === draw.from.el && landed?.ref.a === draw.from.a) return;
+    // **앵커가 아니면 아무것도 만들지 않는다**(SPEC-CANVAS-016 REQ-01).
+    //
+    // 011 은 여기서 자유 끝을 지어 "아직 어디에도 붙이지 않은 선" 을 표현했는데, 그
+    // 표현이 실제로 낳은 것은 **도형에서 떨어져 허공에 꽂힌 선**이다. 도형을 옮기면 그
+    // 선은 따라오지 않고 옛 자리에 남는다 — 011 이 붙은 끝을 참조로 둔 바로 그 이유가
+    // 자유 끝에서는 지켜지지 않는다.
+    //
+    // 안내를 띄우지 않는 것은 바로 위 갈래와 **같은 이유**다: 빈 곳에서 뗀 것은 몸짓을
+    // 그만둔 것이지 거절당한 것이 아니다.
+    if (landed === undefined) return;
     // 참조든 자유 끝점이든 **캔버스 단위**다 — `anchorHitAt` 이 가리키는 자리도,
     // `unprojectPoint` 가 내는 점도 그 공간에 있으므로 한 자료형 안에 두 공간이 섞이지
     // 않는다(`connectorTypes` §중간점이 절대 좌표인 이유와 같은 규율).
@@ -1968,8 +2010,9 @@ export default function CanvasEditOverlay({
     // 놓은 자리를 **캔버스 단위로 한 번만** 낸다. 앵커 위면 집는 함수가 이미 잰 그 자리이고
     // (`AnchorHit.at`), 아니면 포인터를 되돌린 자리다. 끝을 짓는 쪽과 궤적을 다듬는 쪽이
     // 저마다 셈하면 "선이 끝나는 자리" 가 두 벌이 된다.
-    const landedAt = landed?.at ?? unprojectPoint(at, projection);
-    const to = landed?.ref ?? freeConnectorEnd(landedAt);
+    // 위에서 걸렀으므로 여기 오는 것은 **언제나 앵커 위**다(K1).
+    const landedAt = landed.at;
+    const to = landed.ref;
     // 자유선만 궤적을 싣는다(M11 — `ROUTE_TRACES_TRAIL`). 나머지 셋은 궤적을 쌓은 적이
     // 없으므로 빈 목록이 지나가고, 그때 `points` 키는 아예 서지 않는다(`appendConnector`).
     //

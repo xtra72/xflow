@@ -39,7 +39,7 @@ vi.mock('@/lib/i18n', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 
-import type { CanvasElement, CanvasSize } from './canvasConfig';
+import { parseCanvasConfig, type CanvasElement, type CanvasSize } from './canvasConfig';
 import { CanvasEditDockRegion } from './CanvasEditDock';
 import CanvasEditOverlay from './CanvasEditOverlay';
 import { CanvasEditSelectionContext, useCanvasEditSelectionState } from './canvasEditContext';
@@ -343,33 +343,62 @@ describe('앵커에서 앵커로 그으면 연결선이 생긴다 (AC-57)', () =
 
 // --- AC-58: 빈 곳에서 놓으면 자유 끝점 --------------------------------------
 
-describe('빈 곳에서 놓으면 자유 끝점이다 (AC-58)', () => {
-  it('그 끝이 **캔버스 좌표**다 — px 가 아니다', () => {
+describe('빈 곳에서 놓으면 **아무것도 생기지 않는다** (016 이 AC-58 을 뒤집는다)', () => {
+  // ## 뒤집은 조항이며 지우지 않는다
+  //
+  // 011 AC-58 은 "빈 곳에서 놓으면 자유 끝점이다" 였다. 그 표현이 실제로 낳은 것은 **도형
+  // 에서 떨어져 허공에 꽂힌 선**이고, 도형을 옮기면 그 선은 따라오지 않고 옛 자리에 남는다
+  // — 011 이 붙은 끝을 참조로 둔 바로 그 이유가 자유 끝에서는 지켜지지 않았다.
+  //
+  // 016 은 **저술 경로에서** 자유 끝을 없앤다. 자료형의 자유 갈래는 그대로 남으므로
+  // (REQ-03) 016 이전에 저장된 선은 여전히 그려지고 잡힌다 — 아래 마지막 시험이 그 사실을
+  // 따로 붙든다.
+
+  it('빈 곳에서 놓으면 선이 만들어지지 않는다 (REQ-01)', () => {
     setup();
     enableTool();
     draw(AT.r1East, AT.empty);
-    // px (130,95) → 캔버스 (325,380). 저장값이 px 면 이 단언이 곧바로 운다.
-    expect(connectors()[0]!.to).toEqual({ x: 325, y: 380 });
-    expect(connectors()[0]!.from).toEqual({ el: 'r1', a: 'e' });
+    expect(connectors()).toHaveLength(0);
   });
 
-  it('자유 끝점은 **다른 요소가 움직여도 제자리**다 (AC-42 의 몸짓 쪽 확인)', () => {
-    setup();
-    enableTool();
-    draw(AT.r1East, AT.empty);
-    const moved = live.map((n) =>
-      n.id === 'r1' ? ({ ...R1, geometry: { ...R1.geometry, y: 0 } } as CanvasNode) : n,
-    );
-    expect(resolveConnector(connectors()[0]!, moved, PROJ, {})![1]).toEqual({ x: 325, y: 380 });
-  });
-
-  it('도형 몸통 위에서 놓아도 앵커가 아니면 자유 끝점이다', () => {
-    // 잡는 것은 **앵커**이지 요소가 아니다. 몸통에 붙이면 "선이 도형의 어디에 붙었는가" 를
-    // 저장할 두 번째 모델이 필요해지고, 그것은 이 SPEC 이 명시적으로 고르지 않은 길이다.
+  it('도형 몸통 위에서 놓아도 앵커가 아니면 만들어지지 않는다', () => {
+    // 잡는 것은 **앵커**이지 요소가 아니다 — 011 이 이 자리에 적어 둔 그 문장은 그대로
+    // 참이고, 016 은 그 뒤의 처분만 바꾼다(자유 끝 대신 **아무것도 없음**).
     setup();
     enableTool();
     draw(AT.r1East, AT.r1Body);
-    expect(connectors()[0]!.to).toEqual({ x: 250, y: 148 });
+    expect(connectors()).toHaveLength(0);
+  });
+
+  it('안내를 띄우지 않는다 — 몸짓을 그만둔 것이지 거절당한 것이 아니다', () => {
+    setup();
+    enableTool();
+    draw(AT.r1East, AT.empty);
+    // 같은 함수가 "같은 앵커에서 놓으면 아무것도 만들지 않는다" 에 대해 이미 적어 둔
+    // 그 판단이다. 거절 안내가 뜨면 사용자는 하지 않기로 한 일을 두고 꾸중을 듣는다.
+    expect(screen.queryByTestId('canvas-anchor-refusal')).toBeNull();
+  });
+
+  it('**옛 저술의 자유 끝은 살아 있다** (REQ-03)', () => {
+    // 자료형을 지우지 않는 것이 016 의 절반이다. 지우면 016 이전에 저장된 대시보드의
+    // 자유 끝 연결선이 읽는 순간 사라지고, 그것이 011 REQ-08 이 "가장 나쁜 실패" 로
+    // 이름 적은 형상이다.
+    const legacy = {
+      id: 'c-legacy',
+      kind: 'connector',
+      from: { el: 'r1', a: 'e' },
+      to: { x: 325, y: 380 },
+      route: 'straight',
+    } as const;
+    const parsed = parseCanvasConfig({
+      canvas: { ...CANVAS },
+      elements: [{ ...R1 }, { ...legacy }],
+    }).elements;
+    const line = parsed.find((n) => n.id === 'c-legacy');
+    expect(line).toBeDefined();
+    expect(isConnector(line!) && line.to).toEqual({ x: 325, y: 380 });
+    // 그리고 **해석된다** — 그려지고 잡히는 선이라는 뜻이다.
+    expect(resolveConnector(line as never, parsed, PROJ, {})).toBeDefined();
   });
 });
 
@@ -702,10 +731,13 @@ describe('방금 그은 선이 **실제로 칠해진다** (SPEC-CANVAS-001 이 �
     expect(ops(renderLive())).toContain('stroke');
   });
 
-  it('자유 끝점으로 끝난 선도 칠해진다', () => {
+  it('앵커 둘로 끝난 선이 칠해진다 (016 이 자유 끝 갈래를 걷었다)', () => {
+    // 011 은 여기서 **자유 끝으로 끝난 선**을 칠했다. 016 이후 저술 경로는 그런 선을
+    // 만들지 않으므로 같은 사실을 앵커 둘로 잰다 — 지키는 것은 "방금 그은 선이 실제로
+    // 칠해진다"(001 이 배달한 그 함정)이고, 그 사실은 끝의 종류와 무관하다.
     setup();
     enableTool();
-    draw(AT.r1East, AT.empty);
+    draw(AT.r1East, AT.r2West);
     expect(ops(renderLive())).toContain('stroke');
   });
 
@@ -923,15 +955,17 @@ describe('연결선이 걸린 임의 앵커도 **앵커 도구로 뺀다** (M9 �
 // --- 저장 왕복 -------------------------------------------------------------
 
 describe('그은 선의 형상이 저술로서 온전하다', () => {
-  it('끝점 둘이 `ConnectorEnd` 의 두 갈래 중 하나씩이다', () => {
+  it('끝점 둘이 **붙은 끝**이다 (016 K1)', () => {
+    // 011 은 "두 갈래 중 하나씩" 을 보았다 — 그때는 자유 끝이 저술될 수 있었다. 016 이후
+    // 저술 경로가 내는 끝은 **언제나 붙은 끝**이며, 아래 단언은 그 더 좁은 사실을 잰다.
     setup();
     enableTool();
-    draw(AT.r1East, AT.empty);
+    draw(AT.r1East, AT.r2West);
     const c = connectors()[0]!;
     const ends: ConnectorEnd[] = [c.from, c.to];
     for (const end of ends) {
       const keys = Object.keys(end).sort();
-      expect(keys.join(',') === 'a,el' || keys.join(',') === 'x,y', JSON.stringify(end)).toBe(true);
+      expect(keys.join(','), JSON.stringify(end)).toBe('a,el');
     }
   });
 
@@ -1056,11 +1090,14 @@ describe('긋는 동안에는 커서가 **펜으로 남는다**', () => {
     }
   });
 
-  it('놓으면 그 자리가 답한다 — 빈 자리에서 끝내면 기본으로 돌아온다', () => {
+  it('놓으면 그 자리가 답한다 — 빈 자리에서 끝내도 커서는 기본으로 돌아온다', () => {
+    // 016 이후 빈 자리에서 끝내면 **선이 생기지 않는다.** 그래도 커서는 돌아와야 한다 —
+    // 몸짓은 끝났고, 커서가 펜으로 남으면 사용자는 아직 긋는 중이라고 읽는다. 011 의
+    // 전제("선 하나가 그어졌다")를 그 사실로 바꾼다.
     setup();
     enableTool();
     draw(AT.r1East, AT.empty);
-    expect(connectors(), 'precondition: 선 하나가 그어졌다').toHaveLength(1);
+    expect(connectors(), 'precondition: 016 은 빈 자리에서 만들지 않는다').toHaveLength(0);
     expect(isPen()).toBe(false);
   });
 });

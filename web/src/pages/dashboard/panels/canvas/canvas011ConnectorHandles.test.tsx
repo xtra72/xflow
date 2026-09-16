@@ -456,15 +456,19 @@ describe('끝점 손잡이를 다른 앵커에 놓으면 참조가 갈린다 (AC
     expect(resolveConnector(connector('c-plain'), live, PROJ, {})).toHaveLength(2);
   });
 
-  it('**빈 곳에 놓으면 자유 끝점**이다 — 그은 몸짓과 같은 규칙이다 (AC-58 대칭)', () => {
+  it('**빈 곳에 놓으면 그 선이 사라진다** (016 REQ-02 — 그은 몸짓과 같은 규칙이다)', () => {
+    // ## 뒤집은 조항이며 지우지 않는다
+    //
+    // 011 은 여기서 자유 끝점을 만들었다(AC-58 대칭). 016 은 그 대칭을 **유지한 채** 두
+    // 몸짓의 처분을 함께 바꾼다 — 그은 몸짓이 만들지 않게 되었으므로, 떼는 몸짓도 남기지
+    // 않는다. 자리에 그대로 두는 안을 기각한 이유는 사용자가 뗀 끝이 아무 일도 없이
+    // 제자리로 돌아가면 화면이 "왜 안 떨어지는가" 에 답하지 못하기 때문이다.
     setup([R1, R2, EL3, C_PLAIN]);
     enableConnectorTool();
     pick('c-plain');
     dragHandle('to', AT.empty);
 
-    // px (100,5) → 캔버스 (250,20). 정수로 죄어 실린다.
-    expect(connector('c-plain').to).toEqual({ x: 250, y: 20 });
-    expect(Object.keys(connector('c-plain').to).sort()).toEqual(['x', 'y']);
+    expect(live.find((n) => n.id === 'c-plain')).toBeUndefined();
   });
 
   it('**연결선에는 붙지 않는다** — 앵커를 내는 목록에 선이 없다 (A6 · REQ-03-b)', () => {
@@ -476,9 +480,9 @@ describe('끝점 손잡이를 다른 앵커에 놓으면 참조가 갈린다 (AC
     pick('c-mid');
     dragHandle('to', AT.plainInk);
 
-    const end = connector('c-mid').to;
-    expect(Object.keys(end).sort(), '자유 끝점이어야 한다').toEqual(['x', 'y']);
-    expect('el' in end).toBe(false);
+    // 016 이후 "붙지 않았다" 의 결과는 자유 끝점이 아니라 **사라짐**이다(REQ-02). 지키는
+    // 사실은 그대로다 — 다른 선의 잉크 한가운데는 붙을 자리가 **아니다**.
+    expect(live.find((n) => n.id === 'c-mid')).toBeUndefined();
   });
 
   it('**도구가 꺼져 있으면 붙지 않는다** — 붙는 자리는 보이는 자리뿐이다 (위험 R1)', () => {
@@ -495,19 +499,23 @@ describe('끝점 손잡이를 다른 앵커에 놓으면 참조가 갈린다 (AC
     );
 
     dragHandle('to', AT.el3North);
-    // px (52,90) → 캔버스 (130,360).
-    expect(connector('c-plain').to).toEqual({ x: 130, y: 360 });
+    // 016 이후 그 결과는 자유 끝점이 아니라 **사라짐**이다(REQ-02). 지키는 사실은 그대로다 —
+    // 도구가 꺼져 점이 보이지 않으면 그 자리는 붙을 자리가 아니며, 되붙이는 길은 닫히지
+    // 않는다(도구를 켜면 점이 보이고, 보이는 점에 붙는다).
+    expect(live.find((n) => n.id === 'c-plain')).toBeUndefined();
   });
 
-  it('붙였다 떼는 길이 **한 몸짓**이다 — 다시 빈 곳에 놓으면 자유 끝점으로 돌아온다', () => {
+  it('붙였다 떼는 길이 **한 몸짓**이다 — 다시 빈 곳에 놓으면 사라진다 (016)', () => {
     setup([R1, R2, EL3, C_PLAIN]);
     enableConnectorTool();
     pick('c-plain');
     dragHandle('to', AT.el3North);
     expect(connector('c-plain').to).toEqual({ el: 'el-3', a: 'n' });
 
+    // 016 이후 "떼는" 길의 끝은 자유 끝점이 아니라 **사라짐**이다(REQ-02). 한 몸짓이라는
+    // 사실은 그대로 — 붙이는 것도 떼는 것도 끝 손잡이를 끌어 놓는 한 동작이다.
     dragHandle('to', AT.empty);
-    expect(connector('c-plain').to).toEqual({ x: 250, y: 20 });
+    expect(live.find((n) => n.id === 'c-plain')).toBeUndefined();
   });
 });
 

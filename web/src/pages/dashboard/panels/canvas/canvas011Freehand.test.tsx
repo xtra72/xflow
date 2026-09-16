@@ -424,23 +424,31 @@ describe('상한이 몸짓에 **배선되어 있다** (AC-76 · AC-77)', () => {
 
 // --- AC-58: 빈 자리에서 끝난다 ----------------------------------------------
 
-describe('빈 자리에서 놓아도 궤적은 남는다 (AC-58)', () => {
-  it('끝이 **자유 끝점**이고 중간점이 달린다', () => {
+describe('빈 자리에서 놓으면 **아무것도 남지 않는다** (016 이 AC-58 을 뒤집는다)', () => {
+  // ## 뒤집은 조항이며 지우지 않는다
+  //
+  // 011 AC-58 은 "빈 자리에서 놓아도 궤적은 남는다" 였다. 016 은 저술 경로에서 자유 끝을
+  // 없앴으므로 그 선 자체가 생기지 않는다 — **궤적이 사라진 것이 아니라 선이 생기지 않는
+  // 것**이며, 그 차이를 아래 둘이 나눠 붙든다.
+
+  it('빈 자리에서 놓으면 선이 생기지 않는다 (016 REQ-01)', () => {
     setup();
     enableFree();
     drag(AT.r1East, TRAJECTORY, AT.empty);
-
-    const line = drawn();
-    expect(line.from).toEqual({ el: 'r1', a: 'e' });
-    expect(line.to).toEqual({ x: 325, y: 380 });
-    expect(line.points?.length).toBeGreaterThan(0);
+    expect(connectors()).toHaveLength(0);
   });
 
-  it('그 선도 그은 자리를 닮았다', () => {
+  it('**궤적을 닮는 성질은 그대로다** — 앵커에서 끝내면 011 과 같다', () => {
+    // 011 이 이 자리에서 지키려던 것은 "손이 그은 자리를 선이 닮는다" 이고, 그 성질은
+    // 끝의 종류와 무관하다. 016 이후 저술되는 끝이 앵커뿐이므로 앵커로 끝내어 잰다.
     setup();
     enableFree();
-    drag(AT.r1East, TRAJECTORY, AT.empty);
-    expect(worstStray([...TRAJECTORY, AT.empty], drawn())).toBeLessThanOrEqual(
+    drag(AT.r1East, TRAJECTORY, AT.r2West);
+    const line = drawn();
+    expect(line.from).toEqual({ el: 'r1', a: 'e' });
+    expect(line.to).toEqual({ el: 'r2', a: 'w' });
+    expect(line.points?.length).toBeGreaterThan(0);
+    expect(worstStray([...TRAJECTORY, AT.r2West], line)).toBeLessThanOrEqual(
       FREEHAND_TOLERANCE + 1e-9,
     );
   });
