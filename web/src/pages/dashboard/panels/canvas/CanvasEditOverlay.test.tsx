@@ -304,7 +304,13 @@ describe('빈 지점 누름은 상위 조작으로 흘려보낸다 (AC-E3)', () 
   // 주 버튼은 사각형이 가져갔다(`CanvasEditOverlay.marquee.test.tsx` §몸짓의 소유권).
   // **선택을 비운다는 절반은 두 갈래 모두에서 그대로 살아 있으며**, 아래 두 시험이 그 절반을
   // 각각 따로 못박는다 — 소비 여부만 갈리고 선택의 뜻은 갈리지 않는다.
-  it('맞는 것이 없으면 선택을 비우고, **주 버튼이면** 사각형을 위해 소비한다', () => {
+  //
+  // **011 이 그 절반의 *시점*을 옮겼다**(빈 자리 몸짓 뒤집기). 주 버튼 맨손 누름은 이제
+  // 팬을 시작하므로 누르는 순간에 비울 수 없다 — 비우면 화면을 옮기는 동안 고른 것이
+  // 사라진다. 비우는 일은 **뗌**으로 옮겨 갔고(움직이지 않은 팬이 곧 클릭이다), 그래서
+  // 아래 시험은 누름 뒤에 뗌을 함께 쏜다. 주 버튼이 아닌 갈래는 팬을 시작하지 않으므로
+  // 종전대로 **누르는 순간** 비운다.
+  it('맞는 것이 없으면 선택을 비우고, **주 버튼이면** 팬을 위해 소비한다', () => {
     const parent = vi.fn();
     render(
       <Harness
@@ -320,10 +326,16 @@ describe('빈 지점 누름은 상위 조작으로 흘려보낸다 (AC-E3)', () 
 
     // 요소에서 멀리 떨어진 빈 자리(집기 여유 6px 밖).
     const evt = send('pointerdown', 180, 90);
+    // **누르는 순간에는 아직 그대로다**(011 이 뒤집은 자리). 이 한 줄이 시점을 못박는다 —
+    // 없으면 "뗌에서 비운다" 와 "누름에서 비운다" 가 같은 초록을 낸다.
+    expect(selectionText()).toBe('a');
 
-    // 종전 그대로인 절반.
+    // 움직이지 않고 떼면 그 몸짓은 클릭이다 — 여기서 비워진다.
+    send('pointerup', 180, 90);
+
+    // 종전 그대로인 절반(시점만 옮겨 왔다).
     expect(selectionText()).toBe('');
-    // 010 이 바꾼 절반 — 이 누름이 곧 사각형의 시작이다.
+    // 010 이 바꾼 절반 — 이 누름은 우리 것이다(011 에서는 사각형이 아니라 팬의 시작이다).
     expect(evt.defaultPrevented).toBe(true);
     expect(parent).not.toHaveBeenCalled();
   });
@@ -2743,6 +2755,14 @@ describe('키보드로 닿는다 — 루트가 초점을 받는 자리다 (AC-08
     // 아무 말도 하지 않고**, 팬에는 눌러 볼 컨트롤이 아예 없다(짚는 키 하나가 전부다).
     // 그래서 이 문단이 그 몸짓을 알리는 유일한 통로이며, 006 M11 이 흐림·경계를 두고
     // 세운 그 논리가 여기서 세 번째로 그대로 성립한다.
+    //
+    // **011 은 키를 늘리지 않고 두 키의 *내용*을 갈아 끼웠다**(빈 자리 몸짓 뒤집기).
+    // 맨손 끌기가 팬으로, 사각형이 Ctrl/Cmd 로 옮겨 앉았고 그 사실은 `marqueeHint` 와
+    // `panHint` 가 각각 제 몫만큼 말한다 — 몸짓이 하나 더 생긴 것이 아니라 이미 있던 두
+    // 몸짓의 배정이 바뀐 것이므로, 다섯째 키를 세우면 같은 사실이 두 자리에서 두 번
+    // 말해진다. 그래서 이 기대값은 **네 키 그대로**이고, 바뀐 문장 자체는 JSON 을 직접
+    // 읽는 `CanvasEditOverlay.marquee.test.tsx` §i18n 이 낱말로 못박는다(이 파일의 i18n
+    // 대체는 키를 그대로 돌려주므로 여기서는 문장을 잴 수 없다).
     expect(hint!.textContent).toBe(
       'dashboard.canvas.edit.keyboardHint dashboard.canvas.edit.marqueeHint ' +
         'dashboard.canvas.edit.deleteHint dashboard.canvas.edit.panHint',
@@ -3197,16 +3217,19 @@ describe('빈 지점은 미리보기의 다른 조작을 막지 않는다 (AC-E3
 
     const evt = send('pointerdown', 5, 5); // 빈 지점
 
-    // 010 이 바꾼 절반 — 주 버튼 누름은 사각형이 가져간다.
+    // 010 이 바꾼 절반 — 주 버튼 누름은 우리가 가져간다(011 에서는 팬이 가져간다).
     expect(evt.defaultPrevented).toBe(true);
     expect(onParentDown).not.toHaveBeenCalled();
-    // 종전 그대로인 절반.
+    // **011 이 시점을 옮겼다** — 비우는 일은 뗌의 몫이다(움직이지 않은 팬이 곧 클릭이다).
+    // 누르는 순간에 비우면 화면을 옮기는 내내 선택이 사라지므로 팬이 제 일이 아닌 것을
+    // 하게 된다. 뜻은 그대로이고 자리만 한 칸 뒤로 갔다.
+    expect(selectionText()).toBe('a');
+    send('pointerup', 5, 5);
     expect(selectionText()).toBe('');
 
     // **흘러가는 갈래는 그대로 있다.** 이 절이 지키는 것은 "미리보기의 다른 조작이 죽지
     // 않는다" 이고, 휠(위 시험)과 주 버튼이 아닌 누름이 그 문장을 계속 지탱한다. 캔버스
-    // 안에서 잃은 것은 주 버튼 끌기 팬 하나이며 그 자리는 가운데 버튼이 받는다
-    // (`previewPan.test.tsx` §이음매).
+    // 안에서 주 버튼 끌기는 011 이 **팬으로 돌려주었다**(010 이 그것을 사각형에 내주었다).
     onParentDown.mockClear();
     const other = send('pointerdown', 5, 5, { button: 2 });
     expect(other.defaultPrevented).toBe(false);
@@ -4062,15 +4085,36 @@ describe('저술 여백 전체가 포인터를 받는다 (SPEC-CANVAS-006 M7 · 
     const empty = clientFromCanvas(-300, -40);
     const down = sendToHit('pointerdown', empty.x, empty.y);
 
-    expect(selectionText()).toBe('');
     // A8 · I8 이 말하는 것은 "저술 여백의 빈 자리와 출력 영역 **안**의 빈 자리가 같은
-    // 사건이다" 이며, 그 진술은 010 뒤에도 그대로 참이다 — 다만 그 한 사건이 이제 사각형의
-    // 시작이다. 밖을 위한 분기가 없다는 것이 여기서 드러난다.
+    // 사건이다" 이며, 그 진술은 011 뒤에도 그대로 참이다 — 다만 그 한 사건이 이제 **팬의**
+    // 시작이다(010 에서는 사각형이었다). 밖을 위한 분기가 없다는 것이 여기서 드러난다.
     expect(down.defaultPrevented).toBe(true);
-    // 여백에서 시작한 사각형이 실제로 선다 — 소비만 하고 아무것도 하지 않으면 그 누름은
-    // 잃어버린 몸짓이다(006 M7 이 고친 결함의 새 갈래).
+    // **011 이 뒤집은 자리다.** 종전에는 여백의 맨손 끌기가 사각형을 세웠고, 이제 그것은
+    // 팬이다 — 그래서 사각형이 서지 **않는** 것이 옳다. 비우는 일도 누름이 아니라 뗌의
+    // 몫으로 옮겨 갔다(움직이지 않은 팬이 곧 클릭이다).
     sendToHit('pointermove', empty.x + 40, empty.y + 30);
+    expect(screen.queryByTestId('canvas-marquee')).toBeNull();
+    expect(selectionText()).toBe('far');
+    sendToHit('pointerup', empty.x + 40, empty.y + 30);
+    // 끌었으므로 클릭이 아니다 — 선택은 팬에 살아남는다.
+    expect(selectionText()).toBe('far');
+
+    // 사각형은 여백에서도 선다 — 조작키를 짚으면 안쪽과 **같은 사건**이라는 것이 여전히
+    // 이 절의 문장이다(006 M7 이 고친 결함의 그 갈래가 Ctrl 로 옮겨 앉았을 뿐이다).
+    sendToHit('pointerdown', empty.x, empty.y, { ctrlKey: true });
+    sendToHit('pointermove', empty.x + 40, empty.y + 30, { ctrlKey: true });
     expect(screen.queryByTestId('canvas-marquee')).not.toBeNull();
+    sendToHit('pointerup', empty.x + 40, empty.y + 30, { ctrlKey: true });
+    // 갈아 끼우는 사각형이므로 밖에 있던 `far` 가 남지 않는다.
+    expect(selectionText()).toBe('');
+
+    // 빈 자리를 **끌지 않고** 누르면 종전 그대로 선택이 풀린다 — 뜻은 뗌으로만 옮겨 갔다.
+    sendToHit('pointerdown', center.x, center.y);
+    sendToHit('pointerup', center.x, center.y);
+    expect(selectionText()).toBe('far');
+    sendToHit('pointerdown', empty.x, empty.y);
+    sendToHit('pointerup', empty.x, empty.y);
+    expect(selectionText()).toBe('');
 
     // 주 버튼이 아닌 갈래는 여전히 흘러간다 — `previewPan` 이 읽는 그 표시 그대로다.
     expect(sendToHit('pointerdown', empty.x, empty.y, { button: 2 }).defaultPrevented).toBe(false);
@@ -4511,9 +4555,14 @@ describe('줄은 포인터를 받고 빗나간 누름은 종전 그대로 흐른
     expect(selectionText()).toBe('far');
 
     // 저술 여백의 빈 자리는 여전히 선택을 비운다 — 줄이 생겼다고 이 성질이 달라지지
-    // 않는다는 것이 I8 이다. 임자는 010 의 규칙대로 갈린다: 주 버튼은 사각형, 나머지는
-    // 종전대로 흘러간다. 줄 **위**의 누름과 갈리는 자리가 여기다(바로 위 시험).
+    // 않는다는 것이 I8 이다. 임자는 011 의 규칙대로 갈린다: 주 버튼은 팬(010 에서는
+    // 사각형이었다), 나머지는 종전대로 흘러간다. 줄 **위**의 누름과 갈리는 자리가
+    // 여기다(바로 위 시험).
+    //
+    // **011 이 비우는 시점을 뗌으로 옮겼다** — 그래서 뗌까지 쏜다. I8 이 말하는 "비운다"
+    // 는 몸짓 하나(누르고 떼기)에 대한 문장이고, 그 몸짓은 여전히 선택을 비운다.
     const down = sendToHit('pointerdown', -60, -60);
+    sendToHit('pointerup', -60, -60);
     expect(selectionText()).toBe('');
     expect(down.defaultPrevented).toBe(true);
     expect(sendToHit('pointerdown', -60, -60, { button: 2 }).defaultPrevented).toBe(false);

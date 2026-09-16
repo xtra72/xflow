@@ -242,17 +242,38 @@ describe('보기 팬 — 손짓이 표면의 상자를 실제로 옮긴다 (이�
     expect(screenXOf(-500)).toBeGreaterThan(0);
   });
 
-  it('Space 없이 같은 곳을 끌면 상자가 **꿈쩍도 하지 않는다** — 그 몸짓에는 임자가 있다', () => {
+  it('Space 없이 빈 자리를 끌어도 **같은 만큼 옮겨진다** — 011 이 맨손을 팬에 주었다', () => {
+    // **뒤집힌 시험이다.** 종전 문장: "Space 없이 같은 곳을 끌면 상자가 꿈쩍도 하지
+    // 않는다 — 그 몸짓에는 임자가 있다". 그 임자는 010 의 영역 선택이었고, 011 이
+    // 잦기를 근거로 둘을 맞바꿨다(영역 선택은 Ctrl/Cmd 로 갔다). 지우지 않고 뒤집어
+    // 두는 것은, 맨손 끌기가 다시 멈춰 서는 날 그것이 회귀임을 이 자리가 말해야 하기
+    // 때문이다.
     renderSeam();
 
-    // 빈 자리 맨손 끌기는 영역 선택의 것이다(SPEC-CANVAS-010). 팬이 그것을 빼앗으면
-    // 이 시험이 걸린다.
     send('pointerdown', 600, 300);
     send('pointermove', 700, 340);
     send('pointerup', 700, 340);
 
+    expect(stageAt()).toEqual({ x: HOME.x + 100, y: HOME.y + 40 });
+  });
+
+  it('Ctrl 을 짚고 끌면 상자가 **꿈쩍도 하지 않는다** — 그 몸짓은 영역 선택의 것이다', () => {
+    // 위 시험의 짝이다. 011 이 맞바꾼 것이 **배정**이지 경계가 아님을 이 자리가 지킨다 —
+    // 팬이 조작키 갈래까지 먹으면 캔버스 안에서 감싸 고르는 길이 사라진다.
+    renderSeam();
+
+    send('pointerdown', 600, 300, { ctrlKey: true });
+    send('pointermove', 700, 340, { ctrlKey: true });
+    send('pointerup', 700, 340, { ctrlKey: true });
+
     expect(stageAt()).toEqual(HOME);
   });
+
+  // **잉크 위의 맨손 끌기가 여전히 이동이라는 경계는 여기서 재지 않는다.** 이 하네스는
+  // 루트의 상자를 스텁하지 않으므로(jsdom 은 0 을 돌려준다) 히트 테스트가 성립하지
+  // 않는다 — 여기서 재면 "요소를 맞히지 못해 초록" 인 시험이 된다. 그 경계는 상자를
+  // 스텁하는 이웃 파일들이 잰다(`CanvasEditOverlay.test.tsx` §이동 드래그 ·
+  // `CanvasEditOverlay.marquee.test.tsx` §요소 위 누름은 종전 그대로다).
 
   it('편집을 끄면 팬이 화면에서 사라지고, 다시 켜면 **보던 자리로 돌아온다**', () => {
     const { setWorkspace } = renderSeam();
@@ -284,28 +305,42 @@ describe('보기 팬 — 몸짓의 규칙', () => {
     expect(stageAt().x).toBe(HOME.x + 100);
   });
 
-  it('초점이 떠나면 짚은 상태가 풀린다 — 손 커서가 눌러도 풀리지 않는 채로 남지 않는다', () => {
+  it('초점이 떠나면 짚은 상태가 풀린다 — 짚은 채로 굳지 않는다', () => {
+    // **증인이 바뀐 시험이다**(011). 종전에는 짚음이 풀렸다는 것을 루트의 커서로 쟀고
+    // (`style.cursor` 가 `grab` 이 아니게 된다), 011 에서 편 손은 **기본 커서**가 되었다 —
+    // 맨손 누름이 어디서나 팬이거나 이동이기 때문이다. 그래서 같은 사실을 자식까지 덮는
+    // 후손 변형으로 잰다: 그 덮음은 "손잡이마저 잡히지 않는다" 는 뜻이라 여전히 짚은
+    // 동안에만 참이다.
+    //
+    // 뒤의 절반은 **잴 것이 없어졌다**. 종전: "그 뒤의 누름은 다시 **고르기**다(팬이
+    // 아니다)". 011 에서 빈 자리의 맨손 누름은 짚든 짚지 않든 팬이므로 그 절반은 짚음에
+    // 대해 아무것도 말하지 못한다 — 갈리는 자리는 **잉크 위**뿐이고, 이 하네스는 히트
+    // 테스트가 성립하지 않아 그것을 잴 수 없다(위 절 끝의 주석). 거짓 증인을 남기느니
+    // 뺀다.
     renderSeam();
 
     holdSpace();
-    expect(overlayRoot().style.cursor).toBe('grab');
+    expect(overlayRoot().className).toContain('[&_*]:cursor-grab');
     fireEvent.blur(overlayRoot());
-    expect(overlayRoot().style.cursor).not.toBe('grab');
-
-    // 그리고 그 뒤의 누름은 다시 **고르기**다(팬이 아니다).
-    send('pointerdown', 600, 300);
-    send('pointermove', 700, 300);
-    send('pointerup', 700, 300);
-    expect(stageAt()).toEqual(HOME);
+    expect(overlayRoot().className).not.toContain('[&_*]:cursor-grab');
   });
 
-  it('커서가 셋을 차례로 말한다 — 편 손 · 쥔 손 · 놓은 손', () => {
+  it('커서가 둘을 차례로 말한다 — 편 손 · 쥔 손, 그리고 다시 편 손', () => {
+    // **뒤집힌 시험이다**(011). 종전 문장: "커서가 셋을 차례로 말한다 — 편 손 · 쥔 손 ·
+    // **놓은 손**", 그리고 기대값 셋 중 둘이 빈 문자열(브라우저 기본)이었다. 011 에서
+    // 맨손 끌기가 팬이 되었으므로 **쉬고 있는 커서 자체가 편 손**이다 — 손을 켜는 규칙을
+    // 둘로 두지 않겠다는 것이 그 선택이고(`CanvasEditOverlay` §커서의 우선순위), 그래서
+    // 기본 커서가 없어지는 대신 짚음은 **후손 변형**으로만 제 몫을 말한다.
     renderSeam();
 
-    expect(overlayRoot().style.cursor).toBe('');
+    expect(overlayRoot().style.cursor).toBe('grab');
+    // 쉬는 동안에는 자식을 덮지 않는다 — 그 자리에서 손잡이는 실제로 잡히므로 손잡이의
+    // 커서가 거짓말이 아니다.
+    expect(overlayRoot().className).not.toContain('[&_*]:cursor-grab');
+
     holdSpace();
     expect(overlayRoot().style.cursor).toBe('grab');
-    // 자식(손잡이 · 단추)까지 덮어야 짚은 동안의 커서가 거짓말하지 않는다.
+    // 짚은 동안에는 손잡이마저 잡히지 않으므로 자식까지 덮어야 커서가 거짓말하지 않는다.
     expect(overlayRoot().className).toContain('[&_*]:cursor-grab');
 
     send('pointerdown', 600, 300);
@@ -314,7 +349,8 @@ describe('보기 팬 — 몸짓의 규칙', () => {
 
     send('pointerup', 600, 300);
     releaseSpace();
-    expect(overlayRoot().style.cursor).toBe('');
+    expect(overlayRoot().style.cursor).toBe('grab');
+    expect(overlayRoot().className).not.toContain('[&_*]:cursor-grab');
   });
 
   it('Space+방향키가 같은 일을 한다 — 팬이 포인터 전용 기능이 아니다', () => {

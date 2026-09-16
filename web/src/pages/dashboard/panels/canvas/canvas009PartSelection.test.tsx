@@ -158,11 +158,18 @@ function doubleClick(p: { x: number; y: number }): void {
   click(p);
 }
 
-/** 빈 자리에서 사각형을 그어 **최상위 원소**를 고른다(그룹 자신을 고르는 유일한 몸짓). */
+/**
+ * 빈 자리에서 사각형을 그어 **최상위 원소**를 고른다(그룹 자신을 고르는 유일한 몸짓).
+ *
+ * **Ctrl 을 짚는다**(SPEC-CANVAS-011). 이 파일이 재는 것은 009 의 선택 규칙이지 사각형을
+ * 시작하는 몸짓이 아니다 — 011 이 맨손 끌기를 팬에 주었으므로, 이 도우미는 그 몸짓의
+ * 새 이름을 쓸 뿐 기대값은 한 글자도 바뀌지 않는다.
+ */
 function marqueeSelect(from: { x: number; y: number }, to: { x: number; y: number }): void {
-  press(overlayRoot(), from);
-  fireEvent(overlayRoot(), new MouseEvent('pointermove', at(to)));
-  fireEvent(overlayRoot(), new MouseEvent('pointerup', at(to)));
+  const ctrl = { ...at(from), ctrlKey: true };
+  fireEvent(overlayRoot(), new MouseEvent('pointerdown', ctrl));
+  fireEvent(overlayRoot(), new MouseEvent('pointermove', { ...at(to), ctrlKey: true }));
+  fireEvent(overlayRoot(), new MouseEvent('pointerup', { ...at(to), ctrlKey: true }));
 }
 
 function selected(): string[] {

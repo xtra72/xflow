@@ -41,13 +41,19 @@
 // (T13)이고, 그 규칙은 목록 편집기 쪽 AC-06("둘 이상 선택되면 아무 행도 자동으로 펼치지
 // 않는다")과 같은 방향이다 — 다중 선택에서는 표시만 남는다.
 //
-// **영역 선택은 빈 자리의 주 버튼 누름으로 시작한다**(SPEC-CANVAS-010). 맨손으로 끌면
-// 사각형이 서고 그 안에 **온전히 든** 것들이 선택을 **갈아 끼우며**, Shift·Ctrl·Cmd 를
-// 누른 채 끌면 같은 것들이 지금 선택에 **더해진다**. 009 는 이 몸짓을 modifier 로만 열어
-// 두었고 그 근거는 "문턱(몇 px 움직이면 마키로 승격)으로 가르면 `previewPan` 이 누름에서
-// 이미 팬을 시작했고 그것을 무를 신호가 없다" 였다 — 그 근거는 **문턱**에 대해서는 지금도
-// 참이지만, 문턱을 쓰지 않고 **누르는 순간 곧장** 가져가면 무를 것이 없다. 그 층은
-// `defaultPrevented` 로 임자를 가리므로 누름을 소비하면 팬은 시작조차 하지 않는다.
+// **영역 선택은 빈 자리의 주 버튼 누름으로 시작한다**(SPEC-CANVAS-010). 009 는 이 몸짓을
+// modifier 로만 열어 두었고 그 근거는 "문턱(몇 px 움직이면 마키로 승격)으로 가르면
+// `previewPan` 이 누름에서 이미 팬을 시작했고 그것을 무를 신호가 없다" 였다 — 그 근거는
+// **문턱**에 대해서는 지금도 참이지만, 문턱을 쓰지 않고 **누르는 순간 곧장** 가져가면 무를
+// 것이 없다. 그 층은 `defaultPrevented` 로 임자를 가리므로 누름을 소비하면 팬은 시작조차
+// 하지 않는다.
+//
+// **011 이 그 안에서 조작키의 배정을 뒤집었다.** 맨손으로 끌면 **작업 영역이 옮겨지고**
+// (팬), Ctrl·Cmd 를 누른 채 끌면 사각형이 서서 그 안에 **온전히 든** 것들이 선택을
+// **갈아 끼우며**, Shift 를 누른 채 끌면 같은 것들이 지금 선택에 **더해진다**. 빈 자리를
+// 끌지 않고 한 번 누르면 종전 그대로 선택이 풀린다(움직이지 않은 팬이 곧 클릭이다).
+// 근거는 잦기 하나다 — 화면을 옮기는 일은 늘 하고 감싸 고르는 일은 가끔 하므로, 맨손이
+// 잦은 쪽을 맡는다.
 //
 // 판정은 잉크가 아니라 **`outlineBox` 가 낸 상자**이며 그 근거와 대가는 `canvasMarquee`
 // 머리말이 갖는다. 여기서 지킬 것은 하나다 — 판정하는 상자와 골라진 뒤 화면에 뜨는
@@ -58,8 +64,10 @@
 // 몸통을 잡아 옮긴다 — `PanelDragLayer` 헤더가 같은 이유로 같은 결정을 했다. 010 이 빈
 // 자리의 **주 버튼** 누름을 사각형에 내주면서 AC-E3 이 지키던 문장은 좁아졌다: 종전
 // "빈 지점 누름은 소비하지 않는다" 가 지금은 **"주 버튼이 아닌 누름은 소비하지 않는다"**
-// 이다. 좁아진 만큼 위 세 조작 중 캔버스 안에서 잃는 것은 **주 버튼 끌기 팬 하나**이고,
-// 휠 확대·크기 조절·오른쪽 버튼은 한 글자도 달라지지 않는다(누름을 쓰지 않거나 버튼이
+// 이다. 011 뒤에도 그 문장은 같다 — 소비하는 임자만 사각형에서 팬으로 바뀌었다. 좁아진
+// 만큼 위 세 조작 중 캔버스 안에서 잃는 것은 **바깥 층의 주 버튼 끌기 팬 하나**인데,
+// 011 이 같은 몸짓을 이 층의 팬으로 돌려주었으므로 사용자가 잃는 것은 이제 없다. 휠
+// 확대·크기 조절·오른쪽 버튼은 한 글자도 달라지지 않는다(누름을 쓰지 않거나 버튼이
 // 다르다). 핸들은 스스로 이벤트를 소비하므로(자기 `pointer-events-auto` 위에서
 // `stopPropagation`) 핸들을 잡은 포인터는 몸통 히트 테스트에 닿지 않는다.
 //
@@ -1423,21 +1431,27 @@ export default function CanvasEditOverlay({
    *
    * 배율과 갈리는 것이 하나 있다: **팬에는 몸짓이 붙는다.** 배율의 주석이 "셋째 주인이 낄
    * 자리가 없다" 고 적은 그 셋(Ctrl/⌘+휠 · 방향키 두 갈래)은 여전히 임자가 있지만, 팬이
-   * 쓰는 것은 그 셋이 아니라 **Space 를 짚은 채 끄는 손**이다 — 이 표면에서 Space 는 어떤
-   * 뜻도 갖고 있지 않았고(아래 `handleKeyDown` 은 지우는 키와 방향키만 본다), 도해 도구가
-   * 모두 쓰는 그 몸짓이다.
+   * 쓰는 것은 그 셋이 아니라 **끄는 손** 둘이다:
+   *
+   *   - **빈 자리의 맨손 끌기**(SPEC-CANVAS-011) — 가장 잦은 몸짓이라 가장 싼 자리에 둔다.
+   *   - **Space 를 짚은 채 끄는 손**(006) — 잉크 위에서도 듣는 그 몸짓이며, 이 표면에서
+   *     Space 는 어떤 뜻도 갖고 있지 않았고(아래 `handleKeyDown` 은 지우는 키와 방향키만
+   *     본다) 도해 도구가 모두 쓰는 관용이다.
    */
   const [localPan, setLocalPan] = useState<StageCell>(NO_WORKSPACE_PAN);
   const workspacePan = stageGrid?.pan ?? localPan;
   const setWorkspacePan = stageGrid?.setPan ?? setLocalPan;
 
   /**
-   * **Space 를 짚고 있는가** — 팬의 구분자다(SPEC-CANVAS-010 이 빈 자리 끌기를 영역 선택에
-   * 내주었으므로, 맨손 끌기에는 임자가 있다).
+   * **Space 를 짚고 있는가** — **도형 위에서도** 팬을 켜는 구분자다.
+   *
+   * 010 에서는 이 값이 팬의 유일한 문이었다(그때 빈 자리 끌기는 영역 선택의 것이었다).
+   * 011 이 빈 자리 맨손 끌기를 팬에 주면서 이 값의 몫이 좁아졌다 — 남은 몫은 **잉크
+   * 위**다. 도형으로 빽빽한 캔버스에는 빈 자리가 없으므로 그 몫이 사라지지는 않는다.
    *
    * 끄는 중(`panRef`)과 따로 두는 것에 뜻이 있다. 짚기만 한 상태에도 화면이 답해야 하고
-   * (커서가 손 모양으로 바뀐다), 그 답이 "다음 누름은 팬이다" 를 미리 말해 준다 — 눌러
-   * 봐야 아는 몸짓은 배울 수 없다.
+   * (손잡이 · 단추의 커서까지 손 모양으로 덮인다), 그 답이 "다음 누름은 어디서든 팬이다"
+   * 를 미리 말해 준다 — 눌러 봐야 아는 몸짓은 배울 수 없다.
    */
   const [spaceHeld, setSpaceHeld] = useState(false);
 
@@ -1454,6 +1468,15 @@ export default function CanvasEditOverlay({
     startX: number;
     startY: number;
     base: StageCell;
+    /**
+     * 움직이지 않고 끝나면 **선택을 비우는** 누름인가 (SPEC-CANVAS-011 — 빈 자리 몸짓 뒤집기).
+     *
+     * 빈 자리 맨손 누름에서만 참이다. 그 누름이 팬을 가져가면서 "빈 자리를 눌러 선택을
+     * 푼다" 는 010 이전부터의 뜻이 갈 곳을 잃었는데, 누르는 순간 비우면 **끄는 동안에도**
+     * 비워져 팬이 선택을 잡아먹는다. 그래서 뜻을 뗌으로 옮기고, 그 뜻이 살아 있는
+     * 누름인지를 잡는 순간 한 번만 적어 둔다 — Space 를 짚은 팬과 도형 위의 팬은 거짓이다.
+     */
+    clearsSelectionOnClick: boolean;
   } | null>(null);
   /** 끌고 있는가 — 커서 모양이 이 값으로 갈린다(`previewPan.panning` 과 같은 몫). */
   const [panning, setPanning] = useState(false);
@@ -1948,7 +1971,10 @@ export default function CanvasEditOverlay({
    * (`canvasWorkspace` 불변식 I22), 손이 100px 가면 그림도 100px 간다 — 환산할 것이 없고,
    * 환산을 넣으면 그것이 곧 두 번째 투영이다.
    */
-  const beginPan = (event: React.PointerEvent<HTMLDivElement>): void => {
+  const beginPan = (
+    event: React.PointerEvent<HTMLDivElement>,
+    clearsSelectionOnClick: boolean,
+  ): void => {
     panRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -1956,6 +1982,7 @@ export default function CanvasEditOverlay({
       // **잡는 순간의 값에서만 잰다**(`handleDragState` §머리말과 같은 규율). 매 이동마다
       // 직전 팬에 더하면 죔에 걸린 동안의 손짓이 사라져, 되돌아올 때 손과 그림이 갈린다.
       base: workspacePan,
+      clearsSelectionOnClick,
     };
     setPanning(true);
     // 포인터가 상자를 벗어나도 이벤트가 계속 오게 한다. jsdom 에는 없는 API 다.
@@ -1981,6 +2008,23 @@ export default function CanvasEditOverlay({
   };
 
   /**
+   * 이 뗌이 **끌기가 아니라 클릭**이었는가 (SPEC-CANVAS-011).
+   *
+   * 재는 것은 **누른 자리와 뗀 자리**이지 지나온 길이 아니다 — 브라우저가 클릭을 그렇게
+   * 정의하고(누름과 뗌이 같은 자리), 길을 기억하면 몸짓 내내 들고 다닐 상태가 하나 는다.
+   *
+   * 여유는 이 파일이 이미 "손 떨림" 으로 인정해 둔 그 값이다(`DOUBLE_PRESS_SLOP_PX`).
+   * 새 수를 세우면 "클릭으로 치는 떨림" 이 이 파일 안에서 두 벌이 된다.
+   */
+  const panWasClick = (
+    pan: { startX: number; startY: number },
+    clientX: number,
+    clientY: number,
+  ): boolean =>
+    Math.abs(clientX - pan.startX) <= DOUBLE_PRESS_SLOP_PX &&
+    Math.abs(clientY - pan.startY) <= DOUBLE_PRESS_SLOP_PX;
+
+  /**
    * 팬을 끝낸다. **팬 값은 건드리지 않는다** — 마지막 이동이 이미 확정했고, 되돌리면
    * 사용자가 옮겨 놓은 시야가 뗌과 함께 사라진다(마키 · 이동 드래그가 같은 문장을 쓴다).
    */
@@ -1998,8 +2042,12 @@ export default function CanvasEditOverlay({
     //
     // 맨 앞인 것이 이 몸짓의 뜻 전부다. Space 가 구분자인 이유는 아래 세 갈래가 이미
     // 맨손 누름을 **남김없이** 나눠 가졌기 때문이다: 앵커 위면 잇기, 잉크 위면 고르기·이동,
-    // 빈 자리면 영역 선택(SPEC-CANVAS-010). 뒤에 서면 팬은 "아무도 안 가져간 자리" 에서만
-    // 도는데 그런 자리가 없으므로, 뒤에 선 팬은 **없는 팬**이다.
+    // 빈 자리면 팬(SPEC-CANVAS-011 — 010 의 영역 선택이 있던 자리다). 뒤에 서면 팬은
+    // "아무도 안 가져간 자리" 에서만 도는데 그런 자리가 없으므로, 뒤에 선 팬은 **없는 팬**이다.
+    //
+    // **빈 자리가 팬이 된 뒤에도 이 갈래는 남는다**(SPEC-CANVAS-011). 아래 갈래는 빈
+    // 자리에서만 팬이고, 이 갈래는 **도형 위에서도** 팬이다 — 그것이 도해 도구가 Space 에
+    // 맡겨 온 뜻이고, 캔버스를 도형으로 채운 사람에게는 유일하게 남는 길이다.
     //
     // 그래서 짚은 동안에는 도형도 손잡이도 잡히지 않는다 — 그것이 잃는 것이 아니라,
     // 도형 위에서도 화면을 옮길 수 있다는 뜻이다(도해 도구의 그 관용 그대로).
@@ -2012,18 +2060,50 @@ export default function CanvasEditOverlay({
       // 히트 갈래와 같은 이유다 — 위 `preventDefault` 가 브라우저의 기본 초점 이동을
       // 막으므로, 이 한 줄이 없으면 Space 를 뗀 뒤 키가 이 층에 닿지 않는다(T15).
       host.focus();
-      beginPan(event);
+      // **짚은 팬은 선택을 비우지 않는다** — 움직이지 않고 끝나도 그렇다. Space 를 짚는
+      // 일 자체가 "지금부터 화면을 옮긴다" 는 선언이라, 그 몸짓에는 "빈 자리를 눌러
+      // 선택을 푼다" 는 뜻이 애초에 없었다(010 도 이 갈래에서는 비우지 않았다).
+      beginPan(event, false);
       return;
     }
 
     const frame = pointerFrameOf(host.getBoundingClientRect(), stage);
     const point = stagePoint(event.clientX, event.clientY, frame);
 
-    // Shift·Ctrl·Cmd 는 **고르기 전용** 조작이다(`PanelDragLayer` 와 같은 규칙). 히트가
-    // 있을 때의 뜻("이것을 선택에 더하거나 뺀다")과 빈 지점에서의 뜻("사각형으로 감싼
-    // 것들을 선택에 더한다")은 **같은 한 낱말**이다 — 둘 다 "더한다" 이고, 어느 쪽도
-    // 배치를 건드리지 않는다.
-    const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+    // **한 낱말이 세 물음에 답하던 자리다**(SPEC-CANVAS-011 — 빈 자리 몸짓 뒤집기).
+    //
+    // 010 까지 Shift·Ctrl·Cmd 는 이 함수 어디서나 한 낱말이었다("더한다"). 그래서 한 줄
+    // (`additive`)이 세 갈래로 그대로 흘러갔고, 그것이 옳았다 — 뜻이 하나였으므로.
+    //
+    // 011 에서 **빈 자리에서만** 뜻이 갈린다: Ctrl/Cmd 는 사각형을 세우되 **갈아 끼우고**,
+    // Shift 는 종전대로 **더하며**, 맨손은 팬이다. 잉크 위에서는 셋이 여전히 한 낱말이다
+    // ("이것을 선택에 더하거나 뺀다"). 한 이름이 두 뜻을 겸하는 순간 읽는 사람은 그
+    // 이름이 **어느 물음에 답하는지**를 호출 자리마다 되짚어야 하고, 그 되짚음은 언젠가
+    // 반드시 한 번 틀린다 — 그때 갈리는 것은 화면이지 이 줄이 아니다.
+    //
+    // 그래서 조작키를 **읽는 일**만 여기 한 번 두고(아래 둘), **답은 자리마다 따로 짓는다**.
+    // 세 이름은 각각 제가 무엇을 정하는지를 이름으로 말한다.
+    const shiftHeld = event.shiftKey;
+    const ctrlOrMetaHeld = event.ctrlKey || event.metaKey;
+
+    /** 빈 자리 주 버튼 누름이 **무엇을 시작하는가**. 세 값이 맨손·Ctrl/Cmd·Shift 와 일대일이다. */
+    const emptyPressStarts: 'pan' | 'replacingMarquee' | 'addingMarquee' = shiftHeld
+      ? 'addingMarquee'
+      : ctrlOrMetaHeld
+        ? 'replacingMarquee'
+        : 'pan';
+
+    /**
+     * 빈 자리 **보조 버튼** 누름이 지금 선택을 비우는가.
+     *
+     * 조작키를 짚었으면 지킨다 — 010 과 한 글자도 다르지 않다. 그 누름은 사각형을 세우지
+     * 않으므로(주 버튼이 아니다) **갈아 끼울 것이 없고**, 따라서 Ctrl 의 새 뜻이 여기에
+     * 닿지 않는다. 짚은 손이 말하는 것은 그대로 "내 선택을 건드리지 마라" 다.
+     */
+    const secondaryPressClearsSelection = !shiftHeld && !ctrlOrMetaHeld;
+
+    /** 잉크 위 누름이 겨눈 것을 선택에 **더하거나 빼는가**(004 부터의 그 뜻 그대로다). */
+    const pressTogglesSelection = shiftHeld || ctrlOrMetaHeld;
 
     // **연결선 도구가 켜져 있고 누른 자리가 앵커면 잇기가 시작된다**(REQ-03 · AC-57).
     //
@@ -2034,7 +2114,8 @@ export default function CanvasEditOverlay({
     //
     // ## 앵커가 아닌 누름은 **종전의 뜻 그대로** 지나간다
     //
-    // 도구가 켜져 있어도 도형 몸통을 누르면 고르기·이동이고, 빈 자리를 누르면 마키다.
+    // 도구가 켜져 있어도 도형 몸통을 누르면 고르기·이동이고, 빈 자리를 맨손으로 누르면
+    // 팬 · 조작키를 짚고 누르면 마키다(SPEC-CANVAS-011 — 011 전에는 빈 자리가 늘 마키였다).
     // M3'b 가 앵커 도구에 대해 정한 그 형상이다 — 도구는 **한 몸짓의 뜻**만 갈아 끼우고
     // 나머지는 건드리지 않는다. 막아 두면 잇는 동안에는 도형을 옮길 수도 골라 볼 수도
     // 없어, 사용자가 잇기 전후로 도구를 계속 껐다 켜게 된다.
@@ -2079,7 +2160,7 @@ export default function CanvasEditOverlay({
       // (`previewPan` 이 캡처 단계에서 끊는다). 여기서 소비하면 캔버스 위에서만
       // 상황 메뉴가 사라지는 화면이 된다.
       if (event.button !== PRIMARY_BUTTON) {
-        if (!additive && selection.size > 0) setSelection(EMPTY_SELECTION);
+        if (secondaryPressClearsSelection && selection.size > 0) setSelection(EMPTY_SELECTION);
         return;
       }
 
@@ -2093,31 +2174,48 @@ export default function CanvasEditOverlay({
       // 누름을 소비하면 팬은 **시작조차 하지 않는다**. 새 약속이 아니라 그 파일이 이미
       // 적어 둔 규칙("아무도 가져가지 않은 몸짓만 받는다")을 그대로 읽은 것이다.
       //
-      // 그 대가로 **캔버스 안에서 주 버튼 끌기로 화면을 옮기는 길은 닫힌다.** 남는 길은
-      // 둘이며 둘 다 이미 서 있다: 가운데 버튼(그 파일의 명시적 우회로)과, 고른 것이
-      // 없을 때의 방향키(아래 `handleKeyDown` 이 흘려보내면 그 층이 받는다). 가운데
-      // 버튼이 없는 손도 빈 자리를 한 번 누르면 선택이 비고 초점이 이 탭 정거장에 앉으므로
-      // 곧바로 방향키를 쓸 수 있다. 캔버스 **밖**(게이지·차트·히트맵 미리보기)은 아무도
-      // 몸짓을 가져가지 않으므로 주 버튼 끌기가 종전 그대로 팬이다.
+      // 그 대가로 **캔버스 안에서 주 버튼 끌기로 화면을 옮기는 길은 닫힌다** — 고 010 이
+      // 적었고, **011 이 그 대가를 되돌린다**(아래 §맨손은 팬이다). 캔버스 **밖**
+      // (게이지·차트·히트맵 미리보기)은 아무도 몸짓을 가져가지 않으므로 주 버튼 끌기가
+      // 종전 그대로 `previewPan` 의 팬이다.
       event.preventDefault();
       event.stopPropagation();
       // 히트 때와 같은 이유다 — 바로 위 `preventDefault` 가 브라우저의 기본 초점 이동을
       // 막으므로, 이 한 줄이 없으면 방금 감싸 고른 것을 방향키로 옮길 수 없다(T15).
       host.focus();
 
-      // **맨손은 갈아 끼우고 modifier 는 더한다.** 그것이 게이트를 걷어낸 뒤 modifier 에
-      // 남은 뜻이며, 히트 경로의 `additive`("이것을 선택에 더하거나 뺀다")와 여전히 한
-      // 낱말이다. 맨손을 합집합으로 두면 modifier 는 아무것도 가르지 않는 장식이 된다.
-      //
-      // 비우는 일을 **누르는 순간** 한다. 사각형이 고르는 일은 이동에서만 일어나므로,
-      // 여기서 비우지 않으면 "빈 자리를 눌러 선택을 푼다" 는 009 이전부터의 뜻이 움직이지
-      // 않은 몸짓에서 조용히 사라진다. 비운 그 값이 곧 합집합의 좌변이므로 규칙도 하나다.
-      const base = additive ? selection : EMPTY_SELECTION;
-      if (base !== selection) setSelection(base);
       // 빈 자리를 누르면 **연타 사슬이 끊긴다**(SPEC-CANVAS-009 0.3.0). 끊지 않으면 빈
       // 곳을 거쳐 같은 부품을 다시 누른 것이 더블클릭으로 읽혀, 사용자가 한 번도 겹쳐
-      // 누르지 않았는데 그룹 안으로 들어간다.
+      // 누르지 않았는데 그룹 안으로 들어간다. **세 뜻이 함께 쓰는 한 줄**이다 — 끊는
+      // 까닭이 "빈 자리를 지나왔다" 이지 "무엇이 시작되었다" 가 아니기 때문이다.
       lastPressRef.current = null;
+
+      // **맨손 끌기는 팬이다**(SPEC-CANVAS-011 — 010 의 맨손 사각형이 있던 자리다).
+      //
+      // 두 몸짓의 잦기가 자리를 정한다. 화면을 옮기는 일은 **늘** 하고 사각형으로 감싸는
+      // 일은 **가끔** 한다 — 그러니 맨손이 잦은 쪽을 맡고, 가끔 쓰는 쪽이 조작키를 짚는다.
+      // 010 은 그 반대였고, 그래서 사용자는 화면을 옮길 때마다 Space 를 찾아 짚어야 했다.
+      //
+      // **선택을 비우지 않고, 사각형도 세우지 않는다.** 하나라도 하면 팬이 제 일이 아닌
+      // 것을 하게 된다: 비우면 화면을 옮길 때마다 고른 것이 사라지고, 사각형을 세우면 손이
+      // 지나간 자리의 것들이 딸려 온다. "빈 자리를 눌러 선택을 푼다" 는 뜻은 사라지지 않고
+      // **뗌으로 옮겨 간다** — 움직이지 않은 팬이 곧 클릭이며, 그 판정은 뗌이 한다
+      // (`clearsSelectionOnClick` · `panWasClick`).
+      if (emptyPressStarts === 'pan') {
+        beginPan(event, true);
+        return;
+      }
+
+      // **Ctrl/Cmd 는 갈아 끼우고 Shift 는 더한다**(SPEC-CANVAS-011). 010 에서 맨손이
+      // 맡던 "갈아 끼우기" 가 Ctrl/Cmd 로 옮겨 온 것이고, Shift 의 뜻은 009 부터 한 글자도
+      // 바뀌지 않았다. 둘이 같은 뜻이면 둘 중 하나는 아무것도 가르지 않는 장식이 된다.
+      //
+      // **누르는 순간에는 비우지 않는다**(010 과 갈리는 자리다). 010 이 누름에서 비운 것은
+      // 그 맨손 누름이 곧 "선택을 푸는" 몸짓이었기 때문인데, 그 뜻은 위 팬 갈래로 옮겨
+      // 갔다. 조작키를 짚은 누름은 "사각형을 세우겠다" 는 선언일 뿐이므로, 움직이지 않고
+      // 끝난 Ctrl 누름이 선택을 쓸어버릴 까닭이 없다 — Shift 누름이 010 에서도 그랬다.
+      // 갈아 끼우기는 **이동에서** 일어난다: 좌변이 빈 선택이므로 사각형이 덮은 것만 남는다.
+      const base = emptyPressStarts === 'addingMarquee' ? selection : EMPTY_SELECTION;
       setMarquee({ pointerId: event.pointerId, frame, origin: point, point, base });
       host.setPointerCapture?.(event.pointerId);
       return;
@@ -2237,9 +2335,11 @@ export default function CanvasEditOverlay({
     // "서로 다른 그룹의 부품 둘" 이라는 뜻이 정의되지 않은 상태가 만들어지고(A1), 8핸들이
     // 두 상자에 서는 화면이 그 뒤를 따른다. 그룹을 고르는 경로는 최상위 원소와 같으므로
     // modifier 가 종전 그대로 산다.
-    const picked = enteredPart ? new Set([key]) : nextSelection(selection, key, additive);
+    const picked = enteredPart
+      ? new Set([key])
+      : nextSelection(selection, key, pressTogglesSelection);
     if (picked !== selection) setSelection(picked);
-    if (additive && !enteredPart) return;
+    if (pressTogglesSelection && !enteredPart) return;
 
     if (!(stage.width > 0) || !(stage.height > 0)) return;
 
@@ -2452,9 +2552,10 @@ export default function CanvasEditOverlay({
     // 남는" 자리가 생긴다.
     updatePenHover(event);
 
-    // **팬이 가장 먼저다.** 팬은 짚은 채의 누름에서만 시작되므로 아래 셋과 배타적이고,
-    // 순서가 뜻을 바꾸지는 않는다 — 다만 먼저 끊어 두면 아래 세 경로가 팬을 모른 채로
-    // 남는다(마키 · 긋기가 같은 이유로 앞에 섰다).
+    // **팬이 가장 먼저다.** 팬을 시작하는 누름은 둘(짚은 채의 누름 · 빈 자리의 맨손
+    // 누름)이고 그 둘은 아래 셋을 시작하는 누름과 갈리므로 배타적이며, 순서가 뜻을
+    // 바꾸지는 않는다 — 다만 먼저 끊어 두면 아래 세 경로가 팬을 모른 채로 남는다
+    // (마키 · 긋기가 같은 이유로 앞에 섰다).
     //
     // **프레임을 예약하지 않는다** — 고 말할 수 없는 유일한 갈래다. 팬은 상자의 자리를
     // 바꾸므로 표면이 받는 `geometry` 가 실제로 달라지고, 그래서 프레임이 한 장 돈다.
@@ -2594,6 +2695,18 @@ export default function CanvasEditOverlay({
     if (panDrag !== null && event.pointerId === panDrag.pointerId) {
       event.preventDefault();
       finishPan(event.currentTarget, event.pointerId);
+      // **움직이지 않은 팬은 클릭이고, 빈 자리의 클릭은 선택을 푼다**(SPEC-CANVAS-011).
+      //
+      // 009 이전부터 참이던 그 뜻이 서는 유일한 자리다 — 누름에서 비우면 끄는 동안에도
+      // 비워지므로(위 `beginPan` 갈래 주석), 뜻은 여기까지 미뤄져야 한다. 어느 누름이 그
+      // 뜻을 들고 왔는지는 잡는 순간 한 번 적혔다: 빈 자리 맨손 누름만 참이다.
+      if (
+        panDrag.clearsSelectionOnClick &&
+        panWasClick(panDrag, event.clientX, event.clientY) &&
+        selection.size > 0
+      ) {
+        setSelection(EMPTY_SELECTION);
+      }
       return;
     }
     if (connectorDraw !== null && event.pointerId === connectorDraw.pointerId) {
@@ -2635,6 +2748,9 @@ export default function CanvasEditOverlay({
     // 놓은 시야가 사라진다.
     const panDrag = panRef.current;
     if (panDrag !== null && event.pointerId === panDrag.pointerId) {
+      // **끊긴 팬은 클릭이 아니다**(뗌 갈래와 갈리는 자리다 — SPEC-CANVAS-011). 브라우저·
+      // OS 가 가져간 몸짓은 "여기를 눌렀다 뗐다" 는 뜻이 아니므로 선택을 풀지 않는다 —
+      // 끊긴 긋기가 아무것도 만들지 않는 그 규칙과 같은 문장이다.
       finishPan(event.currentTarget, event.pointerId);
       return;
     }
@@ -3279,6 +3395,19 @@ export default function CanvasEditOverlay({
       //   3) 펜(사용자 신고 2026-09-16) — 앵커 점은 표식이라 포인터를 먹지 않으므로 커서가
       //      그 점에서 나올 수 없고(§`penHover`), 루트가 곧 그 점 아래 깔린 면이다. 조건
       //      둘은 사용자가 말한 그 둘이다 — **선이 시작될 수 있는 자리 위**와 **긋는 동안**.
+      //   4) 그 밖에는 **편 손**(SPEC-CANVAS-011) — 맨손 끌기가 이제 팬이기 때문이다.
+      //
+      // **손 커서 규칙을 둘로 두지 않는다**(011). 011 전에는 손이 뜨는 조건이 "Space 를
+      // 짚었다" 하나였고, 011 은 거기에 "빈 자리 위" 를 더하려는 것이 아니라 **기본값을
+      // 손으로 바꾼다**: 맨손 누름이 팬이라는 사실이 이제 자리를 가리지 않고 참이기
+      // 때문이다(잉크 위의 맨손 끌기도 "잡아서 옮긴다" 이므로 손은 거기서도 거짓말하지
+      // 않는다). 그래서 2) 는 **손을 켜는 규칙이 아니라 펜을 이기는 규칙**으로만 남는다 —
+      // 조건 둘을 나란히 두면 같은 커서를 두 자리에서 켜게 되고, 한쪽만 고쳐지는 날
+      // "Space 를 짚으면 손인데 그냥은 아닌" 화면이 돌아온다.
+      //
+      // 손 커서를 **자식까지 덮는 일**(아래 `className`)은 여전히 2)·1) 의 몫이다. 그 둘은
+      // 손잡이마저 잡히지 않는 상태이므로 손잡이의 커서가 거짓말이 되지만, 기본값으로서의
+      // 편 손은 손잡이를 가로챌 까닭이 없다 — 그 자리에서 손잡이는 실제로 잡힌다.
       //
       // 도구 표를 **여기서 한 번 더** 읽는 것에 뜻이 있다. 판정은 이동에서만 도는데 도구는
       // 단추로 바뀌므로, 이 줄이 없으면 도구를 끈 뒤에도 손을 움직이기 전까지 펜이 남는다.
@@ -3290,7 +3419,7 @@ export default function CanvasEditOverlay({
             ? 'grab'
             : connectorDraw !== null || (TOOL_CONNECTOR_ROUTE[tool] !== null && penHover)
               ? PEN_CURSOR
-              : undefined,
+              : 'grab',
       }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}

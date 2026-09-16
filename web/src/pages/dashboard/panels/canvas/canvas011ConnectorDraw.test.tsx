@@ -458,14 +458,31 @@ describe('도구가 켜져 있어도 앵커가 아닌 누름은 옛 뜻으로 �
     expect(selected()).toEqual(['r1']);
   });
 
-  it('빈 자리를 끌면 종전대로 **마키**다', () => {
+  it('빈 자리를 맨손으로 끌면 종전대로 **팬**이다 — 도구가 그 뜻을 갈아 끼우지 않는다', () => {
+    // **뒤집힌 시험이다.** 종전 문장: "빈 자리를 끌면 종전대로 **마키**다". 이 절이
+    // 지키는 것은 "도구는 **앵커 위 한 몸짓**의 뜻만 갈아 끼우고 나머지는 건드리지
+    // 않는다" 이고, 그 문장은 그대로다 — 011 이 뒤집은 것은 **도구 밖의 종전 뜻**이다
+    // (빈 자리 맨손 끌기가 사각형에서 팬으로 바뀌었다). 사각형은 Ctrl 로 옮겨 앉았고,
+    // 아래 시험이 그 갈래도 도구에 먹히지 않음을 함께 잰다.
     setup();
     enableTool();
     down(AT.empty);
     move({ x: 45, y: 30 });
-    expect(screen.queryByTestId('canvas-marquee')).not.toBeNull();
+    expect(screen.queryByTestId('canvas-marquee')).toBeNull();
     expect(screen.queryByTestId('canvas-connector-preview')).toBeNull();
     up({ x: 45, y: 30 });
+    expect(connectors()).toEqual([]);
+  });
+
+  it('빈 자리를 Ctrl 로 끌면 종전대로 **마키**다', () => {
+    setup();
+    enableTool();
+    const ctrl = { ctrlKey: true };
+    fireEvent(overlayRoot(), new MouseEvent('pointerdown', { ...at(AT.empty), ...ctrl }));
+    fireEvent(overlayRoot(), new MouseEvent('pointermove', { ...at({ x: 45, y: 30 }), ...ctrl }));
+    expect(screen.queryByTestId('canvas-marquee')).not.toBeNull();
+    expect(screen.queryByTestId('canvas-connector-preview')).toBeNull();
+    fireEvent(overlayRoot(), new MouseEvent('pointerup', { ...at({ x: 45, y: 30 }), ...ctrl }));
     expect(connectors()).toEqual([]);
   });
 });

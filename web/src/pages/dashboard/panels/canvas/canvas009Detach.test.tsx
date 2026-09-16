@@ -135,10 +135,17 @@ function enterPart(p: { x: number; y: number }): void {
   click(p);
 }
 
+/**
+ * 빈 자리에서 사각형을 그어 그룹 자신을 고른다.
+ *
+ * **Ctrl 을 짚는다**(SPEC-CANVAS-011). 이 파일이 재는 것은 분리·해제 단추의 조건이지
+ * 사각형을 시작하는 몸짓이 아니다 — 011 이 맨손 끌기를 팬에 주었으므로 도우미의 이름만
+ * 바뀌고 기대값은 그대로다.
+ */
 function marqueeSelect(from: { x: number; y: number }, to: { x: number; y: number }): void {
-  fireEvent(overlayRoot(), new MouseEvent('pointerdown', at(from)));
-  fireEvent(overlayRoot(), new MouseEvent('pointermove', at(to)));
-  fireEvent(overlayRoot(), new MouseEvent('pointerup', at(to)));
+  fireEvent(overlayRoot(), new MouseEvent('pointerdown', { ...at(from), ctrlKey: true }));
+  fireEvent(overlayRoot(), new MouseEvent('pointermove', { ...at(to), ctrlKey: true }));
+  fireEvent(overlayRoot(), new MouseEvent('pointerup', { ...at(to), ctrlKey: true }));
 }
 
 function detachButton(): HTMLButtonElement {
