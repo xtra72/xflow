@@ -1,9 +1,9 @@
 ---
 id: SPEC-CANVAS-011
 type: plan
-version: "0.2.0"
+version: "0.3.0"
 created: 2026-09-15
-updated: 2026-09-15
+updated: 2026-09-16
 ---
 
 # SPEC-CANVAS-011 구현 계획
@@ -67,14 +67,33 @@ M6·M7 은 서로 독립이라 순서를 바꿔도 된다. M10·M11 도 마찬�
 
 ### M1 — 팔레트 이동
 
-**대상**: `shapes/paletteGroups.ts`, `shapes/shapeCatalog.ts`, `shapes/CanvasShapeCatalog.tsx`
+**대상**: `shapes/paletteGroups.ts`, `shapes/shapeCatalog.ts`, `shapes/CanvasShapeCatalog.tsx`,
+`CanvasEditDock.tsx`
+
+> 넷째 파일이 있다. 카탈로그 종류는 `shapeCatalog` 에 적혀 있지만 **원시 넷을 세우는 쪽은
+> 도크다** — 이름·접근성 이름·클릭이 부르는 `onPlace` 가 카탈로그의 관심이 아니기 때문이다.
+> 그래서 묶음을 옮기는 일은 위 셋만으로 끝나지 않으며, 넷째를 세지 않으면 "묶음은 셋이
+> 됐는데 사각형은 옛 자리에 남아 있다" 가 된다.
 
 **작업**
 
 1. `PaletteGroupId` 에서 `'primitive'` 를 걷어내고 묶음을 셋(`basic · general · arrow`)으로
    줄인다.
-2. 원시 넷(사각형·타원·선·텍스트)을 `basic` 묶음의 **맨 앞**에 세운다. 카탈로그 12종은
+2. 원시 넷(사각형·타원·선·텍스트)을 `basic` 묶음의 **맨 앞**에 세운다. 카탈로그 30종은
    그 뒤에 온다.
+
+   **자리만 옮기는 일이 아니었다.** 넷은 묶음 **위**가 아니라 그 묶음의 **격자 안**에
+   선다 — 도크가 `leading` 으로 건네고 카탈로그가 `basic` 몸통의 맨 앞에 둔다. 위에
+   두었더니 줄 단추 넷과 2열 격자 서른이 한 몸통에 함께 서서, 옮긴 자리가 "같은 묶음"
+   으로 읽히지 않았다. 그리고 그 칸의 그림은 lucide 글리프가 아니라 카탈로그와 **같은
+   `drawElements`** 를 지난다 — 칸 크기를 맞춰도 윤곽선 글리프와 파란 도형은 여전히 두
+   벌의 잉크였다. 칸에 보이는 모습이 곧 눌렀을 때 놓이는 모습이라는 008 REQ-06 의 규율이
+   넷에도 걸린다.
+
+   두 갈래 모두 **돌아가는 앱을 보고** 나왔다. 계획이 예고한 것은 옮기기 하나이고
+   (`b3ea2ac2`), 격자 칸으로 세우는 일(`7efe8a9c`)과 실제 렌더러로 그리는 일(`fb7e333f`)은
+   옮기고 나서야 보였다. `shapes/previewElements.ts` 가 그 셋째 갈래에서 갈라져 나온
+   파일이며, 계획만 읽고 코드를 보는 사람은 그 파일이 어디서 왔는지 알 수 없다.
 3. `DEFAULT_COLLAPSED` 를 `basic: false` 로 둔다 — 008 위험 R10 의 답을 자리만 옮겨 지킨다.
 4. `readCollapsed` 는 **이미** 모르는 키를 버린다. 저장된 `primitive` 키는 그대로 무시된다
    (REQ-01-a — 새 코드가 필요 없음을 시험으로 확인한다).
@@ -156,8 +175,14 @@ M6·M7 은 서로 독립이라 순서를 바꿔도 된다. M10·M11 도 마찬�
 3. `CanvasNode` 를 셋째 갈래로 넓히고 `CanvasNodeKind` 에 `'connector'` 를 더한다.
    **`CanvasElementKind` 는 건드리지 않는다.**
 4. `parseNode` 에 한 줄을 더한다: `kind === 'connector' → parseConnector`.
-5. `parseConnector` 는 관용적이다 — 모르는 `route` 는 `straight` 로, 손상 좌표는 폴백으로,
-   끝점이 없으면 **노드 자체를 버린다**(정체성이 없는 항목은 버린다는 001 규율).
+5. `parseConnector` 는 관용적이다 — 모르는 `route` 는 `straight` 로, 끝점이 없으면
+   **노드 자체를 버린다**(정체성이 없는 항목은 버린다는 001 규율).
+
+   **손상 좌표에 폴백은 없다.** 손상된 중간점은 **그 항목만** 빠지고, 손상된 끝점은
+   **노드를 버린다**(AC-38). 자리를 뜻하는 좌표에는 채울 기본값이 없기 때문이다 —
+   `0,0` 으로 메우면 점이 캔버스 왼쪽 위 모서리로 조용히 이사하고, 사용자는 저술한 적
+   없는 꺾임을 보게 된다. 008 의 경로 명령과 M3' 의 임의 앵커가 이미 같은 규율을 지나며,
+   001 이 그 근거를 세웠다.
 
 **검증**: 저장 왕복에 값이 바뀌지 않는다. 출시된 가드 둘이 무수정 통과한다.
 
@@ -182,7 +207,13 @@ M6·M7 은 서로 독립이라 순서를 바꿔도 된다. M10·M11 도 마찬�
 
 ### M6 — 그리기
 
-**대상**: `drawElement.ts`, `group/frameKey.ts`(순회)
+**대상**: `drawElement.ts`, `group/frameKey.ts`(순회), `CanvasPanel.tsx`, `CanvasSurface.tsx`
+
+> 순회를 하나로 두기로 한 대가가 뒤의 둘이다. `walkDrawables` 가 연결선도 내는 순간,
+> **그 순회를 쓰는 모든 소비자**가 연결선을 만난다 — 프레임을 짓는 쪽(`CanvasPanel`)과
+> 트윈을 돌리는 쪽(`CanvasSurface`)이 그 둘이다. 판별식 유니온을 훑는 자리마다 한 줄이
+> 붙는다는 것은 §여섯 번째 종류가 이미 대가로 적어 둔 그것이고, 계획이 그 자리를 세지
+> 않았을 뿐이다. 두 자리가 건너뛰는 근거는 §범위 밖(연결선의 데이터 캐스케이드)에 있다.
 
 **작업**
 
@@ -214,7 +245,25 @@ M6·M7 은 서로 독립이라 순서를 바꿔도 된다. M10·M11 도 마찬�
 
 ### M8 — 긋는 몸짓(직선)
 
-**대상**: `CanvasEditOverlay.tsx`, `connector/CanvasConnectorTools.tsx`(신규)
+**대상**: `CanvasEditOverlay.tsx`, `connector/CanvasConnectorTools.tsx`(신규),
+`connector/canvasTools.ts`(M3' 에서 서고 여기서 넷이 는다)
+
+> **도구 상태를 둘 집이 계획에 없었다.** M3' 가 세우는 앵커 도구가 이 표면의 첫 도구
+> 상태이고, M8 이 넷을 더해 **여섯**이 된다. 불리언 여럿으로 들면 "앵커 도구와 곡선
+> 도구가 함께 켜져 있다" 가 형상으로 가능해지고, 그때 더블클릭의 뜻을 아무도 말하지
+> 못한다. 갈래 **하나**로 들면 그 상태가 표현 불가능하다.
+>
+> 그 모듈이 드는 것은 유니온 하나와 `Record<CanvasTool, …>` **다섯**이다 — 무엇이라
+> 부르는가 · 앵커를 보이는가 · 그 더블클릭이 앵커인가 · 그 더블클릭이 중간점인가 ·
+> 어떤 `route` 를 긋는가. 다섯을 표로 두므로 일곱째 도구가 늘면 컴파일러가 다섯 자리를
+> **함께** 가리킨다. 오버레이에 `if` 사슬로 적었다면 새 도구가 조용히 기본값으로 떨어지고,
+> 화면은 "도구를 켰는데 아무 일도 없다" 만 말했을 것이다.
+>
+> 표가 **둘로 갈라진 자리**가 이 결정의 값이다. M3' 에서 "앵커를 보이는가" 와 "그
+> 더블클릭이 앵커인가" 는 같은 값이었다. M8 에서 갈라졌다 — 연결선 도구 넷은 앵커를
+> 보여야 하지만(앵커에서 눌러 앵커에서 놓는 것이 그 몸짓이다) 그 더블클릭은 앵커가
+> 아니다(REQ-05). 한 표로 접었다면 오늘 그것을 쪼개야 했고, 쪼개는 사람은 두 뜻이 언제
+> 갈렸는지 모른 채 한쪽을 골랐을 것이다.
 
 **작업**
 
@@ -332,23 +381,44 @@ M6·M7 은 서로 독립이라 순서를 바꿔도 된다. M10·M11 도 마찬�
 **신규**
 
 ```
+web/src/pages/dashboard/panels/canvas/shapes/previewElements.ts           (M1)
 web/src/pages/dashboard/panels/canvas/canvasOutline.ts                    (M2)
+web/src/pages/dashboard/panels/canvas/connector/anchorTypes.ts            (M3')
 web/src/pages/dashboard/panels/canvas/connector/anchors.ts                (M3 · M3')
 web/src/pages/dashboard/panels/canvas/connector/CanvasAnchorTools.tsx     (M3')
+web/src/pages/dashboard/panels/canvas/connector/canvasTools.ts            (M3' · M8 · M10)
 web/src/pages/dashboard/panels/canvas/connector/connectorTypes.ts         (M4)
 web/src/pages/dashboard/panels/canvas/connector/resolveConnector.ts       (M5)
+web/src/pages/dashboard/panels/canvas/connector/connectorCurve.ts         (M6)
+web/src/pages/dashboard/panels/canvas/connector/connectorPath.ts          (M6 · M7)
 web/src/pages/dashboard/panels/canvas/connector/connectorEdit.ts          (M10)
 web/src/pages/dashboard/panels/canvas/connector/freehand.ts               (M11)
 web/src/pages/dashboard/panels/canvas/connector/CanvasConnectorTools.tsx  (M8)
 ```
 
+넷은 계획이 세지 않은 것들이고, 그중 하나는 **근거가 있어 생긴 자리**다.
+
+- `shapes/previewElements.ts` (M1) — 미리보기 요소 모델. 컴포넌트 파일이 컴포넌트만
+  내보내게 하려고 갈라 나왔다(위 M1 셋째 갈래).
+- `connector/anchorTypes.ts` (M3') — 임의 앵커의 자료형. 잎으로 두어 순환을 막는다.
+- `connector/connectorCurve.ts` (M6) — 2차→3차 환산과 그 일반화(REQ-04).
+- `connector/connectorPath.ts` (M6 · M7) — **왜 있는지가 중요하다.** M7 이 잡는 곡선은
+  M6 이 그린 그 곡선이어야 한다. `curveSegments` 만 나눠 쓰면 "곡선이면 베지어, 아니면
+  폴리라인" 이라는 `route` 갈래가 **두 벌**로 적히고, 한쪽만 고쳐지는 날 "그려진 선과
+  잡히는 선이 다르다" 가 시작된다(위험 R1). 그래서 모양 자체를 명령 목록 **하나**로 내고,
+  그리는 쪽은 명령마다 context 호출을 내고 잡는 쪽은 `flattenPath` 에 그대로 넘긴다 —
+  M5 가 참조 푸는 자리를 하나로 못박은 그 규율을 **모양**에 한 번 더 적용한 것이다.
+
 **수정**
 
 ```
 shapes/paletteGroups.ts · shapes/shapeCatalog.ts · shapes/CanvasShapeCatalog.tsx  (M1)
+CanvasEditDock.tsx         (M1 — 원시 넷을 세우는 쪽은 도크다)
 canvasConfig.ts            (M3' — anchors 필드 · M4 — parseNode 한 줄 + parseConnector)
 group/frameKey.ts          (M6 — 순회가 연결선도 낸다)
 drawElement.ts             (M6)
+CanvasPanel.tsx            (M6 — 한 순회의 소비자. 연결선을 건너뛰고 그 사실을 적는다)
+CanvasSurface.tsx          (M6 — 같은 순회의 둘째 소비자. 트윈 장부)
 canvasHitTest.ts           (M7)
 canvasEditArrange.ts       (M12 — removeNodes 연동)
 CanvasEditOverlay.tsx      (M2 · M8 · M9 · M10 · M11)
