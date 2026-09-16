@@ -47,6 +47,8 @@ import {
 // 없고, 파서와 렌더가 **같은 표**를 본다 — 표를 `drawElement` 에 두면 파서가 유효한 이름을
 // 판정하려고 렌더 모듈을 들이게 된다.
 import { isStrokeDash, type StrokeDash } from './strokeDash';
+// 각도의 정규화와 저장 규율(SPEC-CANVAS-014). 아무것도 들이지 않는 잎이라 순환이 없다.
+import { storableDegrees } from './canvasRotation';
 // 임의 앵커의 자료형. 잎 모듈(`shapes/pathTypes` 밖을 들이지 않는다)이라 순환이 없다.
 import type { CustomAnchor } from './connector/anchorTypes';
 // 연결선의 자료형과 그 판별(SPEC-CANVAS-011 M4). 저쪽이 이 파일에서 **타입만** 가져가므로
@@ -322,6 +324,19 @@ export interface CanvasElementBase {
    * 값이 한 번은 그려지고 다음 읽기에서 사라진다.
    */
   anchors?: CustomAnchor[];
+  /**
+   * 회전 각도 — **정수 도**, `[0, 360)`, 양수는 시계 방향 (SPEC-CANVAS-014 REQ-01).
+   *
+   * **0 은 저장되지 않는다**(§결정 7). 미지정과 0 은 같은 그림이고, 파서가 0 을 만들어
+   * 채우면 왕복 한 번에 모든 요소가 키를 하나씩 얻는다.
+   *
+   * **`kind:'line'` 에는 서지 않는다.** 선의 임의 각도는 두 끝점으로 표현되므로 필드를
+   * 주면 같은 그림을 두 가지로 적을 수 있게 된다 — `anchors` 가 상자형에만 서는 것(A11)과
+   * 같은 규율이고, 그 금지도 같은 자리(파서의 갈래)가 진다.
+   *
+   * 라디안이 아닌 까닭은 `canvasRotation.ts` 머리말이 진다.
+   */
+  rotation?: number;
 }
 
 /** 사각형 요소. */
@@ -855,11 +870,32 @@ function parseElement(raw: unknown): CanvasElement | null {
   const anchors = parseCustomAnchors(e.anchors);
   const withAnchors = anchors !== undefined ? { anchors } : {};
 
+  // 회전도 **갈래에서만** 붙는다(014 §결정 1 · AC-05). 선에 이 조각이 없는 것이 그 금지의
+  // 전부다 — 선의 각도는 두 끝점이 이미 말하므로, 필드를 남겨 두면 같은 그림을 두 가지로
+  // 적을 수 있게 되고 그때 어느 쪽이 참인지 화면이 답하지 못한다.
+  //
+  // **0 은 키를 만들지 않는다**(`storableDegrees`) — 014 이전 저장이 바이트 동일하게
+  // 왕복하는 것이 그 조각의 값이다.
+  const rotation = storableDegrees(e.rotation);
+  const withRotation = rotation !== undefined ? { rotation } : {};
+
   switch (kind) {
     case 'rect':
-      return { ...base, kind, geometry: parseBoxGeometry(e.geometry), ...withAnchors };
+      return {
+        ...base,
+        kind,
+        geometry: parseBoxGeometry(e.geometry),
+        ...withAnchors,
+        ...withRotation,
+      };
     case 'ellipse':
-      return { ...base, kind, geometry: parseBoxGeometry(e.geometry), ...withAnchors };
+      return {
+        ...base,
+        kind,
+        geometry: parseBoxGeometry(e.geometry),
+        ...withAnchors,
+        ...withRotation,
+      };
     case 'line':
       return { ...base, kind, geometry: parseLineGeometry(e.geometry) };
     case 'path': {
@@ -874,10 +910,11 @@ function parseElement(raw: unknown): CanvasElement | null {
         path: parsePathCommands(e.path),
         ...(catalogId !== undefined ? { catalog_id: catalogId } : {}),
         ...withAnchors,
+        ...withRotation,
       };
     }
     default:
-      return { ...base, kind, geometry: parsePointGeometry(e.geometry) };
+      return { ...base, kind, geometry: parsePointGeometry(e.geometry), ...withRotation };
   }
 }
 
@@ -959,6 +996,8 @@ function parseGroup(e: Record<string, unknown>): GroupElement | null {
   // 그룹은 `CanvasElement` 가 아니라서 위 `parseElement` 의 조각이 닿지 않으므로 여기서
   // **같은 파서**를 부른다(앵커 파서가 둘이 되지 않는다).
   const anchors = parseCustomAnchors(e.anchors);
+  // 같은 사정으로 회전도 여기서 **같은 규율**을 부른다(014 §결정 7 — 0 은 키를 만들지 않는다).
+  const rotation = storableDegrees(e.rotation);
 
   return {
     id,
@@ -966,6 +1005,7 @@ function parseGroup(e: Record<string, unknown>): GroupElement | null {
     geometry: parseBoxGeometry(e.geometry),
     parts: parseElements(e.parts),
     ...(anchors !== undefined ? { anchors } : {}),
+    ...(rotation !== undefined ? { rotation } : {}),
     ...(binding !== undefined ? { binding } : {}),
     ...(style !== undefined ? { style } : {}),
     ...(rules !== undefined ? { rules } : {}),

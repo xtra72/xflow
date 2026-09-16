@@ -121,6 +121,16 @@ export interface GroupElement {
    * 그래서 여기에도 크기 변경에 딸린 코드가 한 줄도 없다.
    */
   anchors?: CustomAnchor[];
+  /**
+   * 회전 각도 — **정수 도**, `[0, 360)`, 양수는 시계 방향 (SPEC-CANVAS-014 REQ-01).
+   *
+   * 바로 위 `anchors` 와 **같은 사정**으로 여기에도 같은 이름의 같은 필드를 둔다: 그룹은
+   * `CanvasElement` 가 아니므로 `CanvasElementBase` 에 더하는 것만으로는 빠진다.
+   *
+   * 그룹을 돌려도 **부품 저장 좌표는 한 자리도 바뀌지 않는다**(A17) — 각도는 그룹 상자에
+   * 걸리고 부품은 그 안의 로컬 격자에 그대로 있다.
+   */
+  rotation?: number;
 }
 
 /**

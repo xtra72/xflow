@@ -34,7 +34,7 @@
 import type { CanvasElement, Geometry, PointGeometry } from './canvasConfig';
 import { unprojectBox, type CanvasBox, type CanvasProjection } from './canvasGeometry';
 import { patchNodeGeometry } from './canvasEditGeometry';
-import { outlineBox } from './canvasOutline';
+import { outlineAabb, outlineBox } from './canvasOutline';
 import { ANCHOR_LOCAL_EXTENT, type CustomAnchor } from './connector/anchorTypes';
 import { isConnector, type ConnectorElement, type ConnectorEnd } from './connector/connectorTypes';
 // 붙은 끝과 자유 끝을 가르는 **유일한 판정**(011 AC-45). 제 손으로 `'el' in` 을 적으면
@@ -234,7 +234,10 @@ export function selectionBox(
   // 된다. 그 함수의 인자가 `OutlinedNode` 인 것이 연결선 배제의 전부다.
   const boxes = nodes.flatMap((n): CanvasBox[] => {
     if (!selected.has(n.id) || isConnector(n)) return [];
-    return [unprojectBox(outlineBox(n, proj, textWidths), proj)];
+    // **축-나란 상자를 읽는다**(014 §결정 2). 뒤집기의 축은 화면에서 보이는 상자여야
+    // 하고, 돌아간 도형이 보이는 자리는 그 잉크를 덮는 상자다. 각도가 0 이면 두 상자가
+    // 같은 수이므로 013 이 배달한 동작은 한 글자도 바뀌지 않는다(K3).
+    return [unprojectBox(outlineAabb(n, proj, textWidths), proj)];
   });
   return unionBox(boxes);
 }

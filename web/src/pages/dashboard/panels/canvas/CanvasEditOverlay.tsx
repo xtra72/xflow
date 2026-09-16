@@ -301,7 +301,7 @@ import {
   type StageSize,
 } from './canvasGeometry';
 import { hitTest } from './canvasHitTest';
-import { outlineBox, resolveFontSize, resolveMeasuredWidth } from './canvasOutline';
+import { outlineAabb, outlineBox, resolveFontSize, resolveMeasuredWidth } from './canvasOutline';
 
 // --- 타입 ---------------------------------------------------------------
 
@@ -2550,7 +2550,10 @@ export default function CanvasEditOverlay({
    */
   const marqueeNext = (state: MarqueeState, point: PxPoint): CanvasSelection =>
     marqueeSelection(
-      marqueeCandidates(elements, (el) => outlineBox(el, projection, textWidths)),
+      // **마키는 축-나란 상자를 읽는다**(014 §결정 2). 돌아간 도형을 제 방향 상자로 재면
+      // 사각형 안에 있는데 안 잡히는(또는 그 반대의) 자리가 생긴다. 각도가 0 이면 두
+      // 상자가 같은 수이므로 014 이전 동작은 한 글자도 바뀌지 않는다(K3).
+      marqueeCandidates(elements, (el) => outlineAabb(el, projection, textWidths)),
       marqueeRect(state.origin, point),
       state.base,
     );
@@ -3109,7 +3112,9 @@ export default function CanvasEditOverlay({
       .filter((el) => !isConnector(el))
       .filter((el) => selection.has(el.id));
     const deltas = alignDeltas(
-      picked.map((el) => ({ nodeId: el.id, box: outlineBox(el, projection, textWidths) })),
+      // **정렬도 축-나란 상자다**(014 §결정 2) — 맞추는 것은 화면에서 보이는 자리이고,
+      // 돌아간 도형이 보이는 자리는 그 잉크를 덮는 상자다.
+      picked.map((el) => ({ nodeId: el.id, box: outlineAabb(el, projection, textWidths) })),
       projection,
       axis,
       mode,

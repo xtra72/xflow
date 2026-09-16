@@ -22,6 +22,9 @@ import {
   type PxBox,
 } from './canvasGeometry';
 import type { OutlinedNode } from './group/groupTypes';
+// 각도의 산술은 잎 모듈이 소유한다(SPEC-CANVAS-014). 여기서 제 손으로 모서리를 돌리면
+// 회전 산술이 둘이 된다.
+import { rotatedAabb } from './canvasRotation';
 
 /** 유효한 글자 크기(px). `canvasHitTest.resolveFontSize` 와 같은 판정이다. */
 export function resolveFontSize(size: number | undefined): number {
@@ -92,6 +95,46 @@ export function outlineBox(
       return normalizeBox({ x: origin.x, y: origin.y - fontSize / 2, w: width, h: fontSize });
     }
   }
+}
+
+/**
+ * 이 노드가 돌아간 각도(정수 도). 회전 축이 없는 종류는 **0** 이다.
+ *
+ * `kind:'line'` 이 0 인 것은 결측이 아니라 **금지의 귀결**이다 — 선의 임의 각도는 두
+ * 끝점으로 표현되므로 필드가 서지 않는다(014 §D6). 여기서 `?? 0` 한 줄이 그 사실을
+ * 소비자에게 옮겨 준다.
+ */
+export function outlineAngle(el: OutlinedNode): number {
+  return 'rotation' in el && el.rotation !== undefined ? el.rotation : 0;
+}
+
+/**
+ * 돌아간 잉크를 덮는 **축-나란 상자**(SPEC-CANVAS-014 §결정 2).
+ *
+ * ## 왜 `outlineBox` 를 고치지 않고 파생시키는가
+ *
+ * 돌아간 도형에는 상자가 둘이다 — 요소의 로컬 축을 그대로 둔 **방향 상자**(8핸들 · 앵커 ·
+ * 선택 윤곽이 읽는다)와 그 잉크를 덮는 **축-나란 상자**(마키 · 정렬이 읽는다). 한 이름으로
+ * 부르면 손잡이가 마키의 상자에 서거나 그 반대가 된다.
+ *
+ * 그렇다고 `outlineBox` 의 뜻을 바꾸지는 않는다. 그 함수가 내는 것은 **요소 제 상자**이고
+ * 그 뜻은 014 이전과 한 글자도 다르지 않다 — 각도는 `outlineAngle` 이 따로 말하며, 둘을
+ * 합친 것이 곧 방향 상자다.
+ *
+ * **그리고 이 함수는 그 상자에서 파생된다**(K2). 제 손으로 다시 재면 두 번째 측정이 생기고,
+ * 그 갈라짐은 크기나 각도를 바꾼 뒤에야 화면에서만 드러난다 — `anchors.ts` 가 "상자는
+ * 여기서 **한 번** 나온다(AC-33)" 고 못박아 둔 그 규율이다.
+ *
+ * **각도가 0 이면 `outlineBox` 와 바이트 동일하다**(K3). 014 이전의 모든 화면이 그 등식
+ * 위에 서 있으므로, 여기서 부동소수 왕복을 한 번이라도 태우면 안 된다.
+ */
+export function outlineAabb(
+  el: OutlinedNode,
+  proj: CanvasProjection,
+  textWidths: Readonly<Record<string, number>>,
+): PxBox {
+  const box = outlineBox(el, proj, textWidths);
+  return rotatedAabb(box, outlineAngle(el));
 }
 
 /** 음수 크기를 양수 범위로 편다. 001 은 음수 크기 박스를 그릴 수 있게 해 두었다. */
