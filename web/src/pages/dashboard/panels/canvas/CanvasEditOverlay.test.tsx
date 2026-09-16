@@ -2738,9 +2738,14 @@ describe('키보드로 닿는다 — 루트가 초점을 받는 자리다 (AC-08
     // 010 이 지우기 안내를 그 뒤에 이었으므로 기대값이 세 키가 된다: 사각형은 `aria-hidden`
     // 인 장식이고 지우기는 눈에 보이는 컨트롤이 아예 없으므로, 이 문단이 보조기기에게 두
     // 몸짓을 알리는 **유일한 통로**다(006 M11 이 흐림·경계를 두고 세운 논리 그대로다).
+    // **네 키가 되었다**(사용자 신고 2026-09-16 — 보기 팬). 팬도 앞의 둘과 같은 부류다:
+    // 눈으로 보는 사람에게는 커서가 손 모양으로 바뀌어 알리지만 **커서는 보조기기에게
+    // 아무 말도 하지 않고**, 팬에는 눌러 볼 컨트롤이 아예 없다(짚는 키 하나가 전부다).
+    // 그래서 이 문단이 그 몸짓을 알리는 유일한 통로이며, 006 M11 이 흐림·경계를 두고
+    // 세운 그 논리가 여기서 세 번째로 그대로 성립한다.
     expect(hint!.textContent).toBe(
       'dashboard.canvas.edit.keyboardHint dashboard.canvas.edit.marqueeHint ' +
-        'dashboard.canvas.edit.deleteHint',
+        'dashboard.canvas.edit.deleteHint dashboard.canvas.edit.panHint',
     );
     // 눈에는 보이지 않아야 한다 — 스테이지 위에 안내문이 떠 있으면 그림을 가린다.
     expect(hint!.className).toContain('sr-only');
@@ -2991,9 +2996,25 @@ describe('우리 것이 아닌 키는 소비하지 않는다 (AC-E3 과 같은 �
   it('방향키가 아닌 키는 손대지 않는다 (Tab·Esc 가 살아 있어야 한다)', () => {
     const emit = renderPickedBox();
 
-    for (const key of ['Tab', 'Escape', 'Enter', ' ', 'a']) {
+    // **Space 가 이 목록에서 빠졌다**(사용자 신고 2026-09-16 — 보기 팬). 종전에는 다섯이었고
+    // 그 다섯째가 `' '` 였다 — 그때 Space 는 이 표면에서 아무 뜻도 없었기 때문이다. 팬이
+    // 그것을 **구분자로** 가져갔으므로(`SPACE_KEY`) 이제 소비되며, 그 사실은 아래 형제
+    // 시험이 제 이름으로 단언한다. 목록에서 **지우기만 하고 옮기지 않으면** "Space 는 이제
+    // 아무도 재지 않는 키" 가 되어, 팬을 지우는 변이가 여기서도 저기서도 걸리지 않는다.
+    for (const key of ['Tab', 'Escape', 'Enter', 'a']) {
       expect(sendKey(key)).toBe(true);
     }
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('Space 는 이제 **우리 것이다** — 팬의 구분자라 페이지 스크롤을 막는다', () => {
+    const emit = renderPickedBox();
+
+    // 소비한다(= `preventDefault`). 짚는 일이 실제로 무언가를 켰기 때문이며, 켜지 않았다면
+    // 이 층의 규율대로 흘려보내야 한다.
+    expect(sendKey(' ')).toBe(false);
+    // **고른 것은 건드리지 않는다.** 팬은 시야를 옮길 뿐이므로 요소가 움직이면 그것은
+    // 방향키 갈래로 잘못 떨어진 것이다.
     expect(emit).not.toHaveBeenCalled();
   });
 
@@ -4586,6 +4607,12 @@ describe('문은 하나이고 방향키는 두 주인을 갖지 않는다 (M10 �
   it('`handleKeyDown` 에 표적 가드가 생기지 않았다 — 끊는 자리는 컨트롤 쪽이다', () => {
     // REQ-08 이 "한 줄도 바뀌지 않는다" 로 이름 적어 둔 경로다. 여기 가드가 생겼다면
     // 끊을 자리를 잘못 고른 것이다(도크가 포인터에 대해 이미 컨트롤 쪽을 골랐다).
+    //
+    // **보기 팬이 이 가드에 걸렸고, 걸린 쪽이 물러났다**(사용자 신고 2026-09-16). 팬의
+    // 첫 구현은 Space 를 루트가 직접 초점을 든 동안에만 가져가려고 `event.target` 을
+    // 보았는데, 그 한 줄이 곧 여기 적힌 "잘못 고른 자리" 였다. 물러날 수 있었던 근거는
+    // 루트 안쪽의 초점 가능한 컨트롤이 손잡이 둘뿐이고 둘 다 Space 로 하는 일이 없다는
+    // 사실이다 — 가드를 늦추지 않고 **구현이 규칙을 따랐다**.
     const source = readFileSync(join(__dirname, 'CanvasEditOverlay.tsx'), 'utf-8');
     const start = source.indexOf('const handleKeyDown');
     expect(start).toBeGreaterThan(0);

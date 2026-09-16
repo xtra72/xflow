@@ -81,12 +81,18 @@ import { CANVAS_GRID_STEP_UNITS } from './canvasEditArrange';
 import {
   computeBackingSize,
   type CanvasProjection,
+  type StageCell,
   type StageSize,
 } from './canvasGeometry';
 import type { ResolvedStyle } from './canvasRules';
 import { CanvasStageGridContext, type CanvasStageGrid } from './canvasStageGrid';
 import { beginTween, retargetTween, sampleTween, type TweenState } from './canvasTween';
-import { DEFAULT_WORKSPACE_ZOOM, workspaceBox } from './canvasWorkspace';
+import {
+  DEFAULT_WORKSPACE_ZOOM,
+  NO_WORKSPACE_PAN,
+  clampWorkspacePan,
+  workspaceBox,
+} from './canvasWorkspace';
 import { clearSurface, drawElements, type DrawContext2D } from './drawElement';
 import { isConnectorDrawable, walkDrawables } from './group/frameKey';
 import type { CanvasNode } from './group/groupTypes';
@@ -285,6 +291,23 @@ export default function CanvasSurface({
   const [zoom, setZoom] = useState<number>(DEFAULT_WORKSPACE_ZOOM);
 
   /**
+   * 보기 팬(화면 px) — 출력 영역이 작업 영역 가운데에서 밀려난 변위
+   * (사용자 신고 2026-09-16 · `canvasWorkspace` §보기 팬).
+   *
+   * 주인이 표면인 근거는 위 `zoom` 과 **한 글자도 다르지 않다**: 이 값이 그리는 상자의
+   * 자리를 정하고 그 상자는 표면의 것이다. 저장하지 않는 표시 상태라는 것도, 범위가
+   * 표면 하나·마운트 하나라는 것도 같다.
+   *
+   * 팬을 바꾸면 상자의 자리가 실제로 달라지므로 프레임이 **한 장** 필요하다 — 아래
+   * `geometry` 의 의존성을 지나는 **종전의 경로 그대로**이며(배율 변경과 같은 부류) 새
+   * 깨우기 경로가 아니다(REQ-05 · AC-E4).
+   */
+  const [pan, setPan] = useState<StageCell>(NO_WORKSPACE_PAN);
+  // 효과·메모가 상자가 아니라 **두 수**를 보게 한다 — 상태 객체를 의존성에 그대로 넣으면
+  // 아래 메모의 규율(다섯 수치로 적는다)이 이 한 칸에서만 깨진다(`previewPan` 과 같은 관용구).
+  const { x: panX, y: panY } = pan;
+
+  /**
    * 바깥 상자에서 파생한 상자 한 벌(`canvasWorkspace.workspaceBox`). **투영·상자·격자가
    * 함께 보는 단 한 벌**이다.
    *
@@ -300,8 +323,13 @@ export default function CanvasSurface({
         gridStep,
         workspace,
         zoom,
+        // **그릴 때마다 죈다.** 끄는 쪽(오버레이)도 같은 함수로 죄지만 그 값은 끌던 **그때**의
+        // 상자에 대한 것이라, 패널이 작아지면 옛 이동량이 새 상자의 범위를 넘는다. 상한은
+        // 배율과 무관하므로(`clampWorkspacePan`) 여기서 줄어드는 경우는 **리사이즈 하나**뿐이고,
+        // 죈 값을 상태로 되쓰지 않는 것도 그래서다 — 상자가 돌아오면 보던 자리도 돌아온다.
+        clampWorkspacePan({ x: panX, y: panY }, { width: outer.width, height: outer.height }),
       ),
-    [outer.width, outer.height, canvas.width, canvas.height, gridStep, workspace, zoom],
+    [outer.width, outer.height, canvas.width, canvas.height, gridStep, workspace, zoom, panX, panY],
   );
   /**
    * **패널 출력 영역**. 이 아래에서 "스테이지" 는 언제나 이 값이며, 그 뜻은 006 전후로
@@ -325,11 +353,13 @@ export default function CanvasSurface({
       setStep: setGridStep,
       zoom,
       setZoom,
+      pan,
+      setPan,
       cell: geometry.cell,
       origin: geometry.origin,
       box: geometry.box,
     }),
-    [gridStep, zoom, geometry],
+    [gridStep, zoom, pan, geometry],
   );
 
   /**

@@ -271,7 +271,11 @@ import { useCanvasEditSelection, type CanvasSelection } from './canvasEditContex
 import { useCanvasEditDockHost } from './canvasEditDockHost';
 import type { ImportedShapeSpec, ImportedTextSpec } from './svgimport/svgImportPlan';
 import { useCanvasStageGrid } from './canvasStageGrid';
-import { DEFAULT_WORKSPACE_ZOOM } from './canvasWorkspace';
+import {
+  DEFAULT_WORKSPACE_ZOOM,
+  NO_WORKSPACE_PAN,
+  clampWorkspacePan,
+} from './canvasWorkspace';
 import {
   projectPoint,
   stageLattice,
@@ -281,6 +285,7 @@ import {
   type CanvasDelta,
   type CanvasProjection,
   type PxPoint,
+  type StageCell,
   type StageSize,
 } from './canvasGeometry';
 import { hitTest } from './canvasHitTest';
@@ -878,6 +883,27 @@ const ARROW_STEPS: Record<string, { x: -1 | 0 | 1; y: -1 | 0 | 1 }> = {
 const DELETE_KEYS: ReadonlySet<string> = new Set(['Delete', 'Backspace']);
 
 /**
+ * **팬의 구분자** — `KeyboardEvent.key` 의 스페이스 값이다(이름이 아니라 글자 하나다).
+ *
+ * 이 표면에서 Space 는 그때까지 **아무 뜻도 없었다**: `handleKeyDown` 은 지우는 키와
+ * 방향키만 보고 나머지를 흘려보냈다. 다만 **비어 있는 것은 루트에서일 뿐**이다 — 손잡이 ·
+ * 팔레트 · 도구는 진짜 `<button>` 이라 Space 가 곧 "누름" 이고, 배율 칸은 글자 입력이다.
+ * 그래서 팬은 **루트가 직접 초점을 든 동안에만** Space 를 가져간다(아래 `handleKeyDown`).
+ */
+const SPACE_KEY = ' ';
+
+/**
+ * Space+방향키 한 번의 팬 이동량(화면 px).
+ *
+ * `previewPan.PREVIEW_PAN_ARROW_PX` 와 **같은 수이고 같은 근거**다(편집 영역은 대체로
+ * 500~800px 이라 한 번에 눈에 보이면서 지나치지 않는 크기가 그쯤이다). 그 상수를 빌려
+ * 오지 않고 여기 따로 적는 것은 둘이 **다른 것을 옮기기** 때문이다 — 그쪽은 미리보기
+ * 전체를, 이쪽은 작업 영역 안의 출력 영역을. 한쪽을 손보는 날 다른 쪽까지 따라 움직이면
+ * 그것은 재사용이 아니라 우연한 결합이다.
+ */
+const PAN_ARROW_PX = 24;
+
+/**
  * 스크린 리더에 알리는 단축키 목록. 값은 W3C 가 정한 키 이름이라 **번역하지 않는다**
  * (번역하면 보조기기가 알아듣지 못한다). 사람이 읽는 설명은 `keyboardHint` ·
  * `deleteHint` 가 따로 낸다.
@@ -885,7 +911,12 @@ const DELETE_KEYS: ReadonlySet<string> = new Set(['Delete', 'Backspace']);
 const EDIT_KEY_SHORTCUTS =
   'Delete Backspace ' +
   'ArrowUp ArrowDown ArrowLeft ArrowRight ' +
-  'Shift+ArrowUp Shift+ArrowDown Shift+ArrowLeft Shift+ArrowRight';
+  'Shift+ArrowUp Shift+ArrowDown Shift+ArrowLeft Shift+ArrowRight ' +
+  // 팬(사용자 신고 2026-09-16). **`Space+ArrowUp` 으로 적지 않는다** — 이 속성의 문법이
+  // 아는 조합 키는 Alt·Control·Shift·Meta 넷뿐이라 Space 는 조합 키 자리에 설 수 없다.
+  // 그래서 짚는 키 하나만 알리고, 그것으로 무엇을 하는지는 아래 `panHint` 가 말한다.
+  // (W3C 가 정한 이름이라 글자 그대로 `Space` 이며 값 `' '` 가 아니다.)
+  'Space';
 
 // --- 순수 도우미 ---------------------------------------------------------
 
@@ -1387,6 +1418,47 @@ export default function CanvasEditOverlay({
   const setWorkspaceZoom = stageGrid?.setZoom ?? setLocalZoom;
 
   /**
+   * **보기 팬** — 주인도 폴백도 바로 위 배율과 같은 자리·같은 규율이다
+   * (사용자 신고 2026-09-16 · `canvasWorkspace` §보기 팬).
+   *
+   * 배율과 갈리는 것이 하나 있다: **팬에는 몸짓이 붙는다.** 배율의 주석이 "셋째 주인이 낄
+   * 자리가 없다" 고 적은 그 셋(Ctrl/⌘+휠 · 방향키 두 갈래)은 여전히 임자가 있지만, 팬이
+   * 쓰는 것은 그 셋이 아니라 **Space 를 짚은 채 끄는 손**이다 — 이 표면에서 Space 는 어떤
+   * 뜻도 갖고 있지 않았고(아래 `handleKeyDown` 은 지우는 키와 방향키만 본다), 도해 도구가
+   * 모두 쓰는 그 몸짓이다.
+   */
+  const [localPan, setLocalPan] = useState<StageCell>(NO_WORKSPACE_PAN);
+  const workspacePan = stageGrid?.pan ?? localPan;
+  const setWorkspacePan = stageGrid?.setPan ?? setLocalPan;
+
+  /**
+   * **Space 를 짚고 있는가** — 팬의 구분자다(SPEC-CANVAS-010 이 빈 자리 끌기를 영역 선택에
+   * 내주었으므로, 맨손 끌기에는 임자가 있다).
+   *
+   * 끄는 중(`panRef`)과 따로 두는 것에 뜻이 있다. 짚기만 한 상태에도 화면이 답해야 하고
+   * (커서가 손 모양으로 바뀐다), 그 답이 "다음 누름은 팬이다" 를 미리 말해 준다 — 눌러
+   * 봐야 아는 몸짓은 배울 수 없다.
+   */
+  const [spaceHeld, setSpaceHeld] = useState(false);
+
+  /**
+   * 진행 중인 팬 한 벌. `null` 이면 끌고 있지 않다.
+   *
+   * 드래그(`dragRef`)·마키(`marquee`)와 나란한 셋째 몸짓이지만 **state 가 아니라 ref** 인
+   * 것은 프레임마다 갱신되는 값이 아니기 때문이다 — 움직일 때마다 바뀌는 것은 팬 자체이고,
+   * 그 팬은 표면이 든다. 여기 남는 것은 "어느 포인터가, 어디서, 어떤 값에서 시작했는가"
+   * 셋뿐이라 렌더에 아무 영향이 없다.
+   */
+  const panRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    base: StageCell;
+  } | null>(null);
+  /** 끌고 있는가 — 커서 모양이 이 값으로 갈린다(`previewPan.panning` 과 같은 몫). */
+  const [panning, setPanning] = useState(false);
+
+  /**
    * 격자를 **그리기 위한** 한 칸의 CSS px.
    *
    * 표면이 그리는 영역을 이 칸의 정수배로 맞춰 두었으므로(위 `stageGrid`), 여기서 받는
@@ -1868,9 +1940,82 @@ export default function CanvasEditOverlay({
     );
   };
 
+  /**
+   * **팬 한 벌** — 시작 · 이동 · 끝. 셋을 한자리에 모아 두는 것은 팬이 이 층에서 가장 늦게
+   * 들어온 몸짓이라, 흩어 두면 다음 사람이 세 갈래를 각각 찾아 읽어야 하기 때문이다.
+   *
+   * 옮기는 값은 **화면 px 그대로**다. 작업 영역은 잰 상자 그 자체라 축척이 1 이므로
+   * (`canvasWorkspace` 불변식 I22), 손이 100px 가면 그림도 100px 간다 — 환산할 것이 없고,
+   * 환산을 넣으면 그것이 곧 두 번째 투영이다.
+   */
+  const beginPan = (event: React.PointerEvent<HTMLDivElement>): void => {
+    panRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      // **잡는 순간의 값에서만 잰다**(`handleDragState` §머리말과 같은 규율). 매 이동마다
+      // 직전 팬에 더하면 죔에 걸린 동안의 손짓이 사라져, 되돌아올 때 손과 그림이 갈린다.
+      base: workspacePan,
+    };
+    setPanning(true);
+    // 포인터가 상자를 벗어나도 이벤트가 계속 오게 한다. jsdom 에는 없는 API 다.
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  /**
+   * 끌린 만큼 팬을 옮긴다 — **죄고 나서 넘긴다**(`clampWorkspacePan`).
+   *
+   * 죄지 않고 날값을 쌓으면 범위를 넘어간 만큼이 보이지 않는 빚으로 남아, 손을 되돌려도
+   * 그 빚을 다 갚기 전까지 그림이 꿈쩍하지 않는다(`previewPan` 이 같은 이유로 이동에서
+   * 죈다). 상한을 재는 상자는 **작업 영역**이며 그것은 표면이 지어 내려준 값이다.
+   */
+  const movePan = (clientX: number, clientY: number): void => {
+    const pan = panRef.current;
+    if (pan === null) return;
+    setWorkspacePan(
+      clampWorkspacePan(
+        { x: pan.base.x + (clientX - pan.startX), y: pan.base.y + (clientY - pan.startY) },
+        workspaceSize,
+      ),
+    );
+  };
+
+  /**
+   * 팬을 끝낸다. **팬 값은 건드리지 않는다** — 마지막 이동이 이미 확정했고, 되돌리면
+   * 사용자가 옮겨 놓은 시야가 뗌과 함께 사라진다(마키 · 이동 드래그가 같은 문장을 쓴다).
+   */
+  const finishPan = (host: HTMLDivElement, pointerId: number): void => {
+    releaseCapture(host, pointerId);
+    panRef.current = null;
+    setPanning(false);
+  };
+
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
     if (!enabled) return;
     const host = event.currentTarget;
+
+    // **Space 를 짚은 누름은 팬이다 — 어느 갈래보다 먼저다**(사용자 신고 2026-09-16).
+    //
+    // 맨 앞인 것이 이 몸짓의 뜻 전부다. Space 가 구분자인 이유는 아래 세 갈래가 이미
+    // 맨손 누름을 **남김없이** 나눠 가졌기 때문이다: 앵커 위면 잇기, 잉크 위면 고르기·이동,
+    // 빈 자리면 영역 선택(SPEC-CANVAS-010). 뒤에 서면 팬은 "아무도 안 가져간 자리" 에서만
+    // 도는데 그런 자리가 없으므로, 뒤에 선 팬은 **없는 팬**이다.
+    //
+    // 그래서 짚은 동안에는 도형도 손잡이도 잡히지 않는다 — 그것이 잃는 것이 아니라,
+    // 도형 위에서도 화면을 옮길 수 있다는 뜻이다(도해 도구의 그 관용 그대로).
+    //
+    // 주 버튼만 받는다. 오른쪽은 상황 메뉴의 것이고 가운데 버튼은 여기까지 오지도 않는다
+    // (`previewPan` 이 캡처 단계에서 끊는다) — 아래 빈 자리 갈래가 세운 그 규칙과 같다.
+    if (spaceHeld && event.button === PRIMARY_BUTTON) {
+      event.preventDefault();
+      event.stopPropagation();
+      // 히트 갈래와 같은 이유다 — 위 `preventDefault` 가 브라우저의 기본 초점 이동을
+      // 막으므로, 이 한 줄이 없으면 Space 를 뗀 뒤 키가 이 층에 닿지 않는다(T15).
+      host.focus();
+      beginPan(event);
+      return;
+    }
+
     const frame = pointerFrameOf(host.getBoundingClientRect(), stage);
     const point = stagePoint(event.clientX, event.clientY, frame);
 
@@ -2307,7 +2452,22 @@ export default function CanvasEditOverlay({
     // 남는" 자리가 생긴다.
     updatePenHover(event);
 
-    // **긋기가 가장 먼저다**(SPEC-CANVAS-011 M8). 마키·드래그와 배타적이므로 순서가 뜻을
+    // **팬이 가장 먼저다.** 팬은 짚은 채의 누름에서만 시작되므로 아래 셋과 배타적이고,
+    // 순서가 뜻을 바꾸지는 않는다 — 다만 먼저 끊어 두면 아래 세 경로가 팬을 모른 채로
+    // 남는다(마키 · 긋기가 같은 이유로 앞에 섰다).
+    //
+    // **프레임을 예약하지 않는다** — 고 말할 수 없는 유일한 갈래다. 팬은 상자의 자리를
+    // 바꾸므로 표면이 받는 `geometry` 가 실제로 달라지고, 그래서 프레임이 한 장 돈다.
+    // 그 한 장은 새 깨우기 경로가 아니라 **종전의 props 변경 경로**이며, 배율 변경 ·
+    // 리사이즈와 같은 부류다(REQ-05 · AC-E4).
+    const panDrag = panRef.current;
+    if (panDrag !== null && event.pointerId === panDrag.pointerId) {
+      event.preventDefault();
+      movePan(event.clientX, event.clientY);
+      return;
+    }
+
+    // **긋기가 그다음이다**(SPEC-CANVAS-011 M8). 마키·드래그와 배타적이므로 순서가 뜻을
     // 바꾸지는 않으나(셋은 서로 다른 누름에서만 시작된다), 먼저 끊어 두면 아래 두 경로가
     // 잇기를 모른 채로 남는다 — 마키가 같은 이유로 드래그 앞에 섰다.
     //
@@ -2427,6 +2587,15 @@ export default function CanvasEditOverlay({
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
+    // **Space 를 뗐어도 팬은 손을 뗄 때까지 이어진다**(가정: 몸짓의 뜻은 잡는 순간 한 번만
+    // 정해진다 — `handleDragState` §머리말의 그 규율). 중간에 끊으면 그림이 손 밑에서
+    // 멈춰 서고, 사용자는 제가 무엇을 잘못 눌렀는지 알 수 없다. 도해 도구가 모두 그렇다.
+    const panDrag = panRef.current;
+    if (panDrag !== null && event.pointerId === panDrag.pointerId) {
+      event.preventDefault();
+      finishPan(event.currentTarget, event.pointerId);
+      return;
+    }
     if (connectorDraw !== null && event.pointerId === connectorDraw.pointerId) {
       event.preventDefault();
       releaseCapture(event.currentTarget, event.pointerId);
@@ -2461,6 +2630,14 @@ export default function CanvasEditOverlay({
   };
 
   const handlePointerCancel = (event: React.PointerEvent<HTMLDivElement>): void => {
+    // 끊긴 팬은 **마지막 자리를 그대로 둔다** — 이동 드래그의 취소가 마지막 유효 위치를
+    // 확정하는 것과 같은 규칙이다. 되돌리면 브라우저·OS 가 끊었을 뿐인데 사용자가 옮겨
+    // 놓은 시야가 사라진다.
+    const panDrag = panRef.current;
+    if (panDrag !== null && event.pointerId === panDrag.pointerId) {
+      finishPan(event.currentTarget, event.pointerId);
+      return;
+    }
     // **끊긴 긋기는 아무것도 만들지 않는다.** 이동 드래그의 취소가 마지막 유효 위치를
     // 확정하는 것과 갈리는 자리이며, 근거는 그쪽의 그 근거와 같다: 확정하면 사용자가 한
     // 일이 남아야 하는데, 잇기는 **놓는 자리가 정해져야** 비로소 한 일이 된다. 브라우저·
@@ -2565,6 +2742,47 @@ export default function CanvasEditOverlay({
     // **두 갈래가 함께 쓰는 문턱이다.** 끌고 있는 동안에는 손이 이기고(아래 머리말),
     // 고른 것이 없으면 옮길 것도 지울 것도 없다. 갈래마다 따로 두면 한쪽만 고칠 수 있다.
     if (dragRef.current !== null) return;
+
+    // **팬 갈래가 선택 문턱 앞에 선다** — 팬은 고른 것이 없을 때가 오히려 예사이므로,
+    // 아래 문턱 뒤에 두면 가장 흔한 경우에 동작하지 않는다(사용자 신고 2026-09-16).
+    //
+    // **표적을 보지 않는다**(AC-10 (BA) 의 형상 가드). 컨트롤의 키를 끊는 자리는 이
+    // 함수가 아니라 **컨트롤 쪽**이며, 그 자리는 이미 서 있다: 도크도 떠 있는 배율 줄도
+    // 제 뿌리에서 `stopPropagation` 한다("도크에서 누른 키는 도크의 것"). 여기에 표적
+    // 가드를 세우면 그 문장이 두 벌이 되고, 칸이 늘 때마다 한쪽이 조용히 낡는다.
+    //
+    // 루트 **안쪽**의 초점 가능한 컨트롤은 손잡이 둘(8핸들 · 연결선 손잡이)뿐이고 둘 다
+    // `onPointerDown` 말고는 아무 처리자가 없다 — 그 자리의 Space 는 오늘 **아무 일도
+    // 하지 않으므로** 여기서 가져가도 빼앗는 것이 없다. 언젠가 손잡이가 Space 로 하는
+    // 일을 갖게 된다면 끊을 자리는 여기가 아니라 **그 손잡이**다(도크가 세운 그 규칙).
+    if (event.key === SPACE_KEY) {
+      setSpaceHeld(true);
+      // **여기서만 소비한다.** 짚는 일이 실제로 무언가를 켰을 때이며, 그러지 않으면
+      // 브라우저가 페이지를 한 칸 스크롤해 편집하던 자리가 화면 밖으로 밀린다.
+      event.preventDefault();
+      return;
+    }
+    if (spaceHeld) {
+      // **Space+방향키는 끌기의 키보드 등가물이다.** 없으면 팬은 포인터 전용 기능이 되고,
+      // 이 층이 T15 · REQ-01 에서 "키보드로 닿는다" 로 적어 둔 규율에 구멍이 하나 남는다.
+      // 부호는 **끄는 것과 같다** — 오른쪽 키는 그림을 오른쪽으로 민다.
+      const step = ARROW_STEPS[event.key];
+      if (step === undefined) return;
+      const next = clampWorkspacePan(
+        {
+          x: workspacePan.x + step.x * PAN_ARROW_PX,
+          y: workspacePan.y + step.y * PAN_ARROW_PX,
+        },
+        workspaceSize,
+      );
+      // **실제로 옮겼을 때에만 소비한다** — 이미 끝에 닿았으면 그대로 흘려보낸다(이 함수가
+      // 방향키와 지우기에 대해 세운 그 규율).
+      if (next.x === workspacePan.x && next.y === workspacePan.y) return;
+      setWorkspacePan(next);
+      event.preventDefault();
+      return;
+    }
+
     if (selection.size === 0) return;
 
     // **지우기가 먼저다.** Shift 를 배제하지 않는다 — 방향키의 Shift 는 "한 격자 칸" 이라는
@@ -2589,6 +2807,28 @@ export default function CanvasEditOverlay({
     if (!nudgeSelection(delta)) return;
     // 여기까지 왔다는 것은 실제로 옮겼다는 뜻이다 — 그때에만 스크롤을 막는다.
     event.preventDefault();
+  };
+
+  /**
+   * Space 를 뗀다 — 커서가 손 모양에서 돌아오고, 다음 누름이 다시 고르기가 된다.
+   *
+   * **끌고 있는 팬은 끊지 않는다**(`handlePointerUp` 머리말). 여기서 하는 일은 "다음
+   * 누름의 뜻" 을 되돌리는 것 하나뿐이다.
+   */
+  const handleKeyUp = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== SPACE_KEY) return;
+    setSpaceHeld(false);
+  };
+
+  /**
+   * 초점이 떠나면 짚은 상태를 **강제로 푼다**.
+   *
+   * 없으면 Space 를 짚은 채 다른 곳을 눌러 초점을 옮긴 순간 뗌이 이 층에 오지 않아,
+   * 손 커서가 눌러도 풀리지 않는 채로 남는다(그 상태에서는 도형이 잡히지 않으므로
+   * "캔버스가 고장 났다" 로 보인다). 짚음은 초점을 가진 동안에만 뜻이 있다.
+   */
+  const handleBlur = (): void => {
+    setSpaceHeld(false);
   };
 
   /**
@@ -3021,26 +3261,44 @@ export default function CanvasEditOverlay({
       aria-describedby={hintId}
       aria-keyshortcuts={EDIT_KEY_SHORTCUTS}
       // 캔버스 위 전면 층. 터치 스크롤이 드래그를 가로채지 않게 `touch-none` 을 둔다.
-      className="absolute inset-0 z-20 touch-none"
-      // **펜 커서가 여기 산다**(사용자 신고 2026-09-16). 앵커 점은 표식이라 포인터를 먹지
-      // 않으므로 커서가 그 점에서 나올 수 없고(§`penHover`), 루트가 곧 그 점 아래 깔린
-      // 면이다. 조건 둘은 사용자가 말한 그 둘이다 — **선이 시작될 수 있는 자리 위**와
-      // **선을 긋고 있는 동안**.
+      //
+      // **손 커서는 자식까지 덮는다**(사용자 신고 2026-09-16). 루트의 커서는 인라인
+      // `style` 이 지지만 손잡이 · 단추는 제 `cursor-*` 를 제 노드에 달고 있어 그쪽이
+      // 이긴다 — Space 를 짚은 동안 손잡이 위에서 크기 조절 커서가 뜨면 그것은 **거짓말**
+      // 이다(그 순간 손잡이는 잡히지 않는다). 후손 변형으로 덮는 이 관용구는 이 저장소의
+      // 세 드래그 층(`PanelDragLayer` · `ChartDragLayer` · `GaugeDragLayer`)이 이미 쓴다.
+      className={cn(
+        'absolute inset-0 z-20 touch-none',
+        panning ? '[&_*]:cursor-grabbing' : spaceHeld ? '[&_*]:cursor-grab' : undefined,
+      )}
+      // **커서의 우선순위가 여기 한 줄에 선다**(위에서 아래로 읽는다).
+      //
+      //   1) 끌고 있는 팬 — 쥔 손. 그 몸짓이 끝나기 전에는 다른 어떤 것도 시작될 수 없다.
+      //   2) 짚고 있는 Space — 편 손. **펜을 이긴다**: 짚은 동안 누름은 팬이므로, 펜을
+      //      그대로 두면 커서가 "여기서 선이 시작된다" 고 약속하고 그 약속은 지켜지지 않는다.
+      //   3) 펜(사용자 신고 2026-09-16) — 앵커 점은 표식이라 포인터를 먹지 않으므로 커서가
+      //      그 점에서 나올 수 없고(§`penHover`), 루트가 곧 그 점 아래 깔린 면이다. 조건
+      //      둘은 사용자가 말한 그 둘이다 — **선이 시작될 수 있는 자리 위**와 **긋는 동안**.
       //
       // 도구 표를 **여기서 한 번 더** 읽는 것에 뜻이 있다. 판정은 이동에서만 도는데 도구는
       // 단추로 바뀌므로, 이 줄이 없으면 도구를 끈 뒤에도 손을 움직이기 전까지 펜이 남는다.
       // 값이 아니라 렌더가 그 사실을 들게 하면 끄는 쪽이 즉시 참이 된다.
       style={{
-        cursor:
-          connectorDraw !== null || (TOOL_CONNECTOR_ROUTE[tool] !== null && penHover)
-            ? PEN_CURSOR
-            : undefined,
+        cursor: panning
+          ? 'grabbing'
+          : spaceHeld
+            ? 'grab'
+            : connectorDraw !== null || (TOOL_CONNECTOR_ROUTE[tool] !== null && penHover)
+              ? PEN_CURSOR
+              : undefined,
       }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerCancel}
       onKeyDown={handleKeyDown}
+      onKeyUp={handleKeyUp}
+      onBlur={handleBlur}
     >
       {/* **닿는 면**(REQ-08 · 불변식 I18). 그리지 않고 닿기만 하는 층이며, 그래서
           `pointer-events-none` 이 **없는** 유일한 자식이다.
@@ -3084,7 +3342,7 @@ export default function CanvasEditOverlay({
           가리킬 수 없다. */}
       <p id={hintId} className="sr-only">
         {t('dashboard.canvas.edit.keyboardHint')} {t('dashboard.canvas.edit.marqueeHint')}{' '}
-        {t('dashboard.canvas.edit.deleteHint')}
+        {t('dashboard.canvas.edit.deleteHint')} {t('dashboard.canvas.edit.panHint')}
       </p>
       {/* 격자 — **신규 격자 컴포넌트를 만들지 않는다**(REQ-04). `PanelEditGrid` 는 선을
           DOM 요소가 아니라 `repeating-linear-gradient` 로 그리고 `absolute inset-0` +

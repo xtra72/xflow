@@ -1215,6 +1215,7 @@
         "keyboardHint": "Arrow keys move the selected shape by 1 unit; Shift+arrow moves it by one grid cell. Shapes may also be placed outside the output region, and whatever lies outside it is not shown in the panel. The dimmed surround and the border drawn around it mark the region that the panel shows.",
         "marqueeHint": "To select several at once, drag from an empty spot. Only items that fall entirely inside the rectangle are selected; hold Shift (or Ctrl/Cmd) while dragging to add them to the current selection. To move the view inside the canvas, drag with the middle button, or press an arrow key with nothing selected.",
         "deleteHint": "Press Delete or Backspace to remove whatever is selected. There is no undo, so anything removed has to be placed again.",
+        "panHint": "Hold Space and drag to move the work area, bringing whatever was placed outside the output region into view. Holding Space and pressing an arrow key does the same. The centre of the output region never leaves the view, so its whereabouts stay known.",
         "dockView": "View",
         "workspaceZoomBar": "View zoom bar",
         "workspaceZoom": "View zoom",
