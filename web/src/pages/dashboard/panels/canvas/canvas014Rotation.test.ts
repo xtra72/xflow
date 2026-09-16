@@ -14,6 +14,7 @@ import { parseCanvasConfig, type CanvasElement } from './canvasConfig';
 import { stageLattice } from './canvasGeometry';
 import { outlineAabb, outlineAngle, outlineBox } from './canvasOutline';
 import { isGroup, type CanvasNode } from './group/groupTypes';
+import { transformNodes } from './canvasTransformNodes';
 
 const OUTLINE_SRC = 'src/pages/dashboard/panels/canvas/canvasOutline.ts';
 const OVERLAY_SRC = 'src/pages/dashboard/panels/canvas/CanvasEditOverlay.tsx';
@@ -197,5 +198,65 @@ describe('두 상자 (AC-06 · AC-08 · AC-09)', () => {
     expect(overlay).toContain('box: outlineAabb(');
     const transform = readFileSync(resolve(process.cwd(), TRANSFORM_SRC), 'utf8');
     expect(transform).toContain('outlineAabb(');
+  });
+});
+
+// --- 013 과의 이음매 (M10 · AC-28~AC-31 · K4) -------------------------------
+
+describe('013 의 변환이 각도를 안다 (AC-28~AC-31 · §결정 6)', () => {
+  const PROJ2 = { stage: { width: 400, height: 400 }, canvas: { width: 400, height: 400 } };
+
+  function turned(deg?: number): CanvasElement {
+    return {
+      id: 'r1',
+      kind: 'rect',
+      style: {},
+      geometry: { x: 100, y: 100, w: 200, h: 100 },
+      ...(deg !== undefined ? { rotation: deg } : {}),
+    } as CanvasElement;
+  }
+
+  const run = (kind: Parameters<typeof transformNodes>[0], nodes: readonly CanvasNode[]) =>
+    transformNodes(kind, nodes, new Set(nodes.map((n) => n.id)), PROJ2, {});
+
+  const degOf = (nodes: readonly CanvasNode[]): number | undefined => rotationOf(nodes[0]!);
+
+  it('거울이 각도의 **부호를 뒤집는다** (AC-28)', () => {
+    // 거울에 비친 30° 는 −30°(= 330°)다. 뒤집지 않으면 뒤집힌 도형이 원본과 같은 쪽으로
+    // 기울어 "거울인데 안 뒤집힌 것" 이 된다.
+    expect(degOf(run('flipX', [turned(30)]))).toBe(330);
+    expect(degOf(run('flipY', [turned(30)]))).toBe(150);
+  });
+
+  it('90° 단추가 각도에 90 을 더한다 (AC-29)', () => {
+    expect(degOf(run('rotateCW', [turned(30)]))).toBe(120);
+    expect(degOf(run('rotateCCW', [turned(30)]))).toBe(300);
+  });
+
+  it('네 번 돌리면 각도도 좌표도 제자리다 (AC-30 · K4)', () => {
+    // `(30 + 90) × 4 = 30 + 360 ≡ 30`. 정수 도를 고른 값의 일부다.
+    let nodes: CanvasNode[] = [turned(30)];
+    for (let i = 0; i < 4; i += 1) nodes = run('rotateCW', nodes);
+    expect(nodes[0]).toEqual(turned(30));
+  });
+
+  it('같은 거울 두 번이면 제자리다 (K2)', () => {
+    expect(run('flipX', run('flipX', [turned(30)]))[0]).toEqual(turned(30));
+  });
+
+  it('각도 없는 요소는 **키를 얻지 않는다**', () => {
+    // 013 이 배달한 동작이 한 글자도 넓어지지 않는다는 뜻이다.
+    const out = run('flipX', [turned()]);
+    expect('rotation' in out[0]!).toBe(false);
+  });
+
+  it('013 의 좌표 산술이 **한 줄도** 바뀌지 않았다 (AC-31)', () => {
+    // 각도는 그 위에 얹힐 뿐이다 — 잎 모듈이 각도를 모르는 채여야 그 사실이 참이다.
+    const src = readFileSync(
+      resolve(process.cwd(), 'src/pages/dashboard/panels/canvas/canvasTransform.ts'),
+      'utf8',
+    );
+    expect(src).not.toContain('rotation');
+    expect(src).not.toContain('Degrees');
   });
 });

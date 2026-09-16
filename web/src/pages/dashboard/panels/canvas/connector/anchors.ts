@@ -76,7 +76,10 @@ import {
   type PxPoint,
 } from '../canvasGeometry';
 import { BOX_HANDLE_FACTORS, BOX_HANDLE_IDS } from '../canvasEditGeometry';
-import { outlineBox } from '../canvasOutline';
+import { outlineAngle, outlineBox } from '../canvasOutline';
+// 회전 산술은 잎 모듈 하나가 소유한다(SPEC-CANVAS-014) — 그리는 쪽·잡는 쪽·손잡이와
+// **같은 함수**를 본다.
+import { isRotated, rotatePoint } from '../canvasRotation';
 import { toAbsolutePointExact, toLocalPoint, widenDegenerateBox } from '../group/groupCoords';
 import type { OutlinedNode } from '../group/groupTypes';
 import { ANCHOR_SNAP_LOCAL, type AnchorRefusal, type CustomAnchor } from './anchorTypes';
@@ -139,8 +142,19 @@ export function anchorPoints(
 ): Map<AnchorId, CanvasPoint> {
   // 상자는 여기서 **한 번** 나온다(AC-33).
   const box = outlineBox(node, proj, textWidths);
-  const at = (fx: number, fy: number): CanvasPoint =>
-    unprojectPoint({ x: box.x + box.w * fx, y: box.y + box.h * fy }, proj);
+  // **앵커도 방향 상자에 선다**(SPEC-CANVAS-014 REQ-04). 저절로 따라오지 않는다 —
+  // 아래 `box.x + box.w * fx` 는 축-나란 자리이고, 돌아간 도형에서는 잉크 밖이다. 연결선이
+  // 그 자리에 붙으면 **그려진 도형과 선이 닿지 않는다.**
+  //
+  // 상자는 여전히 한 번만 잰다 — 그 상자를 **돌릴 뿐**이다(K2). 회전 산술도 잎 모듈 하나를
+  // 지나므로(`rotatePoint`) 그리는 쪽·잡는 쪽·손잡이와 같은 함수를 본다.
+  const deg = outlineAngle(node);
+  const turning = isRotated(deg);
+  const pxPivot = { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+  const at = (fx: number, fy: number): CanvasPoint => {
+    const flat = { x: box.x + box.w * fx, y: box.y + box.h * fy };
+    return unprojectPoint(turning ? rotatePoint(flat, pxPivot, deg) : flat, proj);
+  };
 
   const points = new Map<AnchorId, CanvasPoint>();
   for (const id of BOX_HANDLE_IDS) {
@@ -153,9 +167,18 @@ export function anchorPoints(
   if (custom !== undefined && custom.length > 0) {
     // 같은 상자를 캔버스 단위로 되돌린 것이다 — 두 번째 측정이 아니다.
     const canvasBox = unprojectBox(box, proj);
+    // 임의 앵커는 **캔버스 단위에서** 돈다. 두 공간에서 도는 것이 두 산술은 아니다 —
+    // 같은 `rotatePoint` 를 부르고, 투영이 각도를 보존하므로(가정 A1: 두 축 축척이 언제나
+    // 같다) 어느 쪽에서 돌려도 같은 자리가 나온다. `toAbsolutePointExact` 가 px 왕복을
+    // 피하려고 캔버스 단위를 쓰는 그 이유를 여기서 되돌리지 않으려는 것이다.
+    const canvasPivot = {
+      x: canvasBox.x + canvasBox.w / 2,
+      y: canvasBox.y + canvasBox.h / 2,
+    };
     for (const anchor of custom) {
       if (points.has(anchor.id)) continue;
-      points.set(anchor.id, toAbsolutePointExact({ x: anchor.x, y: anchor.y }, canvasBox));
+      const flat = toAbsolutePointExact({ x: anchor.x, y: anchor.y }, canvasBox);
+      points.set(anchor.id, turning ? rotatePoint(flat, canvasPivot, deg) : flat);
     }
   }
   return points;

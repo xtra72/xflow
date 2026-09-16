@@ -1,7 +1,7 @@
 ---
 id: SPEC-CANVAS-014
-version: "0.1.0"
-status: draft
+version: "0.2.0"
+status: implemented
 created: 2026-09-16
 updated: 2026-09-16
 author: xtra

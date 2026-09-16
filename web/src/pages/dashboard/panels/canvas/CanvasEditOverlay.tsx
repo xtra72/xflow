@@ -259,7 +259,7 @@ import {
   handlePositions,
   moveGeometry,
   patchNodeGeometry,
-  resizeBox,
+  resizeRotatedBox,
   resizeFontSize,
   resizeLine,
   type BoxHandleId,
@@ -277,6 +277,13 @@ import {
   type AlignMode,
 } from './canvasEditArrange';
 // 뒤집기·회전의 산술은 이 두 잎이 소유한다(SPEC-CANVAS-013). 이 파일은 넘길 뿐이다.
+// 각도의 상수와 저장 규율은 잎 모듈이 소유한다(SPEC-CANVAS-014).
+import {
+  ROTATION_SNAP_DEGREES,
+  isRotated,
+  rotatePoint,
+  storableDegrees,
+} from './canvasRotation';
 import type { TransformKind } from './canvasTransform';
 import { transformNodes } from './canvasTransformNodes';
 import { useCanvasEditSelection, type CanvasSelection } from './canvasEditContext';
@@ -301,7 +308,13 @@ import {
   type StageSize,
 } from './canvasGeometry';
 import { hitTest } from './canvasHitTest';
-import { outlineAabb, outlineBox, resolveFontSize, resolveMeasuredWidth } from './canvasOutline';
+import {
+  outlineAabb,
+  outlineAngle,
+  outlineBox,
+  resolveFontSize,
+  resolveMeasuredWidth,
+} from './canvasOutline';
 
 // --- 타입 ---------------------------------------------------------------
 
@@ -517,13 +530,40 @@ interface ConnectorPointDrag extends DragCommon {
   handle: ConnectorHandle;
 }
 
+/**
+ * 회전 손잡이 드래그 (SPEC-CANVAS-014 M9 · REQ-02).
+ *
+ * **`CanvasHandleId` 를 넓히지 않는다.** 011 이 연결선 손잡이에 대해 쓴 그 근거가 그대로
+ * 걸린다 — 저쪽은 `HANDLE_ARIA_KEYS`·`HANDLE_CURSOR` 두 `Record` 가 빠짐없이 덮는 닫힌
+ * 이름 집합이고, 그 표에 넣는 순간 8핸들을 세는 출시된 가드들이 함께 흔들린다. 게다가
+ * 이 손잡이는 **기하도 스타일도 아닌 각도**를 쓰므로 `CanvasHandleRole` 의 두 값 어디에도
+ * 맞지 않는다.
+ *
+ * 그래서 별도 렌더 갈래와 별도 이름 공간(`canvas-rotate-handle`)을 세운다 —
+ * `handlePositions` 도 `handleDragState` 도 한 글자도 바뀌지 않는다.
+ *
+ * **잡는 순간의 값 셋을 든다.** 축(px)과 시작 각도, 그리고 그때의 저술 각도다. 매 프레임
+ * 그 셋에서 다시 계산하므로 프레임을 건너뛰어도 결과가 같다(누적하지 않는다).
+ */
+interface RotateDrag extends DragCommon {
+  mode: 'rotate';
+  nodeId: string;
+  /** 축 — 요소의 px 윤곽 상자 가운데. 그리는 쪽이 쓰는 그 자리다. */
+  pivot: PxPoint;
+  /** 잡은 순간 축에서 포인터를 본 각도(도). */
+  grabDeg: number;
+  /** 잡은 순간의 저술 각도(도). */
+  baseDeg: number;
+}
+
 /** 진행 중인 드래그. `null` 이면 유휴. */
 type DragState =
   | MoveDrag
   | BoxResizeDrag
   | LineResizeDrag
   | FontResizeDrag
-  | ConnectorPointDrag;
+  | ConnectorPointDrag
+  | RotateDrag;
 
 /**
  * 아직 반영하지 않은 마지막 포인터 상태.
@@ -666,6 +706,23 @@ const HANDLE_BODY_CLASS =
  * 두 손잡이가 서로 다른 크기로 갈라졌을 것이다.
  */
 const HANDLE_CLASS = `${HANDLE_BODY_CLASS} rounded-sm`;
+
+/**
+ * 회전 손잡이 (SPEC-CANVAS-014 M9).
+ *
+ * **동그랗다.** 8핸들(네모)·중간점과 모양으로 갈리는 것이 요점이다 — 같은 크기·같은 칠을
+ * 쓰면서 모양만 다르므로 "같은 무리인데 다른 일을 한다" 가 화면에 선다(위 `HANDLE_CLASS`
+ * 머리말이 중간점에 대해 쓴 그 판단과 같다).
+ */
+const ROTATE_HANDLE_CLASS = `${HANDLE_BODY_CLASS} rounded-full cursor-grab`;
+
+/**
+ * 회전 손잡이가 상자 위쪽에서 떨어져 있는 거리(CSS px).
+ *
+ * 붙여 두면 위쪽 변 손잡이(`n`)와 겹쳐 눌러야 할 것을 고르지 못한다. 8핸들의 크기보다
+ * 넉넉히 떨어뜨린다.
+ */
+const ROTATE_HANDLE_GAP_PX = 20;
 
 /**
  * 연결선 손잡이의 `aria-label` i18n 키 (SPEC-CANVAS-011 M9).
@@ -1237,6 +1294,44 @@ function patchGeometryByKey(
  * 부품 갈래를 두지 않으면 문구 부품의 글자 크기 손잡이가 **보이는데 잡히지 않는** 손잡이가
  * 된다 — 이 파일이 `handleDragState` 머리말에서 이름 적어 둔 바로 그 결함이다.
  */
+/**
+ * 각도를 쓴다 — **최상위 노드만**이다 (SPEC-CANVAS-014 M9).
+ *
+ * `patchNodeGeometry` 를 지나지 않는 셋째 쓰기다. 글자 크기(둘째)가 기하가 아니라 스타일
+ * 이어서 갈라졌듯, 각도는 기하도 스타일도 아닌 **제 필드**다.
+ *
+ * 부품에는 쓰지 않는다. 회전 손잡이가 최상위 선택 위에만 서므로(아래 렌더 갈래) 부품이
+ * 돌아 있는 상태는 UI 로 만들어지지 않는다 — 닿을 수 없는 갈래를 위해 `replacePart` 경로를
+ * 짓는 것은 014 가 사려는 것이 아니다.
+ *
+ * **0 은 키를 지운다**(§결정 7). 한 바퀴를 돌아 제자리로 온 요소가 `rotation: 0` 을 얻으면
+ * 그 저장은 014 이전과 바이트 동일하지 않다.
+ */
+/** 축에서 점을 본 각도(도). 화면 좌표는 y 가 아래이므로 양수가 시계 방향이다. */
+function angleOfDeg(pivot: PxPoint, p: PxPoint): number {
+  return (Math.atan2(p.y - pivot.y, p.x - pivot.x) * 180) / Math.PI;
+}
+
+function patchRotationByKey(
+  nodes: readonly CanvasNode[],
+  key: string,
+  deg: number,
+): CanvasNode[] {
+  const { nodeId, partId } = parseFrameKey(key);
+  if (partId !== undefined) return [...nodes];
+  const next = storableDegrees(deg);
+  return nodes.map((node): CanvasNode => {
+    if (node.id !== nodeId || isConnector(node)) return node;
+    if (next === undefined) {
+      if (!('rotation' in node) || node.rotation === undefined) return node;
+      const { rotation: _dropped, ...rest } = node;
+      void _dropped;
+      return rest as CanvasNode;
+    }
+    return { ...node, rotation: next };
+  });
+}
+
 function patchFontSizeByKey(
   nodes: readonly CanvasNode[],
   key: string,
@@ -1700,9 +1795,20 @@ export default function CanvasEditOverlay({
         return;
       }
       case 'box': {
-        const box = resizeBox(drag.geometry, drag.handle, pointer, {
-          preserveAspect: pending.shift,
-        });
+        // **돌아간 요소는 제 축 방향으로 늘어난다**(SPEC-CANVAS-014 REQ-05). 각도가 0 이면
+        // 그 함수가 `resizeBox` 를 그대로 부르므로 014 이전 동작은 한 글자도 바뀌지 않는다.
+        //
+        // 각도는 **최상위 노드에서만** 읽는다. 부품에는 회전 손잡이가 닿지 않으므로(M9 가
+        // 최상위 선택 위에 선다) 부품이 돌아 있는 상태는 UI 로 만들어지지 않는다 — 손으로
+        // 고친 config 에서만 올 수 있고, 그 경우의 부품 크기 조절은 014 의 범위 밖이다.
+        const turned = els.find((n) => n.id === drag.nodeId);
+        const box = resizeRotatedBox(
+          drag.geometry,
+          turned !== undefined && !isConnector(turned) ? outlineAngle(turned) : 0,
+          drag.handle,
+          pointer,
+          { preserveAspect: pending.shift },
+        );
         emit(patchGeometryByKey(els, drag.nodeId, box));
         return;
       }
@@ -1732,6 +1838,24 @@ export default function CanvasEditOverlay({
         // 빈 곳에서 놓은 그은 선과 같은 규칙을 탄다(AC-58).
         const landed = anchorHitAt(hosts, point, proj, widths, ANCHOR_PICK_SLOP_PX);
         emit(repointConnector(els, drag.nodeId, drag.handle.side, landed?.ref, pointer));
+        return;
+      }
+      case 'rotate': {
+        // **각도는 매 프레임 잡은 값 셋에서 다시 계산한다**(누적하지 않는다) — 프레임을
+        // 건너뛰어도 결과가 같은 근거이며, 8핸들이 "잡을 때의 기하로 다시 잡는다" 로 쓴
+        // 그 규율과 같다.
+        //
+        // 각도는 **화면 px 공간**에서 잰다. 투영이 각도를 보존하므로(가정 A1) 캔버스
+        // 단위로 재도 같은 수가 나오지만, 축이 이미 px 이라 그 자리에서 재는 것이 환산
+        // 하나를 덜 지난다.
+        const now = angleOfDeg(drag.pivot, point);
+        const raw = drag.baseDeg + (now - drag.grabDeg);
+        // Shift 는 **15° 눈금**이다. 격자 붙임과 다른 축이므로 `gridStep` 을 보지 않는다 —
+        // 격자는 자리의 양자이고 이것은 각도의 양자다.
+        const deg = pending.shift
+          ? Math.round(raw / ROTATION_SNAP_DEGREES) * ROTATION_SNAP_DEGREES
+          : raw;
+        emit(patchRotationByKey(els, drag.nodeId, deg));
         return;
       }
       default: {
@@ -2418,6 +2542,45 @@ export default function CanvasEditOverlay({
     if (next === null) return;
 
     dragRef.current = next;
+    pendingRef.current = null;
+    host.setPointerCapture?.(event.pointerId);
+  };
+
+  /**
+   * 회전 손잡이에서 시작하는 드래그 (SPEC-CANVAS-014 M9 · REQ-02).
+   *
+   * 위 둘과 **같은 세 줄**을 지킨다 — 이벤트를 여기서 끊고, 좌표의 원점은 루트이며, 선택은
+   * 건드리지 않는다(손잡이는 이미 골라진 하나에만 뜬다).
+   *
+   * `handleDragState` 를 지나지 않는 이유도 연결선 손잡이와 같다: 그 함수는 종류와 **핸들
+   * 이름**을 맞춰 보는데, 이 손잡이의 이름은 그 닫힌 집합에 없다(있어서도 안 된다 — 그
+   * 집합에 넣으면 8핸들을 세는 출시된 가드들이 흔들린다).
+   */
+  const startRotateDrag = (
+    target: { nodeId: string; pivot: PxPoint; point: PxPoint },
+    event: React.PointerEvent<HTMLButtonElement>,
+  ): void => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const host = rootRef.current!;
+    const frame = pointerFrameOf(host.getBoundingClientRect(), stage);
+    const origin = stagePoint(event.clientX, event.clientY, frame);
+    const node = elements.find((n) => n.id === target.nodeId);
+
+    dragRef.current = {
+      mode: 'rotate',
+      nodeId: target.nodeId,
+      pivot: target.pivot,
+      // **잡은 자리에서 시작한다.** 손잡이 자리가 아니라 포인터 자리로 재는 것이 요점이다 —
+      // 손잡이 가운데를 정확히 누르는 사람은 없고, 그 차이만큼 도형이 튀면 몸짓이 거칠게
+      // 느껴진다.
+      grabDeg: angleOfDeg(target.pivot, origin),
+      baseDeg: node !== undefined && !isConnector(node) ? outlineAngle(node) : 0,
+      pointerId: event.pointerId,
+      origin,
+      frame,
+    };
     pendingRef.current = null;
     host.setPointerCapture?.(event.pointerId);
   };
@@ -3282,6 +3445,29 @@ export default function CanvasEditOverlay({
   const handleHost = soleKey === undefined ? undefined : nodeForKey(elements, soleKey);
 
   /**
+   * 회전 손잡이의 자리와 축 (SPEC-CANVAS-014 M9).
+   *
+   * **상자와 함께 돈다.** 축-나란 자리에 두면 도형을 90° 돌린 뒤 손잡이가 옆구리에 붙는다.
+   * 축은 그리는 쪽이 쓰는 그 자리(`rotationPivotIn` 이 내는 상자 가운데)이고, 손잡이는 그
+   * 상자의 위쪽 가운데에서 `ROTATE_HANDLE_GAP_PX` 만큼 더 위다 — 그 점을 **같은 각도로**
+   * 돌려 화면 자리를 낸다.
+   *
+   * 선에는 서지 않는다(§D6). 연결선은 `handleHost` 가 애초에 받지 않는다.
+   */
+  const rotateHandle = ((): { nodeId: string; pivot: PxPoint; point: PxPoint } | undefined => {
+    if (handleHost === undefined || handleHost.kind === 'line') return undefined;
+    const box = outlineBox(handleHost, projection, textWidths);
+    const pivot = { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+    const flat = { x: pivot.x, y: box.y - ROTATE_HANDLE_GAP_PX };
+    const deg = outlineAngle(handleHost);
+    return {
+      nodeId: handleHost.id,
+      pivot,
+      point: isRotated(deg) ? rotatePoint(flat, pivot, deg) : flat,
+    };
+  })();
+
+  /**
    * 손잡이를 세울 **연결선** (SPEC-CANVAS-011 M9 · REQ-07).
    *
    * 위 `handleHost` 와 **배타적**이다 — `nodeForKey` 는 연결선을 조용히 떨어뜨리고
@@ -3855,6 +4041,29 @@ export default function CanvasEditOverlay({
             onPointerDown={(event) => startHandleDrag(handleHost, handle.id, event)}
           />
         ))}
+      {/* **회전 손잡이** — 방향 상자 위쪽 하나 (SPEC-CANVAS-014 M9 · REQ-02).
+
+          **8핸들과 이름 공간이 다르다**(`canvas-rotate-handle`). 011 이 연결선 손잡이에
+          대해 쓴 그 근거가 그대로 걸린다 — `CanvasHandleId` 는 두 `Record` 가 빠짐없이 덮는
+          닫힌 집합이고, 그 표에 넣는 순간 8핸들을 세는 출시된 가드들이 함께 흔들린다.
+          게다가 이 손잡이가 쓰는 것은 기하도 스타일도 아닌 **각도**다.
+
+          **선에는 서지 않는다.** 선의 각도는 두 끝점이 이미 말하므로 회전 필드가 없고
+          (§D6), 여기에 손잡이를 세우면 눌러도 아무 일이 없는 단추가 된다.
+
+          자리는 **돌아간 상자의 위쪽 가운데에서 더 위**다. 상자와 함께 도는 것이 요점이다 —
+          축-나란 자리에 두면 도형을 90° 돌린 뒤 손잡이가 옆구리에 붙는다. */}
+      {rotateHandle !== undefined && (
+        <button
+          type="button"
+          data-testid="canvas-rotate-handle"
+          aria-label={t('dashboard.canvas.edit.rotateHandle')}
+          title={t('dashboard.canvas.edit.rotateHandle')}
+          className={ROTATE_HANDLE_CLASS}
+          style={{ left: rotateHandle.point.x, top: rotateHandle.point.y }}
+          onPointerDown={(event) => startRotateDrag(rotateHandle, event)}
+        />
+      )}
       {/* **연결선 손잡이** — 끝점 둘 + 중간점마다 (SPEC-CANVAS-011 M9 · REQ-07).
 
           **8핸들과 이름 공간이 다르다**(`canvas-connector-handle-*`). 섞으면

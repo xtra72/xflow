@@ -1320,7 +1320,8 @@
         "transformFlipX": "Flip horizontally",
         "transformFlipY": "Flip vertically",
         "transformRotateLeft": "Rotate 90° left",
-        "transformRotateRight": "Rotate 90° right"
+        "transformRotateRight": "Rotate 90° right",
+        "rotateHandle": "Rotate — hold Shift for 15° steps"
       },
       "elements": {
         "listTitle": "Elements",

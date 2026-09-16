@@ -41,6 +41,8 @@ import { isConnector, type ConnectorElement, type ConnectorEnd } from './connect
 // 그 판정이 둘이 되고 출시된 가드가 곧바로 운다.
 import { isAttachedEnd } from './connector/resolveConnector';
 import { GROUP_LOCAL_EXTENT, type CanvasNode, type GroupElement } from './group/groupTypes';
+// 각도의 정규화와 저장 규율은 잎 모듈이 소유한다(SPEC-CANVAS-014).
+import { normalizeDegrees, storableDegrees } from './canvasRotation';
 import { PATH_LOCAL_EXTENT, type PathCommand } from './shapes/pathTypes';
 import {
   swapsExtent,
@@ -114,9 +116,49 @@ function transformPart(kind: TransformKind, part: CanvasElement): CanvasElement 
   return { ...withContent, geometry: geo } as CanvasElement;
 }
 
+/**
+ * 변환이 각도에 하는 일 (SPEC-CANVAS-014 §결정 6 · REQ-07).
+ *
+ * 013 은 각도가 없던 세계에서 좌표만 돌렸다. 각도가 생기면 그 규칙이 반쪽이 된다 — 30°
+ * 돌아간 도형에 "오른쪽 90°" 를 걸면 결과는 **120° 돌아간 도형**이어야 한다.
+ *
+ * **013 의 좌표 산술은 한 줄도 바뀌지 않았다.** 자리는 여전히 선택 상자 안에서 돌고, 각도는
+ * 그 위에 얹힐 뿐이다. 013 의 K1(네 번이면 제자리)도 그대로 참이다 —
+ * `(θ + 90) × 4 = θ + 360 ≡ θ` 이며, 그것이 정수 도를 고른 값의 일부다(014 §결정 1).
+ *
+ * 거울이 **부호를 뒤집는** 것이 요점이다. 거울에 비친 30° 는 −30°(= 330°)이지 30° 가 아니다.
+ * 뒤집지 않으면 뒤집힌 도형이 원본과 같은 쪽으로 기울어 "거울인데 안 뒤집힌 것" 이 된다.
+ */
+function turnedDegrees(kind: TransformKind, deg: number): number {
+  switch (kind) {
+    case 'flipX':
+      return (360 - deg) % 360;
+    case 'flipY':
+      return (180 - deg + 360) % 360;
+    case 'rotateCW':
+      return (deg + 90) % 360;
+    case 'rotateCCW':
+      return (deg + 270) % 360;
+  }
+}
+
 /** 속만 바꾼다 — 자리(`geometry`)는 건드리지 않는다. */
 function transformContent<T extends CanvasElement | GroupElement>(kind: TransformKind, node: T): T {
   let out = node;
+  // 각도도 함께 돈다(014 REQ-07). **0 은 키를 만들지 않으므로** 돌지 않은 요소가 이
+  // 자리를 지나도 저장이 넓어지지 않는다 — `flipX` 로 θ=0 이 그대로 0 이 되는 경우가 그렇다.
+  if ('rotation' in node) {
+    const next = storableDegrees(turnedDegrees(kind, normalizeDegrees(node.rotation) ?? 0));
+    if (next === undefined) {
+      if (node.rotation !== undefined) {
+        const { rotation: _dropped, ...rest } = out;
+        void _dropped;
+        out = rest as T;
+      }
+    } else {
+      out = { ...out, rotation: next };
+    }
+  }
   if (node.anchors !== undefined && node.anchors.length > 0) {
     out = { ...out, anchors: transformAnchors(kind, node.anchors) };
   }

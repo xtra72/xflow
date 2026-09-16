@@ -1320,7 +1320,8 @@
         "transformFlipX": "좌우 뒤집기",
         "transformFlipY": "상하 뒤집기",
         "transformRotateLeft": "왼쪽으로 90도 돌리기",
-        "transformRotateRight": "오른쪽으로 90도 돌리기"
+        "transformRotateRight": "오른쪽으로 90도 돌리기",
+        "rotateHandle": "돌리기 — Shift 로 15도 눈금"
       },
       "elements": {
         "listTitle": "요소 목록",

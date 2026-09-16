@@ -49,6 +49,10 @@ import {
   type PxPoint,
 } from './canvasGeometry';
 import { FONT_SIZE_MAX, FONT_SIZE_MIN } from '../charts/statLayout';
+// 각도의 판정·점 회전은 잎 모듈이, **각도를 읽는 일**은 윤곽 모듈이 소유한다
+// (SPEC-CANVAS-014) — 여기서 `el.rotation` 을 직접 읽으면 그 판정이 둘이 된다.
+import { boxCenter, isRotated, rotatePoint } from './canvasRotation';
+import { outlineAngle } from './canvasOutline';
 
 // --- 타입 ---------------------------------------------------------------
 
@@ -304,12 +308,20 @@ export function handlePositions(
     case 'path':
     case 'group': {
       const box = normalizePxBox(projectBox(el.geometry, proj));
+      // **손잡이는 방향 상자에 선다**(SPEC-CANVAS-014 §결정 2 · REQ-04). 축-나란 상자에
+      // 세우면 돌아간 도형의 손잡이가 잉크에서 떨어져 뜨고, 그 손잡이를 끌었을 때 늘어나는
+      // 축도 화면과 어긋난다.
+      //
+      // 상자를 **다시 재지 않는다** — 바로 위 `box` 를 돌릴 뿐이다(K2).
+      const deg = outlineAngle(el);
+      const pivot = boxCenter(box);
       return BOX_HANDLE_IDS.map((id): CanvasHandle => {
         const [fx, fy] = BOX_HANDLE_FACTORS[id];
+        const flat = { x: box.x + box.w * fx, y: box.y + box.h * fy };
         return {
           id,
           role: handleRole(id),
-          point: { x: box.x + box.w * fx, y: box.y + box.h * fy },
+          point: isRotated(deg) ? rotatePoint(flat, pivot, deg) : flat,
         };
       });
     }
@@ -328,11 +340,16 @@ export function handlePositions(
         el.style.align ?? 'left',
         width,
       );
+      // 글자 손잡이도 같은 축을 탄다 — 그 축은 그리는 쪽이 쓰는 그것이다(`rotationPivotIn`).
+      const flat = { x: origin.x + width, y: origin.y + fontSize / 2 };
+      const deg = outlineAngle(el);
       return [
         {
           id: 'font',
           role: handleRole('font'),
-          point: { x: origin.x + width, y: origin.y + fontSize / 2 },
+          point: isRotated(deg)
+            ? rotatePoint(flat, { x: origin.x + width / 2, y: origin.y }, deg)
+            : flat,
         },
       ];
     }
@@ -443,6 +460,57 @@ export function resizeBox(
  *
  * 비유한 포인터는 `resizeBox` 와 같은 이유로 조작을 무시한다.
  */
+/**
+ * 돌아간 상자를 **제 축 방향으로** 늘린다 (SPEC-CANVAS-014 M7 · REQ-05 · §결정 4).
+ *
+ * ## 같은 수법이다
+ *
+ * 잡기가 점을 되돌린 뒤 기존 다섯 판정을 그대로 부른 것처럼(§결정 3), 여기서도 포인터를
+ * 요소의 **돌지 않은 좌표계**로 되돌린 뒤 `resizeBox` 를 **그대로** 부른다. 종횡비 유지도
+ * 최소 크기 죔쇠도 그 함수가 이미 가진 것을 그대로 받는다 — 회전을 아는 리사이즈를 종류마다
+ * 새로 쓰지 않는 것이 이 SPEC 이 크기를 감당하는 방법이다.
+ *
+ * ## 그런데 되돌리는 것만으로는 부족하다
+ *
+ * `resizeBox` 는 **잡지 않은 반대쪽**을 로컬 좌표에서 고정한다. 그런데 회전 축은 상자
+ * **가운데**이므로, 크기가 바뀌면 축도 함께 옮겨 간다 — 로컬에서 고정된 그 모서리가
+ * **화면에서는 미끄러진다.** 늘릴수록 도형이 옆으로 기어가는 그 결함이다.
+ *
+ * 그래서 늘린 뒤에 한 번 더 민다: 고정 모서리의 **화면 자리**가 늘리기 전과 같아지도록
+ * 새 상자를 통째로 옮긴다. 미는 양은 두 화면 자리의 차이 하나뿐이다.
+ *
+ * 각도가 0 이면 `resizeBox` 를 그대로 부른 것과 **바이트 동일**하다(K3).
+ */
+export function resizeRotatedBox(
+  box: BoxGeometry,
+  deg: number,
+  handle: BoxHandleId,
+  pointer: CanvasPoint,
+  opts: ResizeBoxOptions = {},
+): BoxGeometry {
+  if (!isRotated(deg)) return resizeBox(box, handle, pointer, opts);
+
+  const base = normalizeBox(box);
+  const pivot = { x: base.x + base.w / 2, y: base.y + base.h / 2 };
+  // ① 포인터를 요소의 돌지 않은 좌표계로 되돌린다 — 잡기와 **같은 수법**이다.
+  const local = rotatePoint(pointer, pivot, -deg);
+  const next = normalizeBox(resizeBox(base, handle, local, opts));
+
+  // ② 고정 모서리가 화면에서 미끄러지지 않도록 민다.
+  //
+  // 고정 자리는 `resizeBox` 가 쓰는 그 규칙에서 나온다(잡지 않은 반대쪽). 모서리 손잡이면
+  // 반대 모서리이고, 변 손잡이면 그 반대 변 위의 한 점이다 — 어느 쪽이든 늘리기 전후로
+  // **로컬에서는 같은 자리**이므로, 화면 자리의 차이가 곧 밀 양이다.
+  const edges = BOX_HANDLE_EDGES[handle];
+  const fixedOf = (b: BoxGeometry): CanvasPoint => ({
+    x: edges.h === -1 ? b.x + b.w : b.x,
+    y: edges.v === -1 ? b.y + b.h : b.y,
+  });
+  const before = rotatePoint(fixedOf(base), pivot, deg);
+  const after = rotatePoint(fixedOf(next), { x: next.x + next.w / 2, y: next.y + next.h / 2 }, deg);
+  return { ...next, x: next.x + (before.x - after.x), y: next.y + (before.y - after.y) };
+}
+
 export function resizeLine(
   line: LineGeometry,
   endpoint: LineHandleId,
