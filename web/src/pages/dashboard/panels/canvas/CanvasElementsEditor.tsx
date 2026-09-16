@@ -2292,8 +2292,15 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
           (SPEC-CANVAS-006 REQ-07 — 유도가 바꾸는 것은 `canvas` 두 정수뿐이다). */}
       <div className="flex flex-wrap items-center gap-2">
         <span className={GROUP_LABEL_CLASS}>{t('dashboard.canvas.elements.panelSize')}</span>
+        {/* 한 제목에 물음표는 하나다. 그래서 "편집 중에는 패널 크기를 따라갑니다" 가
+            **둘째 물음표가 아니라 이 팝오버의 둘째 단락**으로 들어왔다. 빈 줄로 나누면
+            `FieldHelp` 가 `whitespace-pre-wrap` 이라 단락 사이가 된다
+            (`components/property/PropertyPanel.tsx` 가 포트 설명 둘을 합치는 그 방식). */}
         <FieldHelp
-          text={t('dashboard.canvas.elements.panelSizeHint')}
+          text={
+            `${t('dashboard.canvas.elements.panelSizeHint')}\n\n` +
+            t('dashboard.canvas.elements.panelSizeDerived')
+          }
           testId="canvas-panel-size-hint"
         />
         {/* **읽기 전용 표시**다(SPEC-CANVAS-006 M8 · REQ-07).
@@ -2312,12 +2319,6 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
           className="shrink-0 text-xs tabular-nums text-(--color-text-primary)"
         >
           {cfg.canvas.width} × {cfg.canvas.height}
-        </span>
-        <span
-          data-testid="canvas-panel-size-derived"
-          className="min-w-0 text-[11px] text-(--color-text-muted)"
-        >
-          {t('dashboard.canvas.elements.panelSizeDerived')}
         </span>
       </div>
 
@@ -2373,14 +2374,30 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
         </select>
       </div>
 
-      {/* 001 의 z-order 는 배열 순서 하나뿐이다 — 그 사실을 화면에 적는다.
-          이 한 줄만 인라인으로 남는다: 목록 전체에 대한 말이라 뒤에 `?` 를 달 제목이
-          없고, 제목 없는 물음표는 무엇을 묻는지 알 수 없는 단추가 된다. */}
-      <p className={HINT_CLASS}>
-        {t('dashboard.canvas.elements.orderHint')}
-      </p>
+      {/* 목록의 제목과 그 뒤의 `?`.
+
+          여기 있던 주석은 "목록 전체에 대한 말이라 뒤에 `?` 를 달 제목이 없다" 였다. 그
+          진단은 옳았고 답만 틀렸다 — 없는 제목을 **세우면** 물음표가 무엇을 묻는지 알 수
+          있는 단추가 된다. 그래서 001 의 z-order 규칙(배열 순서 하나뿐)과 "어디서
+          만드는가"(왼쪽 도크의 도형 팔레트 — 요소를 만드는 유일한 입구다)가 둘 다 그 뒤로
+          들어왔다. 위 패널 축 둘과 같은 눈금의 제목이라 설정 절의 결이 한 줄로 이어진다.
+
+          **한 제목에 물음표는 하나다.** 두 문장은 빈 줄로 나누어 한 팝오버에 담는다. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={GROUP_LABEL_CLASS}>{t('dashboard.canvas.elements.listTitle')}</span>
+        <FieldHelp
+          text={
+            `${t('dashboard.canvas.elements.orderHint')}\n\n` +
+            t('dashboard.canvas.elements.emptyHint')
+          }
+          testId="canvas-element-list-hint"
+        />
+      </div>
 
       {elements.length === 0 ? (
+        // 빈 자리에는 **없다는 사실**만 남는다. 뒤에 붙어 있던 "왼쪽 도형 팔레트에서 눌러
+        // 시작하세요" 는 제목 뒤 `?` 로 갔다 — 빈 자리의 일은 빈 곳을 메우는 것이므로
+        // 사실은 남고 지시만 간다.
         <p className={HINT_CLASS} data-testid="canvas-element-empty">
           {t('dashboard.canvas.elements.empty')}
         </p>

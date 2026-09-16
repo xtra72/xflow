@@ -65,6 +65,9 @@ const EDIT_KEYS: readonly string[] = [
   'scratchpadDropHint',
   'scratchpadSave',
   'scratchpadEmpty',
+  // 008 의 빈 서랍 안내가 둘로 갈렸다 — 사실은 빈 자리에, 할 일은 제목 뒤 `?` 로.
+  // 갈라져 나온 쪽도 같은 가드 안에 둔다(한쪽만 지키면 나머지 반이 조용히 빠진다).
+  'scratchpadEmptyHint',
   'scratchpadLocalOnly',
   'scratchpadAutoName',
   'scratchpadName',
@@ -156,7 +159,7 @@ function tokensOf(text: string): string[] {
 describe('008 이 더한 문구는 ko · en 양쪽에 있다 (REQ-06 · 품질 게이트 Unified)', () => {
   it('키 전량이 양쪽 로케일에서 **비어 있지 않은 문자열**로 잡힌다', () => {
     // 켜져 있음을 먼저 단언한다 — 목록이 비면 아래 순회가 0회 돌고 초록이 된다.
-    expect(ALL_008_KEYS.length).toBeGreaterThanOrEqual(23 + 1 + 30 + 3);
+    expect(ALL_008_KEYS.length).toBeGreaterThanOrEqual(24 + 1 + 30 + 3);
 
     const missing: string[] = [];
     for (const key of ALL_008_KEYS) {

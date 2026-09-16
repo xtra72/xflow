@@ -284,8 +284,15 @@ describe('CanvasElementsEditor — 요소 목록', () => {
   });
 
   it('배열 순서가 곧 앞뒤 순서라는 사실을 화면에 적는다', () => {
+    // **재는 것은 그대로 "그 설명이 렌더된다" 다.** 자리만 인라인 줄에서 목록 제목 뒤
+    // `?` 의 sr-only 설명으로 옮겼으므로 집는 법이 `getByText` 에서 `testId` 로 바뀐다
+    // (`components/property/FieldHelp.tsx` §testId — 팝오버를 열지 않아도 그 span 이
+    // 언제나 DOM 에 있어 "설명이 있다" 의 자리가 된다). 한 팝오버가 두 문장을 들므로
+    // 같음이 아니라 **포함**으로 잰다.
     setup(cfg([]));
-    expect(screen.getByText('dashboard.canvas.elements.orderHint')).toBeTruthy();
+    expect(testid('canvas-element-list-hint').textContent).toContain(
+      'dashboard.canvas.elements.orderHint',
+    );
   });
 
   it('목록에는 종류별 추가 버튼이 없다 — 만드는 자리는 도크 팔레트 하나다', () => {
@@ -529,12 +536,18 @@ describe('CanvasElementsEditor — 캔버스 크기 (모든 좌표의 분모)', 
     // 보는 이유가 그것이다.
   });
 
-  it('한 줄이 그 값의 규칙을 말한다 — 왜 손댈 수 없는지 화면이 답한다', () => {
-    // 문구는 "편집 중에는 **패널 크기**를 따라갑니다" 다. 0.4.0 이 적었던 "패널 **출력
+  it('그 값의 규칙을 화면이 말한다 — 이제 제목 뒤 `?` 안이다', () => {
+    // 텍스트는 "편집 중에는 **패널 크기**를 따라갑니다" 다. 0.4.0 이 적었던 "패널 **출력
     // 영역** 크기" 는 틀렸다 — 유도값은 출력 영역이 아니라 패널 몸통이고, 출력 영역은
     // 그것을 축척 R 로 물러나 그린 사각형이다.
+    //
+    // **이 단언은 뜻이 바뀌었다.** 전에는 전용 줄(`canvas-panel-size-derived`)에 그 글자
+    // **하나만** 있음을 보았다 — 자리 단언이었다. 그 줄을 걷어 `캔버스 크기` 제목의
+    // 물음표(한 제목에 하나)로 합쳤으므로 그 자리는 이제 없고, 남은 뜻은 "그 설명이
+    // 렌더된다" 다. 그래서 같음이 아니라 **포함**으로, 합쳐진 팝오버에서 잰다. 지우지
+    // 않고 뒤집는 이유는 지우면 그 글자가 사라져도 아무도 울지 않기 때문이다.
     setup(cfg([rect()]));
-    expect(testid('canvas-panel-size-derived').textContent).toBe(
+    expect(testid('canvas-panel-size-hint').textContent).toContain(
       'dashboard.canvas.elements.panelSizeDerived',
     );
   });
