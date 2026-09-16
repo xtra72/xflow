@@ -13,6 +13,7 @@
 // 측정원이 둘이 될 수 없고, 렌더 없이도 값으로 시험할 수 있다.
 
 import { DEFAULT_FONT_SIZE } from './canvasConfig';
+import type { BoxGeometry, CanvasElement, PointGeometry } from './canvasConfig';
 import {
   projectBox,
   projectLine,
@@ -20,6 +21,7 @@ import {
   resolveTextOrigin,
   type CanvasProjection,
   type PxBox,
+  type PxPoint,
 } from './canvasGeometry';
 import type { OutlinedNode } from './group/groupTypes';
 // 각도의 산술은 잎 모듈이 소유한다(SPEC-CANVAS-014). 여기서 제 손으로 모서리를 돌리면
@@ -94,6 +96,55 @@ export function outlineBox(
       );
       return normalizeBox({ x: origin.x, y: origin.y - fontSize / 2, w: width, h: fontSize });
     }
+  }
+}
+
+/**
+ * 회전 축 — **이 요소의 px 윤곽 상자 가운데**다 (SPEC-CANVAS-014 §결정 3 · K1).
+ *
+ * ## 왜 이 함수가 여기 있는가
+ *
+ * 그리는 쪽(`drawElement`)은 이 축 둘레로 좌표계를 돌리고, 잡는 쪽(`canvasHitTest`)은 이 축
+ * 둘레로 점을 되돌린다. **두 자리가 축을 따로 구하면 그 등식이 깨지고**, 그 어긋남은 각도가
+ * 0 일 때 보이지 않으므로 돌린 뒤에야 드러난다 — 002 위험 R1 의 그 부류다.
+ *
+ * 그래서 함수를 하나 두고 둘이 그것을 부른다. K1("그리기와 잡기가 같은 각도 하나를 본다")이
+ * 주석이 아니라 **문법**으로 지켜지는 자리다.
+ *
+ * ## 투영을 받지 않는다
+ *
+ * 부르는 쪽이 이미 가진 투영 도우미를 그대로 받는다. 그 둘은 부품이면 그룹 상자 안으로,
+ * 최상위면 스테이지로 가는 갈래이며 **두 파일이 이미 같은 형상으로** 들고 있다 — 여기서
+ * 투영을 다시 고르면 세 번째 갈래가 생긴다.
+ *
+ * 문구 가운데의 y 가 원점 y 와 같은 것은 상자가 `원점y − 글자크기/2` 에서 시작해 높이가
+ * 글자 크기이기 때문이다. 그래서 글자 크기를 여기서 구할 필요가 없다.
+ *
+ * `line` 은 각도를 갖지 않으므로(§D6) `undefined` 다 — 부르는 쪽이 그 갈래에 닿지 않는다.
+ */
+export function rotationPivotIn(
+  el: CanvasElement,
+  pxBox: (geo: BoxGeometry) => PxBox,
+  pxPoint: (geo: PointGeometry) => PxPoint,
+  measuredWidth: number,
+): PxPoint | undefined {
+  switch (el.kind) {
+    case 'rect':
+    case 'ellipse':
+    case 'path': {
+      const box = pxBox(el.geometry);
+      return { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+    }
+    case 'text': {
+      const origin = resolveTextOrigin(
+        pxPoint(el.geometry),
+        el.style.align ?? 'left',
+        measuredWidth,
+      );
+      return { x: origin.x + measuredWidth / 2, y: origin.y };
+    }
+    default:
+      return undefined;
   }
 }
 

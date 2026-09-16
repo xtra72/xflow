@@ -23,6 +23,7 @@ import {
   DEFAULT_STROKE_WIDTH,
   type BoxGeometry,
   type CanvasElement,
+  type PointGeometry,
 } from './canvasConfig';
 import {
   closestPointOnSegment,
@@ -41,6 +42,10 @@ import {
   type PxPoint,
 } from './canvasGeometry';
 import { TEXT_BASELINE } from './drawElement';
+// 각도의 판정과 점 회전은 잎 모듈이, **축**은 윤곽 모듈이 소유한다(SPEC-CANVAS-014 K1) —
+// 그리는 쪽이 부르는 그 함수를 여기서도 부른다.
+import { isRotated, rotatePoint } from './canvasRotation';
+import { rotationPivotIn } from './canvasOutline';
 import { frameKey } from './group/frameKey';
 import { isGroup, type CanvasNode, type GroupElement } from './group/groupTypes';
 import { connectorPath } from './connector/connectorPath';
@@ -273,15 +278,35 @@ function hitsElement(
   // 알지 못하며, 그래서 **그린 자리와 잡히는 자리**가 두 벌로 갈라지지 않는다.
   const pxBox = (geo: BoxGeometry): PxBox =>
     host === undefined ? projectBox(geo, proj) : projectBoxIn(geo, host);
+  const pxPoint = (geo: PointGeometry): PxPoint =>
+    host === undefined ? projectPoint(geo, proj) : projectPointIn(geo, host);
+
+  // **점을 되돌린다 — 도형마다 판정을 다시 쓰지 않는다**(SPEC-CANVAS-014 §결정 3).
+  //
+  // 돌아간 사각형·타원·경로를 잡는 판정을 종류마다 새로 쓰면 다섯 갈래가 열이 된다. 대신
+  // 점을 요소의 **돌지 않은 좌표계**로 되돌린 뒤 아래 다섯을 **그대로** 부른다. 한 줄이
+  // 늘고 다섯이 산다.
+  //
+  // 축은 그리는 쪽이 쓰는 그 상자에서 나온다(`drawElement.rotationPivot` 과 같은 식) —
+  // 그래서 그려진 자리와 잡히는 자리가 **각도 하나**를 함께 본다(K1). 두 자리가 축을 따로
+  // 구하면 그 등식이 깨지고, 그 어긋남은 각도가 0 일 때 보이지 않는다.
+  const deg = 'rotation' in el ? el.rotation : undefined;
+  const at = ((): PxPoint => {
+    if (!isRotated(deg)) return point;
+    const pivot = rotationPivotIn(el, pxBox, pxPoint, resolveMeasuredWidth(textWidths[key]));
+    // 축이 없으면(선) 돌지 않은 것과 같다 — 필드가 서지 않는 종류다.
+    return pivot === undefined ? point : rotatePoint(point, pivot, -(deg as number));
+  })();
+
   switch (el.kind) {
     case 'rect':
-      return hitsBox(pxBox(el.geometry), point, HIT_TOLERANCE_PX);
+      return hitsBox(pxBox(el.geometry), at, HIT_TOLERANCE_PX);
     case 'ellipse':
-      return hitsEllipse(pxBox(el.geometry), point, HIT_TOLERANCE_PX);
+      return hitsEllipse(pxBox(el.geometry), at, HIT_TOLERANCE_PX);
     case 'line':
       return hitsLine(
         host === undefined ? projectLine(el.geometry, proj) : projectLineIn(el.geometry, host),
-        point,
+        at,
         resolveStrokeWidth(el.style.strokeWidth),
         HIT_TOLERANCE_PX,
       );
@@ -302,7 +327,7 @@ function hitsElement(
         w: width,
         h: fontSize,
       };
-      return hitsBox(box, point, HIT_TOLERANCE_PX);
+      return hitsBox(box, at, HIT_TOLERANCE_PX);
     }
     case 'path': {
       // **상자는 여기서 한 번만 잰다.** 그 상자가 곧 `projectPathPoints` 의 입력이며,
@@ -320,7 +345,7 @@ function hitsElement(
       const subpaths = flattenPath(projectPathPoints(el.path, box), FLATTEN_TOLERANCE_PX);
       return hitsPath(
         subpaths,
-        point,
+        at,
         resolveStrokeWidth(el.style.strokeWidth),
         HIT_TOLERANCE_PX,
       );
@@ -412,9 +437,24 @@ function hitsGroup(
   // 상자는 **그룹마다 한 번만** 잰다. 부품마다 다시 재도 값은 같지만(순수 함수) 부품 수만큼
   // 같은 계산을 되풀이한다.
   const box = projectBox(group.geometry, proj);
+  // **돌아간 그룹은 점을 한 번 더 되돌린다**(SPEC-CANVAS-014 M5).
+  //
+  // 그리는 쪽은 그룹의 각도로 부품 묶음 **전체**를 감싼다(`drawElements` §돌아간 그룹).
+  // 그래서 잡는 쪽도 부품을 보기 **전에** 그 각도를 되돌려야 하고, 축은 그리는 쪽이 쓰는
+  // 그 상자의 가운데다 — 상자를 여기서 한 번만 재는 성질이 그 등식을 그대로 살린다.
+  //
+  // 부품 자신의 각도는 아래 `hitsElement` 가 제 축으로 다시 되돌린다. 두 겹이 **합성될 뿐
+  // 섞이지 않는 것**은 그리는 쪽의 두 `save` 가 겹치는 것과 같은 모양이다.
+  const at = isRotated(group.rotation)
+    ? rotatePoint(
+        point,
+        { x: box.x + box.w / 2, y: box.y + box.h / 2 },
+        -(group.rotation as number),
+      )
+    : point;
   for (const part of [...group.parts].reverse()) {
     if (part.style.visible === false) continue;
-    if (hitsElement(part, point, proj, textWidths, frameKey(group.id, part.id), box)) {
+    if (hitsElement(part, at, proj, textWidths, frameKey(group.id, part.id), box)) {
       // **선택 키는 여전히 `nodeId` 하나다**(002 의 규칙 불변). `partId` 는 목록 편집기가
       // 그 부품 행을 먼저 펼치는 데에만 쓰인다.
       return { nodeId: group.id, partId: part.id };

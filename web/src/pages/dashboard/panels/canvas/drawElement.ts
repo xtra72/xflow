@@ -54,6 +54,10 @@ import {
 import type { ResolvedStyle } from './canvasRules';
 // 무늬 표는 잎 모듈이 든다(012 §결정 D5) — 파서와 렌더가 **같은 표**를 본다.
 import { dashPattern } from './strokeDash';
+// 각도의 산술과 판정은 잎 모듈이 소유한다(SPEC-CANVAS-014).
+import { isRotated, toRadians } from './canvasRotation';
+// 실측 글자 폭의 해석은 윤곽 모듈이 소유한다 — 축을 구하는 식이 그 파일과 **같아야** 한다.
+import { resolveMeasuredWidth, rotationPivotIn } from './canvasOutline';
 import { connectorPath } from './connector/connectorPath';
 import type { ConnectorElement, ConnectorRoute } from './connector/connectorTypes';
 import { resolveConnector } from './connector/resolveConnector';
@@ -144,6 +148,23 @@ export interface DrawContext2D {
    * 빈 배열이 곧 실선이다(canvas 명세) — 되돌리는 별도 호출이 없다.
    */
   setLineDash?(segments: readonly number[]): void;
+  /**
+   * 좌표계를 옮긴다 (SPEC-CANVAS-014 M3 · §결정 5).
+   *
+   * **`setTransform` 으로는 돌릴 수 없다.** 그것은 **덮어쓰는** 연산이라 `CanvasSurface` 가
+   * 세워 둔 DPR 변환이 지워진다 — 실측: 그 파일이 프레임마다 `ctx.setTransform(scale, …)` 를
+   * 부른다. `translate`/`rotate` 는 **합성**이므로 `save`/`restore` 안에서 안전하다.
+   *
+   * 선택적인 까닭은 `setLineDash` 와 같다(012 §결정 2): 필수로 더하면 이 인터페이스를
+   * 구조적으로 만족하던 스텁 공장 아홉이 한꺼번에 컴파일되지 않고, 008 이 "하중을 받는
+   * 성질" 이라 부른 최소성을 **고치는 비용으로** 갚게 된다.
+   *
+   * 대가도 같고 숨기지 않는다 — 구현하지 않은 스텁에서는 회전이 조용히 지나가므로, 회전을
+   * 재는 시험은 **제 스텁이 이 둘을 갖추는 것**부터 못박는다.
+   */
+  translate?(x: number, y: number): void;
+  /** 좌표계를 돌린다(라디안). 위 `translate` 와 한 쌍이다. */
+  rotate?(angle: number): void;
   stroke(): void;
   fill(): void;
   fillText(text: string, x: number, y: number): void;
@@ -192,6 +213,22 @@ const FULL_TURN = Math.PI * 2;
 function resolveAlpha(opacity: number | undefined): number {
   if (opacity === undefined || !Number.isFinite(opacity)) return DEFAULT_OPACITY;
   return opacity < 0 ? 0 : opacity > 1 ? 1 : opacity;
+}
+
+/**
+ * 좌표계를 축 둘레로 돌린다 — `save`/`restore` **안에서만** 부른다 (SPEC-CANVAS-014 M3).
+ *
+ * `translate(축)` → `rotate` → `translate(−축)` 차례다. 되돌리는 `translate` 를 빠뜨리면
+ * 도형이 축만큼 밀려 그려지고, 그 어긋남은 각도가 0 일 때 보이지 않으므로 **돌린 뒤에야**
+ * 드러난다.
+ *
+ * 멤버가 선택적이므로 `?.` 로 부른다. 스텁이 구현하지 않았으면 회전이 조용히 지나가며,
+ * 그 사실은 §결정 5 가 이름으로 적어 둔 대가다.
+ */
+function applyRotation(ctx: DrawContext2D, pivot: PxPoint, deg: number): void {
+  ctx.translate?.(pivot.x, pivot.y);
+  ctx.rotate?.(toRadians(deg));
+  ctx.translate?.(-pivot.x, -pivot.y);
 }
 
 /** 유효한 선 두께(px). 미지정은 기본값, 손상·0·음수는 "선 없음"을 뜻하는 0 이다. */
@@ -315,6 +352,8 @@ function drawMeasuredElement(
   text: string | undefined,
   proj: CanvasProjection,
   host?: PxBox,
+  widths: Readonly<Record<string, number>> = {},
+  widthKey?: string,
 ): number | undefined {
   if (style.visible === false) return undefined;
   // **투영을 고르는 자리는 여기 넷뿐이다**(SPEC-CANVAS-004 M3). 부품이면 그룹의 px 상자
@@ -334,6 +373,23 @@ function drawMeasuredElement(
   ctx.save();
   try {
     ctx.globalAlpha = resolveAlpha(style.opacity);
+    // **축은 이 요소의 px 윤곽 상자 가운데다**(014 §결정 · M3). 잡는 쪽(`canvasHitTest`)이
+    // **같은 상자에서 같은 가운데**를 구해 점을 되돌리므로, 그려진 자리와 잡히는 자리가
+    // 한 각도 하나를 본다(K1). 두 자리가 축을 따로 구하면 그 등식이 깨지고, 그 어긋남은
+    // 각도가 0 일 때 보이지 않는다.
+    //
+    // `line` 은 각도를 갖지 않으므로(§D6) 이 갈래에 들어오지 않는다.
+    const deg = 'rotation' in el ? el.rotation : undefined;
+    if (isRotated(deg)) {
+      // **축은 윤곽 모듈의 한 함수에서 나온다** — 잡는 쪽이 부르는 그 함수다(K1).
+      const pivot = rotationPivotIn(
+        el,
+        pxBox,
+        pxPoint,
+        resolveMeasuredWidth(widths[widthKey ?? el.id]),
+      );
+      if (pivot !== undefined) applyRotation(ctx, pivot, deg as number);
+    }
     switch (el.kind) {
       case 'rect': {
         const box = pxBox(el.geometry);
@@ -572,6 +628,20 @@ export function drawElements(
   // 한 그룹의 모든 부품에 **같은 객체**를 실어 보내므로 참조 비교로도 캐시가 그대로 산다.
   let hostGroup: GroupElement | undefined;
   let hostBox: PxBox | undefined;
+  // **돌아간 그룹은 부품 묶음 전체를 감싼다**(SPEC-CANVAS-014 M3).
+  //
+  // 그룹은 제 노드로 그려지지 않는다 — `walkDrawables` 가 부품으로 펼치고 이 반복문은 그
+  // 부품만 그린다. 그래서 그룹의 각도를 부품마다 걸면 **부품이 저마다 제 가운데를 축으로**
+  // 돌아 그룹이 흩어진다. 한 `save`/`restore` 로 그 묶음을 감싸는 것이 유일한 모양이다.
+  //
+  // `walkDrawables` 가 한 그룹의 부품을 **연달아** 내놓으므로(바로 위 상자 캐시가 그 성질
+  // 위에 서 있다) 그룹이 바뀌는 자리에서 닫고 여는 것으로 족하다.
+  let rotatedGroupOpen = false;
+  const closeRotatedGroup = (): void => {
+    if (!rotatedGroupOpen) return;
+    ctx.restore();
+    rotatedGroupOpen = false;
+  };
   for (const item of walkDrawables(elements)) {
     const { key } = item;
     // **연결선은 제 배열 자리에서 그려진다**(AC-51). 앞의 도형 뒤, 뒤의 도형 앞이다 —
@@ -586,11 +656,22 @@ export function drawElements(
     }
     const { element, group } = item;
     if (group === undefined) {
+      closeRotatedGroup();
       hostGroup = undefined;
       hostBox = undefined;
     } else if (group !== hostGroup) {
+      closeRotatedGroup();
       hostGroup = group;
       hostBox = projectBox(group.geometry, proj);
+      if (isRotated(group.rotation)) {
+        ctx.save();
+        rotatedGroupOpen = true;
+        applyRotation(
+          ctx,
+          { x: hostBox.x + hostBox.w / 2, y: hostBox.y + hostBox.h / 2 },
+          group.rotation as number,
+        );
+      }
     }
     const measured = drawMeasuredElement(
       ctx,
@@ -599,9 +680,14 @@ export function drawElements(
       texts[key] ?? element.text,
       proj,
       hostBox,
+      priorTextWidths,
+      key,
     );
     if (measured !== undefined) textWidths[key] = measured;
   }
+  // 마지막 그룹이 돌아간 채 끝났으면 여기서 닫는다 — 닫지 않으면 이 함수가 좌표계를
+  // **바꿔 놓은 채** 돌아가고, 다음 프레임의 첫 요소가 남의 각도로 그려진다.
+  closeRotatedGroup();
   return textWidths;
 }
 
