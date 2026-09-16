@@ -79,9 +79,20 @@ describe('모든 구간이 수평이거나 수직이다 (K1)', () => {
   });
 
   it('중간점을 **지난다** (REQ-03)', () => {
+    // **꼭짓점으로 남는 것과 지나는 것은 다르다.** 018 이 일직선 위의 점을 접으므로
+    // (`collapseCollinear` — 잡는 구간이 쪼개지지 않게 한다) 중간점이 꼭짓점 목록에서
+    // 사라질 수 있다. 그래도 선은 그 자리를 **지난다** — 접힌 점은 언제나 이웃 둘 사이의
+    // 직선 위에 있기 때문이다. 요구는 "지난다" 이므로 그것을 잰다.
     const mid = { x: 120, y: 90 };
     const out = ortho([{ x: 10, y: 10 }, mid, { x: 300, y: 40 }]);
-    expect(out).toContainEqual(mid);
+    const onPath = out.some((_, i) => {
+      if (i === 0) return false;
+      const a = out[i - 1]!;
+      const b = out[i]!;
+      if (a.x === b.x) return mid.x === a.x && mid.y >= Math.min(a.y, b.y) && mid.y <= Math.max(a.y, b.y);
+      return mid.y === a.y && mid.x >= Math.min(a.x, b.x) && mid.x <= Math.max(a.x, b.x);
+    });
+    expect(onPath).toBe(true);
   });
 });
 

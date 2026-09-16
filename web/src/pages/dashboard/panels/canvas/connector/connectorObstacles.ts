@@ -44,20 +44,39 @@ function endHost(end: ConnectorEnd): string | undefined {
  * px 인 것에 뜻이 있다 — `connectorPath` 가 점을 px 로 다루므로 그 자리에서 견주면 환산이
  * 끼어들지 않는다. 축척이 하나이므로(014 A1) 어느 공간에서 재도 같은 길이 나온다.
  */
+export interface ConnectorRouting {
+  /**
+   * 피할 상자 **전부** — 두 끝 도형도 든다 (SPEC-CANVAS-018 REQ-01).
+   *
+   * 017 은 두 끝 도형을 여기서 뺐다. 근거("빼지 않으면 앵커가 제 도형의 경계에 있어 선이
+   * 출발조차 못 한다")는 맞았고 **처분이 틀렸다** — 출발하지 못하는 것은 앵커 바로 옆 한
+   * 구간의 문제인데 도형 **전체**를 뺐고, 그 결과 경로가 끝 도형의 변에 붙어 내려왔다.
+   * 018 은 도형을 되돌려 놓고 그 한 구간만 따로 허용한다(`hosts`).
+   */
+  obstacles: PxBox[];
+  /** 두 끝이 앉은 도형의 상자. 자유 끝이면 부재다 — 나갈 도형이 없다. */
+  hosts: { from?: PxBox; to?: PxBox };
+}
+
 export function connectorObstacles(
   connector: ConnectorElement,
   nodes: readonly CanvasNode[],
   proj: CanvasProjection,
   textWidths: Readonly<Record<string, number>>,
-): PxBox[] {
-  const hosts = new Set(
-    [endHost(connector.from), endHost(connector.to)].filter((id): id is string => id !== undefined),
-  );
-  return nodes.flatMap((node): PxBox[] => {
-    if (isConnector(node) || hosts.has(node.id)) return [];
+): ConnectorRouting {
+  const fromId = endHost(connector.from);
+  const toId = endHost(connector.to);
+  const hosts: { from?: PxBox; to?: PxBox } = {};
+  const obstacles = nodes.flatMap((node): PxBox[] => {
+    if (isConnector(node)) return [];
     // 그룹의 `style` 은 선택 필드라 `visible` 판정이 갈린다 — 그리는 쪽이 그룹 자신의
     // `visible` 을 보지 않는 것과 같은 자리이므로 여기서도 부품 기준을 만들지 않는다.
     if (!isGroup(node) && node.style.visible === false) return [];
-    return [outlineAabb(node, proj, textWidths)];
+    const box = outlineAabb(node, proj, textWidths);
+    // 끝 도형은 **장애물이면서 동시에** 나갈 상자다. 빼지 않는 것이 018 의 전부다.
+    if (node.id === fromId) hosts.from = box;
+    if (node.id === toId) hosts.to = box;
+    return [box];
   });
+  return { obstacles, hosts };
 }

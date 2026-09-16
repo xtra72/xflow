@@ -165,21 +165,25 @@ describe('그린 선이 벽을 가로지르지 않는다 (REQ-01)', () => {
 
 // --- ② 두 끝 도형은 장애물이 아니다 (REQ-03) --------------------------------
 
-describe('두 끝 도형은 장애물이 아니다 (REQ-03)', () => {
-  it('목록에 `a` 도 `b` 도 없다', () => {
+describe('두 끝 도형도 장애물이다 — 다리만 허용한다 (018 REQ-01 · REQ-02)', () => {
+  it('**두 끝 도형도 장애물이다** — 018 이 017 의 처분을 뒤집었다', () => {
+    // 017 은 여기서 두 끝 도형을 뺐고, 그 결과 경로가 끝 도형의 변에 붙어 내려왔다
+    // (사용자 신고 2026-09-17). 018 은 도형을 되돌려 놓고 **나가는 다리 하나**만 따로
+    // 허용한다 — 아래 `hosts` 가 그 다리를 낼 상자다.
     const nodes = scene();
-    const boxes = connectorObstacles(connectorOf(nodes), nodes, PROJ, {});
-    // 벽 하나만 남는다 — 연결선은 상자가 없고 두 끝 도형은 빠진다.
-    expect(boxes).toHaveLength(1);
-    expect(boxes[0]!.x).toBe(170);
+    const routing = connectorObstacles(connectorOf(nodes), nodes, PROJ, {});
+    expect(routing.obstacles).toHaveLength(3);
+    expect(routing.hosts.from).toBeDefined();
+    expect(routing.hosts.to).toBeDefined();
   });
 
-  it('보이지 않는 도형도 빠진다', () => {
+  it('보이지 않는 도형은 빠진다', () => {
     const hidden = SCENE.map((n) =>
       n.id === 'wall' ? { ...n, style: { fill: '#333', visible: false } } : n,
     );
     const nodes = scene(hidden);
-    expect(connectorObstacles(connectorOf(nodes), nodes, PROJ, {})).toHaveLength(0);
+    // 벽이 빠지고 두 끝 도형만 남는다.
+    expect(connectorObstacles(connectorOf(nodes), nodes, PROJ, {}).obstacles).toHaveLength(2);
   });
 });
 

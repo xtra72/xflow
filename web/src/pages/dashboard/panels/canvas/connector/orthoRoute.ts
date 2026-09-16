@@ -91,6 +91,75 @@ function axis(values: readonly number[]): number[] {
 }
 
 /**
+ * 이 길이 어느 장애물의 **안**도 지나지 않는가 (SPEC-CANVAS-018 §안정한 모양).
+ *
+ * 라우터는 **같은 값의 길이 여럿일 때 아무것이나** 고른다 — 맨해튼 거리에서는 단조로운
+ * 계단이 전부 같은 길이이고 꺾임 수도 같기 때문이다. 그래서 상자를 조금만 옮겨도 고르는
+ * 길이 바뀌고, 사용자에게는 "세로 선만 길어져야 하는데 모양이 통째로 바뀐다" 로 보인다
+ * (신고 2026-09-17).
+ *
+ * 고침은 라우터의 값을 손보는 것이 아니라 **묻는 차례를 바꾸는 것**이다: 015 의 가운데
+ * 꺾기가 비어 있으면 **그 길을 쓴다.** 그 길은 두 끝에서 대칭이라 한쪽을 옮겨도 가운데
+ * 자리가 그대로이고(REQ-04), 라우터는 그 길이 **막혔을 때만** 돈다.
+ */
+export function orthoPathClear(path: readonly Pt[], obstacles: readonly CanvasBox[]): boolean {
+  const boxes = obstacles.map(inflate);
+  for (let i = 1; i < path.length; i += 1) {
+    const a = path[i - 1]!;
+    const b = path[i]!;
+    if (boxes.some((box) => crosses(a, b, box))) return false;
+  }
+  return true;
+}
+
+/**
+ * 앵커에서 **도형 밖으로 나가는 다리** 하나 (SPEC-CANVAS-018 REQ-02 · REQ-03).
+ *
+ * 한 축으로만 나간다 — 두 구간으로 나가면 그 둘째가 **도형 안에서 꺾이는** 모양이 되고,
+ * 화면에서는 선이 상자 안을 헤매는 것으로 보인다. 축은 상대 끝이 더 먼 쪽이다.
+ *
+ * 앵커가 이미 넓힌 상자 밖이면 **부재**다 — 길이 0 인 구간을 만들지 않는다(REQ-05).
+ */
+export function orthoStub(anchor: Pt, host: CanvasBox, toward: Pt): Pt | undefined {
+  const box = inflate(host);
+  const outside =
+    anchor.x <= box.x || anchor.x >= box.x + box.w || anchor.y <= box.y || anchor.y >= box.y + box.h;
+  if (outside) return undefined;
+
+  // **나가는 쪽은 앵커가 앉은 자리가 정한다** — 상대가 어디 있느냐가 아니다.
+  //
+  // 첫 판은 상대 방향(`|dx|` vs `|dy|`)으로 골랐고, 그래서 오른쪽 변의 `e` 앵커가 상대가
+  // 아래로 멀면 **아래로** 나갔다. 그 선은 제 도형의 아래를 타고 내려가고, 위에서 읽은
+  // 축도 함께 뒤집혀 모양이 통째로 바뀐다(신고 2026-09-17).
+  //
+  // 앵커가 어느 변에 붙어 있는지는 **그 변까지의 거리**가 말한다. 가장 가까운 변으로
+  // 나가면 `e` 는 언제나 오른쪽, `n` 은 언제나 위다.
+  const toRight = box.x + box.w - anchor.x;
+  const toLeft = anchor.x - box.x;
+  const toBottom = box.y + box.h - anchor.y;
+  const toTop = anchor.y - box.y;
+  const nearest = Math.min(toRight, toLeft, toBottom, toTop);
+
+  // **가운데 앵커는 사방이 같다.** 그때만 상대 쪽을 본다 — 어느 변도 더 가깝지 않으므로
+  // 고를 근거가 상대뿐이다.
+  const tied =
+    [toRight, toLeft, toBottom, toTop].filter((d) => d - nearest < 1e-9).length > 1;
+  if (tied) {
+    const dx = toward.x - anchor.x;
+    const dy = toward.y - anchor.y;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      return { x: dx >= 0 ? box.x + box.w : box.x, y: anchor.y };
+    }
+    return { x: anchor.x, y: dy >= 0 ? box.y + box.h : box.y };
+  }
+
+  if (nearest === toRight) return { x: box.x + box.w, y: anchor.y };
+  if (nearest === toLeft) return { x: box.x, y: anchor.y };
+  if (nearest === toBottom) return { x: anchor.x, y: box.y + box.h };
+  return { x: anchor.x, y: box.y };
+}
+
+/**
  * 두 점을 잇는 **가장 짧고 덜 꺾이는** 직각 경로. 막혔거나 너무 크면 **부재**다.
  *
  * 돌려주는 목록은 시작점과 끝점을 **포함한다**. 이웃한 두 점은 언제나 한 축 위다(K1).

@@ -71,9 +71,9 @@ import {
   unprojectPoint,
   type CanvasPoint,
   type CanvasProjection,
-  type PxBox,
   type PxPoint,
 } from '../canvasGeometry';
+import type { ConnectorRouting } from './connectorObstacles';
 import { FLATTEN_TOLERANCE_PX, flattenPath } from '../shapes/pathFlatten';
 import { connectorPath } from './connectorPath';
 import { routeHosting, type ConnectorElement, type ConnectorRoute } from './connectorTypes';
@@ -142,7 +142,7 @@ export function connectorPointGestureAt(
   at: PxPoint,
   proj: CanvasProjection,
   slopPx: number,
-  obstacles: readonly PxBox[] = [],
+  routing: ConnectorRouting = { obstacles: [], hosts: {} },
 ): ConnectorPointGesture | undefined {
   // 점이 둘이 되지 못하면 구간이 없다 — 손으로 지은 목록이 들어와도 던지지 않는다
   // (`connectorPath` 가 빈 목록에 대해 하는 그 선택과 같다).
@@ -151,7 +151,7 @@ export function connectorPointGestureAt(
   const found = midpointAt(points, at, proj, slopPx);
   if (found !== undefined) return { kind: 'remove', index: found };
 
-  const slot = nearestSlot(points, route, at, proj, obstacles);
+  const slot = nearestSlot(points, route, at, proj, routing);
   if (slot === undefined) return undefined;
   return { kind: 'insert', index: slot.index, at: unprojectPoint(slot.at, proj) };
 }
@@ -226,11 +226,11 @@ function drawnPieces(
   points: readonly CanvasPoint[],
   route: ConnectorRoute,
   proj: CanvasProjection,
-  obstacles: readonly PxBox[] = [],
+  routing: ConnectorRouting = { obstacles: [], hosts: {} },
 ): readonly DrawnPiece[] {
   // **그리는 쪽과 같은 장애물 목록을 본다**(017 REQ-04 · K4). 다르면 선 위를 눌렀는데
   // 다른 조각이 답하고, 점이 엉뚱한 자리에 끼워진다.
-  const cmds = connectorPath(points, route, proj, obstacles);
+  const cmds = connectorPath(points, route, proj, routing);
   const head = cmds[0];
   if (head === undefined || head.c === 'C') return [];
 
@@ -289,12 +289,12 @@ function nearestSlot(
   route: ConnectorRoute,
   at: PxPoint,
   proj: CanvasProjection,
-  obstacles: readonly PxBox[] = [],
+  routing: ConnectorRouting = { obstacles: [], hosts: {} },
 ): SlotHit | undefined {
   let best: SlotHit | undefined;
   let bestDistance = Number.POSITIVE_INFINITY;
 
-  for (const piece of drawnPieces(points, route, proj, obstacles)) {
+  for (const piece of drawnPieces(points, route, proj, routing)) {
     const total = polylineLength(piece.points);
     let travelled = 0;
     for (let i = 0; i + 1 < piece.points.length; i += 1) {
