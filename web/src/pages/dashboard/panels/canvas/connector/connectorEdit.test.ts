@@ -297,9 +297,20 @@ describe('오차 안의 중간점은 **빼기**다 (AC-71 · REQ-05-b)', () => {
 // --- 뜻이 서지 않는 경우 -----------------------------------------------------
 
 describe('뜻이 서지 않는 누름은 **아무것도 아니다** — 예외가 아니다', () => {
-  it('직선은 중간점을 들지 않는다 (REQ-04)', () => {
+  // **뒤집힌 조항**(사용자 신고 2026-09-16). 종전 이 자리에는 "직선은 중간점을 들지
+  // 않는다" 가 있었고 답이 `undefined` 였다 — 즉 이 함수가 직선의 누름을 **말없이** 걸러
+  // 냈다. 그 침묵이 결함이었으므로 뒤집는다: 직선의 누름도 다른 셋과 **같은 뜻**이고,
+  // 갈래를 올리는 일은 점을 싣는 쪽(`insertPointAt`)이 한 객체 안에서 한다.
+  //
+  // REQ-04 를 여기서 걷어내는 것이 아니다 — 그 조항("직선은 점을 들지 않는다")을 문 셋
+  // 전부에서 재는 자리가 `connectorRoutePromote.test.ts` 로 따로 섰다.
+  it('직선의 누름도 뜻이 선다 — 하나뿐인 구간의 뒤다 (REQ-04 · REQ-05)', () => {
     const points = [point(100, 100), point(300, 100)];
-    expect(connectorPointGestureAt(points, 'straight', { x: 200, y: 100 }, PROJ, SLOP)).toBeUndefined();
+    expect(connectorPointGestureAt(points, 'straight', { x: 200, y: 100 }, PROJ, SLOP)).toEqual({
+      kind: 'insert',
+      index: 0,
+      at: point(200, 100),
+    });
   });
 
   it('`free` 는 든다 — 점의 출처가 다를 뿐 고치는 법은 같다', () => {

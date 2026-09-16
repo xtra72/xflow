@@ -626,17 +626,29 @@ const HANDLE_CURSOR: Record<CanvasHandleId, string> = {
 };
 
 /**
- * 핸들의 겉모습. 크기·형상·흰 테두리는 `FloorPlanTransformOverlay` 의 모서리 핸들 어휘를
- * 그대로 따르고(같은 대시보드 안에서 손잡이가 두 모양이 되지 않게 한다), **색만** 캔버스
- * 선택 외곽선과 같은 파랑으로 둔다 — 한 선택 안에서 외곽선과 손잡이가 다른 색이면 둘이
- * 다른 것을 가리키는 것처럼 보인다.
+ * 손잡이의 **몸통** — 크기 · 흰 테두리 · 칠 · 초점 테두리. **모양은 빠져 있다.**
+ *
+ * 크기·흰 테두리는 `FloorPlanTransformOverlay` 의 모서리 핸들 어휘를 그대로 따르고(같은
+ * 대시보드 안에서 손잡이가 두 모양이 되지 않게 한다), **색만** 캔버스 선택 외곽선과 같은
+ * 파랑으로 둔다 — 한 선택 안에서 외곽선과 손잡이가 다른 색이면 둘이 다른 것을 가리키는
+ * 것처럼 보인다.
  *
  * 자리는 `left`/`top` 에 **투영된 핸들 점 그대로**를 두고 변환으로 중심을 맞춘다. 반 칸을
  * 미리 빼서 넣으면 그 산술이 곧 두 번째 투영이 되어 AC-E2 가 지키려는 성질이 깨진다.
  */
-const HANDLE_CLASS =
-  'pointer-events-auto absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-sm ' +
+const HANDLE_BODY_CLASS =
+  'pointer-events-auto absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 ' +
   'border border-white bg-blue-500 shadow focus:outline-none focus:ring-2 focus:ring-blue-300';
+
+/**
+ * 잡아서 **옮기거나 늘리는** 손잡이 — 네모다. 8핸들과 연결선 **끝점**이 이 옷을 입는다.
+ *
+ * 모서리(`rounded-*`)만 몸통에서 떼어 둔 것에 뜻이 있다. 아래 중간점 손잡이가 같은 크기 ·
+ * 같은 칠 · 같은 초점 테두리를 쓰면서 **모양만** 갈리므로, 둘이 다른 일을 한다는 사실이
+ * 화면에 서되 "같은 무리" 라는 사실은 남는다. 몸통을 베껴 적었다면 크기를 한 번 바꾸는 날
+ * 두 손잡이가 서로 다른 크기로 갈라졌을 것이다.
+ */
+const HANDLE_CLASS = `${HANDLE_BODY_CLASS} rounded-sm`;
 
 /**
  * 연결선 손잡이의 `aria-label` i18n 키 (SPEC-CANVAS-011 M9).
@@ -646,8 +658,23 @@ const HANDLE_CLASS =
  * 그 닫힌 집합에 넣을 고정 이름이 없다. 그래서 여기 셋만 둔다 — 끝점 둘과, **몇 번째인가**
  * 를 치환자로 받는 중간점 하나.
  *
- * 중간점 문구가 번호를 말하는 것에 뜻이 있다. 한 선에 점이 셋이면 손잡이도 셋이고, 셋이
+ * 중간점 텍스트가 번호를 말하는 것에 뜻이 있다. 한 선에 점이 셋이면 손잡이도 셋이고, 셋이
  * 같은 이름을 읽으면 보조기기를 쓰는 사람에게는 **구별 불가능한 단추 셋**이 된다.
+ *
+ * ## 이름이 **하는 일 둘을 모두** 말한다 (사용자 신고 2026-09-16)
+ *
+ * 중간점을 빼는 길은 M10 부터 있었다(그 손잡이 위의 더블클릭). 사용자는 그 길이 **없다고**
+ * 신고했다 — 화면이 그 사실을 어디에서도 말하지 않았기 때문이다. 손잡이는 끌리기도 하므로
+ * 모양만으로는 "끌어라" 밖에 말하지 못하고, 둘 중 하나만 말하는 이름은 다른 하나를 숨긴다.
+ * 그래서 세 이름 모두가 **끄는 일**을 먼저 말하고, 중간점만 **두 번 누르는 일**을 이어 말한다.
+ *
+ * 순서에 뜻이 있다: 끌기는 손이 먼저 닿는 조작이고 빼기는 그 다음이다. 빼기를 앞세우면
+ * 이름이 "이것은 지우는 단추" 로 읽혀, 끌어 옮기려던 손이 망설인다.
+ *
+ * 없애는 **두 번째 컨트롤**을 세우지 않는다(REQ-05-b). 그 컨트롤은 어디에 서야 하는지 ·
+ * 점이 몰렸을 때 무엇이 되는지 · 끝점 손잡이 밑에 깔린 점에서 무엇이 되는지를 다시 묻게
+ * 하고, 만드는 몸짓과 없애는 몸짓이 같다는 011 의 성질을 깬다. 이름은 그 셋을 하나도
+ * 새로 묻지 않는다.
  */
 const CONNECTOR_HANDLE_ARIA_KEYS: Readonly<Record<ConnectorSide | 'mid', string>> = {
   from: 'dashboard.canvas.edit.connectorHandleFrom',
@@ -656,11 +683,87 @@ const CONNECTOR_HANDLE_ARIA_KEYS: Readonly<Record<ConnectorSide | 'mid', string>
 };
 
 /**
- * 연결선 손잡이의 커서. **넷이 아니라 하나다** — 끝점도 중간점도 하는 일이 "이 점을 저기로
- * 옮긴다" 하나이므로, 방향을 뜻하는 8핸들의 커서 어휘가 여기서는 거짓말이 된다. 선 끝점
- * 핸들(`p1`·`p2`)이 같은 이유로 같은 커서를 쓴다.
+ * 연결선 손잡이의 **모양** — 끝점은 네모, 중간점은 동그라미 (사용자 신고 2026-09-16).
+ *
+ * M9 는 셋에 같은 옷을 입혔고, 그래서 화면에는 "파란 네모 셋" 만 있었다. 그 셋은 하는 일이
+ * 같지 않다: 끝점은 **다른 앵커로 갈아 끼우는** 자리이고(REQ-07-a), 중간점은 옮기거나
+ * **뺄 수 있는** 자리다(REQ-05-b). 구별이 없으면 "두 번 누르면 없어진다" 를 배운 사람도
+ * 그 규칙이 **어느 손잡이의 것**인지 알 수 없다 — 배울 수 없는 규칙은 없는 규칙이다.
+ *
+ * 동그라미를 고른 근거는 두 가지다. 하나는 이 표면이 이미 쓰는 어휘 — 파란 네모는 "잡아서
+ * 크기·끝을 바꾸는 것" 이다(8핸들 · `ANCHOR_DOT_CLASS` 주석이 같은 말을 한다). 다른 하나는
+ * 중간점이 실제로 **선 위에 꿴 구슬**이라는 사실이고, 구슬은 빼낼 수 있는 것으로 읽힌다.
+ *
+ * 앵커 점(초록 동그라미)과 섞이지 않는다 — 칠이 다르고, 둘이 함께 뜨는 동안에는 손잡이가
+ * 포인터를 내려놓는다(아래 렌더 §앵커 도구가 켜진 동안).
+ *
+ * **표로 두는 것이 요점이다.** `CONNECTOR_HANDLE_ARIA_KEYS` 와 **같은 키 셋**이므로 손잡이
+ * 종류가 하나 늘면 컴파일러가 두 표를 함께 가리킨다 — "이 손잡이는 무슨 모양이고 무슨
+ * 이름인가" 가 한 번에 물어진다.
+ */
+const CONNECTOR_HANDLE_CLASS: Readonly<Record<ConnectorSide | 'mid', string>> = {
+  from: HANDLE_CLASS,
+  to: HANDLE_CLASS,
+  mid: `${HANDLE_BODY_CLASS} rounded-full`,
+};
+
+/**
+ * 연결선 손잡이의 커서. **셋이 아니라 하나다** — 끝점도 중간점도 **끌었을 때** 하는 일이
+ * "이 점을 저기로 옮긴다" 하나이므로, 방향을 뜻하는 8핸들의 커서 어휘가 여기서는 거짓말이
+ * 된다. 선 끝점 핸들(`p1`·`p2`)이 같은 이유로 같은 커서를 쓴다.
+ *
+ * 중간점이 모양·이름에서는 갈리면서 커서에서는 갈리지 않는 것에 뜻이 있다. 커서가 답하는
+ * 물음은 **"끌면 무엇이 되는가"** 하나이고 그 답은 둘이 같다. 갈래를 하나 더 만들면 그
+ * 커서는 "이것은 끄는 것이 아니다" 를 뜻하게 되는데 그것은 거짓이다 — 중간점은 끌린다.
+ * 끌기 **말고도** 할 수 있는 일은 커서가 아니라 이름이 나른다(위 표).
  */
 const CONNECTOR_HANDLE_CURSOR = 'cursor-move';
+
+/**
+ * 펜 커서의 그림 — 24×24 SVG 하나 (사용자 신고 2026-09-16).
+ *
+ * ## 왜 Tailwind 클래스가 아닌가
+ *
+ * 위 두 커서는 `cursor-*` 유틸리티지만 그 어휘에 **펜이 없다.** CSS 표준 커서 33 가지에도
+ * 없다 — 가장 가까운 것은 `crosshair`(정밀 지정)이고 그것으로 끝냈다면 사용자가 요청한
+ * "펜 모양" 은 없는 채로 남았을 것이다. 그리는 도구를 쥔 손에 十자를 주는 것은 틀린 말은
+ * 아니지만 **아무 말도 아니다**: 이 표면에서 정밀 지정이 뜻하는 일이 셋이라(고르기 · 앵커
+ * 세우기 · 선 긋기) 十자는 그 셋을 가르지 못한다.
+ *
+ * ## 그림이 지키는 것 셋
+ *
+ *   1. **끝이 맞는 자리에 온다.** 핫스팟은 몸통 가운데가 아니라 **펜촉**(아래 `2 21`)이다.
+ *      펜은 촉으로 그으므로, 가운데를 잡으면 그림과 실제로 찍히는 자리가 어긋난다 — 이
+ *      파일이 손잡이 자리에 대해 지키는 그 성질(AC-E2)과 같은 종류다.
+ *   2. **어느 바탕에서도 보인다.** 칠은 선택 파랑 · 테두리는 흰색이다. 밝은 바탕에서는
+ *      파란 몸통이, 어두운 바탕에서는 흰 테두리가 읽힌다. 한쪽만 두면 그 반대 바탕에서
+ *      커서가 사라지고, 캔버스 바탕은 저술하는 사람이 정한다.
+ *   3. **그림이 없어도 뜻이 남는다.** 값 끝의 `crosshair` 는 장식이 아니라 **낱말 대체**다.
+ *      SVG 커서를 그리지 못하는 브라우저(사파리가 오래 그랬다)나 이미지를 못 읽은 경우
+ *      CSS 는 그 낱말로 떨어지므로, 최악의 경우에도 "여기서 정밀하게 무언가를 시작한다"
+ *      까지는 남는다. 낱말을 빼면 그 경우 커서가 기본 화살표로 돌아가 아무 말도 하지 않는다.
+ *
+ * `%3C`·`%23` 로 미리 죈 것은 `<`·`#` 이 데이터 URI 안에서 그대로 서지 못하기 때문이다.
+ */
+const PEN_CURSOR_SVG =
+  "%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E" +
+  "%3Cpath d='M2.5 21.5L4 17L17 4L20 7L7 20Z' fill='%233b82f6' stroke='%23ffffff' " +
+  "stroke-width='1.6' stroke-linejoin='round'/%3E" +
+  "%3Cpath d='M4 17L7 20' stroke='%23ffffff' stroke-width='1.2' stroke-linecap='round'/%3E" +
+  '%3C/svg%3E';
+
+/**
+ * 선을 그을 수 있는 자리의 커서 — **CSS 값 그대로**다(클래스가 아니다).
+ *
+ * 인라인 style 로 두는 것에 뜻이 있다. Tailwind 임의값으로 적으려면 이 문자열의 공백 ·
+ * 따옴표 · 쉼표를 전부 그 문법으로 도로 죄어야 하고, 그러면 **커서를 읽으려는 사람이
+ * 두 겹의 인코딩을 풀어야** 한다. 값이 켜졌다 꺼졌다 하는 것도 여기서는 상태이므로
+ * (`penCursor`) 클래스 이름이 늘 뜻을 나르지도 않는다.
+ *
+ * 핫스팟 `2 21` 은 위 그림의 펜촉(2.5, 21.5)을 정수로 내린 값이다 — CSS 핫스팟은 정수
+ * px 이고, 촉에서 반 픽셀 안쪽이 촉 밖보다 낫다.
+ */
+const PEN_CURSOR = `url("data:image/svg+xml,${PEN_CURSOR_SVG}") 2 21, crosshair`;
 
 /**
  * 앵커 점의 지름(스테이지 px). `h-2 w-2` 가 그리는 그 크기를 **수로도** 적는다.
@@ -1334,6 +1437,22 @@ export default function CanvasEditOverlay({
    * 컨트롤도 없고, 컨트롤을 지어 붙인다면 그것은 누를 시간이 존재하지 않는 단추가 된다.
    */
   const [connectorDraw, setConnectorDraw] = useState<ConnectorDraw | null>(null);
+
+  /**
+   * 지금 손이 **선을 시작할 수 있는 자리**에 있는가 — 펜 커서의 절반이다
+   * (사용자 신고 2026-09-16).
+   *
+   * 앵커 점은 표식이라 포인터를 먹지 않으므로(`ANCHOR_DOT_CLASS`) 커서가 그 점에서 나올
+   * 수 없다. 나오게 하려면 점을 단추로 바꿔야 하고, 그러면 AC-28 이 막는 "더블클릭 판정이
+   * 둘" 이 DOM 층에서 되살아난다. 그래서 **루트가 제 커서를 갈아 끼우고**, 갈아 끼울지는
+   * 포인터 자리로 판정한다 — 점은 표식인 채로 남는다.
+   *
+   * 불리언 하나뿐이고 자리를 들지 않는 것에 뜻이 있다: 자리를 들면 그 값이 곧 두 번째
+   * 포인터 장부가 되어 `dragRef`·`lastPressRef` 와 어긋날 수 있다. 여기서 필요한 것은
+   * "펜이냐 아니냐" 뿐이다.
+   */
+  const [penHover, setPenHover] = useState(false);
+  const penHoverRef = useRef(false);
 
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -2123,6 +2242,52 @@ export default function CanvasEditOverlay({
   };
 
   /**
+   * 펜 커서 판정을 **바뀔 때만** 갈아 끼운다 — 위 `setDropHighlight` 와 같은 규율이다
+   * (AC-E4). 이동마다 같은 값을 넣으면 렌더는 건너뛰어도 갱신을 예약하는 비용은 매번 든다.
+   */
+  const setPenHovering = (next: boolean): void => {
+    if (penHoverRef.current === next) return;
+    penHoverRef.current = next;
+    setPenHover(next);
+  };
+
+  /**
+   * 이번 이동이 커서를 바꾸는가 (사용자 신고 2026-09-16).
+   *
+   * ## 판정은 **누름이 읽는 그 표**를 읽는다
+   *
+   * 펜이 뜨는 조건은 `TOOL_CONNECTOR_ROUTE[tool] !== null` 이고, 그것은 누름이 잇기를
+   * 시작할지 정하는 **바로 그 줄**이다(`handlePointerDown`). 두 자가 갈리면 화면이 지키지
+   * 못할 약속을 하게 된다 — 펜을 보여 놓고 눌렀더니 고르기가 되는 자리다(위험 R1 의 규율을
+   * 커서에 적용한 것이다).
+   *
+   * 그래서 **앵커 도구에서는 펜이 뜨지 않는다.** 그 도구도 앵커를 보여 주지만
+   * (`TOOL_SHOWS_ANCHORS`) 그 점을 눌러 나는 것은 선이 아니라 앵커이고(REQ-02'), 그 표는
+   * `null` 을 낸다. 보이는 점마다 펜을 씌웠다면 앵커를 세우려는 손에게 화면이 선을 약속했을
+   * 것이다. 두 물음이 다르다는 사실은 `canvasTools.ts` 가 표를 둘로 나눠 이미 적어 두었다.
+   *
+   * ## 잡는 자는 **앵커를 집는 그 함수**다
+   *
+   * `anchorHitAt` 은 누름이 지나는 그 함수이고 오차도 같은 `ANCHOR_PICK_SLOP_PX` 다. 여기서
+   * 자리를 새로 셈하면 "펜이 뜨는 띠" 와 "실제로 집히는 띠" 가 두 벌이 된다.
+   *
+   * ## 긋는 동안에는 **묻지 않는다** — 커서는 몸짓이 끝날 때까지 펜이다
+   *
+   * 앵커에서 눌러 빈 자리로 끌고 가는 것이 이 몸짓의 전부이므로, 자리를 다시 물으면 앵커를
+   * 벗어나는 순간 커서가 기본으로 돌아간다. 긋는 중이라는 사실이 곧 "여기는 선을 긋는
+   * 자리" 이며, 그 사실은 `connectorDraw` 가 이미 들고 있다.
+   */
+  const updatePenHover = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (connectorDraw !== null) return;
+    if (TOOL_CONNECTOR_ROUTE[tool] === null) return;
+    const frame = pointerFrameOf(event.currentTarget.getBoundingClientRect(), stage);
+    const point = stagePoint(event.clientX, event.clientY, frame);
+    setPenHovering(
+      anchorHitAt(anchorHosts, point, projection, textWidths, ANCHOR_PICK_SLOP_PX) !== undefined,
+    );
+  };
+
+  /**
    * 사각형이 지금 감싸는 것들 — **바탕과의 합집합**이다.
    *
    * 투영은 `outlineBox` 를 지난다: 판정하는 상자와 골라진 뒤 **화면에 뜨는 그 상자**가
@@ -2136,6 +2301,12 @@ export default function CanvasEditOverlay({
     );
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+    // **커서 판정이 아래 세 갈래 **앞**에 선다** — 어느 갈래가 이 이동을 먹든 커서는
+    // 갱신되어야 한다(위 `updatePenHover`). 갈래 안에 넣으면 그 갈래가 늘 때마다 같은
+    // 한 줄을 베껴 넣어야 하고, 한 곳에서 빠지는 날 "어떤 몸짓 뒤에는 커서가 옛 모양에
+    // 남는" 자리가 생긴다.
+    updatePenHover(event);
+
     // **긋기가 가장 먼저다**(SPEC-CANVAS-011 M8). 마키·드래그와 배타적이므로 순서가 뜻을
     // 바꾸지는 않으나(셋은 서로 다른 누름에서만 시작된다), 먼저 끊어 두면 아래 두 경로가
     // 잇기를 모른 채로 남는다 — 마키가 같은 이유로 드래그 앞에 섰다.
@@ -2851,6 +3022,20 @@ export default function CanvasEditOverlay({
       aria-keyshortcuts={EDIT_KEY_SHORTCUTS}
       // 캔버스 위 전면 층. 터치 스크롤이 드래그를 가로채지 않게 `touch-none` 을 둔다.
       className="absolute inset-0 z-20 touch-none"
+      // **펜 커서가 여기 산다**(사용자 신고 2026-09-16). 앵커 점은 표식이라 포인터를 먹지
+      // 않으므로 커서가 그 점에서 나올 수 없고(§`penHover`), 루트가 곧 그 점 아래 깔린
+      // 면이다. 조건 둘은 사용자가 말한 그 둘이다 — **선이 시작될 수 있는 자리 위**와
+      // **선을 긋고 있는 동안**.
+      //
+      // 도구 표를 **여기서 한 번 더** 읽는 것에 뜻이 있다. 판정은 이동에서만 도는데 도구는
+      // 단추로 바뀌므로, 이 줄이 없으면 도구를 끈 뒤에도 손을 움직이기 전까지 펜이 남는다.
+      // 값이 아니라 렌더가 그 사실을 들게 하면 끄는 쪽이 즉시 참이 된다.
+      style={{
+        cursor:
+          connectorDraw !== null || (TOOL_CONNECTOR_ROUTE[tool] !== null && penHover)
+            ? PEN_CURSOR
+            : undefined,
+      }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -3254,8 +3439,13 @@ export default function CanvasEditOverlay({
               type="button"
               data-testid={`canvas-connector-handle-${name}`}
               aria-label={connectorHandleLabel(t, handle)}
+              // **보는 사람에게도 같은 말을 한다.** `aria-label` 만 두면 "두 번 누르면
+              // 없어진다" 는 사실이 보조기기를 쓰는 사람에게만 있고, 마우스를 쓰는 사람은
+              // 그 길이 아예 없다고 읽는다 — 그것이 신고된 형상이다. 도구 단추들이 이미
+              // 쓰는 관용구 그대로 **같은 키**를 두 자리에 건다(`CanvasConnectorTools`).
+              title={connectorHandleLabel(t, handle)}
               className={cn(
-                HANDLE_CLASS,
+                CONNECTOR_HANDLE_CLASS[handle.kind === 'end' ? handle.side : 'mid'],
                 CONNECTOR_HANDLE_CURSOR,
                 TOOL_ANCHOR_GESTURE[tool] && 'pointer-events-none',
               )}

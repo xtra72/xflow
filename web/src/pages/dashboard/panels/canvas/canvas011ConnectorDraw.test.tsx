@@ -934,3 +934,155 @@ describe('그은 선의 형상이 저술로서 온전하다', () => {
     expect(live[live.length - 1]!.id).toBe(connectors()[0]!.id);
   });
 });
+
+// --- 펜 커서 (사용자 신고 2026-09-16) ----------------------------------------
+
+/** 지금 루트가 쓰는 커서. 빈 문자열이면 브라우저 기본이다. */
+function cursor(): string {
+  return overlayRoot().style.cursor;
+}
+
+function isPen(): boolean {
+  return cursor().startsWith('url(');
+}
+
+function enableAnchorTool(): void {
+  const button = screen.getByTestId('canvas-anchor-tool');
+  fireEvent.click(button);
+  expect(button.getAttribute('aria-pressed'), 'precondition: 앵커 도구가 켜졌다').toBe('true');
+}
+
+describe('선을 그을 수 있는 자리에서 커서가 **펜**이 된다', () => {
+  // 신고는 둘이었다 — **앵커 위**에서, 그리고 **긋는 동안**. 그 둘이 이 절의 전부다.
+  //
+  // 커서가 루트에 사는 까닭은 앵커 점이 **표식**이기 때문이다(`ANCHOR_DOT_CLASS` —
+  // `pointer-events-none`). 점에서 커서를 내려면 점을 단추로 바꿔야 하고, 그러면 AC-28 이
+  // 막는 "더블클릭 판정이 둘" 이 DOM 층에서 되살아난다.
+
+  it('도구가 꺼져 있으면 앵커 위에서도 펜이 아니다', () => {
+    // 고르기 도구에서 앵커를 누르면 나는 것은 선이 아니라 고르기다. 그때 펜을 보이면
+    // 화면이 지키지 못할 약속을 한다.
+    setup();
+    move(AT.r1East);
+    expect(isPen()).toBe(false);
+  });
+
+  it.each(CONNECTOR_TOOLS)('%s 도구에서 앵커 위면 펜이다', (tool) => {
+    setup();
+    enableTool(tool);
+    move(AT.r1East);
+    expect(isPen()).toBe(true);
+  });
+
+  it('같은 도구라도 앵커가 아닌 자리는 펜이 아니다 — 몸통도 빈 자리도', () => {
+    // 도구가 켜져 있어도 앵커 밖의 누름은 **종전의 뜻 그대로**다(고르기 · 마키).
+    setup();
+    enableTool();
+    for (const point of [AT.r1Body, AT.empty]) {
+      move(point);
+      expect(isPen(), `${point.x},${point.y}`).toBe(false);
+    }
+  });
+
+  it('앵커를 벗어나면 도로 기본이다 — 켜진 채로 남지 않는다', () => {
+    setup();
+    enableTool();
+    move(AT.r1East);
+    expect(isPen(), 'precondition: 앵커 위에서 펜이다').toBe(true);
+    move(AT.empty);
+    expect(isPen()).toBe(false);
+  });
+
+  it('**앵커 도구**에서는 펜이 아니다 — 그 점을 눌러 나는 것은 선이 아니다', () => {
+    // 앵커 도구도 앵커를 보여 주지만(`TOOL_SHOWS_ANCHORS`) 그 누름이 만드는 것은 앵커다
+    // (REQ-02'). 커서는 `TOOL_CONNECTOR_ROUTE` 를 읽고, 그것은 누름이 잇기를 시작할지
+    // 정하는 **그 표**다 — 두 자가 갈리면 보이는 약속과 일어나는 일이 갈린다.
+    setup();
+    enableAnchorTool();
+    expect(dotIds().length, 'precondition: 앵커 점은 보인다').toBeGreaterThan(0);
+    move(AT.r1East);
+    expect(isPen()).toBe(false);
+  });
+
+  it('도구를 끄면 **손을 움직이기 전에** 펜이 사라진다', () => {
+    // 판정은 이동에서만 도는데 도구는 단추로 바뀐다. 렌더가 표를 한 번 더 읽지 않으면
+    // 끈 뒤에도 손이 움직일 때까지 펜이 남는다.
+    setup();
+    enableTool();
+    move(AT.r1East);
+    expect(isPen(), 'precondition: 펜이다').toBe(true);
+
+    fireEvent.click(toolButton('straight'));
+    expect(toolButton('straight').getAttribute('aria-pressed')).toBe('false');
+    expect(isPen()).toBe(false);
+  });
+});
+
+describe('긋는 동안에는 커서가 **펜으로 남는다**', () => {
+  it('앵커를 벗어나 빈 자리로 끌어도 기본으로 돌아가지 않는다', () => {
+    // 이 한 줄이 신고의 둘째 절반이다. 자리를 계속 물으면 앵커를 벗어나는 순간 커서가
+    // 바뀌는데, 긋는 중이라는 사실 자체가 "여기는 선을 긋는 자리" 다.
+    setup();
+    enableTool();
+    down(AT.r1East);
+    move(AT.empty);
+    expect(isPen()).toBe(true);
+  });
+
+  it('다른 앵커 위를 지날 때도 그대로다 — 몸짓 안에서 커서가 깜빡이지 않는다', () => {
+    setup();
+    enableTool();
+    down(AT.r1East);
+    for (const point of [AT.empty, AT.r2West, AT.r1Body, AT.r2West]) {
+      move(point);
+      expect(isPen(), `${point.x},${point.y}`).toBe(true);
+    }
+  });
+
+  it('놓으면 그 자리가 답한다 — 빈 자리에서 끝내면 기본으로 돌아온다', () => {
+    setup();
+    enableTool();
+    draw(AT.r1East, AT.empty);
+    expect(connectors(), 'precondition: 선 하나가 그어졌다').toHaveLength(1);
+    expect(isPen()).toBe(false);
+  });
+});
+
+describe('펜 그림이 지키는 것 셋', () => {
+  const penValue = (): string => {
+    setup();
+    enableTool();
+    move(AT.r1East);
+    return cursor();
+  };
+
+  it('그림이 SVG 데이터 URI 하나다 — 파일을 더 받아 오지 않는다', () => {
+    expect(penValue()).toContain('data:image/svg+xml,');
+  });
+
+  it('핫스팟이 **펜촉**이다 — 몸통 가운데가 아니다', () => {
+    // 펜은 촉으로 긋는다. 가운데를 잡으면 그림과 실제로 집히는 자리가 어긋나고, 그
+    // 어긋남은 이 표면이 손잡이 자리에 대해 막아 둔 그것과 같은 종류다(AC-E2).
+    const value = penValue();
+    const hotspot = value.match(/\)\s+(\d+)\s+(\d+)\s*,/);
+    expect(hotspot, '핫스팟 두 수가 url() 뒤에 온다').not.toBeNull();
+    const [x, y] = [Number(hotspot![1]), Number(hotspot![2])];
+    // 24×24 그림의 왼쪽 아래 — 그 자리에 촉이 있다.
+    expect(x).toBeLessThan(6);
+    expect(y).toBeGreaterThan(18);
+    expect(y).toBeLessThan(24);
+  });
+
+  it('그림을 못 그려도 뜻이 남는다 — 낱말 대체가 붙어 있다', () => {
+    // SVG 커서를 그리지 못하는 브라우저에서 이 낱말이 없으면 커서가 기본 화살표로
+    // 돌아가 아무 말도 하지 않는다.
+    expect(penValue().trim()).toMatch(/,\s*crosshair$/);
+  });
+
+  it('어느 바탕에서도 보인다 — 칠과 흰 테두리를 함께 든다', () => {
+    // 한쪽만 두면 그 반대 바탕에서 커서가 사라지고, 캔버스 바탕은 저술하는 사람이 정한다.
+    const value = penValue();
+    expect(value, '선택 파랑 칠').toContain('%233b82f6');
+    expect(value, '흰 테두리').toContain("stroke='%23ffffff'");
+  });
+});

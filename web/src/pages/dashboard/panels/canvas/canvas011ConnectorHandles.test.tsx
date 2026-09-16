@@ -647,3 +647,119 @@ describe('손잡이를 잡으면 **그것만** 일어난다', () => {
     expect(screen.queryByTestId('canvas-connector-preview')).toBeNull();
   });
 });
+
+// --- 없애는 길이 **보인다** (사용자 신고 2026-09-16) --------------------------
+
+describe('중간점 손잡이가 **제가 무엇인지** 말한다 (REQ-05-b)', () => {
+  // 신고는 "중간점을 없앨 수 없다" 였고, 길은 M10 부터 있었다(그 손잡이 위의 더블클릭 —
+  // `canvas011PointEdit.test.tsx` 가 그것을 재고 있다). 없던 것은 **길을 알릴 화면**이다.
+  //
+  // 사용자가 고른 고침은 "몸짓은 그대로 두고 보이게 하라" 였다. 없애는 두 번째 컨트롤을
+  // 세우지 않는 근거는 SPEC 이 REQ-05-b 에 적어 두었다 — 그 컨트롤은 어디에 서는지 · 점이
+  // 몰리면 무엇이 되는지 · 끝점 손잡이 밑에서 무엇이 되는지를 다시 묻게 한다.
+  //
+  // 그래서 이 절이 재는 것은 셋이다: **이름이 두 조작을 모두 말하는가** · **보는 사람에게도
+  // 같은 말을 하는가**(`title`) · **끝점과 눈으로 갈리는가**.
+
+  it('이름이 끄는 일과 두 번 누르는 일을 **모두** 말한다', () => {
+    setup([R1, R2, EL3, C_MID]);
+    pick('c-mid');
+    const label = handle('mid-0').getAttribute('aria-label') ?? '';
+
+    // 번호가 먼저 든다 — 점이 둘이면 이름도 둘이어야 한다(AC-62 의 그 성질).
+    expect(label).toContain('1');
+    // 끄는 일이 먼저다: 손이 먼저 닿는 조작이고, 빼기를 앞세우면 이름이 "지우는 단추" 로
+    // 읽혀 끌어 옮기려던 손이 망설인다.
+    expect(label).toContain('끌면');
+    expect(label).toContain('두 번');
+    expect(label.indexOf('끌면')).toBeLessThan(label.indexOf('두 번'));
+  });
+
+  it('두 점의 이름이 서로 다르다 — 번호가 실제로 채워진다', () => {
+    setup([R1, R2, EL3, C_MID]);
+    pick('c-mid');
+    expect(handle('mid-0').getAttribute('aria-label')).not.toBe(
+      handle('mid-1').getAttribute('aria-label'),
+    );
+  });
+
+  it('`title` 이 **같은 문장**을 나른다 — 보는 사람에게도 길이 있다', () => {
+    // `aria-label` 만 두면 그 사실이 보조기기를 쓰는 사람에게만 있고, 마우스를 쓰는
+    // 사람에게는 길이 **없는 것과 같다** — 그것이 신고된 형상이다.
+    setup([R1, R2, EL3, C_MID]);
+    pick('c-mid');
+    for (const name of ['from', 'mid-0', 'mid-1', 'to']) {
+      const el = handle(name);
+      expect(el.getAttribute('title'), name).toBe(el.getAttribute('aria-label'));
+      expect((el.getAttribute('title') ?? '').length, name).toBeGreaterThan(0);
+    }
+  });
+
+  it('끝점 이름은 **갈아 끼우는 일**을 말하고 빼기를 말하지 않는다', () => {
+    // 끝점은 빠지지 않는다(REQ-07-a) — 두 끝이 없는 연결선은 표현될 수 없다. 이름이 그
+    // 일을 말하면 화면이 지키지 못할 약속을 한다.
+    setup([R1, R2, EL3, C_MID]);
+    pick('c-mid');
+    for (const name of ['from', 'to']) {
+      const label = handle(name).getAttribute('aria-label') ?? '';
+      expect(label, name).toContain('끌어서');
+      expect(label.includes('두 번'), name).toBe(false);
+    }
+  });
+
+  it('중간점은 **동그라미**, 끝점은 **네모**다 — 눈으로 갈린다', () => {
+    setup([R1, R2, EL3, C_MID]);
+    pick('c-mid');
+    for (const name of ['mid-0', 'mid-1']) {
+      expect(handle(name).className, name).toContain('rounded-full');
+      expect(handle(name).className.includes('rounded-sm'), name).toBe(false);
+    }
+    for (const name of ['from', 'to']) {
+      expect(handle(name).className, name).toContain('rounded-sm');
+      expect(handle(name).className.includes('rounded-full'), name).toBe(false);
+    }
+  });
+
+  it('갈리는 것은 **모양뿐**이다 — 크기·칠·초점 테두리는 한 벌이다', () => {
+    // 몸통까지 갈리면 두 손잡이가 서로 다른 무리로 읽히고, 무엇보다 크기를 한 번 바꾸는
+    // 날 둘이 어긋난다. 집는 오차(`ANCHOR_PICK_SLOP_PX`)는 그 크기에서 나온 하나뿐이다.
+    setup([R1, R2, EL3, C_MID]);
+    pick('c-mid');
+    const shared = ['h-2.5', 'w-2.5', 'bg-blue-500', 'border-white', 'focus:ring-blue-300'];
+    for (const name of ['from', 'mid-0', 'mid-1', 'to']) {
+      for (const token of shared) {
+        expect(handle(name).className, `${name}:${token}`).toContain(token);
+      }
+    }
+  });
+
+  it('커서는 여전히 **하나**다 — 끌면 무엇이 되는가에 대한 답은 둘이 같다', () => {
+    // 중간점에 다른 커서를 주면 그 커서는 "이것은 끄는 것이 아니다" 를 뜻하게 되는데
+    // 그것은 거짓이다. 끌기 말고도 할 수 있는 일은 커서가 아니라 이름이 나른다.
+    setup([R1, R2, EL3, C_MID]);
+    pick('c-mid');
+    for (const name of ['from', 'mid-0', 'mid-1', 'to']) {
+      expect(handle(name).className, name).toContain('cursor-move');
+    }
+  });
+
+  it('없애는 **두 번째 컨트롤**이 서지 않았다 (REQ-05-b)', () => {
+    // 손잡이 넷 말고 다른 단추가 서면 "점을 없애는 길" 이 둘이 되고, 그 둘은 자리도
+    // 문턱도 따로 들게 된다. 넷이 전부임을 세어서 못박는다.
+    setup([R1, R2, EL3, C_MID]);
+    pick('c-mid');
+    expect(handleNames()).toEqual(['from', 'mid-0', 'mid-1', 'to']);
+    expect(boxHandleNames(), '연결선에는 8핸들도 서지 않는다(AC-63)').toEqual([]);
+  });
+
+  it('보이게 만든 뒤에도 그 몸짓은 **그대로 먹는다** — 알림이 길을 바꾸지 않았다', () => {
+    setup([R1, R2, EL3, C_MID]);
+    pick('c-mid');
+    const el = handle('mid-0');
+    down(el, AT.mid0);
+    up(AT.mid0);
+    down(el, AT.mid0);
+    up(AT.mid0);
+    expect(connector('c-mid').points).toEqual([{ x: 360, y: 120 }]);
+  });
+});

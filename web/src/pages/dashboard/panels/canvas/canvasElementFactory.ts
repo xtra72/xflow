@@ -42,6 +42,7 @@ import type { CanvasNode } from './group/groupTypes';
 import {
   CONNECTOR_KIND,
   isConnector,
+  routeHosting,
   type ConnectorElement,
   type ConnectorEnd,
   type ConnectorRoute,
@@ -428,6 +429,13 @@ export function freeConnectorEnd(at: PointGeometry): ConnectorEnd {
  * 함수를 여기서도 지난다 — 죄지 않고 소수를 실으면 다음에 파일을 읽는 순간 파서의
  * `Math.round` 가 사용자의 선을 반 칸 옮긴다. 넘겨주는 쪽이 이미 죄어 왔더라도 이 문은
  * 닫아 둔다: 만드는 모듈이 무엇을 저장하는지에 대한 책임은 부르는 쪽 사정에 달릴 수 없다.
+ *
+ * ## 점을 받으면 `route` 도 **그 점이 사는 갈래**로 죈다
+ *
+ * 정수로 죄는 그 규율이 갈래에도 그대로 붙는다(`routeHosting`). 오늘 이 문으로 점이 드는
+ * 길은 자유선 하나뿐이고 그 갈래는 이미 제 점을 들 수 있으므로 이 줄은 값을 바꾸지
+ * 않는다 — 그래도 두는 까닭은 같다: **점을 쓰는 문이 셋인데 둘만 죄면** 그 불변식
+ * ("직선은 점을 들지 않는다")은 사실이 아니라 관례가 되고, 관례는 다음 호출자가 깬다.
  */
 export function appendConnector(
   elements: readonly CanvasNode[],
@@ -445,7 +453,7 @@ export function appendConnector(
     kind: CONNECTOR_KIND,
     from,
     to,
-    route,
+    route: routeHosting(route, mid.length),
     ...(mid.length > 0 ? { points: mid } : {}),
     style: connectorSeedStyle(),
   };

@@ -286,12 +286,27 @@ describe('선 위 더블클릭이 점을 만든다 (AC-67 · REQ-05)', () => {
     expect(midpoints('c-plain')).toEqual([{ x: 250, y: 150 }]);
   });
 
-  it('직선에는 점이 들지 않는다 — 두 끝을 잇는 직선 하나 그대로다 (REQ-04)', () => {
+  // **넓힌 조항**(사용자 신고 2026-09-16). 종전 이 자리에는 "직선에는 점이 들지 않는다 —
+  // 두 끝을 잇는 직선 하나 그대로다" 가 있었고, 그것이 M10 이 고른 **말없는 거절**을 못으로
+  // 박고 있었다. 그 거절이 결함이었다: 직선은 도구 넷의 첫째라 사람이 가장 먼저 긋는
+  // 선인데, 그 선만 꺾이지 않으면서 왜 안 되는지도 말하지 않았다.
+  //
+  // 걷어낸 것이 아니라 **한 칸 옮겼다.** 지키려던 문장(REQ-04 — 직선은 두 끝을 곧게 잇는다)은
+  // 그대로이고, 지금 그것을 붙드는 자리가 둘이다: 아래 한 줄(직선인 동안은 점이 없다)과,
+  // 문 셋 전부를 재는 `connector/connectorRoutePromote.test.ts`.
+  it('직선은 점을 든 채로 직선인 적이 없다 (REQ-04)', () => {
     setup([R1, R2, C_STRAIGHT]);
     pick('c-straight');
+    expect(drawn('c-straight').map((cmd) => cmd.c), 'precondition: 곧은 선이다').toEqual([
+      'M',
+      'L',
+    ]);
+
     doubleClick(overlayRoot(), AT.ink);
-    expect(midpoints('c-straight')).toEqual([]);
-    expect(drawn('c-straight').map((cmd) => cmd.c)).toEqual(['M', 'L']);
+    // 두 단언을 **함께** 재는 것이 REQ-04 가 뜻하는 전부다: 점이 들었고, 그러므로 그 선은
+    // 더는 직선이 아니다. 하나만 재면 다른 하나가 조용히 어긋난다.
+    expect(midpoints('c-straight')).toHaveLength(1);
+    expect(conn('c-straight').route).not.toBe('straight');
   });
 
   it('**고르지 않은** 선을 더블클릭하면 첫 누름이 고르고 둘째가 찍는다', () => {
@@ -510,5 +525,44 @@ describe('그룹 부품 위면 진입, 연결선 잉크 위면 점 생성 (AC-73
     click(overlayRoot(), AT.empty);
     click(overlayRoot(), AT.ink);
     expect(midpoints('c-plain')).toEqual([]);
+  });
+});
+
+// --- 직선의 승격 (사용자 신고 2026-09-16) ------------------------------------
+
+describe('직선을 꺾으면 **꺾은 선으로 승격한다** (REQ-04 · REQ-05)', () => {
+  it('점이 들고 `route` 가 함께 바뀐다 — 몸짓이 말없이 거절되지 않는다', () => {
+    setup([R1, R2, C_STRAIGHT]);
+    pick('c-straight');
+    expect(conn('c-straight').route, 'precondition: 직선이다').toBe('straight');
+
+    doubleClick(overlayRoot(), AT.ink);
+    expect(midpoints('c-straight')).toEqual([{ x: 250, y: 150 }]);
+    expect(conn('c-straight').route).toBe('elbow');
+  });
+
+  it('승격한 선이 실제로 꺾인다 — 명령 목록이 그 점을 지난다', () => {
+    setup([R1, R2, C_STRAIGHT]);
+    pick('c-straight');
+    doubleClick(overlayRoot(), AT.ink);
+    drag(handle('mid-0'), AT.ink, { x: 250, y: 60 });
+
+    expect(drawn('c-straight')).toEqual([
+      { c: 'M', x: 200, y: 150 },
+      { c: 'L', x: 250, y: 60 },
+      { c: 'L', x: 300, y: 150 },
+    ]);
+  });
+
+  it('마지막 점을 빼도 직선으로 **되돌아가지 않는다**', () => {
+    setup([R1, R2, C_STRAIGHT]);
+    pick('c-straight');
+    doubleClick(overlayRoot(), AT.ink);
+    expect(conn('c-straight').route, 'precondition: 승격했다').toBe('elbow');
+
+    doubleClick(handle('mid-0'), AT.ink);
+    expect(conn('c-straight').points).toBeUndefined();
+    expect(conn('c-straight').route).toBe('elbow');
+    expect(drawn('c-straight').map((cmd) => cmd.c)).toEqual(['M', 'L']);
   });
 });

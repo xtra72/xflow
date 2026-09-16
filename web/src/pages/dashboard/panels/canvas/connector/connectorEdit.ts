@@ -52,6 +52,13 @@
 // `addAnchorAt` · `removeAnchor` 가 노드에 대해 하는 그대로이며, 할 일이 없으면 받은
 // 것을 그대로 돌려준다. 배열에 옮기는 일은 오버레이의 `map` 한 줄이다.
 //
+// ## 점을 싣는 일은 **갈래를 함께 옮긴다** (사용자 신고 2026-09-16)
+//
+// 직선 위의 두 번째 누름은 종전에 아무 말 없이 아무 일도 하지 않았다. 지금은 다른 셋과
+// 같은 뜻이고, 점이 드는 그 순간 `route` 가 점을 들 수 있는 갈래로 **함께** 갈아 끼워진다
+// (`insertPointAt` → `routeHosting`). 한 객체 안에서 일어나므로 "직선인데 점을 든" 중간
+// 상태가 존재할 자리가 없다 — REQ-04 가 지키는 것이 그 상태의 부재다.
+//
 // **이 모듈은 DOM 도 React 도 모른다.** 점과 숫자와 순수 함수뿐이라 jsdom 없이 전량
 // 단위 시험된다.
 //
@@ -68,11 +75,7 @@ import {
 } from '../canvasGeometry';
 import { FLATTEN_TOLERANCE_PX, flattenPath } from '../shapes/pathFlatten';
 import { connectorPath } from './connectorPath';
-import {
-  ROUTE_TAKES_POINTS,
-  type ConnectorElement,
-  type ConnectorRoute,
-} from './connectorTypes';
+import { routeHosting, type ConnectorElement, type ConnectorRoute } from './connectorTypes';
 
 // --- 한 누름이 뜻하는 것 ---------------------------------------------------
 
@@ -80,9 +83,15 @@ import {
  * 선 위의 두 번째 누름이 뜻하는 것.
  *
  * `undefined`(아무 뜻도 없음)와 두 갈래뿐이고 `refuse` 가 없다 — 앵커 쪽은 "여기엔 놓을
- * 수 없다" 는 사실을 화면이 말해야 했지만(A11 의 선·문구), 여기서 뜻이 서지 않는 경우는
- * **직선**과 **끊긴 연결** 둘뿐이고 그 둘은 사용자가 이미 보고 있는 사실이다: 직선에는
- * 꺾을 허리가 없고, 끊긴 선은 애초에 그려지지도 않는다(REQ-08).
+ * 수 없다" 는 사실을 화면이 말해야 했지만(A11 의 선·텍스트), 여기서 뜻이 서지 않는 경우는
+ * **끊긴 연결** 하나뿐이고 그것은 사용자가 이미 보고 있는 사실이다: 끊긴 선은 애초에
+ * 그려지지도 않는다(REQ-08).
+ *
+ * **직선이 이 목록에서 빠진 것이 M10 의 고침이다.** 종전에는 직선도 "아무 뜻 없음" 이었고
+ * 화면은 그 거절을 말하지 않았다 — 도구 넷 가운데 첫째가, 즉 사람이 가장 먼저 긋는 선이
+ * 말없이 꺾이지 않았다(사용자 신고 2026-09-16). 지금 직선 위의 두 번째 누름은 다른 셋과
+ * **같은 뜻**이며, 그 선이 점을 들 수 있는 갈래로 갈아 끼워지는 일은 점을 싣는 쪽
+ * (`insertPointAt`)의 그 한 줄에서 **함께** 일어난다.
  */
 export type ConnectorPointGesture =
   | { kind: 'insert'; index: number; at: CanvasPoint }
@@ -91,11 +100,20 @@ export type ConnectorPointGesture =
 /**
  * 화면의 한 점(스테이지 px)이 뜻하는 중간점 몸짓.
  *
- * 순서가 규칙의 전부다: **점을 들 수 없는 갈래면 아무 뜻도 없음**(직선 — REQ-04) →
- * **오차 안에 중간점이 있으면 빼기**(REQ-05-b · AC-71) → **아니면 그 구간의 뒤에
- * 끼워 넣기**(REQ-05-a · AC-68). 앵커 쪽 순서(거절 → 빼기 → 더하기)와 같은 모양이며,
- * 같은 이유로 **빼기가 먼저다** — 점 위를 눌렀는데 그 곁에 점이 하나 더 생기면 사용자는
- * 지우려던 손으로 늘리게 된다.
+ * 순서가 규칙의 전부다: **오차 안에 중간점이 있으면 빼기**(REQ-05-b · AC-71) → **아니면
+ * 그 구간의 뒤에 끼워 넣기**(REQ-05-a · AC-68). 앵커 쪽 순서와 같은 이유로 **빼기가
+ * 먼저다** — 점 위를 눌렀는데 그 곁에 점이 하나 더 생기면 사용자는 지우려던 손으로 늘리게
+ * 된다.
+ *
+ * ## `route` 로 **거르지 않는다** (M10 의 고침)
+ *
+ * 종전에는 이 함수의 첫 줄이 직선을 걸러 냈다. 그 줄이 사라진 자리에 다른 갈래가 서지
+ * 않는 것이 요점이다 — 직선의 해석된 목록은 `[시작, 끝]` 둘뿐이라 뺄 중간점이 없고,
+ * 그래서 **아래 두 줄이 글자 하나 바뀌지 않고** 직선에 대해 옳게 돈다: 빼기는 찾을 것이
+ * 없어 지나가고, 끼워 넣기는 그 하나뿐인 구간의 뒤(색인 0)를 낸다.
+ *
+ * `route` 는 여전히 인자다 — 자리를 고를 때 **그려진 잉크**를 봐야 하고(아래 `nearestSlot`),
+ * 곡선은 제어 다각형과 다른 자리를 지나기 때문이다.
  *
  * ## 오차는 인자이고, 그 값은 앵커의 것을 그대로 쓴다
  *
@@ -124,7 +142,6 @@ export function connectorPointGestureAt(
   proj: CanvasProjection,
   slopPx: number,
 ): ConnectorPointGesture | undefined {
-  if (!ROUTE_TAKES_POINTS[route]) return undefined;
   // 점이 둘이 되지 못하면 구간이 없다 — 손으로 지은 목록이 들어와도 던지지 않는다
   // (`connectorPath` 가 빈 목록에 대해 하는 그 선택과 같다).
   if (points === undefined || points.length < 2) return undefined;
@@ -308,6 +325,16 @@ function nearestSlot(
  *
  * 끝에 붙이는 것(`index === points.length`)은 범위 안이다 — 마지막 구간을 누른 누름이
  * 그 자리를 낸다(REQ-05-a 의 "구간의 뒤" 가 마지막 구간에서 뜻하는 값이다).
+ *
+ * ## `route` 를 **함께** 갈아 끼운다 (M10 · 사용자 신고 2026-09-16)
+ *
+ * 점을 싣는 일과 갈래를 올리는 일이 **객체 하나**에서 일어나는 것이 이 함수의 절반이다.
+ * 두 줄로 나누면 그 사이에 `straight` 이면서 `points` 를 든 연결선이 **표현 가능해지고**,
+ * 그 상태에서 누가 한 번 그리면 REQ-04 가 거짓인 그림이 화면에 남는다. 승격이 값을 만드는
+ * 그 표현 안에 있으므로 중간 상태가 존재할 자리가 없다.
+ *
+ * 무엇으로 올라가는지는 여기서 정하지 않는다 — `routeHosting` 한 자리이며, 만드는 쪽과
+ * 읽어 들이는 쪽이 지나는 그 함수다(`connectorTypes.ts`).
  */
 export function insertPointAt(
   connector: ConnectorElement,
@@ -317,7 +344,8 @@ export function insertPointAt(
   const points = connector.points ?? [];
   if (index < 0 || index > points.length) return connector;
   const inserted: PointGeometry = { x: coordinate(at.x, 0), y: coordinate(at.y, 0) };
-  return { ...connector, points: [...points.slice(0, index), inserted, ...points.slice(index)] };
+  const next = [...points.slice(0, index), inserted, ...points.slice(index)];
+  return { ...connector, route: routeHosting(connector.route, next.length), points: next };
 }
 
 /**
@@ -330,6 +358,11 @@ export function insertPointAt(
  * 그리고 그 규율에는 **화면의 뜻**이 있다: 점을 전부 뺀 곡선은 휠 자리가 없으므로
  * `curveSegments` 가 빈 목록을 내고, 그래서 그 선은 **직선으로 돌아온다**(AC-50).
  * "빼면 직선으로 돌아온다" 는 사용자의 말이 여기서 코드 한 줄도 없이 성립한다.
+ *
+ * **`route` 는 건드리지 않는다.** 위 `insertPointAt` 의 승격에는 짝이 없다 — 되돌릴 값을
+ * 알 수 없고, 되돌려도 화면이 달라지지 않기 때문이다(근거는 `routeHosting` 의 주석).
+ * 그래서 이 함수가 내는 "직선으로 돌아온 그림" 은 `route` 가 아니라 **점이 없다는 사실**
+ * 에서 나온다.
  */
 export function removePointAt(connector: ConnectorElement, index: number): ConnectorElement {
   const points = connector.points;

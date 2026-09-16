@@ -52,6 +52,7 @@ import {
   DEFAULT_CONNECTOR_ROUTE,
   isConnectorKind,
   MAX_CONNECTOR_POINTS,
+  routeHosting,
   type ConnectorElement,
   type ConnectorEnd,
   type ConnectorRoute,
@@ -1045,6 +1046,20 @@ function parseConnectorRoute(raw: unknown): ConnectorRoute {
  * 스타일 · 규칙 · 바인딩 · 트윈은 001 의 파서를 **그대로** 부른다. 캐스케이드 파서가 둘이
  * 되면 "요소에서는 먹는 규칙이 연결선에서는 안 먹는" 자리가 생긴다. `style` 은 그룹과
  * 같이 빈 객체를 만들어 채우지 않는다(`parseOptionalStyle`).
+ *
+ * ## 점이 살아남으면 `route` 는 **그 점이 사는 갈래**다 (`routeHosting`)
+ *
+ * 손으로 적은 파일은 `route: 'straight'` 와 `points` 를 함께 적을 수 있다. 그 둘은 같은
+ * 자리에 설 수 없다 — `connectorPath` 가 직선을 점 목록 그대로 이어 그리므로, 그대로
+ * 받아들이면 "직선이라고 적혀 있는데 폴리라인으로 그려지는 선" 이 화면에 남고 REQ-04 가
+ * 그 순간 거짓이 된다.
+ *
+ * 버리는 쪽(점을 떨어뜨린다)이 아니라 **올리는 쪽**을 고른다. 위 `parseConnectorRoute` 가
+ * 모르는 `route` 를 버리지 않고 직선으로 떨어뜨리는 그 근거와 같은 방향이다 — 사용자가
+ * 찍어 둔 꺾임은 되돌릴 길이 없지만, 그리는 법은 한 번 더 고르면 된다.
+ *
+ * 저술하는 쪽(`insertPointAt` · `appendConnector`)이 지나는 **그 함수**를 여기서도 지나므로
+ * 저장 왕복에 값이 달라지지 않는다: 승격해서 저장한 `elbow` 는 그대로 `elbow` 로 돌아온다.
  */
 function parseConnector(e: Record<string, unknown>): ConnectorElement | null {
   const id = optionalString(e.id);
@@ -1065,7 +1080,7 @@ function parseConnector(e: Record<string, unknown>): ConnectorElement | null {
     kind: CONNECTOR_KIND,
     from,
     to,
-    route: parseConnectorRoute(e.route),
+    route: routeHosting(parseConnectorRoute(e.route), points?.length ?? 0),
     ...(points !== undefined ? { points } : {}),
     ...(style !== undefined ? { style } : {}),
     ...(binding !== undefined ? { binding } : {}),

@@ -66,6 +66,10 @@ const GEOMETRY = 'canvasGeometry.ts';
 const FACTORY = 'canvasElementFactory.ts';
 /** 목록 편집기 — M12 가 연결선 행을 여기 세웠다(끊김을 **묻는** 넷째 자리). */
 const LIST = 'CanvasElementsEditor.tsx';
+/** 연결선의 자료형과 표 — 점이 어느 갈래에 사는지를 적은 자리. */
+const TYPES = 'connector/connectorTypes.ts';
+/** 파서 — 손으로 적은 config 가 들어오는 문. */
+const CONFIG = 'canvasConfig.ts';
 
 describe('그물이 성기지 않다', () => {
   it('제품 파일이 실제로 여럿 잡히고 오버레이가 그 안에 있다', () => {
@@ -663,6 +667,89 @@ describe('연결선은 `CanvasElement` 가 아니다 (AC-34)', () => {
     const text = source('canvasConfig.ts');
     expect(countOf(text, /\bisConnectorKind\(/g)).toBe(1);
     expect(countOf(text, /\bparseConnector\(/g)).toBe(2); // 정의 한 번 + 호출 한 번
+  });
+});
+
+// --- 점을 쓰는 문이 **셋**이고 셋이 한 함수를 지난다 --------------------------
+
+describe('직선이 점을 들지 못하게 막는 자리가 하나다 (REQ-04 · 사용자 신고 2026-09-16)', () => {
+  // 종전 이 자리를 지킨 것은 `ROUTE_TAKES_POINTS` 라는 불리언 표였고, 그 표가 한 일은
+  // **말없는 거절**이었다 — 직선 위의 더블클릭이 아무 일도 하지 않으면서 왜 안 되는지도
+  // 말하지 않았다. 지금은 거절 대신 승격이며, 지키는 문장은 한 글자도 다르지 않다:
+  // `route === 'straight'` 인 연결선은 `points` 를 결코 들지 않는다.
+  //
+  // 그 문장은 그것을 깰 수 있는 자리를 **전부** 막을 때만 사실이다. 그래서 여기서 문을
+  // 세고 이름을 적는다 — 넷째 문이 생기면 이 절이 먼저 운다.
+
+  it('표가 `connectorTypes.ts` 에 한 번 서고 **그 파일에서만** 읽힌다', () => {
+    expect(countOf(source(TYPES), /const ROUTE_POINT_HOST\b/g)).toBe(1);
+    for (const { name, text } of productSources()) {
+      if (name === TYPES) continue;
+      expect(text.includes('ROUTE_POINT_HOST'), name).toBe(false);
+    }
+  });
+
+  it('죄는 함수도 한 번 정의된다', () => {
+    expect(countOf(source(TYPES), /export function routeHosting\b/g)).toBe(1);
+  });
+
+  it('그 함수를 부르는 제품 파일이 **이름으로 적은 셋**뿐이다 — 문이 셋이다', () => {
+    // 만드는 쪽 · 고치는 쪽 · 읽어 들이는 쪽. 넷째 이름이 여기 끼면 점을 쓰는 문이 하나
+    // 더 열린 것이고, 그 문이 이 함수를 지나는지 사람이 확인해야 한다.
+    const doors = new Set([FACTORY, EDIT, CONFIG]);
+    for (const { name, text } of productSources()) {
+      if (name === TYPES) continue;
+      expect(/\brouteHosting\(/.test(text), name).toBe(doors.has(name));
+    }
+    for (const door of doors) {
+      expect(countOf(source(door), /\brouteHosting\(/g), door).toBe(1);
+    }
+  });
+
+  it('걷어낸 불리언 표가 **어디에도 남지 않았다**', () => {
+    // 남아 있으면 같은 물음에 답이 둘이고, 한쪽만 고쳐지는 날 "점은 드는데 갈래가 그대로"
+    // 가 표현 가능해진다.
+    for (const { name, text } of productSources()) {
+      expect(text.includes('ROUTE_TAKES_POINTS'), name).toBe(false);
+    }
+  });
+
+  it('승격이 점을 싣는 **그 표현 안**에서 일어난다 — 중간 상태가 없다', () => {
+    // 두 줄로 나뉘면 그 사이에 "직선이면서 점을 든" 연결선이 표현 가능해진다.
+    expect(source(EDIT)).toContain(
+      'return { ...connector, route: routeHosting(connector.route, next.length), points: next };',
+    );
+  });
+
+  it('되돌리는 짝(강등)이 없다 — 빼는 쪽은 `route` 를 건드리지 않는다', () => {
+    const body = source(EDIT).slice(source(EDIT).indexOf('export function removePointAt'));
+    expect(body.includes('route')).toBe(false);
+  });
+});
+
+// --- 펜 커서: 값이 하나이고 낱말 대체를 든다 ---------------------------------
+
+describe('선을 그을 수 있는 자리의 커서가 한 자리에 적힌다 (사용자 신고 2026-09-16)', () => {
+  it('값이 오버레이에 한 번 서고 한 번 쓰인다', () => {
+    const text = source(OVERLAY);
+    expect(countOf(text, /const PEN_CURSOR\b/g)).toBe(1);
+    expect(countOf(text, /\bPEN_CURSOR\b/g)).toBe(2); // 정의 한 번 + 쓰임 한 번
+  });
+
+  it('데이터 URI 커서를 적은 제품 파일이 그 하나뿐이다', () => {
+    for (const { name, text } of productSources()) {
+      expect(text.includes('data:image/svg+xml'), name).toBe(name === OVERLAY);
+    }
+  });
+
+  it('낱말 대체가 붙어 있다 — 그림을 못 그려도 뜻이 남는다', () => {
+    expect(source(OVERLAY)).toMatch(/PEN_CURSOR = [^;]*, crosshair`/);
+  });
+
+  it('펜이 뜨는 조건이 **누름이 읽는 그 표**를 읽는다', () => {
+    // 두 자가 갈리면 펜을 보여 놓고 눌렀더니 고르기가 되는 자리가 생긴다(위험 R1).
+    // 표를 읽는 자리 셋 — 누름 갈래 하나, 커서 갈래 둘(판정과 렌더).
+    expect(countOf(source(OVERLAY), /TOOL_CONNECTOR_ROUTE\[tool\]/g)).toBe(3);
   });
 });
 
