@@ -379,8 +379,10 @@ describe('연결선 도구를 짓는 자리가 **하나**다 (AC-61 · 불변식
 // --- AC-39: 연결선 판별이 **한 자리**다 -------------------------------------
 
 const CONNECTOR_TYPES = 'connector/connectorTypes.ts';
-/** SPEC-CANVAS-013 이 더한 다섯째 — 자유 끝을 **옮기는** 자리다(아래 §다섯뿐이다 참조). */
+/** SPEC-CANVAS-013 이 더한 다섯째 — 자유 끝을 **옮기는** 자리다(아래 참조). */
 const TRANSFORM_NODES = 'canvasTransformNodes.ts';
+/** SPEC-CANVAS-017 이 더한 여섯째 — 끝이 가리키는 **도형을 장애물에서 빼는** 자리다. */
+const OBSTACLES = 'connector/connectorObstacles.ts';
 
 describe('`kind === \'connector\'` 가 `isConnector` 바깥에 없다 (AC-39)', () => {
   it('그 문자열이 적힌 제품 파일이 `connectorTypes.ts` 하나뿐이다', () => {
@@ -451,7 +453,7 @@ describe('참조를 푸는 자리가 `resolveConnector.ts` 하나뿐이다 (AC-4
     }
   });
 
-  it('`ConnectorEnd` 를 **타입으로** 들이는 제품 파일이 다섯뿐이다', () => {
+  it('`ConnectorEnd` 를 **타입으로** 들이는 제품 파일이 여섯뿐이다', () => {
     // 자료형을 적는 자리 · 읽어 들이는 자리(파서) · 푸는 자리, M8 이 더한 **만드는**
     // 자리(`appendConnector`), 그리고 013 이 더한 **옮기는** 자리. 구멍을 조용히 지나가지
     // 않고 늘어난 자리를 **세어서** 적는 것이 011 이 가드에 대해 정한 규율이다.
@@ -460,12 +462,23 @@ describe('참조를 푸는 자리가 `resolveConnector.ts` 하나뿐이다 (AC-4
     // `'el' in` 은 여전히 `resolveConnector` 하나뿐이고(바로 위 시험), 두 파일 모두 끝을
     // 인자로 받아 그대로 싣거나 되돌려 줄 뿐이다.
     //
+    // **여섯째도 따졌고, 필요하다.** `connectorObstacles` 는 끝이 가리키는 도형을 장애물
+    // 에서 빼야 하므로(017 REQ-03) 끝의 형상을 알아야 한다 — 빼지 않으면 앵커가 제 도형의
+    // 경계에 있어 선이 출발조차 못 한다.
+    //
     // **다섯째가 정말 필요한지 따졌고, 필요하다**(011 이 이 자리에 적어 둔 그 요구다).
     // `canvasTransformNodes` 는 자유 끝을 **옮겨야** 하므로 끝의 형상을 알아야 한다.
     // 타입 이름을 적지 않고 추론으로 숨길 수는 있었으나, 그것은 이 가드가 세는 일을
     // 피하는 것이지 자리를 줄이는 것이 아니다 — 세어서 적는 편을 골랐다. 가르는 판정은
     // 여전히 한 자리이므로(`isAttachedEnd`) 011 이 지키려던 것은 그대로 지켜진다.
-    const allowed = [CONNECTOR_TYPES, 'canvasConfig.ts', RESOLVE, FACTORY, TRANSFORM_NODES].sort();
+    const allowed = [
+      CONNECTOR_TYPES,
+      'canvasConfig.ts',
+      RESOLVE,
+      FACTORY,
+      TRANSFORM_NODES,
+      OBSTACLES,
+    ].sort();
     const seen = productSources()
       .filter(({ text }) => /\bConnectorEnd\b/.test(text))
       .map(({ name }) => name)

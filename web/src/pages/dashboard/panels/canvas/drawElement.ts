@@ -61,6 +61,7 @@ import { resolveMeasuredWidth, rotationPivotIn } from './canvasOutline';
 import { connectorPath } from './connector/connectorPath';
 import type { ConnectorElement, ConnectorRoute } from './connector/connectorTypes';
 import { resolveConnector } from './connector/resolveConnector';
+import { connectorObstacles } from './connector/connectorObstacles';
 import { isConnectorDrawable, walkDrawables } from './group/frameKey';
 import type { CanvasNode, GroupElement } from './group/groupTypes';
 
@@ -510,12 +511,13 @@ export function drawConnector(
   route: ConnectorRoute,
   style: ResolvedStyle,
   proj: CanvasProjection,
+  obstacles: readonly PxBox[] = [],
 ): void {
   // 요소와 같은 규율이다 — `visible:false` 는 `save`/`restore` 조차 하지 않는다.
   if (style.visible === false) return;
   // 빈 목록이면 **아무 호출도 내지 않는다.** `moveTo(undefined, undefined)` 를 부르면 진짜
   // context 는 조용히 무시하고, 그 침묵이 "어떤 선만 안 그려진다" 로 돌아온다.
-  const cmds = connectorPath(points, route, proj);
+  const cmds = connectorPath(points, route, proj, obstacles);
   if (cmds.length === 0) return;
 
   ctx.save();
@@ -569,7 +571,16 @@ function drawResolvedConnector(
 ): void {
   const points = resolveConnector(connector, nodes, proj, textWidths);
   if (points === undefined) return;
-  drawConnector(ctx, points, connector.route, style ?? connector.style ?? {}, proj);
+  // **장애물 목록은 한 함수가 낸다**(017 §결정 3) — 잡는 쪽도 점 편집도 같은 함수를
+  // 부르므로 셋이 같은 길을 본다(REQ-04).
+  drawConnector(
+    ctx,
+    points,
+    connector.route,
+    style ?? connector.style ?? {},
+    proj,
+    connectorObstacles(connector, nodes, proj, textWidths),
+  );
 }
 
 /**

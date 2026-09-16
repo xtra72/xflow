@@ -46,6 +46,7 @@ import { TEXT_BASELINE } from './drawElement';
 // 그리는 쪽이 부르는 그 함수를 여기서도 부른다.
 import { isRotated, rotatePoint } from './canvasRotation';
 import { rotationPivotIn } from './canvasOutline';
+import { connectorObstacles } from './connector/connectorObstacles';
 import { frameKey } from './group/frameKey';
 import { isGroup, type CanvasNode, type GroupElement } from './group/groupTypes';
 import { connectorPath } from './connector/connectorPath';
@@ -513,7 +514,17 @@ function hitsConnector(
   if (connector.style?.visible === false) return false;
   const points = resolveConnector(connector, nodes, proj, textWidths);
   if (points === undefined) return false;
-  const subpaths = flattenPath(connectorPath(points, connector.route, proj), FLATTEN_TOLERANCE_PX);
+  // **그리는 쪽과 같은 장애물 목록을 본다**(017 REQ-04 · K4). 한 함수가 내므로 두 자리가
+  // 저마다 거를 수 없고, 그래서 "그려진 선과 잡히는 선이 다르다" 가 표현 불가능하다.
+  const subpaths = flattenPath(
+    connectorPath(
+      points,
+      connector.route,
+      proj,
+      connectorObstacles(connector, nodes, proj, textWidths),
+    ),
+    FLATTEN_TOLERANCE_PX,
+  );
   const threshold = Math.max(
     resolveStrokeWidth(connector.style?.strokeWidth) / 2,
     HIT_TOLERANCE_PX,

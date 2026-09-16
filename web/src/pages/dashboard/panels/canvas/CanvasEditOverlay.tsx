@@ -220,6 +220,7 @@ import {
   removePointAt,
 } from './connector/connectorEdit';
 import { resolveConnector } from './connector/resolveConnector';
+import { connectorObstacles } from './connector/connectorObstacles';
 // SPEC-CANVAS-011 M11 — 자유선의 궤적. 받는 일도 줄이는 일도 그 모듈이 하고, 이 층은
 // 포인터가 온 자리를 캔버스 단위로 넘길 뿐이다(허용 오차도 상한도 여기에 적히지 않는다).
 import { freehandPoints, ROUTE_TRACES_TRAIL, takeFreehandSample } from './connector/freehand';
@@ -2130,6 +2131,9 @@ export default function CanvasEditOverlay({
       at,
       projection,
       ANCHOR_PICK_SLOP_PX,
+      // **그리는 쪽과 같은 장애물 목록이다**(017 REQ-04 · K4). 다르면 선 위를 눌렀는데
+      // 다른 조각이 답하고, 점이 엉뚱한 자리에 끼워진다.
+      connectorObstacles(connector, elements, projection, textWidths),
     );
     if (gesture === undefined) return;
     commitConnector(

@@ -36,10 +36,13 @@ import {
   projectPoint,
   type CanvasPoint,
   type CanvasProjection,
+  type CanvasBox,
   type PxPathCommand,
   type PxPoint,
 } from '../canvasGeometry';
 import { curveSegments } from './connectorCurve';
+// 장애물 회피의 산술은 잎 모듈이 소유한다(SPEC-CANVAS-017). 점과 상자와 숫자뿐이다.
+import { orthoRoute } from './orthoRoute';
 import type { ConnectorRoute } from './connectorTypes';
 
 /**
@@ -108,6 +111,7 @@ export function connectorPath(
   points: readonly CanvasPoint[],
   route: ConnectorRoute,
   proj: CanvasProjection,
+  obstacles: readonly CanvasBox[] = [],
 ): readonly ConnectorPathCommand[] {
   const px = points.map((point) => projectPoint(point, proj));
   const start = px[0];
@@ -119,11 +123,22 @@ export function connectorPath(
   // **직각은 점 사이에 모서리를 끼운다**(SPEC-CANVAS-015 REQ-01). 곡선과 달리 갈래를 따로
   // 세우지 않고 **점 목록을 넓혀** 같은 길로 보낸다 — 아래 폴리라인 갈래가 그대로 쓰이므로
   // 그리는 쪽도 잡는 쪽도 새 어휘를 배우지 않는다(§결정 2 · K3).
+  // **장애물이 있으면 그것을 피해 돈다**(SPEC-CANVAS-017 REQ-01). 길을 찾지 못하거나
+  // 피할 것이 없으면 015 의 세 구간으로 떨어진다 — **선이 사라지는 갈래는 없다**(K5).
+  //
+  // 장애물은 **px 로 받는다.** 투영이 각도를 보존하고 축척이 하나이므로(014 A1) 캔버스
+  // 단위에서 돌리든 px 에서 돌리든 같은 길이지만, 여기서 점이 이미 px 이라 그 자리에서
+  // 재는 것이 환산 하나를 덜 지난다.
   const path =
     route === 'ortho'
       ? px.reduce<PxPoint[]>((acc, point, i) => {
           const prev = px[i - 1];
-          if (prev !== undefined) acc.push(...orthoCorners(prev, point));
+          if (prev !== undefined) {
+            const routed = obstacles.length > 0 ? orthoRoute(prev, point, obstacles) : undefined;
+            // 되돌아온 목록은 두 끝을 **포함한다** — 시작점은 이미 실렸으므로 뺀다.
+            if (routed !== undefined) acc.push(...routed.slice(1, -1));
+            else acc.push(...orthoCorners(prev, point));
+          }
           acc.push(point);
           return acc;
         }, [])
