@@ -10,6 +10,8 @@
 //      부르고, 만든 것을 고른다(가정 A7). 목록 하단의 추가 버튼을 걷어낸 뒤로 이 버튼들이
 //      **도형을 만드는 유일한 입구**이므로, 여기서 지는 무게가 그만큼 늘었다.
 //   4) 크기와 이름 — 아이콘뿐이던 칸이 이름을 달고, 글자 크기는 주변 설정 화면을 따른다.
+//   5) (2026-09-16) 도구 띠 — 도크의 절 일곱이 미리보기 제목 아래 가로 띠로 갔다. 띠와
+//      도크는 **같은 조건**으로 나고 들며, 띠가 그 둘보다 앞(위)에 선다.
 //
 // jsdom 은 Tailwind 를 돌리지 않으므로 "얼마나 큰가" 는 렌더 결과로 잴 수 없다. 그래서
 // 크기에 관한 주장만은 **소스를 훑는다** — `CanvasElementsEditor.test.tsx` §글자 크기가
@@ -95,6 +97,15 @@ function overlaySource(): string {
 }
 
 /**
+ * 도구 띠의 소스(2026-09-16). 도크에 있던 절 일곱이 이리로 갔으므로, **크기에 관한
+ * 주장**이 따라와야 한다 — 파일 이름에 매인 가드는 내용이 옮겨 간 자리에서 빈 파일을
+ * 지키며 조용히 무장 해제된다(바로 아래 `fieldSource()` 가 같은 이유로 생겼다).
+ */
+function toolbarSource(): string {
+  return readFileSync(join(__dirname, 'CanvasEditToolbar.tsx'), 'utf-8');
+}
+
+/**
  * 배율 칸을 혼자 소유하는 컴포넌트의 소스(SPEC-CANVAS-006 M10).
  *
  * M9 의 환산 가드가 `dockSource()` 라는 **파일 이름**에 매여 있었으므로, 칸이 옮겨 가면
@@ -140,6 +151,72 @@ describe('도크는 패널 설정에서만 뜬다', () => {
     );
 
     expect(container.firstElementChild).toBe(screen.getByTestId('child'));
+  });
+});
+
+// --- 도구 띠 (2026-09-16 — 사용자 결정: 도크의 절 일곱을 미리보기 제목 아래로) ---------
+//
+// 여기서 못박는 것 셋. 절들이 실제로 무엇을 하는가는 옮기기 전과 같은 시험들이 그대로
+// 재고 있으므로(격자 토글 · 정렬 · 순서 · 배율 — 전부 전역 질의라 그릇을 묻지 않는다),
+// 이 절이 지는 것은 **그릇 자체의 성질**이다.
+
+describe('도구 띠는 도크와 **함께** 나고 든다', () => {
+  it('자리를 내면 띠도 함께 서고, 절 일곱이 그 안에 있다', () => {
+    render(<Harness initial={[]} />);
+
+    const band = screen.getByTestId('canvas-toolbar-panel');
+    expect(screen.getByTestId('canvas-toolbar').contains(band)).toBe(true);
+    // 옮겨 온 일곱 절의 **대표 컨트롤**이 전부 띠 안이다. 하나라도 도크에 남아 있으면
+    // 도구 한 벌이 두 그릇에 흩어진 것이고, 그것은 옮김이 아니라 절반의 옮김이다.
+    for (const id of [
+      'canvas-workspace-zoom',
+      'canvas-grid-toggle',
+      'canvas-align-left',
+      'canvas-order-front',
+      'canvas-group-create',
+      'canvas-anchor-tool',
+      'canvas-connector-tool-straight',
+    ]) {
+      expect(band.contains(screen.getByTestId(id)), id).toBe(true);
+    }
+    // 그리고 도크에 남은 것은 재료를 놓는 셋뿐이다.
+    const dock = screen.getByTestId('canvas-dock-panel');
+    for (const id of ['canvas-palette-add-rect', 'canvas-svg-import-group', 'canvas-scratchpad-save']) {
+      expect(dock.contains(screen.getByTestId(id)), id).toBe(true);
+    }
+  });
+
+  it('자리를 내지 않으면(대시보드) 띠도 없다 — 도크와 **같은 조건**이다', () => {
+    // 조건이 갈라지면 띠만 있고 도크가 없는(또는 그 반대의) 표면이 생기고, 그때 그룹 ·
+    // 앵커 · 연결선은 **어느 표면에서도** 닿지 않을 수 있다 — 006 이 배달한 그 결함이다.
+    render(<Harness initial={[rect('el-1')]} docked={false} />);
+
+    expect(screen.queryByTestId('canvas-toolbar')).toBeNull();
+    expect(screen.queryByTestId('canvas-toolbar-panel')).toBeNull();
+    expect(screen.queryByTestId('canvas-dock')).toBeNull();
+    // 그 표면에서는 떠 있는 줄이 그 셋을 든다(불변식 I23) — 없어지는 것이 아니다.
+    expect(screen.getByTestId('canvas-workspace-zoom-bar')).toBeTruthy();
+  });
+
+  it('띠는 미리보기 **제목 아래**다 — 도크·패널을 감싸지 않고 그 위에 선다', () => {
+    // 자리를 담김이 아니라 **차례**로 잰다. 다이얼로그에서 이 지역은 제목 줄 바로 다음에
+    // 통째로 꽂히므로, 지역 안에서 첫째인 것이 곧 "제목 바로 아래" 다.
+    render(<Harness initial={[]} />);
+
+    const band = screen.getByTestId('canvas-toolbar');
+    const dock = screen.getByTestId('canvas-dock');
+    const panel = screen.getByTestId('scaled-panel');
+    // 감싸지 않는다 — 셋이 서로의 밖이다.
+    expect(band.contains(dock)).toBe(false);
+    expect(band.contains(panel)).toBe(false);
+    expect(dock.contains(band)).toBe(false);
+    // 그리고 띠가 **앞**이다(`DOCUMENT_POSITION_FOLLOWING` = 뒤에 온다).
+    for (const later of [dock, panel]) {
+      expect(band.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    // 축소되는 상자 밖이라는 성질은 도크와 같다 — 안에 두면 미리보기가 대시보드와
+    // 다른 화면이 된다(위 §미리보기 충실도).
+    expect(panel.contains(screen.getByTestId('canvas-toolbar-panel'))).toBe(false);
   });
 });
 
@@ -237,11 +314,20 @@ describe('도구는 이름을 달고 주변 설정 화면의 글자 크기를 �
     );
   });
 
-  it('9px · 10px 이 없고 줄 버튼의 글자 크기가 주변과 같은 text-xs 다', () => {
-    const source = dockSource();
-    expect(source).not.toMatch(/text-\[9px\]/);
-    expect(source).not.toMatch(/text-\[10px\]/);
-    expect(source).toMatch(/const ROW_BUTTON_CLASS =[\s\S]*?text-xs/);
+  it('9px · 10px 이 **두 파일 모두에** 없고 줄 버튼의 글자 크기가 주변과 같은 text-xs 다', () => {
+    // **가드가 넓어졌다**(2026-09-16 — 도구 띠). 줄 버튼(`ROW_BUTTON_CLASS`)을 쓰던 절
+    // 둘(격자 붙임 · 순서)이 띠로 갔고, 그 상수도 함께 갔다. 파일 이름에 매인 가드는 그
+    // 순간 **빈 파일을 지킨다** — 006 M9 가 배율 칸을 옮기며 남긴 그 함정이다(위 §배율).
+    // 그래서 이름을 좇아 옮기되 도크도 계속 훑는다: 막으려는 것은 파일이 아니라
+    // "다시 작게 적는 일" 그 자체이고, 그 일은 두 파일 어디서나 일어날 수 있다.
+    for (const [name, source] of [
+      ['CanvasEditDock.tsx', dockSource()],
+      ['CanvasEditToolbar.tsx', toolbarSource()],
+    ] as const) {
+      expect(source, name).not.toMatch(/text-\[9px\]/);
+      expect(source, name).not.toMatch(/text-\[10px\]/);
+    }
+    expect(toolbarSource()).toMatch(/const ROW_BUTTON_CLASS =[\s\S]*?text-xs/);
   });
 });
 
@@ -285,15 +371,18 @@ describe('격자 · 정렬 · 순서도 같은 자리로 옮겨 왔다', () => {
 // 이 절이 재는 것은 **자리와 형상**이다. 값의 산술은 `canvasWorkspace.test.ts` 가 지고,
 // 여기서는 그 산술에 닿는 길이 화면에 옳게 나 있는가를 잰다.
 
-describe('보기 묶음은 도크의 맨 앞에 서고 이름을 갖는다 (AC-09 (AV))', () => {
-  it('첫 묶음이 보기이고 `role="group"` · `aria-labelledby` 로 이름을 갖는다', () => {
-    // 맨 앞인 것에 뜻이 있다 — 배율은 **보이지 않을 때 손이 가는** 컨트롤이라, 스크롤해야
-    // 찾을 수 있으면 바로 그 순간에 실패한다.
+describe('작업 영역 묶음은 **띠**의 맨 앞에 서고 이름을 갖는다 (AC-09 (AV))', () => {
+  it('띠의 첫 묶음이 작업 영역이고 `role="group"` · `aria-labelledby` 로 이름을 갖는다', () => {
+    // **자리가 옮겨졌다**(2026-09-16 — 도구 띠). 006 이 이 묶음을 도크 맨 앞에 둔 근거는
+    // "배율은 보이지 않을 때 손이 가는 컨트롤이라 스크롤해야 찾으면 그 순간 실패한다"
+    // 였고, 그 근거는 **강해졌다**: 띠는 미리보기 제목 바로 아래라 스크롤이 아예 없다.
+    // 그래서 단언을 지우지 않고 겨누는 그릇만 도크 → 띠로 바꾼다. 아래 두 줄이 그 이동을
+    // 관계로 못박는다 — 배율은 띠의 첫 묶음, 도형은 도크의 첫 묶음.
     render(<Harness initial={[]} />);
 
-    const sections = [...screen.getByTestId('canvas-dock-panel').querySelectorAll('section')];
+    const sections = [...screen.getByTestId('canvas-toolbar-panel').querySelectorAll('section')];
     expect(sections.length).toBeGreaterThan(1);
-    const [first, second] = sections as [HTMLElement, HTMLElement];
+    const [first] = sections as [HTMLElement];
     expect(first.contains(zoomInput())).toBe(true);
     expect(first.getAttribute('role')).toBe('group');
     const labelledBy = first.getAttribute('aria-labelledby');
@@ -301,8 +390,10 @@ describe('보기 묶음은 도크의 맨 앞에 서고 이름을 갖는다 (AC-0
     expect(document.getElementById(labelledBy!)?.textContent).toBe(
       'dashboard.canvas.edit.dockView',
     );
-    // 도형 묶음은 그 **뒤**다 — 두 줄만큼 밀리는 것이 이 자리의 대가다.
-    expect(second.contains(screen.getByTestId('canvas-palette-add-rect'))).toBe(true);
+    // 도형 묶음은 **도크의 맨 앞**이다 — 밀어내던 두 줄이 사라진 자리다.
+    const dockSections = [...screen.getByTestId('canvas-dock-panel').querySelectorAll('section')];
+    const [firstDock] = dockSections as [HTMLElement];
+    expect(firstDock.contains(screen.getByTestId('canvas-palette-add-rect'))).toBe(true);
   });
 
   it('백분율 정수 입력이고 `aria-label` 과 `title` 이 같은 키에서 나온다', () => {
@@ -544,6 +635,10 @@ describe('대시보드에 놓인 패널에는 **배율만** 있다 (AC-10 (AX) �
 
     expect(screen.queryByTestId('canvas-workspace-zoom-bar')).toBeNull();
     expect(screen.getAllByTestId('canvas-workspace-zoom').length).toBe(1);
-    expect(screen.getByTestId('canvas-dock-panel').contains(zoomInput())).toBe(true);
+    // **그릇이 바뀌었다**(2026-09-16 — 도구 띠): 그 하나가 사는 곳이 도크에서 띠로 갔다.
+    // 재는 것은 그대로 "한 표면에 살아 있는 배율 칸은 하나" 이고, 도크에 **없다**는 것을
+    // 함께 못박아 옮김이 복사가 아니었음을 남긴다.
+    expect(screen.getByTestId('canvas-toolbar-panel').contains(zoomInput())).toBe(true);
+    expect(screen.getByTestId('canvas-dock-panel').contains(zoomInput())).toBe(false);
   });
 });

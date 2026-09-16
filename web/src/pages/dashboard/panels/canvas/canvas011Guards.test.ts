@@ -294,22 +294,37 @@ describe('앵커 도구를 짓는 자리가 **하나**다 (AC-61 · 불변식 I2
     expect(text).toContain('anchorTools={anchorTools}');
   });
 
-  it('도크는 **자리와 이름만** 더한다 — 컨트롤을 스스로 짓지 않는다', () => {
+  it('**띠**는 자리와 이름만 더한다 — 컨트롤을 스스로 짓지 않는다', () => {
+    // **자리가 옮겨졌다**(2026-09-16 — 도구 띠). 앵커 절은 도크에서 미리보기 제목 아래
+    // 가로 띠(`CanvasEditToolbar.tsx`)로 갔다. 그래서 이 가드가 읽는 파일도 함께 옮긴다 —
+    // 옮기지 않으면 빈 파일을 지키며 **조용히 무장 해제된다**(006 M9 의 `dockSource()` 가
+    // 같은 자리에서 같은 함정을 남겼고, `CanvasEditDock.test.tsx` §배율이 그 교훈을
+    // 이름으로 적어 두었다).
+    const toolbar = source('CanvasEditToolbar.tsx');
+    expect(toolbar).toContain('anchorTools: React.ReactNode');
+    expect(toolbar.includes('<CanvasAnchorTools')).toBe(false);
+    // 도크에는 **이름조차 남지 않았다** — 남아 있으면 같은 컨트롤을 두 번째로 조립할
+    // 자리가 다시 열린다(I24 가 겨누는 그 형상이다).
     const dock = source('CanvasEditDock.tsx');
-    expect(dock).toContain('anchorTools: React.ReactNode');
+    expect(dock.includes('anchorTools')).toBe(false);
     expect(dock.includes('<CanvasAnchorTools')).toBe(false);
   });
 
-  it('도구 상태가 도크로 내려가지 않는다 — 도크가 없는 표면에서도 도구가 산다', () => {
-    const dock = source('CanvasEditDock.tsx');
-    for (const name of [
-      'CanvasTool',
-      'TOOL_ANCHOR_GESTURE',
-      'TOOL_SHOWS_ANCHORS',
-      'TOOL_CONNECTOR_ROUTE',
-      'toggleTool',
-    ]) {
-      expect(dock.includes(name), name).toBe(false);
+  it('도구 상태가 **도크에도 띠에도** 내려가지 않는다 — 그 둘이 없는 표면에서도 도구가 산다', () => {
+    // 겨누는 파일이 **둘이 되었다**(2026-09-16 — 도구 띠). 앵커 · 연결선 절이 띠로 갔으므로
+    // 상태가 새어 나갈 수 있는 자리도 그쪽이다. 도크를 함께 훑는 것은 덤이 아니다 —
+    // 절이 도로 옮겨 오는 날 상태가 따라오는 것을 여기서 먼저 막는다.
+    for (const file of ['CanvasEditDock.tsx', 'CanvasEditToolbar.tsx']) {
+      const text = source(file);
+      for (const name of [
+        'CanvasTool',
+        'TOOL_ANCHOR_GESTURE',
+        'TOOL_SHOWS_ANCHORS',
+        'TOOL_CONNECTOR_ROUTE',
+        'toggleTool',
+      ]) {
+        expect(text.includes(name), `${file}:${name}`).toBe(false);
+      }
     }
   });
 });
@@ -337,9 +352,13 @@ describe('연결선 도구를 짓는 자리가 **하나**다 (AC-61 · 불변식
     expect(text).toContain('connectorTools={connectorTools}');
   });
 
-  it('도크는 **자리와 이름만** 더한다 — 컨트롤을 스스로 짓지 않는다', () => {
+  it('**띠**는 자리와 이름만 더한다 — 컨트롤을 스스로 짓지 않는다', () => {
+    // 앵커 절의 그 가드와 **한 글자도 다르지 않다** — 자리가 띠로 옮겨진 것까지 같다.
+    const toolbar = source('CanvasEditToolbar.tsx');
+    expect(toolbar).toContain('connectorTools: React.ReactNode');
+    expect(toolbar.includes('<CanvasConnectorTools')).toBe(false);
     const dock = source('CanvasEditDock.tsx');
-    expect(dock).toContain('connectorTools: React.ReactNode');
+    expect(dock.includes('connectorTools')).toBe(false);
     expect(dock.includes('<CanvasConnectorTools')).toBe(false);
   });
 

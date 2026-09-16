@@ -170,6 +170,7 @@ import { cn } from '@/lib/utils/cn';
 import { PanelEditGrid } from '../../PanelEditGrid';
 import { EMPTY_SELECTION, nextSelection } from '../charts/panelEditSelection';
 import { CanvasEditDockBody } from './CanvasEditDock';
+import { CanvasEditToolbarBody } from './CanvasEditToolbar';
 import { CanvasWorkspaceZoomField } from './CanvasWorkspaceZoomField';
 import { marqueeCandidates, marqueeRect, marqueeSelection } from './canvasMarquee';
 import { CanvasGroupTools } from './group/CanvasGroupTools';
@@ -276,7 +277,7 @@ import {
   type AlignMode,
 } from './canvasEditArrange';
 import { useCanvasEditSelection, type CanvasSelection } from './canvasEditContext';
-import { useCanvasEditDockHost } from './canvasEditDockHost';
+import { useCanvasEditDockHost, useCanvasEditToolbarHost } from './canvasEditDockHost';
 import type { ImportedShapeSpec, ImportedTextSpec } from './svgimport/svgImportPlan';
 import { useCanvasStageGrid } from './canvasStageGrid';
 import {
@@ -1313,6 +1314,12 @@ export default function CanvasEditOverlay({
    * **아무 데도 그려지지 않는다** — 대시보드에 놓인 패널이 그 경우다.
    */
   const dockHost = useCanvasEditDockHost();
+  /**
+   * 도구 띠를 그릴 자리(미리보기 제목 바로 아래). 도크와 **같은 컴포넌트가 함께 내므로**
+   * 둘은 언제나 함께 있다(`canvasEditDockHost` §자리가 둘인 이유) — 그래서 "도크가 있는가"
+   * 를 묻는 자는 아래에서도 `dockHost === null` 한 줄 그대로다.
+   */
+  const toolbarHost = useCanvasEditToolbarHost();
 
   /**
    * 드롭 존 노드. **자손이 올려 준다** — 도크는 이 층이 포털로 그리는 자식이므로, 자리를
@@ -3677,7 +3684,40 @@ export default function CanvasEditOverlay({
           이벤트 전파도 종전과 같다(도구가 누름을 스스로 끊는 이유가 그것이다).
 
           자리가 없으면(대시보드에 놓인 패널) **아무 데도 그리지 않는다.** 도구가 스테이지
-          위로 되돌아올 길을 남기지 않는 것이 "설정에서만 쓴다" 는 결정이다. */}
+          위로 되돌아올 길을 남기지 않는 것이 "설정에서만 쓴다" 는 결정이다.
+
+          **자리는 둘이다**(사용자 결정 2026-09-16). 재료를 놓는 절 셋은 왼쪽 도크에, 캔버스와
+          고른 것에 작용하는 절 일곱은 미리보기 제목 아래 가로 띠에 그린다. 포털이 둘인 것은
+          **목적지가 DOM 노드이기 때문**이고 — 한 노드는 두 자리에 동시에 있을 수 없다 —
+          그 둘을 함께 내는 컴포넌트는 여전히 하나다(`CanvasEditDockRegion`). */}
+      {toolbarHost !== null &&
+        createPortal(
+          <CanvasEditToolbarBody
+            snapToGrid={snapToGrid}
+            onSnapToGridChange={setSnapToGrid}
+            gridStep={gridStep}
+            onGridStepChange={setGridStep}
+            zoom={workspaceZoom}
+            onZoomChange={setWorkspaceZoom}
+            // 자투리 고지의 근거 — 간격이 이 두 축을 나누어떨어뜨리는가. 투영이 이미 들고
+            // 있는 그 크기이므로 새 측정원이 되지 않는다(위험 R1).
+            canvas={projection.canvas}
+            canAlign={canAlign}
+            canOrder={canOrder}
+            onAlign={applyAlign}
+            onOrder={applyZOrder}
+            // 그룹 묶음. 떠 있는 줄이 그리는 **그 컴포넌트**를 띠도 그린다 — 띠는 자리를
+            // 주고 이름을 달 뿐이다(SPEC-CANVAS-004 REQ-08 · 불변식 I24).
+            groupTools={groupTools}
+            // 앵커 묶음. 그룹과 **같은 규율**이다 — 짓는 자리는 이 층 하나이고 띠는
+            // 자리와 이름만 더한다(SPEC-CANVAS-011 AC-61).
+            anchorTools={anchorTools}
+            // 연결선 묶음. 앞의 둘과 **같은 규율**이다 — 짓는 자리는 이 층 하나이고
+            // 띠는 자리와 이름만 더한다(SPEC-CANVAS-011 AC-61).
+            connectorTools={connectorTools}
+          />,
+          toolbarHost,
+        )}
       {dockHost !== null &&
         createPortal(
           // 드롭 존 등록 채널을 **포털 안쪽**에 연다. 포털은 DOM 상으로만 패널 밖이고
@@ -3687,19 +3727,8 @@ export default function CanvasEditOverlay({
             <CanvasEditDockBody
               onPlace={placeFromPalette}
               onPlaceShape={placeFromCatalog}
-              snapToGrid={snapToGrid}
-              onSnapToGridChange={setSnapToGrid}
-              gridStep={gridStep}
-              onGridStepChange={setGridStep}
-              zoom={workspaceZoom}
-              onZoomChange={setWorkspaceZoom}
-              // 자투리 고지의 근거 — 간격이 이 두 축을 나누어떨어뜨리는가. 투영이 이미 들고
-              // 있는 그 크기이므로 새 측정원이 되지 않는다(위험 R1).
+              // 가져오기가 들여온 그림이 앉을 상자를 짓는 근거다(위험 R1 — 새 측정원이 아니다).
               canvas={projection.canvas}
-              canAlign={canAlign}
-              canOrder={canOrder}
-              onAlign={applyAlign}
-              onOrder={applyZOrder}
               // 끌어 넣기와 **같은 함수**다(J11). 단추 쪽에는 되돌릴 기하가 없으므로 지금
               // 배열에서 그대로 뜬다 — 뒷줄 하나가 도는지 마는지만 다르다.
               onScratchpadSave={() => saveSelectionToScratchpad(elements)}
@@ -3709,15 +3738,6 @@ export default function CanvasEditOverlay({
               // 가져오기도 같은 규칙이다 — 만드는 입구는 하나이고, 놓은 뒤의 선택은 이 층이
               // 소유한다(불변식 K9).
               onSvgImport={placeFromImport}
-              // 그룹 묶음. 떠 있는 줄이 그리는 **그 컴포넌트**를 도크도 그린다 — 도크는
-              // 자리를 주고 이름을 달 뿐이다(SPEC-CANVAS-004 REQ-08).
-              groupTools={groupTools}
-              // 앵커 묶음. 그룹과 **같은 규율**이다 — 짓는 자리는 이 층 하나이고 도크는
-              // 자리와 이름만 더한다(SPEC-CANVAS-011 AC-61).
-              anchorTools={anchorTools}
-              // 연결선 묶음. 앞의 둘과 **같은 규율**이다 — 짓는 자리는 이 층 하나이고
-              // 도크는 자리와 이름만 더한다(SPEC-CANVAS-011 AC-61).
-              connectorTools={connectorTools}
             />
           </CanvasScratchpadDropContext>,
           dockHost,

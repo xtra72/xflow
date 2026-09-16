@@ -269,11 +269,15 @@ describe('그룹 컨트롤이 두 표면 모두에 선다 (AC-E12 · 불변식 I
     }
   });
 
-  it('②자리 — 도크 표면에서는 도크 안에, 대시보드 표면에서는 떠 있는 줄 안에 산다', () => {
-    // 담김 관계를 잰다. "어딘가에 있다" 만 재면 줄 밖 · 도크 밖에 떠 있어도 초록이다.
+  it('②자리 — 도크 표면에서는 **띠** 안에, 대시보드 표면에서는 떠 있는 줄 안에 산다', () => {
+    // 담김 관계를 잰다. "어딘가에 있다" 만 재면 띠 밖 · 줄 밖에 떠 있어도 초록이다.
+    //
+    // **그릇이 바뀌었다**(2026-09-16 — 도구 띠). 그룹 절은 도크에서 미리보기 제목 아래
+    // 가로 띠로 갔다 — 묶기는 선택 위에서 도는 연산이라 정렬 · 순서와 한 부류이고, 그
+    // 셋이 함께 옮겨졌기 때문이다. 재는 것(두 표면에 하나씩, 제 그릇 안에)은 그대로다.
     cleanup();
     setup({ docked: true, initial: [A, B], select: ['a', 'b'] });
-    expect(screen.getByTestId('canvas-dock-panel').contains(groupButton())).toBe(true);
+    expect(screen.getByTestId('canvas-toolbar-panel').contains(groupButton())).toBe(true);
     expect(screen.queryByTestId('canvas-workspace-zoom-bar')).toBeNull();
 
     cleanup();

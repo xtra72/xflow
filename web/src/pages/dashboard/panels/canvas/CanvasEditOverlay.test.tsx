@@ -4395,7 +4395,9 @@ describe('층이 서는 자리에 손잡이가 선다 (SPEC-CANVAS-006 M10 · �
     renderFixedPoint({ docked: true });
     expect(screen.queryByTestId('canvas-workspace-zoom-bar')).toBeNull();
     expect(screen.getAllByTestId('canvas-workspace-zoom').length).toBe(1);
-    expect(screen.getByTestId('canvas-dock-panel').contains(zoomInput())).toBe(true);
+    // **그릇이 바뀌었다**(2026-09-16 — 도구 띠): 도크 표면에서 그 한 칸이 사는 곳은 이제
+    // 미리보기 제목 아래 띠다. 재는 것(한 표면에 하나)은 한 글자도 바뀌지 않았다.
+    expect(screen.getByTestId('canvas-toolbar-panel').contains(zoomInput())).toBe(true);
   });
 });
 
