@@ -288,8 +288,9 @@ describe('앵커 도구를 짓는 자리가 **하나**다 (AC-61 · 불변식 I2
   it('오버레이가 그것을 **한 번 짓고 두 자리에서 그린다**', () => {
     const text = source(OVERLAY);
     expect(countOf(text, /<CanvasAnchorTools\b/g)).toBe(1);
-    // 지은 값이 **두 자리에서 읽힌다**: 떠 있는 줄과 도크. 이름이 넷 나오는 것은
-    // 선언 하나 + 줄 하나 + 도크의 `anchorTools={anchorTools}` 둘이기 때문이다.
+    // 지은 값이 **두 자리에서 읽힌다**: 떠 있는 줄과 띠. 이름이 넷 나오는 것은
+    // 선언 하나 + 줄 하나 + 띠의 `anchorTools={anchorTools}` 둘이기 때문이다.
+    // (011 의 도구 이전 전에는 그 둘째 자리가 도크였다 — 수는 그대로다.)
     expect(countOf(text, /\banchorTools\b/g)).toBe(4);
     expect(text).toContain('anchorTools={anchorTools}');
   });
@@ -346,7 +347,7 @@ describe('연결선 도구를 짓는 자리가 **하나**다 (AC-61 · 불변식
   it('오버레이가 그것을 **한 번 짓고 두 자리에서 그린다**', () => {
     const text = source(OVERLAY);
     expect(countOf(text, /<CanvasConnectorTools\b/g)).toBe(1);
-    // 앵커 묶음과 같은 셈이다: 선언 하나 + 떠 있는 줄 하나 + 도크의
+    // 앵커 묶음과 같은 셈이다: 선언 하나 + 떠 있는 줄 하나 + 띠의
     // `connectorTools={connectorTools}` 둘.
     expect(countOf(text, /\bconnectorTools\b/g)).toBe(4);
     expect(text).toContain('connectorTools={connectorTools}');
