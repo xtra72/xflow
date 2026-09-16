@@ -330,7 +330,9 @@ describe('끊긴 연결이 목록에서 말해진다 (AC-78)', () => {
     ).toBeNull();
   });
 
-  it.each(LOCALE_NAMES)('%s — 행이 **두 끝과 그리는 법**을 말한다 (REQ-07)', (locale) => {
+  it.each(LOCALE_NAMES)(
+    '%s — 행이 **그리는 법**을 말하고 좌표는 말하지 않는다 (REQ-07 · 012 AC-01)',
+    (locale) => {
     renderList(locale);
     // 머리줄: 종류 이름 · id · 그리는 법.
     const head = screen.getByTestId(`canvas-connector-row-toggle-${ROW.anchor}`).textContent ?? '';
@@ -344,26 +346,34 @@ describe('끊긴 연결이 목록에서 말해진다 (AC-78)', () => {
     expect(head).toContain(kindLabel);
     expect(head).toContain(routeLabel);
 
-    // 몸통: 붙은 끝은 **요소와 자리 이름**을, 자유 끝은 **좌표**를 말한다.
-    fireEvent.click(screen.getByTestId(`canvas-connector-row-toggle-${ROW.anchor}`));
-    const from = screen.getByTestId(`canvas-connector-row-from-${ROW.anchor}`).textContent ?? '';
-    expect(from).toContain('el-1');
-    expect(from).toContain('no-such-anchor');
+    // 몸통: 두 끝과 꺾임점을 말하던 **세 줄은 012 M1 이 걷었다.**
+    //
+    // **뒤집은 단언이며 지우지 않는다.** 종전에는 "붙은 끝은 요소와 자리 이름을, 자유
+    // 끝은 좌표를 말한다" 를 보았다. 그 셋이 말하던 것은 전부 좌표이고 좌표는 이 행에서
+    // 고칠 수 없었으므로 읽는 사람이 할 수 있는 일이 없었다. 지우면 그 세 줄이 되살아나도
+    // 아무도 울지 않으므로, 근거를 적으며 **반대쪽을 본다.**
+    for (const idx of [ROW.anchor, ROW.free]) {
+      fireEvent.click(screen.getByTestId(`canvas-connector-row-toggle-${idx}`));
+      expect(screen.queryByTestId(`canvas-connector-row-from-${idx}`), locale).toBeNull();
+      expect(screen.queryByTestId(`canvas-connector-row-to-${idx}`), locale).toBeNull();
+      expect(screen.queryByTestId(`canvas-connector-row-points-${idx}`), locale).toBeNull();
+    }
+    },
+  );
 
-    fireEvent.click(screen.getByTestId(`canvas-connector-row-toggle-${ROW.free}`));
-    const free = screen.getByTestId(`canvas-connector-row-from-${ROW.free}`).textContent ?? '';
-    expect(free).toContain('10');
-    expect(free).toContain('20');
-  });
-
-  it('꺾임점은 **수만** 말한다 — 좌표를 늘어놓지 않는다', () => {
+  it('꺾임점을 **아예 말하지 않는다** (012 AC-01)', () => {
     renderList();
     fireEvent.click(screen.getByTestId(`canvas-connector-row-toggle-${ROW.gone}`));
-    const points = screen.getByTestId(`canvas-connector-row-points-${ROW.gone}`).textContent ?? '';
-    expect(points).toContain('1');
-    // 저술된 중간점은 (200, 120) 하나다. 그 수치가 새어 나오면 자유선 한 줄이 목록을 덮는다.
-    expect(points).not.toContain('200');
-    expect(points).not.toContain('120');
+    // **뒤집은 단언이다.** 011 은 "수만 말하고 좌표는 늘어놓지 않는다" 를 보았고, 그 뜻은
+    // 자유선 한 줄이 목록을 통째로 덮지 않게 막는 것이었다(상한이 256 이다). 012 는 그 줄
+    // 자체를 걷었으므로 011 이 막으려던 것이 **더 강하게** 지켜진다 — 셀 수조차 없다.
+    expect(screen.queryByTestId(`canvas-connector-row-points-${ROW.gone}`)).toBeNull();
+    // 011 이 지키려던 그 사실은 그대로 잰다: 저술된 중간점 (200, 120) 이 몸통 **어디에도**
+    // 새지 않는다. 줄이 사라졌다고 이 단언까지 버리면 훗날 좌표가 다른 줄로 돌아와도
+    // 아무도 울지 않는다.
+    const body = screen.getByTestId(`canvas-connector-row-body-${ROW.gone}`).textContent ?? '';
+    expect(body).not.toContain('200');
+    expect(body).not.toContain('120');
   });
 
   it('요소 행·그룹 행의 형상을 **가져가지 않는다** — 연결선에는 그 칸이 없다', () => {

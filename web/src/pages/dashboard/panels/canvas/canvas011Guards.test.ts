@@ -793,24 +793,31 @@ describe('011 이 더한 문구가 ko · en 양쪽에 있다', () => {
     'dashboard.canvas.edit.connectorHandleFrom',
     'dashboard.canvas.edit.connectorHandleTo',
     'dashboard.canvas.edit.connectorHandleMid',
-    // M12 가 더한 열여덟 — **목록의 연결선 행**이 말하는 것 전부다(AC-78 · REQ-07).
-    // 행 하나가 더한 수치고 많지만, 그 행이 말해야 하는 것이 그만큼이다: 종류 이름 ·
-    // 그리는 법 넷 · 두 끝의 이름과 그 내용 · 꺾임점 · 끊김 표시와 고치는 길 · 읽는
-    // 자리라는 안내 · 접근성 이름 넷. 세어서 적는 것이 011 의 규율이다.
+    // M12 가 더한 열여덟 가운데 **열하나** — 012 가 일곱을 걷었다(SPEC-CANVAS-012 AC-04).
+    //
+    // 011 이 세어 적은 열여덟은 이랬다: 종류 이름 · 그리는 법 넷 · **두 끝의 이름과 그
+    // 내용 · 꺾임점** · 끊김 표시와 고치는 길 · **읽는 자리라는 안내** · 접근성 이름 넷.
+    // 굵게 적은 일곱이 죽었고, 죽은 이유가 둘로 갈린다.
+    //
+    //   - 좌표 여섯(M1) — 그 여섯이 말하던 것은 전부 좌표이고, 좌표는 이 행에서 고칠 수
+    //     없으므로 읽는 사람이 할 수 있는 일이 없었다.
+    //   - 읽기 전용 안내 하나(M4) — 그 문장은 **고칠 칸이 없다는 사실의 대역**이었다.
+    //     칸이 섰으므로 변명할 빈자리가 없다.
+    //
+    // 012 가 **더한** 키(겉모습 묶음 · 선 스타일 이름 넷 · 접근성 이름 넷)는 이 목록에
+    // 얹지 않는다 — 이 목록의 뜻은 "011 이 더한 키" 이고, 섞으면 한 목록이 두 SPEC 을
+    // 책임진다. 그쪽은 `canvas012Style.test.ts` 가 제 목록으로 센다.
+    //
+    // **목록은 지우지 않고 줄인다.** 통째로 지우면 남은 열하나를 지키던 가드가 함께
+    // 사라진다. 세어서 적는 것이 011 의 규율이고, 줄일 때도 세어서 적는 것이 그 규율의
+    // 나머지 반이다.
     'dashboard.canvas.elements.connectorLabel',
     'dashboard.canvas.elements.connectorRouteStraight',
     'dashboard.canvas.elements.connectorRouteElbow',
     'dashboard.canvas.elements.connectorRouteCurve',
     'dashboard.canvas.elements.connectorRouteFree',
-    'dashboard.canvas.elements.connectorFromLabel',
-    'dashboard.canvas.elements.connectorToLabel',
-    'dashboard.canvas.elements.connectorPointsLabel',
-    'dashboard.canvas.elements.connectorEndAttached',
-    'dashboard.canvas.elements.connectorEndFree',
-    'dashboard.canvas.elements.connectorPointsSummary',
     'dashboard.canvas.elements.connectorBroken',
     'dashboard.canvas.elements.connectorBrokenHint',
-    'dashboard.canvas.elements.connectorReadOnlyHint',
     'dashboard.canvas.elements.connectorDetailsAria',
     'dashboard.canvas.elements.connectorMoveUpAria',
     'dashboard.canvas.elements.connectorMoveDownAria',
@@ -873,10 +880,11 @@ describe('011 이 더한 문구가 ko · en 양쪽에 있다', () => {
   it('행이 쓰는 치환자가 **양쪽 로케일에** 그대로 있다 (M12)', () => {
     // 로케일 기본값이 ko 라 en 쪽 누락이 특히 조용히 지나간다. 빠지면 "요소의 자리" 를
     // 말해야 하는 줄이 요소 이름 없이 뜬다.
+    // 012 M1 이 셋을 걷었다 — `connectorEndAttached`(`{element}`·`{anchor}`) ·
+    // `connectorEndFree`(`{x}`·`{y}`) · `connectorPointsSummary`(`{count}`). 셋 다 좌표를
+    // 말하던 줄의 치환자이고, 그 줄이 사라졌으므로 지킬 문구가 없다. 남은 넷은 접근성
+    // 이름이며 **그대로 선다** — 행이 여전히 그 넷을 부른다.
     const TOKENS: readonly (readonly [string, readonly string[]])[] = [
-      ['dashboard.canvas.elements.connectorEndAttached', ['{element}', '{anchor}']],
-      ['dashboard.canvas.elements.connectorEndFree', ['{x}', '{y}']],
-      ['dashboard.canvas.elements.connectorPointsSummary', ['{count}']],
       ['dashboard.canvas.elements.connectorDetailsAria', ['{index}']],
       ['dashboard.canvas.elements.connectorMoveUpAria', ['{index}']],
       ['dashboard.canvas.elements.connectorMoveDownAria', ['{index}']],

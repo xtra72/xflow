@@ -261,18 +261,21 @@ describe('그룹 행에 투명도 칸이 선다 (AC-34)', () => {
     expect(screen.getByTestId('canvas-group-opacity-0')).toHaveValue(null);
   });
 
-  it('저술된 값이 칸에 보인다', () => {
+  it('저술된 값이 칸에 **백분율로** 보인다 (012 M5 · AC-24)', () => {
+    // 012 가 칸의 눈금을 0..1 에서 0~100% 로 옮겼다. **저장은 0.5 그대로이고** 보이는
+    // 수만 50 이다 — 아래 §왕복이 그 사실을 따로 못박는다.
     setupEditor(cfg([groupNode({ style: { opacity: 0.5 } })]));
     expandGroup(0);
-    expect(screen.getByTestId('canvas-group-opacity-0')).toHaveValue(0.5);
+    expect(screen.getByTestId('canvas-group-opacity-0')).toHaveValue(50);
   });
 });
 
 describe('입력이 그룹 스타일에 기록된다 (AC-35 · AC-36)', () => {
-  it('0.5 를 넣으면 `style.opacity` 가 0.5 다', () => {
+  it('50(%) 을 넣으면 `style.opacity` 가 0.5 다 (012 M5 · AC-25)', () => {
+    // **칸은 백분율, 저장은 0..1.** 이 한 줄이 012 §결정 4 의 전부다.
     const spy = setupEditor(cfg([rectNode(), groupNode()]));
     expandGroup(1);
-    fireEvent.change(screen.getByTestId('canvas-group-opacity-1'), { target: { value: '0.5' } });
+    fireEvent.change(screen.getByTestId('canvas-group-opacity-1'), { target: { value: '50' } });
 
     const nodes = lastNodes(spy);
     expect(nodes[1]!.style?.opacity).toBe(0.5);
@@ -282,10 +285,11 @@ describe('입력이 그룹 스타일에 기록된다 (AC-35 · AC-36)', () => {
     expect(nodes[0]!.id).toBe('r1');
   });
 
-  it('1.5 는 1 로, -0.5 는 0 으로 죈다', () => {
+  it('150(%) 은 1 로, -50(%) 은 0 으로 죈다 (012 AC-27)', () => {
+    // 죄는 **뜻**은 그대로이고 눈금만 옮겼다 — 범위 밖 입력이 저장에 새지 않는다.
     for (const [raw, expected] of [
-      ['1.5', 1],
-      ['-0.5', 0],
+      ['150', 1],
+      ['-50', 0],
     ] as const) {
       const spy = setupEditor(cfg([groupNode()]));
       expandGroup(0);
@@ -318,14 +322,16 @@ describe('최상위 요소 행의 칸과 **같은 컨트롤**이다 (AC-39)', ()
     expect(groupField.getAttribute('placeholder')).toBe(elementField.getAttribute('placeholder'));
   });
 
-  it('같은 클램프를 지난다 — 두 칸에 1.5 를 넣으면 둘 다 1 이다', () => {
+  it('같은 클램프를 지난다 — 두 칸에 150(%) 을 넣으면 둘 다 1 이다', () => {
+    // 012 M5 이후 그 "같은 클램프" 는 `opacityPercent.percentInputToOpacity` 한 쌍이다.
+    // 두 칸이 같은 함수를 지나는 것이 AC-28 이고, 이 단언이 그 결과를 본다.
     const spy = setupEditor(cfg([rectNode(), groupNode()]));
     fireEvent.click(screen.getByTestId('canvas-element-toggle-0'));
-    fireEvent.change(screen.getByTestId('canvas-element-opacity-0'), { target: { value: '1.5' } });
+    fireEvent.change(screen.getByTestId('canvas-element-opacity-0'), { target: { value: '150' } });
     expect(lastNodes(spy)[0]!.style?.opacity).toBe(1);
 
     expandGroup(1);
-    fireEvent.change(screen.getByTestId('canvas-group-opacity-1'), { target: { value: '1.5' } });
+    fireEvent.change(screen.getByTestId('canvas-group-opacity-1'), { target: { value: '150' } });
     expect(lastNodes(spy)[1]!.style?.opacity).toBe(1);
   });
 });

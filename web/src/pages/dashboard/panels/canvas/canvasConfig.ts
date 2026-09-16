@@ -43,6 +43,10 @@ import {
   MAX_PATH_COMMANDS,
   type PathCommand,
 } from './shapes/pathTypes';
+// 파선 무늬의 이름 넷과 그 판별(SPEC-CANVAS-012 M2). 아무것도 들이지 않는 잎이라 순환이
+// 없고, 파서와 렌더가 **같은 표**를 본다 — 표를 `drawElement` 에 두면 파서가 유효한 이름을
+// 판정하려고 렌더 모듈을 들이게 된다.
+import { isStrokeDash, type StrokeDash } from './strokeDash';
 // 임의 앵커의 자료형. 잎 모듈(`shapes/pathTypes` 밖을 들이지 않는다)이라 순환이 없다.
 import type { CustomAnchor } from './connector/anchorTypes';
 // 연결선의 자료형과 그 판별(SPEC-CANVAS-011 M4). 저쪽이 이 파일에서 **타입만** 가져가므로
@@ -225,6 +229,16 @@ export interface ElementStyle {
   stroke?: string;
   /** 선 두께(px). */
   strokeWidth?: number;
+  /**
+   * 파선 무늬 (SPEC-CANVAS-012 REQ-04).
+   *
+   * `strokeWidth` 바로 뒤가 자리다 — 둘 다 **선을 어떻게 긋는가**를 정하고, 무늬가 두께의
+   * 배수로 나오므로(`strokeDash.dashPattern`) 읽는 사람이 둘을 함께 본다.
+   *
+   * **미지정과 `'solid'` 는 다른 값이다**(같은 그림이지만). 그 구분은 `visible` 이 3지
+   * 선택인 것과 같은 판단이다 — 잎 모듈 `strokeDash.ts` 의 `StrokeDash` 주석 참조.
+   */
+  strokeDash?: StrokeDash;
   /** 0..1. */
   opacity?: number;
   /** 글자 크기(px). */
@@ -572,6 +586,10 @@ function parseStyle(raw: unknown): ElementStyle {
   if (fontSize !== undefined) out.fontSize = fontSize;
   const opacity = optionalOpacity(s.opacity);
   if (opacity !== undefined) out.opacity = opacity;
+
+  // 모르는 값은 **키만** 버린다(012 REQ-06 · AC-09) — 요소를 통째로 떨어뜨리지 않는 것이
+  // 001 이래의 파서 규율이고, 판별은 잎 모듈 한 자리에서만 이뤄진다.
+  if (isStrokeDash(s.strokeDash)) out.strokeDash = s.strokeDash;
 
   if (s.fontWeight === 'bold' || s.fontWeight === 'normal') out.fontWeight = s.fontWeight;
   if (s.align === 'left' || s.align === 'center' || s.align === 'right') out.align = s.align;

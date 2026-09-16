@@ -154,17 +154,28 @@ export function matchesRule(value: number | null | undefined, row: RuleRow): boo
  * 흔히 생기는 형태이며, 그것으로 기본값을 지워 버리면 사용자가 지운 적 없는 색이
  * 사라진다.
  *
- * `ElementStyle` 전 필드를 복사한다. 001 이 설정 UI 에 노출하는 패치 대상은 명세대로
- * 8종(fill · stroke · strokeWidth · opacity · textColor · fontWeight · visible · text)이지만
- * `StylePatch` 타입은 그보다 넓다(`Partial<ElementStyle>`). 좁은 8종만 복사하면 타입이
- * 허용하는 `fontSize` · `align` 패치가 **조용히 무시되어** 003 이 노출 범위를 넓힐 때
- * 원인 없는 버그가 된다. 노출 범위를 좁히는 축은 설정 UI 이지 평가기가 아니다.
+ * `ElementStyle` 전 필드를 복사한다. 설정 UI 에 노출하는 패치 대상은 명세대로 9종
+ * (fill · stroke · strokeWidth · strokeDash · opacity · textColor · fontWeight · visible ·
+ * text — 012 가 `strokeDash` 를 더해 여덟에서 아홉이 되었다)이지만 `StylePatch` 타입은
+ * 그보다 넓다(`Partial<ElementStyle>`). 노출 범위만큼만 복사하면 타입이 허용하는
+ * `fontSize` · `align` 패치가 **조용히 무시되어** 003 이 노출 범위를 넓힐 때 원인 없는
+ * 버그가 된다. 노출 범위를 좁히는 축은 설정 UI 이지 평가기가 아니다.
+ *
+ * **그리고 이 열거는 실제로 낡았다.** 012 가 `strokeDash` 를 더하면서 이 줄을 빠뜨렸고,
+ * 그 결함은 타입도 린트도 잡지 못한 채 시험에서만 드러났다 — 위 경고가 예고한 그대로다.
+ * 그래서 이제 열거의 전수성을 가드가 잰다(`canvas012Style.test.ts` §패치 열거가 새지 않는다).
  */
 function mergePatch(base: ElementStyle, patch: StylePatch): ResolvedStyle {
   const out: ResolvedStyle = { ...base };
   if (patch.fill !== undefined) out.fill = patch.fill;
   if (patch.stroke !== undefined) out.stroke = patch.stroke;
   if (patch.strokeWidth !== undefined) out.strokeWidth = patch.strokeWidth;
+  // SPEC-CANVAS-012 M2 — 008 이 "규칙 패치가 함께 넓어진다" 고 예고한 자리다. 그 넓어짐은
+  // **자동이 아니었다**: 이 목록이 손으로 적은 열거라, 축을 더하고 이 줄을 빠뜨리면 저장은
+  // 통과한 점선이 규칙이 한 번 맞는 순간 조용히 실선으로 돌아간다. 바로 위 머리말이 그
+  // 부류를 이미 경고해 두었고(`fontSize`·`align`), 012 가 그 경고의 셋째 사례가 될 뻔했다.
+  // 열거가 새지 않는다는 사실은 이제 가드가 잰다(`canvas012Style.test.ts` §열거 전수).
+  if (patch.strokeDash !== undefined) out.strokeDash = patch.strokeDash;
   if (patch.opacity !== undefined) out.opacity = patch.opacity;
   if (patch.fontSize !== undefined) out.fontSize = patch.fontSize;
   if (patch.fontWeight !== undefined) out.fontWeight = patch.fontWeight;

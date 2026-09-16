@@ -167,14 +167,16 @@ describe('최상위 요소 행과 **같은 컨트롤**이다 (AC-20)', () => {
     }
   });
 
-  it('같은 클램프를 지난다 — 두 칸에 1.5 를 넣으면 둘 다 1 이다', () => {
+  it('같은 클램프를 지난다 — 두 칸에 150(%) 을 넣으면 둘 다 1 이다', () => {
+    // 012 M5 가 칸의 눈금을 0~100% 로 옮겼다. "두 칸이 같은 클램프를 지난다" 는 뜻은
+    // 그대로이고, 오늘 그 클램프는 `opacityPercent.percentInputToOpacity` 한 쌍이다.
     const spy = setup();
     fireEvent.click(screen.getByTestId('canvas-element-toggle-0'));
-    fireEvent.change(screen.getByTestId('canvas-element-opacity-0'), { target: { value: '1.5' } });
+    fireEvent.change(screen.getByTestId('canvas-element-opacity-0'), { target: { value: '150' } });
     expect(lastNodes(spy)[0]!.style?.opacity).toBe(1);
 
     openPart(1, 0);
-    fireEvent.change(screen.getByTestId('canvas-part-opacity-1-0'), { target: { value: '1.5' } });
+    fireEvent.change(screen.getByTestId('canvas-part-opacity-1-0'), { target: { value: '150' } });
     expect(partIn(lastNodes(spy), 'mid').style.opacity).toBe(1);
   });
 
@@ -188,7 +190,8 @@ describe('최상위 요소 행과 **같은 컨트롤**이다 (AC-20)', () => {
     });
     const spy = setup(cfg([rectNode(), withOpacity]));
     openPart(1, 0);
-    expect(screen.getByTestId('canvas-part-opacity-1-0')).toHaveValue(0.5);
+    // 저장은 0.5 그대로이고 칸이 백분율로 보인다(012 M5).
+    expect(screen.getByTestId('canvas-part-opacity-1-0')).toHaveValue(50);
     fireEvent.change(screen.getByTestId('canvas-part-opacity-1-0'), { target: { value: '' } });
     expect('opacity' in partIn(lastNodes(spy), 'mid').style).toBe(false);
   });

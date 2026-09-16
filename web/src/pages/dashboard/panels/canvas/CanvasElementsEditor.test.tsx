@@ -877,10 +877,11 @@ describe('CanvasElementsEditor — 빈 칸은 부재다', () => {
     fireEvent.change(testid('canvas-element-stroke-width-0'), { target: { value: '-4' } });
     expect(lastElements(spy)[0]!.style.strokeWidth).toBe(0);
 
-    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '3' } });
+    // 012 M5 — 칸이 백분율이므로 범위 밖도 백분율로 적는다. **죄는 뜻은 그대로다.**
+    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '300' } });
     expect(lastElements(spy)[0]!.style.opacity).toBe(1);
 
-    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '-1' } });
+    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '-100' } });
     expect(lastElements(spy)[0]!.style.opacity).toBe(0);
 
     openTab('text');
@@ -920,9 +921,9 @@ describe('CanvasElementsEditor — 빈 칸은 부재다', () => {
     expect(lastElements(spy)[0]!.style.visible).toBe(false);
   });
 
-  it('범위 안의 불투명도는 그대로 실린다', () => {
+  it('범위 안의 불투명도는 그대로 실린다 — 칸은 %, 저장은 0..1 (012 M5)', () => {
     const spy = setup(cfg([rect()]));
-    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '0.4' } });
+    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '40' } });
     expect(lastElements(spy)[0]!.style.opacity).toBe(0.4);
   });
 
@@ -1133,7 +1134,7 @@ describe('CanvasElementsEditor — parseCanvasConfig 왕복', () => {
   it('죄인 극단값이 누적된 뒤에도 왕복에서 바뀌지 않는다', () => {
     const live = setupStateful(cfg([rect()]));
 
-    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '9' } });
+    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '900' } });
     fireEvent.change(testid('canvas-element-stroke-width-0'), { target: { value: '-3' } });
     openTab('text');
     fireEvent.change(testid('canvas-element-font-size-0'), { target: { value: '-8' } });
@@ -1174,7 +1175,7 @@ describe('CanvasElementsEditor — parseCanvasConfig 왕복', () => {
     expect(live.elements.map((e) => e.kind)).toEqual(['rect', 'ellipse', 'line', 'text']);
 
     expandAllRows();
-    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '0.5' } });
+    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '50' } });
 
     expect(live.elements[0]!.style.opacity).toBe(0.5);
     expectRoundTrip(cfg(live.elements));
@@ -2682,14 +2683,15 @@ describe('CanvasElementsEditor — 요소 카드의 탭', () => {
     // 돌아온 순간 칸이 원래 값으로 되돌아간다.
     setupStateful(cfg([rect()]));
 
-    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '0.25' } });
+    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '25' } });
     openTab('text');
     fireEvent.change(testid('canvas-element-font-size-0'), { target: { value: '19' } });
     openTab('arrange');
     fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '123' } });
 
     openTab('style');
-    expect((testid('canvas-element-opacity-0') as HTMLInputElement).value).toBe('0.25');
+    // 저장은 0.25 이고 칸은 백분율로 25 를 보인다(012 M5).
+    expect((testid('canvas-element-opacity-0') as HTMLInputElement).value).toBe('25');
     openTab('text');
     expect((testid('canvas-element-font-size-0') as HTMLInputElement).value).toBe('19');
     openTab('arrange');

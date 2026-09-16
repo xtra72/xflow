@@ -52,6 +52,8 @@ import {
   type PxPoint,
 } from './canvasGeometry';
 import type { ResolvedStyle } from './canvasRules';
+// 무늬 표는 잎 모듈이 든다(012 §결정 D5) — 파서와 렌더가 **같은 표**를 본다.
+import { dashPattern } from './strokeDash';
 import { connectorPath } from './connector/connectorPath';
 import type { ConnectorElement, ConnectorRoute } from './connector/connectorTypes';
 import { resolveConnector } from './connector/resolveConnector';
@@ -117,6 +119,31 @@ export interface DrawContext2D {
     x: number,
     y: number,
   ): void;
+  /**
+   * 파선 무늬를 건다 (SPEC-CANVAS-012 M3 · §결정 2).
+   *
+   * ## 왜 선택적인가 — 008 의 최소성을 깨지 않고 더하는 유일한 모양
+   *
+   * 008 이 이 인터페이스에 대해 적어 둔 문장이 이 물음표 하나의 근거다:
+   *
+   *   > 인터페이스의 최소성은 장식이 아니라 하중을 받는 성질이므로(그 최소성이 있어서
+   *   > 렌더 경로 전량이 jsdom 없이 기록 스텁으로 검증된다), 셋째 멤버를 더하려는 설계는
+   *   > 되짚어야 한다.
+   *
+   * 필수로 더하면 이 인터페이스를 **구조적으로** 만족하던 스텁 공장 아홉이 한꺼번에
+   * 컴파일되지 않는다. 그 아홉을 고치는 일은 012 가 사려는 것과 아무 상관이 없고, 008 이
+   * "하중을 받는 성질" 이라 부른 최소성을 **고치는 비용으로 갚게** 만든다.
+   *
+   * ## 대가를 숨기지 않는다
+   *
+   * 선택적이라는 것은 **구현하지 않은 스텁에서 파선이 조용히 지나간다**는 뜻이다. 그래서
+   * 파선을 재는 시험은 제 스텁이 이 멤버를 갖추는 것을 전제로 하며, 그 사실 자체를 가드가
+   * 고정한다(`drawElement.dash.test.ts`). 고정하지 않으면 훗날 스텁이 이 멤버를 잃어도
+   * 시험이 초록으로 남고, 그때 파선은 **아무도 재지 않는 기능**이 된다.
+   *
+   * 빈 배열이 곧 실선이다(canvas 명세) — 되돌리는 별도 호출이 없다.
+   */
+  setLineDash?(segments: readonly number[]): void;
   stroke(): void;
   fill(): void;
   fillText(text: string, x: number, y: number): void;
@@ -201,6 +228,15 @@ function paintStroke(ctx: DrawContext2D, style: ResolvedStyle): void {
   if (style.stroke === undefined || width <= 0) return;
   ctx.strokeStyle = style.stroke;
   ctx.lineWidth = width;
+  // 무늬는 **이른 반환 뒤에** 건다(012 AC-17). 앞에 걸면 칠하지도 않을 선 때문에 canvas
+  // 상태를 건드리게 되고, 그 상태는 `save`/`restore` 경계를 넘어 다음 요소에게 간다.
+  //
+  // 무늬가 두께에서 나오므로 **여기서 다시 재지 않는다** — 바로 위 `width` 가 그 값이다.
+  // 두 번째 측정을 만들면 "그려진 무늬와 잰 무늬가 다르다" 가 시작된다(§결정 3).
+  //
+  // 이 한 자리가 **도형과 연결선 양쪽을 덮는다.** 갈라 두려면 칠하는 함수를 둘로 나눠야
+  // 하고, 그것이 008 이래 이 저장소가 피해 온 형상이다(012 §결정 6).
+  ctx.setLineDash?.(dashPattern(style.strokeDash, width));
   ctx.stroke();
 }
 

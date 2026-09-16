@@ -101,9 +101,21 @@ import {
   type ConnectorRoute,
 } from './connector/connectorTypes';
 // SPEC-CANVAS-011 M12 — 끊긴 연결을 **묻는** 자리다. 답은 `resolveConnector` 한 함수에서
-// 오고(AC-45), 끝을 가르는 판정도 그 모듈이 든다(`isAttachedEnd`) — 목록이 제 손으로
-// 참조를 풀거나 끝을 가르면 "그려지는 자리와 목록이 말하는 자리가 다르다" 가 시작된다.
-import { isAttachedEnd, resolveConnector } from './connector/resolveConnector';
+// 온다(AC-45) — 목록이 제 손으로 참조를 풀면 "그려지는 자리와 목록이 말하는 자리가 다르다"
+// 가 시작된다.
+//
+// 012 M1 이 `isAttachedEnd` 를 걷었다. 끝을 가르던 이유는 두 끝의 **좌표를 말하기** 위해
+// 서였고, 그 줄이 사라졌으므로 판정도 쓰이지 않는다.
+import { resolveConnector } from './connector/resolveConnector';
+// 파선 이름 넷과 그 목록(SPEC-CANVAS-012). 목록이 여기 한 벌만 있으므로 선택지와 판별이
+// 갈라질 수 없다.
+import { STROKE_DASH_NAMES, type StrokeDash } from './strokeDash';
+// 백분율 환산 한 쌍(SPEC-CANVAS-012 M5). 네 칸이 같은 함수를 지나므로 반올림이 갈릴 수 없다.
+import {
+  OPACITY_PERCENT_MAX,
+  opacityToPercentInput,
+  percentInputToOpacity,
+} from './opacityPercent';
 import type { CanvasProjection } from './canvasGeometry';
 import { frameKey, parseFrameKey } from './group/frameKey';
 import { partInCanvasUnits, writePartFromCanvasUnits } from './group/groupOps';
@@ -496,10 +508,6 @@ function nonNegative(v: number | undefined): number | undefined {
   return v === undefined ? undefined : Math.max(0, v);
 }
 
-/** 0..1 로 죈다(파서의 불투명도 clamp 와 같은 범위 — 규율 2). */
-function clamp01(v: number | undefined): number | undefined {
-  return v === undefined ? undefined : v < 0 ? 0 : v > 1 ? 1 : v;
-}
 
 /** 소수 자리는 비음수 정수다(파서의 `Math.trunc` 와 같은 규율 — 규율 2). */
 function decimalsOf(v: number | undefined): number | undefined {
@@ -816,16 +824,20 @@ function ShapeStyleGroup({ el, idx, t, testIdPrefix, ariaOf, onChange }: {
           className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
         />
 
+        {/* 012 M5 — **칸은 백분율, 저장은 0..1 그대로다**(§결정 4). 저장을 100 눈금으로
+            바꾸면 이미 저장된 대시보드가 전부 100 배 불투명해지고, 규칙 패치·트윈·SVG
+            가져오기가 같은 축을 다른 눈금으로 읽는다. 환산은 `opacityPercent` 한 쌍이
+            지므로 네 칸이 반올림을 다르게 할 수 없다(AC-28). */}
         <input
           type="number"
-          step="any"
+          step={1}
           min={0}
-          max={1}
-          value={el.style.opacity ?? ''}
+          max={OPACITY_PERCENT_MAX}
+          value={opacityToPercentInput(el.style.opacity)}
           onChange={(e) =>
             onChange({
               ...el,
-              style: setStyleField(el.style, 'opacity', clamp01(parseOptionalNumber(e.target.value))),
+              style: setStyleField(el.style, 'opacity', percentInputToOpacity(e.target.value)),
             })
           }
           placeholder={t('dashboard.canvas.elements.opacityPlaceholder')}
@@ -1497,17 +1509,17 @@ function GroupNodeRow({
           >
             <input
               type="number"
-              step="any"
+              step={1}
               min={0}
-              max={1}
-              value={node.style?.opacity ?? ''}
+              max={OPACITY_PERCENT_MAX}
+              value={opacityToPercentInput(node.style?.opacity)}
               onChange={(e) =>
                 onChange({
                   ...node,
                   style: setStyleField(
                     node.style ?? {},
                     'opacity',
-                    clamp01(parseOptionalNumber(e.target.value)),
+                    percentInputToOpacity(e.target.value),
                   ),
                 })
               }
@@ -1586,23 +1598,18 @@ const CONNECTOR_ROUTE_LABEL_KEY: Readonly<Record<ConnectorRoute, string>> = {
 };
 
 /**
- * 연결선의 한 끝을 **한 줄로** 말한다 — 붙은 자리이거나 캔버스 위의 좌표다.
+ * 파선 이름 넷의 표시 문구 (SPEC-CANVAS-012 M4).
  *
- * 가르는 일은 `isAttachedEnd` 한 함수가 한다(011 이 그 갈림을 한 자리에 묶었다). 여기서
- * `'el' in` 을 한 번 더 적으면 판정이 둘이 되고, 그중 하나가 갈라지는 날 목록이 말하는
- * 끝과 화면에 그려지는 끝이 달라진다.
+ * `Record<StrokeDash, string>` 이므로 잎 모듈이 다섯째 이름을 얻으면 **여기가 컴파일되지
+ * 않는다** — 바로 위 `CONNECTOR_ROUTE_LABEL_KEY` 가 그리는 법 넷에 대해 쓴 그 규율이다.
+ * 이름 없는 선택지가 조용히 생기는 것을 문법이 막는다.
  */
-function connectorEndText(
-  end: ConnectorElement['from'],
-  t: TranslationFn,
-): string {
-  return isAttachedEnd(end)
-    ? fillTokens(t('dashboard.canvas.elements.connectorEndAttached'), {
-        element: end.el,
-        anchor: end.a,
-      })
-    : fillTokens(t('dashboard.canvas.elements.connectorEndFree'), { x: end.x, y: end.y });
-}
+const STROKE_DASH_LABEL_KEY: Readonly<Record<StrokeDash, string>> = {
+  solid: 'dashboard.canvas.elements.strokeDashSolid',
+  dash: 'dashboard.canvas.elements.strokeDashDash',
+  dot: 'dashboard.canvas.elements.strokeDashDot',
+  dashDot: 'dashboard.canvas.elements.strokeDashDashDot',
+};
 
 /**
  * 연결선 한 줄 — **두 끝과 그리는 법을 말하고, 끊겼으면 그 사실을 말하는 행**
@@ -1649,6 +1656,7 @@ function ConnectorNodeRow({
   onToggle,
   onMove,
   onRemove,
+  onChange,
   rowRef,
 }: {
   node: ConnectorElement;
@@ -1669,9 +1677,18 @@ function ConnectorNodeRow({
   onToggle: () => void;
   onMove: (delta: -1 | 1) => void;
   onRemove: () => void;
+  /**
+   * 겉모습을 고쳐 내보낸다 (SPEC-CANVAS-012 M4 · REQ-03).
+   *
+   * **이 행이 읽기 전용을 벗은 자리다.** 종전에는 이 prop 이 없었고, 그 없음을 화면이
+   * `connectorReadOnlyHint` 한 줄로 변명하고 있었다 — 칸이 서면서 그 문장도 함께 죽는다.
+   *
+   * 최상위 노드를 통째로 돌려준다. 부모의 `replaceNodeAt` 이 그룹 행도 지나는 **같은
+   * 입구**이므로 쓰기 규칙이 둘이 되지 않는다.
+   */
+  onChange: (next: ConnectorElement) => void;
   rowRef: (el: HTMLDivElement | null) => void;
 }) {
-  const pointCount = node.points?.length ?? 0;
   return (
     <div
       ref={rowRef}
@@ -1777,44 +1794,115 @@ function ConnectorNodeRow({
             </p>
           )}
 
-          <FieldGroup
-            label={t('dashboard.canvas.elements.connectorFromLabel')}
-            testId={`canvas-connector-row-from-${idx}`}
-          >
-            <span className="min-w-0 truncate text-xs text-(--color-text-secondary)">
-              {connectorEndText(node.from, t)}
-            </span>
-          </FieldGroup>
+          {/* 012 M1 — 두 끝과 꺾임점 수를 말하던 세 줄이 여기 있었다. **걷는다.**
+              그 셋이 말하던 것은 전부 **좌표**이고, 좌표는 이 행에서 고칠 수 없으므로 읽는
+              사람이 할 수 있는 일이 없었다. 고치는 손잡이는 캔버스에 있고 거기서는 **보면서**
+              고친다 — 목록의 수치는 그 몸짓을 도운 적이 없다.
 
-          <FieldGroup
-            label={t('dashboard.canvas.elements.connectorToLabel')}
-            testId={`canvas-connector-row-to-${idx}`}
-          >
-            <span className="min-w-0 truncate text-xs text-(--color-text-secondary)">
-              {connectorEndText(node.to, t)}
-            </span>
-          </FieldGroup>
+              끊김 배지와 바로 위 끊김 안내는 **남는다.** 그 둘이 말하는 것은 좌표가 아니라
+              "이 선이 서지 못한다" 이며, 칸이 생겨도 참인 사실이다. */}
 
-          {/* 꺾임점은 **수만** 말한다. 좌표를 줄줄이 늘어놓으면 자유선 한 줄이 목록을
-              통째로 덮고(상한이 256 이다), 그 수치는 어차피 여기서 고칠 수 없다 —
-              고치는 손잡이는 캔버스에 있다(M10). */}
-          <FieldGroup
-            label={t('dashboard.canvas.elements.connectorPointsLabel')}
-            testId={`canvas-connector-row-points-${idx}`}
-          >
-            <span className="text-xs tabular-nums text-(--color-text-secondary)">
-              {fillTokens(t('dashboard.canvas.elements.connectorPointsSummary'), {
-                count: pointCount,
-              })}
-            </span>
-          </FieldGroup>
+          {/* 겉모습 칸 넷 (012 M4 · REQ-03).
 
-          {/* 이 행이 읽는 자리라는 사실을 **화면이 말한다.** 없으면 사용자는 고치는 칸을
-              찾다가 없는 것을 결함으로 읽는다 — 어디서 고치는지를 함께 말하는 것이
-              빈자리를 안내로 바꾸는 유일한 길이다. */}
-          <p className={HINT_CLASS} data-testid={`canvas-connector-row-hint-${idx}`}>
-            {t('dashboard.canvas.elements.connectorReadOnlyHint')}
-          </p>
+              **여기 있던 안내문이 죽은 자리다.** 그 문장("연결선은 캔버스에서 고칩니다…")
+              은 고칠 칸이 없다는 사실의 **대역**이었고, 원래 주석이 그 사실을 스스로 적어
+              두었다 — "없으면 사용자는 고치는 칸을 찾다가 없는 것을 결함으로 읽는다".
+              진단은 옳았고 답만 달랐다: 칸을 세우면 변명할 빈자리가 없다. 칸보다 **먼저**
+              죽이면 칸도 안내도 없는 구간이 생기므로, 그 문장은 칸이 서는 **이 커밋에서**
+              죽는다.
+
+              **차례가 요소 스타일 줄과 같다** — 색 → 굵기 → 선 스타일 → 투명도. 같은 축을
+              두 화면이 다른 차례로 그리면 사용자가 두 번 배운다. 컨트롤도 같은 것을 쓴다.
+
+              **칸은 넷뿐이다.** 채움이 없는 것은 열린 경로의 `fill` 이 뜻이 없기 때문이고
+              (`drawConnector` §채우지 않는다), 보임/숨김이 없는 것은 이 SPEC 이 사려는
+              것이 겉모습이지 존재가 아니기 때문이다.
+
+              `node.style` 이 옵셔널이라 매 칸이 `?? {}` 로 연다 — 저술이 없는 연결선은
+              스타일 키 자체가 없고, 그것이 "색을 지정하지 않음" 의 표현이다(001). */}
+          <FieldGroup
+            label={t('dashboard.canvas.elements.connectorStyleLabel')}
+            testId={`canvas-connector-row-style-${idx}`}
+          >
+            <ColorPicker
+              alpha
+              clearable
+              value={node.style?.stroke}
+              onChange={(c) =>
+                onChange({ ...node, style: setStyleField(node.style ?? {}, 'stroke', c) })
+              }
+              ariaLabel={withIndex(t('dashboard.canvas.elements.connectorStrokeAria'), idx)}
+              testId={`canvas-connector-row-stroke-${idx}`}
+            />
+            <input
+              type="number"
+              step="any"
+              min={0}
+              value={node.style?.strokeWidth ?? ''}
+              onChange={(e) =>
+                onChange({
+                  ...node,
+                  style: setStyleField(
+                    node.style ?? {},
+                    'strokeWidth',
+                    nonNegative(parseOptionalNumber(e.target.value)),
+                  ),
+                })
+              }
+              placeholder={t('dashboard.canvas.elements.strokeWidthPlaceholder')}
+              aria-label={withIndex(t('dashboard.canvas.elements.connectorStrokeWidthAria'), idx)}
+              data-testid={`canvas-connector-row-stroke-width-${idx}`}
+              className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
+            />
+            {/* **3지 선택이다** — 빈 칸(미지정)과 `solid` 는 같은 그림이되 다른 값이다.
+                미지정은 규칙이 정할 수 있는 자리이고 `solid` 는 저술자가 정한 값이며,
+                둘을 접으면 "무슨 일이 있어도 실선" 을 표현할 방법이 사라진다
+                (`visible` 이 체크박스가 아닌 것과 같은 판단). */}
+            <select
+              value={node.style?.strokeDash ?? ''}
+              onChange={(e) =>
+                onChange({
+                  ...node,
+                  style: setStyleField(
+                    node.style ?? {},
+                    'strokeDash',
+                    e.target.value === '' ? undefined : (e.target.value as StrokeDash),
+                  ),
+                })
+              }
+              aria-label={withIndex(t('dashboard.canvas.elements.connectorStrokeDashAria'), idx)}
+              data-testid={`canvas-connector-row-stroke-dash-${idx}`}
+              className={cn(INPUT_CLASS, 'shrink-0')}
+            >
+              <option value="">{t('dashboard.canvas.elements.unset')}</option>
+              {STROKE_DASH_NAMES.map((name) => (
+                <option key={name} value={name}>
+                  {t(STROKE_DASH_LABEL_KEY[name])}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              step={1}
+              min={0}
+              max={OPACITY_PERCENT_MAX}
+              value={opacityToPercentInput(node.style?.opacity)}
+              onChange={(e) =>
+                onChange({
+                  ...node,
+                  style: setStyleField(
+                    node.style ?? {},
+                    'opacity',
+                    percentInputToOpacity(e.target.value),
+                  ),
+                })
+              }
+              placeholder={t('dashboard.canvas.elements.opacityPlaceholder')}
+              aria-label={withIndex(t('dashboard.canvas.elements.connectorOpacityAria'), idx)}
+              data-testid={`canvas-connector-row-opacity-${idx}`}
+              className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
+            />
+          </FieldGroup>
         </div>
       )}
     </div>
@@ -2463,6 +2551,9 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                   onToggle={() => toggleExpanded(el.id)}
                   onMove={(delta) => moveAt(idx, delta)}
                   onRemove={() => removeAt(idx)}
+                  // 그룹 행과 **같은 입구**다(`replaceNodeAt`). 연결선 전용 쓰기 통로를
+                  // 따로 내면 쓰기 규칙이 둘이 된다.
+                  onChange={(next) => replaceNodeAt(idx, next)}
                   rowRef={(node) => {
                     if (node === null) rowRefs.current.delete(el.id);
                     else rowRefs.current.set(el.id, node);
