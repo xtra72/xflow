@@ -21,7 +21,7 @@ import {
   toAbsoluteBox,
   toAbsoluteGeometry,
   toAbsoluteLine,
-  toAbsolutePoint,
+  toAbsolutePointRounded,
   toLocalBox,
   toLocalGeometry,
   toLocalLine,
@@ -91,7 +91,7 @@ describe('묶기 → 풀기 왕복 (AC-14 · 가정 A15)', () => {
     const line: LineGeometry = { x1: 90, y1: 60, x2: 300, y2: 180 };
     expect(toAbsoluteLine(toLocalLine(line, BOX), BOX)).toEqual(line);
     const point: PointGeometry = { x: 231, y: 131 };
-    expect(toAbsolutePoint(toLocalPoint(point, BOX), BOX)).toEqual(point);
+    expect(toAbsolutePointRounded(toLocalPoint(point, BOX), BOX)).toEqual(point);
   });
 });
 
@@ -142,7 +142,7 @@ describe('자리에서는 원점을 빼고 길이에서는 빼지 않는다 (E-D
       toLocalPoint({ x: 231, y: 131 }, BOX),
     );
     expect(toAbsoluteGeometry({ x: 5000, y: 5000 } as PointGeometry, BOX)).toEqual(
-      toAbsolutePoint({ x: 5000, y: 5000 }, BOX),
+      toAbsolutePointRounded({ x: 5000, y: 5000 }, BOX),
     );
   });
 });

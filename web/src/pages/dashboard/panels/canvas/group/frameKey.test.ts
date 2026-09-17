@@ -9,11 +9,22 @@
 import { describe, expect, it } from 'vitest';
 
 import type { CanvasElement } from '../canvasConfig';
-import { frameKey, walkDrawables } from './frameKey';
+import { frameKey, walkDrawables, type FrameDrawable, type FrameElementDrawable } from './frameKey';
 import type { CanvasNode, GroupElement } from './groupTypes';
 
 function rect(id: string): CanvasElement {
   return { id, kind: 'rect', style: {}, geometry: { x: 0, y: 0, w: 10, h: 10 } };
+}
+
+/**
+ * 요소 갈래만 걸러 낸다(SPEC-CANVAS-011 M6).
+ *
+ * 순회가 판별 합집합을 내게 되면서 `d.element` 를 바로 읽는 것이 **컴파일되지 않는다** —
+ * 그것이 M6 이 고른 설계다(소비자가 연결선을 잊으면 컴파일이 멈춘다). 시험도 소비자이므로
+ * 같은 문을 지난다.
+ */
+function elementsOf(items: readonly FrameDrawable[]): FrameElementDrawable[] {
+  return items.filter((d): d is FrameElementDrawable => d.kind === 'element');
 }
 
 function group(id: string, partIds: readonly string[]): GroupElement {
@@ -66,17 +77,54 @@ describe('walkDrawables — 그리기 순서는 2단이다 (AC-E4)', () => {
   });
 
   it('그룹 자신은 나오지 않는다 — 그릴 도형이 없다', () => {
-    expect([...walkDrawables(nodes)].map((d) => d.element.id)).toEqual([
+    expect(elementsOf([...walkDrawables(nodes)]).map((d) => d.element.id)).toEqual([
       'rect-A',
       'p1',
       'p2',
       'rect-B',
     ]);
-    expect([...walkDrawables(nodes)].every((d) => d.element.kind !== ('group' as string))).toBe(true);
+    expect(
+      elementsOf([...walkDrawables(nodes)]).every((d) => d.element.kind !== ('group' as string)),
+    ).toBe(true);
+  });
+
+  it('연결선은 **제 배열 자리에서** 나온다 — 이웃의 차례는 흔들리지 않는다 (AC-51)', () => {
+    // SPEC-CANVAS-011 M6 이 M4 의 단언을 **뒤집었다.** M4 는 "연결선은 아직 나오지 않는다"
+    // 를 값으로 붙들어 두었고, 그 줄이 여기서 갈린다 — 뒤집은 것이 의도임을 남긴다.
+    //
+    // 뒤집히지 않은 절반이 함께 있다: 연결선이 섞여도 **나머지의 키가 한 글자도 달라지지
+    // 않는다**(G11). 키가 흔들리면 트윈 장부와 글자 폭 장부가 함께 어긋난다.
+    const withConnector: CanvasNode[] = [
+      rect('rect-A'),
+      {
+        id: 'c1',
+        kind: 'connector',
+        from: { el: 'rect-A', a: 'e' },
+        to: { el: 'rect-B', a: 'w' },
+        route: 'straight',
+      },
+      group('grp-1', ['p1', 'p2']),
+      rect('rect-B'),
+    ];
+    // 연결선의 키는 **평평하다** — 최상위 노드이므로 복합 키가 설 자리가 없다.
+    expect([...walkDrawables(withConnector)].map((d) => d.key)).toEqual([
+      'rect-A',
+      'c1',
+      'grp-1/p1',
+      'grp-1/p2',
+      'rect-B',
+    ]);
+    // 배열 자리 그대로다: 앞의 도형 뒤, 그룹 앞.
+    const kinds = [...walkDrawables(withConnector)].map((d) => d.kind);
+    expect(kinds).toEqual(['element', 'connector', 'element', 'element', 'element']);
+    // 요소 갈래에는 섞이지 않는다 — 연결선은 `CanvasElement` 가 아니다(A4).
+    expect(elementsOf([...walkDrawables(withConnector)]).some((d) => d.element.id === 'c1')).toBe(
+      false,
+    );
   });
 
   it('부품 항목은 제 그룹을 들고 나오고 최상위 항목은 들지 않는다', () => {
-    const visits = [...walkDrawables(nodes)];
+    const visits = elementsOf([...walkDrawables(nodes)]);
     expect(visits[0]?.group).toBeUndefined();
     expect(visits[1]?.group?.id).toBe('grp-1');
     expect(visits[2]?.group).toBe(visits[1]?.group);

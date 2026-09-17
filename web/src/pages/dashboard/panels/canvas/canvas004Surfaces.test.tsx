@@ -40,12 +40,22 @@ vi.mock('@/lib/i18n', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 
-import { DEFAULT_CANVAS_SIZE, type CanvasElement } from './canvasConfig';
+import { DEFAULT_CANVAS_SIZE, type CanvasElement, type Geometry } from './canvasConfig';
 import { CanvasEditDockRegion } from './CanvasEditDock';
 import CanvasEditOverlay from './CanvasEditOverlay';
 import { CanvasEditSelectionContext, useCanvasEditSelectionState } from './canvasEditContext';
 import type { CanvasProjection } from './canvasGeometry';
 import { GROUP_LOCAL_EXTENT, isGroup, type CanvasNode, type GroupElement } from './group/groupTypes';
+import { isConnector } from './connector/connectorTypes';
+
+/**
+ * 노드의 기하. 연결선에는 기하가 없으므로(SPEC-CANVAS-011 M4) 좁혀 읽는다 — 이 시험의
+ * 장면에는 연결선이 오지 않으며, 그때는 `undefined` 라 단언이 조용히 통과하지 않는다.
+ */
+function geometryOf(node: CanvasNode): Geometry | undefined {
+  return isConnector(node) ? undefined : node.geometry;
+}
+
 import { useScratchpadStore } from './scratchpad/scratchpadStore';
 
 afterEach(() => {
@@ -259,11 +269,15 @@ describe('그룹 컨트롤이 두 표면 모두에 선다 (AC-E12 · 불변식 I
     }
   });
 
-  it('②자리 — 도크 표면에서는 도크 안에, 대시보드 표면에서는 떠 있는 줄 안에 산다', () => {
-    // 담김 관계를 잰다. "어딘가에 있다" 만 재면 줄 밖 · 도크 밖에 떠 있어도 초록이다.
+  it('②자리 — 도크 표면에서는 **띠** 안에, 대시보드 표면에서는 떠 있는 줄 안에 산다', () => {
+    // 담김 관계를 잰다. "어딘가에 있다" 만 재면 띠 밖 · 줄 밖에 떠 있어도 초록이다.
+    //
+    // **그릇이 바뀌었다**(2026-09-16 — 도구 띠). 그룹 절은 도크에서 미리보기 제목 아래
+    // 가로 띠로 갔다 — 묶기는 선택 위에서 도는 연산이라 정렬 · 순서와 한 부류이고, 그
+    // 셋이 함께 옮겨졌기 때문이다. 재는 것(두 표면에 하나씩, 제 그릇 안에)은 그대로다.
     cleanup();
     setup({ docked: true, initial: [A, B], select: ['a', 'b'] });
-    expect(screen.getByTestId('canvas-dock-panel').contains(groupButton())).toBe(true);
+    expect(screen.getByTestId('canvas-toolbar-panel').contains(groupButton())).toBe(true);
     expect(screen.queryByTestId('canvas-workspace-zoom-bar')).toBeNull();
 
     cleanup();
@@ -600,7 +614,7 @@ describe('묶었다가 곧바로 푸는 몸짓 (AC-14 의 화면 쪽 — 산술�
 
     const byKind = new Map(live.map((n) => [n.kind, n] as const));
     expect(live).toHaveLength(4);
-    expect(byKind.get('ellipse')!.geometry).toEqual(B.geometry);
-    expect(byKind.get('text')!.geometry).toEqual(T.geometry);
+    expect(geometryOf(byKind.get('ellipse')!)).toEqual(B.geometry);
+    expect(geometryOf(byKind.get('text')!)).toEqual(T.geometry);
   });
 });

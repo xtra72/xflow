@@ -65,6 +65,9 @@ const EDIT_KEYS: readonly string[] = [
   'scratchpadDropHint',
   'scratchpadSave',
   'scratchpadEmpty',
+  // 008 의 빈 서랍 안내가 둘로 갈렸다 — 사실은 빈 자리에, 할 일은 제목 뒤 `?` 로.
+  // 갈라져 나온 쪽도 같은 가드 안에 둔다(한쪽만 지키면 나머지 반이 조용히 빠진다).
+  'scratchpadEmptyHint',
   'scratchpadLocalOnly',
   'scratchpadAutoName',
   'scratchpadName',
@@ -87,7 +90,13 @@ const ELEMENT_KEYS: readonly string[] = ['dashboard.canvas.elements.kindPath'];
 /** 카탈로그 이름 30종 — **목록에서 유도한다**(도형이 늘면 가드도 늘어난다). */
 const CATALOG_NAME_KEYS: readonly string[] = SHAPE_CATALOG.map((s) => s.nameKey);
 
-/** 묶음 제목 넷 — 코드가 든 그 표에서 유도한다. */
+/**
+ * 묶음 제목 셋 — 코드가 든 그 표에서 유도한다.
+ *
+ * **뒤집힌 수 (SPEC-CANVAS-011 REQ-01).** 008 에서는 넷이었다. 011 이 `원시형` 묶음을
+ * 걷어내 셋이 되었다. 그 키(`paletteGroupPrimitive`)는 **소비처만 사라지고 로케일 파일에는
+ * 남으므로** 위 `EDIT_KEYS` 에서는 빠지지 않는다 — 남긴 키가 조용히 지워지면 여기가 운다.
+ */
 const GROUP_TITLE_KEYS: readonly string[] = PALETTE_GROUP_IDS.map(
   (id) => PALETTE_GROUP_TITLE_KEYS[id],
 );
@@ -131,6 +140,15 @@ function lookup(tree: unknown, key: string): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+/**
+ * 묶음 하나를 **편다**. 이미 펴져 있으면 아무 일도 하지 않는다 — 011 이 `기본` 을 펼친 채로
+ * 태어나게 했으므로(REQ-01) 무조건 누르는 몸짓은 그 묶음을 **닫는다**.
+ */
+function openGroup(id: string): void {
+  const head = screen.getByTestId(`canvas-palette-group-${id}`);
+  if (head.getAttribute('aria-expanded') === 'false') fireEvent.click(head);
+}
+
 /** 문구 안의 `{…}` 치환자 다중 집합. 정렬해 두어 비교가 순서에 흔들리지 않는다. */
 function tokensOf(text: string): string[] {
   return [...text.matchAll(/\{[a-zA-Z0-9_]+\}/g)].map((m) => m[0]).sort();
@@ -141,7 +159,7 @@ function tokensOf(text: string): string[] {
 describe('008 이 더한 문구는 ko · en 양쪽에 있다 (REQ-06 · 품질 게이트 Unified)', () => {
   it('키 전량이 양쪽 로케일에서 **비어 있지 않은 문자열**로 잡힌다', () => {
     // 켜져 있음을 먼저 단언한다 — 목록이 비면 아래 순회가 0회 돌고 초록이 된다.
-    expect(ALL_008_KEYS.length).toBeGreaterThanOrEqual(23 + 1 + 30 + 4);
+    expect(ALL_008_KEYS.length).toBeGreaterThanOrEqual(24 + 1 + 30 + 3);
 
     const missing: string[] = [];
     for (const key of ALL_008_KEYS) {
@@ -266,7 +284,8 @@ describe('`en` 로케일에서도 치환이 두 자리 모두 일어난다 (D7 �
   it('카탈로그 칸의 접근성 이름에 벌거벗은 `{shape}` 가 남지 않는다', () => {
     useLocale('en');
     render(<Harness initial={[]} />);
-    fireEvent.click(screen.getByTestId('canvas-palette-group-basic'));
+    // 011 이후 `기본` 은 펼쳐진 채로 태어난다 — 무조건 누르면 닫힌다(REQ-01).
+    openGroup('basic');
 
     const cell = screen.getByTestId('canvas-catalog-add-cloud');
     const label = cell.getAttribute('aria-label') ?? '';
@@ -280,6 +299,43 @@ describe('`en` 로케일에서도 치환이 두 자리 모두 일어난다 (D7 �
     expect(cell.textContent).toContain(name);
     expect(label).toContain(name);
   });
+
+  // 로케일 순회를 `it` **밖**에 둔다 — `useLocale` 은 이름이 훅을 닮아서 함수 본문의
+  // 반복문 안에서 부르면 `react-hooks/rules-of-hooks` 가 운다(이 파일의 다른 순회와 같은 꼴).
+  for (const locale of ['ko', 'en'] as const) {
+    it(`${locale}: 원시형 네 칸도 접근성 이름이 보이는 이름을 품는다 (WCAG 2.5.3)`, () => {
+      // 011 이 넷을 카탈로그와 **같은 격자의 칸**으로 만들었으므로, 이웃한 서른 칸이 지키는
+      // 성질을 이 넷도 지키는지 잰다. 넷의 두 문구는 카탈로그와 달리 치환이 아니라 **따로
+      // 적힌 두 문장**이라(`paletteRect` 와 `shapeRect`) 포함이 저절로 성립하지 않는다.
+      //
+      // ko 는 글자 그대로 품는다("사각형" ⊂ "사각형 놓기"). en 은 **대소문자만** 어긋난다
+      // ("Rectangle" 대 "Place rectangle") — 그래서 접어서 잰다. WCAG 2.5.3 은 대소문자를
+      // 따지지 않으므로 이것으로 충족이지만, 그 어긋남이 있다는 사실 자체를 여기 적어 둔다.
+      // 011 이 만든 것이 아니라 008 이전부터 그랬고, 이 시험이 그것을 처음 고정한다.
+      const pairs: ReadonlyArray<readonly [kind: string, ariaKey: string, nameKey: string]> = [
+        ['rect', 'paletteRect', 'shapeRect'],
+        ['ellipse', 'paletteEllipse', 'shapeEllipse'],
+        ['line', 'paletteLine', 'shapeLine'],
+        ['text', 'paletteText', 'shapeText'],
+      ];
+
+      useLocale(locale);
+      render(<Harness initial={[]} />);
+      for (const [kind, ariaKey, nameKey] of pairs) {
+        const cell = screen.getByTestId(`canvas-palette-add-${kind}`);
+        const label = cell.getAttribute('aria-label') ?? '';
+        const name = lookup(LOCALES[locale], `${EDIT}.${nameKey}`) ?? '';
+        expect(name, `${locale}:${nameKey}`).not.toBe('');
+        expect(label, `${locale}:${ariaKey}`).toBe(lookup(LOCALES[locale], `${EDIT}.${ariaKey}`));
+        // 보이는 이름이 곧 칸의 글자다.
+        expect(cell.textContent, `${locale}:${kind} 의 보이는 이름`).toContain(name);
+        // 접근성 이름이 그것을 품는다(대소문자 접어서).
+        expect(label.toLowerCase(), `${locale}:${kind} 의 접근성 이름`).toContain(
+          name.toLowerCase(),
+        );
+      }
+    });
+  }
 
   it('한도 안내가 상한을 두 번 말하고 두 자리 모두 숫자다', () => {
     useLocale('en');
@@ -310,7 +366,8 @@ describe('`en` 로케일에서도 치환이 두 자리 모두 일어난다 (D7 �
     expect(text.split(String(SCRATCHPAD_MAX_ENTRIES))).toHaveLength(3);
   });
 
-  it('묶음 머리 넷이 en 번역을 보이고 원문 키가 뜨지 않는다', () => {
+  // **뒤집힌 수 (SPEC-CANVAS-011 REQ-01 · AC-01).** 008 의 묶음은 넷이었다.
+  it('묶음 머리 셋이 en 번역을 보이고 원문 키가 뜨지 않는다', () => {
     useLocale('en');
     render(<Harness initial={[]} />);
     for (const id of PALETTE_GROUP_IDS) {
@@ -325,7 +382,7 @@ describe('`en` 로케일에서도 치환이 두 자리 모두 일어난다 (D7 �
 
 describe('도크 안의 008 표면에 원문 키도 벌거벗은 치환자도 없다 (양쪽 로케일)', () => {
   for (const locale of ['ko', 'en'] as const) {
-    it(`${locale}: 묶음 넷을 모두 펴고 서랍에 항목을 하나 둔 상태에서도 없다`, () => {
+    it(`${locale}: 묶음 셋을 모두 펴고 서랍에 항목을 하나 둔 상태에서도 없다`, () => {
       useLocale(locale);
       useScratchpadStore.setState({
         entries: [
@@ -435,7 +492,7 @@ describe('드롭 존 · 목록 · 단추의 이름과 역할 (M11 · WCAG 2.5.3 
 
   it('장식은 이름을 나르지 않는다 — 008 이 그린 그림 전량이 `aria-hidden` 이다', () => {
     render(<Harness initial={[]} />);
-    fireEvent.click(screen.getByTestId('canvas-palette-group-basic'));
+    openGroup('basic');
 
     // **008 이 소유한 자리만 잰다.** 도크 전체로 넓히면 008 이 만들지 않은 공용 부품
     // (`components/property/FieldHelp.tsx` 의 물음표 아이콘 — `aria-hidden` 이 없다)이

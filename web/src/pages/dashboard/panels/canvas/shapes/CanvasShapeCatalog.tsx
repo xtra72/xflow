@@ -21,17 +21,21 @@
 //
 // @spec SPEC-CANVAS-008 REQ-02 · REQ-06 · AC-03 · AC-E9
 
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, type ReactNode } from 'react';
 
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
-import type { PathElement } from '../canvasConfig';
-import { pathSeedStyle } from '../canvasElementFactory';
-import type { CanvasProjection } from '../canvasGeometry';
+import type { CanvasElement } from '../canvasConfig';
 import { clearSurface, drawElements, type DrawContext2D } from '../drawElement';
+import {
+  PREVIEW,
+  PREVIEW_PROJECTION,
+  PREVIEW_SCALE,
+  previewElement,
+} from './previewElements';
 import {
   PALETTE_GROUP_TITLE_KEYS,
   type PaletteCollapseState,
@@ -56,8 +60,14 @@ const GROUP_HEAD_CLASS =
  */
 const GRID_CLASS = 'grid grid-cols-2 gap-0.5 pt-0.5';
 
-/** 칸 하나 — 미리보기 위, 이름 아래. */
-const CELL_CLASS =
+/**
+ * 칸 하나 — 미리보기 위, 이름 아래.
+ *
+ * **내보내는 것에 뜻이 있다.** 011 이후 이 격자의 첫 네 칸은 도크가 그린다(원시형 넷).
+ * 도크가 비슷한 클래스를 제 자리에 한 벌 더 적으면 두 벌이 언젠가 갈라지고, 그 갈라짐은
+ * "한 묶음 안에 두 생김새" 로 화면에 나온다 — 011 이 방금 고친 그 결함이다.
+ */
+export const CELL_CLASS =
   'flex w-full flex-col items-center gap-0.5 rounded px-1 py-1 text-[11px] ' +
   'text-(--color-text-secondary) hover:bg-(--color-bg-elevated) hover:text-blue-500 ' +
   'focus:outline-none focus:ring-2 focus:ring-blue-300';
@@ -66,58 +76,30 @@ const CHEVRON_CLASS = 'h-3 w-3 shrink-0';
 
 // --- 미리보기 ------------------------------------------------------------
 
+
 /**
- * 미리보기 칸의 CSS 크기(px)와 그 안의 도형 상자.
+ * 칸 하나의 미리보기. **어떤 요소든 받는다** — 카탈로그 경로 30종도, 원시형 넷도.
  *
- * 좌표 공간을 CSS px 와 **같은 수**로 두어(`canvas` = 이 크기) 읽는 사람이 두 단위를
- * 환산하지 않게 한다. 도형 상자를 **정사각**으로 두는 것에는 뜻이 있다 — 카탈로그의 명령은
- * 정사각 로컬 격자(0..10000) 위에서 그려졌으므로, 직사각 상자에 넣으면 원이 타원이 되듯
- * 30종 전부가 눌린 채로 보인다.
- */
-const PREVIEW = { width: 44, height: 32, side: 26 } as const;
-
-/**
- * 뒷면 배율. 미리보기는 26px 안에 별의 꼭짓점 열을 그리므로 장치 픽셀이 모자란다. DPR 을
- * 읽지 않고 2 로 고정하는 것은 이 칸이 **그림이 아니라 아이콘**이기 때문이다 — 표면
- * (`CanvasSurface`)이 DPR 을 읽는 것과 달리 여기서는 선명도 한 눈금이면 족하고, DPR 을
- * 읽으면 이 파일이 표면의 그 배선을 한 벌 더 갖게 된다.
- */
-const PREVIEW_SCALE = 2;
-
-/** 미리보기 좌표계 → 뒷면 px. 도형은 언제나 이 투영을 지난다. */
-const PREVIEW_PROJECTION: CanvasProjection = {
-  stage: { width: PREVIEW.width * PREVIEW_SCALE, height: PREVIEW.height * PREVIEW_SCALE },
-  canvas: { width: PREVIEW.width, height: PREVIEW.height },
-};
-
-/** 미리보기 안의 도형 상자 — 가운데 놓인 정사각. */
-const PREVIEW_BOX = {
-  x: (PREVIEW.width - PREVIEW.side) / 2,
-  y: (PREVIEW.height - PREVIEW.side) / 2,
-  w: PREVIEW.side,
-  h: PREVIEW.side,
-} as const;
-
-/** 미리보기가 그릴 요소. **놓았을 때와 같은 씨앗 스타일**을 입는다. */
-function previewElement(entry: ShapeCatalogEntry): PathElement {
-  return {
-    id: entry.id,
-    kind: 'path',
-    geometry: { ...PREVIEW_BOX },
-    path: entry.path.map((cmd) => ({ ...cmd })),
-    catalog_id: entry.id,
-    style: pathSeedStyle(entry.path),
-  };
-}
-
-/**
- * 도형 하나의 미리보기.
+ * 011 이 이 부품을 일반화했다. 넷이 lucide 글리프를 지고 있던 동안에는 한 격자 안에
+ * 윤곽선 글리프와 파란 도형이라는 두 벌의 잉크가 서 있었다. 같은 `drawElements` 를 지나게
+ * 하면 그 둘이 하나가 되고, 덤으로 **"그리지 못하는 원시형" 이 여기서 즉시 드러난다** —
+ * 카탈로그가 미리보기를 별도 썸네일로 짓지 않은 그 이유(REQ-06)가 넷에도 걸린다.
+ *
+ * `element` 는 **참조가 안정적이어야 한다.** 렌더마다 새 객체를 주면 아래 효과가 매번 다시
+ * 돌아 같은 그림을 거듭 그린다. 두 호출자 모두 그 규율을 지킨다(카탈로그는 `useMemo`,
+ * 원시형은 모듈 상수).
  *
  * 2D context 를 얻지 못하면 **조용히 빈 칸으로 남는다.** jsdom 도 그 자리이고(시험 환경),
  * 실제 브라우저에서도 컨텍스트 소진 같은 이유로 `null` 이 올 수 있다. 미리보기 하나가
  * 팔레트 전체를 무너뜨리지 않아야 한다.
  */
-function CanvasShapePreview({ entry }: { entry: ShapeCatalogEntry }): React.ReactElement {
+export function CanvasCellPreview({
+  testId,
+  element,
+}: {
+  testId: string;
+  element: CanvasElement;
+}): React.ReactElement {
   const ref = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -128,15 +110,20 @@ function CanvasShapePreview({ entry }: { entry: ShapeCatalogEntry }): React.Reac
     // `clearSurface` 는 항등 변환(= 장치 px) 기준으로 지운다. 이 칸은 DPR 을 읽지 않으므로
     // 배율이 곧 `PREVIEW_SCALE` 이고, 그 값은 표면이 쓰는 것과 같은 형상으로 넘긴다.
     clearSurface(ctx, { ...PREVIEW_PROJECTION.stage, scale: PREVIEW_SCALE });
-    // 스타일도 문구도 규칙이 없다 — 카탈로그 칸에는 데이터가 붙지 않으므로 요소 자신의
+    // 스타일도 문구도 규칙이 없다 — 미리보기 칸에는 데이터가 붙지 않으므로 요소 자신의
     // 씨앗 스타일이 그대로 쓰인다(`drawElements` 가 `styles[id] ?? el.style` 로 떨어진다).
-    drawElements(ctx, [previewElement(entry)], {}, {}, PREVIEW_PROJECTION);
-  }, [entry]);
+    //
+    // **글자 폭 장부는 여기서 줄 것이 없다.** `drawElements` 의 뒤 두 인자는 스타일 맵과
+    // 문구 맵이고, 장부는 인자가 아니라 **반환값**이다 — 그리는 쪽이 `measureText` 로 직접
+    // 재기 때문이다. 그 장부를 받아 쓰는 것은 히트 판정과 윤곽 상자인데, 미리보기 칸에는
+    // 둘 다 없다. 그래서 버린다.
+    drawElements(ctx, [element], {}, {}, PREVIEW_PROJECTION);
+  }, [element]);
 
   return (
     <canvas
       ref={ref}
-      data-testid={`canvas-catalog-preview-${entry.id}`}
+      data-testid={testId}
       width={PREVIEW_PROJECTION.stage.width}
       height={PREVIEW_PROJECTION.stage.height}
       style={{ width: PREVIEW.width, height: PREVIEW.height }}
@@ -144,6 +131,17 @@ function CanvasShapePreview({ entry }: { entry: ShapeCatalogEntry }): React.Reac
       aria-hidden="true"
     />
   );
+}
+
+/**
+ * 카탈로그 도형 하나의 미리보기. `CanvasCellPreview` 에 얹는 얇은 어댑터다.
+ *
+ * `useMemo` 가 하는 일은 하나 — 카탈로그 항목이 얼어 있는 상수이므로 미리보기 요소도 그
+ * 항목마다 **한 번만** 지어져, 011 이전과 정확히 같은 횟수로 그려진다.
+ */
+function CanvasShapePreview({ entry }: { entry: ShapeCatalogEntry }): React.ReactElement {
+  const element = useMemo(() => previewElement(entry), [entry]);
+  return <CanvasCellPreview testId={`canvas-catalog-preview-${entry.id}`} element={element} />;
 }
 
 // --- 접히는 묶음 ---------------------------------------------------------
@@ -206,16 +204,29 @@ export interface CanvasShapeCatalogProps {
   onToggle: (id: PaletteGroupId) => void;
   /** 카탈로그 도형을 놓는다. 만드는 일은 `canvasElementFactory` 한 입구가 한다. */
   onPlace: (entry: ShapeCatalogEntry) => void;
+  /**
+   * `기본` 묶음 격자의 **첫 칸들**. 도크가 원시형 넷을 여기로 건넨다(SPEC-CANVAS-011 REQ-01).
+   *
+   * **격자 위가 아니라 격자 안이다.** 이 값은 `<div className={GRID_CLASS}>` 의 자식으로
+   * 들어가 카탈로그 칸들 **앞에** 흐르므로, 넘기는 쪽은 감싸는 상자가 아니라 `<button>`
+   * 조각을 주어야 한다. 상자로 감싸면 그 상자 하나가 칸 한 개를 차지하고 넷이 그 안에서
+   * 다시 쌓인다 — 한 묶음 안에 두 배치가 서는 그 결함이 정확히 그렇게 생긴다.
+   *
+   * 칸의 겉모습은 `CELL_CLASS` 로, 그림은 `CanvasCellPreview` 로 내보낸다. 넘기는 쪽이 제
+   * 클래스도 제 그리기도 적지 않아야 두 생김새가 다시 갈라지지 않는다.
+   */
+  leading?: ReactNode;
 }
 
 /**
- * 카탈로그 묶음 셋. 원시형 넷은 여기 없다 — 그 넷은 도크가 제 줄 버튼으로 내며, 자리도
- * 이름도 순서도 이 변경 전과 같다(AC-E10).
+ * 카탈로그 묶음 셋. 원시형 넷은 카탈로그가 아니지만 `기본` 묶음 **격자의 첫 네 칸**으로 선다
+ * (011 REQ-01) — 도크가 `leading` 으로 건넨 그것이다. 그래서 그 묶음의 몸통은 배치가 하나다.
  */
 export function CanvasShapeCatalog({
   collapsed,
   onToggle,
   onPlace,
+  leading,
 }: CanvasShapeCatalogProps): React.ReactElement {
   const { t } = useTranslation();
   // 치환자가 **두 번** 나오는 문구다. `replace` 는 첫 자리만 바꾸므로 뒤쪽에 `{shape}` 가
@@ -234,6 +245,7 @@ export function CanvasShapeCatalog({
           onToggle={onToggle}
         >
           <div className={GRID_CLASS}>
+            {group.id === 'basic' && leading}
             {group.entries.map((shape) => {
               const name = t(shape.nameKey);
               return (

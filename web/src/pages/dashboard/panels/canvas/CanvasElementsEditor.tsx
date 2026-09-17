@@ -47,7 +47,9 @@ import {
   ChevronsUp,
   ChevronUp,
   Group,
+  Link2,
   Trash2,
+  Unlink,
 } from 'lucide-react';
 
 import { FieldHelp } from '@/components/property/FieldHelp';
@@ -86,8 +88,37 @@ import {
   type TweenEasing,
   type TweenSpec,
 } from './canvasConfig';
-import { bringToFront, moveElementTo, removeNodes, sendToBack } from './canvasEditArrange';
+import {
+  bringToFront,
+  moveElementTo,
+  removeNodesWithConnectors,
+  sendToBack,
+} from './canvasEditArrange';
 import { isGroup, type CanvasNode, type GroupElement } from './group/groupTypes';
+import {
+  isConnector,
+  type ConnectorElement,
+  type ConnectorRoute,
+} from './connector/connectorTypes';
+// SPEC-CANVAS-011 M12 — 끊긴 연결을 **묻는** 자리다. 답은 `resolveConnector` 한 함수에서
+// 온다(AC-45) — 목록이 제 손으로 참조를 풀면 "그려지는 자리와 목록이 말하는 자리가 다르다"
+// 가 시작된다.
+//
+// 012 M1 이 `isAttachedEnd` 를 걷었다. 끝을 가르던 이유는 두 끝의 **좌표를 말하기** 위해
+// 서였고, 그 줄이 사라졌으므로 판정도 쓰이지 않는다.
+import { resolveConnector } from './connector/resolveConnector';
+// 파선 이름 넷과 그 목록(SPEC-CANVAS-012). 목록이 여기 한 벌만 있으므로 선택지와 판별이
+// 갈라질 수 없다.
+import { STROKE_DASH_NAMES, type StrokeDash } from './strokeDash';
+// 백분율 환산 한 쌍(SPEC-CANVAS-012 M5). 네 칸이 같은 함수를 지나므로 반올림이 갈릴 수 없다.
+import {
+  OPACITY_PERCENT_MAX,
+  opacityToPercentInput,
+  percentInputToOpacity,
+} from './opacityPercent';
+import type { CanvasProjection } from './canvasGeometry';
+import { frameKey, parseFrameKey } from './group/frameKey';
+import { partInCanvasUnits, writePartFromCanvasUnits } from './group/groupOps';
 import {
   useCanvasEditSelection,
   useCanvasLiveSeries,
@@ -477,10 +508,6 @@ function nonNegative(v: number | undefined): number | undefined {
   return v === undefined ? undefined : Math.max(0, v);
 }
 
-/** 0..1 로 죈다(파서의 불투명도 clamp 와 같은 범위 — 규율 2). */
-function clamp01(v: number | undefined): number | undefined {
-  return v === undefined ? undefined : v < 0 ? 0 : v > 1 ? 1 : v;
-}
 
 /** 소수 자리는 비음수 정수다(파서의 `Math.trunc` 와 같은 규율 — 규율 2). */
 function decimalsOf(v: number | undefined): number | undefined {
@@ -564,6 +591,732 @@ function summaryOf(el: CanvasElement, t: TranslationFn): string {
 
 // --- 하위 표현 -----------------------------------------------------------
 
+
+// --- 두 행이 함께 쓰는 편집 묶음 (SPEC-CANVAS-009 M5) ---------------------
+//
+// 아래 셋은 **요소 행에서 그대로 들어낸 것**이다. 부품 행이 "최상위 요소 행과 같은
+// 컨트롤" 을 쓴다는 요구(REQ-04 · 가정 A6 · AC-20)를 지키는 길은 비슷하게 다시 짓는 것이
+// 아니라 **같은 것을 부르는 것**뿐이다 — 다시 지으면 한쪽만 고쳐지는 날 "요소에서는
+// 1.5 가 1 로 죄이는데 부품에서는 그대로 들어간다" 가 생기고, 그 어긋남은 저장 왕복을
+// 견딘다.
+//
+// 두 행이 다른 것은 **셋뿐**이다: testId 앞머리 · aria 자리 번호 · 쓰기 콜백. 그래서 그
+// 셋만 인자로 받는다.
+
+/**
+ * 기하 묶음 — 크기와 위치(종류에 따라 갈린다).
+ *
+ * **부품 행에서는 이 칸들이 캔버스 단위로 말한다**(REQ-04-a · AC-21). 그룹 로컬 격자의
+ * 숫자는 화면 어디에도 설명이 없는 네 번째 단위이고, 004 가 그 노출을 기각한 근거를 009 가
+ * 그대로 승계했다(가정 A3). 읽을 때 `partInCanvasUnits`, 쓸 때 `writePartFromCanvasUnits`
+ * 가 그 환산을 맡으므로 **이 컴포넌트는 단위를 모른다** — 받은 기하를 그대로 보이고 고친
+ * 기하를 그대로 돌려준다.
+ */
+function GeometryGroups({
+  el,
+  idx,
+  t,
+  testIdPrefix,
+  ariaOf,
+  onChange,
+  coordHelp,
+}: {
+  el: CanvasElement;
+  idx: number | string;
+  t: TranslationFn;
+  testIdPrefix: string;
+  ariaOf: (label: string) => string;
+  onChange: (next: CanvasElement) => void;
+  /** 좌표계 안내 `?`. 종류마다 갈라 그리는 세 갈래가 **같은 하나**를 쓴다. */
+  coordHelp: ReactNode;
+}) {
+  return (
+    <>
+      {/* 경로가 상자 갈래에 붙는 것이 008 이 이 절에 한 전부다. 경로의
+          기하는 rect 와 **같은 상자**이므로 같은 여섯 칸이 선다. 빠뜨리면
+          경로 행에는 기하 칸이 **하나도 없고**(어느 조건에도 걸리지
+          않는다), 그러면 캔버스 밖으로 나간 경로를 수치로 되찾을 길이
+          사라진다 — 이 목록이 마지막 회수 경로다. */}
+      {(el.kind === 'rect' || el.kind === 'ellipse' || el.kind === 'path') && (
+        <>
+          <FieldGroup
+            label={t('dashboard.canvas.elements.sizeLabel')}
+            testId={`${testIdPrefix}-size-${idx}`}
+          >
+            {BOX_SIZE_AXES.map((axis) => (
+              <GeometryInput
+                key={axis}
+                axis={axis}
+                extent
+                value={el.geometry[axis]}
+                onChange={(v) => onChange({ ...el, geometry: { ...el.geometry, [axis]: v } })}
+                ariaLabel={ariaOf(t('dashboard.canvas.elements.geoAria')).replace('{axis}', axis)}
+                testId={`${testIdPrefix}-geo-${axis}-${idx}`}
+              />
+            ))}
+          </FieldGroup>
+          <FieldGroup
+            label={t('dashboard.canvas.elements.positionLabel')}
+            testId={`${testIdPrefix}-position-${idx}`}
+            help={coordHelp}
+          >
+            {BOX_POSITION_AXES.map((axis) => (
+              <GeometryInput
+                key={axis}
+                axis={axis}
+                value={el.geometry[axis]}
+                onChange={(v) => onChange({ ...el, geometry: { ...el.geometry, [axis]: v } })}
+                ariaLabel={ariaOf(t('dashboard.canvas.elements.geoAria')).replace('{axis}', axis)}
+                testId={`${testIdPrefix}-geo-${axis}-${idx}`}
+              />
+            ))}
+          </FieldGroup>
+        </>
+      )}
+      {/* 선은 두 끝점이 전부다 — 크기 묶음을 만들지 않는다(위 축 상수 주석). */}
+      {el.kind === 'line' && (
+        <FieldGroup
+          label={t('dashboard.canvas.elements.endpointsLabel')}
+          testId={`${testIdPrefix}-position-${idx}`}
+          help={coordHelp}
+        >
+          {LINE_AXES.map((axis) => (
+            <GeometryInput
+              key={axis}
+              axis={axis}
+              value={el.geometry[axis]}
+              onChange={(v) => onChange({ ...el, geometry: { ...el.geometry, [axis]: v } })}
+              ariaLabel={ariaOf(t('dashboard.canvas.elements.geoAria')).replace('{axis}', axis)}
+              testId={`${testIdPrefix}-geo-${axis}-${idx}`}
+            />
+          ))}
+        </FieldGroup>
+      )}
+      {/* 텍스트의 크기는 글자 크기이며 **텍스트 탭에 한 자리에만** 있다. */}
+      {el.kind === 'text' && (
+        <FieldGroup
+          label={t('dashboard.canvas.elements.positionLabel')}
+          testId={`${testIdPrefix}-position-${idx}`}
+          help={coordHelp}
+        >
+          {POINT_AXES.map((axis) => (
+            <GeometryInput
+              key={axis}
+              axis={axis}
+              value={el.geometry[axis]}
+              onChange={(v) => onChange({ ...el, geometry: { ...el.geometry, [axis]: v } })}
+              ariaLabel={ariaOf(t('dashboard.canvas.elements.geoAria')).replace('{axis}', axis)}
+              testId={`${testIdPrefix}-geo-${axis}-${idx}`}
+            />
+          ))}
+        </FieldGroup>
+      )}
+    </>
+  );
+}
+
+/**
+ * 스타일 묶음 — 종류 · 채우기 · 테두리 · 불투명도 · 보임.
+ *
+ * `kind` 칸이 첫 자리인 것은 그것이 아래 칸들이 걸릴 도형 자체를 정하기 때문이다.
+ * 부품에서도 종류를 바꿀 수 있다 — `withKind` 가 기하를 새 형상으로 옮겨 싣고, 부품
+ * 쓰기 통로는 그 결과를 그대로 받는다.
+ */
+function ShapeStyleGroup({ el, idx, t, testIdPrefix, ariaOf, onChange }: {
+  /** 편집 대상. 요소 행에서는 최상위 요소, 부품 행에서는 **캔버스 단위로 읽은 부품**이다. */
+  el: CanvasElement;
+  /**
+   * testId 꼬리. 요소 행은 배열 자리(숫자), 부품 행은 `그룹자리-부품자리` 다 — 두 행이
+   * 한 목록에 함께 서므로 꼬리가 겹치면 시험도 사용자도 둘을 가르지 못한다.
+   */
+  idx: number | string;
+  t: TranslationFn;
+  /** testId 앞머리. `canvas-element` 또는 `canvas-part`. */
+  testIdPrefix: string;
+  /** 번역된 문구에 자리 번호를 채운다. 두 행이 세는 자가 다르므로 함수로 받는다. */
+  ariaOf: (label: string) => string;
+  onChange: (next: CanvasElement) => void;
+}) {
+  return (
+      <FieldGroup
+        label={t('dashboard.canvas.elements.shapeStyleLabel')}
+        testId={`${testIdPrefix}-shape-style-${idx}`}
+      >
+        {/* **첫 칸이 종류다.** 이 묶음이 "무엇을 어떻게 그리는가" 를 다루는
+            자리이고, 그중 가장 먼저 정해지는 것이 무엇으로 그릴지이기 때문이다
+            (종류가 바뀌면 아래 두께·색이 걸릴 도형 자체가 바뀐다). 종류를
+            바꾸면 기하가 새 형상으로 옮겨 실린다 — `withKind` 한 곳이 그 일을
+            하며, 탭으로 갈라도 그 경로는 그대로다. 머리줄이 아닌 것도 그대로다. */}
+        <select
+          value={el.kind}
+          onChange={(e) => onChange(withKind(el, e.target.value as CanvasPrimitiveKind))}
+          aria-label={ariaOf(t('dashboard.canvas.elements.kindAria'))}
+          data-testid={`${testIdPrefix}-kind-${idx}`}
+          className={cn(INPUT_CLASS, 'shrink-0')}
+        >
+          {/* 지금 종류가 **바꿀 수 있는 넷 밖**이면(경로) 그 이름을 말하는
+              칸을 하나 더 세운다. 없으면 `select` 의 값이 어느 `option`
+              과도 맞지 않아 브라우저가 첫 칸(사각형)을 보여 주고, 그것은
+              "이 줄은 사각형이다" 라는 거짓말이다. 고를 수는 없게 둔다 —
+              경로로 **바꾸는** 길은 없기 때문이다(REQ-07).
+
+              이름은 `kindLabel` 이 정한다 — 카탈로그에서 온 도형이면
+              **그 도형의 이름**이고("구름"), 아니면 일반 이름이다("경로"). */}
+          {!(ELEMENT_KINDS as readonly string[]).includes(el.kind) && (
+            <option value={el.kind} disabled>
+              {kindLabel(el, t)}
+            </option>
+          )}
+          {ELEMENT_KINDS.map((k) => (
+            <option key={k} value={k}>
+              {t(KIND_LABEL_KEY[k])}
+            </option>
+          ))}
+        </select>
+
+        {/* 차례는 참고 화면을 따른다 — **채우기 → 테두리(색과 두께가 붙어
+            선다) → 불투명도**. 한때 테두리를 먼저 두고 "바깥에서 안으로"
+            라 적었지만, 그 차례는 두께를 제 색에서 떼어 놓아 한 가지
+            (테두리)를 두 자리에서 만지게 했다.
+            비운 칸은 미지정이며 렌더측 기본을 따른다.
+            `fill` 의 자리는 **종류를 따른다.** 도형에서는 도형의 색이고,
+            `kind:'text'` 에서는 칠할 도형이 없어 렌더 층이 이 값을 글자색의
+            폴백으로 읽는다(`drawElement`: `textColor ?? fill`). 그래서 텍스트
+            요소에서는 이 칸이 텍스트 탭에 선다 — 없는 도형의 색을 "도형" 이라
+            부르면 화면이 거짓말을 한다. */}
+        {el.kind !== 'text' && (
+          <ColorPicker
+            alpha
+            clearable
+            value={el.style.fill}
+            onChange={(c) => onChange({ ...el, style: setStyleField(el.style, 'fill', c) })}
+            ariaLabel={ariaOf(t('dashboard.canvas.elements.fillAria'))}
+            testId={`${testIdPrefix}-fill-${idx}`}
+          />
+        )}
+
+        <ColorPicker
+          alpha
+          clearable
+          value={el.style.stroke}
+          onChange={(c) => onChange({ ...el, style: setStyleField(el.style, 'stroke', c) })}
+          ariaLabel={ariaOf(t('dashboard.canvas.elements.strokeAria'))}
+          testId={`${testIdPrefix}-stroke-${idx}`}
+        />
+        <input
+          type="number"
+          step="any"
+          min={0}
+          value={el.style.strokeWidth ?? ''}
+          onChange={(e) =>
+            onChange({
+              ...el,
+              style: setStyleField(
+                el.style,
+                'strokeWidth',
+                nonNegative(parseOptionalNumber(e.target.value)),
+              ),
+            })
+          }
+          placeholder={t('dashboard.canvas.elements.strokeWidthPlaceholder')}
+          aria-label={ariaOf(t('dashboard.canvas.elements.strokeWidthAria'))}
+          data-testid={`${testIdPrefix}-stroke-width-${idx}`}
+          className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
+        />
+
+        {/* 012 M5 — **칸은 백분율, 저장은 0..1 그대로다**(§결정 4). 저장을 100 눈금으로
+            바꾸면 이미 저장된 대시보드가 전부 100 배 불투명해지고, 규칙 패치·트윈·SVG
+            가져오기가 같은 축을 다른 눈금으로 읽는다. 환산은 `opacityPercent` 한 쌍이
+            지므로 네 칸이 반올림을 다르게 할 수 없다(AC-28). */}
+        <input
+          type="number"
+          step={1}
+          min={0}
+          max={OPACITY_PERCENT_MAX}
+          value={opacityToPercentInput(el.style.opacity)}
+          onChange={(e) =>
+            onChange({
+              ...el,
+              style: setStyleField(el.style, 'opacity', percentInputToOpacity(e.target.value)),
+            })
+          }
+          placeholder={t('dashboard.canvas.elements.opacityPlaceholder')}
+          aria-label={ariaOf(t('dashboard.canvas.elements.opacityAria'))}
+          data-testid={`${testIdPrefix}-opacity-${idx}`}
+          className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
+        />
+
+        {/* `visible` 은 도형만이 아니라 요소 전체를 끄는 스위치지만, 이 탭이
+            요소를 그리는 방식을 다루는 자리이므로 여기 둔다(텍스트만 숨기는
+            축은 없다). 다만 그리는 방식이 아니라 그릴지 말지를 정하는 축이라
+            **줄 끝**에 선다 — 앞자리는 그리는 방식을 정하는 칸들의 것이다.
+            3지 선택인 것은 체크박스로 "미지정"과 "숨김"을 구분할 수 없고,
+            그 둘은 뜻이 다르기 때문이다(규칙 표의 같은 컨트롤과 같은 판단). */}
+        <select
+          value={el.style.visible === undefined ? '' : el.style.visible ? 'show' : 'hide'}
+          onChange={(e) =>
+            onChange({
+              ...el,
+              style: setStyleField(
+                el.style,
+                'visible',
+                e.target.value === '' ? undefined : e.target.value === 'show',
+              ),
+            })
+          }
+          aria-label={ariaOf(t('dashboard.canvas.elements.visibleAria'))}
+          data-testid={`${testIdPrefix}-visible-${idx}`}
+          className={cn(INPUT_CLASS, 'shrink-0')}
+        >
+          <option value="">{t('dashboard.canvas.elements.unset')}</option>
+          <option value="show">{t('dashboard.canvas.elements.visibleShow')}</option>
+          <option value="hide">{t('dashboard.canvas.elements.visibleHide')}</option>
+        </select>
+      </FieldGroup>
+  );
+}
+
+/** 문구 묶음 — 템플릿 · 글자 크기 · 글자색 · 정렬 · 굵기. 종류에 따라 칸이 갈린다. */
+function TextStyleGroup({ el, idx, t, testIdPrefix, ariaOf, onChange }: {
+  /** 편집 대상. 요소 행에서는 최상위 요소, 부품 행에서는 **캔버스 단위로 읽은 부품**이다. */
+  el: CanvasElement;
+  /**
+   * testId 꼬리. 요소 행은 배열 자리(숫자), 부품 행은 `그룹자리-부품자리` 다 — 두 행이
+   * 한 목록에 함께 서므로 꼬리가 겹치면 시험도 사용자도 둘을 가르지 못한다.
+   */
+  idx: number | string;
+  t: TranslationFn;
+  /** testId 앞머리. `canvas-element` 또는 `canvas-part`. */
+  testIdPrefix: string;
+  /** 번역된 문구에 자리 번호를 채운다. 두 행이 세는 자가 다르므로 함수로 받는다. */
+  ariaOf: (label: string) => string;
+  onChange: (next: CanvasElement) => void;
+}) {
+  return (
+      <FieldGroup
+        label={t('dashboard.canvas.elements.textStyleLabel')}
+        testId={`${testIdPrefix}-text-style-${idx}`}
+        help={
+          <>
+            <FieldHelp
+              text={t('dashboard.canvas.elements.tokenHelp')}
+              testId={`${testIdPrefix}-token-help-${idx}`}
+            />
+            {/* 두 갈래를 **화면에 적는다.** 렌더 층의 규칙이 종류마다 다르고
+                (`drawElement`: 텍스트는 `textColor ?? fill`, 도형 라벨은
+                `textColor` 만), 게다가 도형에 문구를 처음 적는 순간
+                `canvasElementFactory` 가 글자색을 대신 심는다. 적어 두지 않으면
+                사용자는 "고르지도 않은 색이 들어와 있다" 를 결함으로 읽는다. */}
+            <FieldHelp
+              text={
+                el.kind === 'text'
+                  ? t('dashboard.canvas.elements.textStyleHintText')
+                  : t('dashboard.canvas.elements.textStyleHintShape')
+              }
+              testId={`${testIdPrefix}-text-style-help-${idx}`}
+            />
+          </>
+        }
+      >
+        {/* 문구만은 `setElementField` 가 아니라 팩토리를 지난다 — 도형에 라벨이
+            생기는 순간 글자색이 함께 심겨야 그 라벨이 실제로 칠해진다. */}
+        <input
+          type="text"
+          value={el.text ?? ''}
+          onChange={(e) =>
+            onChange(withElementText(el, optionalText(e.target.value)))
+          }
+          placeholder={t('dashboard.canvas.elements.textPlaceholder')}
+          aria-label={ariaOf(t('dashboard.canvas.elements.textAria'))}
+          data-testid={`${testIdPrefix}-text-${idx}`}
+          className={cn(INPUT_CLASS, 'min-w-16 flex-1')}
+        />
+
+        <input
+          type="number"
+          step="any"
+          min={0}
+          value={el.style.fontSize ?? ''}
+          onChange={(e) =>
+            onChange({
+              ...el,
+              style: setStyleField(
+                el.style,
+                'fontSize',
+                nonNegative(parseOptionalNumber(e.target.value)),
+              ),
+            })
+          }
+          placeholder={t('dashboard.canvas.elements.fontSizePlaceholder')}
+          aria-label={ariaOf(t('dashboard.canvas.elements.fontSizeAria'))}
+          data-testid={`${testIdPrefix}-font-size-${idx}`}
+          className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
+        />
+
+        <select
+          value={el.style.fontWeight ?? ''}
+          onChange={(e) =>
+            onChange({
+              ...el,
+              style: setStyleField(
+                el.style,
+                'fontWeight',
+                e.target.value === '' ? undefined : (e.target.value as ElementFontWeight),
+              ),
+            })
+          }
+          aria-label={ariaOf(t('dashboard.canvas.elements.fontWeightAria'))}
+          data-testid={`${testIdPrefix}-font-weight-${idx}`}
+          className={cn(INPUT_CLASS, 'shrink-0')}
+        >
+          <option value="">{t('dashboard.canvas.elements.unset')}</option>
+          <option value="normal">{t('dashboard.canvas.elements.fontWeightNormal')}</option>
+          <option value="bold">{t('dashboard.canvas.elements.fontWeightBold')}</option>
+        </select>
+
+        <select
+          value={el.style.align ?? ''}
+          onChange={(e) =>
+            onChange({
+              ...el,
+              style: setStyleField(
+                el.style,
+                'align',
+                e.target.value === '' ? undefined : (e.target.value as ElementAlign),
+              ),
+            })
+          }
+          aria-label={ariaOf(t('dashboard.canvas.elements.alignAria'))}
+          data-testid={`${testIdPrefix}-align-${idx}`}
+          className={cn(INPUT_CLASS, 'shrink-0')}
+        >
+          <option value="">{t('dashboard.canvas.elements.unset')}</option>
+          <option value="left">{t('dashboard.canvas.elements.alignLeft')}</option>
+          <option value="center">{t('dashboard.canvas.elements.alignCenter')}</option>
+          <option value="right">{t('dashboard.canvas.elements.alignRight')}</option>
+        </select>
+
+        <ColorPicker
+          alpha
+          clearable
+          value={el.style.textColor}
+          onChange={(c) => onChange({ ...el, style: setStyleField(el.style, 'textColor', c) })}
+          ariaLabel={ariaOf(t('dashboard.canvas.elements.textColorAria'))}
+          testId={`${testIdPrefix}-text-color-${idx}`}
+        />
+        {/* 텍스트 요소의 `fill` 은 글자색 폴백이다 — 그래서 글자색 **바로 옆**에
+            선다(위 도형 묶음의 주석 참조). */}
+        {el.kind === 'text' && (
+          <ColorPicker
+            alpha
+            clearable
+            value={el.style.fill}
+            onChange={(c) => onChange({ ...el, style: setStyleField(el.style, 'fill', c) })}
+            ariaLabel={ariaOf(t('dashboard.canvas.elements.fillAria'))}
+            testId={`${testIdPrefix}-fill-${idx}`}
+          />
+        )}
+      </FieldGroup>
+  );
+}
+
+/** 데이터 묶음 — 시리즈 바인딩 · 숫자 스위치 · 소수 자리 · 단위. */
+function BindingGroup({
+  el,
+  idx,
+  t,
+  testIdPrefix,
+  ariaOf,
+  onChange,
+  bindingOptions,
+  numeric,
+}: {
+  /** 편집 대상. 요소 행에서는 최상위 요소, 부품 행에서는 **캔버스 단위로 읽은 부품**이다. */
+  el: CanvasElement;
+  /**
+   * testId 꼬리. 요소 행은 배열 자리(숫자), 부품 행은 `그룹자리-부품자리` 다 — 두 행이
+   * 한 목록에 함께 서므로 꼬리가 겹치면 시험도 사용자도 둘을 가르지 못한다.
+   */
+  idx: number | string;
+  t: TranslationFn;
+  /** testId 앞머리. `canvas-element` 또는 `canvas-part`. */
+  testIdPrefix: string;
+  /** 번역된 문구에 자리 번호를 채운다. 두 행이 세는 자가 다르므로 함수로 받는다. */
+  ariaOf: (label: string) => string;
+  onChange: (next: CanvasElement) => void;
+  /** 고를 수 있는 시리즈 목록. 살아 있는 키 집합을 패널이 내놓은 그대로다. */
+  bindingOptions: readonly CanvasSeriesOption[];
+  /** 이 요소가 값을 숫자로 읽는가(`isNumericElement`). 판정을 여기서 다시 짓지 않는다. */
+  numeric: boolean;
+}) {
+  return (
+      <FieldGroup
+        label={t('dashboard.canvas.elements.bindingLabel')}
+        testId={`${testIdPrefix}-data-${idx}`}
+      >
+        <select
+          value={el.binding?.series ?? ''}
+          onChange={(e) =>
+            onChange(setElementField(
+                el,
+                'binding',
+                e.target.value === '' ? undefined : { series: e.target.value, agg: 'last' },
+              ),
+            )
+          }
+          aria-label={ariaOf(t('dashboard.canvas.elements.bindingAria'))}
+          data-testid={`${testIdPrefix}-binding-${idx}`}
+          className={cn(INPUT_CLASS, 'min-w-24 flex-1')}
+        >
+          <option value="">{t('dashboard.canvas.elements.bindingNone')}</option>
+          {bindingOptions.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        {/* 고를 것이 하나도 없으면 **왜 없는지**를 말한다. 목록이 비는 정상적인
+            이유는 하나뿐이다 — 데이터 소스에 시리즈가 아직 없다. 그 말을 하지
+            않으면 사용자는 "바인딩 없음" 만 있는 상자를 보고 고장으로 읽는다.
+            히트맵의 `heatmapNoSensors` 가 같은 자리에서 같은 일을 하며, 가리키는
+            곳도 화면이 그 절을 부르는 이름(`dashboard.settings.dataSource`)
+            그대로다. */}
+        {bindingOptions.length === 0 && (
+          <p
+            className={cn(HINT_CLASS, 'w-full')}
+            data-testid={`${testIdPrefix}-binding-hint-${idx}`}
+          >
+            {t('dashboard.canvas.elements.bindingNoSeries')}
+          </p>
+        )}
+          {/* --- 숫자 스위치 ---
+              **보이기/감추기 스위치가 아니다.** 판독값을 어떻게 **읽을지**를
+              정한다: 켜면 숫자로 읽어 소수 자리로 반올림하고 단위를 붙이며(001
+              이래의 동작), 끄면 받은 값을 **문자열 그대로** 내보낸다. 그래서 끈
+              상태에서 소수 자리·단위는 걸릴 곳이 없고, 걸리지 않는 칸을 남겨 두면
+              사용자는 고쳐도 아무 일도 일어나지 않는 칸을 만진다 — 그 둘을 함께
+              감추는 이유다.
+
+              `w-full` 로 제 줄을 차지한다. 위 칸들과 한 줄에 섞이면 "값을 어떻게
+              읽는가" 라는 다른 층위의 결정이 글꼴 설정처럼 보인다. */}
+          <div className="flex w-full flex-wrap items-center gap-1.5">
+            <label className="flex items-center gap-1 text-xs text-(--color-text-primary)">
+              {/* 체크는 **키를 지운다**(부재 = 숫자). 켠 상태를 `numeric: true` 로
+                  적어 두면 종전 config 와 형상이 갈라지고, 갈라진 만큼 왕복 시험이
+                  지켜야 할 것이 늘어난다(규율 1 — 기본값은 부재로 적는다). */}
+              <input
+                type="checkbox"
+                checked={numeric}
+                onChange={(e) =>
+                  onChange(setElementField(el, 'numeric', e.target.checked ? undefined : false),
+                  )
+                }
+                aria-label={ariaOf(t('dashboard.canvas.elements.numericAria'))}
+                data-testid={`${testIdPrefix}-numeric-${idx}`}
+                className="h-3.5 w-3.5 shrink-0 accent-blue-500"
+              />
+              {t('dashboard.canvas.elements.numericLabel')}
+            </label>
+            <FieldHelp
+              text={t('dashboard.canvas.elements.numericHint')}
+              testId={`${testIdPrefix}-numeric-help-${idx}`}
+            />
+          </div>
+
+          {numeric && (
+            <div
+              className="flex w-full flex-wrap items-center gap-1.5 rounded border border-(--color-border-default) px-1.5 py-1"
+              data-testid={`${testIdPrefix}-numeric-fields-${idx}`}
+            >
+              <input
+                type="number"
+                step={1}
+                min={0}
+                value={el.decimals ?? ''}
+                onChange={(e) =>
+                  onChange(setElementField(el, 'decimals', decimalsOf(parseOptionalNumber(e.target.value))),
+                  )
+                }
+                placeholder={t('dashboard.canvas.elements.decimalsPlaceholder')}
+                aria-label={ariaOf(t('dashboard.canvas.elements.decimalsAria'))}
+                data-testid={`${testIdPrefix}-decimals-${idx}`}
+                className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
+              />
+              <input
+                type="text"
+                value={el.unit ?? ''}
+                onChange={(e) =>
+                  onChange(setElementField(el, 'unit', optionalText(e.target.value)))
+                }
+                placeholder={t('dashboard.canvas.elements.unitPlaceholder')}
+                aria-label={ariaOf(t('dashboard.canvas.elements.unitAria'))}
+                data-testid={`${testIdPrefix}-unit-${idx}`}
+                className={cn(INPUT_CLASS, 'w-16')}
+              />
+            </div>
+          )}
+      </FieldGroup>
+  );
+}
+
+
+/**
+ * 부품 한 줄 — **펼치면 요소 행과 같은 칸들이 선다** (SPEC-CANVAS-009 M5).
+ *
+ * ## 004 가 두지 않은 칸을 여기서 연다
+ *
+ * 004 는 부품 행에 수치 칸을 두지 않았고, 그 기각 근거는 둘이었다(SPEC-CANVAS-004 A18):
+ * (가) 그룹 로컬 격자를 화면에 내놓으면 네 번째 단위가 생긴다, (나) 캔버스 단위로 환산해
+ * 보이면 **쓰기에 역투영이 필요하고** 그것이 좌표 넘기 자리를 늘린다.
+ *
+ * **(가) 는 009 도 뒤집지 않는다** — 이 카드의 기하 칸은 캔버스 단위로 말하며 로컬 격자의
+ * 숫자는 어디에도 나오지 않는다(REQ-04-a · AC-21 · AC-22). **(나) 는 뒤집는다**: 그때는
+ * 없던 역투영이 REQ-07(풀기)을 구현하며 `groupOps` 안에 생겼고, 009 는 그 함수의 **두 번째
+ * 호출자**가 될 뿐 두 번째 역투영을 짓지 않는다(불변식 G2).
+ *
+ * ## 새 컨트롤을 짓지 않는다
+ *
+ * 아래 네 묶음은 요소 행이 그리는 **바로 그 컴포넌트**다(AC-20 · 가정 A6). 비슷하게 다시
+ * 지으면 한쪽만 고쳐지는 날 "요소에서는 1.5 가 1 로 죄이는데 부품에서는 그대로 들어간다"
+ * 가 생기고, 그 어긋남은 저장 왕복을 견딘다.
+ *
+ * **탭은 두지 않는다.** 요소 카드가 탭 넷으로 갈린 것은 묶음 일곱이 한 두루마리로 이어져
+ * 있었기 때문인데(§요소 카드의 네 갈래), 부품 카드에는 규칙 표도 z-order 도 전환 효과도
+ * 없어 묶음이 넷뿐이다. 넷을 넷으로 가르는 탭은 누를 자리만 늘린다.
+ */
+function PartRow({
+  groupIdx,
+  partIdx,
+  part,
+  canvasPart,
+  open,
+  picked,
+  t,
+  seriesOptions,
+  onToggle,
+  onSelect,
+  onChange,
+}: {
+  groupIdx: number;
+  partIdx: number;
+  /** 저장 형상 그대로의 부품. 요약과 종류 이름이 이것을 읽는다. */
+  part: CanvasElement;
+  /**
+   * **캔버스 단위로 읽은** 부품. 편집 칸들은 이것만 본다.
+   *
+   * 그룹이 사라지는 중이거나 부품이 없어지면 `undefined` 다 — 그때는 칸을 그리지 않는다
+   * (없는 것에 칸을 세우면 그 칸의 값이 어디서 왔는지 화면이 답하지 못한다).
+   */
+  canvasPart: CanvasElement | undefined;
+  open: boolean;
+  picked: boolean;
+  t: TranslationFn;
+  seriesOptions: readonly CanvasSeriesOption[];
+  onToggle: () => void;
+  onSelect: () => void;
+  /** 캔버스 단위로 고친 결과. 되돌리는 환산은 부르는 쪽이 `groupOps` 에 맡긴다. */
+  onChange: (next: CanvasElement) => void;
+}) {
+  /** testId 꼬리 — `그룹자리-부품자리`. 요소 행의 꼬리(숫자 하나)와 겹치지 않는다. */
+  const tail = `${groupIdx}-${partIdx}`;
+  /**
+   * aria 자리 번호 — `그룹번호.부품번호`.
+   *
+   * 요소 행과 **같은 i18n 키**를 쓰므로(새 키를 짓지 않는다) 구별은 이 번호가 진다.
+   * 그냥 부품 번호만 쓰면 서로 다른 그룹의 첫 부품이 같은 이름을 갖는다.
+   */
+  const ariaOf = (label: string): string =>
+    label.replace('{index}', `${groupIdx + 1}.${partIdx + 1}`);
+
+  const bindingOptions = bindingOptionsFor(seriesOptions, canvasPart?.binding?.series);
+  const coordHelp = (
+    <FieldHelp
+      text={t('dashboard.canvas.elements.coordHint')}
+      testId={`canvas-part-coord-help-${tail}`}
+    />
+  );
+
+  return (
+    <div
+      data-testid={`canvas-group-row-part-${tail}`}
+      data-part-id={part.id}
+      data-selected={picked ? 'true' : undefined}
+      className={cn(
+        'space-y-1.5 rounded border p-1',
+        picked ? 'border-blue-500' : 'border-transparent',
+      )}
+    >
+      {/* 머리줄 — **펼침과 고르기를 함께 한다**. 요소 행은 펼치는 방향에서만 고르지만
+          (그쪽은 선택에서 자동 펼침이 파생되어 접기가 되돌아오기 때문이다), 부품의 자동
+          펼침은 **그룹 행**을 향하므로 접으면서 골라도 이 카드가 다시 열리지 않는다. */}
+      <button
+        type="button"
+        onClick={() => {
+          onSelect();
+          onToggle();
+        }}
+        aria-expanded={open}
+        aria-label={fillTokens(t('dashboard.canvas.elements.groupPartAria'), {
+          index: groupIdx + 1,
+          part: part.id,
+        })}
+        data-testid={`canvas-group-row-part-toggle-${tail}`}
+        className="flex w-full min-w-0 items-center gap-1.5 rounded text-left text-xs text-(--color-text-muted) hover:text-(--color-text-secondary)"
+      >
+        <span className={ORDER_BADGE_CLASS}>{partIdx + 1}</span>
+        {open ? (
+          <ChevronDown className="h-3 w-3 shrink-0" />
+        ) : (
+          <ChevronRight className="h-3 w-3 shrink-0" />
+        )}
+        {/* 종류를 여기서도 말한다 — 접힌 목록에서 줄을 가르는 것이 이 낱말이다. */}
+        <span className="shrink-0">{t(KIND_LABEL_KEY[part.kind])}</span>
+        <span className="truncate">{summaryOf(part, t)}</span>
+      </button>
+
+      {open && canvasPart !== undefined && (
+        <div className="space-y-2 pl-4" data-testid={`canvas-part-body-${tail}`}>
+          <ShapeStyleGroup
+            el={canvasPart}
+            idx={tail}
+            t={t}
+            testIdPrefix="canvas-part"
+            ariaOf={ariaOf}
+            onChange={onChange}
+          />
+          <TextStyleGroup
+            el={canvasPart}
+            idx={tail}
+            t={t}
+            testIdPrefix="canvas-part"
+            ariaOf={ariaOf}
+            onChange={onChange}
+          />
+          <GeometryGroups
+            el={canvasPart}
+            idx={tail}
+            t={t}
+            testIdPrefix="canvas-part"
+            ariaOf={ariaOf}
+            onChange={onChange}
+            coordHelp={coordHelp}
+          />
+          <BindingGroup
+            el={canvasPart}
+            idx={tail}
+            t={t}
+            testIdPrefix="canvas-part"
+            ariaOf={ariaOf}
+            onChange={onChange}
+            bindingOptions={bindingOptions}
+            numeric={isNumericElement(canvasPart)}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * 그룹 노드 한 줄 — **접힘/펼침으로 부품을 드러내는 행** (SPEC-CANVAS-004 REQ-08).
  *
@@ -605,7 +1358,14 @@ function GroupNodeRow({
   picked,
   t,
   onToggle,
-  onSelect,
+  onChange,
+  canvasPartOf,
+  isPartOpen,
+  onPartToggle,
+  onPartSelect,
+  onPartChange,
+  pickedPartId,
+  seriesOptions,
   onMove,
   onRemove,
   rowRef,
@@ -617,9 +1377,29 @@ function GroupNodeRow({
   open: boolean;
   picked: boolean;
   t: TranslationFn;
+  /**
+   * 머리줄 펼침 — **펼치는 방향에서 그룹이 함께 골라진다**(부르는 쪽의 `toggleExpanded`).
+   *
+   * 004 에서는 부품 행도 "그룹을 고른다" 는 별도 입구(`onSelect`)를 썼다. 009 REQ-01 이
+   * 그 조항을 뒤집어 부품 행은 아래 `onPartSelect` 로 **제 복합 키**를 고르므로, 그룹만
+   * 고르던 그 입구는 쓸 곳이 없어져 걷어냈다.
+   */
   onToggle: () => void;
-  /** 부품 행을 눌렀을 때 — **그룹**을 고른다. 선택 키는 여전히 `nodeId` 하나다. */
-  onSelect: () => void;
+  /** 그룹 자신을 갈아 끼운다(SPEC-CANVAS-009 M1 — 투명도 편집). */
+  onChange: (next: GroupElement) => void;
+  /** 부품을 **캔버스 단위**로 읽는다. 환산은 `groupOps` 가 소유한다(AC-16). */
+  canvasPartOf: (partId: string) => CanvasElement | undefined;
+  /** 부품 카드가 펼쳐져 있는가. 펼침 장부는 요소 행과 **같은 집합**이다(복합 키로 담긴다). */
+  isPartOpen: (partId: string) => boolean;
+  onPartToggle: (partId: string) => void;
+  /** 부품 행을 눌렀을 때 — **그 부품**을 고른다(SPEC-CANVAS-009 AC-23). */
+  onPartSelect: (partId: string) => void;
+  /** 부품 편집 결과를 저장 형상으로 되돌려 쓴다. */
+  onPartChange: (partId: string, next: CanvasElement) => void;
+  /** 지금 골라진 부품의 id. 그룹이 골라졌거나 빈 선택이면 `undefined`. */
+  pickedPartId?: string;
+  /** 바인딩 선택지. 요소 행과 **같은 목록**이다. */
+  seriesOptions: readonly CanvasSeriesOption[];
   onMove: (delta: -1 | 1) => void;
   onRemove: () => void;
   rowRef: (el: HTMLDivElement | null) => void;
@@ -708,6 +1488,50 @@ function GroupNodeRow({
         </button>
       </div>
 
+      {/* 그룹 자신의 겉모습 — **부품 목록 위**에 선다(SPEC-CANVAS-009 M1 · REQ-06).
+
+          부품보다 먼저 오는 것에 뜻이 있다: 이 값은 아래 부품 **전부**에 걸리는 값이고,
+          그 사실을 자리로 말한다. 아래에 두면 마지막 부품의 설정처럼 읽힌다.
+
+          **새 컨트롤을 짓지 않는다**(가정 A6). 요소 행의 불투명도 칸과 같은 `<input>` ·
+          같은 `clamp01` · 같은 `parseOptionalNumber` · 같은 i18n 키를 쓴다. 여기서 제
+          나름의 파싱을 적으면 "요소에서는 1.5 가 1 로 죄이는데 그룹에서는 그대로 들어간다"
+          가 표현 가능해지고, 그 어긋남은 저장 왕복을 견딘다.
+
+          aria 문구도 요소 행의 그것(`요소 {index} 불투명도`)을 그대로 쓴다 — `{index}` 는
+          **노드 배열의 자리**라 그룹 행과 요소 행이 같은 번호를 가질 수 없고, 따라서 새 키를
+          짓지 않아도 가리키는 것이 하나다(plan.md M1 §2 "새 키를 만들지 않는다"). */}
+      {open && (
+        <div className="space-y-1.5 pl-4" data-testid={`canvas-group-row-style-${idx}`}>
+          <FieldGroup
+            label={t('dashboard.canvas.elements.shapeStyleLabel')}
+            testId={`canvas-group-row-shape-style-${idx}`}
+          >
+            <input
+              type="number"
+              step={1}
+              min={0}
+              max={OPACITY_PERCENT_MAX}
+              value={opacityToPercentInput(node.style?.opacity)}
+              onChange={(e) =>
+                onChange({
+                  ...node,
+                  style: setStyleField(
+                    node.style ?? {},
+                    'opacity',
+                    percentInputToOpacity(e.target.value),
+                  ),
+                })
+              }
+              placeholder={t('dashboard.canvas.elements.opacityPlaceholder')}
+              aria-label={withIndex(t('dashboard.canvas.elements.opacityAria'), idx)}
+              data-testid={`canvas-group-opacity-${idx}`}
+              className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
+            />
+          </FieldGroup>
+        </div>
+      )}
+
       {open && (
         <div className="space-y-1 pl-4" data-testid={`canvas-group-row-parts-${idx}`}>
           {parts.length === 0 ? (
@@ -719,31 +1543,367 @@ function GroupNodeRow({
           ) : (
             <>
               {parts.map((part, pIdx) => (
-                <button
+                <PartRow
                   key={part.id}
-                  type="button"
-                  onClick={onSelect}
-                  data-testid={`canvas-group-row-part-${idx}-${pIdx}`}
-                  data-part-id={part.id}
-                  aria-label={fillTokens(t('dashboard.canvas.elements.groupPartAria'), {
-                    index: idx + 1,
-                    part: part.id,
-                  })}
-                  className="flex w-full min-w-0 items-center gap-1.5 rounded text-left text-xs text-(--color-text-muted) hover:text-(--color-text-secondary)"
-                >
-                  <span className={ORDER_BADGE_CLASS}>{pIdx + 1}</span>
-                  {/* 종류를 여기서 말한다 — 요소 행은 펼친 카드의 종류 칸이 말하지만
-                      부품 행에는 그 카드가 없다. 빠뜨리면 목록의 여러 줄이 구분되지
-                      않는 요약만 남는다. */}
-                  <span className="shrink-0">{t(KIND_LABEL_KEY[part.kind])}</span>
-                  <span className="truncate">{summaryOf(part, t)}</span>
-                </button>
+                  groupIdx={idx}
+                  partIdx={pIdx}
+                  part={part}
+                  canvasPart={canvasPartOf(part.id)}
+                  open={isPartOpen(part.id)}
+                  picked={pickedPartId === part.id}
+                  t={t}
+                  seriesOptions={seriesOptions}
+                  onToggle={() => onPartToggle(part.id)}
+                  onSelect={() => onPartSelect(part.id)}
+                  onChange={(next) => onPartChange(part.id, next)}
+                />
               ))}
               <p className={HINT_CLASS} data-testid={`canvas-group-row-parts-hint-${idx}`}>
                 {t('dashboard.canvas.elements.groupPartsHint')}
               </p>
             </>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 목록이 끊김을 물을 때 넘기는 **빈 글자 폭 장부** (SPEC-CANVAS-011 M12).
+ *
+ * 목록에는 캔버스가 없으므로 잰 글자 폭도 없다. 비어 있어도 묻는 답이 흔들리지 않는 근거는
+ * 아래 `BROKEN_QUERY_PROJECTION` 주석에 함께 적었다 — 장부는 앵커 **자리**에만 쓰이고,
+ * 끊김은 그 지도에 **이름이 있는가**로 정해진다.
+ *
+ * 모듈 상수 하나로 두는 것은 렌더마다 새 객체를 짓지 않기 위해서다.
+ */
+const NO_TEXT_WIDTHS: Readonly<Record<string, number>> = Object.freeze({});
+
+/**
+ * 그리는 법 → 목록이 읽는 이름 (SPEC-CANVAS-011 M12).
+ *
+ * **표로 두는 것이 요점이다**(`KIND_LABEL_KEY` 와 같은 규율). `Record<ConnectorRoute, …>`
+ * 이므로 다섯째 갈래가 생기면 컴파일러가 이 자리를 가리킨다 — `if/else` 로 적으면 새
+ * 갈래가 **빈 칸**으로 조용히 떨어져 행이 제 그리는 법을 말하지 못한다.
+ *
+ * 도구 단추의 이름(`edit.toolStraight` …)을 그대로 쓰지 않는 것에 뜻이 있다. 그쪽은
+ * "직선으로 잇기" 처럼 **시키는 말**이라 다 그은 선을 가리키는 자리에서는 어긋난다.
+ */
+const CONNECTOR_ROUTE_LABEL_KEY: Readonly<Record<ConnectorRoute, string>> = {
+  straight: 'dashboard.canvas.elements.connectorRouteStraight',
+  elbow: 'dashboard.canvas.elements.connectorRouteElbow',
+  ortho: 'dashboard.canvas.elements.connectorRouteOrtho',
+  curve: 'dashboard.canvas.elements.connectorRouteCurve',
+  free: 'dashboard.canvas.elements.connectorRouteFree',
+};
+
+/**
+ * 파선 이름 넷의 표시 문구 (SPEC-CANVAS-012 M4).
+ *
+ * `Record<StrokeDash, string>` 이므로 잎 모듈이 다섯째 이름을 얻으면 **여기가 컴파일되지
+ * 않는다** — 바로 위 `CONNECTOR_ROUTE_LABEL_KEY` 가 그리는 법 넷에 대해 쓴 그 규율이다.
+ * 이름 없는 선택지가 조용히 생기는 것을 문법이 막는다.
+ */
+const STROKE_DASH_LABEL_KEY: Readonly<Record<StrokeDash, string>> = {
+  solid: 'dashboard.canvas.elements.strokeDashSolid',
+  dash: 'dashboard.canvas.elements.strokeDashDash',
+  dot: 'dashboard.canvas.elements.strokeDashDot',
+  dashDot: 'dashboard.canvas.elements.strokeDashDashDot',
+};
+
+/**
+ * 연결선 한 줄 — **두 끝과 그리는 법을 말하고, 끊겼으면 그 사실을 말하는 행**
+ * (SPEC-CANVAS-011 REQ-07 · REQ-08 · AC-78).
+ *
+ * ## 왜 이 행이 있어야 하는가
+ *
+ * 없는 동안 목록은 연결선을 **말없이 건너뛰었다**(M4 가 그 자리에 남긴 주석). 저술이
+ * 사라지지는 않았지만 — 파서가 읽고 쓰기가 보존한다 — 참조가 끊긴 선은 **그려지지도
+ * 않고 목록에도 없어서**, 사용자가 볼 수 있는 자리가 한 군데도 없었다. 그리지 않되
+ * 버리지 않는다는 REQ-08 의 절반은 그렇게 지켜도 나머지 절반("화면이 그 사실을 말한다")
+ * 이 지켜지지 않으면 결국 조용히 사라지는 저술과 구별되지 않는다.
+ *
+ * ## 이 행이 **칸을 내놓지 않는** 이유
+ *
+ * 요소 행의 몸통(기하 묶음 · 도형 스타일 · 글자 탭 · 숫자 스위치)은 전부 `CanvasElement`
+ * 위에 서 있고, 연결선에는 그 자리에 넣을 값이 없다(`geometry` 가 없다 — M4). 그렇다고
+ * 연결선 전용 편집 칸을 여기서 짓지도 않는다:
+ *
+ *   - **두 끝과 꺾임**은 캔버스의 손잡이가 이미 소유한다(M9 · M10). 같은 값에 살아 있는
+ *     컨트롤이 둘이면 안 된다(006 불변식 I24).
+ *   - **`binding` · `rules` · `tween`** 은 자료형에는 있으나 **화면에 닿지 않는다.**
+ *     `CanvasPanel.buildCanvasFrame` 과 `CanvasSurface` 가 연결선을 건너뛰며 그 사실을
+ *     제자리에 적어 두었고, 011 의 어느 마일스톤도 그것을 세우지 않는다. 닿지 않는 값에
+ *     칸을 내면 그 칸은 **거짓말하는 컨트롤**이다 — 값을 넣어도 아무 일도 일어나지 않고,
+ *     그 침묵에는 아무 표시가 없다(004 가 그룹에서 겪은 그 자리다).
+ *
+ * 그래서 몸통은 **읽는 자리**다. 말할 수 있는 것만 말하고, 지키지 못할 약속을 하지 않는
+ * 다는 이 파일의 규율이 여기서도 같게 적용된 것이다.
+ *
+ * ## 이 행이 **다시 만들지 않는** 것
+ *
+ * 순서 이동·삭제는 최상위 배열 조작이므로 요소 행·그룹 행과 **같은 함수**(`moveAt` ·
+ * `removeAt`)를 받아서 부른다. 고르기도 `toggleExpanded` 한 규칙을 지난다.
+ */
+function ConnectorNodeRow({
+  node,
+  idx,
+  count,
+  open,
+  picked,
+  broken,
+  t,
+  onToggle,
+  onMove,
+  onRemove,
+  onChange,
+  rowRef,
+}: {
+  node: ConnectorElement;
+  idx: number;
+  /** 최상위 노드의 총수. 끝자리에서 바깥쪽 이동을 잠근다(요소 행과 같은 규칙). */
+  count: number;
+  open: boolean;
+  picked: boolean;
+  /**
+   * 참조가 풀리지 않는가 — **묻는 쪽이 아니라 받는 쪽이다.**
+   *
+   * 판정을 이 컴포넌트가 하지 않는 것에 뜻이 있다: 답은 `resolveConnector` 한 함수에서
+   * 와야 하고(AC-45), 그 함수는 노드 목록 전체를 본다. 행이 제 노드만 들고 답을 지으면
+   * 그것은 두 번째 판정이다.
+   */
+  broken: boolean;
+  t: TranslationFn;
+  onToggle: () => void;
+  onMove: (delta: -1 | 1) => void;
+  onRemove: () => void;
+  /**
+   * 겉모습을 고쳐 내보낸다 (SPEC-CANVAS-012 M4 · REQ-03).
+   *
+   * **이 행이 읽기 전용을 벗은 자리다.** 종전에는 이 prop 이 없었고, 그 없음을 화면이
+   * `connectorReadOnlyHint` 한 줄로 변명하고 있었다 — 칸이 서면서 그 문장도 함께 죽는다.
+   *
+   * 최상위 노드를 통째로 돌려준다. 부모의 `replaceNodeAt` 이 그룹 행도 지나는 **같은
+   * 입구**이므로 쓰기 규칙이 둘이 되지 않는다.
+   */
+  onChange: (next: ConnectorElement) => void;
+  rowRef: (el: HTMLDivElement | null) => void;
+}) {
+  return (
+    <div
+      ref={rowRef}
+      data-testid={`canvas-connector-row-${idx}`}
+      data-element-id={node.id}
+      data-selected={picked ? 'true' : undefined}
+      data-broken={broken ? 'true' : undefined}
+      className={cn(
+        'space-y-1.5 rounded-md border p-1.5',
+        picked ? 'border-blue-500' : 'border-(--color-border-default)',
+      )}
+    >
+      {/* 머리줄 — 요소 행·그룹 행과 **같은 차례**다(순번 · 요약 · 순서 · 삭제). */}
+      <div className="flex w-full items-center gap-1.5">
+        <span
+          className={ORDER_BADGE_CLASS}
+          data-testid={`canvas-connector-row-order-${idx}`}
+        >
+          {idx + 1}
+        </span>
+
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          aria-label={withIndex(t('dashboard.canvas.elements.connectorDetailsAria'), idx)}
+          data-testid={`canvas-connector-row-toggle-${idx}`}
+          className="flex min-w-0 flex-1 items-center gap-1 rounded text-left text-xs text-(--color-text-muted) hover:text-(--color-text-secondary)"
+        >
+          {open ? (
+            <ChevronDown className="h-3 w-3 shrink-0" />
+          ) : (
+            <ChevronRight className="h-3 w-3 shrink-0" />
+          )}
+          {/* 끊긴 선은 **아이콘부터** 다르다 — 접힌 목록을 훑는 눈이 글자를 읽기 전에
+              무엇이 잘못됐는지 알아야 한다. 아이콘만으로는 못 보는 사람에게 아무 말도
+              하지 않으므로, 바로 뒤 배지가 같은 말을 글자로 한 번 더 한다. */}
+          {broken ? (
+            <Unlink className="h-3 w-3 shrink-0 text-red-500" aria-hidden="true" />
+          ) : (
+            <Link2 className="h-3 w-3 shrink-0" aria-hidden="true" />
+          )}
+          <span className="truncate">
+            {[
+              t('dashboard.canvas.elements.connectorLabel'),
+              node.id,
+              t(CONNECTOR_ROUTE_LABEL_KEY[node.route]),
+            ].join(' · ')}
+          </span>
+          {broken && (
+            <span
+              data-testid={`canvas-connector-row-broken-${idx}`}
+              className="shrink-0 rounded bg-red-500/15 px-1 text-[11px] text-red-500"
+            >
+              {t('dashboard.canvas.elements.connectorBroken')}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onMove(-1)}
+          disabled={idx === 0}
+          className={ICON_BUTTON_CLASS}
+          aria-label={withIndex(t('dashboard.canvas.elements.connectorMoveUpAria'), idx)}
+          data-testid={`canvas-connector-row-move-up-${idx}`}
+        >
+          <ChevronUp className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          onClick={() => onMove(1)}
+          disabled={idx === count - 1}
+          className={ICON_BUTTON_CLASS}
+          aria-label={withIndex(t('dashboard.canvas.elements.connectorMoveDownAria'), idx)}
+          data-testid={`canvas-connector-row-move-down-${idx}`}
+        >
+          <ChevronDown className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="shrink-0 text-(--color-text-muted) hover:text-red-500"
+          aria-label={withIndex(t('dashboard.canvas.elements.connectorDeleteAria'), idx)}
+          data-testid={`canvas-connector-row-delete-${idx}`}
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      </div>
+
+      {open && (
+        <div className="space-y-1.5 pl-4" data-testid={`canvas-connector-row-body-${idx}`}>
+          {/* 끊김 안내가 **맨 위**에 선다. 아래 두 끝 가운데 어느 쪽이 풀리지 않는지는
+              이 행이 알지 못한다 — 아는 것은 "이 선이 서지 못한다" 하나이고(한 함수가
+              내는 답이 그것이다), 모르는 것을 아는 척하지 않는다. 대신 고치는 길을
+              문구가 말한다. */}
+          {broken && (
+            <p
+              className={HINT_CLASS}
+              data-testid={`canvas-connector-row-broken-hint-${idx}`}
+            >
+              {t('dashboard.canvas.elements.connectorBrokenHint')}
+            </p>
+          )}
+
+          {/* 012 M1 — 두 끝과 꺾임점 수를 말하던 세 줄이 여기 있었다. **걷는다.**
+              그 셋이 말하던 것은 전부 **좌표**이고, 좌표는 이 행에서 고칠 수 없으므로 읽는
+              사람이 할 수 있는 일이 없었다. 고치는 손잡이는 캔버스에 있고 거기서는 **보면서**
+              고친다 — 목록의 수치는 그 몸짓을 도운 적이 없다.
+
+              끊김 배지와 바로 위 끊김 안내는 **남는다.** 그 둘이 말하는 것은 좌표가 아니라
+              "이 선이 서지 못한다" 이며, 칸이 생겨도 참인 사실이다. */}
+
+          {/* 겉모습 칸 넷 (012 M4 · REQ-03).
+
+              **여기 있던 안내문이 죽은 자리다.** 그 문장("연결선은 캔버스에서 고칩니다…")
+              은 고칠 칸이 없다는 사실의 **대역**이었고, 원래 주석이 그 사실을 스스로 적어
+              두었다 — "없으면 사용자는 고치는 칸을 찾다가 없는 것을 결함으로 읽는다".
+              진단은 옳았고 답만 달랐다: 칸을 세우면 변명할 빈자리가 없다. 칸보다 **먼저**
+              죽이면 칸도 안내도 없는 구간이 생기므로, 그 문장은 칸이 서는 **이 커밋에서**
+              죽는다.
+
+              **차례가 요소 스타일 줄과 같다** — 색 → 굵기 → 선 스타일 → 투명도. 같은 축을
+              두 화면이 다른 차례로 그리면 사용자가 두 번 배운다. 컨트롤도 같은 것을 쓴다.
+
+              **칸은 넷뿐이다.** 채움이 없는 것은 열린 경로의 `fill` 이 뜻이 없기 때문이고
+              (`drawConnector` §채우지 않는다), 보임/숨김이 없는 것은 이 SPEC 이 사려는
+              것이 겉모습이지 존재가 아니기 때문이다.
+
+              `node.style` 이 옵셔널이라 매 칸이 `?? {}` 로 연다 — 저술이 없는 연결선은
+              스타일 키 자체가 없고, 그것이 "색을 지정하지 않음" 의 표현이다(001). */}
+          <FieldGroup
+            label={t('dashboard.canvas.elements.connectorStyleLabel')}
+            testId={`canvas-connector-row-style-${idx}`}
+          >
+            <ColorPicker
+              alpha
+              clearable
+              value={node.style?.stroke}
+              onChange={(c) =>
+                onChange({ ...node, style: setStyleField(node.style ?? {}, 'stroke', c) })
+              }
+              ariaLabel={withIndex(t('dashboard.canvas.elements.connectorStrokeAria'), idx)}
+              testId={`canvas-connector-row-stroke-${idx}`}
+            />
+            <input
+              type="number"
+              step="any"
+              min={0}
+              value={node.style?.strokeWidth ?? ''}
+              onChange={(e) =>
+                onChange({
+                  ...node,
+                  style: setStyleField(
+                    node.style ?? {},
+                    'strokeWidth',
+                    nonNegative(parseOptionalNumber(e.target.value)),
+                  ),
+                })
+              }
+              placeholder={t('dashboard.canvas.elements.strokeWidthPlaceholder')}
+              aria-label={withIndex(t('dashboard.canvas.elements.connectorStrokeWidthAria'), idx)}
+              data-testid={`canvas-connector-row-stroke-width-${idx}`}
+              className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
+            />
+            {/* **3지 선택이다** — 빈 칸(미지정)과 `solid` 는 같은 그림이되 다른 값이다.
+                미지정은 규칙이 정할 수 있는 자리이고 `solid` 는 저술자가 정한 값이며,
+                둘을 접으면 "무슨 일이 있어도 실선" 을 표현할 방법이 사라진다
+                (`visible` 이 체크박스가 아닌 것과 같은 판단). */}
+            <select
+              value={node.style?.strokeDash ?? ''}
+              onChange={(e) =>
+                onChange({
+                  ...node,
+                  style: setStyleField(
+                    node.style ?? {},
+                    'strokeDash',
+                    e.target.value === '' ? undefined : (e.target.value as StrokeDash),
+                  ),
+                })
+              }
+              aria-label={withIndex(t('dashboard.canvas.elements.connectorStrokeDashAria'), idx)}
+              data-testid={`canvas-connector-row-stroke-dash-${idx}`}
+              className={cn(INPUT_CLASS, 'shrink-0')}
+            >
+              <option value="">{t('dashboard.canvas.elements.unset')}</option>
+              {STROKE_DASH_NAMES.map((name) => (
+                <option key={name} value={name}>
+                  {t(STROKE_DASH_LABEL_KEY[name])}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              step={1}
+              min={0}
+              max={OPACITY_PERCENT_MAX}
+              value={opacityToPercentInput(node.style?.opacity)}
+              onChange={(e) =>
+                onChange({
+                  ...node,
+                  style: setStyleField(
+                    node.style ?? {},
+                    'opacity',
+                    percentInputToOpacity(e.target.value),
+                  ),
+                })
+              }
+              placeholder={t('dashboard.canvas.elements.opacityPlaceholder')}
+              aria-label={withIndex(t('dashboard.canvas.elements.connectorOpacityAria'), idx)}
+              data-testid={`canvas-connector-row-opacity-${idx}`}
+              className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
+            />
+          </FieldGroup>
         </div>
       )}
     </div>
@@ -951,6 +2111,43 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
   const liveSeriesOptions = useCanvasLiveSeries();
   const seriesOptions = liveSeriesOptions.length > 0 ? liveSeriesOptions : configSeriesOptions;
 
+  /**
+   * 끊김을 **묻기 위한** 투영 (SPEC-CANVAS-011 M12 · AC-78).
+   *
+   * ## 스테이지가 없다 — 그래서 1:1 이다
+   *
+   * `CanvasProjection` 은 "잰 스테이지 CSS px" 와 "저술된 캔버스 단위" 한 쌍이다. 목록에는
+   * 캔버스가 없으므로 잰 스테이지가 없고, 없는 값을 지어낼 수는 없다. 그래서 스테이지를
+   * 캔버스 크기와 **같게** 둔다 — 1 단위 = 1 px 인 항등 투영이라, 지어낸 배율이 없다.
+   *
+   * ## 그래도 답이 흔들리지 않는 근거
+   *
+   * 여기서 읽는 것은 `resolveConnector` 의 **부재 여부 하나**이고, 그 부재는 투영에
+   * 딸리지 않는다: 끊김은 `anchorPoints` 가 낸 지도에 **그 이름이 있는가**로 정해지는데,
+   * 그 지도의 **키 집합**은 고정 아홉 + 저장된 임의 앵커 id 라 상자를 어떻게 재든 같다.
+   * 투영과 글자 폭 장부가 정하는 것은 각 이름이 **어디에** 앉는가뿐이며, 이 파일은 그
+   * 좌표를 한 자리도 읽지 않는다(가드가 소스에서 그것을 붙든다).
+   *
+   * 그러므로 여기 있는 것은 두 번째 측정이 아니라 **한 함수에 묻기 위한 통행증**이다.
+   * 판정을 제 손으로 적는 길(참조 id 를 배열에서 찾아보는 길)을 고르지 않은 것이 요점이다 —
+   * 그러면 끊김의 정의가 둘이 되고, 그중 하나(예: 없는 앵커 이름)가 빠지는 날 목록은
+   * 멀쩡하다고 말하는데 화면에는 아무것도 그려지지 않는다.
+   */
+  const brokenQueryProjection: CanvasProjection = useMemo(
+    () => ({ stage: { ...cfg.canvas }, canvas: cfg.canvas }),
+    [cfg.canvas],
+  );
+
+  /**
+   * 이 연결선의 참조가 풀리지 않는가 — **답은 `resolveConnector` 한 함수에서 온다**(AC-45).
+   *
+   * 끊기는 경우 넷(지워진 요소 · 부품 복합 키 · 연결선 참조 · 없는 앵커 이름)을 여기서
+   * 세지 않는다. 세는 순간 그 목록이 두 벌이 되고, 그리는 쪽이 넷째를 더한 날 목록만
+   * 옛 셋을 아는 상태가 된다.
+   */
+  const isBrokenConnector = (connector: ConnectorElement): boolean =>
+    resolveConnector(connector, elements, brokenQueryProjection, NO_TEXT_WIDTHS) === undefined;
+
   /** **사용자가 손으로** 펼쳐 둔 요소의 id 집합. 기본은 전부 접힘이다. */
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -1053,22 +2250,49 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
     if (picked !== selection) setSelection(picked);
   }
 
+  /**
+   * 지금 골라진 **부품**의 id — 그 부품이 이 그룹의 것일 때만 (SPEC-CANVAS-009 M5).
+   *
+   * 분해는 `parseFrameKey` 가 한다. 소비 측에서 `split('/')` 을 적으면 구분자 판정이
+   * 여럿이 되고, 그중 하나가 갈라지는 날 "어떤 그룹에서만 부품 강조가 안 된다" 가 된다.
+   */
+  const pickedPartIdOf = (groupId: string): string | undefined => {
+    if (selection.size !== 1) return undefined;
+    const { nodeId, partId } = parseFrameKey([...selection][0]!);
+    return nodeId === groupId ? partId : undefined;
+  };
+
   // SPEC-CANVAS-004 M1 — 쓰기 경로의 원소 타입이 `CanvasNode` 로 넓어졌다. 목록이 아직
   // 그룹 행을 그리지 않더라도(M6/M10 의 몫) **배열은 통째로 오간다** — 여기서 그룹을
   // 걸러 낸 배열을 되돌려 쓰면 패널을 한 번 편집하는 것만으로 손으로 저술한 그룹이
   // 조용히 사라진다. 자리(index)도 그래서 노드 배열의 자리 그대로다.
   const emit = (next: CanvasNode[]): void => onConfigChange({ elements: next });
 
+  /**
+   * 최상위 노드 하나를 갈아 끼운다. **그룹 행도 이 입구를 쓴다**(SPEC-CANVAS-009 M1).
+   *
+   * `replaceAt` 이 이 함수로 좁혀 부르는 것이 요점이다 — 쓰기 규칙이 둘이 되면 "요소를
+   * 고칠 때와 그룹을 고칠 때 배열이 다르게 만들어진다" 가 표현 가능해진다.
+   */
+  const replaceNodeAt = (idx: number, node: CanvasNode): void => {
+    emit(elements.map((e, i) => (i === idx ? node : e)));
+  };
+
   const replaceAt = (idx: number, el: CanvasElement): void => {
-    emit(elements.map((e, i) => (i === idx ? el : e)));
+    replaceNodeAt(idx, el);
   };
 
   /**
-   * 행 하나를 지운다 — **규칙은 `canvasEditArrange.removeNodes` 한 곳에 있다**.
+   * 행 하나를 지운다 — **규칙은 `canvasEditArrange.removeNodesWithConnectors` 한 곳에
+   * 있다**.
    *
    * 캔버스의 Delete·Backspace(SPEC-CANVAS-010)도 같은 함수를 지나므로, "목록에서
    * 눌렀는가 캔버스에서 눌렀는가" 에 따라 결과가 달라질 수 없다 — 바로 아래 `moveAt` 이
    * 순서 이동에 대해 하는 그 일과 같은 모양이다(자리로 받아 `nodeId` 로 넘긴다).
+   *
+   * **그 요소를 가리키던 연결선도 함께 간다**(SPEC-CANVAS-011 REQ-08). 한쪽 입구만
+   * 연동하면 "캔버스에서 지우면 선이 따라가는데 목록에서 지우면 끊긴 선이 남는다" 가
+   * 되고, 그 차이는 저장된 뒤에야 드러난다.
    *
    * 뺄 것이 없으면 그 함수가 받은 배열을 그대로(같은 참조) 돌려주고, 그 참조 비교가 곧
    * "쓸 일이 없다" 다.
@@ -1076,7 +2300,7 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
   const removeAt = (idx: number): void => {
     const el = elements[idx];
     if (el === undefined) return;
-    const next = removeNodes(elements, new Set([el.id]));
+    const next = removeNodesWithConnectors(elements, new Set([el.id]));
     if (next === elements) return;
     emit([...next]);
   };
@@ -1157,8 +2381,15 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
           (SPEC-CANVAS-006 REQ-07 — 유도가 바꾸는 것은 `canvas` 두 정수뿐이다). */}
       <div className="flex flex-wrap items-center gap-2">
         <span className={GROUP_LABEL_CLASS}>{t('dashboard.canvas.elements.panelSize')}</span>
+        {/* 한 제목에 물음표는 하나다. 그래서 "편집 중에는 패널 크기를 따라갑니다" 가
+            **둘째 물음표가 아니라 이 팝오버의 둘째 단락**으로 들어왔다. 빈 줄로 나누면
+            `FieldHelp` 가 `whitespace-pre-wrap` 이라 단락 사이가 된다
+            (`components/property/PropertyPanel.tsx` 가 포트 설명 둘을 합치는 그 방식). */}
         <FieldHelp
-          text={t('dashboard.canvas.elements.panelSizeHint')}
+          text={
+            `${t('dashboard.canvas.elements.panelSizeHint')}\n\n` +
+            t('dashboard.canvas.elements.panelSizeDerived')
+          }
           testId="canvas-panel-size-hint"
         />
         {/* **읽기 전용 표시**다(SPEC-CANVAS-006 M8 · REQ-07).
@@ -1177,12 +2408,6 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
           className="shrink-0 text-xs tabular-nums text-(--color-text-primary)"
         >
           {cfg.canvas.width} × {cfg.canvas.height}
-        </span>
-        <span
-          data-testid="canvas-panel-size-derived"
-          className="min-w-0 text-[11px] text-(--color-text-muted)"
-        >
-          {t('dashboard.canvas.elements.panelSizeDerived')}
         </span>
       </div>
 
@@ -1238,14 +2463,30 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
         </select>
       </div>
 
-      {/* 001 의 z-order 는 배열 순서 하나뿐이다 — 그 사실을 화면에 적는다.
-          이 한 줄만 인라인으로 남는다: 목록 전체에 대한 말이라 뒤에 `?` 를 달 제목이
-          없고, 제목 없는 물음표는 무엇을 묻는지 알 수 없는 단추가 된다. */}
-      <p className={HINT_CLASS}>
-        {t('dashboard.canvas.elements.orderHint')}
-      </p>
+      {/* 목록의 제목과 그 뒤의 `?`.
+
+          여기 있던 주석은 "목록 전체에 대한 말이라 뒤에 `?` 를 달 제목이 없다" 였다. 그
+          진단은 옳았고 답만 틀렸다 — 없는 제목을 **세우면** 물음표가 무엇을 묻는지 알 수
+          있는 단추가 된다. 그래서 001 의 z-order 규칙(배열 순서 하나뿐)과 "어디서
+          만드는가"(왼쪽 도크의 도형 팔레트 — 요소를 만드는 유일한 입구다)가 둘 다 그 뒤로
+          들어왔다. 위 패널 축 둘과 같은 눈금의 제목이라 설정 절의 결이 한 줄로 이어진다.
+
+          **한 제목에 물음표는 하나다.** 두 문장은 빈 줄로 나누어 한 팝오버에 담는다. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={GROUP_LABEL_CLASS}>{t('dashboard.canvas.elements.listTitle')}</span>
+        <FieldHelp
+          text={
+            `${t('dashboard.canvas.elements.orderHint')}\n\n` +
+            t('dashboard.canvas.elements.emptyHint')
+          }
+          testId="canvas-element-list-hint"
+        />
+      </div>
 
       {elements.length === 0 ? (
+        // 빈 자리에는 **없다는 사실**만 남는다. 뒤에 붙어 있던 "왼쪽 도형 팔레트에서 눌러
+        // 시작하세요" 는 제목 뒤 `?` 로 갔다 — 빈 자리의 일은 빈 곳을 메우는 것이므로
+        // 사실은 남고 지시만 간다.
         <p className={HINT_CLASS} data-testid="canvas-element-empty">
           {t('dashboard.canvas.elements.empty')}
         </p>
@@ -1266,7 +2507,18 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                   picked={selection.has(el.id)}
                   t={t}
                   onToggle={() => toggleExpanded(el.id)}
-                  onSelect={() => selectNode(el.id)}
+                  onChange={(next) => replaceNodeAt(idx, next)}
+                  // 부품 통로 넷 — 읽기·펼침·고르기·쓰기. 환산은 전부 `groupOps` 안에서
+                  // 끝나므로 이 파일에는 좌표 산술이 한 줄도 없다(AC-16).
+                  canvasPartOf={(partId) => partInCanvasUnits(elements, el.id, partId)}
+                  isPartOpen={(partId) => isExpanded(frameKey(el.id, partId))}
+                  onPartToggle={(partId) => toggleExpanded(frameKey(el.id, partId))}
+                  onPartSelect={(partId) => selectNode(frameKey(el.id, partId))}
+                  onPartChange={(partId, next) =>
+                    emit([...writePartFromCanvasUnits(elements, el.id, partId, next)])
+                  }
+                  pickedPartId={pickedPartIdOf(el.id)}
+                  seriesOptions={seriesOptions}
                   onMove={(delta) => moveAt(idx, delta)}
                   onRemove={() => removeAt(idx)}
                   rowRef={(node) => {
@@ -1276,6 +2528,41 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                 />
               );
             }
+            // SPEC-CANVAS-011 M12 — 연결선도 제 행을 갖는다. 건너뛰던 동안 참조가 끊긴
+            // 선은 **그려지지도 않고 목록에도 없어**, 사용자가 그것을 볼 수 있는 자리가
+            // 한 군데도 없었다(REQ-08 의 나머지 절반).
+            //
+            // 아래 요소 행을 태우지 않는 것은 그대로다: 그 행은 통째로 `CanvasElement`
+            // 위에 서 있고(기하 묶음 · 도형 스타일 · 글자 탭 · 숫자 스위치) 연결선에는 그
+            // 자리에 넣을 값이 없다. 그래서 제 행을 따로 짓되, 그 행은 **말하는 행**이다
+            // (`ConnectorNodeRow` 머리말).
+            //
+            // **자리(index)는 노드 배열의 자리 그대로다** — 위 `emit` 주석의 그 이유다.
+            if (isConnector(el)) {
+              return (
+                <ConnectorNodeRow
+                  key={el.id}
+                  node={el}
+                  idx={idx}
+                  count={elements.length}
+                  open={isExpanded(el.id)}
+                  picked={selection.has(el.id)}
+                  broken={isBrokenConnector(el)}
+                  t={t}
+                  onToggle={() => toggleExpanded(el.id)}
+                  onMove={(delta) => moveAt(idx, delta)}
+                  onRemove={() => removeAt(idx)}
+                  // 그룹 행과 **같은 입구**다(`replaceNodeAt`). 연결선 전용 쓰기 통로를
+                  // 따로 내면 쓰기 규칙이 둘이 된다.
+                  onChange={(next) => replaceNodeAt(idx, next)}
+                  rowRef={(node) => {
+                    if (node === null) rowRefs.current.delete(el.id);
+                    else rowRefs.current.set(el.id, node);
+                  }}
+                />
+              );
+            }
+
             const bindingOptions = bindingOptionsFor(seriesOptions, el.binding?.series);
             const unbound = el.binding === undefined;
             const open = isExpanded(el.id);
@@ -1474,221 +2761,28 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
 
                               크기가 위치보다 먼저 오는 것은 참고 화면의 차례다: 얼마만큼인지를
                               정한 다음 어디인지를 정한다. */}
-                          {/* 경로가 상자 갈래에 붙는 것이 008 이 이 절에 한 전부다. 경로의
-                              기하는 rect 와 **같은 상자**이므로 같은 여섯 칸이 선다. 빠뜨리면
-                              경로 행에는 기하 칸이 **하나도 없고**(어느 조건에도 걸리지
-                              않는다), 그러면 캔버스 밖으로 나간 경로를 수치로 되찾을 길이
-                              사라진다 — 이 목록이 마지막 회수 경로다. */}
-                          {(el.kind === 'rect' || el.kind === 'ellipse' || el.kind === 'path') && (
-                            <>
-                              <FieldGroup
-                                label={t('dashboard.canvas.elements.sizeLabel')}
-                                testId={`canvas-element-size-${idx}`}
-                              >
-                                {BOX_SIZE_AXES.map((axis) => (
-                                  <GeometryInput
-                                    key={axis}
-                                    axis={axis}
-                                    extent
-                                    value={el.geometry[axis]}
-                                    onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
-                                    ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
-                                    testId={`canvas-element-geo-${axis}-${idx}`}
-                                  />
-                                ))}
-                              </FieldGroup>
-                              <FieldGroup
-                                label={t('dashboard.canvas.elements.positionLabel')}
-                                testId={`canvas-element-position-${idx}`}
-                                help={coordHelp}
-                              >
-                                {BOX_POSITION_AXES.map((axis) => (
-                                  <GeometryInput
-                                    key={axis}
-                                    axis={axis}
-                                    value={el.geometry[axis]}
-                                    onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
-                                    ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
-                                    testId={`canvas-element-geo-${axis}-${idx}`}
-                                  />
-                                ))}
-                              </FieldGroup>
-                            </>
-                          )}
-                          {/* 선은 두 끝점이 전부다 — 크기 묶음을 만들지 않는다(위 축 상수 주석). */}
-                          {el.kind === 'line' && (
-                            <FieldGroup
-                              label={t('dashboard.canvas.elements.endpointsLabel')}
-                              testId={`canvas-element-position-${idx}`}
-                              help={coordHelp}
-                            >
-                              {LINE_AXES.map((axis) => (
-                                <GeometryInput
-                                  key={axis}
-                                  axis={axis}
-                                  value={el.geometry[axis]}
-                                  onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
-                                  ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
-                                  testId={`canvas-element-geo-${axis}-${idx}`}
-                                />
-                              ))}
-                            </FieldGroup>
-                          )}
-                          {/* 텍스트의 크기는 글자 크기이며 **텍스트 탭에 한 자리에만** 있다. */}
-                          {el.kind === 'text' && (
-                            <FieldGroup
-                              label={t('dashboard.canvas.elements.positionLabel')}
-                              testId={`canvas-element-position-${idx}`}
-                              help={coordHelp}
-                            >
-                              {POINT_AXES.map((axis) => (
-                                <GeometryInput
-                                  key={axis}
-                                  axis={axis}
-                                  value={el.geometry[axis]}
-                                  onChange={(v) => replaceAt(idx, { ...el, geometry: { ...el.geometry, [axis]: v } })}
-                                  ariaLabel={withIndex(t('dashboard.canvas.elements.geoAria'), idx).replace('{axis}', axis)}
-                                  testId={`canvas-element-geo-${axis}-${idx}`}
-                                />
-                              ))}
-                            </FieldGroup>
-                          )}
+                          <GeometryGroups
+                            el={el}
+                            idx={idx}
+                            t={t}
+                            testIdPrefix="canvas-element"
+                            ariaOf={(label) => withIndex(label, idx)}
+                            onChange={(next) => replaceAt(idx, next)}
+                            coordHelp={coordHelp}
+                          />
                         </>
                       )}
 
                       {/* ==== 스타일 탭 — 무엇으로, 어떻게 그리는가 ==== */}
                       {activeTab === 'style' && (
-                        <FieldGroup
-                          label={t('dashboard.canvas.elements.shapeStyleLabel')}
-                          testId={`canvas-element-shape-style-${idx}`}
-                        >
-                          {/* **첫 칸이 종류다.** 이 묶음이 "무엇을 어떻게 그리는가" 를 다루는
-                              자리이고, 그중 가장 먼저 정해지는 것이 무엇으로 그릴지이기 때문이다
-                              (종류가 바뀌면 아래 두께·색이 걸릴 도형 자체가 바뀐다). 종류를
-                              바꾸면 기하가 새 형상으로 옮겨 실린다 — `withKind` 한 곳이 그 일을
-                              하며, 탭으로 갈라도 그 경로는 그대로다. 머리줄이 아닌 것도 그대로다. */}
-                          <select
-                            value={el.kind}
-                            onChange={(e) => replaceAt(idx, withKind(el, e.target.value as CanvasPrimitiveKind))}
-                            aria-label={withIndex(t('dashboard.canvas.elements.kindAria'), idx)}
-                            data-testid={`canvas-element-kind-${idx}`}
-                            className={cn(INPUT_CLASS, 'shrink-0')}
-                          >
-                            {/* 지금 종류가 **바꿀 수 있는 넷 밖**이면(경로) 그 이름을 말하는
-                                칸을 하나 더 세운다. 없으면 `select` 의 값이 어느 `option`
-                                과도 맞지 않아 브라우저가 첫 칸(사각형)을 보여 주고, 그것은
-                                "이 줄은 사각형이다" 라는 거짓말이다. 고를 수는 없게 둔다 —
-                                경로로 **바꾸는** 길은 없기 때문이다(REQ-07).
-
-                                이름은 `kindLabel` 이 정한다 — 카탈로그에서 온 도형이면
-                                **그 도형의 이름**이고("구름"), 아니면 일반 이름이다("경로"). */}
-                            {!(ELEMENT_KINDS as readonly string[]).includes(el.kind) && (
-                              <option value={el.kind} disabled>
-                                {kindLabel(el, t)}
-                              </option>
-                            )}
-                            {ELEMENT_KINDS.map((k) => (
-                              <option key={k} value={k}>
-                                {t(KIND_LABEL_KEY[k])}
-                              </option>
-                            ))}
-                          </select>
-
-                          {/* 차례는 참고 화면을 따른다 — **채우기 → 테두리(색과 두께가 붙어
-                              선다) → 불투명도**. 한때 테두리를 먼저 두고 "바깥에서 안으로"
-                              라 적었지만, 그 차례는 두께를 제 색에서 떼어 놓아 한 가지
-                              (테두리)를 두 자리에서 만지게 했다.
-                              비운 칸은 미지정이며 렌더측 기본을 따른다.
-                              `fill` 의 자리는 **종류를 따른다.** 도형에서는 도형의 색이고,
-                              `kind:'text'` 에서는 칠할 도형이 없어 렌더 층이 이 값을 글자색의
-                              폴백으로 읽는다(`drawElement`: `textColor ?? fill`). 그래서 텍스트
-                              요소에서는 이 칸이 텍스트 탭에 선다 — 없는 도형의 색을 "도형" 이라
-                              부르면 화면이 거짓말을 한다. */}
-                          {el.kind !== 'text' && (
-                            <ColorPicker
-                              alpha
-                              clearable
-                              value={el.style.fill}
-                              onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'fill', c) })}
-                              ariaLabel={withIndex(t('dashboard.canvas.elements.fillAria'), idx)}
-                              testId={`canvas-element-fill-${idx}`}
-                            />
-                          )}
-
-                          <ColorPicker
-                            alpha
-                            clearable
-                            value={el.style.stroke}
-                            onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'stroke', c) })}
-                            ariaLabel={withIndex(t('dashboard.canvas.elements.strokeAria'), idx)}
-                            testId={`canvas-element-stroke-${idx}`}
-                          />
-                          <input
-                            type="number"
-                            step="any"
-                            min={0}
-                            value={el.style.strokeWidth ?? ''}
-                            onChange={(e) =>
-                              replaceAt(idx, {
-                                ...el,
-                                style: setStyleField(
-                                  el.style,
-                                  'strokeWidth',
-                                  nonNegative(parseOptionalNumber(e.target.value)),
-                                ),
-                              })
-                            }
-                            placeholder={t('dashboard.canvas.elements.strokeWidthPlaceholder')}
-                            aria-label={withIndex(t('dashboard.canvas.elements.strokeWidthAria'), idx)}
-                            data-testid={`canvas-element-stroke-width-${idx}`}
-                            className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
-                          />
-
-                          <input
-                            type="number"
-                            step="any"
-                            min={0}
-                            max={1}
-                            value={el.style.opacity ?? ''}
-                            onChange={(e) =>
-                              replaceAt(idx, {
-                                ...el,
-                                style: setStyleField(el.style, 'opacity', clamp01(parseOptionalNumber(e.target.value))),
-                              })
-                            }
-                            placeholder={t('dashboard.canvas.elements.opacityPlaceholder')}
-                            aria-label={withIndex(t('dashboard.canvas.elements.opacityAria'), idx)}
-                            data-testid={`canvas-element-opacity-${idx}`}
-                            className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
-                          />
-
-                          {/* `visible` 은 도형만이 아니라 요소 전체를 끄는 스위치지만, 이 탭이
-                              요소를 그리는 방식을 다루는 자리이므로 여기 둔다(텍스트만 숨기는
-                              축은 없다). 다만 그리는 방식이 아니라 그릴지 말지를 정하는 축이라
-                              **줄 끝**에 선다 — 앞자리는 그리는 방식을 정하는 칸들의 것이다.
-                              3지 선택인 것은 체크박스로 "미지정"과 "숨김"을 구분할 수 없고,
-                              그 둘은 뜻이 다르기 때문이다(규칙 표의 같은 컨트롤과 같은 판단). */}
-                          <select
-                            value={el.style.visible === undefined ? '' : el.style.visible ? 'show' : 'hide'}
-                            onChange={(e) =>
-                              replaceAt(idx, {
-                                ...el,
-                                style: setStyleField(
-                                  el.style,
-                                  'visible',
-                                  e.target.value === '' ? undefined : e.target.value === 'show',
-                                ),
-                              })
-                            }
-                            aria-label={withIndex(t('dashboard.canvas.elements.visibleAria'), idx)}
-                            data-testid={`canvas-element-visible-${idx}`}
-                            className={cn(INPUT_CLASS, 'shrink-0')}
-                          >
-                            <option value="">{t('dashboard.canvas.elements.unset')}</option>
-                            <option value="show">{t('dashboard.canvas.elements.visibleShow')}</option>
-                            <option value="hide">{t('dashboard.canvas.elements.visibleHide')}</option>
-                          </select>
-                        </FieldGroup>
+                        <ShapeStyleGroup
+                          el={el}
+                          idx={idx}
+                          t={t}
+                          testIdPrefix="canvas-element"
+                          ariaOf={(label) => withIndex(label, idx)}
+                          onChange={(next) => replaceAt(idx, next)}
+                        />
                       )}
 
                       {/* ==== 텍스트 탭 — 무엇을 적고, 그 글자를 어떻게 칠하는가 ====
@@ -1700,130 +2794,14 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                           **숫자 스위치는 여기 없다** — 값을 어떻게 읽을지는 무엇을 읽는지와
                           한 결정이므로 데이터 탭의 바인딩 옆에 선다. */}
                       {activeTab === 'text' && (
-                        <FieldGroup
-                          label={t('dashboard.canvas.elements.textStyleLabel')}
-                          testId={`canvas-element-text-style-${idx}`}
-                          help={
-                            <>
-                              <FieldHelp
-                                text={t('dashboard.canvas.elements.tokenHelp')}
-                                testId={`canvas-element-token-help-${idx}`}
-                              />
-                              {/* 두 갈래를 **화면에 적는다.** 렌더 층의 규칙이 종류마다 다르고
-                                  (`drawElement`: 텍스트는 `textColor ?? fill`, 도형 라벨은
-                                  `textColor` 만), 게다가 도형에 문구를 처음 적는 순간
-                                  `canvasElementFactory` 가 글자색을 대신 심는다. 적어 두지 않으면
-                                  사용자는 "고르지도 않은 색이 들어와 있다" 를 결함으로 읽는다. */}
-                              <FieldHelp
-                                text={
-                                  el.kind === 'text'
-                                    ? t('dashboard.canvas.elements.textStyleHintText')
-                                    : t('dashboard.canvas.elements.textStyleHintShape')
-                                }
-                                testId={`canvas-element-text-style-help-${idx}`}
-                              />
-                            </>
-                          }
-                        >
-                          {/* 문구만은 `setElementField` 가 아니라 팩토리를 지난다 — 도형에 라벨이
-                              생기는 순간 글자색이 함께 심겨야 그 라벨이 실제로 칠해진다. */}
-                          <input
-                            type="text"
-                            value={el.text ?? ''}
-                            onChange={(e) =>
-                              replaceAt(idx, withElementText(el, optionalText(e.target.value)))
-                            }
-                            placeholder={t('dashboard.canvas.elements.textPlaceholder')}
-                            aria-label={withIndex(t('dashboard.canvas.elements.textAria'), idx)}
-                            data-testid={`canvas-element-text-${idx}`}
-                            className={cn(INPUT_CLASS, 'min-w-16 flex-1')}
-                          />
-
-                          <input
-                            type="number"
-                            step="any"
-                            min={0}
-                            value={el.style.fontSize ?? ''}
-                            onChange={(e) =>
-                              replaceAt(idx, {
-                                ...el,
-                                style: setStyleField(
-                                  el.style,
-                                  'fontSize',
-                                  nonNegative(parseOptionalNumber(e.target.value)),
-                                ),
-                              })
-                            }
-                            placeholder={t('dashboard.canvas.elements.fontSizePlaceholder')}
-                            aria-label={withIndex(t('dashboard.canvas.elements.fontSizeAria'), idx)}
-                            data-testid={`canvas-element-font-size-${idx}`}
-                            className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
-                          />
-
-                          <select
-                            value={el.style.fontWeight ?? ''}
-                            onChange={(e) =>
-                              replaceAt(idx, {
-                                ...el,
-                                style: setStyleField(
-                                  el.style,
-                                  'fontWeight',
-                                  e.target.value === '' ? undefined : (e.target.value as ElementFontWeight),
-                                ),
-                              })
-                            }
-                            aria-label={withIndex(t('dashboard.canvas.elements.fontWeightAria'), idx)}
-                            data-testid={`canvas-element-font-weight-${idx}`}
-                            className={cn(INPUT_CLASS, 'shrink-0')}
-                          >
-                            <option value="">{t('dashboard.canvas.elements.unset')}</option>
-                            <option value="normal">{t('dashboard.canvas.elements.fontWeightNormal')}</option>
-                            <option value="bold">{t('dashboard.canvas.elements.fontWeightBold')}</option>
-                          </select>
-
-                          <select
-                            value={el.style.align ?? ''}
-                            onChange={(e) =>
-                              replaceAt(idx, {
-                                ...el,
-                                style: setStyleField(
-                                  el.style,
-                                  'align',
-                                  e.target.value === '' ? undefined : (e.target.value as ElementAlign),
-                                ),
-                              })
-                            }
-                            aria-label={withIndex(t('dashboard.canvas.elements.alignAria'), idx)}
-                            data-testid={`canvas-element-align-${idx}`}
-                            className={cn(INPUT_CLASS, 'shrink-0')}
-                          >
-                            <option value="">{t('dashboard.canvas.elements.unset')}</option>
-                            <option value="left">{t('dashboard.canvas.elements.alignLeft')}</option>
-                            <option value="center">{t('dashboard.canvas.elements.alignCenter')}</option>
-                            <option value="right">{t('dashboard.canvas.elements.alignRight')}</option>
-                          </select>
-
-                          <ColorPicker
-                            alpha
-                            clearable
-                            value={el.style.textColor}
-                            onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'textColor', c) })}
-                            ariaLabel={withIndex(t('dashboard.canvas.elements.textColorAria'), idx)}
-                            testId={`canvas-element-text-color-${idx}`}
-                          />
-                          {/* 텍스트 요소의 `fill` 은 글자색 폴백이다 — 그래서 글자색 **바로 옆**에
-                              선다(위 도형 묶음의 주석 참조). */}
-                          {el.kind === 'text' && (
-                            <ColorPicker
-                              alpha
-                              clearable
-                              value={el.style.fill}
-                              onChange={(c) => replaceAt(idx, { ...el, style: setStyleField(el.style, 'fill', c) })}
-                              ariaLabel={withIndex(t('dashboard.canvas.elements.fillAria'), idx)}
-                              testId={`canvas-element-fill-${idx}`}
-                            />
-                          )}
-                        </FieldGroup>
+                        <TextStyleGroup
+                          el={el}
+                          idx={idx}
+                          t={t}
+                          testIdPrefix="canvas-element"
+                          ariaOf={(label) => withIndex(label, idx)}
+                          onChange={(next) => replaceAt(idx, next)}
+                        />
                       )}
 
                       {/* ==== 데이터 탭 — 무엇을 읽고, 어떻게 반응하는가 ==== */}
@@ -1832,118 +2810,16 @@ export default function CanvasElementsEditor({ config, onConfigChange }: CanvasE
                           {/* --- 데이터 ---
                               바인딩이 없으면 정적 도형이며, 규칙은 평가되지 않는다(그래서 아래
                               표가 읽기 전용으로 잠긴다). */}
-                          <FieldGroup
-                            label={t('dashboard.canvas.elements.bindingLabel')}
-                            testId={`canvas-element-data-${idx}`}
-                          >
-                            <select
-                              value={el.binding?.series ?? ''}
-                              onChange={(e) =>
-                                replaceAt(
-                                  idx,
-                                  setElementField(
-                                    el,
-                                    'binding',
-                                    e.target.value === '' ? undefined : { series: e.target.value, agg: 'last' },
-                                  ),
-                                )
-                              }
-                              aria-label={withIndex(t('dashboard.canvas.elements.bindingAria'), idx)}
-                              data-testid={`canvas-element-binding-${idx}`}
-                              className={cn(INPUT_CLASS, 'min-w-24 flex-1')}
-                            >
-                              <option value="">{t('dashboard.canvas.elements.bindingNone')}</option>
-                              {bindingOptions.map((o) => (
-                                <option key={o.id} value={o.id}>
-                                  {o.label}
-                                </option>
-                              ))}
-                            </select>
-                            {/* 고를 것이 하나도 없으면 **왜 없는지**를 말한다. 목록이 비는 정상적인
-                                이유는 하나뿐이다 — 데이터 소스에 시리즈가 아직 없다. 그 말을 하지
-                                않으면 사용자는 "바인딩 없음" 만 있는 상자를 보고 고장으로 읽는다.
-                                히트맵의 `heatmapNoSensors` 가 같은 자리에서 같은 일을 하며, 가리키는
-                                곳도 화면이 그 절을 부르는 이름(`dashboard.settings.dataSource`)
-                                그대로다. */}
-                            {bindingOptions.length === 0 && (
-                              <p
-                                className={cn(HINT_CLASS, 'w-full')}
-                                data-testid={`canvas-element-binding-hint-${idx}`}
-                              >
-                                {t('dashboard.canvas.elements.bindingNoSeries')}
-                              </p>
-                            )}
-                              {/* --- 숫자 스위치 ---
-                                  **보이기/감추기 스위치가 아니다.** 판독값을 어떻게 **읽을지**를
-                                  정한다: 켜면 숫자로 읽어 소수 자리로 반올림하고 단위를 붙이며(001
-                                  이래의 동작), 끄면 받은 값을 **문자열 그대로** 내보낸다. 그래서 끈
-                                  상태에서 소수 자리·단위는 걸릴 곳이 없고, 걸리지 않는 칸을 남겨 두면
-                                  사용자는 고쳐도 아무 일도 일어나지 않는 칸을 만진다 — 그 둘을 함께
-                                  감추는 이유다.
-
-                                  `w-full` 로 제 줄을 차지한다. 위 칸들과 한 줄에 섞이면 "값을 어떻게
-                                  읽는가" 라는 다른 층위의 결정이 글꼴 설정처럼 보인다. */}
-                              <div className="flex w-full flex-wrap items-center gap-1.5">
-                                <label className="flex items-center gap-1 text-xs text-(--color-text-primary)">
-                                  {/* 체크는 **키를 지운다**(부재 = 숫자). 켠 상태를 `numeric: true` 로
-                                      적어 두면 종전 config 와 형상이 갈라지고, 갈라진 만큼 왕복 시험이
-                                      지켜야 할 것이 늘어난다(규율 1 — 기본값은 부재로 적는다). */}
-                                  <input
-                                    type="checkbox"
-                                    checked={numeric}
-                                    onChange={(e) =>
-                                      replaceAt(
-                                        idx,
-                                        setElementField(el, 'numeric', e.target.checked ? undefined : false),
-                                      )
-                                    }
-                                    aria-label={withIndex(t('dashboard.canvas.elements.numericAria'), idx)}
-                                    data-testid={`canvas-element-numeric-${idx}`}
-                                    className="h-3.5 w-3.5 shrink-0 accent-blue-500"
-                                  />
-                                  {t('dashboard.canvas.elements.numericLabel')}
-                                </label>
-                                <FieldHelp
-                                  text={t('dashboard.canvas.elements.numericHint')}
-                                  testId={`canvas-element-numeric-help-${idx}`}
-                                />
-                              </div>
-
-                              {numeric && (
-                                <div
-                                  className="flex w-full flex-wrap items-center gap-1.5 rounded border border-(--color-border-default) px-1.5 py-1"
-                                  data-testid={`canvas-element-numeric-fields-${idx}`}
-                                >
-                                  <input
-                                    type="number"
-                                    step={1}
-                                    min={0}
-                                    value={el.decimals ?? ''}
-                                    onChange={(e) =>
-                                      replaceAt(
-                                        idx,
-                                        setElementField(el, 'decimals', decimalsOf(parseOptionalNumber(e.target.value))),
-                                      )
-                                    }
-                                    placeholder={t('dashboard.canvas.elements.decimalsPlaceholder')}
-                                    aria-label={withIndex(t('dashboard.canvas.elements.decimalsAria'), idx)}
-                                    data-testid={`canvas-element-decimals-${idx}`}
-                                    className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
-                                  />
-                                  <input
-                                    type="text"
-                                    value={el.unit ?? ''}
-                                    onChange={(e) =>
-                                      replaceAt(idx, setElementField(el, 'unit', optionalText(e.target.value)))
-                                    }
-                                    placeholder={t('dashboard.canvas.elements.unitPlaceholder')}
-                                    aria-label={withIndex(t('dashboard.canvas.elements.unitAria'), idx)}
-                                    data-testid={`canvas-element-unit-${idx}`}
-                                    className={cn(INPUT_CLASS, 'w-16')}
-                                  />
-                                </div>
-                              )}
-                          </FieldGroup>
+                          <BindingGroup
+                            el={el}
+                            idx={idx}
+                            t={t}
+                            testIdPrefix="canvas-element"
+                            ariaOf={(label) => withIndex(label, idx)}
+                            onChange={(next) => replaceAt(idx, next)}
+                            bindingOptions={bindingOptions}
+                            numeric={numeric}
+                          />
 
                           {/* --- 전환 효과 ---
                               패널 쪽과 같은 이유로 `?` 를 단다 — 다만 **비웠을 때의 뜻이 다르다**:

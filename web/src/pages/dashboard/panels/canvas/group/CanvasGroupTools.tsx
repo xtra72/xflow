@@ -34,7 +34,7 @@ import { useEffect, useState } from 'react';
 
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
-import { Check, Group, Ungroup, X } from 'lucide-react';
+import { Check, Group, Ungroup, Unlink, X } from 'lucide-react';
 
 import type { GroupRefusal } from './groupOps';
 
@@ -74,10 +74,26 @@ export interface CanvasGroupToolsProps {
    * 걸음이 붙고, 한 걸음이 늘 붙는 확인은 곧 읽지 않고 누르는 확인이 된다.
    */
   rulesAtRisk: number;
+  /**
+   * 뺄 부품이 정확히 하나 골라져 있는가 (SPEC-CANVAS-009 M6).
+   *
+   * 판정은 오버레이가 소유한다(`selectedPart`) — `canUngroup` 과 같은 규율이다. 여기서
+   * 다시 세면 단추의 활성 조건과 `detachPart` 의 거절 조건이 갈라진다.
+   */
+  canDetach: boolean;
+  /**
+   * 분리가 버릴 규칙 행의 수(`rulesLostByDetach`).
+   *
+   * **0 보다 클 때만** 확인을 묻는다 — 풀기와 같은 규칙이고, 같은 확인 줄을 쓴다. 확인이
+   * 두 벌이 되면 "그룹 해제는 물어보는데 부품 분리는 그냥 된다" 가 표현 가능해지고,
+   * 잃는 것은 같은 규칙 표다.
+   */
+  detachRulesAtRisk: number;
   /** 마지막 묶기 거절 사유. `null` 이면 안내가 없다. */
   refusal: GroupRefusal | null;
   onGroup: () => void;
   onUngroup: () => void;
+  onDetach: () => void;
 }
 
 /**
@@ -95,31 +111,51 @@ export function CanvasGroupTools({
   canGroup,
   canUngroup,
   rulesAtRisk,
+  canDetach,
+  detachRulesAtRisk,
   refusal,
   onGroup,
   onUngroup,
+  onDetach,
 }: CanvasGroupToolsProps): React.ReactElement {
   const { t } = useTranslation();
-  const [confirming, setConfirming] = useState(false);
+  /**
+   * 확인 중인 **무엇**인가. `null` 이면 묻는 중이 아니다.
+   *
+   * 불리언 둘로 두지 않는 것에 뜻이 있다 — 둘이면 "풀기 확인과 분리 확인이 동시에 떠
+   * 있다" 가 형상으로 가능해지고, 그때 화면의 "예" 는 어느 쪽인지 말하지 못한다. 하나의
+   * 값이라 그 상태가 표현 불가능하다.
+   */
+  const [confirming, setConfirming] = useState<'ungroup' | 'detach' | null>(null);
 
-  // 풀 대상이 사라지거나 바뀌면 확인을 거둔다. 거두지 않으면 다른 것을 고른 뒤에도 확인이
+  // 대상이 사라지거나 바뀌면 확인을 거둔다. 거두지 않으면 다른 것을 고른 뒤에도 확인이
   // 남아, 그 자리에서 "예" 를 누르면 **묻지 않은 것이 풀린다**.
   useEffect(() => {
-    if (!canUngroup) setConfirming(false);
-  }, [canUngroup]);
+    setConfirming((prev) => {
+      if (prev === 'ungroup' && !canUngroup) return null;
+      if (prev === 'detach' && !canDetach) return null;
+      return prev;
+    });
+  }, [canUngroup, canDetach]);
 
-  const askBeforeUngroup = (): void => {
-    // **잃을 것이 없으면 묻지 않는다**(REQ-07 — 안내는 `rulesAtRisk > 0` 일 때만 뜬다).
-    if (rulesAtRisk > 0) {
-      setConfirming(true);
+  /** 확인 절차 하나 — **풀기와 분리가 같은 줄을 쓴다**(둘째 확인 기구를 짓지 않는다). */
+  const ask = (kind: 'ungroup' | 'detach', atRisk: number, run: () => void): void => {
+    // **잃을 것이 없으면 묻지 않는다**(REQ-07 — 안내는 `atRisk > 0` 일 때만 뜬다).
+    if (atRisk > 0) {
+      setConfirming(kind);
       return;
     }
-    onUngroup();
+    run();
   };
 
-  const confirmUngroup = (): void => {
-    setConfirming(false);
-    onUngroup();
+  const askBeforeUngroup = (): void => ask('ungroup', rulesAtRisk, onUngroup);
+  const askBeforeDetach = (): void => ask('detach', detachRulesAtRisk, onDetach);
+
+  const confirmPending = (): void => {
+    const kind = confirming;
+    setConfirming(null);
+    if (kind === 'ungroup') onUngroup();
+    else if (kind === 'detach') onDetach();
   };
 
   return (
@@ -146,14 +182,33 @@ export function CanvasGroupTools({
       >
         <Ungroup className={ICON_CLASS} aria-hidden="true" />
       </button>
+      {/* 부품 분리 (SPEC-CANVAS-009 M6) — **그룹 해제 옆**에 선다.
+
+          두 단추가 다루는 것은 같은 덩어리이고 다른 것은 **범위**뿐이다(전부 / 하나). 그
+          관계를 자리로 말한다. 활성 조건이 서로 배타적인 것도 그 때문이다: 그룹이 골라져
+          있으면 풀기가 켜지고, 부품이 골라져 있으면 분리가 켜진다 — 한 선택에서 둘이 함께
+          켜지는 일은 없다(부품과 그룹이 동시에 선택되지 않는다 · REQ-01-a). */}
+      <button
+        type="button"
+        data-testid="canvas-group-detach"
+        aria-label={t('dashboard.canvas.edit.groupDetach')}
+        title={t('dashboard.canvas.edit.groupDetach')}
+        disabled={!canDetach}
+        className={cn(ICON_BUTTON_CLASS, DISABLED_CLASS)}
+        onClick={askBeforeDetach}
+      >
+        <Unlink className={ICON_CLASS} aria-hidden="true" />
+      </button>
       {/* 풀기 확인 — **푸는 것을 되돌릴 수 없어서가 아니라, 규칙 표를 되돌릴 수 없어서다.**
           좌표는 왕복하지만 그룹의 `rules` 는 버려진다(가정 A19): 규칙은 값이 아니라 판정
           이므로 N 개 부품에 복사하면 프레임당 평가가 1회에서 N회로 늘고, 그중 한 표만
           나중에 고쳐지는 순간 "같이 흐려지던 것이 따로 논다". 잃는다는 사실을 **잃기
           전에** 말하지 않으면 그 손실은 조용하다. */}
-      {confirming && (
+      {confirming !== null && (
         <div
-          data-testid="canvas-group-ungroup-ask"
+          data-testid={
+            confirming === 'detach' ? 'canvas-group-detach-ask' : 'canvas-group-ungroup-ask'
+          }
           role="status"
           className="flex items-center gap-1"
         >
@@ -165,10 +220,11 @@ export function CanvasGroupTools({
               그때 `.replace` 는 더 이상 등가가 아니다. 008 이 `{shape}` 에서 물린 그
               자리이므로 이 저장소의 기본형을 따른다. */}
           <span className={NOTICE_CLASS}>
-            {t('dashboard.canvas.edit.groupUngroupAsk').replaceAll(
-              '{rows}',
-              String(rulesAtRisk),
-            )}
+            {t(
+              confirming === 'detach'
+                ? 'dashboard.canvas.edit.groupDetachAsk'
+                : 'dashboard.canvas.edit.groupUngroupAsk',
+            ).replaceAll('{rows}', String(confirming === 'detach' ? detachRulesAtRisk : rulesAtRisk))}
           </span>
           <button
             type="button"
@@ -176,7 +232,7 @@ export function CanvasGroupTools({
             aria-label={t('dashboard.canvas.edit.groupUngroupYes')}
             title={t('dashboard.canvas.edit.groupUngroupYes')}
             className={cn(ICON_BUTTON_CLASS, 'hover:text-red-500')}
-            onClick={confirmUngroup}
+            onClick={confirmPending}
           >
             <Check className={ICON_CLASS} aria-hidden="true" />
           </button>
@@ -186,7 +242,7 @@ export function CanvasGroupTools({
             aria-label={t('dashboard.canvas.edit.groupUngroupNo')}
             title={t('dashboard.canvas.edit.groupUngroupNo')}
             className={ICON_BUTTON_CLASS}
-            onClick={() => setConfirming(false)}
+            onClick={() => setConfirming(null)}
           >
             <X className={ICON_CLASS} aria-hidden="true" />
           </button>

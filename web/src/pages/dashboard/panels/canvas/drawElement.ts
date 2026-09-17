@@ -52,7 +52,18 @@ import {
   type PxPoint,
 } from './canvasGeometry';
 import type { ResolvedStyle } from './canvasRules';
-import { walkDrawables } from './group/frameKey';
+// 무늬 표는 잎 모듈이 든다(012 §결정 D5) — 파서와 렌더가 **같은 표**를 본다.
+import { dashPattern } from './strokeDash';
+// 각도의 산술과 판정은 잎 모듈이 소유한다(SPEC-CANVAS-014).
+import { isRotated, toRadians } from './canvasRotation';
+// 실측 글자 폭의 해석은 윤곽 모듈이 소유한다 — 축을 구하는 식이 그 파일과 **같아야** 한다.
+import { resolveMeasuredWidth, rotationPivotIn } from './canvasOutline';
+import { connectorPath } from './connector/connectorPath';
+import type { OrthoSplit } from './connector/orthoSplits';
+import type { ConnectorElement, ConnectorRoute } from './connector/connectorTypes';
+import { resolveConnector } from './connector/resolveConnector';
+import { connectorObstacles, type ConnectorRouting } from './connector/connectorObstacles';
+import { isConnectorDrawable, walkDrawables } from './group/frameKey';
 import type { CanvasNode, GroupElement } from './group/groupTypes';
 
 // --- 최소 context 인터페이스 ---------------------------------------------
@@ -114,6 +125,48 @@ export interface DrawContext2D {
     x: number,
     y: number,
   ): void;
+  /**
+   * 파선 무늬를 건다 (SPEC-CANVAS-012 M3 · §결정 2).
+   *
+   * ## 왜 선택적인가 — 008 의 최소성을 깨지 않고 더하는 유일한 모양
+   *
+   * 008 이 이 인터페이스에 대해 적어 둔 문장이 이 물음표 하나의 근거다:
+   *
+   *   > 인터페이스의 최소성은 장식이 아니라 하중을 받는 성질이므로(그 최소성이 있어서
+   *   > 렌더 경로 전량이 jsdom 없이 기록 스텁으로 검증된다), 셋째 멤버를 더하려는 설계는
+   *   > 되짚어야 한다.
+   *
+   * 필수로 더하면 이 인터페이스를 **구조적으로** 만족하던 스텁 공장 아홉이 한꺼번에
+   * 컴파일되지 않는다. 그 아홉을 고치는 일은 012 가 사려는 것과 아무 상관이 없고, 008 이
+   * "하중을 받는 성질" 이라 부른 최소성을 **고치는 비용으로 갚게** 만든다.
+   *
+   * ## 대가를 숨기지 않는다
+   *
+   * 선택적이라는 것은 **구현하지 않은 스텁에서 파선이 조용히 지나간다**는 뜻이다. 그래서
+   * 파선을 재는 시험은 제 스텁이 이 멤버를 갖추는 것을 전제로 하며, 그 사실 자체를 가드가
+   * 고정한다(`drawElement.dash.test.ts`). 고정하지 않으면 훗날 스텁이 이 멤버를 잃어도
+   * 시험이 초록으로 남고, 그때 파선은 **아무도 재지 않는 기능**이 된다.
+   *
+   * 빈 배열이 곧 실선이다(canvas 명세) — 되돌리는 별도 호출이 없다.
+   */
+  setLineDash?(segments: readonly number[]): void;
+  /**
+   * 좌표계를 옮긴다 (SPEC-CANVAS-014 M3 · §결정 5).
+   *
+   * **`setTransform` 으로는 돌릴 수 없다.** 그것은 **덮어쓰는** 연산이라 `CanvasSurface` 가
+   * 세워 둔 DPR 변환이 지워진다 — 실측: 그 파일이 프레임마다 `ctx.setTransform(scale, …)` 를
+   * 부른다. `translate`/`rotate` 는 **합성**이므로 `save`/`restore` 안에서 안전하다.
+   *
+   * 선택적인 까닭은 `setLineDash` 와 같다(012 §결정 2): 필수로 더하면 이 인터페이스를
+   * 구조적으로 만족하던 스텁 공장 아홉이 한꺼번에 컴파일되지 않고, 008 이 "하중을 받는
+   * 성질" 이라 부른 최소성을 **고치는 비용으로** 갚게 된다.
+   *
+   * 대가도 같고 숨기지 않는다 — 구현하지 않은 스텁에서는 회전이 조용히 지나가므로, 회전을
+   * 재는 시험은 **제 스텁이 이 둘을 갖추는 것**부터 못박는다.
+   */
+  translate?(x: number, y: number): void;
+  /** 좌표계를 돌린다(라디안). 위 `translate` 와 한 쌍이다. */
+  rotate?(angle: number): void;
   stroke(): void;
   fill(): void;
   fillText(text: string, x: number, y: number): void;
@@ -164,6 +217,22 @@ function resolveAlpha(opacity: number | undefined): number {
   return opacity < 0 ? 0 : opacity > 1 ? 1 : opacity;
 }
 
+/**
+ * 좌표계를 축 둘레로 돌린다 — `save`/`restore` **안에서만** 부른다 (SPEC-CANVAS-014 M3).
+ *
+ * `translate(축)` → `rotate` → `translate(−축)` 차례다. 되돌리는 `translate` 를 빠뜨리면
+ * 도형이 축만큼 밀려 그려지고, 그 어긋남은 각도가 0 일 때 보이지 않으므로 **돌린 뒤에야**
+ * 드러난다.
+ *
+ * 멤버가 선택적이므로 `?.` 로 부른다. 스텁이 구현하지 않았으면 회전이 조용히 지나가며,
+ * 그 사실은 §결정 5 가 이름으로 적어 둔 대가다.
+ */
+function applyRotation(ctx: DrawContext2D, pivot: PxPoint, deg: number): void {
+  ctx.translate?.(pivot.x, pivot.y);
+  ctx.rotate?.(toRadians(deg));
+  ctx.translate?.(-pivot.x, -pivot.y);
+}
+
 /** 유효한 선 두께(px). 미지정은 기본값, 손상·0·음수는 "선 없음"을 뜻하는 0 이다. */
 function resolveStrokeWidth(width: number | undefined): number {
   if (width === undefined) return DEFAULT_STROKE_WIDTH;
@@ -198,6 +267,15 @@ function paintStroke(ctx: DrawContext2D, style: ResolvedStyle): void {
   if (style.stroke === undefined || width <= 0) return;
   ctx.strokeStyle = style.stroke;
   ctx.lineWidth = width;
+  // 무늬는 **이른 반환 뒤에** 건다(012 AC-17). 앞에 걸면 칠하지도 않을 선 때문에 canvas
+  // 상태를 건드리게 되고, 그 상태는 `save`/`restore` 경계를 넘어 다음 요소에게 간다.
+  //
+  // 무늬가 두께에서 나오므로 **여기서 다시 재지 않는다** — 바로 위 `width` 가 그 값이다.
+  // 두 번째 측정을 만들면 "그려진 무늬와 잰 무늬가 다르다" 가 시작된다(§결정 3).
+  //
+  // 이 한 자리가 **도형과 연결선 양쪽을 덮는다.** 갈라 두려면 칠하는 함수를 둘로 나눠야
+  // 하고, 그것이 008 이래 이 저장소가 피해 온 형상이다(012 §결정 6).
+  ctx.setLineDash?.(dashPattern(style.strokeDash, width));
   ctx.stroke();
 }
 
@@ -276,6 +354,8 @@ function drawMeasuredElement(
   text: string | undefined,
   proj: CanvasProjection,
   host?: PxBox,
+  widths: Readonly<Record<string, number>> = {},
+  widthKey?: string,
 ): number | undefined {
   if (style.visible === false) return undefined;
   // **투영을 고르는 자리는 여기 넷뿐이다**(SPEC-CANVAS-004 M3). 부품이면 그룹의 px 상자
@@ -295,6 +375,23 @@ function drawMeasuredElement(
   ctx.save();
   try {
     ctx.globalAlpha = resolveAlpha(style.opacity);
+    // **축은 이 요소의 px 윤곽 상자 가운데다**(014 §결정 · M3). 잡는 쪽(`canvasHitTest`)이
+    // **같은 상자에서 같은 가운데**를 구해 점을 되돌리므로, 그려진 자리와 잡히는 자리가
+    // 한 각도 하나를 본다(K1). 두 자리가 축을 따로 구하면 그 등식이 깨지고, 그 어긋남은
+    // 각도가 0 일 때 보이지 않는다.
+    //
+    // `line` 은 각도를 갖지 않으므로(§D6) 이 갈래에 들어오지 않는다.
+    const deg = 'rotation' in el ? el.rotation : undefined;
+    if (isRotated(deg)) {
+      // **축은 윤곽 모듈의 한 함수에서 나온다** — 잡는 쪽이 부르는 그 함수다(K1).
+      const pivot = rotationPivotIn(
+        el,
+        pxBox,
+        pxPoint,
+        resolveMeasuredWidth(widths[widthKey ?? el.id]),
+      );
+      if (pivot !== undefined) applyRotation(ctx, pivot, deg as number);
+    }
     switch (el.kind) {
       case 'rect': {
         const box = pxBox(el.geometry);
@@ -372,6 +469,123 @@ function drawMeasuredElement(
   return measured;
 }
 
+// --- 연결선 그리기 (SPEC-CANVAS-011 M6) ----------------------------------
+
+/**
+ * 해석된 연결선 하나를 그린다 — 점 목록은 **캔버스 단위**이고, 투영은 `connectorPath` 안이다.
+ *
+ * ## `route` 는 **그리기만** 가른다 — 그리고 그 갈래는 **여기 없다**
+ *
+ * 모양을 정하는 일은 `connector/connectorPath` **한 함수**의 몫이다(M7 이 그리로 옮겼다).
+ * 여기가 하는 일은 그 명령 목록을 context 호출로 **옮겨 적는 것**뿐이며, 잡는 쪽(M7)은 같은
+ * 목록을 `flattenPath` 에 넘긴다 — 그래서 그려진 곡선과 잡히는 곡선이 **같은 하나**다.
+ * 갈래를 여기 한 벌 더 두면 한쪽만 고쳐지는 날 그 둘이 갈라지고, 그 갈라짐은 002 가 위험 R1
+ * 로 이름 적어 둔 그대로 화면에서만 드러난다.
+ *
+ * 아래 남은 것은 그 모듈의 성질이다:
+ *
+ * `straight` · `elbow` · `free` 는 셋이 **같은 코드**를 지난다. 다른 것은 점이 어디서
+ * 왔는가 뿐이며(사람이 찍었는가, 손이 그은 궤적인가), 그 출처는 그리기에 닿지 않는다.
+ * 셋을 따로 적으면 그 셋이 갈라질 자리가 생기고, 그 갈라짐은 "자유선만 굵기가 다르다"
+ * 같은 모양으로만 보인다.
+ *
+ * `curve` 만 갈라지되, 중간점이 없으면 **그 갈래도 같은 길로 떨어진다**(AC-50) —
+ * `curveSegments` 가 빈 목록을 내므로 폴리라인이 그대로 걸린다. 네 갈래의 호출 기록이
+ * 동일해야 한다는 REQ-04-b 가 조건문이 아니라 **구조**로 지켜진다.
+ *
+ * ## 채우지 않는다
+ *
+ * 열린 경로의 `fill` 은 뜻이 없다 — `line` 이 001 이래 지켜 온 그 규율 그대로다.
+ * 색이 없거나 두께가 0 이면 `paintStroke` 가 아무것도 하지 않는다. **기본 색을 지어내지
+ * 않는다**(001): 저술이 없는 연결선은 잉크 없이 지나가고, 그래야 사용자가 "색을 지정하지
+ * 않음" 을 표현할 수 있다.
+ *
+ * ## 중심 앵커에서 물러나지 않는다 (AC-16 · A12)
+ *
+ * 받은 끝점을 **그대로** 잇는다. 경계 교점을 여기서 구해 선을 뒤로 물리면 종류마다 산술이
+ * 갈리고 `outlineBox` 와 어긋날 다섯 번째 자리가 생긴다. 도형에 가려지는 대가는 숨기지
+ * 않는다 — 그것이 A12 가 고른 것이다.
+ */
+export function drawConnector(
+  ctx: DrawContext2D,
+  points: readonly PointGeometry[],
+  route: ConnectorRoute,
+  style: ResolvedStyle,
+  proj: CanvasProjection,
+  routing: ConnectorRouting = { obstacles: [], hosts: {} },
+  splits?: readonly OrthoSplit[],
+): void {
+  // 요소와 같은 규율이다 — `visible:false` 는 `save`/`restore` 조차 하지 않는다.
+  if (style.visible === false) return;
+  // 빈 목록이면 **아무 호출도 내지 않는다.** `moveTo(undefined, undefined)` 를 부르면 진짜
+  // context 는 조용히 무시하고, 그 침묵이 "어떤 선만 안 그려진다" 로 돌아온다.
+  const cmds = connectorPath(points, route, proj, routing, splits);
+  if (cmds.length === 0) return;
+
+  ctx.save();
+  try {
+    ctx.globalAlpha = resolveAlpha(style.opacity);
+    ctx.beginPath();
+    // 명령 하나에 호출 하나. 여기에 판단이 없는 것이 요점이다 — 판단은 `connectorPath` 에
+    // 있고, 잡는 쪽도 그 판단을 지난다.
+    for (const cmd of cmds) {
+      switch (cmd.c) {
+        case 'M':
+          ctx.moveTo(cmd.x, cmd.y);
+          break;
+        case 'L':
+          ctx.lineTo(cmd.x, cmd.y);
+          break;
+        case 'C':
+          ctx.bezierCurveTo(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.x, cmd.y);
+          break;
+      }
+    }
+    paintStroke(ctx, style);
+  } catch {
+    // 손상된 선 하나가 프레임 전체를 무너뜨리지 않는다 — 요소 갈래와 같은 규율이다(REQ-05).
+  } finally {
+    ctx.restore();
+  }
+}
+
+/**
+ * 연결선 하나를 **풀어서** 그린다 — `drawElements` 의 연결선 갈래 본체다.
+ *
+ * 참조를 푸는 일은 `resolveConnector` **한 함수**의 몫이다. 그리는 쪽이 제 손으로 앵커를
+ * 찾으면 잡는 쪽(M7) · 손잡이(M9)와 갈라지고, 그때부터 "그려진 자리와 잡히는 자리가
+ * 다르다" 가 시작된다(002 위험 R1).
+ *
+ * `undefined` 는 **끊긴 연결**이며 그때 **캔버스 호출이 하나도 나지 않는다**(AC-52).
+ * 길이 0 인 선도, 아무것도 따르지 않는 `beginPath` 도 아니다 — 부재는 그릴 수 없다.
+ * 그 사실을 화면이 말하는 일은 목록 쪽의 몫이다(REQ-08 · M12).
+ *
+ * 저술이 없으면 빈 스타일로 간다. **기본 색을 지어내지 않으므로**(001) 그 선은 잉크 없이
+ * 지나가며, 예외도 나지 않는다.
+ */
+function drawResolvedConnector(
+  ctx: DrawContext2D,
+  connector: ConnectorElement,
+  nodes: readonly CanvasNode[],
+  style: ResolvedStyle | undefined,
+  proj: CanvasProjection,
+  textWidths: Readonly<Record<string, number>>,
+): void {
+  const points = resolveConnector(connector, nodes, proj, textWidths);
+  if (points === undefined) return;
+  // **장애물 목록은 한 함수가 낸다**(017 §결정 3) — 잡는 쪽도 점 편집도 같은 함수를
+  // 부르므로 셋이 같은 길을 본다(REQ-04).
+  drawConnector(
+    ctx,
+    points,
+    connector.route,
+    style ?? connector.style ?? {},
+    proj,
+    connectorObstacles(connector, nodes, proj, textWidths),
+    connector.ortho_split,
+  );
+}
+
 /**
  * 요소 목록을 **배열 순서대로** 그린다(뒤가 위, REQ-02). 돌려주는 값은 이 프레임에서
  * 실제로 잰 **글자 폭 장부**(`kind:'text'` 요소 id → CSS px)다.
@@ -393,6 +607,21 @@ function drawMeasuredElement(
  *
  * 측정 횟수는 001 과 같은 **프레임당 1회**다. 이 함수는 새로 재지 않고 이미 잰 값을 모으기만
  * 하므로 "스테이지의 두 번째 측정원을 만들지 않는다" 는 REQ-05 금지 조항이 지켜진다.
+ *
+ * ## `priorTextWidths` — 011 이 더한 인자 하나 (M6)
+ *
+ * **직전 프레임**이 잰 글자 폭 장부다. 연결선의 끝점을 푸는 데 필요하다 — 문구 요소의
+ * 윤곽 상자는 잰 폭에서 나오고, 그 상자에서 앵커 아홉이 파생되기 때문이다.
+ *
+ * 이 프레임이 쌓고 있는 장부를 쓰지 **않는** 것에 뜻이 있다. 그러면 같은 연결선이 배열의
+ * 어디에 있느냐에 따라 끝점이 달라진다 — 가리킨 문구가 앞에 있으면 폭을 알고 뒤에 있으면
+ * 모른다. 그 어긋남은 요소를 위아래로 옮기다가 **선이 튀는** 모양으로만 보인다.
+ *
+ * 직전 프레임의 장부는 잡는 쪽(`canvasHitTest`)과 오버레이가 이미 쓰고 있는 **그 장부**다
+ * (002 T3). 같은 값을 보므로 그려진 자리와 잡히는 자리가 갈라지지 않는다. 최악의 지연은
+ * 한 프레임이고 그 지연이 틀리게 할 수 있는 것은 문구 상자의 폭 하나뿐이다.
+ *
+ * 부재는 빈 장부다 — 연결선을 쓰지 않는 호출부는 **한 글자도 고치지 않는다**(REQ-09).
  */
 export function drawElements(
   ctx: DrawContext2D,
@@ -400,6 +629,7 @@ export function drawElements(
   styles: Record<string, ResolvedStyle>,
   texts: Record<string, string | undefined>,
   proj: CanvasProjection,
+  priorTextWidths: Readonly<Record<string, number>> = {},
 ): Record<string, number> {
   const textWidths: Record<string, number> = {};
   // 그룹 상자는 **그룹마다 한 번만** 잰다. 부품마다 다시 재면 같은 값을 부품 수만큼
@@ -412,13 +642,50 @@ export function drawElements(
   // 한 그룹의 모든 부품에 **같은 객체**를 실어 보내므로 참조 비교로도 캐시가 그대로 산다.
   let hostGroup: GroupElement | undefined;
   let hostBox: PxBox | undefined;
-  for (const { key, element, group } of walkDrawables(elements)) {
+  // **돌아간 그룹은 부품 묶음 전체를 감싼다**(SPEC-CANVAS-014 M3).
+  //
+  // 그룹은 제 노드로 그려지지 않는다 — `walkDrawables` 가 부품으로 펼치고 이 반복문은 그
+  // 부품만 그린다. 그래서 그룹의 각도를 부품마다 걸면 **부품이 저마다 제 가운데를 축으로**
+  // 돌아 그룹이 흩어진다. 한 `save`/`restore` 로 그 묶음을 감싸는 것이 유일한 모양이다.
+  //
+  // `walkDrawables` 가 한 그룹의 부품을 **연달아** 내놓으므로(바로 위 상자 캐시가 그 성질
+  // 위에 서 있다) 그룹이 바뀌는 자리에서 닫고 여는 것으로 족하다.
+  let rotatedGroupOpen = false;
+  const closeRotatedGroup = (): void => {
+    if (!rotatedGroupOpen) return;
+    ctx.restore();
+    rotatedGroupOpen = false;
+  };
+  for (const item of walkDrawables(elements)) {
+    const { key } = item;
+    // **연결선은 제 배열 자리에서 그려진다**(AC-51). 앞의 도형 뒤, 뒤의 도형 앞이다 —
+    // 늘 위(또는 아래)에 두는 별도 층을 만들지 않는다. 그룹 상자 캐시는 건드리지 않는다:
+    // 연결선은 그룹에 담기지 않으므로(A8) 부품의 연속을 끊는 일이 없다.
+    if (isConnectorDrawable(item)) {
+      drawResolvedConnector(ctx, item.connector, elements, styles[key], proj, priorTextWidths);
+      // 글자 폭 장부에 **키를 더하지 않는다.** 이 장부는 `measureText` 를 지난 사실만
+      // 나르는데(002), 연결선은 잴 글자가 없다. 키를 더하면 받는 쪽이 "이 선에도 잡을 수
+      // 있는 글자 상자가 있다" 고 잘못 읽는다.
+      continue;
+    }
+    const { element, group } = item;
     if (group === undefined) {
+      closeRotatedGroup();
       hostGroup = undefined;
       hostBox = undefined;
     } else if (group !== hostGroup) {
+      closeRotatedGroup();
       hostGroup = group;
       hostBox = projectBox(group.geometry, proj);
+      if (isRotated(group.rotation)) {
+        ctx.save();
+        rotatedGroupOpen = true;
+        applyRotation(
+          ctx,
+          { x: hostBox.x + hostBox.w / 2, y: hostBox.y + hostBox.h / 2 },
+          group.rotation as number,
+        );
+      }
     }
     const measured = drawMeasuredElement(
       ctx,
@@ -427,9 +694,14 @@ export function drawElements(
       texts[key] ?? element.text,
       proj,
       hostBox,
+      priorTextWidths,
+      key,
     );
     if (measured !== undefined) textWidths[key] = measured;
   }
+  // 마지막 그룹이 돌아간 채 끝났으면 여기서 닫는다 — 닫지 않으면 이 함수가 좌표계를
+  // **바꿔 놓은 채** 돌아가고, 다음 프레임의 첫 요소가 남의 각도로 그려진다.
+  closeRotatedGroup();
   return textWidths;
 }
 

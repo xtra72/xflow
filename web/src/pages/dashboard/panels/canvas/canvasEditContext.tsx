@@ -37,6 +37,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 
 import { EMPTY_SELECTION, type PanelSelection } from '../charts/panelEditSelection';
+import { parseFrameKey } from './group/frameKey';
 
 // --- 타입 ---------------------------------------------------------------
 
@@ -84,7 +85,14 @@ export const CanvasEditSelectionContext = createContext<CanvasEditSelectionValue
 export function canvasAutoExpandedId(selection: CanvasSelection): string | null {
   if (selection.size !== 1) return null;
   // 배열 전개 뒤 첫 원소 — 크기가 1 임을 위에서 이미 가렸으므로 반드시 있다.
-  return [...selection][0]!;
+  //
+  // **부품 키가 오면 그 그룹의 id 를 낸다**(SPEC-CANVAS-009 M3). 목록에서 펼칠 수 있는
+  // 행은 최상위 노드의 행뿐이고, 부품 행은 그 그룹 행이 펼쳐져야 비로소 보인다. 복합 키를
+  // 그대로 내려보내면 `rowRefs` 와 `isExpanded` 가 어느 행과도 만나지 못해 **캔버스에서
+  // 부품을 골라도 목록이 꼼짝하지 않는다.**
+  //
+  // 분해는 `parseFrameKey` 가 한다 — 구분자 리터럴이 이 파일에 없다(AC-04).
+  return parseFrameKey([...selection][0]!).nodeId;
 }
 
 // --- 훅 -----------------------------------------------------------------

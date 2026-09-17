@@ -29,6 +29,7 @@ import {
   isNumericElement,
 } from './canvasConfig';
 import type { CanvasNode } from './group/groupTypes';
+import { isConnector } from './connector/connectorTypes';
 
 /** 최소 유효 요소를 만든다(테스트 잡음 축소). */
 function rawRect(over: Record<string, unknown> = {}): Record<string, unknown> {
@@ -51,7 +52,10 @@ function firstElement(raw: unknown): CanvasElement {
  * 어느 단언도 바뀌지 않는다.
  */
 function asElement(node: CanvasNode | undefined): CanvasElement | undefined {
-  return node === undefined || node.kind === 'group' ? undefined : node;
+  // SPEC-CANVAS-011 M4 — 최상위 노드에 연결선이 더해졌다. 요소가 아닌 갈래가 둘이 되었을
+  // 뿐 이 파일의 단언은 한 글자도 바뀌지 않는다(004 가 그룹에 대해 한 그대로다).
+  if (node === undefined || node.kind === 'group' || isConnector(node)) return undefined;
+  return node;
 }
 
 describe('buildDefaultCanvasConfig', () => {

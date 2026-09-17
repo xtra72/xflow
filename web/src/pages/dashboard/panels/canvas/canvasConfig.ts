@@ -43,6 +43,28 @@ import {
   MAX_PATH_COMMANDS,
   type PathCommand,
 } from './shapes/pathTypes';
+// 파선 무늬의 이름 넷과 그 판별(SPEC-CANVAS-012 M2). 아무것도 들이지 않는 잎이라 순환이
+// 없고, 파서와 렌더가 **같은 표**를 본다 — 표를 `drawElement` 에 두면 파서가 유효한 이름을
+// 판정하려고 렌더 모듈을 들이게 된다.
+import { isStrokeDash, type StrokeDash } from './strokeDash';
+// 각도의 정규화와 저장 규율(SPEC-CANVAS-014). 아무것도 들이지 않는 잎이라 순환이 없다.
+import { storableDegrees } from './canvasRotation';
+// 임의 앵커의 자료형. 잎 모듈(`shapes/pathTypes` 밖을 들이지 않는다)이라 순환이 없다.
+import type { CustomAnchor } from './connector/anchorTypes';
+import { parseOrthoSplits } from './connector/orthoSplits';
+// 연결선의 자료형과 그 판별(SPEC-CANVAS-011 M4). 저쪽이 이 파일에서 **타입만** 가져가므로
+// 값(`CONNECTOR_KIND` · `isConnectorKind`)을 들여도 실행 시각 순환이 생기지 않는다.
+import {
+  CONNECTOR_KIND,
+  DEFAULT_CONNECTOR_ROUTE,
+  isConnectorRoute,
+  isConnectorKind,
+  MAX_CONNECTOR_POINTS,
+  routeHosting,
+  type ConnectorElement,
+  type ConnectorEnd,
+  type ConnectorRoute,
+} from './connector/connectorTypes';
 // 타입만 가져온다 — 런타임 의존이 없으므로 `group/groupTypes.ts` 와의 순환이 생기지
 // 않는다(저쪽도 이 파일에서 타입만 가져간다).
 import type { CanvasNode, GroupElement, SymbolStamp } from './group/groupTypes';
@@ -186,6 +208,22 @@ export interface PointGeometry {
 export type Geometry = BoxGeometry | LineGeometry | PointGeometry;
 
 /**
+ * 기하가 **저장된 상자**인가 — 011 A11("임의 앵커는 상자형에만 선다")의 판정이다.
+ *
+ * 코드베이스의 관용은 `'w' in geo` 를 쓰는 자리에 바로 적는 것이고, 여기만 이름을 갖는
+ * 데에는 이유가 둘 있다. 하나는 A11 이 **하나의 규칙**이라 이름이 있어야 쓰기 경로와
+ * 파서가 같은 것을 말한다고 보일 수 있다는 것. 다른 하나는 `connector/anchors.ts` 가
+ * 자리 이름 리터럴을 `'c'` 하나로 못박은 가드(AC-11) 아래 있어 그 파일 안에서는
+ * `'w'` 라는 **글자**를 적을 수 없다는 것이다 — 가드를 피하려고 이름을 짓는 것이 아니라,
+ * 가드가 그 파일을 자리 이름 전용으로 못박아 두었으므로 형상 판정은 밖에 산다.
+ *
+ * 문구(`PointGeometry`)와 선(`LineGeometry`)이 여기서 떨어지는 것이 A11 의 전부다.
+ */
+export function isBoxGeometry(geo: Geometry): geo is BoxGeometry {
+  return 'w' in geo;
+}
+
+/**
  * 요소의 기본 스타일. 모든 필드가 옵셔널이며, 미지정은 "렌더측 기본" 을 뜻한다
  * (히트맵 `ContourLineStyle` 선례). 파서는 미지정 필드를 만들어 채우지 않는다 —
  * 채우면 "지정 안 함" 과 "값이 우연히 기본값과 같음" 이 구분되지 않는다.
@@ -195,6 +233,16 @@ export interface ElementStyle {
   stroke?: string;
   /** 선 두께(px). */
   strokeWidth?: number;
+  /**
+   * 파선 무늬 (SPEC-CANVAS-012 REQ-04).
+   *
+   * `strokeWidth` 바로 뒤가 자리다 — 둘 다 **선을 어떻게 긋는가**를 정하고, 무늬가 두께의
+   * 배수로 나오므로(`strokeDash.dashPattern`) 읽는 사람이 둘을 함께 본다.
+   *
+   * **미지정과 `'solid'` 는 다른 값이다**(같은 그림이지만). 그 구분은 `visible` 이 3지
+   * 선택인 것과 같은 판단이다 — 잎 모듈 `strokeDash.ts` 의 `StrokeDash` 주석 참조.
+   */
+  strokeDash?: StrokeDash;
   /** 0..1. */
   opacity?: number;
   /** 글자 크기(px). */
@@ -267,6 +315,30 @@ export interface CanvasElementBase {
   rules?: RuleRow[];
   /** 패널 기본 트윈을 덮어쓴다. */
   tween?: TweenSpec;
+  /**
+   * 임의 앵커. 좌표는 **요소 로컬 정수 격자**(0..`ANCHOR_LOCAL_EXTENT`)다(A10).
+   *
+   * **상자형(rect · ellipse · path)에만 선다**(A11). 선에는 상자가 없고, 문구의 상자는
+   * 글자를 재어 나온 값이라 그 위에 저술값을 얹으면 앵커가 측정에 딸려 조용히 미끄러진다.
+   * 그런데 이 필드는 공통 베이스에 있으므로 **타입으로는 선·문구에도 앉는다** — 그
+   * 구멍을 파서(`parseElement` 의 상자형 갈래에서만 붙인다)와 쓰기 경로
+   * (`addAnchorAt` 의 상자 판정)가 **양쪽에서** 막는다. 한쪽만 막으면 다른 쪽으로 들어온
+   * 값이 한 번은 그려지고 다음 읽기에서 사라진다.
+   */
+  anchors?: CustomAnchor[];
+  /**
+   * 회전 각도 — **정수 도**, `[0, 360)`, 양수는 시계 방향 (SPEC-CANVAS-014 REQ-01).
+   *
+   * **0 은 저장되지 않는다**(§결정 7). 미지정과 0 은 같은 그림이고, 파서가 0 을 만들어
+   * 채우면 왕복 한 번에 모든 요소가 키를 하나씩 얻는다.
+   *
+   * **`kind:'line'` 에는 서지 않는다.** 선의 임의 각도는 두 끝점으로 표현되므로 필드를
+   * 주면 같은 그림을 두 가지로 적을 수 있게 된다 — `anchors` 가 상자형에만 서는 것(A11)과
+   * 같은 규율이고, 그 금지도 같은 자리(파서의 갈래)가 진다.
+   *
+   * 라디안이 아닌 까닭은 `canvasRotation.ts` 머리말이 진다.
+   */
+  rotation?: number;
 }
 
 /** 사각형 요소. */
@@ -439,6 +511,7 @@ function optionalString(v: unknown): string | undefined {
  * 폴백으로 보정한다. 손상 값을 조용히 지우면 사용자가 화면에서 원인을 볼 수 없고,
  * 부재를 기본값으로 채우면 "지정 안 함" 이 사라진다 — 두 경우를 갈라 두는 이유다.
  */
+
 function optionalNonNegative(v: unknown, fallback: number): number | undefined {
   if (isAbsent(v)) return undefined;
   return isFiniteNumber(v) && v >= 0 ? v : fallback;
@@ -531,6 +604,10 @@ function parseStyle(raw: unknown): ElementStyle {
   if (fontSize !== undefined) out.fontSize = fontSize;
   const opacity = optionalOpacity(s.opacity);
   if (opacity !== undefined) out.opacity = opacity;
+
+  // 모르는 값은 **키만** 버린다(012 REQ-06 · AC-09) — 요소를 통째로 떨어뜨리지 않는 것이
+  // 001 이래의 파서 규율이고, 판별은 잎 모듈 한 자리에서만 이뤄진다.
+  if (isStrokeDash(s.strokeDash)) out.strokeDash = s.strokeDash;
 
   if (s.fontWeight === 'bold' || s.fontWeight === 'normal') out.fontWeight = s.fontWeight;
   if (s.align === 'left' || s.align === 'center' || s.align === 'right') out.align = s.align;
@@ -700,6 +777,50 @@ function parsePathCommands(raw: unknown): PathCommand[] {
   return out[0]?.c === 'M' ? out : seedPath();
 }
 
+/**
+ * 임의 앵커 1건. 성립하지 않으면 `null`(그 **항목만** 버린다 — AC-29).
+ *
+ * 좌표 규율은 경로 명령과 같다(`localCoordinate`): 손상 좌표에는 채울 기본값이 없으므로
+ * 지어내지 않고 항목을 뺀다. 0 으로 채우면 앵커가 상자 왼쪽 위 모서리로 조용히 이사하고,
+ * 그 자리에 붙은 연결선은 예외 없이 엉뚱한 곳을 가리킨다.
+ *
+ * `id` 는 정체성이다. 없으면 연결선이 가리킬 수 없으므로 그 항목은 뜻이 없다.
+ */
+function parseCustomAnchor(raw: unknown): CustomAnchor | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const a = raw as Record<string, unknown>;
+  const id = optionalString(a.id);
+  if (id === undefined) return null;
+  const x = localCoordinate(a.x);
+  const y = localCoordinate(a.y);
+  if (x === null || y === null) return null;
+  return { id, x, y };
+}
+
+/**
+ * 임의 앵커 목록. **예외를 던지지 않으며 요소를 버리지도 않는다**(REQ-07 규율).
+ *
+ * 배열이 아니면 미지정이고, 손상 항목은 그것만 빠지며(AC-29), id 중복은 **먼저 온 것이
+ * 이긴다**(AC-30 — `parseElements` 와 같은 규율이다. 연결선이 id 로 앵커를 지목하므로
+ * 중복이 남으면 어느 쪽을 가리키는지 정할 수 없다).
+ *
+ * 살아남은 항목이 없으면 **미지정으로 떨어뜨린다.** `[]` 를 남기면 "쓴 적 없음" 과
+ * "다 지웠음" 이 구분되지 않고, 저장 왕복에 `anchors` 키가 새로 생긴다(AC-25).
+ */
+function parseCustomAnchors(raw: unknown): CustomAnchor[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: CustomAnchor[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const anchor = parseCustomAnchor(item);
+    if (!anchor) continue;
+    if (seen.has(anchor.id)) continue;
+    seen.add(anchor.id);
+    out.push(anchor);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 /** 요소 1건. 정체성(id · kind)이 성립하지 않으면 버린다(null). */
 function parseElement(raw: unknown): CanvasElement | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -745,11 +866,39 @@ function parseElement(raw: unknown): CanvasElement | null {
     ...(tween !== undefined ? { tween } : {}),
   };
 
+  // 임의 앵커는 **상자형 갈래에서만** 붙는다(A11 · AC-24). 선·문구 갈래에 이 조각이
+  // 없는 것이 그 금지의 전부이며, 손으로 고친 config 가 문구에 `anchors` 를 적어 두어도
+  // 읽는 순간 사라진다 — 남겨 두면 그 값이 한 번은 그려지고 글자 폭이 바뀌는 날 조용히
+  // 미끄러진다.
+  const anchors = parseCustomAnchors(e.anchors);
+  const withAnchors = anchors !== undefined ? { anchors } : {};
+
+  // 회전도 **갈래에서만** 붙는다(014 §결정 1 · AC-05). 선에 이 조각이 없는 것이 그 금지의
+  // 전부다 — 선의 각도는 두 끝점이 이미 말하므로, 필드를 남겨 두면 같은 그림을 두 가지로
+  // 적을 수 있게 되고 그때 어느 쪽이 참인지 화면이 답하지 못한다.
+  //
+  // **0 은 키를 만들지 않는다**(`storableDegrees`) — 014 이전 저장이 바이트 동일하게
+  // 왕복하는 것이 그 조각의 값이다.
+  const rotation = storableDegrees(e.rotation);
+  const withRotation = rotation !== undefined ? { rotation } : {};
+
   switch (kind) {
     case 'rect':
-      return { ...base, kind, geometry: parseBoxGeometry(e.geometry) };
+      return {
+        ...base,
+        kind,
+        geometry: parseBoxGeometry(e.geometry),
+        ...withAnchors,
+        ...withRotation,
+      };
     case 'ellipse':
-      return { ...base, kind, geometry: parseBoxGeometry(e.geometry) };
+      return {
+        ...base,
+        kind,
+        geometry: parseBoxGeometry(e.geometry),
+        ...withAnchors,
+        ...withRotation,
+      };
     case 'line':
       return { ...base, kind, geometry: parseLineGeometry(e.geometry) };
     case 'path': {
@@ -763,10 +912,12 @@ function parseElement(raw: unknown): CanvasElement | null {
         geometry: parseBoxGeometry(e.geometry),
         path: parsePathCommands(e.path),
         ...(catalogId !== undefined ? { catalog_id: catalogId } : {}),
+        ...withAnchors,
+        ...withRotation,
       };
     }
     default:
-      return { ...base, kind, geometry: parsePointGeometry(e.geometry) };
+      return { ...base, kind, geometry: parsePointGeometry(e.geometry), ...withRotation };
   }
 }
 
@@ -808,12 +959,17 @@ function parseSymbolStamp(raw: unknown): SymbolStamp | undefined {
 }
 
 /**
- * 그룹의 기본 스타일. **빈 객체를 만들어 채우지 않는다** — `{}` 를 넣어 두면 "캐스케이드
- * 미사용" 과 "빈 캐스케이드" 가 구분되지 않고, 설정 UI 가 두 상태를 다르게 보여 사용자를
- * 혼란시킨다(§파서 생존). 001 의 `parseStyle` 을 **그대로 재사용**하고 결과가 비었을
- * 때만 미지정으로 떨어뜨린다 — 스타일 파서가 둘이 되지 않는다.
+ * **선택 필드로서의** 스타일. 그룹(004)과 연결선(011)이 함께 쓴다.
+ *
+ * **빈 객체를 만들어 채우지 않는다** — `{}` 를 넣어 두면 "캐스케이드 미사용" 과 "빈
+ * 캐스케이드" 가 구분되지 않고, 설정 UI 가 두 상태를 다르게 보여 사용자를 혼란시킨다
+ * (§파서 생존). 001 의 `parseStyle` 을 **그대로 재사용**하고 결과가 비었을 때만 미지정으로
+ * 떨어뜨린다 — 스타일 파서가 둘이 되지 않는다.
+ *
+ * 요소(001)와 갈리는 자리는 여기 하나뿐이다: 요소의 `style` 은 **언제나 있는** 필드라
+ * `parseStyle` 을 곧바로 부른다.
  */
-function parseGroupStyle(raw: unknown): ElementStyle | undefined {
+function parseOptionalStyle(raw: unknown): ElementStyle | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const style = parseStyle(raw);
   return Object.keys(style).length > 0 ? style : undefined;
@@ -835,16 +991,24 @@ function parseGroup(e: Record<string, unknown>): GroupElement | null {
   if (id === undefined) return null;
 
   const binding = parseBinding(e.binding);
-  const style = parseGroupStyle(e.style);
+  const style = parseOptionalStyle(e.style);
   const rules = parseRules(e.rules);
   const tween = parseTween(e.tween);
   const symbol = parseSymbolStamp(e.symbol);
+  // 그룹도 상자형이다(A11) — `geometry` 가 저장된 상자이므로 로컬 격자가 그대로 성립한다.
+  // 그룹은 `CanvasElement` 가 아니라서 위 `parseElement` 의 조각이 닿지 않으므로 여기서
+  // **같은 파서**를 부른다(앵커 파서가 둘이 되지 않는다).
+  const anchors = parseCustomAnchors(e.anchors);
+  // 같은 사정으로 회전도 여기서 **같은 규율**을 부른다(014 §결정 7 — 0 은 키를 만들지 않는다).
+  const rotation = storableDegrees(e.rotation);
 
   return {
     id,
     kind: 'group',
     geometry: parseBoxGeometry(e.geometry),
     parts: parseElements(e.parts),
+    ...(anchors !== undefined ? { anchors } : {}),
+    ...(rotation !== undefined ? { rotation } : {}),
     ...(binding !== undefined ? { binding } : {}),
     ...(style !== undefined ? { style } : {}),
     ...(rules !== undefined ? { rules } : {}),
@@ -854,17 +1018,168 @@ function parseGroup(e: Record<string, unknown>): GroupElement | null {
 }
 
 /**
- * 최상위 노드 1건 — 그룹이면 그룹으로, 아니면 001 의 요소 파서로 보낸다.
+ * 자유 끝점 · 중간점 1건. 좌표 한쪽이라도 손상됐으면 `null`이다.
+ *
+ * 좌표 규율은 경로 명령(`localCoordinate`) · 임의 앵커(`parseCustomAnchor`)와 **같다**:
+ * 자리를 뜻하는 좌표에는 채울 기본값이 없으므로 지어내지 않는다. 0 으로 채우면 점이
+ * 캔버스 왼쪽 위 모서리로 조용히 이사하고, 사용자는 저술한 적 없는 꺾임을 보게 된다.
+ * 반올림은 `coordinate()` 를 지난다 — 유한성 관문 때문에 폴백 인자에는 닿지 않지만,
+ * **반올림 규율이 적히는 자리를 둘로 만들지 않는 것**이 이 재사용의 요점이다.
+ *
+ * 경로 명령과 달리 **로컬 격자가 아니라 캔버스 단위 절대 정수**다. 연결선에는 담을 상자가
+ * 없어 기준 삼을 로컬 격자가 없기 때문이다(`connectorTypes` §중간점이 절대 좌표인 이유).
+ */
+function parseAbsolutePoint(raw: unknown): PointGeometry | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const p = raw as Record<string, unknown>;
+  if (!isFiniteNumber(p.x) || !isFiniteNumber(p.y)) return null;
+  return { x: coordinate(p.x, 0), y: coordinate(p.y, 0) };
+}
+
+/**
+ * 연결선의 한 끝. 성립하지 않으면 `null`이고, 그때 **노드 자체가 버려진다**(AC-38).
+ *
+ * 끝이 없는 연결선은 잇는 것이 없으므로 뜻이 없다 — id 가 없는 요소를 버리는 001 의 규율
+ * 과 같은 자리다. 기본 끝점을 지어 넣지 않는 이유도 같다: 캔버스 어딘가에 사용자가 긋지
+ * 않은 선이 나타나고, 그것이 제 저술인지 파서가 지어낸 것인지 구분할 길이 없다.
+ *
+ * **붙은 끝을 먼저 본다.** 두 형태가 한 객체에 섞여 들어오면(`{el,a,x,y}`) 참조가 이긴다 —
+ * 참조는 사용자가 앵커를 골랐다는 사실이고 좌표는 그 결과의 흔적일 뿐이므로, 좌표를
+ * 택하면 붙여 둔 선이 저장 왕복 한 번에 떨어져 나온다.
+ */
+function parseConnectorEnd(raw: unknown): ConnectorEnd | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const e = raw as Record<string, unknown>;
+  const el = optionalString(e.el);
+  const a = optionalString(e.a);
+  if (el !== undefined && a !== undefined) return { el, a };
+  return parseAbsolutePoint(raw);
+}
+
+/**
+ * 중간점 목록. 손상 항목은 **그것만** 빠진다(경로 명령 · 임의 앵커와 같은 규율).
+ *
+ * 살아남은 점이 없으면 **미지정으로 떨어뜨린다.** `[]` 를 남기면 "찍은 적 없음" 과 "다
+ * 지웠음" 이 구분되지 않고, 저장 왕복에 없던 `points` 키가 생긴다(AC-25 와 같은 규율).
+ *
+ * 상한은 008 의 경로 명령과 **같은 수**를 쓴다. 두 값은 같은 개념("한 도형이 들 수 있는
+ * 점의 수")이고, 자유선(M11)이 궤적을 받는 쪽이므로 상한 없이 두면 손이 움직인 만큼
+ * config 가 자란다. 넘치면 **앞에서부터** 살린다 — 전부 버리면 선이 사라진다.
+ *
+ * M11 부터 그 수를 이름으로 든다(`MAX_CONNECTOR_POINTS`). 값은 한 자리도 달라지지 않지만,
+ * 궤적을 **받는** 쪽이 같은 이름을 보므로 저술의 상한과 파싱의 상한이 갈릴 수 없다 —
+ * 갈리면 그어 놓은 선이 저장 왕복에서 조용히 잘린다.
+ */
+function parseConnectorPoints(raw: unknown): PointGeometry[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: PointGeometry[] = [];
+  for (const item of raw) {
+    const point = parseAbsolutePoint(item);
+    if (!point) continue;
+    out.push(point);
+    if (out.length >= MAX_CONNECTOR_POINTS) break;
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * 그리는 법. 모르는 값은 **직선으로 떨어진다**(AC-37).
+ *
+ * 규칙 행의 미지 연산자나 경로의 미지 명령처럼 **버리지 않는** 것에 뜻이 있다: 여기서
+ * 노드를 버리면 사용자의 연결이 오타 하나에 사라지는데, 직선은 점이 없어도 그림이 완전한
+ * 유일한 갈래이므로 어떤 `points` 상태에서도 화면이 답을 낸다. 그리는 법은 사용자가
+ * 한 번 더 고르면 되지만 사라진 선은 되돌릴 길이 없다.
+ */
+function parseConnectorRoute(raw: unknown): ConnectorRoute {
+  // **판별은 잎 모듈 한 자리다**(SPEC-CANVAS-015). 종전에는 이 자리에 이름 넷을 손으로 적은
+  // `||` 사슬이 있었고, 015 가 다섯째를 더했을 때 그 사슬이 **조용히 낡았다** — 저장에
+  // `ortho` 로 적힌 선이 읽는 순간 직선으로 돌아갔고, 타입도 린트도 울지 않았다.
+  return isConnectorRoute(raw) ? raw : DEFAULT_CONNECTOR_ROUTE;
+}
+
+/**
+ * 연결선 1건. 정체성(`id` · 두 끝)이 성립하지 않으면 버린다.
+ *
+ * 요소 · 그룹보다 버리는 문턱이 하나 높다: 그 둘은 id 만 있으면 살지만 연결선은 **끝
+ * 둘**까지 있어야 산다(AC-38). 근거는 기하 손상 정책과 같은 자리에 있다 — 요소는 기하가
+ * 깨져도 기본 기하로 세워 두면 사용자가 화면에서 보고 고칠 수 있지만, 끝이 없는 연결선을
+ * 세우려면 두 자리를 **지어내야** 하고 그것은 저술한 적 없는 선이 된다.
+ *
+ * 스타일 · 규칙 · 바인딩 · 트윈은 001 의 파서를 **그대로** 부른다. 캐스케이드 파서가 둘이
+ * 되면 "요소에서는 먹는 규칙이 연결선에서는 안 먹는" 자리가 생긴다. `style` 은 그룹과
+ * 같이 빈 객체를 만들어 채우지 않는다(`parseOptionalStyle`).
+ *
+ * ## 점이 살아남으면 `route` 는 **그 점이 사는 갈래**다 (`routeHosting`)
+ *
+ * 손으로 적은 파일은 `route: 'straight'` 와 `points` 를 함께 적을 수 있다. 그 둘은 같은
+ * 자리에 설 수 없다 — `connectorPath` 가 직선을 점 목록 그대로 이어 그리므로, 그대로
+ * 받아들이면 "직선이라고 적혀 있는데 폴리라인으로 그려지는 선" 이 화면에 남고 REQ-04 가
+ * 그 순간 거짓이 된다.
+ *
+ * 버리는 쪽(점을 떨어뜨린다)이 아니라 **올리는 쪽**을 고른다. 위 `parseConnectorRoute` 가
+ * 모르는 `route` 를 버리지 않고 직선으로 떨어뜨리는 그 근거와 같은 방향이다 — 사용자가
+ * 찍어 둔 꺾임은 되돌릴 길이 없지만, 그리는 법은 한 번 더 고르면 된다.
+ *
+ * 저술하는 쪽(`insertPointAt` · `appendConnector`)이 지나는 **그 함수**를 여기서도 지나므로
+ * 저장 왕복에 값이 달라지지 않는다: 승격해서 저장한 `elbow` 는 그대로 `elbow` 로 돌아온다.
+ */
+function parseConnector(e: Record<string, unknown>): ConnectorElement | null {
+  const id = optionalString(e.id);
+  if (id === undefined) return null;
+
+  const from = parseConnectorEnd(e.from);
+  const to = parseConnectorEnd(e.to);
+  if (from === null || to === null) return null;
+
+  const points = parseConnectorPoints(e.points);
+  const style = parseOptionalStyle(e.style);
+  const binding = parseBinding(e.binding);
+  const rules = parseRules(e.rules);
+  const tween = parseTween(e.tween);
+
+  const route = routeHosting(parseConnectorRoute(e.route), points?.length ?? 0);
+  // 손상된 값은 **키만** 버린다 — 요소를 통째로 떨어뜨리지 않는 001 이래의 규율이다.
+  // 019 는 수 하나였고 021 이 **구간과 나란한 목록**으로 넓혔다. 019 가 적은 수 하나도
+  // 그대로 읽는다(`[그 수]`) — 갈래가 하나뿐이면 목록의 첫 자리가 곧 그 수다.
+  const orthoSplit = parseOrthoSplits(e.ortho_split);
+
+  return {
+    id,
+    kind: CONNECTOR_KIND,
+    from,
+    to,
+    route,
+    ...(points !== undefined ? { points } : {}),
+    // 가운데 구간의 자리(SPEC-CANVAS-019). **직각이 아니면 키를 만들지 않는다** — 다른
+    // 갈래에는 "가운데 구간" 이 없으므로 그 수가 뜻을 갖지 못하고, 남겨 두면 갈래를 바꾼
+    // 뒤에 아무도 읽지 않는 값이 저장에 남는다.
+    ...(route === 'ortho' && orthoSplit !== undefined ? { ortho_split: orthoSplit } : {}),
+    ...(style !== undefined ? { style } : {}),
+    ...(binding !== undefined ? { binding } : {}),
+    ...(rules !== undefined ? { rules } : {}),
+    ...(tween !== undefined ? { tween } : {}),
+  };
+}
+
+/**
+ * 최상위 노드 1건 — 그룹이면 그룹으로, 연결선이면 연결선으로, 아니면 001 의 요소 파서로.
  *
  * **갈래가 `parseElement` 안이 아니라 그 위 한 층에 서는 것이 이 형상의 요점이다**
  * (§파서 생존). `parseElement` 는 `CanvasElement` 를 내는 계약이고 008 이 `'path'` 갈래를
  * 더하며 그 계약을 다시 못박았다. 그룹을 그 안에 넣으면 반환 타입이 넓어져 계약이 깨지고,
  * `parts` 안의 그룹을 **런타임으로** 걸러야 한다. 한 층 위에 두면 그 검사가 사라진다.
+ *
+ * **011 이 이 함수에 더한 것은 한 줄이다.** `parseElement` 는 한 글자도 바뀌지 않았고,
+ * 그래서 그 함수의 `kind` 화이트리스트를 세는 출시된 가드가 그대로 산다(AC-34 · AC-35).
+ * 같은 형상 덕에 `parts` 에 섞여 들어온 연결선도 **저절로** 버려진다 — 그룹 안에 연결선이
+ * 올 수 없다는 사실에 런타임 검사가 필요 없다(A3).
  */
 function parseNode(raw: unknown): CanvasNode | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const e = raw as Record<string, unknown>;
-  return e.kind === 'group' ? parseGroup(e) : parseElement(raw);
+  if (e.kind === 'group') return parseGroup(e);
+  if (isConnectorKind(e.kind)) return parseConnector(e);
+  return parseElement(raw);
 }
 
 /**

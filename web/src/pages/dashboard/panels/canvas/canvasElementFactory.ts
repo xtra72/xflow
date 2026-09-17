@@ -25,6 +25,7 @@ import {
   DEFAULT_POINT_GEOMETRY,
   type CanvasElement,
   type CanvasPrimitiveKind,
+  coordinate,
   type ElementStyle,
   type LineGeometry,
   type PathElement,
@@ -35,6 +36,20 @@ import {
 // (`created` 의 타입이 그 사실을 든다) 새 입구도 늘지 않았다 — 008 불변식 J9 그대로다.
 // 넓히지 않았다면 팔레트로 도형 하나를 놓는 순간 손으로 저술한 그룹이 배열에서 떨어진다.
 import type { CanvasNode } from './group/groupTypes';
+// SPEC-CANVAS-011 M8 — **연결선을 만드는 입구가 이 모듈에 선다**(아래 `appendConnector`).
+// 값 하나(`CONNECTOR_KIND`)를 들이지만 그 모듈은 `import type` 만 하는 잎이라 실행 시각
+// 순환이 생기지 않는다(`connectorTypes` 머리말 §모듈 자리).
+import {
+  CONNECTOR_KIND,
+  isConnector,
+  routeHosting,
+  type ConnectorElement,
+  type ConnectorEnd,
+  type ConnectorRoute,
+} from './connector/connectorTypes';
+// SPEC-CANVAS-011 M9 — 끝을 갈아 끼우는 자가 **집는 함수가 낸 참조**를 받는다
+// (아래 `repointConnector`). `import type` 이므로 실행 시각에는 아무것도 남지 않는다.
+import type { AnchorRef } from './connector/anchors';
 import type { PathCommand } from './shapes/pathTypes';
 
 // --- 씨앗 상수 -----------------------------------------------------------
@@ -335,6 +350,221 @@ export function appendPathElement(
     elements.length,
   );
   return { next: [...elements, created], created };
+}
+
+/**
+ * **손으로 그은** 윤곽 하나로 만든 경로 요소 (SPEC-CANVAS-022 REQ-06 · K1 · K2).
+ *
+ * 위 `newPathElement` 와 갈리는 자리는 **둘**이다.
+ *
+ *   1. **상자를 받는다.** 카탈로그 도형은 어디에 놓일지 모르므로 씨앗 상자와 계단
+ *      오프셋을 쓰지만, 손으로 그은 윤곽은 **이미 자리를 안다** — 그린 자리가 곧 그 자리다.
+ *      씨앗 상자로 옮겨 놓으면 사용자가 방금 그린 그림이 다른 데로 뛴다.
+ *   2. **`catalog_id` 를 심지 않는다.** 그 필드의 뜻은 "어느 카탈로그 도형에서 나왔는가"
+ *      이고, 이것은 어디에서도 나오지 않았다. 빈 문자열이나 `'custom'` 을 지어 넣으면
+ *      감사용 필드가 거짓을 말한다.
+ *
+ * 나머지는 **한 글자도 다르지 않다**: 겉모습은 `pathSeedStyle` 이 명령에서 닫힘을 읽어
+ * 정하고(`Z` 가 있으므로 닫힌 도형의 씨앗), id 는 `nextElementId` 가, 자리는 배열 끝이
+ * 곧 맨 위라는 001 이래의 규칙이 정한다. 사용자에게 카탈로그 별과 손으로 그은 오각형은
+ * **같은 종류의 일**이다.
+ */
+export function appendDrawnPath(
+  elements: readonly CanvasNode[],
+  geometry: BoxGeometry,
+  commands: readonly PathCommand[],
+): { next: CanvasNode[]; created: CanvasElement } {
+  const created: PathElement = {
+    id: nextElementId(elements),
+    kind: 'path',
+    geometry: { ...geometry },
+    // 값이지 참조가 아니다 — 카탈로그 경로가 사본을 싣는 그 근거와 같다.
+    path: commands.map((cmd) => ({ ...cmd })),
+    style: pathSeedStyle(commands),
+  };
+  return { next: [...elements, created], created };
+}
+
+// --- 연결선 (SPEC-CANVAS-011 M8) ------------------------------------------
+
+/**
+ * 연결선이 입고 나오는 씨앗 스타일 — **열린 경로의 그 씨앗 그대로**다.
+ *
+ * `closedSeedStyle(false)` 를 지나므로 새 상수도, 두 번째 규칙도 생기지 않는다. 그 함수가
+ * 내는 값은 `newElement('line')` 이 심는 것과 같고(§`closedSeedStyle`), 그래서 손으로 그은
+ * 선과 두 도형을 이은 선이 목록에서 **구별할 이유 없는 차이**를 갖지 않는다.
+ *
+ * ## 색만으로는 그려지지 않는다 — 두께를 **함께** 심는다
+ *
+ * 이것이 이 함수가 존재하는 이유의 전부다. `drawElement.paintStroke` 는 `style.stroke` 와
+ * **양수 `strokeWidth`** 가 **둘 다** 있을 때만 칠하고, 하나라도 없으면 경로를 다 지어
+ * 놓고도 조용히 지나간다(`drawConnector` §채우지 않는다 — "기본 색을 지어내지 않는다").
+ * 씨앗이 `{}` 인 연결선은 그래서 **배열에는 있는데 화면에는 없는** 선이 되고, 사용자는
+ * 그것을 "가끔 안 그어진다" 로 읽는다.
+ *
+ * 001 이 이 결함을 한 번 배달했고(빈 스타일로 만든 요소가 아무것도 그리지 않았다) 그때
+ * 고친 자리가 바로 이 모듈이다 — 렌더가 색을 지어내는 쪽은 옳지 않으므로, 저술 시점에
+ * 심는다. M8 은 같은 함정을 같은 자리에서 같은 방법으로 피한다.
+ */
+export function connectorSeedStyle(): ElementStyle {
+  return closedSeedStyle(false);
+}
+
+/**
+ * 앵커에 붙지 않은 끝 하나 — **캔버스 단위 정수**로 죈다 (M8 · REQ-03).
+ *
+ * 죄는 자가 파서의 그 함수(`coordinate`)인 것이 요점이다. 저술하는 쪽과 읽어 들이는 쪽이
+ * 다른 규칙으로 죄면 **저장 왕복에 값이 달라진다** — 파서는 `Math.round` 를 지나므로,
+ * 여기서 죄지 않고 소수를 실으면 다음에 파일을 읽는 순간 사용자가 놓은 끝이 조용히 반 칸
+ * 옮겨 앉는다. 예외도 경고도 없이 화면에서만 드러나는 그 부류이며, AC-36("저장 왕복에
+ * 값이 바뀌지 않는다")이 금지한 바로 그것이다.
+ *
+ * 붙은 끝에는 이런 자가 필요 없다 — 그쪽은 좌표가 아니라 **이름**이기 때문이다.
+ */
+export function freeConnectorEnd(at: PointGeometry): ConnectorEnd {
+  return { x: coordinate(at.x, 0), y: coordinate(at.y, 0) };
+}
+
+/**
+ * 연결선을 배열 끝에 붙인 결과 — **연결선을 만드는 유일한 입구**다.
+ *
+ * ## 왜 이 모듈인가
+ *
+ * 연결선은 `CanvasElement` 가 아니므로 `appendElement` 를 지날 수 없고(그 함수는
+ * `CanvasPrimitiveKind` 만 받는다), 그래서 제 입구가 필요하다. 그 입구를 **여기** 두는
+ * 근거는 `appendPathElement` 를 여기 둔 그 근거와 같다: id 규칙(`nextElementId`)과 씨앗
+ * 스타일 규칙(`closedSeedStyle`)이 **둘 다 이 모듈에 있다.** 오버레이가 제 손으로 두 줄을
+ * 조립하면 그 조립이 곧 갈라질 수 있는 두 번째 지점이 되고(§`appendElement`), 그때
+ * "팔레트로 놓은 선과 이어서 그은 선의 id 규칙이 다르다" 가 표현 가능해진다.
+ *
+ * 그래서 **종류마다 입구 하나**라는 규율은 그대로다 — 원시형 넷은 `appendElement`,
+ * 카탈로그 경로는 `appendPathElement`, 가져온 그림은 `appendImportedElements`, 연결선은
+ * 이것. 넷 다 같은 세 줄(끝에 붙이고 · id 를 발급하고 · 만든 것을 함께 돌려준다)이다.
+ *
+ * ## 계단 오프셋이 없다
+ *
+ * 연결선에는 **놓을 자리가 없다.** 두 끝이 이미 사용자가 고른 자리이므로 겹침을 피해
+ * 어긋나게 할 좌표 자체가 없다(`seedOffset` 은 씨앗 기하를 미는 값이고, 여기에는 씨앗
+ * 기하가 없다). 억지로 밀면 사용자가 앵커에서 놓은 선이 앵커에서 시작하지 않는다.
+ *
+ * 끝에 붙는 것은 여전히 뜻이 있다 — 배열 순서가 001 의 유일한 z-order 이므로 **방금 그은
+ * 선이 맨 위에 온다.** 그어 놓고 도형 밑에 깔리면 사용자는 다시 긋는다.
+ *
+ * ## 중간점을 **지어내지** 않는다
+ *
+ * 점은 몸짓에서만 온다. 자유선(M11)은 궤적에서 줄여 낸 목록을 넘기고, 나머지 셋은 아무것도
+ * 넘기지 않는다 — 그리고 넘긴 것이 없으면 `points` 키가 **아예 서지 않는다**(빈 배열도
+ * 아니다). 점이 없는 네 갈래는 **같은 그림**이므로(REQ-04-b · AC-50) 빈 배열은 그리기에
+ * 아무것도 더하지 않으면서 저장 형상만 넓힌다 — 011 이 "쓰지 않은 키는 생기지 않는다" 로
+ * 지킨 그 성질이다(AC-25 와 같은 방향).
+ *
+ * 받은 점은 **정수로 죈다.** 끝점(`freeConnectorEnd`)과 꺾임(`insertPointAt`)이 지나는 그
+ * 함수를 여기서도 지난다 — 죄지 않고 소수를 실으면 다음에 파일을 읽는 순간 파서의
+ * `Math.round` 가 사용자의 선을 반 칸 옮긴다. 넘겨주는 쪽이 이미 죄어 왔더라도 이 문은
+ * 닫아 둔다: 만드는 모듈이 무엇을 저장하는지에 대한 책임은 부르는 쪽 사정에 달릴 수 없다.
+ *
+ * ## 점을 받으면 `route` 도 **그 점이 사는 갈래**로 죈다
+ *
+ * 정수로 죄는 그 규율이 갈래에도 그대로 붙는다(`routeHosting`). 오늘 이 문으로 점이 드는
+ * 길은 자유선 하나뿐이고 그 갈래는 이미 제 점을 들 수 있으므로 이 줄은 값을 바꾸지
+ * 않는다 — 그래도 두는 까닭은 같다: **점을 쓰는 문이 셋인데 둘만 죄면** 그 불변식
+ * ("직선은 점을 들지 않는다")은 사실이 아니라 관례가 되고, 관례는 다음 호출자가 깬다.
+ */
+export function appendConnector(
+  elements: readonly CanvasNode[],
+  from: ConnectorEnd,
+  to: ConnectorEnd,
+  route: ConnectorRoute,
+  points: readonly PointGeometry[] = [],
+): { next: CanvasNode[]; created: ConnectorElement } {
+  const mid: PointGeometry[] = points.map((at) => ({
+    x: coordinate(at.x, 0),
+    y: coordinate(at.y, 0),
+  }));
+  const created: ConnectorElement = {
+    id: nextElementId(elements),
+    kind: CONNECTOR_KIND,
+    from,
+    to,
+    route: routeHosting(route, mid.length),
+    ...(mid.length > 0 ? { points: mid } : {}),
+    style: connectorSeedStyle(),
+  };
+  return { next: [...elements, created], created };
+}
+
+/**
+ * 연결선의 두 끝 중 어느 쪽인가 (SPEC-CANVAS-011 M9).
+ *
+ * 필드 이름을 그대로 쓴다 — `'start' | 'end'` 같은 두 번째 어휘를 두면 쓰는 자리마다
+ * 그 이름을 필드로 옮기는 표가 하나씩 필요해지고, 그 표는 늘 한쪽만 고쳐진다.
+ */
+export type ConnectorSide = 'from' | 'to';
+
+/**
+ * 연결선의 한 끝을 **갈아 끼운다** — 앵커 위면 참조로, 아니면 자유 끝점으로 (M9 · REQ-07-a).
+ *
+ * ## 왜 이 모듈인가
+ *
+ * 끝을 **짓는** 규칙이 이미 여기 둘 있다 — 붙은 끝은 `appendConnector` 가 인자로 받아
+ * 그대로 싣고, 자유 끝은 `freeConnectorEnd` 가 파서와 같은 규칙으로 죈다. 갈아 끼우는
+ * 일은 그 둘을 한 번 더 쓰는 일이므로, 오버레이가 제 손으로 `{ el, a }` 를 조립하면
+ * 그 조립이 곧 갈라질 수 있는 두 번째 지점이 된다(§`appendConnector` 와 같은 근거).
+ *
+ * 그래서 이 함수는 **`AnchorRef` 를 받는다** — 끝점 자료형이 아니다. 오버레이는 집는
+ * 함수(`anchorHitAt`)가 낸 참조를 그대로 넘기고, 끝을 짓는 일은 여기서만 일어난다.
+ * `ConnectorEnd` 를 읽고 쓰는 제품 파일이 넷으로 유지되는 것이 그 규율의 값이다.
+ *
+ * 놓은 자리가 앵커가 아니면(`landed === undefined`) 그 끝은 **자유 끝점**이 된다 —
+ * 그은 몸짓이 빈 곳에서 끝났을 때와 같다(AC-58). 붙어 있던 선을 떼는 길이 그것이며,
+ * 붙이는 길과 떼는 길이 **한 몸짓**인 것에 뜻이 있다.
+ */
+export function repointConnector(
+  elements: readonly CanvasNode[],
+  connectorId: string,
+  side: ConnectorSide,
+  landed: AnchorRef | undefined,
+  at: PointGeometry,
+): CanvasNode[] {
+  const end: ConnectorEnd =
+    landed === undefined ? freeConnectorEnd(at) : { el: landed.el, a: landed.a };
+  const replace = (node: ConnectorElement): ConnectorElement =>
+    side === 'from' ? { ...node, from: end } : { ...node, to: end };
+  return elements.map((node) =>
+    node.id === connectorId && isConnector(node) ? replace(node) : node,
+  );
+}
+
+/**
+ * 중간점 하나를 옮긴다 — **그 자리 하나만** 쓴다 (M9 · AC-65).
+ *
+ * 이웃을 **같은 객체 그대로** 지나 보낸다(`map` 이 손대지 않은 원소는 참조가 같다).
+ * 새 객체로 베껴 담으면 값은 같아도 되돌리기 장부와 렌더 비교가 "달라졌다" 고 읽고,
+ * 그 차이는 점이 하나라도 있는 모든 선에서 매 프레임 쌓인다.
+ *
+ * 좌표는 **캔버스 단위 정수**로 죈다 — `freeConnectorEnd` 가 끝점에 대해 쓰는 그 함수를
+ * 지난다(A5). 죄지 않고 소수를 실으면 다음에 파일을 읽는 순간 파서의 `Math.round` 가
+ * 사용자가 찍어 둔 꺾임을 반 칸 옮겨 앉힌다(AC-36 이 금지한 그것이다).
+ *
+ * 범위 밖 `index` 는 **받은 노드를 그대로** 돌려준다. 손잡이는 해석된 점 목록에서만
+ * 나오므로 닿을 길이 없으나, 닿았다면 없는 자리를 지어내느니 아무 일도 하지 않는 편이
+ * 낫다(`handleDragState` 의 두 `null` 과 같은 규율).
+ */
+export function moveConnectorPoint(
+  elements: readonly CanvasNode[],
+  connectorId: string,
+  index: number,
+  at: PointGeometry,
+): CanvasNode[] {
+  const moved: PointGeometry = { x: coordinate(at.x, 0), y: coordinate(at.y, 0) };
+  const replace = (node: ConnectorElement): ConnectorElement => {
+    const points = node.points ?? [];
+    if (index < 0 || index >= points.length) return node;
+    return { ...node, points: points.map((point, i) => (i === index ? moved : point)) };
+  };
+  return elements.map((node) =>
+    node.id === connectorId && isConnector(node) ? replace(node) : node,
+  );
 }
 
 // --- 가져온 요소 ---------------------------------------------------------

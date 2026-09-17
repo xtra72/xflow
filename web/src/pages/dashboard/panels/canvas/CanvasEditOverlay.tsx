@@ -41,13 +41,19 @@
 // (T13)이고, 그 규칙은 목록 편집기 쪽 AC-06("둘 이상 선택되면 아무 행도 자동으로 펼치지
 // 않는다")과 같은 방향이다 — 다중 선택에서는 표시만 남는다.
 //
-// **영역 선택은 빈 자리의 주 버튼 누름으로 시작한다**(SPEC-CANVAS-010). 맨손으로 끌면
-// 사각형이 서고 그 안에 **온전히 든** 것들이 선택을 **갈아 끼우며**, Shift·Ctrl·Cmd 를
-// 누른 채 끌면 같은 것들이 지금 선택에 **더해진다**. 009 는 이 몸짓을 modifier 로만 열어
-// 두었고 그 근거는 "문턱(몇 px 움직이면 마키로 승격)으로 가르면 `previewPan` 이 누름에서
-// 이미 팬을 시작했고 그것을 무를 신호가 없다" 였다 — 그 근거는 **문턱**에 대해서는 지금도
-// 참이지만, 문턱을 쓰지 않고 **누르는 순간 곧장** 가져가면 무를 것이 없다. 그 층은
-// `defaultPrevented` 로 임자를 가리므로 누름을 소비하면 팬은 시작조차 하지 않는다.
+// **영역 선택은 빈 자리의 주 버튼 누름으로 시작한다**(SPEC-CANVAS-010). 009 는 이 몸짓을
+// modifier 로만 열어 두었고 그 근거는 "문턱(몇 px 움직이면 마키로 승격)으로 가르면
+// `previewPan` 이 누름에서 이미 팬을 시작했고 그것을 무를 신호가 없다" 였다 — 그 근거는
+// **문턱**에 대해서는 지금도 참이지만, 문턱을 쓰지 않고 **누르는 순간 곧장** 가져가면 무를
+// 것이 없다. 그 층은 `defaultPrevented` 로 임자를 가리므로 누름을 소비하면 팬은 시작조차
+// 하지 않는다.
+//
+// **011 이 그 안에서 조작키의 배정을 뒤집었다.** 맨손으로 끌면 **작업 영역이 옮겨지고**
+// (팬), Ctrl·Cmd 를 누른 채 끌면 사각형이 서서 그 안에 **온전히 든** 것들이 선택을
+// **갈아 끼우며**, Shift 를 누른 채 끌면 같은 것들이 지금 선택에 **더해진다**. 빈 자리를
+// 끌지 않고 한 번 누르면 종전 그대로 선택이 풀린다(움직이지 않은 팬이 곧 클릭이다).
+// 근거는 잦기 하나다 — 화면을 옮기는 일은 늘 하고 감싸 고르는 일은 가끔 하므로, 맨손이
+// 잦은 쪽을 맡는다.
 //
 // 판정은 잉크가 아니라 **`outlineBox` 가 낸 상자**이며 그 근거와 대가는 `canvasMarquee`
 // 머리말이 갖는다. 여기서 지킬 것은 하나다 — 판정하는 상자와 골라진 뒤 화면에 뜨는
@@ -58,8 +64,10 @@
 // 몸통을 잡아 옮긴다 — `PanelDragLayer` 헤더가 같은 이유로 같은 결정을 했다. 010 이 빈
 // 자리의 **주 버튼** 누름을 사각형에 내주면서 AC-E3 이 지키던 문장은 좁아졌다: 종전
 // "빈 지점 누름은 소비하지 않는다" 가 지금은 **"주 버튼이 아닌 누름은 소비하지 않는다"**
-// 이다. 좁아진 만큼 위 세 조작 중 캔버스 안에서 잃는 것은 **주 버튼 끌기 팬 하나**이고,
-// 휠 확대·크기 조절·오른쪽 버튼은 한 글자도 달라지지 않는다(누름을 쓰지 않거나 버튼이
+// 이다. 011 뒤에도 그 문장은 같다 — 소비하는 임자만 사각형에서 팬으로 바뀌었다. 좁아진
+// 만큼 위 세 조작 중 캔버스 안에서 잃는 것은 **바깥 층의 주 버튼 끌기 팬 하나**인데,
+// 011 이 같은 몸짓을 이 층의 팬으로 돌려주었으므로 사용자가 잃는 것은 이제 없다. 휠
+// 확대·크기 조절·오른쪽 버튼은 한 글자도 달라지지 않는다(누름을 쓰지 않거나 버튼이
 // 다르다). 핸들은 스스로 이벤트를 소비하므로(자기 `pointer-events-auto` 위에서
 // `stopPropagation`) 핸들을 잡은 포인터는 몸통 히트 테스트에 닿지 않는다.
 //
@@ -162,25 +170,82 @@ import { cn } from '@/lib/utils/cn';
 import { PanelEditGrid } from '../../PanelEditGrid';
 import { EMPTY_SELECTION, nextSelection } from '../charts/panelEditSelection';
 import { CanvasEditDockBody } from './CanvasEditDock';
+import { CanvasEditToolbarBody } from './CanvasEditToolbar';
 import { CanvasWorkspaceZoomField } from './CanvasWorkspaceZoomField';
 import { marqueeCandidates, marqueeRect, marqueeSelection } from './canvasMarquee';
 import { CanvasGroupTools } from './group/CanvasGroupTools';
-import { groupNodes, rulesLostByUngroup, ungroupNode, type GroupRefusal } from './group/groupOps';
-import { isGroup, type CanvasNode } from './group/groupTypes';
+import { CanvasAnchorTools } from './connector/CanvasAnchorTools';
+import { CanvasConnectorTools } from './connector/CanvasConnectorTools';
+import type { AnchorRefusal } from './connector/anchorTypes';
 import {
-  DEFAULT_FONT_SIZE,
+  addAnchorAt,
+  anchorGestureAt,
+  anchorHitAt,
+  anchorPoints,
+  nextAnchorId,
+  removeAnchor,
+  type AnchorRef,
+} from './connector/anchors';
+import {
+  DEFAULT_CANVAS_TOOL,
+  TOOL_ANCHOR_GESTURE,
+  TOOL_CONNECTOR_ROUTE,
+  TOOL_POINT_GESTURE,
+  TOOL_SHOWS_ANCHORS,
+  toggleTool,
+  type CanvasTool,
+} from './connector/canvasTools';
+import { frameKey, isPartKey, parseFrameKey } from './group/frameKey';
+import {
+  detachPart,
+  findPart,
+  groupNodes,
+  partInCanvasUnits,
+  patchPartGeometry,
+  replacePart,
+  rulesLostByDetach,
+  rulesLostByUngroup,
+  ungroupNode,
+  type GroupRefusal,
+} from './group/groupOps';
+import { isGroup, type CanvasNode, type OutlinedNode } from './group/groupTypes';
+import {
+  isConnector,
+  type ConnectorElement,
+  type ConnectorRoute,
+} from './connector/connectorTypes';
+import {
+  connectorPointGestureAt,
+  insertPointAt,
+  removePointAt,
+} from './connector/connectorEdit';
+import { resolveConnector } from './connector/resolveConnector';
+import { connectorObstacles } from './connector/connectorObstacles';
+import { connectorDrawn, connectorPath } from './connector/connectorPath';
+import { withSplit } from './connector/orthoSplits';
+import { SHAPE_MIN_VERTICES, shapeDraftOf } from './shapeDraft';
+// SPEC-CANVAS-011 M11 — 자유선의 궤적. 받는 일도 줄이는 일도 그 모듈이 하고, 이 층은
+// 포인터가 온 자리를 캔버스 단위로 넘길 뿐이다(허용 오차도 상한도 여기에 적히지 않는다).
+import { freehandPoints, ROUTE_TRACES_TRAIL, takeFreehandSample } from './connector/freehand';
+import {
   type BoxGeometry,
   type CanvasElement,
   type CanvasPrimitiveKind,
   type Geometry,
   type LineGeometry,
+  type PointGeometry,
 } from './canvasConfig';
 import {
+  appendConnector,
   appendElement,
   appendImportedElements,
+  appendDrawnPath,
   appendPathElement,
+  moveConnectorPoint,
   nextElementId,
+  repointConnector,
   seedOffset,
+  type ConnectorSide,
 } from './canvasElementFactory';
 import {
   CanvasScratchpadDropContext,
@@ -198,7 +263,7 @@ import {
   handlePositions,
   moveGeometry,
   patchNodeGeometry,
-  resizeBox,
+  resizeRotatedBox,
   resizeFontSize,
   resizeLine,
   type BoxHandleId,
@@ -209,33 +274,51 @@ import {
   CANVAS_GRID_STEP_UNITS,
   alignDeltas,
   bringToFront,
-  removeNodes,
+  removeNodesWithConnectors,
   sendToBack,
   snapDelta,
   type AlignAxis,
   type AlignMode,
 } from './canvasEditArrange';
+// 뒤집기·회전의 산술은 이 두 잎이 소유한다(SPEC-CANVAS-013). 이 파일은 넘길 뿐이다.
+// 각도의 상수와 저장 규율은 잎 모듈이 소유한다(SPEC-CANVAS-014).
+import {
+  ROTATION_SNAP_DEGREES,
+  isRotated,
+  rotatePoint,
+  storableDegrees,
+} from './canvasRotation';
+import type { TransformKind } from './canvasTransform';
+import { transformNodes } from './canvasTransformNodes';
 import { useCanvasEditSelection, type CanvasSelection } from './canvasEditContext';
-import { useCanvasEditDockHost } from './canvasEditDockHost';
+import { useCanvasEditDockHost, useCanvasEditToolbarHost } from './canvasEditDockHost';
 import type { ImportedShapeSpec, ImportedTextSpec } from './svgimport/svgImportPlan';
 import { useCanvasStageGrid } from './canvasStageGrid';
-import { DEFAULT_WORKSPACE_ZOOM } from './canvasWorkspace';
 import {
-  projectBox,
-  projectLine,
+  DEFAULT_WORKSPACE_ZOOM,
+  NO_WORKSPACE_PAN,
+  clampWorkspacePan,
+} from './canvasWorkspace';
+import {
   projectPoint,
-  resolveTextOrigin,
   stageLattice,
   unprojectBox,
   unprojectPoint,
   type CanvasBox,
   type CanvasDelta,
   type CanvasProjection,
-  type PxBox,
   type PxPoint,
+  type StageCell,
   type StageSize,
 } from './canvasGeometry';
 import { hitTest } from './canvasHitTest';
+import {
+  outlineAabb,
+  outlineAngle,
+  outlineBox,
+  resolveFontSize,
+  resolveMeasuredWidth,
+} from './canvasOutline';
 
 // --- 타입 ---------------------------------------------------------------
 
@@ -314,6 +397,50 @@ interface MarqueeState {
   base: CanvasSelection;
 }
 
+/**
+ * 진행 중인 **긋기**(SPEC-CANVAS-011 M8 · REQ-03) — 누른 앵커에서 지금 손까지.
+ *
+ * ## `dragRef` 가 아니라 React 상태다 — 마키와 **같은 근거**로
+ *
+ * 드래그 상태를 ref 에 둔 것은 그것이 화면에 아무것도 그리지 않고 기하 쓰기만 하기
+ * 때문이고(쓰기는 rAF 로 모인다), 긋기는 반대로 **제 미리보기를 그려야** 하므로 렌더에
+ * 참여해야 한다. 그리고 긋는 동안 기하 쓰기는 **한 글자도 없다** — 배열이 달라지는 것은
+ * 손을 뗄 때 한 번뿐이므로, ref + rAF 통로를 빌리면 흘릴 것이 없는데 루프가 돈다
+ * (`MarqueeState` 가 같은 문장으로 같은 결정을 했다).
+ *
+ * ## 시작은 **언제나 앵커**다 (REQ-03)
+ *
+ * `from` 이 자유 끝점을 들 수 없는 것이 그 사실이다. 몸짓은 "한 앵커에서 눌러" 로 시작하며,
+ * 앵커가 아닌 곳의 누름은 이 상태를 만들지 않고 종전의 뜻(고르기 · 마키)으로 지나간다.
+ * 놓는 쪽만 자유롭다 — 그쪽은 REQ-03 이 명시적으로 허락한 갈래다.
+ */
+interface ConnectorDraw {
+  /** 이 몸짓을 시작한 포인터. 다른 포인터의 이동은 무시한다(드래그와 같은 규율). */
+  pointerId: number;
+  /** 잡는 순간의 좌표 기준. 드래그·마키와 같은 규율으로 다시 재지 않는다. */
+  frame: PointerFrame;
+  /** 누른 앵커의 참조 — 이것이 곧 만들 선의 `from` 이다. */
+  from: AnchorRef;
+  /**
+   * 그 앵커가 **화면에 찍힌 자리**(스테이지 로컬 px). 미리보기의 고정된 한 끝이다.
+   *
+   * 포인터가 내려앉은 자리가 아니라 **점의 자리**다. 둘은 오차(`ANCHOR_PICK_SLOP_PX`)만큼
+   * 어긋날 수 있고, 포인터 쪽을 쓰면 미리보기가 점에서 시작하지 않는다 — 만들어질 선은
+   * 점에서 시작하므로 그때 미리보기는 결과를 두고 거짓말을 한다.
+   */
+  origin: PxPoint;
+  /** 지금 손이 있는 자리(스테이지 로컬 px). 미리보기의 움직이는 끝이다. */
+  point: PxPoint;
+  /**
+   * 이 몸짓이 만들 선의 그리는 법. **누를 때의 도구**에서 온다(`frame` 과 같은 규율).
+   *
+   * 뗄 때 `tool` 을 다시 읽지 않는다. 오늘 도구는 단추로만 바뀌고 단추는 끄는 동안 눌릴
+   * 수 없으나, 잡는 순간의 값을 드는 것이 이 파일의 관용구이고 그 관용구는 "왜 여기만
+   * 다른가" 를 묻게 하지 않는다.
+   */
+  route: ConnectorRoute;
+}
+
 /** 어느 드래그든 공통으로 드는 것. */
 interface DragCommon {
   /** 이 드래그를 시작한 포인터. 다른 포인터의 이동은 무시한다(멀티터치 방어). */
@@ -378,8 +505,92 @@ interface FontResizeDrag extends DragCommon {
   fontSize: number;
 }
 
+/**
+ * 연결선 손잡이 하나 — **끝점 둘**이거나 **중간점 하나**다 (SPEC-CANVAS-011 M9 · REQ-07).
+ *
+ * `CanvasHandleId` 를 넓히지 않는 것이 이 자료형이 있는 이유다. 저쪽은
+ * `HANDLE_ARIA_KEYS` · `HANDLE_CURSOR` 두 `Record` 가 **빠짐없이** 덮는 닫힌 이름 집합
+ * 인데, 중간점은 개수가 저술마다 다르므로 그 표에 넣을 고정된 이름이 없다. 억지로 넣으면
+ * 두 표가 뜻 없는 항목을 하나씩 갖고, 그때 "이 손잡이는 무엇을 하는가" 에 답이 없다.
+ *
+ * 그래서 M9 는 **별도 렌더 갈래**를 세운다(plan §M9 2). 그 갈래가 지나는 자리는
+ * `handlePositions` 도 `handleDragState` 도 아니며, 둘은 한 글자도 바뀌지 않는다.
+ */
+type ConnectorHandle = { kind: 'end'; side: ConnectorSide } | { kind: 'mid'; index: number };
+
+/**
+ * 연결선 손잡이 드래그 (SPEC-CANVAS-011 M9).
+ *
+ * **잡는 순간의 기하를 들지 않는다** — 다른 셋과 갈리는 자리다. 연결선에는 상자가 없고
+ * 끝점은 좌표가 아니라 참조이므로 "잡을 때의 값으로 매 프레임 다시 잡는다" 가 성립하지
+ * 않는다. 대신 매 프레임 **포인터 자리 그대로**를 쓴다: 중간점은 그 자리로 옮기고,
+ * 끝점은 그 자리가 어느 앵커 위인지 물어 참조를 갈아 끼운다.
+ *
+ * 그래서 프레임을 건너뛰어도 결과가 같다는 성질은 유지된다 — 누적하지 않기 때문이다.
+ */
+interface ConnectorPointDrag extends DragCommon {
+  mode: 'connectorPoint';
+  nodeId: string;
+  handle: ConnectorHandle;
+}
+
+/**
+ * 회전 손잡이 드래그 (SPEC-CANVAS-014 M9 · REQ-02).
+ *
+ * **`CanvasHandleId` 를 넓히지 않는다.** 011 이 연결선 손잡이에 대해 쓴 그 근거가 그대로
+ * 걸린다 — 저쪽은 `HANDLE_ARIA_KEYS`·`HANDLE_CURSOR` 두 `Record` 가 빠짐없이 덮는 닫힌
+ * 이름 집합이고, 그 표에 넣는 순간 8핸들을 세는 출시된 가드들이 함께 흔들린다. 게다가
+ * 이 손잡이는 **기하도 스타일도 아닌 각도**를 쓰므로 `CanvasHandleRole` 의 두 값 어디에도
+ * 맞지 않는다.
+ *
+ * 그래서 별도 렌더 갈래와 별도 이름 공간(`canvas-rotate-handle`)을 세운다 —
+ * `handlePositions` 도 `handleDragState` 도 한 글자도 바뀌지 않는다.
+ *
+ * **잡는 순간의 값 셋을 든다.** 축(px)과 시작 각도, 그리고 그때의 저술 각도다. 매 프레임
+ * 그 셋에서 다시 계산하므로 프레임을 건너뛰어도 결과가 같다(누적하지 않는다).
+ */
+interface RotateDrag extends DragCommon {
+  mode: 'rotate';
+  nodeId: string;
+  /** 축 — 요소의 px 윤곽 상자 가운데. 그리는 쪽이 쓰는 그 자리다. */
+  pivot: PxPoint;
+  /** 잡은 순간 축에서 포인터를 본 각도(도). */
+  grabDeg: number;
+  /** 잡은 순간의 저술 각도(도). */
+  baseDeg: number;
+}
+
+/**
+ * 직각 선의 가운데 구간 드래그 (SPEC-CANVAS-019 REQ-02).
+ *
+ * **`CanvasHandleId` 를 넓히지 않는다** — 011 의 연결선 손잡이 · 014 의 회전 손잡이와 같은
+ * 근거다(닫힌 이름 집합을 건드리면 8핸들을 세는 출시된 가드들이 흔들린다).
+ *
+ * 축은 **잡는 순간 정해진다.** 가로면 좌우로만, 세로면 위아래로만 움직인다 — 다른 축으로는
+ * 옮길 자리가 없고, 매 프레임 다시 읽으면 손이 비스듬히 움직일 때 축이 흔들린다.
+ */
+interface OrthoSplitDrag extends DragCommon {
+  mode: 'orthoSplit';
+  nodeId: string;
+  axis: 'lr' | 'tb';
+  /**
+   * 어느 **논리 구간**의 고정값을 건드리는가 (SPEC-CANVAS-021 REQ-05).
+   *
+   * 그려진 구간의 차례가 아니다 — 그 차례는 모서리가 끼면서 구간과 갈린다(020 이 고친 그
+   * 어긋남이다). 값은 `connectorDrawn` 의 `owner` 에서 오므로 그리는 쪽과 한 길이다.
+   */
+  segment: number;
+}
+
 /** 진행 중인 드래그. `null` 이면 유휴. */
-type DragState = MoveDrag | BoxResizeDrag | LineResizeDrag | FontResizeDrag;
+type DragState =
+  | MoveDrag
+  | BoxResizeDrag
+  | LineResizeDrag
+  | FontResizeDrag
+  | ConnectorPointDrag
+  | RotateDrag
+  | OrthoSplitDrag;
 
 /**
  * 아직 반영하지 않은 마지막 포인터 상태.
@@ -499,17 +710,244 @@ const HANDLE_CURSOR: Record<CanvasHandleId, string> = {
 };
 
 /**
- * 핸들의 겉모습. 크기·형상·흰 테두리는 `FloorPlanTransformOverlay` 의 모서리 핸들 어휘를
- * 그대로 따르고(같은 대시보드 안에서 손잡이가 두 모양이 되지 않게 한다), **색만** 캔버스
- * 선택 외곽선과 같은 파랑으로 둔다 — 한 선택 안에서 외곽선과 손잡이가 다른 색이면 둘이
- * 다른 것을 가리키는 것처럼 보인다.
+ * 손잡이의 **몸통** — 크기 · 흰 테두리 · 칠 · 초점 테두리. **모양은 빠져 있다.**
+ *
+ * 크기·흰 테두리는 `FloorPlanTransformOverlay` 의 모서리 핸들 어휘를 그대로 따르고(같은
+ * 대시보드 안에서 손잡이가 두 모양이 되지 않게 한다), **색만** 캔버스 선택 외곽선과 같은
+ * 파랑으로 둔다 — 한 선택 안에서 외곽선과 손잡이가 다른 색이면 둘이 다른 것을 가리키는
+ * 것처럼 보인다.
  *
  * 자리는 `left`/`top` 에 **투영된 핸들 점 그대로**를 두고 변환으로 중심을 맞춘다. 반 칸을
  * 미리 빼서 넣으면 그 산술이 곧 두 번째 투영이 되어 AC-E2 가 지키려는 성질이 깨진다.
  */
-const HANDLE_CLASS =
-  'pointer-events-auto absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-sm ' +
+const HANDLE_BODY_CLASS =
+  'pointer-events-auto absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 ' +
   'border border-white bg-blue-500 shadow focus:outline-none focus:ring-2 focus:ring-blue-300';
+
+/**
+ * 잡아서 **옮기거나 늘리는** 손잡이 — 네모다. 8핸들과 연결선 **끝점**이 이 옷을 입는다.
+ *
+ * 모서리(`rounded-*`)만 몸통에서 떼어 둔 것에 뜻이 있다. 아래 중간점 손잡이가 같은 크기 ·
+ * 같은 칠 · 같은 초점 테두리를 쓰면서 **모양만** 갈리므로, 둘이 다른 일을 한다는 사실이
+ * 화면에 서되 "같은 무리" 라는 사실은 남는다. 몸통을 베껴 적었다면 크기를 한 번 바꾸는 날
+ * 두 손잡이가 서로 다른 크기로 갈라졌을 것이다.
+ */
+const HANDLE_CLASS = `${HANDLE_BODY_CLASS} rounded-sm`;
+
+/**
+ * 회전 손잡이 (SPEC-CANVAS-014 M9).
+ *
+ * **동그랗다.** 8핸들(네모)·중간점과 모양으로 갈리는 것이 요점이다 — 같은 크기·같은 칠을
+ * 쓰면서 모양만 다르므로 "같은 무리인데 다른 일을 한다" 가 화면에 선다(위 `HANDLE_CLASS`
+ * 머리말이 중간점에 대해 쓴 그 판단과 같다).
+ */
+const ROTATE_HANDLE_CLASS = `${HANDLE_BODY_CLASS} rounded-full cursor-grab`;
+
+/**
+ * 회전 손잡이가 상자 위쪽에서 떨어져 있는 거리(CSS px).
+ *
+ * 붙여 두면 위쪽 변 손잡이(`n`)와 겹쳐 눌러야 할 것을 고르지 못한다. 8핸들의 크기보다
+ * 넉넉히 떨어뜨린다.
+ */
+const ROTATE_HANDLE_GAP_PX = 20;
+
+/**
+ * 끝점을 **뗀 것으로 보는** 최소 움직임(CSS px) — SPEC-CANVAS-016 REQ-02.
+ *
+ * 이보다 덜 움직였으면 누름과 뗌이 같은 자리에서 일어난 것이고, 그것은 끈 것이 아니라
+ * **누른 것**이다. 값이 앵커 집기 오차(`ANCHOR_PICK_SLOP_PX`)와 다른 축인 것에 뜻이 있다 —
+ * 저쪽은 "이 자리가 앵커인가" 를 묻고 이쪽은 "손이 움직였는가" 를 묻는다.
+ */
+const ENDPOINT_DETACH_SLOP_PX = 2;
+
+/**
+ * 직각 선의 가운데 구간 손잡이 (SPEC-CANVAS-019).
+ *
+ * **마름모다.** 8핸들(네모) · 회전(동그라미) · 중간점과 모양으로 갈리는 것이 요점이다 —
+ * 같은 크기·같은 칠을 쓰면서 모양만 다르므로 "같은 무리인데 다른 일을 한다" 가 화면에 선다.
+ * 이것이 옮기는 것은 점이 아니라 **구간의 자리**다.
+ */
+const ORTHO_SPLIT_HANDLE_CLASS = `${HANDLE_BODY_CLASS} rotate-45 rounded-[2px]`;
+
+/**
+ * 연결선 손잡이의 `aria-label` i18n 키 (SPEC-CANVAS-011 M9).
+ *
+ * **표가 따로인 것이 요점이다.** `HANDLE_ARIA_KEYS` 는 `Record<CanvasHandleId, string>`
+ * 이라 이름 하나가 늘면 컴파일러가 그 표를 가리키는데, 중간점은 개수가 저술마다 달라
+ * 그 닫힌 집합에 넣을 고정 이름이 없다. 그래서 여기 셋만 둔다 — 끝점 둘과, **몇 번째인가**
+ * 를 치환자로 받는 중간점 하나.
+ *
+ * 중간점 텍스트가 번호를 말하는 것에 뜻이 있다. 한 선에 점이 셋이면 손잡이도 셋이고, 셋이
+ * 같은 이름을 읽으면 보조기기를 쓰는 사람에게는 **구별 불가능한 단추 셋**이 된다.
+ *
+ * ## 이름이 **하는 일 둘을 모두** 말한다 (사용자 신고 2026-09-16)
+ *
+ * 중간점을 빼는 길은 M10 부터 있었다(그 손잡이 위의 더블클릭). 사용자는 그 길이 **없다고**
+ * 신고했다 — 화면이 그 사실을 어디에서도 말하지 않았기 때문이다. 손잡이는 끌리기도 하므로
+ * 모양만으로는 "끌어라" 밖에 말하지 못하고, 둘 중 하나만 말하는 이름은 다른 하나를 숨긴다.
+ * 그래서 세 이름 모두가 **끄는 일**을 먼저 말하고, 중간점만 **두 번 누르는 일**을 이어 말한다.
+ *
+ * 순서에 뜻이 있다: 끌기는 손이 먼저 닿는 조작이고 빼기는 그 다음이다. 빼기를 앞세우면
+ * 이름이 "이것은 지우는 단추" 로 읽혀, 끌어 옮기려던 손이 망설인다.
+ *
+ * 없애는 **두 번째 컨트롤**을 세우지 않는다(REQ-05-b). 그 컨트롤은 어디에 서야 하는지 ·
+ * 점이 몰렸을 때 무엇이 되는지 · 끝점 손잡이 밑에 깔린 점에서 무엇이 되는지를 다시 묻게
+ * 하고, 만드는 몸짓과 없애는 몸짓이 같다는 011 의 성질을 깬다. 이름은 그 셋을 하나도
+ * 새로 묻지 않는다.
+ */
+const CONNECTOR_HANDLE_ARIA_KEYS: Readonly<Record<ConnectorSide | 'mid', string>> = {
+  from: 'dashboard.canvas.edit.connectorHandleFrom',
+  to: 'dashboard.canvas.edit.connectorHandleTo',
+  mid: 'dashboard.canvas.edit.connectorHandleMid',
+};
+
+/**
+ * 연결선 손잡이의 **모양** — 끝점은 네모, 중간점은 동그라미 (사용자 신고 2026-09-16).
+ *
+ * M9 는 셋에 같은 옷을 입혔고, 그래서 화면에는 "파란 네모 셋" 만 있었다. 그 셋은 하는 일이
+ * 같지 않다: 끝점은 **다른 앵커로 갈아 끼우는** 자리이고(REQ-07-a), 중간점은 옮기거나
+ * **뺄 수 있는** 자리다(REQ-05-b). 구별이 없으면 "두 번 누르면 없어진다" 를 배운 사람도
+ * 그 규칙이 **어느 손잡이의 것**인지 알 수 없다 — 배울 수 없는 규칙은 없는 규칙이다.
+ *
+ * 동그라미를 고른 근거는 두 가지다. 하나는 이 표면이 이미 쓰는 어휘 — 파란 네모는 "잡아서
+ * 크기·끝을 바꾸는 것" 이다(8핸들 · `ANCHOR_DOT_CLASS` 주석이 같은 말을 한다). 다른 하나는
+ * 중간점이 실제로 **선 위에 꿴 구슬**이라는 사실이고, 구슬은 빼낼 수 있는 것으로 읽힌다.
+ *
+ * 앵커 점(초록 동그라미)과 섞이지 않는다 — 칠이 다르고, 둘이 함께 뜨는 동안에는 손잡이가
+ * 포인터를 내려놓는다(아래 렌더 §앵커 도구가 켜진 동안).
+ *
+ * **표로 두는 것이 요점이다.** `CONNECTOR_HANDLE_ARIA_KEYS` 와 **같은 키 셋**이므로 손잡이
+ * 종류가 하나 늘면 컴파일러가 두 표를 함께 가리킨다 — "이 손잡이는 무슨 모양이고 무슨
+ * 이름인가" 가 한 번에 물어진다.
+ */
+const CONNECTOR_HANDLE_CLASS: Readonly<Record<ConnectorSide | 'mid', string>> = {
+  from: HANDLE_CLASS,
+  to: HANDLE_CLASS,
+  mid: `${HANDLE_BODY_CLASS} rounded-full`,
+};
+
+/**
+ * 연결선 손잡이의 커서. **셋이 아니라 하나다** — 끝점도 중간점도 **끌었을 때** 하는 일이
+ * "이 점을 저기로 옮긴다" 하나이므로, 방향을 뜻하는 8핸들의 커서 어휘가 여기서는 거짓말이
+ * 된다. 선 끝점 핸들(`p1`·`p2`)이 같은 이유로 같은 커서를 쓴다.
+ *
+ * 중간점이 모양·이름에서는 갈리면서 커서에서는 갈리지 않는 것에 뜻이 있다. 커서가 답하는
+ * 물음은 **"끌면 무엇이 되는가"** 하나이고 그 답은 둘이 같다. 갈래를 하나 더 만들면 그
+ * 커서는 "이것은 끄는 것이 아니다" 를 뜻하게 되는데 그것은 거짓이다 — 중간점은 끌린다.
+ * 끌기 **말고도** 할 수 있는 일은 커서가 아니라 이름이 나른다(위 표).
+ */
+const CONNECTOR_HANDLE_CURSOR = 'cursor-move';
+
+/**
+ * 펜 커서의 그림 — 24×24 SVG 하나 (사용자 신고 2026-09-16).
+ *
+ * ## 왜 Tailwind 클래스가 아닌가
+ *
+ * 위 두 커서는 `cursor-*` 유틸리티지만 그 어휘에 **펜이 없다.** CSS 표준 커서 33 가지에도
+ * 없다 — 가장 가까운 것은 `crosshair`(정밀 지정)이고 그것으로 끝냈다면 사용자가 요청한
+ * "펜 모양" 은 없는 채로 남았을 것이다. 그리는 도구를 쥔 손에 十자를 주는 것은 틀린 말은
+ * 아니지만 **아무 말도 아니다**: 이 표면에서 정밀 지정이 뜻하는 일이 셋이라(고르기 · 앵커
+ * 세우기 · 선 긋기) 十자는 그 셋을 가르지 못한다.
+ *
+ * ## 그림이 지키는 것 셋
+ *
+ *   1. **끝이 맞는 자리에 온다.** 핫스팟은 몸통 가운데가 아니라 **펜촉**(아래 `2 21`)이다.
+ *      펜은 촉으로 그으므로, 가운데를 잡으면 그림과 실제로 찍히는 자리가 어긋난다 — 이
+ *      파일이 손잡이 자리에 대해 지키는 그 성질(AC-E2)과 같은 종류다.
+ *   2. **어느 바탕에서도 보인다.** 칠은 선택 파랑 · 테두리는 흰색이다. 밝은 바탕에서는
+ *      파란 몸통이, 어두운 바탕에서는 흰 테두리가 읽힌다. 한쪽만 두면 그 반대 바탕에서
+ *      커서가 사라지고, 캔버스 바탕은 저술하는 사람이 정한다.
+ *   3. **그림이 없어도 뜻이 남는다.** 값 끝의 `crosshair` 는 장식이 아니라 **낱말 대체**다.
+ *      SVG 커서를 그리지 못하는 브라우저(사파리가 오래 그랬다)나 이미지를 못 읽은 경우
+ *      CSS 는 그 낱말로 떨어지므로, 최악의 경우에도 "여기서 정밀하게 무언가를 시작한다"
+ *      까지는 남는다. 낱말을 빼면 그 경우 커서가 기본 화살표로 돌아가 아무 말도 하지 않는다.
+ *
+ * `%3C`·`%23` 로 미리 죈 것은 `<`·`#` 이 데이터 URI 안에서 그대로 서지 못하기 때문이다.
+ */
+const PEN_CURSOR_SVG =
+  "%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E" +
+  "%3Cpath d='M2.5 21.5L4 17L17 4L20 7L7 20Z' fill='%233b82f6' stroke='%23ffffff' " +
+  "stroke-width='1.6' stroke-linejoin='round'/%3E" +
+  "%3Cpath d='M4 17L7 20' stroke='%23ffffff' stroke-width='1.2' stroke-linecap='round'/%3E" +
+  '%3C/svg%3E';
+
+/**
+ * 선을 그을 수 있는 자리의 커서 — **CSS 값 그대로**다(클래스가 아니다).
+ *
+ * 인라인 style 로 두는 것에 뜻이 있다. Tailwind 임의값으로 적으려면 이 문자열의 공백 ·
+ * 따옴표 · 쉼표를 전부 그 문법으로 도로 죄어야 하고, 그러면 **커서를 읽으려는 사람이
+ * 두 겹의 인코딩을 풀어야** 한다. 값이 켜졌다 꺼졌다 하는 것도 여기서는 상태이므로
+ * (`penCursor`) 클래스 이름이 늘 뜻을 나르지도 않는다.
+ *
+ * 핫스팟 `2 21` 은 위 그림의 펜촉(2.5, 21.5)을 정수로 내린 값이다 — CSS 핫스팟은 정수
+ * px 이고, 촉에서 반 픽셀 안쪽이 촉 밖보다 낫다.
+ */
+const PEN_CURSOR = `url("data:image/svg+xml,${PEN_CURSOR_SVG}") 2 21, crosshair`;
+
+/**
+ * 앵커 점의 지름(스테이지 px). `h-2 w-2` 가 그리는 그 크기를 **수로도** 적는다.
+ *
+ * 한 벌뿐인 값이 아니라 **두 자리에서 읽히는 값**이라 상수가 필요하다: 그리는 크기와
+ * 집는 오차가 같은 수에서 나와야, 눈에 보이는 점보다 좁게 집히거나 한참 멀리서 집히는
+ * 일이 생기지 않는다. 클래스 문자열과 이 수가 갈라지면 그 어긋남은 화면에서만 보인다.
+ */
+const ANCHOR_DOT_PX = 8;
+
+/**
+ * 앵커 점. **단추가 아니다**(AC-28 · REQ-02'-c).
+ *
+ * 임의 앵커를 제 요소를 눌러 빼게 만들면 더블클릭 판정이 **둘**이 된다 — 하나는 도형
+ * 위의 것, 하나는 점 위의 것. 그 둘은 문턱도 대상 키도 따로 들게 되고, 갈리는 날
+ * "도형에서는 되는데 점에서는 가끔 안 된다" 가 시작된다. 그래서 점은 **표식**이고
+ * (`pointer-events-none`), 빼는 일은 여전히 오버레이의 그 한 판정(`isSecondPress`)이
+ * 결정하며 **자리로만** 갈린다(`anchorGestureAt`).
+ *
+ * 8핸들과 칠을 달리한다 — 파랑 네모는 이 화면에서 이미 "잡아서 크기를 바꾸는 것" 을
+ * 뜻한다. 앵커는 잡히지 않으므로 같은 옷을 입으면 안 된다.
+ */
+const ANCHOR_DOT_CLASS =
+  'pointer-events-none absolute h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full ' +
+  'border border-white bg-emerald-500 shadow-sm';
+
+/**
+ * 긋는 중인 선의 미리보기 옷 (SPEC-CANVAS-011 M8).
+ *
+ * 마키 사각형과 **같은 어휘**다 — 파랑 파선. 둘 다 "손이 눌려 있는 동안에만 있는 몸짓의
+ * 그림자" 이므로 같은 옷을 입는 것이 옳고, 확정된 연결선(씨앗 색의 실선)과는 그래서 한눈에
+ * 갈린다.
+ *
+ * `border-t-2` 로 긋고 높이를 0 으로 두는 것에 뜻이 있다: 이 층은 `<div>` 하나이므로
+ * 위험 R8 의 **형상 가드**(칠하면서 `aria-hidden` 인 자식은 포인터를 먹지 않는다)가 이
+ * 요소를 실제로 검사한다. `<svg>` 였다면 그 가드의 `instanceof HTMLElement` 에 걸리지
+ * 않아 조용히 면제되었을 것이고, 면제를 얻으려고 원소 종류를 고르는 것은 가드를 우회하는
+ * 일이다.
+ */
+const CONNECTOR_PREVIEW_CLASS =
+  'pointer-events-none absolute h-0 border-t-2 border-dashed border-blue-500';
+
+/**
+ * 두 점을 잇는 **눕힌 상자**의 style — 길이와 각도뿐이다.
+ *
+ * 이 산술은 다른 어느 것과도 맞아떨어질 필요가 없다. 저장되지도, 히트에 쓰이지도, 확정된
+ * 연결선의 자리를 정하지도 않는다 — 손이 눌려 있는 동안 화면에만 있는 값이다. 그래서
+ * `connectorPath` 를 지나지 않는 것이 두 번째 기하가 되지 않는다: 그 함수는 **캔버스
+ * 단위 점 목록**을 명령으로 옮기는 자이고, 여기서 필요한 것은 px 두 점 사이의 각뿐이다.
+ *
+ * 중간점을 그리지 않는 것도 같은 이유다. 긋는 동안에는 중간점이 없고(만드는 몸짓은
+ * M10 · M11 의 것이다), 없는 동안 네 갈래는 **같은 그림**이다(REQ-04-b · AC-50) — 그래서
+ * 직선 하나가 도구 넷 모두의 정직한 미리보기다.
+ */
+function previewLineStyle(from: PxPoint, to: PxPoint): React.CSSProperties {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  return {
+    left: from.x,
+    top: from.y,
+    width: Math.hypot(dx, dy),
+    transform: `rotate(${Math.atan2(dy, dx)}rad)`,
+    transformOrigin: '0 50%',
+  };
+}
 
 /**
  * 방향키 한 번의 **미세 이동**(캔버스 단위).
@@ -559,6 +997,29 @@ const ARROW_STEPS: Record<string, { x: -1 | 0 | 1; y: -1 | 0 | 1 }> = {
 const DELETE_KEYS: ReadonlySet<string> = new Set(['Delete', 'Backspace']);
 
 /**
+ * **팬의 구분자** — `KeyboardEvent.key` 의 스페이스 값이다(이름이 아니라 글자 하나다).
+ *
+ * 이 표면에서 Space 는 그때까지 **아무 뜻도 없었다**: `handleKeyDown` 은 지우는 키와
+ * 방향키만 보고 나머지를 흘려보냈다. 다만 **비어 있는 것은 루트에서일 뿐**이다 — 손잡이 ·
+ * 팔레트 · 도구는 진짜 `<button>` 이라 Space 가 곧 "누름" 이고, 배율 칸은 글자 입력이다.
+ * 그래서 팬은 **루트가 직접 초점을 든 동안에만** Space 를 가져간다(아래 `handleKeyDown`).
+ */
+const SPACE_KEY = ' ';
+/** 닫는 키 — 차림표 하나에만 쓰인다(SPEC-CANVAS-021 REQ-03). */
+const ESCAPE_KEY = 'Escape';
+
+/**
+ * Space+방향키 한 번의 팬 이동량(화면 px).
+ *
+ * `previewPan.PREVIEW_PAN_ARROW_PX` 와 **같은 수이고 같은 근거**다(편집 영역은 대체로
+ * 500~800px 이라 한 번에 눈에 보이면서 지나치지 않는 크기가 그쯤이다). 그 상수를 빌려
+ * 오지 않고 여기 따로 적는 것은 둘이 **다른 것을 옮기기** 때문이다 — 그쪽은 미리보기
+ * 전체를, 이쪽은 작업 영역 안의 출력 영역을. 한쪽을 손보는 날 다른 쪽까지 따라 움직이면
+ * 그것은 재사용이 아니라 우연한 결합이다.
+ */
+const PAN_ARROW_PX = 24;
+
+/**
  * 스크린 리더에 알리는 단축키 목록. 값은 W3C 가 정한 키 이름이라 **번역하지 않는다**
  * (번역하면 보조기기가 알아듣지 못한다). 사람이 읽는 설명은 `keyboardHint` ·
  * `deleteHint` 가 따로 낸다.
@@ -566,84 +1027,14 @@ const DELETE_KEYS: ReadonlySet<string> = new Set(['Delete', 'Backspace']);
 const EDIT_KEY_SHORTCUTS =
   'Delete Backspace ' +
   'ArrowUp ArrowDown ArrowLeft ArrowRight ' +
-  'Shift+ArrowUp Shift+ArrowDown Shift+ArrowLeft Shift+ArrowRight';
+  'Shift+ArrowUp Shift+ArrowDown Shift+ArrowLeft Shift+ArrowRight ' +
+  // 팬(사용자 신고 2026-09-16). **`Space+ArrowUp` 으로 적지 않는다** — 이 속성의 문법이
+  // 아는 조합 키는 Alt·Control·Shift·Meta 넷뿐이라 Space 는 조합 키 자리에 설 수 없다.
+  // 그래서 짚는 키 하나만 알리고, 그것으로 무엇을 하는지는 아래 `panHint` 가 말한다.
+  // (W3C 가 정한 이름이라 글자 그대로 `Space` 이며 값 `' '` 가 아니다.)
+  'Space';
 
 // --- 순수 도우미 ---------------------------------------------------------
-
-/** 유효한 글자 크기(px). `canvasHitTest.resolveFontSize` 와 같은 판정이다. */
-function resolveFontSize(size: number | undefined): number {
-  if (size === undefined) return DEFAULT_FONT_SIZE;
-  return Number.isFinite(size) && size > 0 ? size : DEFAULT_FONT_SIZE;
-}
-
-/** 실측 글자 폭. 아직 한 프레임도 그리지 않았으면 0 이다(AC-E7). */
-function resolveMeasuredWidth(width: number | undefined): number {
-  return width !== undefined && Number.isFinite(width) && width > 0 ? width : 0;
-}
-
-/**
- * 선택 외곽선이 두를 상자(스테이지 로컬 CSS px, **양수 범위로 정규화**).
- *
- * 투영은 `canvasGeometry` 의 같은 함수를 지난다 — 렌더·히트·외곽선이 한 투영을 공유하면
- * 셋이 갈라질 수 없다(위험 R1).
- *
- * 문구 상자의 **세로 기준이 이 함수에서 가장 틀리기 쉬운 지점이다**(위험 R8).
- * `drawElement.TEXT_BASELINE` 이 `'middle'` 이므로 기준점 y 는 상자의 **세로 중심**이고,
- * 따라서 상단은 `기준점 y - fontSize/2` 다. 상단으로 착각하면 외곽선이 글자 아래로 반 줄
- * 내려가 앉는다. `canvasHitTest` 의 문구 상자와 같은 식이어야 **보이는 대로 잡힌다**.
- *
- * **경로는 rect 와 같은 상자다.** 종전의 `default:` 는 경로의 상자 기하를 문구 기준점으로
- * 읽어(구조적으로 대입된다 — 가정 A6) 외곽선을 실측 글자 폭 0 · 기본 글자 크기의 작은
- * 상자로 그렸다. 컴파일러가 울지 않던 자리이므로 갈래를 이름으로 적는다.
- */
-function outlineBox(
-  el: CanvasNode,
-  proj: CanvasProjection,
-  textWidths: Readonly<Record<string, number>>,
-): PxBox {
-  switch (el.kind) {
-    // 그룹의 윤곽은 **제 상자**다(REQ-08). 부품의 합집합을 여기서 다시 재지 않는다 —
-    // 상자는 묶는 순간 적힌 **저장된 값**이고(가정 A16), 파생으로 되재면 8핸들이
-    // 잡는 상자와 윤곽이 두는 상자가 갈라진다. 그 갈라짐은 "늘리면 테두리만 안 따라온다"
-    // 로만 보고되는 부류다.
-    case 'group':
-    case 'rect':
-    case 'ellipse':
-    case 'path': {
-      const box = projectBox(el.geometry, proj);
-      return normalizeBox(box);
-    }
-    case 'line': {
-      const line = projectLine(el.geometry, proj);
-      return normalizeBox({
-        x: line.x1,
-        y: line.y1,
-        w: line.x2 - line.x1,
-        h: line.y2 - line.y1,
-      });
-    }
-    case 'text': {
-      const width = resolveMeasuredWidth(textWidths[el.id]);
-      const fontSize = resolveFontSize(el.style.fontSize);
-      const origin = resolveTextOrigin(
-        projectPoint(el.geometry, proj),
-        el.style.align ?? 'left',
-        width,
-      );
-      return normalizeBox({ x: origin.x, y: origin.y - fontSize / 2, w: width, h: fontSize });
-    }
-  }
-}
-
-/** 음수 크기를 양수 범위로 편다. 001 은 음수 크기 박스를 그릴 수 있게 해 두었다. */
-function normalizeBox(box: PxBox): PxBox {
-  return {
-    x: Math.min(box.x, box.x + box.w),
-    y: Math.min(box.y, box.y + box.h),
-    w: Math.abs(box.w),
-    h: Math.abs(box.h),
-  };
-}
 
 /**
  * 잡은 핸들이 **무엇을 쓸지** 잡는 순간에 한 번만 정한다.
@@ -661,6 +1052,11 @@ function normalizeBox(box: PxBox): PxBox {
  * 여덟 손잡이를 내주고 `handlePositions` 가 자리까지 잡아 주는데도 **드래그가 시작되지
  * 않는다** — 손잡이가 보이는데 잡히지 않는 도형이 되고, 그 증상은 화면에서만 드러난다.
  * 앞선 두 함수를 고치고 이 한 줄을 빠뜨리면 크기 조절이 그대로 죽어 있다.
+ *
+ * **연결선은 이 함수에 오지 않는다**(SPEC-CANVAS-011 M9). 맞춰 볼 이름도(손잡이 id 가
+ * 가변이라 `CanvasHandleId` 에 없다) 뜰 기하도(`geometry` 자체가 없다) 없으므로, 갈래를
+ * 더하면 두 `null` 이 셋이 되고 그 셋이 서로 다른 뜻을 갖는다. 대신 제 시작 함수를 따로
+ * 둔다(`startConnectorHandleDrag`).
  */
 function handleDragState(
   el: CanvasNode,
@@ -705,6 +1101,299 @@ function patchNodeFontSize(
   return elements.map((el): CanvasNode =>
     el.kind === 'text' && el.id === nodeId ? { ...el, style: { ...el.style, fontSize } } : el,
   );
+}
+
+// --- 복합 키 분배 (SPEC-CANVAS-009 M3 · M4) --------------------------------
+//
+// 009 부터 선택 상태에는 최상위 id 와 **부품 복합 키**가 함께 담긴다. 아래 셋은 그 키를
+// 받아 갈래를 고르는 유일한 자리다 — 소비 측이 저마다 갈래를 적으면 "끌 때는 부품이
+// 움직이는데 방향키로는 안 움직인다" 같은 부분 마비가 생긴다.
+//
+// **분해는 `parseFrameKey` 하나가 한다**(구분자 리터럴이 이 파일에 없다 — AC-04).
+
+// --- 그룹 진입 (SPEC-CANVAS-009 0.3.0) -------------------------------------
+//
+// 0.2.0 은 "부품 위를 누르면 그 부품을 고른다" 로 못박았고, 그 결과 **그룹을 클릭으로
+// 고를 길이 사라졌다.** 004 의 히트 테스트는 그룹을 제 상자가 아니라 **부품 잉크**로만
+// 잡으므로(빈 상자를 잡으면 밸브 심볼의 빈 공간에서 뒤 요소가 영영 안 잡힌다), 부품이
+// 선택을 가져가는 순간 그룹은 아무 데서도 잡히지 않는다.
+//
+// 그래서 그림 도구의 관용구를 들인다 — **단일 클릭은 그룹, 더블클릭은 그 안.**
+//
+// ## "안에 있는가" 를 상태로 들지 않는다
+//
+// Figma 처럼 한 번 들어가면 그 그룹 안에서는 단일 클릭도 부품을 고른다. 그 "안에 있음" 을
+// 별도 상태로 들면 선택과 어긋난 중간 상태가 생기고("부품이 골라져 있는데 밖에 있다")
+// 그것을 되돌릴 경로가 화면에 없다. 대신 **선택에서 파생시킨다**: 지금 골라진 것이 그
+// 그룹의 부품이면 안에 있는 것이다. `canvasAutoExpandedId` 가 자동 펼침을 선택에서
+// 파생시킨 것과 같은 규율이며, 빈 곳·다른 요소를 누르면 선택이 갈리므로 **빠져나오는
+// 일도 공짜로 따라온다.**
+
+/**
+ * 두 번째 누름이 첫 번째와 **같은 몸짓**으로 읽히는 시간(ms).
+ *
+ * macOS·Windows 의 기본 더블클릭 속도가 대략 이 값이다. 더 좁히면 손이 느린 사용자가
+ * 그룹 안으로 못 들어가고, 그 실패는 "더블클릭이 가끔 안 먹는다" 로만 보고된다.
+ */
+const DOUBLE_PRESS_MS = 500;
+/** 그 사이 손이 이만큼 넘게 움직였으면 다른 자리를 누른 것이다(스테이지 px). */
+const DOUBLE_PRESS_SLOP_PX = 5;
+
+/**
+ * 앵커를 집는 오차(스테이지 px). **두 기존 수에서 파생시킨다** — 새 눈금이 아니다.
+ *
+ *   보이는 반지름 `ANCHOR_DOT_PX / 2` = 4
+ * + 더블클릭이 **이미 허락한** 손 떨림 `DOUBLE_PRESS_SLOP_PX` = 5
+ *
+ * 앞의 항이 없으면 점 위를 정확히 눌러도 빠지지 않는다 — 보이는 것보다 좁게 집히는
+ * 컨트롤은 고장으로 읽힌다. 뒤의 항이 없으면 더 나쁘다: `isSecondPress` 는 두 누름이
+ * 5px 까지 어긋나도 더블클릭으로 읽으므로, 오차가 4 뿐이면 **판정은 더블클릭인데 자리는
+ * 빗나가** 빼려던 손이 바로 옆에 앵커를 하나 더 만든다. 한 몸짓 안에서 두 규칙이 서로
+ * 다른 여유를 갖는 그 상태가 "가끔 지워지고 가끔 늘어난다" 의 형상이다.
+ *
+ * 더 키우지 않는 까닭은 반대쪽이다 — 오차가 크면 이미 있는 앵커 **곁에** 새 앵커를 놓을
+ * 길이 사라진다. 9px 은 점 지름의 한 배 남짓이라, 눈으로 "떨어진 자리" 로 보이는 곳은
+ * 여전히 더하기가 된다.
+ *
+ * **이 값은 더블클릭 판정이 아니다.** 판정은 위 `isSecondPress` 하나가 하고(AC-28), 이
+ * 수는 그 판정이 이미 "두 번째 누름" 이라고 말한 뒤에 **어느 자리인가**만 가른다.
+ */
+const ANCHOR_PICK_SLOP_PX = ANCHOR_DOT_PX / 2 + DOUBLE_PRESS_SLOP_PX;
+
+/** 직전 누름 — 더블클릭 판정에만 쓴다. */
+interface LastPress {
+  at: number;
+  point: PxPoint;
+  /** 그때 눌린 히트의 키. 같은 것을 두 번 눌러야 진입이다. */
+  key: string;
+}
+
+/**
+ * 이번 누름이 **같은 자리를 두 번째로** 누른 것인가.
+ *
+ * 시각·좌표·대상 셋을 모두 본다. `PointerEvent.detail` 에 기대지 않는 것에 뜻이 있다 —
+ * 그 값은 입력 장치와 브라우저에 따라 채워지지 않으며, 채워지지 않으면 진입이 **조용히**
+ * 죽는다(손가락으로는 되는데 펜으로는 안 되는 부류의 결함이다).
+ */
+function isSecondPress(prev: LastPress | null, now: number, point: PxPoint, key: string): boolean {
+  if (prev === null || prev.key !== key) return false;
+  if (now - prev.at > DOUBLE_PRESS_MS) return false;
+  return (
+    Math.abs(point.x - prev.point.x) <= DOUBLE_PRESS_SLOP_PX &&
+    Math.abs(point.y - prev.point.y) <= DOUBLE_PRESS_SLOP_PX
+  );
+}
+
+/** 지금 선택이 이 그룹 **안**을 가리키는가 — 즉 그 그룹의 부품이 골라져 있는가. */
+function isInsideGroup(selection: CanvasSelection, groupId: string): boolean {
+  for (const key of selection) {
+    const { nodeId, partId } = parseFrameKey(key);
+    if (partId !== undefined && nodeId === groupId) return true;
+  }
+  return false;
+}
+
+/**
+ * 이번 누름이 선택에 넣을 키.
+ *
+ * **순수 함수로 떼어 둔 것이 요점이다.** 이 갈래는 화면에서만 드러나는 종류의 규칙이라
+ * (눌러 봐야 안다) 시험이 직접 겨눌 수 있어야 한다.
+ *
+ * - 최상위 요소 → 제 id 그대로(004 와 바이트 동일).
+ * - 부품 위, 밖에서 첫 누름 → **그룹**을 고른다.
+ * - 부품 위, 두 번째 누름 → **그 부품**으로 진입한다.
+ * - 부품 위, 이미 그 그룹 안 → 단일 누름도 부품을 고른다(머무름).
+ */
+function pressTargetKey(
+  hit: { nodeId: string; partId?: string },
+  selection: CanvasSelection,
+  secondPress: boolean,
+): string {
+  if (hit.partId === undefined) return hit.nodeId;
+  const enter = secondPress || isInsideGroup(selection, hit.nodeId);
+  return enter ? frameKey(hit.nodeId, hit.partId) : hit.nodeId;
+}
+
+/**
+ * 키가 가리키는 노드. 부품이면 **캔버스 단위 의사 노드**이고, 최상위면 그 노드 자신이다.
+ *
+ * 그래서 윤곽 상자 · 8핸들 · 드래그 상태가 부품에 대해서도 **한 글자도 바뀌지 않고**
+ * 걸린다(009 가 004 의 A18 을 뒤집는 방식이 이것이다). 없는 키(지워진 요소 · 없는 부품)는
+ * `undefined` 이고 예외가 아니다(REQ-07 · AC-40).
+ *
+ * ## 연결선은 **아직** 여기서 나오지 않는다 (SPEC-CANVAS-011 M4)
+ *
+ * 이 해석기를 지난 값은 곧바로 `outlineBox` · `handlePositions` · `moveGeometry` 에
+ * 들어간다 — 전부 상자를 요구하는 통로이고, 연결선에는 그 상자가 없다. 그래서 반환이
+ * `OutlinedNode` 이고, 연결선 키는 **해석되지 않은 것과 같이** 조용히 빠진다: 지워진
+ * 요소의 키를 그렇게 다루는 그 자리와 같은 규율이며, 소비 측 다섯 곳에 건너뛰기를 한
+ * 줄씩 심지 않아도 된다.
+ *
+ * **009 의 선택 모델은 한 글자도 바뀌지 않는다.** 연결선은 최상위 노드이므로 선택 키는
+ * 평평한 `nodeId` 이고, 그 키가 선택 집합에 드는 것도 지금 그대로다 — 다만 그 키를 **상자
+ * 로** 푸는 길이 없을 뿐이다. 연결선의 손잡이(끝점·중간점)는 id 가 가변이라 8핸들 표를
+ * 지날 수 없으므로 M9 가 **별도 렌더 갈래**를 세우며, 그때 이 함수 옆에 제 해석기가 선다.
+ */
+function nodeForKey(elements: readonly CanvasNode[], key: string): OutlinedNode | undefined {
+  const { nodeId, partId } = parseFrameKey(key);
+  if (partId === undefined) {
+    const node = elements.find((el) => el.id === nodeId);
+    return node !== undefined && !isConnector(node) ? node : undefined;
+  }
+  return partInCanvasUnits(elements, nodeId, partId);
+}
+
+/**
+ * 키가 가리키는 **연결선** — 위 `nodeForKey` 가 조용히 떨어뜨리는 그 갈래를 받는다
+ * (SPEC-CANVAS-011 M9).
+ *
+ * 둘로 나눈 것이 요점이다. 저쪽의 반환이 `OutlinedNode` 인 것은 그 값을 받는 통로
+ * (`outlineBox` · `handlePositions` · `moveGeometry`)가 전부 **상자**를 요구하기 때문이고,
+ * 연결선에는 그 상자가 없다. 한 함수로 접어 합집합을 돌려주면 그 다섯 통로가 저마다
+ * "연결선은 건너뛴다" 를 한 줄씩 갖게 된다 — 004 가 그룹에서 치른 그 대가를 되풀이하는
+ * 일이다.
+ *
+ * 부품 키는 여기서도 부재다. 연결선은 최상위 노드이고(A4) 부품이 될 수 없으므로,
+ * 복합 키가 연결선을 가리키는 상태 자체가 없다.
+ */
+function connectorForKey(
+  elements: readonly CanvasNode[],
+  key: string,
+): ConnectorElement | undefined {
+  const { nodeId, partId } = parseFrameKey(key);
+  if (partId !== undefined) return undefined;
+  const node = elements.find((el) => el.id === nodeId);
+  return node !== undefined && isConnector(node) ? node : undefined;
+}
+
+/**
+ * 해석된 점 목록의 `index` 번째가 **어느 손잡이인가** (SPEC-CANVAS-011 M9).
+ *
+ * `resolveConnector` 가 내는 목록이 `[시작, …중간점, 끝]` 이므로 양 끝만 끝점이고 나머지는
+ * 중간점이다. 그 사실을 **여기 한 자리에서만** 읽는다 — 렌더와 드래그가 저마다 "0 은
+ * 시작이고 마지막은 끝" 을 적으면, 중간점이 늘거나 줄 때 한쪽만 고쳐진 채 손잡이가 엉뚱한
+ * 점을 쓰게 된다.
+ *
+ * 중간점의 `index` 는 **저장 배열의 자리**다(해석된 목록의 자리가 아니다). 쓰는 쪽
+ * (`moveConnectorPoint`)이 그 배열을 그대로 색인하므로, 여기서 1 을 빼 두지 않으면
+ * 끄는 손이 늘 이웃을 옮긴다.
+ */
+function connectorHandleAt(index: number, total: number): ConnectorHandle {
+  if (index === 0) return { kind: 'end', side: 'from' };
+  if (index === total - 1) return { kind: 'end', side: 'to' };
+  return { kind: 'mid', index: index - 1 };
+}
+
+/**
+ * 손잡이의 이름 — `data-testid` 와 React `key` 가 함께 쓴다.
+ *
+ * 8핸들의 이름 공간(`canvas-handle-*`)을 **쓰지 않는다.** 섞으면 `canvas-handle-nw` 가
+ * "상자 왼쪽 위" 인지 "연결선의 어떤 자리" 인지 이름만으로는 답하지 못하고, 8핸들이 서지
+ * 않았음을 재는 자리(AC-63)가 그 이름으로는 가려낼 것이 없어진다.
+ *
+ * 중간점이 **번호를 달고 나오는 것**에 뜻이 있다 — 점이 둘 이상이면 이름이 같은 단추가
+ * 여럿 서고, 그때 "그 점 하나만 움직였다"(AC-65)를 겨눌 수단이 사라진다.
+ */
+function connectorHandleName(handle: ConnectorHandle): string {
+  return handle.kind === 'end' ? handle.side : `mid-${handle.index}`;
+}
+
+/** 손잡이가 스크린 리더에 읽히는 문구. 중간점만 번호를 채워 넣는다. */
+function connectorHandleLabel(t: (key: string) => string, handle: ConnectorHandle): string {
+  if (handle.kind === 'end') return t(CONNECTOR_HANDLE_ARIA_KEYS[handle.side]);
+  // `replaceAll` 인 것은 문구가 번호를 두 번 말할 수도 있기 때문이다(svgimport 의 상한
+  // 안내가 이 저장소에서 이미 물린 자리다 — 위험 R14).
+  return t(CONNECTOR_HANDLE_ARIA_KEYS.mid).replaceAll('{index}', String(handle.index + 1));
+}
+
+/** 고른 것들을 노드로 푼다. 가리킬 것이 없는 키는 조용히 빠진다. */
+function selectedNodes(
+  elements: readonly CanvasNode[],
+  selection: CanvasSelection,
+): OutlinedNode[] {
+  const out: OutlinedNode[] = [];
+  for (const key of selection) {
+    const node = nodeForKey(elements, key);
+    if (node !== undefined) out.push(node);
+  }
+  return out;
+}
+
+/**
+ * 기하 쓰기의 **분배기**. 최상위 키는 004 의 통로로, 부품 키는 `groupOps` 의 통로로 간다.
+ *
+ * `canvasEditGeometry` 는 `parts` 를 여전히 모른다(AC-17) — 부품 쓰기는 저 모듈을 지나지
+ * 않고 `groupOps` 안에서 끝난다. 역투영을 부르는 자리도 늘지 않는다(AC-16).
+ */
+function patchGeometryByKey(
+  nodes: readonly CanvasNode[],
+  key: string,
+  geometry: Geometry,
+): CanvasNode[] {
+  const { nodeId, partId } = parseFrameKey(key);
+  if (partId === undefined) return patchNodeGeometry(nodes, nodeId, geometry);
+  return [...patchPartGeometry(nodes, nodeId, partId, geometry)];
+}
+
+/**
+ * 글자 크기 쓰기의 분배기. **기하가 아니므로 위 통로를 지나지 않는다**(004 의 그 구분 그대로).
+ *
+ * 부품 갈래를 두지 않으면 문구 부품의 글자 크기 손잡이가 **보이는데 잡히지 않는** 손잡이가
+ * 된다 — 이 파일이 `handleDragState` 머리말에서 이름 적어 둔 바로 그 결함이다.
+ */
+/**
+ * 각도를 쓴다 — **최상위 노드만**이다 (SPEC-CANVAS-014 M9).
+ *
+ * `patchNodeGeometry` 를 지나지 않는 셋째 쓰기다. 글자 크기(둘째)가 기하가 아니라 스타일
+ * 이어서 갈라졌듯, 각도는 기하도 스타일도 아닌 **제 필드**다.
+ *
+ * 부품에는 쓰지 않는다. 회전 손잡이가 최상위 선택 위에만 서므로(아래 렌더 갈래) 부품이
+ * 돌아 있는 상태는 UI 로 만들어지지 않는다 — 닿을 수 없는 갈래를 위해 `replacePart` 경로를
+ * 짓는 것은 014 가 사려는 것이 아니다.
+ *
+ * **0 은 키를 지운다**(§결정 7). 한 바퀴를 돌아 제자리로 온 요소가 `rotation: 0` 을 얻으면
+ * 그 저장은 014 이전과 바이트 동일하지 않다.
+ */
+/** 축에서 점을 본 각도(도). 화면 좌표는 y 가 아래이므로 양수가 시계 방향이다. */
+function angleOfDeg(pivot: PxPoint, p: PxPoint): number {
+  return (Math.atan2(p.y - pivot.y, p.x - pivot.x) * 180) / Math.PI;
+}
+
+function patchRotationByKey(
+  nodes: readonly CanvasNode[],
+  key: string,
+  deg: number,
+): CanvasNode[] {
+  const { nodeId, partId } = parseFrameKey(key);
+  if (partId !== undefined) return [...nodes];
+  const next = storableDegrees(deg);
+  return nodes.map((node): CanvasNode => {
+    if (node.id !== nodeId || isConnector(node)) return node;
+    if (next === undefined) {
+      if (!('rotation' in node) || node.rotation === undefined) return node;
+      const { rotation: _dropped, ...rest } = node;
+      void _dropped;
+      return rest as CanvasNode;
+    }
+    return { ...node, rotation: next };
+  });
+}
+
+function patchFontSizeByKey(
+  nodes: readonly CanvasNode[],
+  key: string,
+  fontSize: number,
+): CanvasNode[] {
+  const { nodeId, partId } = parseFrameKey(key);
+  if (partId === undefined) return patchNodeFontSize(nodes, nodeId, fontSize);
+  const found = findPart(nodes, nodeId, partId);
+  if (found === undefined || found.part.kind !== 'text') return [...nodes];
+  return [
+    ...replacePart(nodes, nodeId, partId, {
+      ...found.part,
+      style: { ...found.part.style, fontSize },
+    }),
+  ];
 }
 
 /**
@@ -770,6 +1459,12 @@ export default function CanvasEditOverlay({
    * **아무 데도 그려지지 않는다** — 대시보드에 놓인 패널이 그 경우다.
    */
   const dockHost = useCanvasEditDockHost();
+  /**
+   * 도구 띠를 그릴 자리(미리보기 제목 바로 아래). 도크와 **같은 컴포넌트가 함께 내므로**
+   * 둘은 언제나 함께 있다(`canvasEditDockHost` §자리가 둘인 이유) — 그래서 "도크가 있는가"
+   * 를 묻는 자는 아래에서도 `dockHost === null` 한 줄 그대로다.
+   */
+  const toolbarHost = useCanvasEditToolbarHost();
 
   /**
    * 드롭 존 노드. **자손이 올려 준다** — 도크는 이 층이 포털로 그리는 자식이므로, 자리를
@@ -790,6 +1485,31 @@ export default function CanvasEditOverlay({
    * 뒤에도 남아 있으면 지금 고른 것을 두고 하는 말로 읽힌다.
    */
   const [groupRefusal, setGroupRefusal] = useState<GroupRefusal | null>(null);
+
+  /**
+   * 지금 손에 쥔 도구 (SPEC-CANVAS-011 REQ-02 · M3'b).
+   *
+   * **이 층의 첫 도구 상태다.** 011 이전의 `useState` 일곱은 전부 그리는 것과 진행 중인
+   * 몸짓을 들었고(드롭 존 · 거절 · 드롭 강조 · 붙임 · 간격 · 배율 · 마키), 포인터 경로는
+   * 언제나 "고르기" 한 뜻으로만 돌았다.
+   *
+   * 불리언이 아니라 **갈래 하나를 드는 값**인 까닭은 `connector/canvasTools.ts` 머리말에
+   * 적혀 있다 — M8 이 넷을 더해 여섯이 되고, 불리언이면 그때 "둘이 함께 켜져 있다" 가
+   * 형상으로 가능해진다.
+   *
+   * 선택·붙임과 같이 **저장하지 않는 런타임 상태**다(가정 A4). config 스키마를 넓히지
+   * 않으며, 패널을 다시 열면 고르기로 돌아온다.
+   */
+  const [tool, setTool] = useState<CanvasTool>(DEFAULT_CANVAS_TOOL);
+
+  /**
+   * 마지막 앵커 거절 사유 (REQ-02'-d · AC-24).
+   *
+   * `groupRefusal` 과 **같은 자리·같은 규율**이다: 상태를 컨트롤 안에 두면 표면을 갈아
+   * 끼울 때 함께 사라지고, 사유를 말하지 않으면 선·문구 위의 더블클릭은 "도구가 가끔
+   * 안 먹는다" 로 읽힌다.
+   */
+  const [anchorRefusal, setAnchorRefusal] = useState<AnchorRefusal | null>(null);
 
   /** 끌던 손이 드롭 존 위에 있는가. **강조는 드롭 존 자신이 입는다**(REQ-07 · I23). */
   const [dropActive, setDropActive] = useState(false);
@@ -858,6 +1578,84 @@ export default function CanvasEditOverlay({
   const setWorkspaceZoom = stageGrid?.setZoom ?? setLocalZoom;
 
   /**
+   * **보기 팬** — 주인도 폴백도 바로 위 배율과 같은 자리·같은 규율이다
+   * (사용자 신고 2026-09-16 · `canvasWorkspace` §보기 팬).
+   *
+   * 배율과 갈리는 것이 하나 있다: **팬에는 몸짓이 붙는다.** 배율의 주석이 "셋째 주인이 낄
+   * 자리가 없다" 고 적은 그 셋(Ctrl/⌘+휠 · 방향키 두 갈래)은 여전히 임자가 있지만, 팬이
+   * 쓰는 것은 그 셋이 아니라 **끄는 손** 둘이다:
+   *
+   *   - **빈 자리의 맨손 끌기**(SPEC-CANVAS-011) — 가장 잦은 몸짓이라 가장 싼 자리에 둔다.
+   *   - **Space 를 짚은 채 끄는 손**(006) — 잉크 위에서도 듣는 그 몸짓이며, 이 표면에서
+   *     Space 는 어떤 뜻도 갖고 있지 않았고(아래 `handleKeyDown` 은 지우는 키와 방향키만
+   *     본다) 도해 도구가 모두 쓰는 관용이다.
+   */
+  const [localPan, setLocalPan] = useState<StageCell>(NO_WORKSPACE_PAN);
+  const workspacePan = stageGrid?.pan ?? localPan;
+  const setWorkspacePan = stageGrid?.setPan ?? setLocalPan;
+
+  /**
+   * **Space 를 짚고 있는가** — **도형 위에서도** 팬을 켜는 구분자다.
+   *
+   * 010 에서는 이 값이 팬의 유일한 문이었다(그때 빈 자리 끌기는 영역 선택의 것이었다).
+   * 011 이 빈 자리 맨손 끌기를 팬에 주면서 이 값의 몫이 좁아졌다 — 남은 몫은 **잉크
+   * 위**다. 도형으로 빽빽한 캔버스에는 빈 자리가 없으므로 그 몫이 사라지지는 않는다.
+   *
+   * 끄는 중(`panRef`)과 따로 두는 것에 뜻이 있다. 짚기만 한 상태에도 화면이 답해야 하고
+   * (손잡이 · 단추의 커서까지 손 모양으로 덮인다), 그 답이 "다음 누름은 어디서든 팬이다"
+   * 를 미리 말해 준다 — 눌러 봐야 아는 몸짓은 배울 수 없다.
+   */
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  /**
+   * 도형 모드가 켜져 있는가 (SPEC-CANVAS-022 REQ-01 · §결정 1).
+   *
+   * **도구를 늘리지 않고 모드를 더한다.** `CanvasTool` 유니온은 `Record<CanvasTool, …>`
+   * 표 다섯을 거느리고, 갈래를 늘리면 다섯 자리가 함께 흔들린다 — 그 흔들림이 값을 내는
+   * 때는 새 도구가 정말 새 몸짓을 가질 때이고, 도형 모드는 모양을 기존 도구에서 빌린다.
+   */
+  const [shapeMode, setShapeMode] = useState(false);
+  /**
+   * 그리는 중인 윤곽 — 찍은 꼭짓점들과 지금 손이 있는 자리 (REQ-02 · REQ-04).
+   *
+   * 자리는 **캔버스 단위**다. px 로 들면 화면 축척이 바뀌는 순간 밑그림이 어긋나고, 그
+   * 어긋남은 "그리다가 창을 줄이면 그림이 튄다" 로 보인다.
+   */
+  const [shapeDraft, setShapeDraft] = useState<
+    { vertices: PointGeometry[]; at: PxPoint } | undefined
+  >(undefined);
+
+  /** 지금 윤곽에 쓸 모양 — 켜 둔 연결선 도구가 정한다(§모양은 어디서 오는가). */
+  const shapeRoute = TOOL_CONNECTOR_ROUTE[tool];
+  /** 도형을 그릴 수 있는 상태인가 — 모드가 켜져 있고 모양이 정해져 있다. */
+  const drawingShape = shapeMode && shapeRoute !== null;
+
+  /**
+   * 진행 중인 팬 한 벌. `null` 이면 끌고 있지 않다.
+   *
+   * 드래그(`dragRef`)·마키(`marquee`)와 나란한 셋째 몸짓이지만 **state 가 아니라 ref** 인
+   * 것은 프레임마다 갱신되는 값이 아니기 때문이다 — 움직일 때마다 바뀌는 것은 팬 자체이고,
+   * 그 팬은 표면이 든다. 여기 남는 것은 "어느 포인터가, 어디서, 어떤 값에서 시작했는가"
+   * 셋뿐이라 렌더에 아무 영향이 없다.
+   */
+  const panRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    base: StageCell;
+    /**
+     * 움직이지 않고 끝나면 **선택을 비우는** 누름인가 (SPEC-CANVAS-011 — 빈 자리 몸짓 뒤집기).
+     *
+     * 빈 자리 맨손 누름에서만 참이다. 그 누름이 팬을 가져가면서 "빈 자리를 눌러 선택을
+     * 푼다" 는 010 이전부터의 뜻이 갈 곳을 잃었는데, 누르는 순간 비우면 **끄는 동안에도**
+     * 비워져 팬이 선택을 잡아먹는다. 그래서 뜻을 뗌으로 옮기고, 그 뜻이 살아 있는
+     * 누름인지를 잡는 순간 한 번만 적어 둔다 — Space 를 짚은 팬과 도형 위의 팬은 거짓이다.
+     */
+    clearsSelectionOnClick: boolean;
+  } | null>(null);
+  /** 끌고 있는가 — 커서 모양이 이 값으로 갈린다(`previewPan.panning` 과 같은 몫). */
+  const [panning, setPanning] = useState(false);
+
+  /**
    * 격자를 **그리기 위한** 한 칸의 CSS px.
    *
    * 표면이 그리는 영역을 이 칸의 정수배로 맞춰 두었으므로(위 `stageGrid`), 여기서 받는
@@ -898,23 +1696,126 @@ export default function CanvasEditOverlay({
    * 눌려 있는 동안뿐**이며, 그것이 아래 §마키 사각형이 표시 층이 아닌 근거다(불변식 I23).
    */
   const [marquee, setMarquee] = useState<MarqueeState | null>(null);
+  /**
+   * 열려 있는 꺾임점 지움 차림표 (SPEC-CANVAS-021 REQ-01).
+   *
+   * 자리를 **px 로 들고 다닌다.** 열릴 때의 그 자리에 세우면 선이 다시 그려져도 차림표가
+   * 따라 움직이지 않는다 — 손이 이미 그 자리를 겨누고 있으므로 따라 움직이는 쪽이 더
+   * 놀랍다(누르려던 줄이 손가락 밑에서 빠져나간다).
+   */
+  const [pointMenu, setPointMenu] = useState<
+    { nodeId: string; index: number; at: PxPoint } | undefined
+  >(undefined);
+
+  /**
+   * 진행 중인 긋기(SPEC-CANVAS-011 M8). `null` 이면 미리보기를 그리지 않는다.
+   *
+   * 마키와 **같은 자리에 같은 이유로** 산다 — 손이 눌려 있는 동안에만 있고 제 그림을 그려야
+   * 하므로 렌더에 참여한다. 그래서 위 사각형이 표시 층이 아닌 근거(§마키 사각형 · 불변식
+   * I23)가 이 선에도 한 글자도 다르지 않게 붙는다: 다스릴 지속 상태가 없으므로 다스릴
+   * 컨트롤도 없고, 컨트롤을 지어 붙인다면 그것은 누를 시간이 존재하지 않는 단추가 된다.
+   */
+  const [connectorDraw, setConnectorDraw] = useState<ConnectorDraw | null>(null);
+
+  /**
+   * 지금 손이 **선을 시작할 수 있는 자리**에 있는가 — 펜 커서의 절반이다
+   * (사용자 신고 2026-09-16).
+   *
+   * 앵커 점은 표식이라 포인터를 먹지 않으므로(`ANCHOR_DOT_CLASS`) 커서가 그 점에서 나올
+   * 수 없다. 나오게 하려면 점을 단추로 바꿔야 하고, 그러면 AC-28 이 막는 "더블클릭 판정이
+   * 둘" 이 DOM 층에서 되살아난다. 그래서 **루트가 제 커서를 갈아 끼우고**, 갈아 끼울지는
+   * 포인터 자리로 판정한다 — 점은 표식인 채로 남는다.
+   *
+   * 불리언 하나뿐이고 자리를 들지 않는 것에 뜻이 있다: 자리를 들면 그 값이 곧 두 번째
+   * 포인터 장부가 되어 `dragRef`·`lastPressRef` 와 어긋날 수 있다. 여기서 필요한 것은
+   * "펜이냐 아니냐" 뿐이다.
+   */
+  const [penHover, setPenHover] = useState(false);
+  const penHoverRef = useRef(false);
 
   const rootRef = useRef<HTMLDivElement>(null);
 
+  /**
+   * 직전 누름 — **더블클릭 판정에만** 쓴다(SPEC-CANVAS-009 0.3.0 §그룹 진입).
+   *
+   * `useRef` 인 것에 뜻이 있다. 이 값은 화면에 아무것도 그리지 않으므로 상태로 들면
+   * 누를 때마다 렌더가 한 번씩 더 돌고, 001 이 지은 유휴 정지가 그만큼 흔들린다.
+   */
+  const lastPressRef = useRef<LastPress | null>(null);
+
   const dragRef = useRef<DragState | null>(null);
+  /**
+   * 자유선이 긋는 동안 쌓는 **궤적**(캔버스 단위 정수 — SPEC-CANVAS-011 M11 · REQ-06).
+   *
+   * **`ConnectorDraw` 안이 아니라 `useRef` 다.** 그 상태는 미리보기를 그리므로 렌더에
+   * 참여해야 하지만, 궤적은 화면에 아무것도 그리지 않는다(미리보기는 누른 앵커에서 지금
+   * 손까지의 곧은 줄 하나다). 상태에 실으면 포인터 사건마다 렌더가 한 번 더 도는데,
+   * 그 렌더가 바꾸는 픽셀은 한 점도 없다 — `lastPressRef` 가 같은 문장으로 같은 결정을
+   * 했다.
+   *
+   * 몸짓이 시작·끝·취소될 때마다 비운다. 남겨 두면 다음에 그은 자유선이 **앞 몸짓의 손짓**
+   * 을 물려받고, 그 선은 사용자가 그은 적 없는 자리를 지난다.
+   */
+  const trailRef = useRef<readonly PointGeometry[]>([]);
   /** 아직 반영하지 않은 마지막 포인터 상태(스테이지 로컬 px + 보조키). */
   const pendingRef = useRef<PendingPointer | null>(null);
   /** 예약된 합류 프레임. `null` 이면 예약 없음. */
   const frameRef = useRef<number | null>(null);
 
   /**
+   * 지금 앵커를 보일 노드들 — **최상위 전부**다(REQ-02-b · 앵커를 보이는 도구가 켜진
+   * 동안에만).
+   *
+   * 고른 것에만 세우지 않는 까닭은 M8 이다: 잇는 일은 요소 **둘** 사이에서 일어나므로,
+   * 출발 앵커를 고르는 순간 도착 앵커가 사라지는 화면이 된다. M3' 가 미리 그렇게 정해
+   * 두었고, M8 은 그 결정을 되돌리지 않는다.
+   *
+   * 도구가 꺼져 있으면 **빈 배열**이라 아래 `map` 이 DOM 에 아무것도 남기지 않으며,
+   * 잇는 몸짓도 집을 점이 없어 시작되지 않는다(`anchorHitAt` 이 부재를 낸다). 편집이 꺼진
+   * 표면에는 이 층 자체가 서지 않으므로 표시 전용 패널에도 앵커가 없다(위
+   * `if (!enabled) return null`) — AC-60 은 그 한 줄이 이미 참으로 만든다.
+   *
+   * **그리는 자리와 집는 자리가 이 한 목록을 함께 본다.** 둘이 저마다 걸러 내면 "보이는
+   * 점인데 잡히지 않는다"(또는 그 반대)가 표현 가능해진다 — 위험 R1 의 그 형상이다.
+   * 그래서 이 값이 포인터 경로 **앞**에 선다.
+   */
+  // 연결선은 앵커를 내지 않는다(SPEC-CANVAS-011 M4 · A6) — 낼 윤곽 상자가 없다. 걸러 두면
+  // 선에 선을 붙이는 길이 애초에 열리지 않는다(`connector/anchors.ts` §연결선도 앵커를
+  // 내지 않는다). `anchorHitAt` 의 인자가 `OutlinedNode[]` 이므로 이 걸러냄이 빠지면
+  // **컴파일되지 않는다** — A6 을 붙드는 것은 검사가 아니라 타입이다.
+  const anchorHosts: readonly OutlinedNode[] = TOOL_SHOWS_ANCHORS[tool]
+    ? elements.filter((el) => !isConnector(el))
+    : [];
+
+  /**
    * 프레임 콜백이 늦게 실행될 때 **최신** props 를 보게 한다. 드래그 중에는 매 프레임
    * `elements` 가 새로 오므로, 예약 시점의 클로저를 그대로 쓰면 한 프레임 뒤처진 배열에
    * 기하를 써 넣게 된다.
+   *
+   * **M9 가 둘을 더한다**(`textWidths` · `anchorHosts`). 연결선 끝점 손잡이는 끄는 동안
+   * 매 프레임 "지금 손이 어느 앵커 위인가" 를 물어야 하고(REQ-07-a), 그 물음은 앵커를
+   * **그리는 그 목록**을 봐야 한다 — 여기서 제 손으로 다시 거르면 보이는 점과 붙는 점이
+   * 갈린다(위험 R1). 그래서 위 `anchorHosts` 가 이 줄보다 **앞에** 선다.
    */
-  const latestRef = useRef({ elements, projection, onElementsChange, snapToGrid, gridStep });
+  const latestRef = useRef({
+    elements,
+    projection,
+    onElementsChange,
+    snapToGrid,
+    gridStep,
+    textWidths,
+    anchorHosts,
+  });
   useEffect(() => {
-    latestRef.current = { elements, projection, onElementsChange, snapToGrid, gridStep };
+    latestRef.current = {
+      elements,
+      projection,
+      onElementsChange,
+      snapToGrid,
+      gridStep,
+      textWidths,
+      anchorHosts,
+    };
   });
 
   /**
@@ -944,6 +1845,8 @@ export default function CanvasEditOverlay({
       onElementsChange: emit,
       snapToGrid: snap,
       gridStep: step,
+      textWidths: widths,
+      anchorHosts: hosts,
     } = latestRef.current;
     // 0 으로 나눈 이동량은 요소를 화면 밖으로 날린다.
     if (!(proj.stage.width > 0) || !(proj.stage.height > 0)) return;
@@ -965,29 +1868,136 @@ export default function CanvasEditOverlay({
         const delta = snap ? snapDelta(raw, drag.anchor, step) : raw;
         let next: CanvasNode[] = [...els];
         for (const base of drag.bases) {
-          next = patchNodeGeometry(next, base.nodeId, moveGeometry(base.geometry, delta));
+          next = patchGeometryByKey(next, base.nodeId, moveGeometry(base.geometry, delta));
         }
         emit(next);
         return;
       }
       case 'box': {
-        const box = resizeBox(drag.geometry, drag.handle, pointer, {
-          preserveAspect: pending.shift,
-        });
-        emit(patchNodeGeometry(els, drag.nodeId, box));
+        // **돌아간 요소는 제 축 방향으로 늘어난다**(SPEC-CANVAS-014 REQ-05). 각도가 0 이면
+        // 그 함수가 `resizeBox` 를 그대로 부르므로 014 이전 동작은 한 글자도 바뀌지 않는다.
+        //
+        // 각도는 **최상위 노드에서만** 읽는다. 부품에는 회전 손잡이가 닿지 않으므로(M9 가
+        // 최상위 선택 위에 선다) 부품이 돌아 있는 상태는 UI 로 만들어지지 않는다 — 손으로
+        // 고친 config 에서만 올 수 있고, 그 경우의 부품 크기 조절은 014 의 범위 밖이다.
+        const turned = els.find((n) => n.id === drag.nodeId);
+        const box = resizeRotatedBox(
+          drag.geometry,
+          turned !== undefined && !isConnector(turned) ? outlineAngle(turned) : 0,
+          drag.handle,
+          pointer,
+          { preserveAspect: pending.shift },
+        );
+        emit(patchGeometryByKey(els, drag.nodeId, box));
         return;
       }
       case 'line': {
         const line = resizeLine(drag.geometry, drag.endpoint, pointer, {
           constrainAngle: pending.shift,
         });
-        emit(patchNodeGeometry(els, drag.nodeId, line));
+        emit(patchGeometryByKey(els, drag.nodeId, line));
+        return;
+      }
+      case 'connectorPoint': {
+        // **기하 통로를 지나지 않는 둘째 쓰기다.** 글자 크기(아래)가 첫째였고 그것은
+        // 기하가 아니라 스타일이기 때문인데, 여기는 이유가 다르다 — 연결선에 `geometry`
+        // 자체가 없다(A4). `patchGeometryByKey` 는 `Geometry` 를 받으므로 실을 값이 없고,
+        // 억지로 상자를 지어 넣으면 011 이 §여섯 번째 종류에서 기각한 그 형상이 된다.
+        if (drag.handle.kind === 'mid') {
+          // 중간점은 **그 자리 하나만** 쓴다(AC-65). 이웃은 쓰는 함수가 같은 객체 그대로
+          // 지나 보낸다.
+          emit(moveConnectorPoint(els, drag.nodeId, drag.handle.index, pointer));
+          return;
+        }
+        // 끝점은 **매 프레임 다시 묻는다** — 지금 손이 어느 앵커 위인가(REQ-07-a).
+        // 집는 자는 잇는 몸짓이 쓰는 그 함수 하나이고(`anchorHitAt`), 보는 목록도 점을
+        // 찍은 그 목록이다(`anchorHosts`) — 보이는 점과 붙는 점이 갈릴 수 없다(위험 R1).
+        //
+        // 오차 밖이면 **자유 끝점**이다. 그래서 붙이는 길과 떼는 길이 한 몸짓이며,
+        // 빈 곳에서 놓은 그은 선과 같은 규칙을 탄다(AC-58).
+        const landed = anchorHitAt(hosts, point, proj, widths, ANCHOR_PICK_SLOP_PX);
+        // **앵커 밖에서 놓으면 그 선이 사라진다**(SPEC-CANVAS-016 REQ-02).
+        //
+        // 자리에 그대로 두는 안을 기각했다 — 그러면 사용자가 뗀 끝이 아무 일도 없이
+        // 제자리로 돌아가고, 화면은 "왜 안 떨어지는가" 에 답하지 못한다.
+        //
+        // **지우는 입구는 하나다**(§결정 2). 목록의 휴지통 · 캔버스의 Delete 와 같은 함수를
+        // 지나므로 "어디서 지웠느냐" 에 따라 결과가 달라질 수 없다.
+        if (landed === undefined) {
+          // **움직이지 않았으면 아무 일도 없다.**
+          //
+          // 누름과 뗌이 같은 자리에서 일어난 것은 **끈 것이 아니라 누른 것**이다 — 끝점
+          // 손잡이 위의 더블클릭이 그 형상이고(M10 이 그 몸짓을 쓴다), 거기서 선을 지우면
+          // 사용자는 점을 빼려다 선을 잃는다. 그은 몸짓이 "같은 앵커에서 놓으면 아무것도
+          // 만들지 않는다" 로 정한 그 판단을 떼는 몸짓에도 그대로 적용한다.
+          //
+          // **이 가드가 없을 때 무슨 일이 나는지는 출시된 시험이 말했다** — 016 을 붙이자
+          // `canvas011PointEdit` 의 끝점 더블클릭 시험이 곧바로 울었다.
+          const moved =
+            Math.abs(point.x - drag.origin.x) > ENDPOINT_DETACH_SLOP_PX ||
+            Math.abs(point.y - drag.origin.y) > ENDPOINT_DETACH_SLOP_PX;
+          if (!moved) return;
+          emit([...removeNodesWithConnectors(els, new Set([drag.nodeId]))]);
+          return;
+        }
+        emit(repointConnector(els, drag.nodeId, drag.handle.side, landed.ref, pointer));
+        return;
+      }
+      case 'orthoSplit': {
+        // **움직이지 않았으면 고정을 푼다**(REQ-05). 016 이 끝 손잡이에 대해 세운 그
+        // 규칙이다 — 누름과 뗌이 같은 자리에서 일어난 것은 끈 것이 아니라 **누른 것**이고,
+        // 이 손잡이에서 누르기만 하는 몸짓의 뜻은 "자동으로 되돌려라" 다.
+        //
+        // 더블클릭을 쓰지 않는 것은 `onDoubleClick` 이 입력 장치에 따라 채워지지 않아
+        // 몸짓이 조용히 죽기 때문이며, 011 이 그 의존을 가드로 막아 두었다.
+        const moved =
+          Math.abs(point.x - drag.origin.x) > ENDPOINT_DETACH_SLOP_PX ||
+          Math.abs(point.y - drag.origin.y) > ENDPOINT_DETACH_SLOP_PX;
+        //
+        // **그 구간의 고정만 푼다**(021 REQ-06). 다른 구간의 고정값은 남는다 — 사용자가
+        // 만진 것은 이 구간 하나이고, 옆 구간까지 되돌리면 한 번의 누름이 만지지 않은 것을
+        // 바꾼다.
+        const at = drag.axis === 'lr' ? pointer.x : pointer.y;
+        const value = moved ? Math.round(at) : null;
+        emit(
+          els.map((node) => {
+            if (node.id !== drag.nodeId || !isConnector(node)) return node;
+            const next = withSplit(node.ortho_split, drag.segment, value);
+            if (next === undefined) {
+              // **전부 자동이면 키를 지운다** — 부재가 곧 자동이고, 빈 목록을 남기면 저장
+              // 왕복에 없던 키가 생긴다(019 가 수 하나에 대해 지킨 그 규율이다).
+              if (node.ortho_split === undefined) return node;
+              const { ortho_split: _dropped, ...rest } = node;
+              void _dropped;
+              return rest;
+            }
+            return { ...node, ortho_split: next };
+          }),
+        );
+        return;
+      }
+      case 'rotate': {
+        // **각도는 매 프레임 잡은 값 셋에서 다시 계산한다**(누적하지 않는다) — 프레임을
+        // 건너뛰어도 결과가 같은 근거이며, 8핸들이 "잡을 때의 기하로 다시 잡는다" 로 쓴
+        // 그 규율과 같다.
+        //
+        // 각도는 **화면 px 공간**에서 잰다. 투영이 각도를 보존하므로(가정 A1) 캔버스
+        // 단위로 재도 같은 수가 나오지만, 축이 이미 px 이라 그 자리에서 재는 것이 환산
+        // 하나를 덜 지난다.
+        const now = angleOfDeg(drag.pivot, point);
+        const raw = drag.baseDeg + (now - drag.grabDeg);
+        // Shift 는 **15° 눈금**이다. 격자 붙임과 다른 축이므로 `gridStep` 을 보지 않는다 —
+        // 격자는 자리의 양자이고 이것은 각도의 양자다.
+        const deg = pending.shift
+          ? Math.round(raw / ROTATION_SNAP_DEGREES) * ROTATION_SNAP_DEGREES
+          : raw;
+        emit(patchRotationByKey(els, drag.nodeId, deg));
         return;
       }
       default: {
         // 유일하게 기하 통로를 지나지 않는 쓰기다. 델타가 px 인 것은 글자 크기가 **화면
         // 양**이기 때문이다 — 캔버스 단위로 재면 캔버스가 클수록 손이 더 가야 같은 크기가 된다.
-        emit(patchNodeFontSize(els, drag.nodeId, resizeFontSize(drag.fontSize, px)));
+        emit(patchFontSizeByKey(els, drag.nodeId, resizeFontSize(drag.fontSize, px)));
       }
     }
   }, []);
@@ -1031,6 +2041,13 @@ export default function CanvasEditOverlay({
   // 보게 된다. `null` 은 상수라 이미 비어 있으면 React 가 재렌더를 건너뛴다.
   useEffect(() => setGroupRefusal(null), [selection]);
 
+  // 도구가 바뀌면 앵커 거절 안내를 거둔다(SPEC-CANVAS-011 REQ-02'-d).
+  //
+  // 위 묶기 거절과 **같은 규율**이고 매달리는 것만 다르다: 묶기 안내는 그 **선택**에 대한
+  // 말이고, 앵커 안내는 그 **도구**에 대한 말이다("이 도구로는 선·문구에 놓을 수 없다").
+  // 도구를 끈 뒤에도 남아 있으면 지금 하는 일을 두고 하는 말로 읽힌다.
+  useEffect(() => setAnchorRefusal(null), [tool]);
+
   // 언마운트 정리 — 예약된 합류 프레임을 남기지 않는다.
   useEffect(
     () => () => {
@@ -1038,21 +2055,437 @@ export default function CanvasEditOverlay({
       frameRef.current = null;
       dragRef.current = null;
       pendingRef.current = null;
+      trailRef.current = [];
     },
     [],
   );
 
+  /**
+   * 잇는 몸짓을 **끝낸다** — 놓은 자리가 앵커면 참조로, 아니면 자유 끝점으로 (REQ-03).
+   *
+   * ## 만드는 일은 여기서 하지 않는다
+   *
+   * `appendConnector` 한 함수가 id 를 발급하고 씨앗 스타일을 심는다
+   * (`canvasElementFactory` — §연결선). 이 층이 제 손으로 객체를 지으면 그 조립이 곧
+   * 갈라질 수 있는 두 번째 지점이 되고, 무엇보다 **씨앗 스타일을 빠뜨리기 쉽다**: 스타일이
+   * 없는 연결선은 배열에 있는데 화면에는 없다(`paintStroke` 는 색과 양수 두께가 둘 다
+   * 있을 때만 칠한다). 001 이 그 결함을 한 번 배달했고, 그때 고친 자리가 그 모듈이다.
+   *
+   * ## 같은 앵커에서 놓으면 **아무것도 만들지 않는다**
+   *
+   * 길이 0 인 선은 그려도 보이지 않고(두 끝이 같은 점이다) 잉크가 없어 잡기도 어렵다 —
+   * 배열에만 있고 화면에는 없는 노드는 011 이 REQ-08 에서 "가장 나쁜 실패" 로 이름 적은
+   * 그 형상이다. 그렇다고 안내를 띄우지도 않는다: 누른 자리에서 그대로 뗀 것은 **몸짓을
+   * 그만둔 것**이지 거절당한 것이 아니며, 그 뜻은 마키가 움직임 없이 끝날 때와 같다.
+   *
+   * 같은 **요소**의 다른 앵커는 막지 않는다 — 한 상자의 `nw` 와 `se` 를 이으면 대각선
+   * 하나가 그어지고, 그것은 사용자가 실제로 볼 수 있는 선이다.
+   *
+   * ## 놓은 것이 곧 **골라진다** (AC-59)
+   *
+   * 팔레트 · 카탈로그 · 가져오기 · 서랍이 이미 지킨 규율이다 — 방금 놓은 것에 다음 몸짓이
+   * 곧바로 걸려야 한다. 연결선의 선택 키는 최상위 노드이므로 **평평하다**(009 의 선택
+   * 모델은 한 글자도 바뀌지 않는다 — AC-66).
+   */
+  const finishConnectorDraw = (draw: ConnectorDraw, at: PxPoint): void => {
+    setConnectorDraw(null);
+    // 궤적은 **이 몸짓의 것**이므로 여기서 거둔다 — 아래 어느 갈래로 빠지든(같은 앵커에서
+    // 놓아 아무것도 만들지 않는 갈래까지) 다음 몸짓에 넘어가지 않는다.
+    const trail = trailRef.current;
+    trailRef.current = [];
+    const landed = anchorHitAt(anchorHosts, at, projection, textWidths, ANCHOR_PICK_SLOP_PX);
+    if (landed?.ref.el === draw.from.el && landed?.ref.a === draw.from.a) return;
+    // **앵커가 아니면 아무것도 만들지 않는다**(SPEC-CANVAS-016 REQ-01).
+    //
+    // 011 은 여기서 자유 끝을 지어 "아직 어디에도 붙이지 않은 선" 을 표현했는데, 그
+    // 표현이 실제로 낳은 것은 **도형에서 떨어져 허공에 꽂힌 선**이다. 도형을 옮기면 그
+    // 선은 따라오지 않고 옛 자리에 남는다 — 011 이 붙은 끝을 참조로 둔 바로 그 이유가
+    // 자유 끝에서는 지켜지지 않는다.
+    //
+    // 안내를 띄우지 않는 것은 바로 위 갈래와 **같은 이유**다: 빈 곳에서 뗀 것은 몸짓을
+    // 그만둔 것이지 거절당한 것이 아니다.
+    if (landed === undefined) return;
+    // 참조든 자유 끝점이든 **캔버스 단위**다 — `anchorHitAt` 이 가리키는 자리도,
+    // `unprojectPoint` 가 내는 점도 그 공간에 있으므로 한 자료형 안에 두 공간이 섞이지
+    // 않는다(`connectorTypes` §중간점이 절대 좌표인 이유와 같은 규율).
+    //
+    // 정수로 죄는 일은 **만드는 모듈**이 한다(`freeConnectorEnd`). 이 층이 제 손으로
+    // 반올림하면 파서의 규칙과 두 벌이 되고, 갈리는 날 저장 왕복에 끝점이 옮겨 앉는다.
+    // 놓은 자리를 **캔버스 단위로 한 번만** 낸다. 앵커 위면 집는 함수가 이미 잰 그 자리이고
+    // (`AnchorHit.at`), 아니면 포인터를 되돌린 자리다. 끝을 짓는 쪽과 궤적을 다듬는 쪽이
+    // 저마다 셈하면 "선이 끝나는 자리" 가 두 벌이 된다.
+    // 위에서 걸렀으므로 여기 오는 것은 **언제나 앵커 위**다(K1).
+    const landedAt = landed.at;
+    const to = landed.ref;
+    // 자유선만 궤적을 싣는다(M11 — `ROUTE_TRACES_TRAIL`). 나머지 셋은 궤적을 쌓은 적이
+    // 없으므로 빈 목록이 지나가고, 그때 `points` 키는 아예 서지 않는다(`appendConnector`).
+    //
+    // **줄이는 일은 여기서 하지 않는다.** 허용 오차도 상한도 그 모듈의 것이며, 이 층이
+    // 제 손으로 오차를 고르면 "어느 화면에서 그었느냐" 가 config 에 남는다. 두 끝을
+    // 넘기는 것은 끝점에 겹치는 표본을 걷어내기 위함이다(그 함수의 §끝점과 겹치는 앞뒤 표본).
+    const { next, created } = appendConnector(
+      elements,
+      draw.from,
+      to,
+      draw.route,
+      freehandPoints(trail, unprojectPoint(draw.origin, projection), landedAt),
+    );
+    onElementsChange(next);
+    setSelection(new Set([created.id]));
+  };
+
+  /**
+   * 앵커 도구가 켜진 채로 온 **두 번째 누름** 하나를 처리한다 (REQ-02' · REQ-02'-c · AC-24).
+   *
+   * **판정을 여기서 다시 짓지 않는다.** 더하기인지 빼기인지 거절인지는 `anchorGestureAt`
+   * 하나가 정하고(`connector/anchors.ts`), 이 층은 그 답을 배열에 옮길 뿐이다 —
+   * `applyGroup` 이 `groupNodes` 에 대해 지키는 그 규율이다. 둘이 되면 "단추는 눌렸는데
+   * 아무 일도 없다" 와 "안내는 떴는데 실제로는 놓였다" 가 함께 가능해진다.
+   *
+   * 앵커 자리도 **여기서 다시 셈하지 않는다** — 화면에 점을 찍은 `anchorPoints` 와 같은
+   * 함수를 부른다. 두 벌이 되면 보이는 점과 집히는 점이 갈리고, 그 어긋남은 화면에서만
+   * 드러난다(위험 R1).
+   *
+   * 선택을 건드리지 않는 것에도 뜻이 있다. 첫 누름이 이미 그 요소(부품이면 그 그룹)를
+   * 골라 두었고, 앵커를 놓는 일은 고른 것을 바꾸는 일이 아니다.
+   */
+  const applyAnchorGesture = (nodeId: string, at: PxPoint): void => {
+    const node = elements.find((el) => el.id === nodeId);
+    if (node === undefined) return;
+    // 연결선 위에서는 아무 일도 없다 — 앵커를 낼 상자가 없으므로 위 `anchorHosts` 에도
+    // 점이 찍히지 않았다(M4). 거절 안내를 띄우지 않는 것에 뜻이 있다: `notBoxed` 는
+    // "상자형이 아니어서 못 놓는다" 는 **도형**에 대한 사유이고, 선 위의 누름은 애초에
+    // 놓을 대상을 고른 적이 없다.
+    if (isConnector(node)) return;
+
+    const gesture = anchorGestureAt(
+      node,
+      anchorPoints(node, projection, textWidths),
+      at,
+      projection,
+      ANCHOR_PICK_SLOP_PX,
+    );
+    if (gesture.kind === 'refuse') {
+      setAnchorRefusal(gesture.reason);
+      return;
+    }
+    setAnchorRefusal(null);
+
+    const next =
+      gesture.kind === 'remove'
+        ? removeAnchor(node, gesture.id)
+        : addAnchorAt(node, gesture.at, nextAnchorId(node));
+    // 순수 함수 둘은 할 일이 없으면 **받은 노드를 그대로** 돌려준다. 그때 배열을 새로
+    // 흘리면 값이 한 자리도 달라지지 않은 채 패널이 다시 그려진다(AC-E4 의 규율).
+    if (next === node) return;
+    onElementsChange(elements.map((el) => (el === node ? next : el)));
+  };
+
+  /**
+   * 이번 누름이 **같은 자리를 두 번째로** 누른 것인가 — 그리고 그 사실을 장부에 적는다.
+   *
+   * **판정을 부르는 자리가 여기 하나다**(AC-28 · AC-72). 누름은 두 문으로 들어온다:
+   * 루트의 몸통 누름(아래 `handlePointerDown`)과 연결선 손잡이의 누름
+   * (`startConnectorHandleDrag` — 손잡이는 진짜 단추라 이벤트를 제가 먹는다). 둘이 저마다
+   * `isSecondPress` 를 부르면 판정은 여전히 한 함수이지만 **장부를 적는 자리가 둘**이 되고,
+   * 그때 한쪽만 고쳐지는 날 "선 위에서는 되는데 점 위에서는 가끔 안 된다" 가 시작된다 —
+   * AC-28 이 막는 형상이 그것이다. 그래서 묻는 일과 적는 일을 한 함수에 묶는다.
+   *
+   * 키는 **겨눈 것**이다(M9 가 세운 그 규율). 두 문이 같은 연결선을 겨누면 같은 키를 적으므로,
+   * 첫 누름이 잉크에 닿고 둘째 누름이 손잡이에 닿아도 짝이 유지된다 — 손잡이는 중간점 위에
+   * 서 있고 연타 오차(5px)는 손잡이보다 좁으므로 실제로 일어나는 일이다.
+   */
+  const pressedTwice = (at: PxPoint, key: string, now: number): boolean => {
+    const second = isSecondPress(lastPressRef.current, now, at, key);
+    lastPressRef.current = { at: now, point: at, key };
+    return second;
+  };
+
+  /**
+   * 선 위의 **두 번째 누름** 하나를 처리한다 — 점을 끼워 넣거나 뺀다 (REQ-05 · M10).
+   *
+   * **판정을 여기서 다시 짓지 않는다.** 더하기인지 빼기인지, 더한다면 목록의 어느 자리인지는
+   * `connectorPointGestureAt` 하나가 정하고(`connector/connectorEdit.ts`), 이 층은 그 답을
+   * 배열에 옮길 뿐이다 — `applyAnchorGesture` 가 앵커에 대해 지키는 그 규율이다.
+   *
+   * 선의 자리도 **여기서 다시 풀지 않는다** — 그리는 쪽·잡는 쪽·손잡이가 지나는 그
+   * `resolveConnector` 를 부른다(AC-45). 끊긴 연결이면 목록이 부재이고, 그 부재는 그대로
+   * 넘어가 아무 뜻도 없는 누름이 된다(REQ-08 — 예외가 아니다).
+   *
+   * 선택을 건드리지 않는 것에도 뜻이 있다. 첫 누름이 이미 그 연결선을 골라 두었고(REQ-05 의
+   * "선택된 연결선" 이 그렇게 성립한다), 점을 찍는 일은 고른 것을 바꾸는 일이 아니다.
+   */
+  /**
+   * 고친 연결선을 배열에 옮긴다 — **두 문이 같은 한 줄을 지난다**(잉크 갈래와 손잡이 갈래).
+   *
+   * 순수 함수들은 할 일이 없으면 **받은 것을 그대로** 돌려준다. 그때 배열을 새로 흘리면 값이
+   * 한 자리도 달라지지 않은 채 패널이 다시 그려지므로(AC-E4 의 규율), 그 판정도 여기 한
+   * 줄에 둔다 — 두 문에 나눠 적으면 한쪽만 빠지는 날 그 헛된 렌더가 조용히 돌아온다.
+   */
+  const commitConnector = (connector: ConnectorElement, next: ConnectorElement): void => {
+    if (next === connector) return;
+    onElementsChange(elements.map((el) => (el === connector ? next : el)));
+  };
+
+  const applyConnectorPointGesture = (connector: ConnectorElement, at: PxPoint): void => {
+    const gesture = connectorPointGestureAt(
+      resolveConnector(connector, elements, projection, textWidths),
+      connector.route,
+      at,
+      projection,
+      ANCHOR_PICK_SLOP_PX,
+      // **그리는 쪽과 같은 장애물 목록이다**(017 REQ-04 · K4). 다르면 선 위를 눌렀는데
+      // 다른 조각이 답하고, 점이 엉뚱한 자리에 끼워진다.
+      connectorObstacles(connector, elements, projection, textWidths),
+    );
+    if (gesture === undefined) return;
+    commitConnector(
+      connector,
+      gesture.kind === 'remove'
+        ? removePointAt(connector, gesture.index)
+        : insertPointAt(connector, gesture.index, gesture.at),
+    );
+  };
+
+  /**
+   * **팬 한 벌** — 시작 · 이동 · 끝. 셋을 한자리에 모아 두는 것은 팬이 이 층에서 가장 늦게
+   * 들어온 몸짓이라, 흩어 두면 다음 사람이 세 갈래를 각각 찾아 읽어야 하기 때문이다.
+   *
+   * 옮기는 값은 **화면 px 그대로**다. 작업 영역은 잰 상자 그 자체라 축척이 1 이므로
+   * (`canvasWorkspace` 불변식 I22), 손이 100px 가면 그림도 100px 간다 — 환산할 것이 없고,
+   * 환산을 넣으면 그것이 곧 두 번째 투영이다.
+   */
+  const beginPan = (
+    event: React.PointerEvent<HTMLDivElement>,
+    clearsSelectionOnClick: boolean,
+  ): void => {
+    panRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      // **잡는 순간의 값에서만 잰다**(`handleDragState` §머리말과 같은 규율). 매 이동마다
+      // 직전 팬에 더하면 죔에 걸린 동안의 손짓이 사라져, 되돌아올 때 손과 그림이 갈린다.
+      base: workspacePan,
+      clearsSelectionOnClick,
+    };
+    setPanning(true);
+    // 포인터가 상자를 벗어나도 이벤트가 계속 오게 한다. jsdom 에는 없는 API 다.
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  /**
+   * 끌린 만큼 팬을 옮긴다 — **죄고 나서 넘긴다**(`clampWorkspacePan`).
+   *
+   * 죄지 않고 날값을 쌓으면 범위를 넘어간 만큼이 보이지 않는 빚으로 남아, 손을 되돌려도
+   * 그 빚을 다 갚기 전까지 그림이 꿈쩍하지 않는다(`previewPan` 이 같은 이유로 이동에서
+   * 죈다). 상한을 재는 상자는 **작업 영역**이며 그것은 표면이 지어 내려준 값이다.
+   */
+  const movePan = (clientX: number, clientY: number): void => {
+    const pan = panRef.current;
+    if (pan === null) return;
+    setWorkspacePan(
+      clampWorkspacePan(
+        { x: pan.base.x + (clientX - pan.startX), y: pan.base.y + (clientY - pan.startY) },
+        workspaceSize,
+      ),
+    );
+  };
+
+  /**
+   * 이 뗌이 **끌기가 아니라 클릭**이었는가 (SPEC-CANVAS-011).
+   *
+   * 재는 것은 **누른 자리와 뗀 자리**이지 지나온 길이 아니다 — 브라우저가 클릭을 그렇게
+   * 정의하고(누름과 뗌이 같은 자리), 길을 기억하면 몸짓 내내 들고 다닐 상태가 하나 는다.
+   *
+   * 여유는 이 파일이 이미 "손 떨림" 으로 인정해 둔 그 값이다(`DOUBLE_PRESS_SLOP_PX`).
+   * 새 수를 세우면 "클릭으로 치는 떨림" 이 이 파일 안에서 두 벌이 된다.
+   */
+  const panWasClick = (
+    pan: { startX: number; startY: number },
+    clientX: number,
+    clientY: number,
+  ): boolean =>
+    Math.abs(clientX - pan.startX) <= DOUBLE_PRESS_SLOP_PX &&
+    Math.abs(clientY - pan.startY) <= DOUBLE_PRESS_SLOP_PX;
+
+  /**
+   * 팬을 끝낸다. **팬 값은 건드리지 않는다** — 마지막 이동이 이미 확정했고, 되돌리면
+   * 사용자가 옮겨 놓은 시야가 뗌과 함께 사라진다(마키 · 이동 드래그가 같은 문장을 쓴다).
+   */
+  const finishPan = (host: HTMLDivElement, pointerId: number): void => {
+    releaseCapture(host, pointerId);
+    panRef.current = null;
+    setPanning(false);
+  };
+
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+    // **차림표 밖을 누르면 닫힌다**(SPEC-CANVAS-021 REQ-03). 차림표 안쪽의 누름은 제
+    // 뿌리에서 `stopPropagation` 하므로 여기까지 오지 않는다 — "밖" 의 정의를 좌표로 다시
+    // 짓지 않는 것이 요점이다. 좌표로 지으면 차림표가 커지거나 자리를 옮길 때마다 그 셈이
+    // 낡고, 낡은 채로도 아무도 울지 않는다.
+    //
+    // 닫기만 하고 **이벤트는 소비하지 않는다.** 소비하면 차림표를 닫는 누름이 고르기도
+    // 함께 먹어, 다른 것을 고르려면 두 번 눌러야 한다.
+    if (pointMenu !== undefined) setPointMenu(undefined);
+
     if (!enabled) return;
     const host = event.currentTarget;
+
+    // **Space 를 짚은 누름은 팬이다 — 어느 갈래보다 먼저다**(사용자 신고 2026-09-16).
+    //
+    // 맨 앞인 것이 이 몸짓의 뜻 전부다. Space 가 구분자인 이유는 아래 세 갈래가 이미
+    // 맨손 누름을 **남김없이** 나눠 가졌기 때문이다: 앵커 위면 잇기, 잉크 위면 고르기·이동,
+    // 빈 자리면 팬(SPEC-CANVAS-011 — 010 의 영역 선택이 있던 자리다). 뒤에 서면 팬은
+    // "아무도 안 가져간 자리" 에서만 도는데 그런 자리가 없으므로, 뒤에 선 팬은 **없는 팬**이다.
+    //
+    // **빈 자리가 팬이 된 뒤에도 이 갈래는 남는다**(SPEC-CANVAS-011). 아래 갈래는 빈
+    // 자리에서만 팬이고, 이 갈래는 **도형 위에서도** 팬이다 — 그것이 도해 도구가 Space 에
+    // 맡겨 온 뜻이고, 캔버스를 도형으로 채운 사람에게는 유일하게 남는 길이다.
+    //
+    // 그래서 짚은 동안에는 도형도 손잡이도 잡히지 않는다 — 그것이 잃는 것이 아니라,
+    // 도형 위에서도 화면을 옮길 수 있다는 뜻이다(도해 도구의 그 관용 그대로).
+    //
+    // 주 버튼만 받는다. 오른쪽은 상황 메뉴의 것이고 가운데 버튼은 여기까지 오지도 않는다
+    // (`previewPan` 이 캡처 단계에서 끊는다) — 아래 빈 자리 갈래가 세운 그 규칙과 같다.
+    if (spaceHeld && event.button === PRIMARY_BUTTON) {
+      event.preventDefault();
+      event.stopPropagation();
+      // 히트 갈래와 같은 이유다 — 위 `preventDefault` 가 브라우저의 기본 초점 이동을
+      // 막으므로, 이 한 줄이 없으면 Space 를 뗀 뒤 키가 이 층에 닿지 않는다(T15).
+      host.focus();
+      // **짚은 팬은 선택을 비우지 않는다** — 움직이지 않고 끝나도 그렇다. Space 를 짚는
+      // 일 자체가 "지금부터 화면을 옮긴다" 는 선언이라, 그 몸짓에는 "빈 자리를 눌러
+      // 선택을 푼다" 는 뜻이 애초에 없었다(010 도 이 갈래에서는 비우지 않았다).
+      beginPan(event, false);
+      return;
+    }
+
     const frame = pointerFrameOf(host.getBoundingClientRect(), stage);
     const point = stagePoint(event.clientX, event.clientY, frame);
 
-    // Shift·Ctrl·Cmd 는 **고르기 전용** 조작이다(`PanelDragLayer` 와 같은 규칙). 히트가
-    // 있을 때의 뜻("이것을 선택에 더하거나 뺀다")과 빈 지점에서의 뜻("사각형으로 감싼
-    // 것들을 선택에 더한다")은 **같은 한 낱말**이다 — 둘 다 "더한다" 이고, 어느 쪽도
-    // 배치를 건드리지 않는다.
-    const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+    // **한 낱말이 세 물음에 답하던 자리다**(SPEC-CANVAS-011 — 빈 자리 몸짓 뒤집기).
+    //
+    // 010 까지 Shift·Ctrl·Cmd 는 이 함수 어디서나 한 낱말이었다("더한다"). 그래서 한 줄
+    // (`additive`)이 세 갈래로 그대로 흘러갔고, 그것이 옳았다 — 뜻이 하나였으므로.
+    //
+    // 011 에서 **빈 자리에서만** 뜻이 갈린다: Ctrl/Cmd 는 사각형을 세우되 **갈아 끼우고**,
+    // Shift 는 종전대로 **더하며**, 맨손은 팬이다. 잉크 위에서는 셋이 여전히 한 낱말이다
+    // ("이것을 선택에 더하거나 뺀다"). 한 이름이 두 뜻을 겸하는 순간 읽는 사람은 그
+    // 이름이 **어느 물음에 답하는지**를 호출 자리마다 되짚어야 하고, 그 되짚음은 언젠가
+    // 반드시 한 번 틀린다 — 그때 갈리는 것은 화면이지 이 줄이 아니다.
+    //
+    // 그래서 조작키를 **읽는 일**만 여기 한 번 두고(아래 둘), **답은 자리마다 따로 짓는다**.
+    // 세 이름은 각각 제가 무엇을 정하는지를 이름으로 말한다.
+    const shiftHeld = event.shiftKey;
+    const ctrlOrMetaHeld = event.ctrlKey || event.metaKey;
+
+    /** 빈 자리 주 버튼 누름이 **무엇을 시작하는가**. 세 값이 맨손·Ctrl/Cmd·Shift 와 일대일이다. */
+    const emptyPressStarts: 'pan' | 'replacingMarquee' | 'addingMarquee' = shiftHeld
+      ? 'addingMarquee'
+      : ctrlOrMetaHeld
+        ? 'replacingMarquee'
+        : 'pan';
+
+    /**
+     * 빈 자리 **보조 버튼** 누름이 지금 선택을 비우는가.
+     *
+     * 조작키를 짚었으면 지킨다 — 010 과 한 글자도 다르지 않다. 그 누름은 사각형을 세우지
+     * 않으므로(주 버튼이 아니다) **갈아 끼울 것이 없고**, 따라서 Ctrl 의 새 뜻이 여기에
+     * 닿지 않는다. 짚은 손이 말하는 것은 그대로 "내 선택을 건드리지 마라" 다.
+     */
+    const secondaryPressClearsSelection = !shiftHeld && !ctrlOrMetaHeld;
+
+    /** 잉크 위 누름이 겨눈 것을 선택에 **더하거나 빼는가**(004 부터의 그 뜻 그대로다). */
+    const pressTogglesSelection = shiftHeld || ctrlOrMetaHeld;
+
+    // **연결선 도구가 켜져 있고 누른 자리가 앵커면 잇기가 시작된다**(REQ-03 · AC-57).
+    //
+    // 히트 테스트 **앞**에 선다. 앵커는 상자의 모서리·변 가운데·중심이라 잉크 위일 수도
+    // 아닐 수도 있고(속을 채우지 않은 사각형의 모서리가 그렇다), 히트에 기대면 같은 점이
+    // 도형에 따라 집히기도 하고 안 집히기도 한다. 집는 자는 `anchorHitAt` 하나이며 그것은
+    // 화면에 점을 찍은 **그 지도**를 본다(위험 R1).
+    //
+    // ## 앵커가 아닌 누름은 **종전의 뜻 그대로** 지나간다
+    //
+    // 도구가 켜져 있어도 도형 몸통을 누르면 고르기·이동이고, 빈 자리를 맨손으로 누르면
+    // 팬 · 조작키를 짚고 누르면 마키다(SPEC-CANVAS-011 — 011 전에는 빈 자리가 늘 마키였다).
+    // M3'b 가 앵커 도구에 대해 정한 그 형상이다 — 도구는 **한 몸짓의 뜻**만 갈아 끼우고
+    // 나머지는 건드리지 않는다. 막아 두면 잇는 동안에는 도형을 옮길 수도 골라 볼 수도
+    // 없어, 사용자가 잇기 전후로 도구를 계속 껐다 켜게 된다.
+    //
+    // 주 버튼이 아닌 누름은 여기 오지 않는다 — 아래 빈 자리 갈래가 그것을 종전대로
+    // 흘려보내듯, 잇기도 상황 메뉴를 가로채지 않는다.
+    // **도형 모드가 잇기보다 앞에 선다**(SPEC-CANVAS-022 REQ-02).
+    //
+    // 앞이어야 하는 이유는 겹치는 자리에 있다: 앵커 위를 누르면 아래 잇기 갈래가 그것을
+    // 집는데, 도형은 **무엇에도 매이지 않으므로**(REQ-02) 그 자리를 그냥 꼭짓점으로 써야
+    // 한다. 뒤에 두면 앵커 곁을 지나는 윤곽이 그릴 때마다 선을 하나 낳는다.
+    //
+    // **모드가 꺼져 있으면 이 갈래는 통째로 지나간다**(K4) — 011 이래의 누름 처리가 한
+    // 글자도 바뀌지 않는다.
+    if (drawingShape && shapeRoute !== null && event.button === PRIMARY_BUTTON) {
+      event.preventDefault();
+      event.stopPropagation();
+      host.focus();
+      const at = unprojectPoint(point, projection);
+      const vertices = shapeDraft?.vertices ?? [];
+      const first = vertices[0];
+      // **시작점을 다시 누르면 닫는다**(REQ-03). 집는 오차는 앵커의 그것을 그대로 쓴다 —
+      // 새 상수를 세우면 "얼마나 가까워야 닫히는가" 가 두 벌이 된다.
+      const closing =
+        first !== undefined &&
+        vertices.length >= SHAPE_MIN_VERTICES &&
+        Math.hypot(projectPoint(first, projection).x - point.x, projectPoint(first, projection).y - point.y) <=
+          ANCHOR_PICK_SLOP_PX;
+      if (closing) {
+        const draft = shapeDraftOf(vertices, shapeRoute, projection.canvas);
+        if (draft !== undefined) {
+          const { next, created } = appendDrawnPath(elements, draft.geometry, draft.path);
+          onElementsChange(next);
+          // 팔레트·카탈로그가 지키는 그 세 줄 — 놓은 것이 맨 위에 오고, 놓자마자 골라져
+          // 다음 몸짓이 곧 배치 드래그가 된다.
+          setSelection(new Set([created.id]));
+        }
+        setShapeDraft(undefined);
+        return;
+      }
+      setShapeDraft({ vertices: [...vertices, at], at: point });
+      return;
+    }
+
+    // **위에서 한 번 읽은 그 값이다**(`shapeRoute`). 표를 여기서 다시 조회하면 "펜이 뜨는
+    // 조건" 과 "누름이 읽는 표" 를 셋으로 묶어 둔 011 의 가드가 한 자리 헐거워진다 —
+    // 같은 값에 이름이 둘 붙는 것은 갈라질 자리를 하나 더 만드는 일이다.
+    const drawRoute = shapeRoute;
+    if (drawRoute !== null && event.button === PRIMARY_BUTTON) {
+      const from = anchorHitAt(anchorHosts, point, projection, textWidths, ANCHOR_PICK_SLOP_PX);
+      if (from !== undefined) {
+        event.preventDefault();
+        event.stopPropagation();
+        // 히트 갈래와 같은 이유다 — `preventDefault` 가 브라우저의 기본 초점 이동을
+        // 막으므로, 이 한 줄이 없으면 그은 뒤 방향키가 이 층에 닿지 않는다(T15).
+        host.focus();
+        // **연타 사슬을 끊는다.** 끊지 않으면 앵커 위에서 연달아 그은 두 몸짓의 둘째 누름이
+        // 첫째와 짝을 지어 더블클릭으로 읽힌다 — 앵커 갈래가 같은 한 줄을 같은 이유로 쓴다.
+        lastPressRef.current = null;
+        // **궤적을 비우고 시작한다**(M11). 취소·언마운트가 이미 비우지만, 시작하는 쪽이
+        // 제 전제를 스스로 세우지 않으면 "어떤 경로로 들어왔느냐" 에 따라 첫 점이 달라진다.
+        trailRef.current = [];
+        setConnectorDraw({
+          pointerId: event.pointerId,
+          frame,
+          from: from.ref,
+          // 미리보기의 고정된 끝은 **점의 자리**이지 포인터가 내려앉은 자리가 아니다
+          // (`ConnectorDraw.origin` 주석). 그 자리는 집는 함수가 **이미 잰 값**을 그대로
+          // 투영한 것이라 상자를 다시 재지 않는다(AC-33 · `AnchorHit`).
+          origin: projectPoint(from.at, projection),
+          point,
+          route: drawRoute,
+        });
+        host.setPointerCapture?.(event.pointerId);
+        return;
+      }
+    }
 
     const hit = hitTest(elements, point, projection, textWidths);
     if (hit === undefined) {
@@ -1061,7 +2494,7 @@ export default function CanvasEditOverlay({
       // (`previewPan` 이 캡처 단계에서 끊는다). 여기서 소비하면 캔버스 위에서만
       // 상황 메뉴가 사라지는 화면이 된다.
       if (event.button !== PRIMARY_BUTTON) {
-        if (!additive && selection.size > 0) setSelection(EMPTY_SELECTION);
+        if (secondaryPressClearsSelection && selection.size > 0) setSelection(EMPTY_SELECTION);
         return;
       }
 
@@ -1075,27 +2508,48 @@ export default function CanvasEditOverlay({
       // 누름을 소비하면 팬은 **시작조차 하지 않는다**. 새 약속이 아니라 그 파일이 이미
       // 적어 둔 규칙("아무도 가져가지 않은 몸짓만 받는다")을 그대로 읽은 것이다.
       //
-      // 그 대가로 **캔버스 안에서 주 버튼 끌기로 화면을 옮기는 길은 닫힌다.** 남는 길은
-      // 둘이며 둘 다 이미 서 있다: 가운데 버튼(그 파일의 명시적 우회로)과, 고른 것이
-      // 없을 때의 방향키(아래 `handleKeyDown` 이 흘려보내면 그 층이 받는다). 가운데
-      // 버튼이 없는 손도 빈 자리를 한 번 누르면 선택이 비고 초점이 이 탭 정거장에 앉으므로
-      // 곧바로 방향키를 쓸 수 있다. 캔버스 **밖**(게이지·차트·히트맵 미리보기)은 아무도
-      // 몸짓을 가져가지 않으므로 주 버튼 끌기가 종전 그대로 팬이다.
+      // 그 대가로 **캔버스 안에서 주 버튼 끌기로 화면을 옮기는 길은 닫힌다** — 고 010 이
+      // 적었고, **011 이 그 대가를 되돌린다**(아래 §맨손은 팬이다). 캔버스 **밖**
+      // (게이지·차트·히트맵 미리보기)은 아무도 몸짓을 가져가지 않으므로 주 버튼 끌기가
+      // 종전 그대로 `previewPan` 의 팬이다.
       event.preventDefault();
       event.stopPropagation();
       // 히트 때와 같은 이유다 — 바로 위 `preventDefault` 가 브라우저의 기본 초점 이동을
       // 막으므로, 이 한 줄이 없으면 방금 감싸 고른 것을 방향키로 옮길 수 없다(T15).
       host.focus();
 
-      // **맨손은 갈아 끼우고 modifier 는 더한다.** 그것이 게이트를 걷어낸 뒤 modifier 에
-      // 남은 뜻이며, 히트 경로의 `additive`("이것을 선택에 더하거나 뺀다")와 여전히 한
-      // 낱말이다. 맨손을 합집합으로 두면 modifier 는 아무것도 가르지 않는 장식이 된다.
+      // 빈 자리를 누르면 **연타 사슬이 끊긴다**(SPEC-CANVAS-009 0.3.0). 끊지 않으면 빈
+      // 곳을 거쳐 같은 부품을 다시 누른 것이 더블클릭으로 읽혀, 사용자가 한 번도 겹쳐
+      // 누르지 않았는데 그룹 안으로 들어간다. **세 뜻이 함께 쓰는 한 줄**이다 — 끊는
+      // 까닭이 "빈 자리를 지나왔다" 이지 "무엇이 시작되었다" 가 아니기 때문이다.
+      lastPressRef.current = null;
+
+      // **맨손 끌기는 팬이다**(SPEC-CANVAS-011 — 010 의 맨손 사각형이 있던 자리다).
       //
-      // 비우는 일을 **누르는 순간** 한다. 사각형이 고르는 일은 이동에서만 일어나므로,
-      // 여기서 비우지 않으면 "빈 자리를 눌러 선택을 푼다" 는 009 이전부터의 뜻이 움직이지
-      // 않은 몸짓에서 조용히 사라진다. 비운 그 값이 곧 합집합의 좌변이므로 규칙도 하나다.
-      const base = additive ? selection : EMPTY_SELECTION;
-      if (base !== selection) setSelection(base);
+      // 두 몸짓의 잦기가 자리를 정한다. 화면을 옮기는 일은 **늘** 하고 사각형으로 감싸는
+      // 일은 **가끔** 한다 — 그러니 맨손이 잦은 쪽을 맡고, 가끔 쓰는 쪽이 조작키를 짚는다.
+      // 010 은 그 반대였고, 그래서 사용자는 화면을 옮길 때마다 Space 를 찾아 짚어야 했다.
+      //
+      // **선택을 비우지 않고, 사각형도 세우지 않는다.** 하나라도 하면 팬이 제 일이 아닌
+      // 것을 하게 된다: 비우면 화면을 옮길 때마다 고른 것이 사라지고, 사각형을 세우면 손이
+      // 지나간 자리의 것들이 딸려 온다. "빈 자리를 눌러 선택을 푼다" 는 뜻은 사라지지 않고
+      // **뗌으로 옮겨 간다** — 움직이지 않은 팬이 곧 클릭이며, 그 판정은 뗌이 한다
+      // (`clearsSelectionOnClick` · `panWasClick`).
+      if (emptyPressStarts === 'pan') {
+        beginPan(event, true);
+        return;
+      }
+
+      // **Ctrl/Cmd 는 갈아 끼우고 Shift 는 더한다**(SPEC-CANVAS-011). 010 에서 맨손이
+      // 맡던 "갈아 끼우기" 가 Ctrl/Cmd 로 옮겨 온 것이고, Shift 의 뜻은 009 부터 한 글자도
+      // 바뀌지 않았다. 둘이 같은 뜻이면 둘 중 하나는 아무것도 가르지 않는 장식이 된다.
+      //
+      // **누르는 순간에는 비우지 않는다**(010 과 갈리는 자리다). 010 이 누름에서 비운 것은
+      // 그 맨손 누름이 곧 "선택을 푸는" 몸짓이었기 때문인데, 그 뜻은 위 팬 갈래로 옮겨
+      // 갔다. 조작키를 짚은 누름은 "사각형을 세우겠다" 는 선언일 뿐이므로, 움직이지 않고
+      // 끝난 Ctrl 누름이 선택을 쓸어버릴 까닭이 없다 — Shift 누름이 010 에서도 그랬다.
+      // 갈아 끼우기는 **이동에서** 일어난다: 좌변이 빈 선택이므로 사각형이 덮은 것만 남는다.
+      const base = emptyPressStarts === 'addingMarquee' ? selection : EMPTY_SELECTION;
       setMarquee({ pointerId: event.pointerId, frame, origin: point, point, base });
       host.setPointerCapture?.(event.pointerId);
       return;
@@ -1110,25 +2564,136 @@ export default function CanvasEditOverlay({
     // 고른 사람과 키보드로 옮기려는 사람이 같은 사람이다(T15 · REQ-01).
     host.focus();
 
-    // 위 `additive` 로 갈린다 — 그 상태로 끌리면 무리에 넣으려다 배치가 흐트러진다.
-    const picked = nextSelection(selection, hit.nodeId, additive);
+    // **단일 클릭은 그룹, 더블클릭은 그 안**(SPEC-CANVAS-009 0.3.0 · REQ-01).
+    //
+    // 히트 테스트는 004 부터 `{ nodeId, partId }` 를 돌려주고 있었고, 무엇을 고를지는
+    // `pressTargetKey` 한 함수가 정한다. 최상위 요소에서는 `frameKey` 가 `nodeId` 를
+    // **그대로** 돌려주므로 그 경로는 004 와 바이트 동일하다(불변식 G11 · AC-06).
+    //
+    // 판정에 쓸 직전 누름은 **대상 키까지** 함께 본다. 그래서 서로 다른 두 부품을 빠르게
+    // 연달아 누르는 것은 더블클릭이 아니다 — 그때 사용자가 한 일은 "이것, 그리고 저것"
+    // 이지 "이 안으로" 가 아니다.
+    // **앵커 도구가 켜진 동안 앵커가 잉크를 이긴다**(SPEC-CANVAS-011 M9).
+    //
+    // M8 이 붙들어 둔 사실이 이 자리의 결함이었다: 연결선의 끝은 **정확히 그 앵커 자리**
+    // 이므로 그 점을 누르면 히트가 잉크라고 답하고(REQ-07-b · 배열 뒤가 곧 위다), 대상이
+    // 연결선이면 앵커 갈래가 아무 일도 하지 않는다 — 선이 걸린 앵커는 앵커 도구로 뺄 수
+    // 없었다. 도구가 있는데 닿지 못하는 자리가 있는 것이 그 자체로 결함이다.
+    //
+    // 고치는 근거는 M3'b 가 이미 세웠다: 몸짓의 뜻을 가르는 것은 **대상이 아니라 도구**다
+    // ("앵커 도구가 켜진 동안 더블클릭은 언제나 앵커다 — 그룹 부품 위에서도"). 앵커에 무엇이
+    // 붙어 있다는 이유로 그 앵커에 닿지 못하는 것은 그 규칙의 구멍이다.
+    //
+    // **도구에 매인 우선순위다.** 그리기 순서는 한 글자도 바뀌지 않고(배열 순서가 여전히
+    // 유일한 z-order), 도구가 꺼져 있거나 고르기 도구일 때의 평범한 고르기에서는 잉크가
+    // 종전대로 이긴다 — 연결선을 눌러 고르는 길이 막히면 M9 의 손잡이 자체가 설 수 없다.
+    const hitNode = elements.find((el) => el.id === hit.nodeId);
+    const overAnchor =
+      TOOL_ANCHOR_GESTURE[tool] && hitNode !== undefined && isConnector(hitNode)
+        ? anchorHitAt(anchorHosts, point, projection, textWidths, ANCHOR_PICK_SLOP_PX)
+        : undefined;
+
+    /** 이 누름이 **겨누는** 것. 앵커가 이겼으면 그 앵커를 든 요소다. */
+    const gestureNodeId = overAnchor?.ref.el ?? hit.nodeId;
+
+    // **연타 짝짓기에 쓰는 키는 겨눈 것의 키다** — 히트의 키가 아니다.
+    //
+    // 두 누름이 같은 몸짓으로 읽히려면 첫 누름이 적은 키를 둘째 누름이 **다시 적어야**
+    // 한다. 잉크를 기준으로 적으면 그 조건이 잉크의 경계에서 깨진다: 같은 앵커를 겨눈 두
+    // 누름이라도 하나는 선 위(연결선 키)이고 하나는 그 곁(요소 키)일 수 있고 — 집는 오차
+    // 9px 은 연타 오차 5px 보다 넓으므로 실제로 일어난다 — 그때 키가 갈려 둘째 누름이
+    // 짝을 잃는다. 사용자에게는 "더블클릭이 가끔 안 먹는다" 로만 보이는 그 부류다.
+    //
+    // 겨눈 것을 적으면 두 누름 모두 그 요소를 적으므로 짝이 유지된다. 반대로 정말 다른
+    // 것을 겨눈 두 누름(선 위의 아무 곳 · 그 곁의 앵커)은 키가 갈려 짝지어지지 않으며,
+    // 그것이 옳다 — 009 가 "서로 다른 두 부품을 빠르게 연달아 누르는 것은 더블클릭이
+    // 아니다" 로 세운 그 규칙과 같은 문장이다.
+    //
+    // 도구가 꺼져 있으면 `overAnchor` 가 언제나 부재이므로 이 줄은 `frameKey(hit…)` 로
+    // 떨어지고, 009 의 그룹 진입은 한 글자도 바뀌지 않는다(AC-26 · AC-27).
+    const hitKey =
+      overAnchor === undefined ? frameKey(hit.nodeId, hit.partId) : frameKey(gestureNodeId);
+    const second = pressedTwice(point, hitKey, event.timeStamp);
+
+    // **앵커 도구가 켜진 동안 두 번째 누름은 언제나 앵커다**(REQ-02' · AC-17 · AC-23).
+    //
+    // 판정은 바로 위 `second` 하나다 — 이 갈래는 그 값을 **읽을 뿐** 시각도 거리도 다시
+    // 재지 않는다(AC-28). 갈리는 것은 그 누름의 **뜻**이지 판정이 아니며, 그 뜻을 가르는
+    // 것은 대상이 아니라 **도구**다(`TOOL_ANCHOR_GESTURE`). 대상으로 가르면(도형이면
+    // 앵커 · 부품이면 진입) 같은 손짓이 무엇을 할지 눌러 봐야 알게 되고, 그것이 REQ-05-c
+    // 가 "두 몸짓은 섞이지 않는다" 로 막으려는 바로 그 상태다.
+    //
+    // 그래서 대상은 `hit.nodeId` 다: 부품 위였어도 앵커는 **그 그룹**에 선다(부품은 앵커를
+    // 내지 않는다 — A3). 도구가 꺼져 있으면 이 줄은 지나가고 009 의 그룹 진입이 한 글자도
+    // 바뀌지 않은 채 아래에서 돈다(AC-26 · AC-27).
+    if (second && TOOL_ANCHOR_GESTURE[tool]) {
+      // **몸짓을 먹었으면 연타 사슬을 끊는다**(빈 자리 누름이 쓰는 그 한 줄이다).
+      //
+      // 끊지 않으면 셋째 누름이 둘째와 다시 짝을 지어 방금 더한 앵커를 빼고, 넷째가 그것을
+      // 도로 더한다 — 손가락 네 번에 결과가 홀짝으로 갈린다. 009 의 그룹 진입이 이 사슬을
+      // 끊지 않고도 멀쩡했던 것은 진입이 **멱등**이기 때문이고(같은 부품으로 두 번 들어가면
+      // 같은 자리다), 더하기·빼기를 오가는 몸짓에는 그 성질이 없다.
+      lastPressRef.current = null;
+      // **겨눈 것**에 건다 — 위 `gestureNodeId` 다. 잉크가 이겼으면 종전과 같은
+      // `hit.nodeId` 이고, 앵커가 이겼으면 그 앵커를 든 요소다.
+      applyAnchorGesture(gestureNodeId, point);
+      return;
+    }
+
+    // **선 위의 두 번째 누름은 중간점이다**(REQ-05 · AC-67 · AC-71 · M10).
+    //
+    // 판정은 위 `second` 하나다 — 이 갈래도 그 값을 **읽을 뿐** 시각도 거리도 다시 재지
+    // 않는다(AC-72). 앞 갈래와 나란히 서는 것에 뜻이 있다: 한 몸짓(두 번째 누름)의 뜻을
+    // 가르는 답이 **표 둘**에 적혀 있고, 그 표는 도구마다 빠짐없이 답을 갖는다
+    // (`TOOL_ANCHOR_GESTURE` · `TOOL_POINT_GESTURE`). 조건을 즉석에서 적으면 일곱째 도구가
+    // 조용히 한쪽으로 떨어진다.
+    //
+    // **그룹 부품 위의 더블클릭은 여전히 그룹 진입이다**(REQ-05-c · AC-73). 여기서 갈리는
+    // 잣대는 **대상**이며, 부품 위의 누름은 그 그룹을 겨누므로 `hitNode` 가 연결선이 아니다 —
+    // 아래 `pressTargetKey` 가 009 그대로 진입을 처리한다. 두 몸짓은 대상이 다르므로 섞이지
+    // 않고, 그래서 어느 쪽도 상대의 갈래를 알 필요가 없다.
+    if (second && TOOL_POINT_GESTURE[tool] && hitNode !== undefined && isConnector(hitNode)) {
+      // **몸짓을 먹었으면 연타 사슬을 끊는다**(앵커 갈래가 쓰는 그 한 줄이다). 끊지 않으면
+      // 셋째 누름이 둘째와 다시 짝을 지어 방금 찍은 점을 빼고, 넷째가 그것을 도로 찍는다 —
+      // 더하기·빼기를 오가는 몸짓에는 그룹 진입이 가진 멱등성이 없다.
+      lastPressRef.current = null;
+      applyConnectorPointGesture(hitNode, point);
+      return;
+    }
+
+    const key = pressTargetKey(hit, selection, second);
+    const enteredPart = isPartKey(key);
+
+    // **부품 선택은 언제나 하나이고, 그 그룹과 함께 서지 않는다**(REQ-01-a · REQ-01-b).
+    // modifier 를 부품 경로에서 흘려보내는 것에 뜻이 있다: 부품을 무리에 더할 수 있게 하면
+    // "서로 다른 그룹의 부품 둘" 이라는 뜻이 정의되지 않은 상태가 만들어지고(A1), 8핸들이
+    // 두 상자에 서는 화면이 그 뒤를 따른다. 그룹을 고르는 경로는 최상위 원소와 같으므로
+    // modifier 가 종전 그대로 산다.
+    const picked = enteredPart
+      ? new Set([key])
+      : nextSelection(selection, key, pressTogglesSelection);
     if (picked !== selection) setSelection(picked);
-    if (additive) return;
+    if (pressTogglesSelection && !enteredPart) return;
 
     if (!(stage.width > 0) || !(stage.height > 0)) return;
 
     // 무리 이동: 같은 캔버스 단위 델타를 선택된 **모든** 요소에 더한다. 상한이 없으므로
     // `clampGroupDelta` 는 쓰지 않는다 — 아무 일도 하지 않는 호출은 읽는 사람에게
     // 상한이 있다고 거짓말한다(spec.md §드래그 기구).
-    const bases: DragBase[] = elements
-      .filter((el) => picked.has(el.id))
-      .map((el) => ({ nodeId: el.id, geometry: el.geometry }));
+    //
+    // 부품은 `selectedNodes` 가 **캔버스 단위 의사 노드**로 풀어 주므로, 잡는 순간의 기하도
+    // 이동 산술도 최상위 요소와 한 글자도 다르지 않다. 갈리는 자리는 쓰기 하나뿐이다
+    // (`patchGeometryByKey`).
+    const bases: DragBase[] = selectedNodes(elements, picked).map((el) => ({
+      nodeId: el.id,
+      geometry: el.geometry,
+    }));
     if (bases.length === 0) return;
 
-    // 히트는 `elements` 를 훑어 나온 id 이므로 그 요소는 반드시 있다(`canvasHitTest` 는
+    // 히트는 `elements` 를 훑어 나온 키이므로 그 노드는 반드시 있다(`canvasHitTest` 는
     // 배열 밖의 id 를 만들지 않는다). 없을 수 없는 경우에 가드를 두면 그 가드는 검증되지
     // 않은 채 남아 읽는 사람에게 "없을 수도 있다" 고 거짓말한다.
-    const anchorEl = elements.find((el) => el.id === hit.nodeId)!;
+    const anchorEl = nodeForKey(elements, key)!;
 
     dragRef.current = {
       mode: 'move',
@@ -1182,6 +2747,138 @@ export default function CanvasEditOverlay({
   };
 
   /**
+   * 가운데 구간 손잡이에서 시작하는 드래그 (SPEC-CANVAS-019 REQ-02).
+   *
+   * 위 둘과 **같은 세 줄**을 지킨다 — 이벤트를 여기서 끊고, 좌표의 원점은 루트이며, 선택은
+   * 건드리지 않는다(손잡이는 이미 골라진 선에만 뜬다).
+   *
+   * 축은 **잡는 순간 얼린다.** 매 프레임 다시 읽으면 손이 비스듬히 움직일 때 축이 흔들린다.
+   */
+  const startOrthoSplitDrag = (
+    target: { nodeId: string; axis: 'lr' | 'tb'; segment: number },
+    event: React.PointerEvent<HTMLButtonElement>,
+  ): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    const host = rootRef.current!;
+    const frame = pointerFrameOf(host.getBoundingClientRect(), stage);
+    dragRef.current = {
+      mode: 'orthoSplit',
+      nodeId: target.nodeId,
+      axis: target.axis,
+      segment: target.segment,
+      pointerId: event.pointerId,
+      origin: stagePoint(event.clientX, event.clientY, frame),
+      frame,
+    };
+    pendingRef.current = null;
+    host.setPointerCapture?.(event.pointerId);
+  };
+
+  /**
+   * 회전 손잡이에서 시작하는 드래그 (SPEC-CANVAS-014 M9 · REQ-02).
+   *
+   * 위 둘과 **같은 세 줄**을 지킨다 — 이벤트를 여기서 끊고, 좌표의 원점은 루트이며, 선택은
+   * 건드리지 않는다(손잡이는 이미 골라진 하나에만 뜬다).
+   *
+   * `handleDragState` 를 지나지 않는 이유도 연결선 손잡이와 같다: 그 함수는 종류와 **핸들
+   * 이름**을 맞춰 보는데, 이 손잡이의 이름은 그 닫힌 집합에 없다(있어서도 안 된다 — 그
+   * 집합에 넣으면 8핸들을 세는 출시된 가드들이 흔들린다).
+   */
+  const startRotateDrag = (
+    target: { nodeId: string; pivot: PxPoint; point: PxPoint },
+    event: React.PointerEvent<HTMLButtonElement>,
+  ): void => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const host = rootRef.current!;
+    const frame = pointerFrameOf(host.getBoundingClientRect(), stage);
+    const origin = stagePoint(event.clientX, event.clientY, frame);
+    const node = elements.find((n) => n.id === target.nodeId);
+
+    dragRef.current = {
+      mode: 'rotate',
+      nodeId: target.nodeId,
+      pivot: target.pivot,
+      // **잡은 자리에서 시작한다.** 손잡이 자리가 아니라 포인터 자리로 재는 것이 요점이다 —
+      // 손잡이 가운데를 정확히 누르는 사람은 없고, 그 차이만큼 도형이 튀면 몸짓이 거칠게
+      // 느껴진다.
+      grabDeg: angleOfDeg(target.pivot, origin),
+      baseDeg: node !== undefined && !isConnector(node) ? outlineAngle(node) : 0,
+      pointerId: event.pointerId,
+      origin,
+      frame,
+    };
+    pendingRef.current = null;
+    host.setPointerCapture?.(event.pointerId);
+  };
+
+  /**
+   * 연결선 손잡이에서 시작하는 드래그 (SPEC-CANVAS-011 M9 · REQ-07).
+   *
+   * 위 `startHandleDrag` 와 **같은 세 줄**을 지킨다 — 이벤트를 여기서 끊고(끊지 않으면
+   * 루트의 몸통 히트 테스트가 이어서 돌아 손잡이 뒤의 것을 새로 고르거나 빈 자리의
+   * 사각형을 세운다), 좌표의 원점은 루트이며, 선택은 건드리지 않는다(손잡이는 이미
+   * 골라진 연결선에만 뜬다).
+   *
+   * 갈리는 것은 `handleDragState` 를 지나지 않는다는 점 하나다. 그 함수는 **종류와 핸들
+   * 이름을 맞춰 보고 잡는 순간의 기하를 뜬다** — 연결선에는 맞춰 볼 이름도(고정 표에 없다)
+   * 뜰 기하도(`geometry` 가 없다) 없으므로, 그 함수에 연결선 갈래를 더하면 두 `null` 이
+   * 세 개가 되고 그 셋은 서로 다른 뜻을 갖는다.
+   */
+  const startConnectorHandleDrag = (
+    connector: ConnectorElement,
+    handle: ConnectorHandle,
+    event: React.PointerEvent<HTMLButtonElement>,
+  ): void => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const host = rootRef.current!;
+    const frame = pointerFrameOf(host.getBoundingClientRect(), stage);
+    const origin = stagePoint(event.clientX, event.clientY, frame);
+
+    // **중간점 손잡이의 두 번째 누름은 그 점을 뺀다**(REQ-05-b · AC-71).
+    //
+    // 이 갈래가 여기 있는 까닭은 손잡이가 **진짜 단추**이기 때문이다(REQ-01). 단추는 제
+    // 누름을 먹으므로 루트의 그 갈래가 이 자리를 영영 보지 못하고, 그러면 화면에 서 있는
+    // 점을 뺄 길이 없다 — 도구가 있는데 닿지 못하는 자리가 있는 것이 그 자체로 결함이다
+    // (M9 가 "선이 걸린 앵커를 뺄 수 없다" 를 같은 문장으로 고쳤다).
+    //
+    // 그렇다고 여기서 **판정을 새로 짓지 않는다.** 묻는 일도 적는 일도 위 `pressedTwice`
+    // 하나를 지나며, 키는 그 연결선이다 — 첫 누름이 잉크에 닿고 둘째가 손잡이에 닿아도
+    // (연타 오차 5px 은 손잡이보다 좁다) 두 누름이 같은 키를 적으므로 짝이 유지된다.
+    //
+    // 대상으로 가르지 않고 **표**를 보는 것도 루트 갈래와 같은 규율이다. 오늘 앵커 도구는
+    // 손잡이에서 포인터를 걷어 두므로(아래 렌더 §앵커 도구가 켜진 동안) 이 자리에 닿지
+    // 않지만, 닿는 날 두 갈래가 서로 다른 답을 내면 "빼기는 되는데 만들기는 안 된다" 가 된다.
+    //
+    // 묻는 일은 **조건보다 먼저**다. 뒤에 두면 끝점 손잡이의 누름이 장부에 적히지 않아,
+    // 그 누름을 사이에 둔 두 누름이 서로 짝을 짓는다 — 이 표면이 본 누름은 전부 장부를
+    // 지나야 그 뒤섞임이 없다(루트 갈래가 같은 차례로 적는다).
+    const second = pressedTwice(origin, frameKey(connector.id), event.timeStamp);
+    if (second && TOOL_POINT_GESTURE[tool] && handle.kind === 'mid') {
+      // 루트 갈래와 같은 이유로 사슬을 끊는다 — 빼기와 찍기를 오가는 몸짓은 멱등이 아니다.
+      lastPressRef.current = null;
+      commitConnector(connector, removePointAt(connector, handle.index));
+      // 뺀 점을 끌 수는 없다. 드래그를 시작하지 않고 돌아간다.
+      return;
+    }
+
+    dragRef.current = {
+      mode: 'connectorPoint',
+      pointerId: event.pointerId,
+      origin,
+      frame,
+      nodeId: connector.id,
+      handle,
+    };
+    pendingRef.current = null;
+    host.setPointerCapture?.(event.pointerId);
+  };
+
+  /**
    * 드롭 존 강조를 **바뀔 때만** 갈아 끼운다. 같은 값을 다시 넣으면 React 가 렌더를
    * 건너뛰기는 하나, 그 전에 갱신을 예약하는 비용은 매 이동마다 든다(AC-E4 의 규율).
    */
@@ -1192,6 +2889,52 @@ export default function CanvasEditOverlay({
   };
 
   /**
+   * 펜 커서 판정을 **바뀔 때만** 갈아 끼운다 — 위 `setDropHighlight` 와 같은 규율이다
+   * (AC-E4). 이동마다 같은 값을 넣으면 렌더는 건너뛰어도 갱신을 예약하는 비용은 매번 든다.
+   */
+  const setPenHovering = (next: boolean): void => {
+    if (penHoverRef.current === next) return;
+    penHoverRef.current = next;
+    setPenHover(next);
+  };
+
+  /**
+   * 이번 이동이 커서를 바꾸는가 (사용자 신고 2026-09-16).
+   *
+   * ## 판정은 **누름이 읽는 그 표**를 읽는다
+   *
+   * 펜이 뜨는 조건은 `TOOL_CONNECTOR_ROUTE[tool] !== null` 이고, 그것은 누름이 잇기를
+   * 시작할지 정하는 **바로 그 줄**이다(`handlePointerDown`). 두 자가 갈리면 화면이 지키지
+   * 못할 약속을 하게 된다 — 펜을 보여 놓고 눌렀더니 고르기가 되는 자리다(위험 R1 의 규율을
+   * 커서에 적용한 것이다).
+   *
+   * 그래서 **앵커 도구에서는 펜이 뜨지 않는다.** 그 도구도 앵커를 보여 주지만
+   * (`TOOL_SHOWS_ANCHORS`) 그 점을 눌러 나는 것은 선이 아니라 앵커이고(REQ-02'), 그 표는
+   * `null` 을 낸다. 보이는 점마다 펜을 씌웠다면 앵커를 세우려는 손에게 화면이 선을 약속했을
+   * 것이다. 두 물음이 다르다는 사실은 `canvasTools.ts` 가 표를 둘로 나눠 이미 적어 두었다.
+   *
+   * ## 잡는 자는 **앵커를 집는 그 함수**다
+   *
+   * `anchorHitAt` 은 누름이 지나는 그 함수이고 오차도 같은 `ANCHOR_PICK_SLOP_PX` 다. 여기서
+   * 자리를 새로 셈하면 "펜이 뜨는 띠" 와 "실제로 집히는 띠" 가 두 벌이 된다.
+   *
+   * ## 긋는 동안에는 **묻지 않는다** — 커서는 몸짓이 끝날 때까지 펜이다
+   *
+   * 앵커에서 눌러 빈 자리로 끌고 가는 것이 이 몸짓의 전부이므로, 자리를 다시 물으면 앵커를
+   * 벗어나는 순간 커서가 기본으로 돌아간다. 긋는 중이라는 사실이 곧 "여기는 선을 긋는
+   * 자리" 이며, 그 사실은 `connectorDraw` 가 이미 들고 있다.
+   */
+  const updatePenHover = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (connectorDraw !== null) return;
+    if (TOOL_CONNECTOR_ROUTE[tool] === null) return;
+    const frame = pointerFrameOf(event.currentTarget.getBoundingClientRect(), stage);
+    const point = stagePoint(event.clientX, event.clientY, frame);
+    setPenHovering(
+      anchorHitAt(anchorHosts, point, projection, textWidths, ANCHOR_PICK_SLOP_PX) !== undefined,
+    );
+  };
+
+  /**
    * 사각형이 지금 감싸는 것들 — **바탕과의 합집합**이다.
    *
    * 투영은 `outlineBox` 를 지난다: 판정하는 상자와 골라진 뒤 **화면에 뜨는 그 상자**가
@@ -1199,13 +2942,68 @@ export default function CanvasEditOverlay({
    */
   const marqueeNext = (state: MarqueeState, point: PxPoint): CanvasSelection =>
     marqueeSelection(
-      marqueeCandidates(elements, (el) => outlineBox(el, projection, textWidths)),
+      // **마키는 축-나란 상자를 읽는다**(014 §결정 2). 돌아간 도형을 제 방향 상자로 재면
+      // 사각형 안에 있는데 안 잡히는(또는 그 반대의) 자리가 생긴다. 각도가 0 이면 두
+      // 상자가 같은 수이므로 014 이전 동작은 한 글자도 바뀌지 않는다(K3).
+      marqueeCandidates(elements, (el) => outlineAabb(el, projection, textWidths)),
       marqueeRect(state.origin, point),
       state.base,
     );
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
-    // **영역 선택이 먼저다.** 둘은 배타적이므로(마키는 히트가 없을 때만, 이동 드래그는
+    // **커서 판정이 아래 세 갈래 **앞**에 선다** — 어느 갈래가 이 이동을 먹든 커서는
+    // 갱신되어야 한다(위 `updatePenHover`). 갈래 안에 넣으면 그 갈래가 늘 때마다 같은
+    // 한 줄을 베껴 넣어야 하고, 한 곳에서 빠지는 날 "어떤 몸짓 뒤에는 커서가 옛 모양에
+    // 남는" 자리가 생긴다.
+    updatePenHover(event);
+
+    // **밑그림은 손을 따라간다**(SPEC-CANVAS-022 REQ-04). 찍은 꼭짓점들은 그대로 두고 손의
+    // 자리만 갈아 끼운다 — 그 자리가 곧 "다음 구간이 어디로 가는가" 이며, 그것을 보여 주지
+    // 않으면 사용자는 누를 자리를 눌러 보고서야 안다.
+    if (shapeDraft !== undefined) {
+      const frame = pointerFrameOf(event.currentTarget.getBoundingClientRect(), stage);
+      const at = stagePoint(event.clientX, event.clientY, frame);
+      setShapeDraft((prev) => (prev === undefined ? prev : { vertices: prev.vertices, at }));
+    }
+
+    // **팬이 가장 먼저다.** 팬을 시작하는 누름은 둘(짚은 채의 누름 · 빈 자리의 맨손
+    // 누름)이고 그 둘은 아래 셋을 시작하는 누름과 갈리므로 배타적이며, 순서가 뜻을
+    // 바꾸지는 않는다 — 다만 먼저 끊어 두면 아래 세 경로가 팬을 모른 채로 남는다
+    // (마키 · 긋기가 같은 이유로 앞에 섰다).
+    //
+    // **프레임을 예약하지 않는다** — 고 말할 수 없는 유일한 갈래다. 팬은 상자의 자리를
+    // 바꾸므로 표면이 받는 `geometry` 가 실제로 달라지고, 그래서 프레임이 한 장 돈다.
+    // 그 한 장은 새 깨우기 경로가 아니라 **종전의 props 변경 경로**이며, 배율 변경 ·
+    // 리사이즈와 같은 부류다(REQ-05 · AC-E4).
+    const panDrag = panRef.current;
+    if (panDrag !== null && event.pointerId === panDrag.pointerId) {
+      event.preventDefault();
+      movePan(event.clientX, event.clientY);
+      return;
+    }
+
+    // **긋기가 그다음이다**(SPEC-CANVAS-011 M8). 마키·드래그와 배타적이므로 순서가 뜻을
+    // 바꾸지는 않으나(셋은 서로 다른 누름에서만 시작된다), 먼저 끊어 두면 아래 두 경로가
+    // 잇기를 모른 채로 남는다 — 마키가 같은 이유로 드래그 앞에 섰다.
+    //
+    // **프레임을 예약하지 않는다**(AC-E4). 긋는 동안 기하는 한 글자도 쓰이지 않으므로
+    // `CanvasSurface` 가 받는 props 가 그대로이고, 001 이 지은 유휴 정지가 유지된다.
+    if (connectorDraw !== null && event.pointerId === connectorDraw.pointerId) {
+      event.preventDefault();
+      const point = stagePoint(event.clientX, event.clientY, connectorDraw.frame);
+      // **자유선만 궤적을 받는다**(M11 · REQ-06). 표를 보고 갈리므로 갈래가 하나 늘면
+      // 컴파일러가 그 표를 가리킨다. 상한에 닿으면 그 함수가 받은 배열을 그대로 돌려주고,
+      // 몸짓은 이 줄을 지나 끝까지 이어진다(AC-77).
+      if (ROUTE_TRACES_TRAIL[connectorDraw.route]) {
+        trailRef.current = takeFreehandSample(
+          trailRef.current,
+          unprojectPoint(point, projection),
+        );
+      }
+      setConnectorDraw({ ...connectorDraw, point });
+      return;
+    }
+    // **영역 선택이 그다음이다.** 둘은 배타적이므로(마키는 히트가 없을 때만, 이동 드래그는
     // 있을 때만 시작된다) 순서가 뜻을 바꾸지는 않으나, 먼저 끊어 두면 아래 이동 경로가
     // 마키를 모른 채로 남는다 — 그 경로는 REQ-08 이 "한 줄도 바뀌지 않는다" 로 이름
     // 적어 둔 자리다.
@@ -1304,6 +3102,36 @@ export default function CanvasEditOverlay({
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
+    // **Space 를 뗐어도 팬은 손을 뗄 때까지 이어진다**(가정: 몸짓의 뜻은 잡는 순간 한 번만
+    // 정해진다 — `handleDragState` §머리말의 그 규율). 중간에 끊으면 그림이 손 밑에서
+    // 멈춰 서고, 사용자는 제가 무엇을 잘못 눌렀는지 알 수 없다. 도해 도구가 모두 그렇다.
+    const panDrag = panRef.current;
+    if (panDrag !== null && event.pointerId === panDrag.pointerId) {
+      event.preventDefault();
+      finishPan(event.currentTarget, event.pointerId);
+      // **움직이지 않은 팬은 클릭이고, 빈 자리의 클릭은 선택을 푼다**(SPEC-CANVAS-011).
+      //
+      // 009 이전부터 참이던 그 뜻이 서는 유일한 자리다 — 누름에서 비우면 끄는 동안에도
+      // 비워지므로(위 `beginPan` 갈래 주석), 뜻은 여기까지 미뤄져야 한다. 어느 누름이 그
+      // 뜻을 들고 왔는지는 잡는 순간 한 번 적혔다: 빈 자리 맨손 누름만 참이다.
+      if (
+        panDrag.clearsSelectionOnClick &&
+        panWasClick(panDrag, event.clientX, event.clientY) &&
+        selection.size > 0
+      ) {
+        setSelection(EMPTY_SELECTION);
+      }
+      return;
+    }
+    if (connectorDraw !== null && event.pointerId === connectorDraw.pointerId) {
+      event.preventDefault();
+      releaseCapture(event.currentTarget, event.pointerId);
+      finishConnectorDraw(
+        connectorDraw,
+        stagePoint(event.clientX, event.clientY, connectorDraw.frame),
+      );
+      return;
+    }
     if (marquee !== null && event.pointerId === marquee.pointerId) {
       event.preventDefault();
       finishMarquee(event.currentTarget, event.pointerId);
@@ -1329,6 +3157,28 @@ export default function CanvasEditOverlay({
   };
 
   const handlePointerCancel = (event: React.PointerEvent<HTMLDivElement>): void => {
+    // 끊긴 팬은 **마지막 자리를 그대로 둔다** — 이동 드래그의 취소가 마지막 유효 위치를
+    // 확정하는 것과 같은 규칙이다. 되돌리면 브라우저·OS 가 끊었을 뿐인데 사용자가 옮겨
+    // 놓은 시야가 사라진다.
+    const panDrag = panRef.current;
+    if (panDrag !== null && event.pointerId === panDrag.pointerId) {
+      // **끊긴 팬은 클릭이 아니다**(뗌 갈래와 갈리는 자리다 — SPEC-CANVAS-011). 브라우저·
+      // OS 가 가져간 몸짓은 "여기를 눌렀다 뗐다" 는 뜻이 아니므로 선택을 풀지 않는다 —
+      // 끊긴 긋기가 아무것도 만들지 않는 그 규칙과 같은 문장이다.
+      finishPan(event.currentTarget, event.pointerId);
+      return;
+    }
+    // **끊긴 긋기는 아무것도 만들지 않는다.** 이동 드래그의 취소가 마지막 유효 위치를
+    // 확정하는 것과 갈리는 자리이며, 근거는 그쪽의 그 근거와 같다: 확정하면 사용자가 한
+    // 일이 남아야 하는데, 잇기는 **놓는 자리가 정해져야** 비로소 한 일이 된다. 브라우저·
+    // OS 가 끊은 몸짓은 "여기에 놓았다" 는 뜻이 아니다(서랍이 같은 문장을 쓴다).
+    if (connectorDraw !== null && event.pointerId === connectorDraw.pointerId) {
+      releaseCapture(event.currentTarget, event.pointerId);
+      setConnectorDraw(null);
+      // 끊긴 몸짓의 궤적도 함께 버린다 — 남기면 다음 자유선이 이 손짓을 물려받는다.
+      trailRef.current = [];
+      return;
+    }
     // 이동 드래그의 취소가 **마지막 유효 위치를 확정하는** 것과 같은 규칙이다 — 되돌리면
     // 사용자가 한 일이 소리 없이 사라진다. 사각형만 거둔다.
     if (marquee !== null && event.pointerId === marquee.pointerId) {
@@ -1359,22 +3209,23 @@ export default function CanvasEditOverlay({
    * 쓰기는 곧 헛된 렌더 프레임이다(AC-E4).
    */
   const nudgeSelection = (delta: CanvasDelta): boolean => {
+    // **드래그와 같은 해석기를 지난다**(`selectedNodes`). 부품이 골라져 있으면 여기서도
+    // 캔버스 단위 의사 노드가 나오므로, 끌었을 때와 방향키로 옮겼을 때가 갈라질 수 없다.
+    const targets = selectedNodes(elements, selection);
+    if (targets.length === 0) return false;
     let next: CanvasNode[] = [...elements];
-    let moved = false;
-    for (const el of elements) {
-      if (!selection.has(el.id)) continue;
-      next = patchNodeGeometry(next, el.id, moveGeometry(el.geometry, delta));
-      moved = true;
+    for (const el of targets) {
+      next = patchGeometryByKey(next, el.id, moveGeometry(el.geometry, delta));
     }
-    if (!moved) return false;
     onElementsChange(next);
     return true;
   };
 
   /**
-   * 고른 것들을 지운다 — **규칙은 `canvasEditArrange.removeNodes` 한 곳에 있다**
-   * (SPEC-CANVAS-010). 목록 편집기의 휴지통이 같은 함수를 지나므로 "목록에서 지웠는가
-   * 캔버스에서 지웠는가" 에 따라 결과가 갈릴 수 없다.
+   * 고른 것들을 지운다 — **규칙은 `canvasEditArrange.removeNodesWithConnectors` 한 곳에
+   * 있다** (SPEC-CANVAS-010 · 011 M12). 목록 편집기의 휴지통이 같은 함수를 지나므로
+   * "목록에서 지웠는가 캔버스에서 지웠는가" 에 따라 결과가 갈릴 수 없다 — 지워지는 요소를
+   * 가리키던 연결선이 함께 가는 일(REQ-08)도 그래서 두 입구에서 같다.
    *
    * **한 번만 방출한다.** 고른 것마다 한 번씩 부르면 중간 배열이 프레임마다 화면에 서고
    * config 쓰기가 N 번이 된다(AC-E4 의 규율). 그 함수가 집합 하나를 받는 것이 그래서다.
@@ -1393,7 +3244,7 @@ export default function CanvasEditOverlay({
    * 돌려주는 값은 **지웠는가** 다. 지우지 않았으면 이벤트를 소비하지 않는다.
    */
   const deleteSelection = (): boolean => {
-    const next = removeNodes(elements, selection);
+    const next = removeNodesWithConnectors(elements, selection);
     if (next === elements) return false;
     onElementsChange([...next]);
     setSelection(EMPTY_SELECTION);
@@ -1417,10 +3268,71 @@ export default function CanvasEditOverlay({
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     // `enabled` 를 다시 보지 않는다 — 꺼져 있으면 이 층이 DOM 에 아예 없어 키가 닿을 길이
     // 없다. 검증되지 않는 가드는 읽는 사람에게 "닿을 수도 있다" 고 거짓말한다.
+    // **차림표가 열려 있으면 `Escape` 가 그것을 닫는다**(SPEC-CANVAS-021 REQ-03).
+    //
+    // 조작키 문턱보다 **앞에** 선다. 뒤에 두면 `Ctrl` 을 짚은 채 누른 `Escape` 가 차림표를
+    // 닫지 못하고, 사용자에게는 "가끔 안 닫힌다" 로만 보인다 — 닫는 몸짓은 무엇을 짚고
+    // 있든 닫아야 한다.
+    if (event.key === ESCAPE_KEY && pointMenu !== undefined) {
+      setPointMenu(undefined);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    // **밑그림을 버린다**(SPEC-CANVAS-022 REQ-05). 차림표 뒤에 서는 것에 뜻이 있다 — 차림표가
+    // 열려 있으면 그것이 더 위의 것이고, 한 번의 `Escape` 가 둘을 함께 닫으면 사용자는
+    // 그리던 것을 잃는다.
+    if (event.key === ESCAPE_KEY && shapeDraft !== undefined) {
+      setShapeDraft(undefined);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     // **두 갈래가 함께 쓰는 문턱이다.** 끌고 있는 동안에는 손이 이기고(아래 머리말),
     // 고른 것이 없으면 옮길 것도 지울 것도 없다. 갈래마다 따로 두면 한쪽만 고칠 수 있다.
     if (dragRef.current !== null) return;
+
+    // **팬 갈래가 선택 문턱 앞에 선다** — 팬은 고른 것이 없을 때가 오히려 예사이므로,
+    // 아래 문턱 뒤에 두면 가장 흔한 경우에 동작하지 않는다(사용자 신고 2026-09-16).
+    //
+    // **표적을 보지 않는다**(AC-10 (BA) 의 형상 가드). 컨트롤의 키를 끊는 자리는 이
+    // 함수가 아니라 **컨트롤 쪽**이며, 그 자리는 이미 서 있다: 도크도 떠 있는 배율 줄도
+    // 제 뿌리에서 `stopPropagation` 한다("도크에서 누른 키는 도크의 것"). 여기에 표적
+    // 가드를 세우면 그 문장이 두 벌이 되고, 칸이 늘 때마다 한쪽이 조용히 낡는다.
+    //
+    // 루트 **안쪽**의 초점 가능한 컨트롤은 손잡이 둘(8핸들 · 연결선 손잡이)뿐이고 둘 다
+    // `onPointerDown` 말고는 아무 처리자가 없다 — 그 자리의 Space 는 오늘 **아무 일도
+    // 하지 않으므로** 여기서 가져가도 빼앗는 것이 없다. 언젠가 손잡이가 Space 로 하는
+    // 일을 갖게 된다면 끊을 자리는 여기가 아니라 **그 손잡이**다(도크가 세운 그 규칙).
+    if (event.key === SPACE_KEY) {
+      setSpaceHeld(true);
+      // **여기서만 소비한다.** 짚는 일이 실제로 무언가를 켰을 때이며, 그러지 않으면
+      // 브라우저가 페이지를 한 칸 스크롤해 편집하던 자리가 화면 밖으로 밀린다.
+      event.preventDefault();
+      return;
+    }
+    if (spaceHeld) {
+      // **Space+방향키는 끌기의 키보드 등가물이다.** 없으면 팬은 포인터 전용 기능이 되고,
+      // 이 층이 T15 · REQ-01 에서 "키보드로 닿는다" 로 적어 둔 규율에 구멍이 하나 남는다.
+      // 부호는 **끄는 것과 같다** — 오른쪽 키는 그림을 오른쪽으로 민다.
+      const step = ARROW_STEPS[event.key];
+      if (step === undefined) return;
+      const next = clampWorkspacePan(
+        {
+          x: workspacePan.x + step.x * PAN_ARROW_PX,
+          y: workspacePan.y + step.y * PAN_ARROW_PX,
+        },
+        workspaceSize,
+      );
+      // **실제로 옮겼을 때에만 소비한다** — 이미 끝에 닿았으면 그대로 흘려보낸다(이 함수가
+      // 방향키와 지우기에 대해 세운 그 규율).
+      if (next.x === workspacePan.x && next.y === workspacePan.y) return;
+      setWorkspacePan(next);
+      event.preventDefault();
+      return;
+    }
+
     if (selection.size === 0) return;
 
     // **지우기가 먼저다.** Shift 를 배제하지 않는다 — 방향키의 Shift 는 "한 격자 칸" 이라는
@@ -1445,6 +3357,28 @@ export default function CanvasEditOverlay({
     if (!nudgeSelection(delta)) return;
     // 여기까지 왔다는 것은 실제로 옮겼다는 뜻이다 — 그때에만 스크롤을 막는다.
     event.preventDefault();
+  };
+
+  /**
+   * Space 를 뗀다 — 커서가 손 모양에서 돌아오고, 다음 누름이 다시 고르기가 된다.
+   *
+   * **끌고 있는 팬은 끊지 않는다**(`handlePointerUp` 머리말). 여기서 하는 일은 "다음
+   * 누름의 뜻" 을 되돌리는 것 하나뿐이다.
+   */
+  const handleKeyUp = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== SPACE_KEY) return;
+    setSpaceHeld(false);
+  };
+
+  /**
+   * 초점이 떠나면 짚은 상태를 **강제로 푼다**.
+   *
+   * 없으면 Space 를 짚은 채 다른 곳을 눌러 초점을 옮긴 순간 뗌이 이 층에 오지 않아,
+   * 손 커서가 눌러도 풀리지 않는 채로 남는다(그 상태에서는 도형이 잡히지 않으므로
+   * "캔버스가 고장 났다" 로 보인다). 짚음은 초점을 가진 동안에만 뜻이 있다.
+   */
+  const handleBlur = (): void => {
+    setSpaceHeld(false);
   };
 
   /**
@@ -1592,9 +3526,16 @@ export default function CanvasEditOverlay({
    * (맞출 상대가 없으면 빈 배열이다) 여기서 다시 세지 않는다 — 두 곳에서 세면 갈라진다.
    */
   const applyAlign = (axis: AlignAxis, mode: AlignMode): void => {
-    const picked = elements.filter((el) => selection.has(el.id));
+    // 연결선은 맞출 상자가 없으므로 빠진다(M4). 남겨 두면 `outlineBox` 가 받을 수 없는
+    // 노드가 되고, 억지로 상자를 지어 맞추면 "선을 왼쪽에 맞췄는데 아무 데도 안 붙는다"
+    // 가 된다 — 연결선의 자리는 제 좌표가 아니라 **두 끝이 가리키는 것**이 정한다.
+    const picked = elements
+      .filter((el) => !isConnector(el))
+      .filter((el) => selection.has(el.id));
     const deltas = alignDeltas(
-      picked.map((el) => ({ nodeId: el.id, box: outlineBox(el, projection, textWidths) })),
+      // **정렬도 축-나란 상자다**(014 §결정 2) — 맞추는 것은 화면에서 보이는 자리이고,
+      // 돌아간 도형이 보이는 자리는 그 잉크를 덮는 상자다.
+      picked.map((el) => ({ nodeId: el.id, box: outlineAabb(el, projection, textWidths) })),
       projection,
       axis,
       mode,
@@ -1628,6 +3569,26 @@ export default function CanvasEditOverlay({
     const next = toFront ? bringToFront(elements, selection) : sendToBack(elements, selection);
     if (next === elements) return;
     onElementsChange([...next]);
+  };
+
+  /**
+   * 뒤집기 · 90° 회전 (SPEC-CANVAS-013 REQ-01 · REQ-02).
+   *
+   * **규칙은 `canvasTransformNodes.transformNodes` 한 곳에 있다.** 이 층이 하는 일은 지금
+   * 선택과 투영과 글자 폭 장부를 넘기는 것뿐이다 — 산술을 여기 두면 "화면에서 뒤집은 것과
+   * 저장된 것이 다르다" 가 표현 가능해진다.
+   *
+   * **글자 폭 장부를 함께 넘기는 것이 요점이다.** 문구의 윤곽 상자는 실측 글자 폭에서
+   * 나오고, 뒤집기는 그 상자를 축으로 쓴다. 장부를 빼면 문구가 폭 0 인 상자로 읽혀
+   * 정렬에 따라 글자 폭만큼 어긋난 자리로 간다.
+   *
+   * 아무것도 바뀌지 않으면 그 모듈이 **받은 배열의 사본**을 돌려주므로 값으로 견준다 —
+   * `applyZOrder` 가 참조로 견주는 것과 다른 이유는 그쪽 모듈이 같은 참조를 돌려주기
+   * 때문이며, 두 규율을 한 이름으로 부르지 않는다.
+   */
+  const applyTransform = (kind: TransformKind): void => {
+    const next = transformNodes(kind, elements, selection, projection, textWidths);
+    onElementsChange(next);
   };
 
   /**
@@ -1690,6 +3651,45 @@ export default function CanvasEditOverlay({
     setSelection(new Set(outcome.liftedIds));
   };
 
+  /**
+   * 분리할 부품 — **정확히 하나를 골랐고 그것이 부품일 때만** 있다(SPEC-CANVAS-009 M6).
+   *
+   * `selectedGroup` 과 **같은 형상**이다: 한 함수가 단추의 활성 여부 · 안내가 뜰지 · 실제로
+   * 무엇을 빼는지를 모두 소유한다. 셋을 따로 지으면 "단추는 켜졌는데 눌러도 아무 일이
+   * 없다" 가 표현 가능해진다.
+   *
+   * 배열에 실재하는지까지 여기서 가린다 — 없는 부품 키가 선택에 남아 있어도(지워진 그룹)
+   * 단추가 켜지지 않는다(REQ-07).
+   */
+  const selectedPart = (): { groupId: string; partId: string } | undefined => {
+    if (selection.size !== 1) return undefined;
+    const key = [...selection][0]!;
+    if (!isPartKey(key)) return undefined;
+    const { nodeId, partId } = parseFrameKey(key);
+    if (partId === undefined || findPart(elements, nodeId, partId) === undefined) return undefined;
+    return { groupId: nodeId, partId };
+  };
+
+  /**
+   * 고른 부품 하나를 그룹 밖으로 뺀다 — 확인은 **컨트롤이 이미 받았다**(REQ-05-c).
+   *
+   * `applyUngroup` 과 같은 형상이고, 실제로 같은 자리에서 갈린다: 남을 부품이 1 개 이하면
+   * `detachPart` 자신이 `ungroupNode` 를 부른다(M6). 이 층은 그 갈래를 **알지 못한다** —
+   * 알면 조건이 두 자리가 되고, 둘이 어긋나는 날 "빼면 그룹이 남는다고 했는데 사라졌다"
+   * 가 된다.
+   */
+  const applyDetach = (): void => {
+    const target = selectedPart();
+    if (target === undefined) return;
+    const outcome = detachPart(elements, target.groupId, target.partId);
+    if (outcome.refusal !== undefined) return;
+    setGroupRefusal(null);
+    onElementsChange([...outcome.nodes]);
+    // 올라온 것이 선택으로 남는다 — 풀기가 같은 이유로 같은 일을 한다(방금 뺀 것을 곧바로
+    // 끌 수 있어야 한다).
+    setSelection(new Set(outcome.liftedIds));
+  };
+
   // 편집이 꺼져 있으면 DOM 에 아무것도 남기지 않는다(표시 전용).
   if (!enabled) return null;
 
@@ -1698,13 +3698,130 @@ export default function CanvasEditOverlay({
    * `find` 가 비는 것은 실제로 일어난다 — 골라 둔 요소를 목록 편집기에서 지우면 선택에는
    * 그 id 가 남고 배열에는 없다.
    */
-  const handleHost =
-    selection.size === 1 ? elements.find((el) => selection.has(el.id)) : undefined;
+  /** 하나만 골랐을 때의 그 키. 손잡이는 **한 요소만 골랐을 때만** 뜬다(§크기 조절). */
+  const soleKey = selection.size === 1 ? [...selection][0]! : undefined;
+  const handleHost = soleKey === undefined ? undefined : nodeForKey(elements, soleKey);
+
+  /**
+   * 회전 손잡이의 자리와 축 (SPEC-CANVAS-014 M9).
+   *
+   * **상자와 함께 돈다.** 축-나란 자리에 두면 도형을 90° 돌린 뒤 손잡이가 옆구리에 붙는다.
+   * 축은 그리는 쪽이 쓰는 그 자리(`rotationPivotIn` 이 내는 상자 가운데)이고, 손잡이는 그
+   * 상자의 위쪽 가운데에서 `ROTATE_HANDLE_GAP_PX` 만큼 더 위다 — 그 점을 **같은 각도로**
+   * 돌려 화면 자리를 낸다.
+   *
+   * 선에는 서지 않는다(§D6). 연결선은 `handleHost` 가 애초에 받지 않는다.
+   */
+  const rotateHandle = ((): { nodeId: string; pivot: PxPoint; point: PxPoint } | undefined => {
+    if (handleHost === undefined || handleHost.kind === 'line') return undefined;
+    const box = outlineBox(handleHost, projection, textWidths);
+    const pivot = { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+    const flat = { x: pivot.x, y: box.y - ROTATE_HANDLE_GAP_PX };
+    const deg = outlineAngle(handleHost);
+    return {
+      nodeId: handleHost.id,
+      pivot,
+      point: isRotated(deg) ? rotatePoint(flat, pivot, deg) : flat,
+    };
+  })();
+
+  /**
+   * 손잡이를 세울 **연결선** (SPEC-CANVAS-011 M9 · REQ-07).
+   *
+   * 위 `handleHost` 와 **배타적**이다 — `nodeForKey` 는 연결선을 조용히 떨어뜨리고
+   * `connectorForKey` 는 그것만 받으므로, 한 키가 둘 다를 채우는 상태가 없다. 그래서
+   * "연결선에 8핸들이 선다"(AC-63)가 검사가 아니라 **형상**으로 불가능하다.
+   */
+  const connectorHost = soleKey === undefined ? undefined : connectorForKey(elements, soleKey);
+
+  /**
+   * 그 연결선의 점들 — **그린 그 함수**가 낸 목록이다(AC-45 ①의 셋째 소비자).
+   *
+   * 여기서 참조를 다시 풀지 않는 것이 요점이다. 그리는 쪽·잡는 쪽과 다른 자리에서 풀면
+   * "보이는 선과 잡는 손잡이가 다른 자리에 있다" 가 표현 가능해진다 — 002 가 위험 R1 로
+   * 이름 적어 둔 그 결함이며, 011 은 그것을 막으려고 해석을 한 함수로 못박았다.
+   *
+   * 끊긴 연결이면 `undefined` 이고, 그때 손잡이는 **하나도 서지 않는다**(REQ-08).
+   * 그려지지 않는 선에 손잡이가 서면 사용자는 보이지 않는 것을 끌게 된다.
+   */
+  const connectorPoints =
+    connectorHost === undefined
+      ? undefined
+      : resolveConnector(connectorHost, elements, projection, textWidths);
+
+  /**
+   * 직각 선의 **구간 손잡이들** (SPEC-CANVAS-021 REQ-04 · 019 §결정 3 을 넓힌다).
+   *
+   * **판정은 그려진 그림이 한다.** 저술을 보고 "점이 없으니 세 구간일 것이다" 라고 추측하면
+   * 장애물을 돌아간 길에서 그 추측이 깨지고, 손잡이가 있지도 않은 구간에 선다.
+   *
+   * 세우는 자는 하나다: **그 논리 구간이 Z 하나로 그려졌는가**(점 넷 — 시작 · 모서리
+   * 둘 · 끝). 그 Z 의 가운데 구간이 곧 손잡이가 붙는 자리다.
+   *
+   *   - 점 둘이면 이미 한 축 위라 밀 자리가 없다.
+   *   - 다섯 이상이면 라우터가 낸 **계단**이다. 고정값은 구간당 하나인데 계단은 꺾임이
+   *     여럿이라, 옮긴 뒤 무엇이 남는지 말할 수 없다(021 §결정 3).
+   *
+   * **접기 전 목록(`runs`)을 읽는다.** 접힌 그림에서 구간을 되찾을 수는 없다 — 접기는 한
+   * 직선 위의 가운데 점을 지우고, 지워진 것이 논리 꼭짓점이면 그려진 구간 하나가 **두
+   * 논리 구간에 걸친다**. 그때 그 구간의 손잡이는 어느 고정값을 건드리는지 말할 수 없다.
+   */
+  const orthoSplitHandles = ((): readonly {
+    nodeId: string;
+    axis: 'lr' | 'tb';
+    segment: number;
+    at: PxPoint;
+  }[] => {
+    if (connectorHost === undefined || connectorHost.route !== 'ortho') return [];
+    if (connectorPoints === undefined) return [];
+    const { runs } = connectorDrawn(
+      connectorPoints,
+      connectorHost.route,
+      projection,
+      connectorObstacles(connectorHost, elements, projection, textWidths),
+      connectorHost.ortho_split,
+    );
+    const out: { nodeId: string; axis: 'lr' | 'tb'; segment: number; at: PxPoint }[] = [];
+    runs.forEach((run, segment) => {
+      if (run.length !== 4) return;
+      const a = run[1];
+      const b = run[2];
+      if (a === undefined || b === undefined) return;
+      const axis = a.x === b.x ? 'lr' : a.y === b.y ? 'tb' : undefined;
+      if (axis === undefined) return;
+      out.push({
+        nodeId: connectorHost.id,
+        axis,
+        segment,
+        at: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      });
+    });
+    return out;
+  })();
 
   /** 정렬은 **맞출 상대가 있어야** 뜻이 있다 — 하나만 골라 놓고 맞출 곳은 없다. */
   const canAlign = selection.size >= 2;
-  /** 순서 이동은 하나만 골라도 뜻이 있다. */
-  const canOrder = selection.size >= 1;
+  /**
+   * 순서 이동은 하나만 골라도 뜻이 있다 — 다만 **최상위 원소**여야 한다.
+   *
+   * z-order 는 최상위 배열의 자리이고 부품에는 그 자리가 없다(부품 순서 바꾸기는 009 의
+   * 범위 밖이다). 세는 자를 `selection.size` 로 두면 부품만 고른 상태에서 단추가 켜지고,
+   * 눌러도 `bringToFront` 가 아무것도 찾지 못해 **눌러도 아무 일이 없는 단추**가 된다.
+   */
+  const canOrder = elements.some((el) => selection.has(el.id));
+
+  /**
+   * 뒤집거나 돌릴 것이 있는가 — **하나만 골라도 참이다**(SPEC-CANVAS-013 REQ-05).
+   *
+   * `canAlign` 의 `>= 2` 와 **다른 자**다. 정렬은 맞출 상대가 있어야 뜻이 있지만 거울은 제
+   * 상자 안에서 이미 뜻이 있고, 같은 자를 쓰면 하나 골라 놓고 뒤집으려는 사용자에게 꺼진
+   * 단추를 내민다.
+   *
+   * **연결선만 골라 놓으면 거짓이다.** 연결선에는 `geometry` 가 없어 윤곽 상자가 없고,
+   * 상자가 없으면 뒤집을 축이 없다 — 그 판정을 `selectionBox` 도 똑같이 내리므로(거기서는
+   * `undefined`), 단추의 활성과 실제 동작이 **같은 사실**을 본다.
+   */
+  const canTransform = elements.some((el) => selection.has(el.id) && !isConnector(el));
 
   /**
    * 묶을 수 있는가 — **둘 이상**이다(REQ-07 · AC-12). `canAlign` 과 같은 자다.
@@ -1726,15 +3843,80 @@ export default function CanvasEditOverlay({
    */
   const ungroupRulesAtRisk = rulesLostByUngroup(ungroupTarget);
 
+  /** 뺄 수 있는 부품(없으면 단추가 꺼진다 — SPEC-CANVAS-009 M6). */
+  const detachTarget = selectedPart();
+
+  /**
+   * 분리가 **버릴** 규칙 행의 수. 위 `ungroupRulesAtRisk` 와 **같은 규율**이다 — 판정은
+   * `groupOps` 의 순수 함수 하나가 소유하고 이 층은 그 수를 나를 뿐이다(REQ-05-c).
+   */
+  const detachRulesAtRisk =
+    detachTarget === undefined
+      ? 0
+      : rulesLostByDetach(elements, detachTarget.groupId, detachTarget.partId);
+
   /** 두 표면이 **같은 컴포넌트**를 그린다 — 그것이 I23 을 형상으로 만드는 유일한 길이다. */
   const groupTools = (
     <CanvasGroupTools
       canGroup={canGroup}
       canUngroup={ungroupTarget !== undefined}
       rulesAtRisk={ungroupRulesAtRisk}
+      canDetach={detachTarget !== undefined}
+      detachRulesAtRisk={detachRulesAtRisk}
       refusal={groupRefusal}
       onGroup={applyGroup}
       onUngroup={applyUngroup}
+      onDetach={applyDetach}
+    />
+  );
+
+  /**
+   * 앵커 도구도 **한 번 짓고 두 자리에서 그린다** — `groupTools` 와 같은 값이다(AC-61).
+   *
+   * 그룹 도구가 두 표면에 서는 근거(가정 A21 · 불변식 I23)가 여기에는 한 걸음 더 곧게
+   * 적용된다: 앵커는 **조건 없이 그려지는 표시 층**이다(도구가 켜진 동안 최상위 전부에
+   * 점이 선다). 컨트롤을 도크에만 두면 대시보드에 놓인 패널에서는 그 층을 켤 수도 끌
+   * 수도 없고, 그것이 006 이 배달한 그 결함의 형상이다.
+   */
+  const anchorTools = (
+    <CanvasAnchorTools
+      active={tool === 'anchor'}
+      onToggle={() => setTool((prev) => toggleTool(prev, 'anchor'))}
+      refusal={anchorRefusal}
+    />
+  );
+
+  /**
+   * 연결선 도구 넷도 **한 번 짓고 두 자리에서 그린다** — `groupTools` · `anchorTools` 와
+   * 같은 값이다(SPEC-CANVAS-011 AC-61 · 불변식 I24).
+   *
+   * 근거는 앵커 도구의 그것보다 한 걸음 더 곧다: 연결선 도구를 켜면 **앵커 점이 함께**
+   * 뜬다(REQ-02-b — `TOOL_SHOWS_ANCHORS`). 즉 이 단추들은 조건 없이 그려지는 표시 층을
+   * 켜고 끄는 손잡이이기도 하며, 도크에만 두면 대시보드에 놓인 패널에서는 그 층을 켤 수도
+   * 끌 수도 없다 — 006 이 배달한 그 결함의 형상이다(불변식 I23).
+   *
+   * 넷을 **하나의 컴포넌트**가 그리는 것에도 뜻이 있다. 도구 넷이 서로 배타임을 화면이
+   * 말해야 하고(많아야 하나가 `aria-pressed`), 네 자리에 각각 짜 넣으면 그 배타성을 네
+   * 벌이 따로 지키게 된다.
+   */
+  const connectorTools = (
+    <CanvasConnectorTools
+      tool={tool}
+      onToggle={(pressed) => setTool((prev) => toggleTool(prev, pressed))}
+      shapeMode={shapeMode}
+      onToggleShape={() => {
+        setShapeMode((prev) => {
+          const next = !prev;
+          // **끌 때는 밑그림을 버린다**(REQ-05). 남겨 두면 다시 켠 순간 옛 꼭짓점이 딸려
+          // 나오고, 사용자는 그것을 "지운 줄 알았는데 남아 있다" 로 읽는다.
+          if (!next) setShapeDraft(undefined);
+          return next;
+        });
+        // **모드에는 언제나 모양이 있어야 한다**(REQ-01). 모양을 정할 도구가 하나도 켜져
+        // 있지 않으면 곧은선을 함께 켠다 — 단추는 눌렸는데 눌러도 아무 일이 없는 상태를
+        // 만들지 않는다.
+        if (shapeRoute === null) setTool('straight');
+      }}
     />
   );
 
@@ -1751,12 +3933,57 @@ export default function CanvasEditOverlay({
       aria-describedby={hintId}
       aria-keyshortcuts={EDIT_KEY_SHORTCUTS}
       // 캔버스 위 전면 층. 터치 스크롤이 드래그를 가로채지 않게 `touch-none` 을 둔다.
-      className="absolute inset-0 z-20 touch-none"
+      //
+      // **손 커서는 자식까지 덮는다**(사용자 신고 2026-09-16). 루트의 커서는 인라인
+      // `style` 이 지지만 손잡이 · 단추는 제 `cursor-*` 를 제 노드에 달고 있어 그쪽이
+      // 이긴다 — Space 를 짚은 동안 손잡이 위에서 크기 조절 커서가 뜨면 그것은 **거짓말**
+      // 이다(그 순간 손잡이는 잡히지 않는다). 후손 변형으로 덮는 이 관용구는 이 저장소의
+      // 세 드래그 층(`PanelDragLayer` · `ChartDragLayer` · `GaugeDragLayer`)이 이미 쓴다.
+      className={cn(
+        'absolute inset-0 z-20 touch-none',
+        panning ? '[&_*]:cursor-grabbing' : spaceHeld ? '[&_*]:cursor-grab' : undefined,
+      )}
+      // **커서의 우선순위가 여기 한 줄에 선다**(위에서 아래로 읽는다).
+      //
+      //   1) 끌고 있는 팬 — 쥔 손. 그 몸짓이 끝나기 전에는 다른 어떤 것도 시작될 수 없다.
+      //   2) 짚고 있는 Space — 편 손. **펜을 이긴다**: 짚은 동안 누름은 팬이므로, 펜을
+      //      그대로 두면 커서가 "여기서 선이 시작된다" 고 약속하고 그 약속은 지켜지지 않는다.
+      //   3) 펜(사용자 신고 2026-09-16) — 앵커 점은 표식이라 포인터를 먹지 않으므로 커서가
+      //      그 점에서 나올 수 없고(§`penHover`), 루트가 곧 그 점 아래 깔린 면이다. 조건
+      //      둘은 사용자가 말한 그 둘이다 — **선이 시작될 수 있는 자리 위**와 **긋는 동안**.
+      //   4) 그 밖에는 **편 손**(SPEC-CANVAS-011) — 맨손 끌기가 이제 팬이기 때문이다.
+      //
+      // **손 커서 규칙을 둘로 두지 않는다**(011). 011 전에는 손이 뜨는 조건이 "Space 를
+      // 짚었다" 하나였고, 011 은 거기에 "빈 자리 위" 를 더하려는 것이 아니라 **기본값을
+      // 손으로 바꾼다**: 맨손 누름이 팬이라는 사실이 이제 자리를 가리지 않고 참이기
+      // 때문이다(잉크 위의 맨손 끌기도 "잡아서 옮긴다" 이므로 손은 거기서도 거짓말하지
+      // 않는다). 그래서 2) 는 **손을 켜는 규칙이 아니라 펜을 이기는 규칙**으로만 남는다 —
+      // 조건 둘을 나란히 두면 같은 커서를 두 자리에서 켜게 되고, 한쪽만 고쳐지는 날
+      // "Space 를 짚으면 손인데 그냥은 아닌" 화면이 돌아온다.
+      //
+      // 손 커서를 **자식까지 덮는 일**(아래 `className`)은 여전히 2)·1) 의 몫이다. 그 둘은
+      // 손잡이마저 잡히지 않는 상태이므로 손잡이의 커서가 거짓말이 되지만, 기본값으로서의
+      // 편 손은 손잡이를 가로챌 까닭이 없다 — 그 자리에서 손잡이는 실제로 잡힌다.
+      //
+      // 도구 표를 **여기서 한 번 더** 읽는 것에 뜻이 있다. 판정은 이동에서만 도는데 도구는
+      // 단추로 바뀌므로, 이 줄이 없으면 도구를 끈 뒤에도 손을 움직이기 전까지 펜이 남는다.
+      // 값이 아니라 렌더가 그 사실을 들게 하면 끄는 쪽이 즉시 참이 된다.
+      style={{
+        cursor: panning
+          ? 'grabbing'
+          : spaceHeld
+            ? 'grab'
+            : connectorDraw !== null || (TOOL_CONNECTOR_ROUTE[tool] !== null && penHover)
+              ? PEN_CURSOR
+              : 'grab',
+      }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerCancel}
       onKeyDown={handleKeyDown}
+      onKeyUp={handleKeyUp}
+      onBlur={handleBlur}
     >
       {/* **닿는 면**(REQ-08 · 불변식 I18). 그리지 않고 닿기만 하는 층이며, 그래서
           `pointer-events-none` 이 **없는** 유일한 자식이다.
@@ -1800,7 +4027,7 @@ export default function CanvasEditOverlay({
           가리킬 수 없다. */}
       <p id={hintId} className="sr-only">
         {t('dashboard.canvas.edit.keyboardHint')} {t('dashboard.canvas.edit.marqueeHint')}{' '}
-        {t('dashboard.canvas.edit.deleteHint')}
+        {t('dashboard.canvas.edit.deleteHint')} {t('dashboard.canvas.edit.panHint')}
       </p>
       {/* 격자 — **신규 격자 컴포넌트를 만들지 않는다**(REQ-04). `PanelEditGrid` 는 선을
           DOM 요소가 아니라 `repeating-linear-gradient` 로 그리고 `absolute inset-0` +
@@ -1965,6 +4192,31 @@ export default function CanvasEditOverlay({
           >
             {groupTools}
           </div>
+          {/* **앵커 도구도 이 줄에 선다**(SPEC-CANVAS-011 AC-61 · 불변식 I23 · I24).
+
+              그룹 묶음과 같은 자리·같은 이유이고, 근거는 한 걸음 더 곧다: 앵커 점은 도구가
+              켜진 동안 **조건 없이** 그려지는 표시 층이므로, 켜고 끄는 손잡이가 그 층이
+              그려지는 표면에 있어야 한다. 제 이름을 가진 묶음을 따로 두어 듣는 사람에게
+              "보기 배율 줄 → 그룹 → …, 앵커 → …" 로 읽히게 한다. */}
+          <div
+            role="group"
+            aria-label={t('dashboard.canvas.edit.dockAnchor')}
+            className="flex items-center gap-1"
+          >
+            {anchorTools}
+          </div>
+          {/* **연결선 도구도 이 줄에 선다**(SPEC-CANVAS-011 AC-61 · 불변식 I23 · I24).
+
+              앵커 묶음 바로 뒤이고, 근거는 그 묶음의 근거를 그대로 물려받는다: 이 단추들이
+              켜는 것은 잇는 몸짓이자 **앵커 점이라는 표시 층**이므로(REQ-02-b), 켜고 끄는
+              손잡이가 그 층이 그려지는 표면에 있어야 한다. */}
+          <div
+            role="group"
+            aria-label={t('dashboard.canvas.edit.dockConnector')}
+            className="flex items-center gap-1"
+          >
+            {connectorTools}
+          </div>
         </div>
       )}
       {/*
@@ -1981,7 +4233,42 @@ export default function CanvasEditOverlay({
           이벤트 전파도 종전과 같다(도구가 누름을 스스로 끊는 이유가 그것이다).
 
           자리가 없으면(대시보드에 놓인 패널) **아무 데도 그리지 않는다.** 도구가 스테이지
-          위로 되돌아올 길을 남기지 않는 것이 "설정에서만 쓴다" 는 결정이다. */}
+          위로 되돌아올 길을 남기지 않는 것이 "설정에서만 쓴다" 는 결정이다.
+
+          **자리는 둘이다**(사용자 결정 2026-09-16). 재료를 놓는 절 셋은 왼쪽 도크에, 캔버스와
+          고른 것에 작용하는 절 일곱은 미리보기 제목 아래 가로 띠에 그린다. 포털이 둘인 것은
+          **목적지가 DOM 노드이기 때문**이고 — 한 노드는 두 자리에 동시에 있을 수 없다 —
+          그 둘을 함께 내는 컴포넌트는 여전히 하나다(`CanvasEditDockRegion`). */}
+      {toolbarHost !== null &&
+        createPortal(
+          <CanvasEditToolbarBody
+            snapToGrid={snapToGrid}
+            onSnapToGridChange={setSnapToGrid}
+            gridStep={gridStep}
+            onGridStepChange={setGridStep}
+            zoom={workspaceZoom}
+            onZoomChange={setWorkspaceZoom}
+            // 자투리 고지의 근거 — 간격이 이 두 축을 나누어떨어뜨리는가. 투영이 이미 들고
+            // 있는 그 크기이므로 새 측정원이 되지 않는다(위험 R1).
+            canvas={projection.canvas}
+            canAlign={canAlign}
+            canOrder={canOrder}
+            onAlign={applyAlign}
+          canTransform={canTransform}
+          onTransform={applyTransform}
+            onOrder={applyZOrder}
+            // 그룹 묶음. 떠 있는 줄이 그리는 **그 컴포넌트**를 띠도 그린다 — 띠는 자리를
+            // 주고 이름을 달 뿐이다(SPEC-CANVAS-004 REQ-08 · 불변식 I24).
+            groupTools={groupTools}
+            // 앵커 묶음. 그룹과 **같은 규율**이다 — 짓는 자리는 이 층 하나이고 띠는
+            // 자리와 이름만 더한다(SPEC-CANVAS-011 AC-61).
+            anchorTools={anchorTools}
+            // 연결선 묶음. 앞의 둘과 **같은 규율**이다 — 짓는 자리는 이 층 하나이고
+            // 띠는 자리와 이름만 더한다(SPEC-CANVAS-011 AC-61).
+            connectorTools={connectorTools}
+          />,
+          toolbarHost,
+        )}
       {dockHost !== null &&
         createPortal(
           // 드롭 존 등록 채널을 **포털 안쪽**에 연다. 포털은 DOM 상으로만 패널 밖이고
@@ -1991,19 +4278,8 @@ export default function CanvasEditOverlay({
             <CanvasEditDockBody
               onPlace={placeFromPalette}
               onPlaceShape={placeFromCatalog}
-              snapToGrid={snapToGrid}
-              onSnapToGridChange={setSnapToGrid}
-              gridStep={gridStep}
-              onGridStepChange={setGridStep}
-              zoom={workspaceZoom}
-              onZoomChange={setWorkspaceZoom}
-              // 자투리 고지의 근거 — 간격이 이 두 축을 나누어떨어뜨리는가. 투영이 이미 들고
-              // 있는 그 크기이므로 새 측정원이 되지 않는다(위험 R1).
+              // 가져오기가 들여온 그림이 앉을 상자를 짓는 근거다(위험 R1 — 새 측정원이 아니다).
               canvas={projection.canvas}
-              canAlign={canAlign}
-              canOrder={canOrder}
-              onAlign={applyAlign}
-              onOrder={applyZOrder}
               // 끌어 넣기와 **같은 함수**다(J11). 단추 쪽에는 되돌릴 기하가 없으므로 지금
               // 배열에서 그대로 뜬다 — 뒷줄 하나가 도는지 마는지만 다르다.
               onScratchpadSave={() => saveSelectionToScratchpad(elements)}
@@ -2013,15 +4289,17 @@ export default function CanvasEditOverlay({
               // 가져오기도 같은 규칙이다 — 만드는 입구는 하나이고, 놓은 뒤의 선택은 이 층이
               // 소유한다(불변식 K9).
               onSvgImport={placeFromImport}
-              // 그룹 묶음. 떠 있는 줄이 그리는 **그 컴포넌트**를 도크도 그린다 — 도크는
-              // 자리를 주고 이름을 달 뿐이다(SPEC-CANVAS-004 REQ-08).
-              groupTools={groupTools}
             />
           </CanvasScratchpadDropContext>,
           dockHost,
         )}
-      {elements.map((el) => {
-        if (!selection.has(el.id)) return null;
+      {/* 선택 윤곽 — **해석기를 지난 노드**를 두른다(SPEC-CANVAS-009 M3).
+
+          `elements` 를 직접 돌면 부품 키는 어느 원소와도 만나지 못해 골라도 테두리가 서지
+          않는다. `selectedNodes` 는 부품을 캔버스 단위 의사 노드로 풀어 주므로 `outlineBox`
+          가 한 글자도 바뀌지 않고 걸리고, 판정하는 상자와 보이는 상자가 여전히 같은
+          함수에서 나온다(위험 R1). */}
+      {selectedNodes(elements, selection).map((el) => {
         const box = outlineBox(el, projection, textWidths);
         return (
           <div
@@ -2039,6 +4317,37 @@ export default function CanvasEditOverlay({
           />
         );
       })}
+      {/* **앵커 점** — 선이 붙는 자리(SPEC-CANVAS-011 REQ-02 · M3 · M3').
+
+          손잡이 **앞에** 그린다. 둘은 겹칠 수 있고(모서리 앵커와 모서리 핸들은 같은
+          자리다), 그때 위에 있어야 하는 것은 **잡히는 쪽**이다 — 점은 표식이라 가려져도
+          잃는 것이 없지만, 손잡이가 가려지면 크기 조절이 죽는다.
+
+          자리는 `anchorPoints` **한 함수**에서 나온다(REQ-02). 빼기 판정이 쓰는 것도 같은
+          함수이므로(`applyAnchorGesture`), 보이는 점과 집히는 점이 갈릴 수 없다(위험 R1).
+
+          좌표계는 선택 윤곽선·손잡이와 같다: 스테이지 로컬 px 을 `left`/`top` 에 그대로
+          쓰고 `-translate-*-1/2` 로 중심을 맞춘다.
+
+          **장식이다**(`aria-hidden`). 무엇이 어디에 붙을 수 있는지는 도구 단추의 이름이
+          알리고(`toolAnchor`), 점 하나하나는 듣는 사람에게 읽을 것이 없는 좌표다 —
+          아홉 × 요소 수만큼의 이름을 읽히면 그것은 알림이 아니라 소음이다. 그래서 위험
+          R8 의 가드에 **걸린 채** `pointer-events-none` 을 갖는다. */}
+      {anchorHosts.map((el) => {
+        const points = anchorPoints(el, projection, textWidths);
+        return [...points].map(([id, point]) => {
+          const px = projectPoint(point, projection);
+          return (
+            <div
+              key={`${el.id}/${id}`}
+              data-testid={`canvas-anchor-dot-${el.id}-${id}`}
+              aria-hidden="true"
+              className={ANCHOR_DOT_CLASS}
+              style={{ left: px.x, top: px.y }}
+            />
+          );
+        });
+      })}
       {handleHost !== undefined &&
         handlePositions(handleHost, projection, {
           measuredWidth: resolveMeasuredWidth(textWidths[handleHost.id]),
@@ -2054,6 +4363,152 @@ export default function CanvasEditOverlay({
             onPointerDown={(event) => startHandleDrag(handleHost, handle.id, event)}
           />
         ))}
+      {/* **회전 손잡이** — 방향 상자 위쪽 하나 (SPEC-CANVAS-014 M9 · REQ-02).
+
+          **8핸들과 이름 공간이 다르다**(`canvas-rotate-handle`). 011 이 연결선 손잡이에
+          대해 쓴 그 근거가 그대로 걸린다 — `CanvasHandleId` 는 두 `Record` 가 빠짐없이 덮는
+          닫힌 집합이고, 그 표에 넣는 순간 8핸들을 세는 출시된 가드들이 함께 흔들린다.
+          게다가 이 손잡이가 쓰는 것은 기하도 스타일도 아닌 **각도**다.
+
+          **선에는 서지 않는다.** 선의 각도는 두 끝점이 이미 말하므로 회전 필드가 없고
+          (§D6), 여기에 손잡이를 세우면 눌러도 아무 일이 없는 단추가 된다.
+
+          자리는 **돌아간 상자의 위쪽 가운데에서 더 위**다. 상자와 함께 도는 것이 요점이다 —
+          축-나란 자리에 두면 도형을 90° 돌린 뒤 손잡이가 옆구리에 붙는다. */}
+      {rotateHandle !== undefined && (
+        <button
+          type="button"
+          data-testid="canvas-rotate-handle"
+          aria-label={t('dashboard.canvas.edit.rotateHandle')}
+          title={t('dashboard.canvas.edit.rotateHandle')}
+          className={ROTATE_HANDLE_CLASS}
+          style={{ left: rotateHandle.point.x, top: rotateHandle.point.y }}
+          onPointerDown={(event) => startRotateDrag(rotateHandle, event)}
+        />
+      )}
+      {/* **연결선 손잡이** — 끝점 둘 + 중간점마다 (SPEC-CANVAS-011 M9 · REQ-07).
+
+          **8핸들과 이름 공간이 다르다**(`canvas-connector-handle-*`). 섞으면
+          `canvas-handle-nw` 가 "상자 왼쪽 위" 인지 "연결선의 어떤 자리" 인지 이름만으로는
+          답하지 못하고, 연결선에 8핸들이 서지 않았음을 재는 자리가 가려낼 것을 잃는다.
+
+          갯수가 저술마다 다르므로 `CanvasHandleId` 를 넓히지 않고 **별도 갈래**로 둔다
+          (plan §M9 2) — 넓히면 `HANDLE_ARIA_KEYS` · `HANDLE_CURSOR` 두 표가 뜻 없는 항목을
+          하나씩 갖고, 그 항목에는 답할 문장이 없다.
+
+          자리는 `resolveConnector` **한 함수**에서 온다 — 그리는 쪽·잡는 쪽이 보는 그
+          목록이다. 끊긴 연결이면 목록 자체가 부재이므로 손잡이도 서지 않고 예외도 없다
+          (REQ-08). `connectorHost` 와 `handleHost` 는 배타적이라 이 갈래와 위 갈래가
+          함께 서는 일이 없다.
+
+          좌표계는 8핸들과 같다: 투영된 점을 `left`/`top` 에 그대로 두고 `-translate-*-1/2`
+          로 중심을 맞춘다. 반 칸을 미리 빼면 그 산술이 곧 두 번째 투영이 된다(AC-E2).
+
+          **앵커 도구가 켜진 동안에는 포인터를 먹지 않는다.** 끝 손잡이는 제가 붙은 앵커와
+          **정확히 같은 자리**에 서므로(그 점이 곧 그 끝이다), 먹으면 그 앵커를 겨눈 누름을
+          손잡이가 가로챈다 — 위 §앵커가 잉크를 이긴다가 히트 층에서 막은 바로 그 구멍이
+          DOM 층에서 되살아나는 형상이다. 도구가 몸짓의 뜻을 갈아 끼우는 동안 이 표면은
+          앵커의 것이고, 그래서 앵커 점이 표식인 것과 **같은 이유로** 손잡이도 물러선다. */}
+      {/* **가운데 구간 손잡이** — 직각 선이 세 구간일 때만 (SPEC-CANVAS-019 REQ-01).
+
+          8핸들과도 연결선 손잡이와도 **이름 공간이 다르다**. 하는 일이 다르기 때문이다 —
+          저쪽 둘은 점을 옮기고 이것은 **구간의 자리**를 옮긴다.
+
+          **누르기만 하면 고정이 풀려** 자동 자리로 돌아온다(REQ-05). 되돌릴 길이 없으면
+          한 번 옮긴 선은 영영 자동으로 돌아오지 못한다 — 이 패널에는 되돌리기가 없다.
+
+          되돌리는 몸짓으로 더블클릭을 쓰지 않는 것에 뜻이 있다: `onDoubleClick` 은 입력
+          장치에 따라 채워지지 않아 **몸짓이 조용히 죽고**, 011 이 그 의존을 가드로 막아
+          두었다. 016 이 끝 손잡이에 대해 세운 "움직이지 않았으면" 규칙을 여기서도 쓴다 —
+          끌면 옮기고, 누르기만 하면 되돌린다. */}
+      {orthoSplitHandles.map((knob) => (
+        <button
+          // **구간 번호로 이름을 짓는다.** 배열 차례로 지으면 옆 구간에 손잡이가 하나 늘고
+          // 줄 때 React 가 다른 손잡이를 같은 것으로 읽어, 끌던 중에 자리가 튄다.
+          key={knob.segment}
+          type="button"
+          data-testid={`canvas-ortho-split-handle-${knob.segment}`}
+          aria-label={t('dashboard.canvas.edit.orthoSplitHandle')}
+          title={t('dashboard.canvas.edit.orthoSplitHandle')}
+          className={cn(
+            ORTHO_SPLIT_HANDLE_CLASS,
+            knob.axis === 'lr' ? 'cursor-ew-resize' : 'cursor-ns-resize',
+          )}
+          style={{ left: knob.at.x, top: knob.at.y }}
+          onPointerDown={(event) => startOrthoSplitDrag(knob, event)}
+        />
+      ))}
+      {connectorHost !== undefined &&
+        connectorPoints?.map((point, index) => {
+          const handle = connectorHandleAt(index, connectorPoints.length);
+          const name = connectorHandleName(handle);
+          const px = projectPoint(point, projection);
+          return (
+            <button
+              key={name}
+              type="button"
+              data-testid={`canvas-connector-handle-${name}`}
+              aria-label={connectorHandleLabel(t, handle)}
+              // **보는 사람에게도 같은 말을 한다.** `aria-label` 만 두면 "두 번 누르면
+              // 없어진다" 는 사실이 보조기기를 쓰는 사람에게만 있고, 마우스를 쓰는 사람은
+              // 그 길이 아예 없다고 읽는다 — 그것이 신고된 형상이다. 도구 단추들이 이미
+              // 쓰는 관용구 그대로 **같은 키**를 두 자리에 건다(`CanvasConnectorTools`).
+              title={connectorHandleLabel(t, handle)}
+              className={cn(
+                CONNECTOR_HANDLE_CLASS[handle.kind === 'end' ? handle.side : 'mid'],
+                CONNECTOR_HANDLE_CURSOR,
+                TOOL_ANCHOR_GESTURE[tool] && 'pointer-events-none',
+              )}
+              style={{ left: px.x, top: px.y }}
+              onPointerDown={(event) => startConnectorHandleDrag(connectorHost, handle, event)}
+              // **꺾임점에만 차림표가 열린다**(SPEC-CANVAS-021 REQ-01). 끝점에는 뺄 것이
+              // 없다 — 끝은 앵커에 매여 있고, 그것을 떼는 일은 016 이 따로 정했다.
+              onContextMenu={
+                handle.kind === 'mid'
+                  ? (event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setPointMenu({ nodeId: connectorHost.id, index: handle.index, at: px });
+                    }
+                  : undefined
+              }
+            />
+          );
+        })}
+      {/* **꺾임점 지움 차림표** (SPEC-CANVAS-021 REQ-01 · REQ-02 · §결정 1).
+
+          캔버스 전체에 오른쪽 차림표 틀을 세우지 않는다 — 세우면 "빈 곳에서는", "도형
+          위에서는", "그룹 위에서는" 이 줄줄이 따라오고 그 답은 이 SPEC 에 없다. 꺾임점
+          손잡이 하나가 제 차림표를 든다(`PanelSettingsDialog` 가 배치 칸에 쓰는 그 형상).
+
+          빼는 일은 **`removePointAt` 하나**를 지난다(K3) — 연타가 지나는 그 함수다. 두 문이
+          같은 한 줄을 지나야 "연타로 뺀 것" 과 "차림표로 뺀 것" 이 갈리지 않는다. */}
+      {pointMenu !== undefined && (
+        <div
+          data-testid="canvas-point-menu"
+          role="menu"
+          className="pointer-events-auto absolute z-30 min-w-40 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-1 text-left shadow-lg"
+          style={{ left: pointMenu.at.x, top: pointMenu.at.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="canvas-point-menu-remove"
+            className="w-full rounded-sm px-2 py-1 text-left text-xs text-(--color-text-primary) hover:bg-(--color-interactive-hover)"
+            onClick={() => {
+              const host = elements.find((el) => el.id === pointMenu.nodeId);
+              if (host !== undefined && isConnector(host)) {
+                commitConnector(host, removePointAt(host, pointMenu.index));
+              }
+              setPointMenu(undefined);
+            }}
+          >
+            {t('dashboard.canvas.edit.removeBendPoint')}
+          </button>
+        </div>
+      )}
       {/* **마키 사각형** — 지금 감싸고 있는 영역(SPEC-CANVAS-009 결정 5).
 
           **표시 층이 아니다**(불변식 I23). I23 이 막는 결함의 형상은 "**조건 없이** 그려지는
@@ -2075,6 +4530,86 @@ export default function CanvasEditOverlay({
 
           좌표계는 선택 윤곽선과 **같다**: 스테이지 로컬 px 을 `left`/`top` 에 그대로 쓴다.
           루트에 `overflow` 가 없으므로 저술 여백까지 음수 좌표로 뻗는다(닿는 면과 같은 방식). */}
+      {/* **긋는 중인 선** — 누른 앵커에서 지금 손까지(SPEC-CANVAS-011 M8 · REQ-03).
+
+          **표시 층이 아니다**(불변식 I23). 마키 사각형이 그 목록 밖인 근거가 여기에도
+          한 글자도 다르지 않게 붙는다: 손이 눌려 있는 동안에만 존재하고, 그리는 것도
+          거두는 것도 **그 몸짓 자신**이다. 다스릴 지속 상태가 없으므로 다스릴 컨트롤도
+          없고, 컨트롤을 지어 붙인다면 누를 시간이 존재하지 않는 단추가 된다. 그래서
+          `LAYER_CONTROLS` 표에 행을 더하지 않는다 — 이것은 **몸짓 자신의 그림자**다.
+
+          **위험 R8 의 가드를 우회하지 않고 만족시킨다.** 칠하고 `aria-hidden` 이므로 그
+          형상 가드에 **걸리며**, 걸린 채로 `pointer-events-none` 을 갖는다. `<div>` 인 것이
+          그 사실의 절반이다 — `<svg>` 였다면 가드의 `instanceof HTMLElement` 에 잡히지 않아
+          조용히 면제되었을 것이고, 면제를 얻으려고 원소 종류를 고르는 것은 가드를
+          **우회하는** 일이다.
+
+          좌표계는 선택 윤곽선·마키와 같다: 스테이지 로컬 px 을 `left`/`top` 에 그대로 쓴다. */}
+      {connectorDraw !== null && (
+        <div
+          data-testid="canvas-connector-preview"
+          aria-hidden="true"
+          className={CONNECTOR_PREVIEW_CLASS}
+          style={previewLineStyle(connectorDraw.origin, connectorDraw.point)}
+        />
+      )}
+      {/* **그리는 중인 윤곽** (SPEC-CANVAS-022 REQ-04).
+
+          모양을 여기서 다시 그리지 않는다 — `connectorPath` 가 낸 명령을 그대로 `d` 로
+          옮긴다(K3). 보이는 선과 만들어질 도형이 **같은 함수**에서 나야, 눌러 보고서야
+          모양을 아는 일이 없다(위험 R1 의 규율을 밑그림에 적용한 것이다).
+
+          `Z` 를 붙이지 않는다 — 아직 닫히지 않았고, 닫는 일은 시작점을 다시 누르는 몸짓의
+          것이다. 미리 닫아 보이면 화면이 하지 않은 약속을 한다.
+
+          표시 층이 아니다(불변식 I23): 손이 그리는 동안에만 있고, 거두는 것도 그 몸짓
+          자신이다 — 마키·긋는 중인 선이 그 목록 밖인 근거와 한 글자도 다르지 않다. */}
+      {shapeDraft !== undefined &&
+        shapeRoute !== null &&
+        (() => {
+          const px = connectorPath(
+            [...shapeDraft.vertices, unprojectPoint(shapeDraft.at, projection)],
+            shapeRoute,
+            projection,
+          );
+          if (px.length === 0) return null;
+          const d = px
+            .map((cmd) =>
+              cmd.c === 'M'
+                ? `M ${cmd.x} ${cmd.y}`
+                : cmd.c === 'L'
+                  ? `L ${cmd.x} ${cmd.y}`
+                  : `C ${cmd.x1} ${cmd.y1} ${cmd.x2} ${cmd.y2} ${cmd.x} ${cmd.y}`,
+            )
+            .join(' ');
+          return (
+            <svg
+              data-testid="canvas-shape-preview"
+              aria-hidden="true"
+              className="pointer-events-none absolute left-0 top-0 overflow-visible"
+              width={stage.width}
+              height={stage.height}
+            >
+              <path d={d} fill="none" stroke="rgb(59 130 246)" strokeWidth={1} strokeDasharray="4 3" />
+              {shapeDraft.vertices.map((vertex, index) => {
+                const at = projectPoint(vertex, projection);
+                return (
+                  <circle
+                    // **찍힌 차례가 곧 그 점의 이름이다** — 목록에서 빠지는 일이 없으므로
+                    // (버릴 때는 통째로 버린다) 차례가 안정한 키다.
+                    key={index}
+                    data-testid={`canvas-shape-vertex-${index}`}
+                    cx={at.x}
+                    cy={at.y}
+                    r={index === 0 ? 5 : 3}
+                    fill={index === 0 ? 'rgb(59 130 246)' : 'white'}
+                    stroke="rgb(59 130 246)"
+                  />
+                );
+              })}
+            </svg>
+          );
+        })()}
       {marquee !== null &&
         (() => {
           const box = marqueeRect(marquee.origin, marquee.point);

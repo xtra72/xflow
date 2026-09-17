@@ -35,7 +35,8 @@ import {
   type LineGeometry,
   type PointGeometry,
 } from './canvasConfig';
-import type { CanvasNode, CanvasNodeKind } from './group/groupTypes';
+import type { CanvasNode, OutlinedNode, OutlinedNodeKind } from './group/groupTypes';
+import { isConnector } from './connector/connectorTypes';
 import {
   projectBox,
   projectLine,
@@ -48,6 +49,10 @@ import {
   type PxPoint,
 } from './canvasGeometry';
 import { FONT_SIZE_MAX, FONT_SIZE_MIN } from '../charts/statLayout';
+// 각도의 판정·점 회전은 잎 모듈이, **각도를 읽는 일**은 윤곽 모듈이 소유한다
+// (SPEC-CANVAS-014) — 여기서 `el.rotation` 을 직접 읽으면 그 판정이 둘이 된다.
+import { boxCenter, isRotated, rotatePoint } from './canvasRotation';
+import { outlineAngle } from './canvasOutline';
 
 // --- 타입 ---------------------------------------------------------------
 
@@ -133,8 +138,14 @@ export const BOX_CORNER_HANDLE_IDS = ['nw', 'ne', 'se', 'sw'] as const;
 export const CANVAS_FONT_SIZE_MIN = FONT_SIZE_MIN;
 export const CANVAS_FONT_SIZE_MAX = FONT_SIZE_MAX;
 
-/** 핸들 → 정규화된 px 박스 안의 상대 위치(0=시작 변, 1=끝 변). */
-const BOX_HANDLE_FACTORS: Record<BoxHandleId, readonly [number, number]> = {
+/**
+ * 핸들 → 정규화된 px 박스 안의 상대 위치(0=시작 변, 1=끝 변).
+ *
+ * **밖으로 열려 있다** — 011 의 고정 앵커 여덟이 같은 표를 지나야 하기 때문이다
+ * (`connector/anchors.ts` · AC-10). 베껴 적게 두면 표가 둘이 되고, 그중 하나가 바뀌는 날
+ * 손잡이가 선 자리와 선이 붙는 자리가 갈라진다.
+ */
+export const BOX_HANDLE_FACTORS: Record<BoxHandleId, readonly [number, number]> = {
   nw: [0, 0],
   n: [0.5, 0],
   ne: [1, 0],
@@ -245,8 +256,14 @@ export function handleRole(id: CanvasHandleId): CanvasHandleRole {
  * 하나뿐이라 기하 형상이 검사에 참여하지 않기 때문이다. 그래서 갈래를 이름으로 적는다:
  * `default:` 를 `case 'text':` 로 펴 두면 여섯 번째 종류가 들어올 때 컴파일러가 이 자리를
  * 가리킨다.
+ *
+ * **연결선은 이 표에 없다**(SPEC-CANVAS-011 REQ-07). 인자가 `CanvasNodeKind` 가 아니라
+ * `OutlinedNodeKind` 인 것이 그 금지다 — 연결선에는 늘릴 상자가 없고, 빈 배열을 돌려주는
+ * 갈래를 더하면 "손잡이가 없는 것" 과 "아직 안 지은 것" 이 같은 값이 되어 M9 가 제 갈래를
+ * 잊어도 화면이 조용하다. 연결선의 손잡이는 끝점과 중간점마다 서고 그 id 가 가변이므로
+ * `CanvasHandleId` 를 넓히지 않고 **별도 렌더 갈래**가 맡는다(M9).
  */
-export function handlesFor(kind: CanvasNodeKind): readonly CanvasHandleId[] {
+export function handlesFor(kind: OutlinedNodeKind): readonly CanvasHandleId[] {
   switch (kind) {
     // 그룹은 **제 상자**에 여덟 손잡이를 세운다(REQ-08). 부품에는 손잡이가 서지 않으므로
     // (가정 A18) 역방향 중첩 투영이 필요 없고, 그룹 상자는 `BoxGeometry` 라 크기 조절 ·
@@ -272,9 +289,12 @@ export function handlesFor(kind: CanvasNodeKind): readonly CanvasHandleId[] {
  * `text` 의 글자 크기 핸들은 글자 상자의 **오른쪽 아래 모서리**에 둔다. 상자의 세로
  * 중심이 기준점이므로(`drawElement.TEXT_BASELINE === 'middle'`) 아래 변은
  * `기준점 y + fontSize/2` 이며, 실측 폭이 아직 없으면 폭 0 으로 보아 기준점에 붙는다.
+ *
+ * 인자가 `OutlinedNode` 인 근거는 위 `handlesFor` 와 **같다** — 연결선은 이 통로를 지나지
+ * 않는다(REQ-07 · M9).
  */
 export function handlePositions(
-  el: CanvasNode,
+  el: OutlinedNode,
   proj: CanvasProjection,
   opts: HandleLayoutOptions = {},
 ): CanvasHandle[] {
@@ -288,12 +308,20 @@ export function handlePositions(
     case 'path':
     case 'group': {
       const box = normalizePxBox(projectBox(el.geometry, proj));
+      // **손잡이는 방향 상자에 선다**(SPEC-CANVAS-014 §결정 2 · REQ-04). 축-나란 상자에
+      // 세우면 돌아간 도형의 손잡이가 잉크에서 떨어져 뜨고, 그 손잡이를 끌었을 때 늘어나는
+      // 축도 화면과 어긋난다.
+      //
+      // 상자를 **다시 재지 않는다** — 바로 위 `box` 를 돌릴 뿐이다(K2).
+      const deg = outlineAngle(el);
+      const pivot = boxCenter(box);
       return BOX_HANDLE_IDS.map((id): CanvasHandle => {
         const [fx, fy] = BOX_HANDLE_FACTORS[id];
+        const flat = { x: box.x + box.w * fx, y: box.y + box.h * fy };
         return {
           id,
           role: handleRole(id),
-          point: { x: box.x + box.w * fx, y: box.y + box.h * fy },
+          point: isRotated(deg) ? rotatePoint(flat, pivot, deg) : flat,
         };
       });
     }
@@ -312,11 +340,16 @@ export function handlePositions(
         el.style.align ?? 'left',
         width,
       );
+      // 글자 손잡이도 같은 축을 탄다 — 그 축은 그리는 쪽이 쓰는 그것이다(`rotationPivotIn`).
+      const flat = { x: origin.x + width, y: origin.y + fontSize / 2 };
+      const deg = outlineAngle(el);
       return [
         {
           id: 'font',
           role: handleRole('font'),
-          point: { x: origin.x + width, y: origin.y + fontSize / 2 },
+          point: isRotated(deg)
+            ? rotatePoint(flat, { x: origin.x + width / 2, y: origin.y }, deg)
+            : flat,
         },
       ];
     }
@@ -427,6 +460,57 @@ export function resizeBox(
  *
  * 비유한 포인터는 `resizeBox` 와 같은 이유로 조작을 무시한다.
  */
+/**
+ * 돌아간 상자를 **제 축 방향으로** 늘린다 (SPEC-CANVAS-014 M7 · REQ-05 · §결정 4).
+ *
+ * ## 같은 수법이다
+ *
+ * 잡기가 점을 되돌린 뒤 기존 다섯 판정을 그대로 부른 것처럼(§결정 3), 여기서도 포인터를
+ * 요소의 **돌지 않은 좌표계**로 되돌린 뒤 `resizeBox` 를 **그대로** 부른다. 종횡비 유지도
+ * 최소 크기 죔쇠도 그 함수가 이미 가진 것을 그대로 받는다 — 회전을 아는 리사이즈를 종류마다
+ * 새로 쓰지 않는 것이 이 SPEC 이 크기를 감당하는 방법이다.
+ *
+ * ## 그런데 되돌리는 것만으로는 부족하다
+ *
+ * `resizeBox` 는 **잡지 않은 반대쪽**을 로컬 좌표에서 고정한다. 그런데 회전 축은 상자
+ * **가운데**이므로, 크기가 바뀌면 축도 함께 옮겨 간다 — 로컬에서 고정된 그 모서리가
+ * **화면에서는 미끄러진다.** 늘릴수록 도형이 옆으로 기어가는 그 결함이다.
+ *
+ * 그래서 늘린 뒤에 한 번 더 민다: 고정 모서리의 **화면 자리**가 늘리기 전과 같아지도록
+ * 새 상자를 통째로 옮긴다. 미는 양은 두 화면 자리의 차이 하나뿐이다.
+ *
+ * 각도가 0 이면 `resizeBox` 를 그대로 부른 것과 **바이트 동일**하다(K3).
+ */
+export function resizeRotatedBox(
+  box: BoxGeometry,
+  deg: number,
+  handle: BoxHandleId,
+  pointer: CanvasPoint,
+  opts: ResizeBoxOptions = {},
+): BoxGeometry {
+  if (!isRotated(deg)) return resizeBox(box, handle, pointer, opts);
+
+  const base = normalizeBox(box);
+  const pivot = { x: base.x + base.w / 2, y: base.y + base.h / 2 };
+  // ① 포인터를 요소의 돌지 않은 좌표계로 되돌린다 — 잡기와 **같은 수법**이다.
+  const local = rotatePoint(pointer, pivot, -deg);
+  const next = normalizeBox(resizeBox(base, handle, local, opts));
+
+  // ② 고정 모서리가 화면에서 미끄러지지 않도록 민다.
+  //
+  // 고정 자리는 `resizeBox` 가 쓰는 그 규칙에서 나온다(잡지 않은 반대쪽). 모서리 손잡이면
+  // 반대 모서리이고, 변 손잡이면 그 반대 변 위의 한 점이다 — 어느 쪽이든 늘리기 전후로
+  // **로컬에서는 같은 자리**이므로, 화면 자리의 차이가 곧 밀 양이다.
+  const edges = BOX_HANDLE_EDGES[handle];
+  const fixedOf = (b: BoxGeometry): CanvasPoint => ({
+    x: edges.h === -1 ? b.x + b.w : b.x,
+    y: edges.v === -1 ? b.y + b.h : b.y,
+  });
+  const before = rotatePoint(fixedOf(base), pivot, deg);
+  const after = rotatePoint(fixedOf(next), { x: next.x + next.w / 2, y: next.y + next.h / 2 }, deg);
+  return { ...next, x: next.x + (before.x - after.x), y: next.y + (before.y - after.y) };
+}
+
 export function resizeLine(
   line: LineGeometry,
   endpoint: LineHandleId,
@@ -563,6 +647,12 @@ export function patchNodeGeometry(
 ): CanvasNode[] {
   return elements.map((el): CanvasNode => {
     if (el.id !== nodeId) return el;
+
+    // **연결선은 그대로 둔다**(SPEC-CANVAS-011 M4). `geometry` 가 없으므로 쓸 자리가 없다 —
+    // 위 문단이 적은 "종류와 기하 형상이 어긋나면 그대로 둔다" 의 극단이며, 여기서 예외를
+    // 내거나 상자를 지어 넣으면 연결선이 조용히 도형이 된다. 연결선의 자리를 고치는 길은
+    // 끝점 참조와 중간점뿐이고, 그 통로는 M9·M10 이 제 손으로 낸다.
+    if (isConnector(el)) return el;
 
     switch (el.kind) {
       // **004 가 이 함수에 더한 것의 전부다.** 그룹은 rect 와 같은 상자 기하를 쓰므로

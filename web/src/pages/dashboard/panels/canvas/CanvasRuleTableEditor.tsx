@@ -30,6 +30,12 @@ import type {
   StylePatch,
 } from './canvasConfig';
 import { matchesRule } from './canvasRules';
+// 백분율 환산 한 쌍(SPEC-CANVAS-012 M5) — 요소·그룹·연결선 칸과 **같은 함수**를 지난다.
+import {
+  OPACITY_PERCENT_MAX,
+  opacityToPercentInput,
+  percentInputToOpacity,
+} from './opacityPercent';
 
 /** 연산자 선택지. 표시 순서는 §명세 "비교 연산자 집합" 의 나열 순서를 따른다. */
 const RULE_OPS: readonly RuleOp[] = ['gt', 'gte', 'lt', 'lte', 'eq', 'ne', 'between', 'nodata'];
@@ -476,15 +482,21 @@ export default function CanvasRuleTableEditor({
                       data-testid={`canvas-rule-stroke-width-${idx}`}
                     className={cn(INPUT_CLASS, 'w-12 text-center tabular-nums')}
                   />
+                  {/* 012 M5 — 칸은 백분율, 저장은 0..1 그대로다. 요소·그룹·연결선 칸과
+                      **같은 함수 한 쌍**을 지난다(AC-28).
+
+                      이 칸은 종전에 0..1 로 죄지 **않았다** — `1.5` 가 저장에 남을 수 있었고
+                      그 값은 `resolveAlpha` 가 1 로 죄어 그렸다. 이제 칸이 그려지는 수를
+                      보이고(100) 쓸 때도 죈다. */}
                   <input
                     type="number"
-                    step="any"
+                    step={1}
                     min={0}
-                    max={1}
-                    value={row.patch.opacity ?? ''}
+                    max={OPACITY_PERCENT_MAX}
+                    value={opacityToPercentInput(row.patch.opacity)}
                     disabled={disabled}
                     onChange={(e) =>
-                      updatePatch(row, idx, 'opacity', parseOptionalNumber(e.target.value))
+                      updatePatch(row, idx, 'opacity', percentInputToOpacity(e.target.value))
                     }
                     placeholder={t('dashboard.canvas.rules.opacityPlaceholder')}
                     aria-label={withIndex(t('dashboard.canvas.rules.opacityAria'), idx)}

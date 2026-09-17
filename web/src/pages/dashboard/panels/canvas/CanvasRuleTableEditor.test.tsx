@@ -299,7 +299,8 @@ describe('CanvasRuleTableEditor — 비운 패치 칸은 키 자체가 사라진
     fireEvent.change(testid('canvas-rule-stroke-width-0'), { target: { value: '4' } });
     expect(lastPayload(onChange)![0]!.patch).toEqual({ strokeWidth: 4 });
 
-    fireEvent.change(testid('canvas-rule-opacity-0'), { target: { value: '0.25' } });
+    // 012 M5 — 칸은 백분율, 저장은 0..1. 요소·그룹·연결선 칸과 같은 함수를 지난다.
+    fireEvent.change(testid('canvas-rule-opacity-0'), { target: { value: '25' } });
     expect(lastPayload(onChange)![0]!.patch).toEqual({ opacity: 0.25 });
 
     fireEvent.change(testid('canvas-rule-font-weight-0'), { target: { value: 'bold' } });

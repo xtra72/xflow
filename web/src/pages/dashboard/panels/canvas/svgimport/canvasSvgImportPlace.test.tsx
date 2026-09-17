@@ -308,7 +308,11 @@ describe('AC-09 — 놓으면 일반 요소가 된다 (REQ-06)', () => {
     expect(screen.queryByTestId('canvas-handle-se')).toBeNull();
 
     // 상자 밖이면서 씨앗 셋에서도 먼 자리 — `HIT_TOLERANCE_PX`(6) 안에 아무것도 없다.
+    // **뗌까지 쏜다**(SPEC-CANVAS-011): 빈 자리의 맨손 누름은 이제 팬을 시작하고, 선택을
+    // 비우는 것은 움직이지 않고 끝난 그 몸짓 — 곧 클릭 — 이다. 이 시험이 쓰는 것은
+    // 선택을 비우는 **몸짓**이지 그 시점이 아니므로, 도우미 한 줄만 몸짓을 마저 마친다.
     send('pointerdown', 240, 20);
+    send('pointerup', 240, 20);
     expect(liveSelection()).toEqual([]);
 
     // 큰 도형만 덮는 자리(작은 초록 사각은 상자의 x 0.17~0.36 · y 0.18~0.40 에 있다).
@@ -331,7 +335,9 @@ describe('AC-09 — 놓으면 일반 요소가 된다 (REQ-06)', () => {
     // **가져온 요소 하나와 씨앗 요소 하나**를 함께 고른다 — 이 시험이 재는 것은 "정렬이
     // 출처를 구분하지 않는가" 이므로 두 출처가 섞여 있어야 한다. 가져온 것들끼리의 정렬은
     // 바로 위 시험이 따로 잰다(그것이 결함 D3 의 세 번째 증상이었다).
-    send('pointerdown', 240, 20); // 빈 자리 — 선택을 비운다
+    // 빈 자리 — 선택을 비운다. **뗌까지 쏜다**(SPEC-CANVAS-011 — 비우는 것은 클릭이다).
+    send('pointerdown', 240, 20);
+    send('pointerup', 240, 20);
     const created = liveElements().slice(3) as PathElement[];
     const g = created[0]!.geometry;
     send('pointerdown', (g.x + g.w * 0.8) * 0.5, (g.y + g.h * 0.8) * 0.5); // 가져온 큰 도형

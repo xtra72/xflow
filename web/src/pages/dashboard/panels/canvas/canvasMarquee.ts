@@ -42,7 +42,8 @@
 
 import type { PanelSelection } from '../charts/panelEditSelection';
 import type { PxBox, PxPoint } from './canvasGeometry';
-import { isGroup, type CanvasNode } from './group/groupTypes';
+import { isGroup, type CanvasNode, type OutlinedNode } from './group/groupTypes';
+import { isConnector } from './connector/connectorTypes';
 
 // --- 타입 ---------------------------------------------------------------
 
@@ -114,10 +115,17 @@ export function enclosesBox(outer: PxBox, inner: PxBox): boolean {
  */
 export function marqueeCandidates(
   elements: readonly CanvasNode[],
-  boxOf: (el: CanvasNode) => PxBox,
+  boxOf: (el: OutlinedNode) => PxBox,
 ): MarqueeCandidate[] {
   const out: MarqueeCandidate[] = [];
   for (const node of elements) {
+    // **연결선은 아직 사각형에 들지 않는다**(SPEC-CANVAS-011 M9).
+    //
+    // 이 모듈의 판정은 `outlineBox` 가 낸 상자인데 연결선에는 그 상자가 없다 — 그래서
+    // `boxOf` 의 인자도 `OutlinedNode` 다(타입이 "여기 올 수 없다" 고 말한다). 두 끝을
+    // 감싸는 상자를 지어 재면 잉크가 사각형 밖으로 한참 나간 선까지 딸려 오고, 그것은
+    // 이 모듈이 "덜 고르는 쪽으로만 틀린다" 고 못박아 둔 방향을 **뒤집는다**.
+    if (isConnector(node)) continue;
     if (!isGroup(node) && node.style.visible === false) continue;
     out.push({ nodeId: node.id, box: boxOf(node) });
   }

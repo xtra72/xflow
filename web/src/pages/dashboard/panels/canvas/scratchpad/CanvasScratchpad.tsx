@@ -27,6 +27,7 @@ import { useRef, useState } from 'react';
 
 import { Check, Inbox, Save, StickyNote, Trash2, X } from 'lucide-react';
 
+import { FieldHelp } from '@/components/property/FieldHelp';
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
 
@@ -268,9 +269,29 @@ export function CanvasScratchpad({
 
   return (
     <section role="group" aria-labelledby={titleId} className="flex flex-col gap-1">
-      <p id={titleId} className="px-1 pb-1 text-[11px] font-medium text-(--color-text-muted)">
-        {t('dashboard.canvas.edit.dockScratchpad')}
-      </p>
+      {/* 제목과 그 뒤의 `?`. 줄로 깔려 있던 두 안내가 여기로 들어왔다 — 빈 서랍이 시키던
+          **할 일**과 기기 지역 저장 **고지**다(REQ-06). 둘 다 늘 읽을 글이 아니라 물어볼
+          때 읽는 글이고, 서랍은 도크에서 가장 키가 큰 절이라 줄이 둘 줄면 목록이 그만큼
+          접히지 않고 선다.
+
+          **한 제목에 물음표는 하나다.** 두 문장은 빈 줄로 나누어 한 팝오버에 담는다 —
+          `FieldHelp` 가 `whitespace-pre-wrap` 이라 그 빈 줄이 단락 사이가 된다
+          (`components/property/PropertyPanel.tsx` 가 포트 설명 둘을 합치는 그 방식).
+
+          **`?` 는 제목 `<p>` 의 형제다.** 안에 넣으면 `aria-labelledby` 가 가리키는 글자에
+          도움말 본문(sr-only)이 섞여 절 이름이 문단만큼 길어진다. */}
+      <div className="flex items-center gap-1 px-1 pb-1">
+        <p id={titleId} className="text-[11px] font-medium text-(--color-text-muted)">
+          {t('dashboard.canvas.edit.dockScratchpad')}
+        </p>
+        <FieldHelp
+          text={
+            `${t('dashboard.canvas.edit.scratchpadEmptyHint')}\n\n` +
+            t('dashboard.canvas.edit.scratchpadLocalOnly')
+          }
+          testId="canvas-scratchpad-local-hint"
+        />
+      </div>
 
       {/* 드롭 존 — 노드만 내놓는다. 사건은 오버레이가 받는다(위 머리말). */}
       <div
@@ -319,7 +340,9 @@ export function CanvasScratchpad({
       )}
 
       {entries.length === 0 ? (
-        // 항목이 없으면 **안내 문구 하나**다(REQ-05). 캔버스 표면에는 아무것도 더하지 않는다.
+        // 항목이 없으면 **없다는 사실 하나**다(REQ-05). 캔버스 표면에는 아무것도 더하지
+        // 않는다. 뒤에 붙어 있던 "어떻게 채우는가" 는 제목 뒤 `?` 로 옮겼다 — 빈 자리의
+        // 일은 빈 곳을 메우는 것이므로 **사실은 남고 지시만 간다**.
         <p data-testid="canvas-scratchpad-empty" className={HINT_CLASS}>
           <Inbox className="mr-1 inline h-3 w-3" aria-hidden="true" />
           {t('dashboard.canvas.edit.scratchpadEmpty')}
@@ -338,11 +361,6 @@ export function CanvasScratchpad({
         </div>
       )}
 
-      {/* 기기 지역 저장임을 말한다 — 다른 기기로 따라가지 않는다는 사실은 사용자가 알아야
-          되돌릴 수 있는 성질이다(REQ-06). */}
-      <p data-testid="canvas-scratchpad-local-hint" className={HINT_CLASS}>
-        {t('dashboard.canvas.edit.scratchpadLocalOnly')}
-      </p>
     </section>
   );
 }

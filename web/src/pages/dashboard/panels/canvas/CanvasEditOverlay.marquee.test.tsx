@@ -200,7 +200,22 @@ function dragMarquee(
   for (const p of points) send('pointermove', p.x, p.y, { shiftKey: true });
 }
 
-/** 맨손으로 사각형을 긋는다 — **갈아 끼우기** 뜻이다(SPEC-CANVAS-010). */
+/**
+ * Ctrl 을 누른 채 사각형을 긋는다 — **갈아 끼우기** 뜻이다(SPEC-CANVAS-011).
+ *
+ * 010 에서는 이 몸짓이 `dragBare`(맨손)였다. 011 이 맨손을 팬에 내주면서 갈아 끼우기가
+ * 조작키로 옮겨 앉았고, 이 파일의 "갈아 끼운다" 시험들은 이름만 바꿔 그 자리에 남는다 —
+ * 지운 것은 없다. 뜻이 어디로 갔는지를 시험이 계속 말해야 하기 때문이다.
+ */
+function dragReplace(
+  from: { x: number; y: number },
+  ...points: readonly { x: number; y: number }[]
+): void {
+  send('pointerdown', from.x, from.y, { ctrlKey: true });
+  for (const p of points) send('pointermove', p.x, p.y, { ctrlKey: true });
+}
+
+/** 맨손으로 끈다 — **팬**이다(SPEC-CANVAS-011). 이 하네스에는 표면이 없어 눈에 뵈는 것이 없다. */
 function dragBare(
   from: { x: number; y: number },
   ...points: readonly { x: number; y: number }[]
@@ -227,9 +242,28 @@ afterEach(() => {
 // 지금: **"빈 지점의 주 버튼 누름은 우리 것이고, 그렇지 않은 버튼은 종전 그대로다"**.
 // 캔버스 안에서 화면을 옮기는 길은 가운데 버튼(`previewPan` 의 캡처 단계 우회로)과
 // 고른 것이 없을 때의 방향키 둘이며, 그 둘은 `previewPan.test.tsx` 가 층을 건너 잰다.
+//
+// ## **011 이 이 절의 몸짓 배정을 뒤집었다**
+//
+// 소유권(위 문장)은 한 글자도 바뀌지 않는다 — 빈 지점의 주 버튼 누름은 여전히 우리
+// 것이다. 바뀐 것은 **그 누름이 무엇을 시작하는가** 다:
+//
+//   | 몸짓            | 010            | 011                       |
+//   |-----------------|----------------|---------------------------|
+//   | 맨손 끌기       | 사각형(갈아 끼움) | **팬**                   |
+//   | Ctrl/Cmd 끌기   | 사각형(더함)    | **사각형(갈아 끼움)**      |
+//   | Shift 끌기      | 사각형(더함)    | 사각형(더함) — 그대로      |
+//   | 맨손 클릭       | 선택 비움       | 선택 비움 — **뗌에서**     |
+//
+// 잦기가 그 배정을 정한다: 화면을 옮기는 일은 늘 하고 감싸 고르는 일은 가끔 한다.
+// 아래 시험들은 **뒤집혔을 뿐 지워지지 않았다** — 어느 몸짓이 어디로 갔는지를 시험이
+// 계속 말해야 하고, 지우면 그 자리에 되돌아온 옛 동작을 아무도 붙잡지 못한다.
 
-describe('빈 지점의 주 버튼 누름은 **우리 것이다** (SPEC-CANVAS-010)', () => {
-  it('맨손이어도 소비하고 위층에 닿지 않는다 — 팬은 `defaultPrevented` 로 물러선다', () => {
+describe('빈 지점의 주 버튼 누름은 **우리 것이다** (SPEC-CANVAS-010 · 011 이 뜻을 갈아 끼웠다)', () => {
+  it('맨손이어도 소비하고 위층에 닿지 않는다 — 바깥 팬은 `defaultPrevented` 로 물러선다', () => {
+    // **011 뒤에도 같은 값을 잰다.** 소비하는 까닭만 갈렸다: 010 에서는 사각형이
+    // 가져갔고 011 에서는 **이 층의 팬**이 가져간다. 어느 쪽이든 `previewPan`(미리보기
+    // 바깥의 팬)은 물러서야 하며, 그러지 않으면 팬이 두 벌 돌아 그림이 두 배로 간다.
     const parent = vi.fn();
     render(<Harness elements={FIXTURE} onParentDown={parent} />);
     stubOverlayRect();
@@ -241,9 +275,11 @@ describe('빈 지점의 주 버튼 누름은 **우리 것이다** (SPEC-CANVAS-0
   });
 
   it('그래도 **선택은 비운다** — 빈 자리를 누르면 풀린다는 종전 뜻이 그대로다', () => {
-    // 009 이전부터 참이던 문장이다. 사각형이 누름을 가져가면서 이 뜻이 조용히 사라질 수
-    // 있는데(선택은 이동에서만 다시 세므로), 움직이지 않은 몸짓은 그때 아무것도 하지
-    // 않는다 — 그래서 누르는 순간에 비우고 그 빈 선택을 합집합의 좌변으로 삼는다.
+    // 009 이전부터 참이던 문장이다. 010 은 사각형이 누름을 가져가면서 이 뜻이 사라질까
+    // 하여 **누르는 순간** 비웠고, 011 은 같은 이유로 그것을 **뗌**으로 옮겼다 — 이제
+    // 그 누름은 팬을 시작하므로, 누르는 순간 비우면 화면을 옮기는 내내 선택이 사라진다.
+    // 움직이지 않은 팬이 곧 클릭이고, 클릭이 이 뜻을 든다. 이 시험은 누름과 뗌을 모두
+    // 쏘는 **몸짓 하나**를 재므로 010 에서 쓰던 그대로 참이다.
     render(<Harness elements={FIXTURE} />);
     stubOverlayRect();
     send('pointerdown', 40, 20); // `a` 를 고른다
@@ -256,28 +292,65 @@ describe('빈 지점의 주 버튼 누름은 **우리 것이다** (SPEC-CANVAS-0
     expect(selected()).toEqual([]);
   });
 
-  it('맨손으로 끌면 사각형이 **선다** — 사용자가 말한 그 몸짓이다', () => {
+  it('맨손으로 끌면 사각형이 **서지 않는다** — 011 이 그 몸짓을 팬에 주었다', () => {
+    // **010 의 뒤집힘이다.** 종전 문장: "맨손으로 끌면 사각형이 선다 — 사용자가 말한 그
+    // 몸짓이다". 사용자가 011 에서 말한 몸짓은 그 반대다("빈 자리 맨손 끌기는 화면을
+    // 옮긴다"). 지우지 않고 뒤집어 두는 것은, 이 값이 되돌아오는 날 그것이 회귀임을
+    // 이 자리가 말해야 하기 때문이다.
     render(<Harness elements={FIXTURE} />);
     stubOverlayRect();
 
     dragBare(FROM, TO);
 
-    expect(marqueeEl()).not.toBeNull();
-    expect(selected()).toEqual(['a', 'b']);
+    expect(marqueeEl()).toBeNull();
+    // 지나간 자리의 것들이 딸려 오지도 않는다 — 팬은 고르는 몸짓이 아니다.
+    expect(selected()).toEqual([]);
   });
 
-  it('맨손은 **갈아 끼운다** — 사각형 밖에 있던 선택이 남지 않는다', () => {
-    // 이 한 줄이 modifier 에 남은 뜻이다. 맨손과 Shift 가 둘 다 합집합이면 modifier 는
-    // 아무것도 가르지 않는 장식이 된다.
+  it('맨손 끌기는 **골라 둔 것을 지킨다** — 화면을 옮긴다고 선택이 사라지지 않는다', () => {
+    // 010 에서 이 자리의 문장은 "맨손은 **갈아 끼운다**" 였다(사각형 밖의 선택이 남지
+    // 않는다). 갈아 끼우기는 Ctrl/Cmd 로 옮겨 갔고(아래 시험), 맨손에 남은 것은 팬이다 —
+    // 팬은 선택을 건드리지 않는다. 그것이 "누르는 순간 비우지 않는다" 의 눈에 보이는 값이다.
+    render(<Harness elements={FIXTURE} />);
+    stubOverlayRect();
+    send('pointerdown', 200, 105); // `c` 의 중심
+    send('pointerup', 200, 105);
+    expect(selected()).toEqual(['c']);
+
+    dragBare(FROM, TO);
+    send('pointerup', TO.x, TO.y);
+
+    expect(selected()).toEqual(['c']);
+  });
+
+  it('Ctrl 로 끌면 사각형이 서고 **갈아 끼운다** — 010 의 맨손이 여기로 옮겨 왔다', () => {
+    // 이 한 줄이 두 조작키를 가르는 뜻이다. Ctrl 과 Shift 가 둘 다 합집합이면 둘 중
+    // 하나는 아무것도 가르지 않는 장식이 된다(010 이 맨손과 Shift 를 두고 한 말이다).
     render(<Harness elements={FIXTURE} />);
     stubOverlayRect();
     send('pointerdown', 200, 105); // `c` 의 중심 — 사각형 밖이다
     send('pointerup', 200, 105);
     expect(selected()).toEqual(['c']);
 
-    dragBare(FROM, TO);
+    dragReplace(FROM, TO);
 
+    expect(marqueeEl()).not.toBeNull();
     expect(selected()).toEqual(['a', 'b']);
+  });
+
+  it('Ctrl 로 **누르기만** 하면 선택이 그대로다 — 갈아 끼우기는 이동에서 일어난다', () => {
+    // 011 의 선택이다: 조작키를 짚은 누름은 "사각형을 세우겠다" 는 선언일 뿐이므로,
+    // 움직이지 않은 Ctrl 누름이 선택을 쓸어버릴 까닭이 없다. 비우는 뜻은 맨손 클릭
+    // 하나가 든다(위 §선택은 비운다). Shift 누름이 010 에서도 같은 답을 냈다.
+    render(<Harness elements={FIXTURE} />);
+    stubOverlayRect();
+    send('pointerdown', 40, 20);
+    send('pointerup', 40, 20);
+
+    send('pointerdown', EMPTY.x, EMPTY.y, { ctrlKey: true });
+    send('pointerup', EMPTY.x, EMPTY.y, { ctrlKey: true });
+
+    expect(selected()).toEqual(['a']);
   });
 
   it('Shift 는 여전히 **더한다** — 갈아 끼우기와 갈리는 자리가 여기다', () => {
@@ -321,14 +394,31 @@ describe('빈 지점의 주 버튼 누름은 **우리 것이다** (SPEC-CANVAS-0
     expect(selected()).toEqual([]);
   });
 
-  // 셋을 **모두** 잰다. 하나만 재면 `event.shiftKey` 한 갈래만 읽는 구현이 통과한다 —
-  // 히트 경로의 `additive` 는 처음부터 셋을 같은 자로 보았고, 여기서 갈라지면 "빈 자리에서는
-  // Cmd 가 듣지 않는다" 가 된다.
+  // **셋이 한 낱말이던 것이 여기서 갈린다**(011).
+  //
+  // 010 의 이 자리는 `it.each` 하나였고 Shift·Ctrl·Cmd 셋이 모두 "더하기" 였다(히트
+  // 경로의 `additive` 와 한 낱말). 011 에서 빈 자리의 Ctrl·Cmd 는 **갈아 끼우기**가
+  // 되었으므로 표가 둘로 갈린다 — 같은 표에 남겨 두면 한쪽 기대값이 반드시 거짓이 된다.
+  //
+  // 그래도 **Ctrl 과 Cmd 는 여전히 한 낱말**이라 둘을 함께 잰다. 하나만 재면 한 갈래만
+  // 읽는 구현이 통과하고, 그때 "맥에서는 듣지 않는다"(또는 그 반대)가 시작된다.
+  it('Shift 는 **더한다** — 009 부터 한 글자도 바뀌지 않았다', () => {
+    render(<Harness elements={FIXTURE} />);
+    stubOverlayRect();
+    send('pointerdown', 200, 105); // `c` — 사각형 밖에 미리 골라 둔다
+    send('pointerup', 200, 105);
+
+    send('pointerdown', FROM.x, FROM.y, { shiftKey: true });
+    send('pointermove', TO.x, TO.y, { shiftKey: true });
+
+    expect(marqueeEl()).not.toBeNull();
+    expect(selected()).toEqual(['a', 'b', 'c']);
+  });
+
   it.each([
-    ['Shift', { shiftKey: true }],
     ['Ctrl', { ctrlKey: true }],
     ['Cmd', { metaKey: true }],
-  ])('%s 로도 **더하기**가 된다 — 히트 경로의 `additive` 와 한 낱말이다', (_name, init) => {
+  ])('%s 는 **갈아 끼운다** — 010 에서는 이 둘도 더하기였다', (_name, init) => {
     render(<Harness elements={FIXTURE} />);
     stubOverlayRect();
     send('pointerdown', 200, 105); // `c` — 사각형 밖에 미리 골라 둔다
@@ -338,7 +428,8 @@ describe('빈 지점의 주 버튼 누름은 **우리 것이다** (SPEC-CANVAS-0
     send('pointermove', TO.x, TO.y, init);
 
     expect(marqueeEl()).not.toBeNull();
-    expect(selected()).toEqual(['a', 'b', 'c']);
+    // 010 의 기대값은 `['a', 'b', 'c']` 였다 — 밖의 `c` 가 빠지는 것이 뒤집힌 자리다.
+    expect(selected()).toEqual(['a', 'b']);
   });
 });
 
@@ -475,19 +566,39 @@ describe('저술 여백에서 시작한 사각형도 선다 (D6 ② · 006 M7 �
     expect(document.activeElement).toBe(overlayRoot());
   });
 
-  it('맨손 누름도 처리자 없는 닿는 면에서 **버블링으로** 올라온다 (D6 ②)', () => {
-    // 위 §경로 시험의 맨손 짝이다. 쏘는 자리는 루트가 **아니다** — 006 M7 이 고친 결함은
-    // 이 노드가 없을 때 여백의 누름이 영영 닿지 않는 것이었고, modifier 갈래만 재 두면
-    // 맨손 갈래가 그 결함을 다시 품어도 초록이다.
+  it('Ctrl 누름도 처리자 없는 닿는 면에서 **버블링으로** 올라온다 (D6 ②)', () => {
+    // 위 §경로 시험의 갈아 끼우기 짝이다. 쏘는 자리는 루트가 **아니다** — 006 M7 이 고친
+    // 결함은 이 노드가 없을 때 여백의 누름이 영영 닿지 않는 것이었고, Shift 갈래만 재
+    // 두면 이 갈래가 그 결함을 다시 품어도 초록이다.
+    //
+    // **010 에서는 맨손 갈래였다**(011 이 그 몸짓을 팬에 주었다). 맨손의 버블링은 바로
+    // 아래 시험이 팬으로 잰다 — 경로는 갈래마다 따로 재야 하고, 그 규율은 010 이 세웠다.
     render(<Harness elements={FIXTURE} />);
     stubOverlayRect();
+
+    const evt = sendToHit('pointerdown', FROM.x, FROM.y, { ctrlKey: true });
+    sendToHit('pointermove', TO.x, TO.y, { ctrlKey: true });
+
+    expect(evt.defaultPrevented).toBe(true);
+    expect(marqueeEl()).not.toBeNull();
+    expect(selected()).toEqual(['a', 'b']);
+  });
+
+  it('맨손 누름도 **버블링으로** 올라와 팬이 된다 — 사각형은 서지 않는다 (D6 ②)', () => {
+    // 010 의 맨손 시험이 뜻만 바꿔 남은 자리다. 이 하네스에는 표면이 없어 옮겨진 픽셀을
+    // 볼 수 없으므로(그 이음매는 `canvas006Pan.test.tsx` 가 잰다), 여기서 재는 것은
+    // **닿았다는 사실**과 그 누름이 사각형을 세우지 않는다는 것 둘이다.
+    render(<Harness elements={FIXTURE} />);
+    stubOverlayRect();
+    send('pointerdown', 200, 105); // `c` 를 미리 골라 둔다
+    send('pointerup', 200, 105);
 
     const evt = sendToHit('pointerdown', FROM.x, FROM.y);
     sendToHit('pointermove', TO.x, TO.y);
 
     expect(evt.defaultPrevented).toBe(true);
-    expect(marqueeEl()).not.toBeNull();
-    expect(selected()).toEqual(['a', 'b']);
+    expect(marqueeEl()).toBeNull();
+    expect(selected()).toEqual(['c']);
   });
 
   it('좌표 기준은 여전히 **루트**다 — 닿는 면을 재면 축척과 원점이 함께 틀린다', () => {
@@ -692,18 +803,33 @@ describe('사각형은 rAF 루프 밖의 DOM 이다 (REQ-05 · AC-E4)', () => {
     expect(emit).not.toHaveBeenCalled();
   });
 
-  it('**맨손** 갈래도 같다 — 누름을 가져갔다고 프레임이 도는 것은 아니다', () => {
-    // 010 이 연 새 입구다. modifier 갈래만 재 두면 맨손 갈래가 rAF 를 잡아도 초록이다.
+  it('**Ctrl** 갈래도 같다 — 누름을 가져갔다고 프레임이 도는 것은 아니다', () => {
+    // 010 이 연 새 입구이며(그때는 맨손이었다), 011 에서 그 입구는 Ctrl 이다. Shift
+    // 갈래만 재 두면 이 갈래가 rAF 를 잡아도 초록이다.
     const emit = vi.fn();
     render(<Harness elements={FIXTURE} onElementsChange={emit} />);
     stubOverlayRect();
     const raf = vi.spyOn(globalThis, 'requestAnimationFrame');
 
-    dragBare(FROM, { x: 60, y: 30 }, { x: 100, y: 45 }, TO);
-    send('pointerup', TO.x, TO.y);
+    dragReplace(FROM, { x: 60, y: 30 }, { x: 100, y: 45 }, TO);
+    send('pointerup', TO.x, TO.y, { ctrlKey: true });
 
     expect(selected()).toEqual(['a', 'b']);
     expect(raf).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('**맨손 팬**도 기하를 한 글자도 쓰지 않는다 — 옮기는 것은 시야이지 그림이 아니다', () => {
+    // 010 의 맨손 시험이 뜻만 바꿔 남은 자리다. 팬은 상자의 자리를 바꾸므로 표면 쪽에는
+    // 프레임이 한 장 돌 수 있으나(`handlePointerMove` §팬 주석), **저술은 건드리지
+    // 않는다** — 그 한 가지가 이 절이 지키는 유휴 정지의 본디 문장이다.
+    const emit = vi.fn();
+    render(<Harness elements={FIXTURE} onElementsChange={emit} />);
+    stubOverlayRect();
+
+    dragBare(FROM, { x: 60, y: 30 }, { x: 100, y: 45 }, TO);
+    send('pointerup', TO.x, TO.y);
+
     expect(emit).not.toHaveBeenCalled();
   });
 });
@@ -836,7 +962,7 @@ describe('안내 문구가 두 언어에 있고 짝이 맞는다', () => {
     }
   });
 
-  it('한국어 문구가 금지 어휘를 쓰지 않고 사용자의 낱말로 말한다', () => {
+  it('한국어 안내가 금지 어휘를 쓰지 않고 사용자의 낱말로 말한다', () => {
     const text = editNs(ko)['marqueeHint'] as string;
 
     for (const word of ['문구', '트윈', '이징']) {
@@ -844,6 +970,41 @@ describe('안내 문구가 두 언어에 있고 짝이 맞는다', () => {
     }
     // 몸짓을 실제로 설명한다 — 지우기만 하고 끝내지 않았다는 확인이다.
     expect(text).toContain('Shift');
+  });
+
+  // **011 이 뒤집은 배정을 안내가 실제로 말하는가.**
+  //
+  // 이 문단은 "눈에 보이는 컨트롤이 없는 몸짓" 을 알리는 유일한 통로다(006 M11 의 그
+  // 논리). 몸짓의 뜻이 바뀌었는데 안내가 옛 뜻을 말하면 그 통로는 **틀린 길을 가리키는
+  // 이정표**가 되고, 그것은 안내가 없는 것보다 나쁘다. 그래서 낱말 몇을 값으로 못박는다 —
+  // 문장 전체를 베껴 재면 조사 하나 고칠 때마다 빨개지므로, 뜻을 지탱하는 낱말만 잰다.
+  it.each([
+    ['ko', ko],
+    ['en', en],
+  ])('%s 안내가 사각형은 **Ctrl**, 화면 옮기기는 **맨손 끌기**라고 말한다', (_name, messages) => {
+    const marquee = editNs(messages)['marqueeHint'] as string;
+    const pan = editNs(messages)['panHint'] as string;
+
+    // 사각형을 시작하는 조작키 둘이 이름으로 선다.
+    expect(marquee).toContain('Ctrl');
+    expect(marquee).toContain('Shift');
+    // 팬 안내는 Space 를 여전히 말한다 — 도형 위에서 시작하는 길이 그것뿐이다.
+    expect(pan).toContain('Space');
+  });
+
+  it('팬 안내가 **빈 자리 맨손 끌기**를 먼저 말한다 — 가장 잦은 몸짓이 그것이다', () => {
+    // 로케일마다 낱말이 다르므로 위 표에 넣지 않고 따로 잰다. 이 한 줄이 없으면 안내는
+    // 011 이전처럼 "Space 를 짚어야 옮겨진다" 만 말하고도 초록이다.
+    expect(editNs(ko)['panHint'] as string).toContain('빈 자리');
+    expect(editNs(en)['panHint'] as string).toContain('empty spot');
+  });
+
+  it('두 안내가 **옛 배정**을 말하지 않는다 — 가운데 버튼 우회로는 011 에서 사라졌다', () => {
+    // 010 의 ko 안내는 "캔버스 안에서 화면을 옮기려면 가운데 버튼으로 끌거나" 였다.
+    // 맨손 끌기가 팬이 된 뒤 그 문장은 사용자를 **없는 길**로 보낸다(가운데 버튼은
+    // `previewPan` 의 우회로로 여전히 살아 있으나, 캔버스 안에서 먼저 배울 길이 아니다).
+    expect(editNs(ko)['marqueeHint'] as string).not.toContain('가운데 버튼');
+    expect(editNs(en)['marqueeHint'] as string).not.toContain('middle button');
   });
 
   it('설명문이 사각형 몸짓을 말한다 — 사각형은 `aria-hidden` 이라 이 문단이 유일한 통로다', () => {

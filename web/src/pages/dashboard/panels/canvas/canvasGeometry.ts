@@ -563,6 +563,32 @@ export function ellipseParams(box: PxBox): EllipseParams {
   return { cx: x + w / 2, cy: y + h / 2, rx: Math.abs(w) / 2, ry: Math.abs(h) / 2 };
 }
 
+/**
+ * 선분 위에서 `point` 에 **가장 가까운 자리**(px). 퇴화한 선분(두 끝점이 같음)은 그 점이다.
+ *
+ * ## 왜 `canvasHitTest` 가 아니라 여기인가 (SPEC-CANVAS-011 M10)
+ *
+ * 저 파일의 머리말은 두 낱말을 갈라 두었다 — `unprojectPoint` 처럼 **자리**를 내는 산술은
+ * 여기 것이고, 그 자리로 참·거짓을 내는 **판정**이 저기 것이다. 이 함수는 자리를 낸다.
+ * 그래서 점–선분 거리(`distanceToSegment`)는 이제 이 자리를 한 번 지나 재고, 꺾임을
+ * 끼워 넣는 쪽(`connector/connectorEdit.ts`)은 같은 자리를 **새 점으로** 쓴다.
+ *
+ * 둘이 한 산술을 나눠 쓰는 것이 요점이다. 끼워 넣는 쪽이 제 손으로 투영을 적으면 "잡히는
+ * 자리와 점이 놓이는 자리가 다르다" 가 시작되고 — 002 가 위험 R1 로 이름 적어 둔 그
+ * 형상이다 — 그 어긋남은 예외도 경고도 없이 **화면에서만** 드러난다. 저 파일이 머리말에서
+ * 금지한 "두 번째 측정원" 은 그러므로 여기서도 생기지 않는다: 측정원은 늘어난 것이 아니라
+ * **한 자리로 내려온** 것이다.
+ */
+export function closestPointOnSegment(line: PxLine, point: PxPoint): PxPoint {
+  const dx = line.x2 - line.x1;
+  const dy = line.y2 - line.y1;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq === 0) return { x: line.x1, y: line.y1 };
+  const raw = ((point.x - line.x1) * dx + (point.y - line.y1) * dy) / lengthSq;
+  const t = raw < 0 ? 0 : raw > 1 ? 1 : raw;
+  return { x: line.x1 + t * dx, y: line.y1 + t * dy };
+}
+
 // --- 텍스트 배치 --------------------------------------------------------
 
 /**

@@ -563,8 +563,11 @@ describe('카탈로그 30종 전량이 실제로 놓인다 (품질 게이트 Tes
       );
     }
     render(<Spy />);
+    // 011 이후 `기본` 은 펼쳐진 채로 태어난다(REQ-01) — 무조건 누르면 **닫힌다.**
+    // 여는 몸짓이 아니라 "열려 있다" 는 결과를 만든다.
     for (const id of ['general', 'basic', 'arrow']) {
-      fireEvent.click(screen.getByTestId(`canvas-palette-group-${id}`));
+      const head = screen.getByTestId(`canvas-palette-group-${id}`);
+      if (head.getAttribute('aria-expanded') === 'false') fireEvent.click(head);
     }
     expect(SHAPE_CATALOG).toHaveLength(30);
     for (const shape of SHAPE_CATALOG) {

@@ -197,6 +197,11 @@ describe('고른 것을 지운다 (Delete · Backspace)', () => {
   it('그룹을 지우면 **부품도 함께 간다** — 배열 항목 하나가 곧 그 무리다', () => {
     // SPEC-CANVAS-004 0.4.0 이 일부러 고른 형상이다. 부품은 최상위 배열이 아니라 그룹
     // 항목 **안**에 살므로, 항목을 빼는 것 말고 따로 할 일이 없다.
+    //
+    // **고르는 몸짓은 004 와 같다**(SPEC-CANVAS-009 0.3.0). 009 0.2.0 은 부품 위의
+    // 누름을 부품 선택에 걸어 그룹을 클릭으로 고를 길을 없앴고, 0.3.0 이 그것을 그림
+    // 도구의 관용구로 되돌렸다 — **단일 클릭은 그룹, 더블클릭은 그 안.** 그래서 이
+    // 시험은 004 때처럼 클릭 한 번으로 그룹을 고른다. 아래 §더블클릭이 진입 쪽을 잰다.
     const group: GroupElement = {
       id: 'g',
       kind: 'group',
@@ -213,6 +218,27 @@ describe('고른 것을 지운다 (Delete · Backspace)', () => {
     fireEvent.keyDown(overlayRoot(), { key: 'Delete' });
 
     expect(emittedIds(emit)).toEqual(['z']);
+  });
+
+  it('더블클릭으로 들어가면 **부품**이 골라지고 Delete 는 아무것도 지우지 않는다 (SPEC-CANVAS-009 0.3.0)', () => {
+    // 단일 클릭은 그룹을 고르고(위 시험), **더블클릭**이 그 안으로 들어간다. 들어간
+    // 뒤의 Delete 는 **무동작**이다 — 부품 삭제는 009 의 범위가 아니며(빼는 길은 분리
+    // 단추다), 조용히 그룹째 지우는 것은 사용자가 가리킨 것과 다른 것을 없애는 일이다.
+    const group: GroupElement = {
+      id: 'g',
+      kind: 'group',
+      geometry: { x: 50, y: 40, w: 100, h: 80 },
+      parts: [rect('p1', { x: 0, y: 0, w: GROUP_LOCAL_EXTENT, h: GROUP_LOCAL_EXTENT })],
+    };
+    const emit = setup([group, rect('z', { x: 400, y: 320, w: 100, h: 60 })]);
+    pick(emit, CENTER.a);
+    expect(selectionText(), '전제 — 첫 누름은 그룹을 고른다').toBe('g');
+    pick(emit, CENTER.a); // 두 번째 누름 = 진입
+    expect(selectionText()).toBe('g/p1');
+
+    fireEvent.keyDown(overlayRoot(), { key: 'Delete' });
+
+    expect(emit).not.toHaveBeenCalled();
   });
 
   it('소비한다 — Backspace 의 뒤로 가기가 그림을 지우면서 화면까지 떠나면 안 된다', () => {
@@ -438,10 +464,18 @@ describe('지우는 규칙은 **한 함수**다 (목록 편집기의 휴지통�
     // 순서 이동 가드는 그 구멍을 eslint(`no-unused-vars`, error)에 맡겼고 실제로 잡히지만
     // — 확인했다 — 그러면 **이 시험 자체는 아무것도 말하지 못한다**. 부르는 자리까지
     // 보면 시험 하나가 제 힘으로 문을 막는다(돌연변이로 확인했다).
+    //
+    // **이름이 옮겨 갔다 (SPEC-CANVAS-011 M12).** 지워지는 요소를 가리키던 연결선까지
+    // 걷어내야 하므로 두 입구가 `removeNodesWithConnectors` 를 지나고, 그 함수가 지울
+    // 이름을 넓혀 `removeNodes` 를 **한 번** 부른다. 거르는 규칙은 여전히 한 함수이며,
+    // 이 가드가 지키는 성질("두 입구가 같은 길")도 그대로다 — 가리키는 이름만 바뀌었다.
     for (const name of ['CanvasEditOverlay.tsx', 'CanvasElementsEditor.tsx']) {
       const source = readFileSync(join(__dirname, name), 'utf-8');
-      expect(source, `${name}: 들여오기`).toMatch(/removeNodes[,\s}]/);
-      expect(source, `${name}: 부르는 자리`).toMatch(/removeNodes\(/);
+      expect(source, `${name}: 들여오기`).toMatch(/removeNodesWithConnectors[,\s}]/);
+      expect(source, `${name}: 부르는 자리`).toMatch(/removeNodesWithConnectors\(/);
+      // 옛 이름을 **직접** 부르면 그 입구만 연결선을 남긴다 — 한쪽만 연동한 상태가
+      // 정확히 이 형상이고, 그 차이는 저장된 뒤에야 드러난다.
+      expect(source, `${name}: 옛 이름 직접 호출`).not.toMatch(/\bremoveNodes\(/);
     }
   });
 
