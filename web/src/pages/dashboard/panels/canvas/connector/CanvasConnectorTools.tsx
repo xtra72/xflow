@@ -35,7 +35,15 @@
 
 import { useTranslation } from '@/lib/i18n';
 import { cn } from '@/lib/utils/cn';
-import { CornerDownRight, PenLine, Slash, Spline, Waypoints, type LucideIcon } from 'lucide-react';
+import {
+  CornerDownRight,
+  PenLine,
+  Pentagon,
+  Slash,
+  Spline,
+  Waypoints,
+  type LucideIcon,
+} from 'lucide-react';
 
 import {
   CANVAS_TOOLS,
@@ -82,6 +90,10 @@ export interface CanvasConnectorToolsProps {
   tool: CanvasTool;
   /** 단추를 눌렀다. 다음 도구가 무엇인지는 `toggleTool` 이 정한다. */
   onToggle: (tool: CanvasTool) => void;
+  /** 도형 모드가 켜져 있는가 (SPEC-CANVAS-022 REQ-01). */
+  shapeMode: boolean;
+  /** 도형 단추를 눌렀다. 모양을 정할 도구까지 켜는 일은 **부르는 쪽**이 한다. */
+  onToggleShape: () => void;
 }
 
 /**
@@ -95,6 +107,8 @@ export interface CanvasConnectorToolsProps {
 export function CanvasConnectorTools({
   tool,
   onToggle,
+  shapeMode,
+  onToggleShape,
 }: CanvasConnectorToolsProps): React.ReactElement {
   const { t } = useTranslation();
   return (
@@ -121,6 +135,26 @@ export function CanvasConnectorTools({
           </button>
         );
       })}
+      {/* **도형 모드** (SPEC-CANVAS-022 REQ-01 · §결정 1).
+
+          위 넷과 **배타가 아니다** — 저 넷은 "어떤 선을 긋는가" 를 고르고 이것은 "그 선으로
+          무엇을 짓는가" 를 고른다. 그래서 `aria-pressed` 를 쓰되 같은 무리의 다섯째 단추로
+          두지 않고, 같은 줄 끝에 선다.
+
+          단추가 이 부품에 있는 것에 뜻이 있다: 이 부품은 도크와 떠 있는 줄 **둘 다**에
+          서므로(불변식 I23), 여기 두면 대시보드에 놓인 패널에서도 도형을 그릴 수 있다.
+          도크에만 두면 006 이 배달한 그 결함을 다시 심는다. */}
+      <button
+        type="button"
+        data-testid="canvas-shape-tool"
+        aria-label={t('dashboard.canvas.edit.toolShape')}
+        title={t('dashboard.canvas.edit.toolShape')}
+        aria-pressed={shapeMode}
+        className={cn(ICON_BUTTON_CLASS, shapeMode && ACTIVE_CLASS)}
+        onClick={onToggleShape}
+      >
+        <Pentagon className={ICON_CLASS} aria-hidden="true" />
+      </button>
     </>
   );
 }

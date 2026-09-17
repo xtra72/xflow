@@ -221,8 +221,9 @@ import {
 } from './connector/connectorEdit';
 import { resolveConnector } from './connector/resolveConnector';
 import { connectorObstacles } from './connector/connectorObstacles';
-import { connectorDrawn } from './connector/connectorPath';
+import { connectorDrawn, connectorPath } from './connector/connectorPath';
 import { withSplit } from './connector/orthoSplits';
+import { SHAPE_MIN_VERTICES, shapeDraftOf } from './shapeDraft';
 // SPEC-CANVAS-011 M11 — 자유선의 궤적. 받는 일도 줄이는 일도 그 모듈이 하고, 이 층은
 // 포인터가 온 자리를 캔버스 단위로 넘길 뿐이다(허용 오차도 상한도 여기에 적히지 않는다).
 import { freehandPoints, ROUTE_TRACES_TRAIL, takeFreehandSample } from './connector/freehand';
@@ -238,6 +239,7 @@ import {
   appendConnector,
   appendElement,
   appendImportedElements,
+  appendDrawnPath,
   appendPathElement,
   moveConnectorPoint,
   nextElementId,
@@ -1604,6 +1606,28 @@ export default function CanvasEditOverlay({
    * 를 미리 말해 준다 — 눌러 봐야 아는 몸짓은 배울 수 없다.
    */
   const [spaceHeld, setSpaceHeld] = useState(false);
+  /**
+   * 도형 모드가 켜져 있는가 (SPEC-CANVAS-022 REQ-01 · §결정 1).
+   *
+   * **도구를 늘리지 않고 모드를 더한다.** `CanvasTool` 유니온은 `Record<CanvasTool, …>`
+   * 표 다섯을 거느리고, 갈래를 늘리면 다섯 자리가 함께 흔들린다 — 그 흔들림이 값을 내는
+   * 때는 새 도구가 정말 새 몸짓을 가질 때이고, 도형 모드는 모양을 기존 도구에서 빌린다.
+   */
+  const [shapeMode, setShapeMode] = useState(false);
+  /**
+   * 그리는 중인 윤곽 — 찍은 꼭짓점들과 지금 손이 있는 자리 (REQ-02 · REQ-04).
+   *
+   * 자리는 **캔버스 단위**다. px 로 들면 화면 축척이 바뀌는 순간 밑그림이 어긋나고, 그
+   * 어긋남은 "그리다가 창을 줄이면 그림이 튄다" 로 보인다.
+   */
+  const [shapeDraft, setShapeDraft] = useState<
+    { vertices: PointGeometry[]; at: PxPoint } | undefined
+  >(undefined);
+
+  /** 지금 윤곽에 쓸 모양 — 켜 둔 연결선 도구가 정한다(§모양은 어디서 오는가). */
+  const shapeRoute = TOOL_CONNECTOR_ROUTE[tool];
+  /** 도형을 그릴 수 있는 상태인가 — 모드가 켜져 있고 모양이 정해져 있다. */
+  const drawingShape = shapeMode && shapeRoute !== null;
 
   /**
    * 진행 중인 팬 한 벌. `null` 이면 끌고 있지 않다.
@@ -2391,7 +2415,48 @@ export default function CanvasEditOverlay({
     //
     // 주 버튼이 아닌 누름은 여기 오지 않는다 — 아래 빈 자리 갈래가 그것을 종전대로
     // 흘려보내듯, 잇기도 상황 메뉴를 가로채지 않는다.
-    const drawRoute = TOOL_CONNECTOR_ROUTE[tool];
+    // **도형 모드가 잇기보다 앞에 선다**(SPEC-CANVAS-022 REQ-02).
+    //
+    // 앞이어야 하는 이유는 겹치는 자리에 있다: 앵커 위를 누르면 아래 잇기 갈래가 그것을
+    // 집는데, 도형은 **무엇에도 매이지 않으므로**(REQ-02) 그 자리를 그냥 꼭짓점으로 써야
+    // 한다. 뒤에 두면 앵커 곁을 지나는 윤곽이 그릴 때마다 선을 하나 낳는다.
+    //
+    // **모드가 꺼져 있으면 이 갈래는 통째로 지나간다**(K4) — 011 이래의 누름 처리가 한
+    // 글자도 바뀌지 않는다.
+    if (drawingShape && shapeRoute !== null && event.button === PRIMARY_BUTTON) {
+      event.preventDefault();
+      event.stopPropagation();
+      host.focus();
+      const at = unprojectPoint(point, projection);
+      const vertices = shapeDraft?.vertices ?? [];
+      const first = vertices[0];
+      // **시작점을 다시 누르면 닫는다**(REQ-03). 집는 오차는 앵커의 그것을 그대로 쓴다 —
+      // 새 상수를 세우면 "얼마나 가까워야 닫히는가" 가 두 벌이 된다.
+      const closing =
+        first !== undefined &&
+        vertices.length >= SHAPE_MIN_VERTICES &&
+        Math.hypot(projectPoint(first, projection).x - point.x, projectPoint(first, projection).y - point.y) <=
+          ANCHOR_PICK_SLOP_PX;
+      if (closing) {
+        const draft = shapeDraftOf(vertices, shapeRoute, projection.canvas);
+        if (draft !== undefined) {
+          const { next, created } = appendDrawnPath(elements, draft.geometry, draft.path);
+          onElementsChange(next);
+          // 팔레트·카탈로그가 지키는 그 세 줄 — 놓은 것이 맨 위에 오고, 놓자마자 골라져
+          // 다음 몸짓이 곧 배치 드래그가 된다.
+          setSelection(new Set([created.id]));
+        }
+        setShapeDraft(undefined);
+        return;
+      }
+      setShapeDraft({ vertices: [...vertices, at], at: point });
+      return;
+    }
+
+    // **위에서 한 번 읽은 그 값이다**(`shapeRoute`). 표를 여기서 다시 조회하면 "펜이 뜨는
+    // 조건" 과 "누름이 읽는 표" 를 셋으로 묶어 둔 011 의 가드가 한 자리 헐거워진다 —
+    // 같은 값에 이름이 둘 붙는 것은 갈라질 자리를 하나 더 만드는 일이다.
+    const drawRoute = shapeRoute;
     if (drawRoute !== null && event.button === PRIMARY_BUTTON) {
       const from = anchorHitAt(anchorHosts, point, projection, textWidths, ANCHOR_PICK_SLOP_PX);
       if (from !== undefined) {
@@ -2892,6 +2957,15 @@ export default function CanvasEditOverlay({
     // 남는" 자리가 생긴다.
     updatePenHover(event);
 
+    // **밑그림은 손을 따라간다**(SPEC-CANVAS-022 REQ-04). 찍은 꼭짓점들은 그대로 두고 손의
+    // 자리만 갈아 끼운다 — 그 자리가 곧 "다음 구간이 어디로 가는가" 이며, 그것을 보여 주지
+    // 않으면 사용자는 누를 자리를 눌러 보고서야 안다.
+    if (shapeDraft !== undefined) {
+      const frame = pointerFrameOf(event.currentTarget.getBoundingClientRect(), stage);
+      const at = stagePoint(event.clientX, event.clientY, frame);
+      setShapeDraft((prev) => (prev === undefined ? prev : { vertices: prev.vertices, at }));
+    }
+
     // **팬이 가장 먼저다.** 팬을 시작하는 누름은 둘(짚은 채의 누름 · 빈 자리의 맨손
     // 누름)이고 그 둘은 아래 셋을 시작하는 누름과 갈리므로 배타적이며, 순서가 뜻을
     // 바꾸지는 않는다 — 다만 먼저 끊어 두면 아래 세 경로가 팬을 모른 채로 남는다
@@ -3201,6 +3275,15 @@ export default function CanvasEditOverlay({
     // 있든 닫아야 한다.
     if (event.key === ESCAPE_KEY && pointMenu !== undefined) {
       setPointMenu(undefined);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    // **밑그림을 버린다**(SPEC-CANVAS-022 REQ-05). 차림표 뒤에 서는 것에 뜻이 있다 — 차림표가
+    // 열려 있으면 그것이 더 위의 것이고, 한 번의 `Escape` 가 둘을 함께 닫으면 사용자는
+    // 그리던 것을 잃는다.
+    if (event.key === ESCAPE_KEY && shapeDraft !== undefined) {
+      setShapeDraft(undefined);
       event.preventDefault();
       event.stopPropagation();
       return;
@@ -3820,6 +3903,20 @@ export default function CanvasEditOverlay({
     <CanvasConnectorTools
       tool={tool}
       onToggle={(pressed) => setTool((prev) => toggleTool(prev, pressed))}
+      shapeMode={shapeMode}
+      onToggleShape={() => {
+        setShapeMode((prev) => {
+          const next = !prev;
+          // **끌 때는 밑그림을 버린다**(REQ-05). 남겨 두면 다시 켠 순간 옛 꼭짓점이 딸려
+          // 나오고, 사용자는 그것을 "지운 줄 알았는데 남아 있다" 로 읽는다.
+          if (!next) setShapeDraft(undefined);
+          return next;
+        });
+        // **모드에는 언제나 모양이 있어야 한다**(REQ-01). 모양을 정할 도구가 하나도 켜져
+        // 있지 않으면 곧은선을 함께 켠다 — 단추는 눌렸는데 눌러도 아무 일이 없는 상태를
+        // 만들지 않는다.
+        if (shapeRoute === null) setTool('straight');
+      }}
     />
   );
 
@@ -4456,6 +4553,63 @@ export default function CanvasEditOverlay({
           style={previewLineStyle(connectorDraw.origin, connectorDraw.point)}
         />
       )}
+      {/* **그리는 중인 윤곽** (SPEC-CANVAS-022 REQ-04).
+
+          모양을 여기서 다시 그리지 않는다 — `connectorPath` 가 낸 명령을 그대로 `d` 로
+          옮긴다(K3). 보이는 선과 만들어질 도형이 **같은 함수**에서 나야, 눌러 보고서야
+          모양을 아는 일이 없다(위험 R1 의 규율을 밑그림에 적용한 것이다).
+
+          `Z` 를 붙이지 않는다 — 아직 닫히지 않았고, 닫는 일은 시작점을 다시 누르는 몸짓의
+          것이다. 미리 닫아 보이면 화면이 하지 않은 약속을 한다.
+
+          표시 층이 아니다(불변식 I23): 손이 그리는 동안에만 있고, 거두는 것도 그 몸짓
+          자신이다 — 마키·긋는 중인 선이 그 목록 밖인 근거와 한 글자도 다르지 않다. */}
+      {shapeDraft !== undefined &&
+        shapeRoute !== null &&
+        (() => {
+          const px = connectorPath(
+            [...shapeDraft.vertices, unprojectPoint(shapeDraft.at, projection)],
+            shapeRoute,
+            projection,
+          );
+          if (px.length === 0) return null;
+          const d = px
+            .map((cmd) =>
+              cmd.c === 'M'
+                ? `M ${cmd.x} ${cmd.y}`
+                : cmd.c === 'L'
+                  ? `L ${cmd.x} ${cmd.y}`
+                  : `C ${cmd.x1} ${cmd.y1} ${cmd.x2} ${cmd.y2} ${cmd.x} ${cmd.y}`,
+            )
+            .join(' ');
+          return (
+            <svg
+              data-testid="canvas-shape-preview"
+              aria-hidden="true"
+              className="pointer-events-none absolute left-0 top-0 overflow-visible"
+              width={stage.width}
+              height={stage.height}
+            >
+              <path d={d} fill="none" stroke="rgb(59 130 246)" strokeWidth={1} strokeDasharray="4 3" />
+              {shapeDraft.vertices.map((vertex, index) => {
+                const at = projectPoint(vertex, projection);
+                return (
+                  <circle
+                    // **찍힌 차례가 곧 그 점의 이름이다** — 목록에서 빠지는 일이 없으므로
+                    // (버릴 때는 통째로 버린다) 차례가 안정한 키다.
+                    key={index}
+                    data-testid={`canvas-shape-vertex-${index}`}
+                    cx={at.x}
+                    cy={at.y}
+                    r={index === 0 ? 5 : 3}
+                    fill={index === 0 ? 'rgb(59 130 246)' : 'white'}
+                    stroke="rgb(59 130 246)"
+                  />
+                );
+              })}
+            </svg>
+          );
+        })()}
       {marquee !== null &&
         (() => {
           const box = marqueeRect(marquee.origin, marquee.point);

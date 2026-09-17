@@ -1244,6 +1244,7 @@
         "toolElbow": "Connect with an elbowed line",
         "toolCurve": "Connect with a curve",
         "toolFree": "Connect with a freehand line",
+        "toolShape": "Draw a shape — click points, click the first one again to close",
         "anchorRefusalNotBoxed": "Lines and text cannot take anchors. Double-click a rectangle, ellipse, path or group instead.",
         "gridStepPartial": "A {width} x {height} canvas is not divisible by a spacing of {step}, so the last cell is clipped. Grid, snapping and Shift+arrow still work in {step}-unit steps. Enter a value that divides both axes to fill the canvas evenly.",
         "dockScratchpad": "Scratchpad",

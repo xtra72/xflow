@@ -352,6 +352,39 @@ export function appendPathElement(
   return { next: [...elements, created], created };
 }
 
+/**
+ * **손으로 그은** 윤곽 하나로 만든 경로 요소 (SPEC-CANVAS-022 REQ-06 · K1 · K2).
+ *
+ * 위 `newPathElement` 와 갈리는 자리는 **둘**이다.
+ *
+ *   1. **상자를 받는다.** 카탈로그 도형은 어디에 놓일지 모르므로 씨앗 상자와 계단
+ *      오프셋을 쓰지만, 손으로 그은 윤곽은 **이미 자리를 안다** — 그린 자리가 곧 그 자리다.
+ *      씨앗 상자로 옮겨 놓으면 사용자가 방금 그린 그림이 다른 데로 뛴다.
+ *   2. **`catalog_id` 를 심지 않는다.** 그 필드의 뜻은 "어느 카탈로그 도형에서 나왔는가"
+ *      이고, 이것은 어디에서도 나오지 않았다. 빈 문자열이나 `'custom'` 을 지어 넣으면
+ *      감사용 필드가 거짓을 말한다.
+ *
+ * 나머지는 **한 글자도 다르지 않다**: 겉모습은 `pathSeedStyle` 이 명령에서 닫힘을 읽어
+ * 정하고(`Z` 가 있으므로 닫힌 도형의 씨앗), id 는 `nextElementId` 가, 자리는 배열 끝이
+ * 곧 맨 위라는 001 이래의 규칙이 정한다. 사용자에게 카탈로그 별과 손으로 그은 오각형은
+ * **같은 종류의 일**이다.
+ */
+export function appendDrawnPath(
+  elements: readonly CanvasNode[],
+  geometry: BoxGeometry,
+  commands: readonly PathCommand[],
+): { next: CanvasNode[]; created: CanvasElement } {
+  const created: PathElement = {
+    id: nextElementId(elements),
+    kind: 'path',
+    geometry: { ...geometry },
+    // 값이지 참조가 아니다 — 카탈로그 경로가 사본을 싣는 그 근거와 같다.
+    path: commands.map((cmd) => ({ ...cmd })),
+    style: pathSeedStyle(commands),
+  };
+  return { next: [...elements, created], created };
+}
+
 // --- 연결선 (SPEC-CANVAS-011 M8) ------------------------------------------
 
 /**
