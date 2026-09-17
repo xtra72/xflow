@@ -510,6 +510,17 @@ function optionalString(v: unknown): string | undefined {
  * 폴백으로 보정한다. 손상 값을 조용히 지우면 사용자가 화면에서 원인을 볼 수 없고,
  * 부재를 기본값으로 채우면 "지정 안 함" 이 사라진다 — 두 경우를 갈라 두는 이유다.
  */
+/**
+ * 유한한 수이거나 부재 — **폴백이 없다**(SPEC-CANVAS-019).
+ *
+ * 위 `optionalNonNegative` 와 갈리는 자리다. 저쪽은 "손상되면 기본값" 이지만 여기는
+ * 손상되면 **부재**다 — 가운데 구간의 자리에는 지어낼 기본값이 없고(자동 자리가 곧
+ * 부재의 뜻이다), 0 으로 떨어뜨리면 선이 캔버스 왼쪽 끝으로 끌려간다.
+ */
+function optionalFiniteNumber(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+
 function optionalNonNegative(v: unknown, fallback: number): number | undefined {
   if (isAbsent(v)) return undefined;
   return isFiniteNumber(v) && v >= 0 ? v : fallback;
@@ -1135,13 +1146,21 @@ function parseConnector(e: Record<string, unknown>): ConnectorElement | null {
   const rules = parseRules(e.rules);
   const tween = parseTween(e.tween);
 
+  const route = routeHosting(parseConnectorRoute(e.route), points?.length ?? 0);
+  // 손상된 값은 **키만** 버린다 — 요소를 통째로 떨어뜨리지 않는 001 이래의 규율이다.
+  const orthoSplit = optionalFiniteNumber(e.ortho_split);
+
   return {
     id,
     kind: CONNECTOR_KIND,
     from,
     to,
-    route: routeHosting(parseConnectorRoute(e.route), points?.length ?? 0),
+    route,
     ...(points !== undefined ? { points } : {}),
+    // 가운데 구간의 자리(SPEC-CANVAS-019). **직각이 아니면 키를 만들지 않는다** — 다른
+    // 갈래에는 "가운데 구간" 이 없으므로 그 수가 뜻을 갖지 못하고, 남겨 두면 갈래를 바꾼
+    // 뒤에 아무도 읽지 않는 값이 저장에 남는다.
+    ...(route === 'ortho' && orthoSplit !== undefined ? { ortho_split: orthoSplit } : {}),
     ...(style !== undefined ? { style } : {}),
     ...(binding !== undefined ? { binding } : {}),
     ...(rules !== undefined ? { rules } : {}),

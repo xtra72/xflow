@@ -153,6 +153,25 @@ function cornerAxis(
   return a === 'lr' ? 'lr-tb' : 'tb-lr';
 }
 
+/**
+ * 고정된 가운데 자리로 꺾는다 (SPEC-CANVAS-019 REQ-03).
+ *
+ * `orthoCorners` 의 가운데 갈래와 **같은 모양**이고 가운데 값만 사용자가 고른 것이다 —
+ * 두 함수를 갈라 두면 자동일 때와 고정일 때의 모양이 갈라진다.
+ */
+function orthoSplitCorners(a: PxPoint, b: PxPoint, axis: 'lr' | 'tb', at: number): PxPoint[] {
+  if (axis === 'lr') {
+    return [
+      { x: at, y: a.y },
+      { x: at, y: b.y },
+    ];
+  }
+  return [
+    { x: a.x, y: at },
+    { x: b.x, y: at },
+  ];
+}
+
 /** 아무것도 피하지 않는 자리 — 015 의 길로 간다. */
 const EMPTY_ROUTING: ConnectorRouting = { obstacles: [], hosts: {} };
 
@@ -165,7 +184,15 @@ const EMPTY_ROUTING: ConnectorRouting = { obstacles: [], hosts: {} };
  *
  * 다리는 **양 끝의 바깥쪽**에만 난다. 사용자가 찍은 중간점 사이에는 나갈 도형이 없다.
  */
-function orthoPath(px: readonly PxPoint[], routing: ConnectorRouting): PxPoint[] {
+function orthoPath(
+  px: readonly PxPoint[],
+  routing: ConnectorRouting,
+  split: number | undefined,
+  proj: CanvasProjection,
+): PxPoint[] {
+  // 저장은 **캔버스 단위**이고 여기는 px 다. 축을 아는 자리에서 한 번만 옮긴다 —
+  // 축마다 배율이 다를 수 있으므로(형상상 같지만 — 014 A1) 좌표를 통째로 투영해 고른다.
+  const projected = split === undefined ? undefined : projectPoint({ x: split, y: split }, proj);
   const out: PxPoint[] = [];
   const push = (p: PxPoint): void => {
     const last = out.at(-1);
@@ -194,11 +221,19 @@ function orthoPath(px: readonly PxPoint[], routing: ConnectorRouting): PxPoint[]
     //
     // 라우터는 **막혔을 때만** 돈다. 먼저 묻지 않으면, 맨해튼 거리에서 같은 값인 여러
     // 계단 가운데 아무것이나 골라 상자를 조금 옮길 때마다 모양이 통째로 바뀐다.
-    const midway = orthoCorners(a, b, cornerAxis(prev, exitA, point, exitB));
+    const axis = cornerAxis(prev, exitA, point, exitB);
+    // **사용자가 고른 자리가 있으면 그것을 쓴다**(019 REQ-03 · §결정 2). 라우터를 돌리지
+    // 않는 것이 요점이다 — 거기서 다시 피해 돌면 옮긴 자리가 지켜지지 않는다.
+    const pinned =
+      projected !== undefined && px.length === 2 && (axis === 'lr' || axis === 'tb')
+        ? orthoSplitCorners(a, b, axis, axis === 'lr' ? projected.x : projected.y)
+        : undefined;
+    const midway = pinned ?? orthoCorners(a, b, axis);
     const plain = [a, ...midway, b];
-    const routed = orthoPathClear(plain, routing.obstacles)
-      ? undefined
-      : orthoRoute(a, b, routing.obstacles);
+    const routed =
+      pinned !== undefined || orthoPathClear(plain, routing.obstacles)
+        ? undefined
+        : orthoRoute(a, b, routing.obstacles);
     // 되돌아온 목록은 두 끝을 **포함한다** — 양 끝은 아래에서 따로 싣는다.
     if (routed !== undefined) for (const p of routed.slice(1, -1)) push(p);
     else for (const p of midway) push(p);
@@ -239,6 +274,7 @@ export function connectorPath(
   route: ConnectorRoute,
   proj: CanvasProjection,
   routing: ConnectorRouting = EMPTY_ROUTING,
+  split?: number,
 ): readonly ConnectorPathCommand[] {
   const px = points.map((point) => projectPoint(point, proj));
   const start = px[0];
@@ -256,7 +292,7 @@ export function connectorPath(
   // 장애물은 **px 로 받는다.** 투영이 각도를 보존하고 축척이 하나이므로(014 A1) 캔버스
   // 단위에서 돌리든 px 에서 돌리든 같은 길이지만, 여기서 점이 이미 px 이라 그 자리에서
   // 재는 것이 환산 하나를 덜 지난다.
-  const path = route === 'ortho' ? orthoPath(px, routing) : px;
+  const path = route === 'ortho' ? orthoPath(px, routing, split, proj) : px;
   const segments = route === 'curve' ? curveSegments(px) : [];
   if (segments.length === 0) {
     for (const point of path.slice(1)) out.push({ c: 'L', x: point.x, y: point.y });

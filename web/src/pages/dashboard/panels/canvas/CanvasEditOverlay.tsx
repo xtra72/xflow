@@ -221,6 +221,7 @@ import {
 } from './connector/connectorEdit';
 import { resolveConnector } from './connector/resolveConnector';
 import { connectorObstacles } from './connector/connectorObstacles';
+import { connectorPath, type ConnectorPathCommand } from './connector/connectorPath';
 // SPEC-CANVAS-011 M11 — 자유선의 궤적. 받는 일도 줄이는 일도 그 모듈이 하고, 이 층은
 // 포인터가 온 자리를 캔버스 단위로 넘길 뿐이다(허용 오차도 상한도 여기에 적히지 않는다).
 import { freehandPoints, ROUTE_TRACES_TRAIL, takeFreehandSample } from './connector/freehand';
@@ -556,6 +557,21 @@ interface RotateDrag extends DragCommon {
   baseDeg: number;
 }
 
+/**
+ * 직각 선의 가운데 구간 드래그 (SPEC-CANVAS-019 REQ-02).
+ *
+ * **`CanvasHandleId` 를 넓히지 않는다** — 011 의 연결선 손잡이 · 014 의 회전 손잡이와 같은
+ * 근거다(닫힌 이름 집합을 건드리면 8핸들을 세는 출시된 가드들이 흔들린다).
+ *
+ * 축은 **잡는 순간 정해진다.** 가로면 좌우로만, 세로면 위아래로만 움직인다 — 다른 축으로는
+ * 옮길 자리가 없고, 매 프레임 다시 읽으면 손이 비스듬히 움직일 때 축이 흔들린다.
+ */
+interface OrthoSplitDrag extends DragCommon {
+  mode: 'orthoSplit';
+  nodeId: string;
+  axis: 'lr' | 'tb';
+}
+
 /** 진행 중인 드래그. `null` 이면 유휴. */
 type DragState =
   | MoveDrag
@@ -563,7 +579,8 @@ type DragState =
   | LineResizeDrag
   | FontResizeDrag
   | ConnectorPointDrag
-  | RotateDrag;
+  | RotateDrag
+  | OrthoSplitDrag;
 
 /**
  * 아직 반영하지 않은 마지막 포인터 상태.
@@ -732,6 +749,15 @@ const ROTATE_HANDLE_GAP_PX = 20;
  * 저쪽은 "이 자리가 앵커인가" 를 묻고 이쪽은 "손이 움직였는가" 를 묻는다.
  */
 const ENDPOINT_DETACH_SLOP_PX = 2;
+
+/**
+ * 직각 선의 가운데 구간 손잡이 (SPEC-CANVAS-019).
+ *
+ * **마름모다.** 8핸들(네모) · 회전(동그라미) · 중간점과 모양으로 갈리는 것이 요점이다 —
+ * 같은 크기·같은 칠을 쓰면서 모양만 다르므로 "같은 무리인데 다른 일을 한다" 가 화면에 선다.
+ * 이것이 옮기는 것은 점이 아니라 **구간의 자리**다.
+ */
+const ORTHO_SPLIT_HANDLE_CLASS = `${HANDLE_BODY_CLASS} rotate-45 rounded-[2px]`;
 
 /**
  * 연결선 손잡이의 `aria-label` i18n 키 (SPEC-CANVAS-011 M9).
@@ -1873,6 +1899,40 @@ export default function CanvasEditOverlay({
         emit(repointConnector(els, drag.nodeId, drag.handle.side, landed.ref, pointer));
         return;
       }
+      case 'orthoSplit': {
+        // **움직이지 않았으면 고정을 푼다**(REQ-05). 016 이 끝 손잡이에 대해 세운 그
+        // 규칙이다 — 누름과 뗌이 같은 자리에서 일어난 것은 끈 것이 아니라 **누른 것**이고,
+        // 이 손잡이에서 누르기만 하는 몸짓의 뜻은 "자동으로 되돌려라" 다.
+        //
+        // 더블클릭을 쓰지 않는 것은 `onDoubleClick` 이 입력 장치에 따라 채워지지 않아
+        // 몸짓이 조용히 죽기 때문이며, 011 이 그 의존을 가드로 막아 두었다.
+        const moved =
+          Math.abs(point.x - drag.origin.x) > ENDPOINT_DETACH_SLOP_PX ||
+          Math.abs(point.y - drag.origin.y) > ENDPOINT_DETACH_SLOP_PX;
+        if (!moved) {
+          emit(
+            els.map((node) => {
+              if (node.id !== drag.nodeId || !isConnector(node)) return node;
+              if (node.ortho_split === undefined) return node;
+              // **키를 지운다**(0 을 싣지 않는다) — 부재가 곧 "자동" 의 뜻이다.
+              const { ortho_split: _dropped, ...rest } = node;
+              void _dropped;
+              return rest;
+            }),
+          );
+          return;
+        }
+        // 축 하나만 쓴다 — 다른 축으로는 옮길 자리가 없다(REQ-02).
+        const at = drag.axis === 'lr' ? pointer.x : pointer.y;
+        emit(
+          els.map((node) =>
+            node.id === drag.nodeId && isConnector(node)
+              ? { ...node, ortho_split: Math.round(at) }
+              : node,
+          ),
+        );
+        return;
+      }
       case 'rotate': {
         // **각도는 매 프레임 잡은 값 셋에서 다시 계산한다**(누적하지 않는다) — 프레임을
         // 건너뛰어도 결과가 같은 근거이며, 8핸들이 "잡을 때의 기하로 다시 잡는다" 로 쓴
@@ -2589,6 +2649,34 @@ export default function CanvasEditOverlay({
     if (next === null) return;
 
     dragRef.current = next;
+    pendingRef.current = null;
+    host.setPointerCapture?.(event.pointerId);
+  };
+
+  /**
+   * 가운데 구간 손잡이에서 시작하는 드래그 (SPEC-CANVAS-019 REQ-02).
+   *
+   * 위 둘과 **같은 세 줄**을 지킨다 — 이벤트를 여기서 끊고, 좌표의 원점은 루트이며, 선택은
+   * 건드리지 않는다(손잡이는 이미 골라진 선에만 뜬다).
+   *
+   * 축은 **잡는 순간 얼린다.** 매 프레임 다시 읽으면 손이 비스듬히 움직일 때 축이 흔들린다.
+   */
+  const startOrthoSplitDrag = (
+    target: { nodeId: string; axis: 'lr' | 'tb' },
+    event: React.PointerEvent<HTMLButtonElement>,
+  ): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    const host = rootRef.current!;
+    const frame = pointerFrameOf(host.getBoundingClientRect(), stage);
+    dragRef.current = {
+      mode: 'orthoSplit',
+      nodeId: target.nodeId,
+      axis: target.axis,
+      pointerId: event.pointerId,
+      origin: stagePoint(event.clientX, event.clientY, frame),
+      frame,
+    };
     pendingRef.current = null;
     host.setPointerCapture?.(event.pointerId);
   };
@@ -3538,6 +3626,41 @@ export default function CanvasEditOverlay({
       ? undefined
       : resolveConnector(connectorHost, elements, projection, textWidths);
 
+  /**
+   * 직각 선의 **가운데 구간 손잡이** (SPEC-CANVAS-019 REQ-01 · §결정 3).
+   *
+   * **판정은 그려진 그림이 한다.** 저술을 보고 "점이 없으니 세 구간일 것이다" 라고 추측하면
+   * 장애물을 돌아간 길에서 그 추측이 깨지고, 손잡이가 있지도 않은 가운데 구간에 선다.
+   *
+   * 그래서 그리는 쪽이 낸 **그 명령 목록**을 그대로 읽는다 — 네 점(세 구간)일 때만, 그리고
+   * 가운데 구간이 한 축 위일 때만 손잡이가 있다.
+   */
+  const orthoSplitHandle = ((): { nodeId: string; axis: 'lr' | 'tb'; at: PxPoint } | undefined => {
+    if (connectorHost === undefined || connectorHost.route !== 'ortho') return undefined;
+    if (connectorPoints === undefined) return undefined;
+    const cmds = connectorPath(
+      connectorPoints,
+      connectorHost.route,
+      projection,
+      connectorObstacles(connectorHost, elements, projection, textWidths),
+      connectorHost.ortho_split,
+    );
+    if (cmds.length !== 4) return undefined;
+    const pts = cmds.map((c: ConnectorPathCommand) =>
+      c.c === 'C' ? undefined : { x: c.x, y: c.y },
+    );
+    if (pts.some((p: PxPoint | undefined) => p === undefined)) return undefined;
+    const [, b, c] = pts as PxPoint[];
+    if (b === undefined || c === undefined) return undefined;
+    const axis = b.x === c.x ? 'lr' : b.y === c.y ? 'tb' : undefined;
+    if (axis === undefined) return undefined;
+    return {
+      nodeId: connectorHost.id,
+      axis,
+      at: { x: (b.x + c.x) / 2, y: (b.y + c.y) / 2 },
+    };
+  })();
+
   /** 정렬은 **맞출 상대가 있어야** 뜻이 있다 — 하나만 골라 놓고 맞출 곳은 없다. */
   const canAlign = selection.size >= 2;
   /**
@@ -4134,6 +4257,32 @@ export default function CanvasEditOverlay({
           손잡이가 가로챈다 — 위 §앵커가 잉크를 이긴다가 히트 층에서 막은 바로 그 구멍이
           DOM 층에서 되살아나는 형상이다. 도구가 몸짓의 뜻을 갈아 끼우는 동안 이 표면은
           앵커의 것이고, 그래서 앵커 점이 표식인 것과 **같은 이유로** 손잡이도 물러선다. */}
+      {/* **가운데 구간 손잡이** — 직각 선이 세 구간일 때만 (SPEC-CANVAS-019 REQ-01).
+
+          8핸들과도 연결선 손잡이와도 **이름 공간이 다르다**. 하는 일이 다르기 때문이다 —
+          저쪽 둘은 점을 옮기고 이것은 **구간의 자리**를 옮긴다.
+
+          **누르기만 하면 고정이 풀려** 자동 자리로 돌아온다(REQ-05). 되돌릴 길이 없으면
+          한 번 옮긴 선은 영영 자동으로 돌아오지 못한다 — 이 패널에는 되돌리기가 없다.
+
+          되돌리는 몸짓으로 더블클릭을 쓰지 않는 것에 뜻이 있다: `onDoubleClick` 은 입력
+          장치에 따라 채워지지 않아 **몸짓이 조용히 죽고**, 011 이 그 의존을 가드로 막아
+          두었다. 016 이 끝 손잡이에 대해 세운 "움직이지 않았으면" 규칙을 여기서도 쓴다 —
+          끌면 옮기고, 누르기만 하면 되돌린다. */}
+      {orthoSplitHandle !== undefined && (
+        <button
+          type="button"
+          data-testid="canvas-ortho-split-handle"
+          aria-label={t('dashboard.canvas.edit.orthoSplitHandle')}
+          title={t('dashboard.canvas.edit.orthoSplitHandle')}
+          className={cn(
+            ORTHO_SPLIT_HANDLE_CLASS,
+            orthoSplitHandle.axis === 'lr' ? 'cursor-ew-resize' : 'cursor-ns-resize',
+          )}
+          style={{ left: orthoSplitHandle.at.x, top: orthoSplitHandle.at.y }}
+          onPointerDown={(event) => startOrthoSplitDrag(orthoSplitHandle, event)}
+        />
+      )}
       {connectorHost !== undefined &&
         connectorPoints?.map((point, index) => {
           const handle = connectorHandleAt(index, connectorPoints.length);

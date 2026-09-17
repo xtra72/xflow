@@ -1322,7 +1322,8 @@
         "transformRotateLeft": "Rotate 90° left",
         "transformRotateRight": "Rotate 90° right",
         "rotateHandle": "Rotate — hold Shift for 15° steps",
-        "toolOrtho": "Connect with right angles"
+        "toolOrtho": "Connect with right angles",
+        "orthoSplitHandle": "Move the middle segment — drag to move, click to reset"
       },
       "elements": {
         "listTitle": "Elements",

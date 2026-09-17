@@ -522,6 +522,7 @@ function hitsConnector(
       connector.route,
       proj,
       connectorObstacles(connector, nodes, proj, textWidths),
+      connector.ortho_split,
     ),
     FLATTEN_TOLERANCE_PX,
   );
