@@ -536,14 +536,31 @@ func (s *Server) NodeCount() int {
 
 // sweepOnce 는 now 기준으로 heartbeat 타임아웃을 넘긴 online 노드를 offline 으로
 // 표시한다(REQ-B05). StartSweeper 가 주기적으로 호출한다.
+// # 뒤집은 것을 **영속한다** (@SPEC:SPEC-REMOTE-ONLINE-001 REQ-01, K4)
+//
+// 종전에는 메모리만 뒤집고 DB 에 `online=1` 을 남겼다. 프로세스가 사는 동안은 읽는 쪽의
+// 오버레이가 그 거짓을 가려 주지만, **다음 재시작에 그대로 드러난다** — 그때는 메모리
+// 항목이 없어 오버레이가 건너뛰어지고, 청소기도 항목이 없어 그 노드를 보지 못한다.
+//
+// 끊김을 감지하는 `markOffline` 은 이미 `persistOnline` 을 지난다. 여기에 그 한 줄이
+// 없던 것이 결함이었다 — 같은 사실을 두 경로가 다르게 다루면 한쪽이 조용히 낡는다.
+//
+// 영속은 **락 밖에서** 한다. `persistOnline` 은 DB 를 지나므로 `s.mu` 를 잡은 채 부르면
+// 그 잠금이 디스크 왕복만큼 길어진다 — `markOffline` 이 `wasOnline` 을 들고 락을 나선 뒤
+// 부르는 그 관용구와 같다.
 func (s *Server) sweepOnce(now time.Time) {
+	var timedOut []string
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for id, st := range s.nodes {
 		if st.Online && now.Sub(st.LastSeen) > s.cfg.HeartbeatTimeout {
 			st.Online = false
-			s.logger.Info("관리 노드 heartbeat 타임아웃 → offline", "instance_id", id)
+			timedOut = append(timedOut, id)
 		}
+	}
+	s.mu.Unlock()
+	for _, id := range timedOut {
+		s.logger.Info("관리 노드 heartbeat 타임아웃 → offline", "instance_id", id)
+		s.persistOnline(id, false, now)
 	}
 }
 

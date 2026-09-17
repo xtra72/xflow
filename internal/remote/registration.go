@@ -86,16 +86,56 @@ func (s *Server) ListNodes(ctx context.Context) ([]storage.ManagedNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	// in-memory online 상태를 반영한다(repo 의 online 은 영속 시점 기준이므로 라이브
-	// 연결 상태를 우선 적용 — 라이브 추적이 권위).
+	// online 판정은 아래 한 함수를 지난다(@SPEC:SPEC-REMOTE-ONLINE-001 REQ-03, K1).
+	now := time.Now()
 	s.mu.RLock()
 	for i := range nodes {
-		if st, ok := s.nodes[nodes[i].InstanceID]; ok {
-			nodes[i].Online = st.Online
-		}
+		nodes[i].Online = s.onlineLocked(nodes[i], now)
 	}
 	s.mu.RUnlock()
 	return nodes, nil
+}
+
+// onlineLocked 는 노드가 지금 붙어 있는가를 판정한다
+// (@SPEC:SPEC-REMOTE-ONLINE-001 REQ-02, K1/K3). s.mu 를 잡은 채 호출한다.
+//
+// # 권위는 keep-alive 이지 항목의 유무가 아니다
+//
+// 종전에는 메모리 항목이 있을 때만 그 값을 덮어썼고, 없으면 **영속값이 그대로 나갔다.**
+// 항목은 register/hello 에서만 생기고 노드 삭제에서만 지워지므로, "항목 없음" 은
+// "연결 없음" 이 아니라 **"이번 부팅 이후 붙지 않았음"** 이다. 그 둘을 같은 것으로 쓰면
+// 재시작이 진실을 지운다 — 서버가 죽을 때 online=1 이던 행이 영원히 online 으로
+// 보고되고, 청소기는 항목이 없어 그 노드를 보지도 못한다(사용자 신고 2026-09-17:
+// "xagent04 는 연결도 안되어 있는데 online 으로 표시됨").
+//
+// 그래서 항목이 없을 때는 **keep-alive 가 최근에 왔는가**로 가른다. 하트비트는 재시작
+// 경계를 지나 살아남는 유일한 신호다.
+//
+// `last_seen == 0` 은 "본 적 없음" 이므로 오래된 것으로 읽힌다(offline). 미래 값(시계
+// 왜곡)은 `Sub` 이 음수를 내므로 최근으로 읽힌다 — 어느 쪽도 패닉이 아니다(REQ-04).
+func (s *Server) onlineLocked(node storage.ManagedNode, now time.Time) bool {
+	// 항목이 있으면 라이브 추적이 답한다 — 하트비트가 `touch` 로 갱신하는 그 값이다.
+	if st, ok := s.nodes[node.InstanceID]; ok {
+		return st.Online
+	}
+	// 영속값이 이미 offline 이면 최근성을 묻지 않는다.
+	if !node.Online {
+		return false
+	}
+	return now.Sub(time.UnixMilli(node.LastSeen)) <= s.cfg.HeartbeatTimeout
+}
+
+// OnlineOf 는 `onlineLocked` 의 락을 잡는 겉면이다
+// (@SPEC:SPEC-REMOTE-ONLINE-001 REQ-03, K1).
+//
+// 판정을 **두 벌로 두지 않기 위해** 있다. `ListNodes` 는 목록을 한 번의 RLock 안에서
+// 돌므로 `onlineLocked` 를 직접 쓰고, 한 건만 묻는 자리(`NodeDetail`)는 이 겉면을 쓴다.
+// 두 자리가 각자 `s.nodes[id]` 를 들여다보면 둘 중 하나만 고쳐지는 날이 온다 — 실제로
+// 그런 날이 있었고, 그것이 이 SPEC 이 고친 결함의 둘째 사본이다.
+func (s *Server) OnlineOf(node storage.ManagedNode, now time.Time) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.onlineLocked(node, now)
 }
 
 // registerConn 은 라이브 연결을 추적한다(approve ack push / revoke 종료용).
