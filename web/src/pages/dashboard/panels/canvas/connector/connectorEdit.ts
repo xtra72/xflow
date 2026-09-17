@@ -75,7 +75,7 @@ import {
 } from '../canvasGeometry';
 import type { ConnectorRouting } from './connectorObstacles';
 import { FLATTEN_TOLERANCE_PX, flattenPath } from '../shapes/pathFlatten';
-import { connectorPath } from './connectorPath';
+import { connectorDrawn } from './connectorPath';
 import { routeHosting, type ConnectorElement, type ConnectorRoute } from './connectorTypes';
 
 // --- 한 누름이 뜻하는 것 ---------------------------------------------------
@@ -230,13 +230,21 @@ function drawnPieces(
 ): readonly DrawnPiece[] {
   // **그리는 쪽과 같은 장애물 목록을 본다**(017 REQ-04 · K4). 다르면 선 위를 눌렀는데
   // 다른 조각이 답하고, 점이 엉뚱한 자리에 끼워진다.
-  const cmds = connectorPath(points, route, proj, routing);
+  // **명령과 주인을 한자리에서 받는다**(SPEC-CANVAS-020 REQ-03 · K4). 주인은 그 명령을
+  // 낳은 **논리 구간**의 번호이고, 그것이 곧 `insertPointAt` 이 받는 자리다.
+  //
+  // 종전에는 명령의 **차례**를 자리로 썼다. 곧은 선·꺾은선·곡선에서는 점 하나가 명령
+  // 하나라 차례와 구간이 우연히 같았지만, 직각(015)은 점 사이에 모서리를 끼우므로 그
+  // 일치가 깨졌다 — 점 없는 직각선이 구간 셋을 그리는데 넣을 수 있는 자리는 0 하나뿐이라,
+  // 첫 구간 말고는 눌러도 `insertPointAt` 이 조용히 되돌려 보냈다(사용자 신고 2026-09-17).
+  const { commands: cmds, owner } = connectorDrawn(points, route, proj, routing);
   const head = cmds[0];
   if (head === undefined || head.c === 'C') return [];
 
   const out: DrawnPiece[] = [];
   let from: PxPoint = { x: head.x, y: head.y };
-  cmds.slice(1).forEach((cmd, index) => {
+  cmds.slice(1).forEach((cmd, at) => {
+    const index = owner[at] ?? at;
     if (cmd.c === 'C') {
       // 시작점을 `M` 하나로 앞에 세워 **이 조각만** 편다. `flattenPath` 는 부분 경로마다
       // 하나씩 내므로 목록은 언제나 한 벌이다.

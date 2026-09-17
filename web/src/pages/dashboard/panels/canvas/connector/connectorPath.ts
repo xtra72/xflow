@@ -176,6 +176,30 @@ function orthoSplitCorners(a: PxPoint, b: PxPoint, axis: 'lr' | 'tb', at: number
 const EMPTY_ROUTING: ConnectorRouting = { obstacles: [], hosts: {} };
 
 /**
+ * 그려진 점과, 점마다 **그것을 낳은 논리 구간의 번호** (SPEC-CANVAS-020 §결정 2).
+ *
+ * 두 목록은 언제나 같은 길이다. 나란함을 타입으로 묶어 두는 것에 뜻이 있다 — 따로 돌려
+ * 주면 한쪽만 접거나 한쪽만 거르는 날이 온다.
+ */
+interface OwnedPath {
+  readonly points: readonly PxPoint[];
+  readonly owner: readonly number[];
+}
+
+/**
+ * 점 하나가 명령 하나인 갈래의 주인 목록.
+ *
+ * `i - 1` 인 것에 뜻이 있다 — 점 `i` 에 **닿는** 명령은 구간 `i-1`(`px[i-1] → px[i]`)을
+ * 그린다. 첫 점은 `M` 이라 어느 명령의 도착점도 아니지만, 목록의 길이를 점과 맞춰 두면
+ * `slice(1)` 한 번으로 명령과 나란해진다 — 직각 갈래가 쓰는 그 셈과 같다.
+ */
+function identity(px: readonly PxPoint[]): number[] {
+  return px.map((_point, i) => Math.max(i - 1, 0));
+}
+
+const EMPTY_DRAWN: ConnectorDrawn = { commands: [], owner: [] };
+
+/**
  * 직각 경로 하나를 편다 — **다리 · 길 · 다리** (SPEC-CANVAS-018 §결정 2).
  *
  * `앵커 → 다리끝 → …길… → 다리끝 → 앵커`. 가운데 길은 **모든 도형**을 피하므로 끝 도형의
@@ -189,19 +213,28 @@ function orthoPath(
   routing: ConnectorRouting,
   split: number | undefined,
   proj: CanvasProjection,
-): PxPoint[] {
+): OwnedPath {
   // 저장은 **캔버스 단위**이고 여기는 px 다. 축을 아는 자리에서 한 번만 옮긴다 —
   // 축마다 배율이 다를 수 있으므로(형상상 같지만 — 014 A1) 좌표를 통째로 투영해 고른다.
   const projected = split === undefined ? undefined : projectPoint({ x: split, y: split }, proj);
   const out: PxPoint[] = [];
+  // **점마다 그것을 낳은 논리 구간의 번호**(SPEC-CANVAS-020 §결정 2). 같은 순환에서 함께
+  // 실으므로 새로 계산할 것이 없다 — 따로 계산하면 그 둘이 갈리는 날 아무도 울지 않는다.
+  const owner: number[] = [];
+  let owns = 0;
   const push = (p: PxPoint): void => {
     const last = out.at(-1);
     // 같은 자리를 두 번 싣지 않는다 — 길이 0 인 구간은 잡는 쪽의 거리 산술에서 0 으로
     // 나누는 자리가 된다(015 K2).
-    if (last === undefined || last.x !== p.x || last.y !== p.y) out.push(p);
+    if (last === undefined || last.x !== p.x || last.y !== p.y) {
+      out.push(p);
+      owner.push(owns);
+    }
   };
 
   px.forEach((point, i) => {
+    // 구간 `i-1` 은 `px[i-1] → px[i]` 다. 첫 점(`i === 0`)은 첫 구간의 시작이므로 0 이다.
+    owns = Math.max(i - 1, 0);
     const prev = px[i - 1];
     if (prev === undefined) {
       push(point);
@@ -240,7 +273,7 @@ function orthoPath(
     if (exitB !== undefined) push(exitB);
     push(point);
   });
-  return collapseCollinear(out);
+  return collapseCollinear(out, owner);
 }
 
 /**
@@ -251,36 +284,62 @@ function orthoPath(
  * 피할 것이 없을 때 015 와 **바이트 동일**한 목록이 되어, 017 이전의 그림이 그대로임을
  * 값으로 보일 수 있다(K3).
  */
-function collapseCollinear(points: readonly PxPoint[]): PxPoint[] {
+function collapseCollinear(points: readonly PxPoint[], owner: readonly number[]): OwnedPath {
   const out: PxPoint[] = [];
-  for (const point of points) {
+  const kept: number[] = [];
+  points.forEach((point, i) => {
     const last = out.at(-1);
     const prev = out.at(-2);
+    const owns = owner[i] ?? 0;
     if (
       last !== undefined &&
       prev !== undefined &&
       ((prev.x === last.x && last.x === point.x) || (prev.y === last.y && last.y === point.y))
     ) {
+      // **삼킨 점의 주인은 버리고 살아남은 점의 주인을 쓴다**(020 §결정 3). 삼켜진 것이
+      // 논리 꼭짓점이었다면 그 자리를 누른 누름은 한 자리 늦은 번호를 받는다 — 두 점이
+      // 한 직선 위에 있으므로 그려지는 그림은 사실상 같다. 접기를 멈추면 017 K3(바이트
+      // 동일)이 깨지므로 그림이 같은 쪽을 고르고, 그 한계를 SPEC 에 적어 두었다.
       out[out.length - 1] = point;
-      continue;
+      kept[kept.length - 1] = owns;
+      return;
     }
     out.push(point);
-  }
-  return out;
+    kept.push(owns);
+  });
+  return { points: out, owner: kept };
 }
 
-export function connectorPath(
+/**
+ * 그려진 명령과, 명령마다 **그것을 낳은 논리 구간의 번호** (SPEC-CANVAS-020 §결정 1).
+ *
+ * `owner` 는 `commands.slice(1)` 과 나란하다 — 명령 `k` 는 `path[k-1] → path[k]` 를
+ * 그리므로 `path[k]` 의 주인이 그 명령의 주인이다.
+ */
+export interface ConnectorDrawn {
+  readonly commands: readonly ConnectorPathCommand[];
+  readonly owner: readonly number[];
+}
+
+/**
+ * 그리는 쪽과 **자리 번호가 같은 함수를 지나게 하는** 한 자리 (020 REQ-03 · K4).
+ *
+ * 그리는 쪽은 `connectorPath` 로 명령만 받아 가고, 점을 찍는 쪽은 여기서 주인까지 받아
+ * 간다. 나란한 두 함수로 나누면 그 둘이 갈리는 날 아무도 울지 않는다 — 017 이 장애물
+ * 목록에 대해 세운 K4 와 같은 문장이다.
+ */
+export function connectorDrawn(
   points: readonly CanvasPoint[],
   route: ConnectorRoute,
   proj: CanvasProjection,
   routing: ConnectorRouting = EMPTY_ROUTING,
   split?: number,
-): readonly ConnectorPathCommand[] {
+): ConnectorDrawn {
   const px = points.map((point) => projectPoint(point, proj));
   const start = px[0];
   // `resolveConnector` 는 늘 점을 둘 이상 내지만 그 사실은 타입에 없다. 손으로 지은 목록이
   // 들어와도 던지지 않는 쪽을 고른다 — 빈 목록에서 `M` 을 지어내면 없는 자리에 선이 선다.
-  if (start === undefined) return [];
+  if (start === undefined) return EMPTY_DRAWN;
 
   const out: ConnectorPathCommand[] = [{ c: 'M', x: start.x, y: start.y }];
   // **직각은 점 사이에 모서리를 끼운다**(SPEC-CANVAS-015 REQ-01). 곡선과 달리 갈래를 따로
@@ -292,22 +351,42 @@ export function connectorPath(
   // 장애물은 **px 로 받는다.** 투영이 각도를 보존하고 축척이 하나이므로(014 A1) 캔버스
   // 단위에서 돌리든 px 에서 돌리든 같은 길이지만, 여기서 점이 이미 px 이라 그 자리에서
   // 재는 것이 환산 하나를 덜 지난다.
-  const path = route === 'ortho' ? orthoPath(px, routing, split, proj) : px;
+  //
+  // **주인 목록은 직각에서만 따로 난다**(020 REQ-04 · K3). 다른 갈래는 점 하나가 명령
+  // 하나이므로 주인이 곧 차례이고, 그 항등이 "다른 갈래는 한 글자도 바뀌지 않는다" 를
+  // 코드 한 줄 없이 지킨다.
+  const drawn: OwnedPath =
+    route === 'ortho' ? orthoPath(px, routing, split, proj) : { points: px, owner: identity(px) };
   const segments = route === 'curve' ? curveSegments(px) : [];
   if (segments.length === 0) {
-    for (const point of path.slice(1)) out.push({ c: 'L', x: point.x, y: point.y });
-  } else {
-    for (const seg of segments) {
-      out.push({
-        c: 'C',
-        x1: seg.c1.x,
-        y1: seg.c1.y,
-        x2: seg.c2.x,
-        y2: seg.c2.y,
-        x: seg.to.x,
-        y: seg.to.y,
-      });
-    }
+    for (const point of drawn.points.slice(1)) out.push({ c: 'L', x: point.x, y: point.y });
+    return { commands: out, owner: drawn.owner.slice(1) };
   }
-  return out;
+  for (const seg of segments) {
+    out.push({
+      c: 'C',
+      x1: seg.c1.x,
+      y1: seg.c1.y,
+      x2: seg.c2.x,
+      y2: seg.c2.y,
+      x: seg.to.x,
+      y: seg.to.y,
+    });
+  }
+  // 곡선은 구간 하나가 명령 하나다 — 차례가 곧 주인이다.
+  return { commands: out, owner: segments.map((_seg, i) => i) };
+}
+
+/**
+ * 그려진 명령만. `connectorDrawn` 의 얇은 껍데기이며 **출력은 019 와 바이트 동일**하다
+ * (020 REQ-05 · K2).
+ */
+export function connectorPath(
+  points: readonly CanvasPoint[],
+  route: ConnectorRoute,
+  proj: CanvasProjection,
+  routing: ConnectorRouting = EMPTY_ROUTING,
+  split?: number,
+): readonly ConnectorPathCommand[] {
+  return connectorDrawn(points, route, proj, routing, split).commands;
 }

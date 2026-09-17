@@ -60,6 +60,8 @@ const RESOLVE = 'connector/resolveConnector.ts';
 const HIT_TEST = 'canvasHitTest.ts';
 /** 꺾임을 끼워 넣고 빼는 산술 — M10 이 세운 모듈. */
 const EDIT = 'connector/connectorEdit.ts';
+/** 모양을 정하는 자리 — SPEC-CANVAS-020 이 명령과 **주인**을 함께 내게 했다. */
+const PATH = 'connector/connectorPath.ts';
 /** 자리 산술이 사는 자리 — 점–선분의 가장 가까운 자리가 여기 하나다. */
 const GEOMETRY = 'canvasGeometry.ts';
 /** 노드를 **만드는** 유일한 모듈 — M8 이 연결선 입구를 여기 세웠다. */
@@ -234,11 +236,32 @@ describe('점–선분의 가장 가까운 자리가 **한 함수**다 (위험 R
     const text = source(EDIT);
     expect(/from '[^']*pathFlatten'/.test(text)).toBe(true);
     expect(text.includes('flattenPath(')).toBe(true);
-    // 모양은 그리는 쪽과 같은 함수에서 온다.
-    expect(text.includes('connectorPath(')).toBe(true);
+    // 모양은 그리는 쪽과 **같은 함수**에서 온다.
+    //
+    // **0.1.0 은 여기서 `connectorPath(` 를 셌다.** SPEC-CANVAS-020 이 그 함수를 둘로
+    // 갈랐으므로 이름을 바꿔 적는다 — 뜻이 약해진 것이 아니라 **넓어졌다**: 이제 이 파일은
+    // 명령뿐 아니라 **명령의 주인**(어느 논리 구간에서 났는가)까지 그리는 쪽에서 받아
+    // 간다. 자리 번호를 제 손으로 셈하지 않는다는 이 가드의 뜻이 한 겹 더 걸린다.
+    //
+    // 짝이 되는 사실을 아래에서 **세어서** 못 박는다 — `connectorPath` 가 `connectorDrawn`
+    // 의 얇은 껍데기라는 것. 그 한 줄이 없으면 둘이 갈라져 "그리는 모양" 과 "자리를 내는
+    // 모양" 이 달라질 수 있고, 그것이 이 가드가 애초에 막으려던 상태다.
+    expect(text.includes('connectorDrawn(')).toBe(true);
+    expect(text.includes('connectorPath(')).toBe(false);
     for (const banned of ['curveSegments', 'flattenCubic', 'TWO_THIRDS', 'bezierCurveTo']) {
       expect(text.includes(banned), banned).toBe(false);
     }
+  });
+
+  it('`connectorPath` 는 `connectorDrawn` 의 **얇은 껍데기**다 (SPEC-CANVAS-020 K4)', () => {
+    const text = source(PATH);
+    // 정의는 각각 하나다 — 둘 중 하나가 둘이 되면 어느 쪽이 그리는지 알 수 없다.
+    expect(countOf(text, /export function connectorDrawn\b/g)).toBe(1);
+    expect(countOf(text, /export function connectorPath\b/g)).toBe(1);
+    // 그리고 후자는 전자를 **지나서** 난다. 이 한 줄이 두 함수를 한 길로 묶는다.
+    expect(text.includes('return connectorDrawn(points, route, proj, routing, split).commands;')).toBe(
+      true,
+    );
   });
 });
 
