@@ -51,6 +51,7 @@ import { isStrokeDash, type StrokeDash } from './strokeDash';
 import { storableDegrees } from './canvasRotation';
 // 임의 앵커의 자료형. 잎 모듈(`shapes/pathTypes` 밖을 들이지 않는다)이라 순환이 없다.
 import type { CustomAnchor } from './connector/anchorTypes';
+import { parseOrthoSplits } from './connector/orthoSplits';
 // 연결선의 자료형과 그 판별(SPEC-CANVAS-011 M4). 저쪽이 이 파일에서 **타입만** 가져가므로
 // 값(`CONNECTOR_KIND` · `isConnectorKind`)을 들여도 실행 시각 순환이 생기지 않는다.
 import {
@@ -510,16 +511,6 @@ function optionalString(v: unknown): string | undefined {
  * 폴백으로 보정한다. 손상 값을 조용히 지우면 사용자가 화면에서 원인을 볼 수 없고,
  * 부재를 기본값으로 채우면 "지정 안 함" 이 사라진다 — 두 경우를 갈라 두는 이유다.
  */
-/**
- * 유한한 수이거나 부재 — **폴백이 없다**(SPEC-CANVAS-019).
- *
- * 위 `optionalNonNegative` 와 갈리는 자리다. 저쪽은 "손상되면 기본값" 이지만 여기는
- * 손상되면 **부재**다 — 가운데 구간의 자리에는 지어낼 기본값이 없고(자동 자리가 곧
- * 부재의 뜻이다), 0 으로 떨어뜨리면 선이 캔버스 왼쪽 끝으로 끌려간다.
- */
-function optionalFiniteNumber(v: unknown): number | undefined {
-  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
-}
 
 function optionalNonNegative(v: unknown, fallback: number): number | undefined {
   if (isAbsent(v)) return undefined;
@@ -1148,7 +1139,9 @@ function parseConnector(e: Record<string, unknown>): ConnectorElement | null {
 
   const route = routeHosting(parseConnectorRoute(e.route), points?.length ?? 0);
   // 손상된 값은 **키만** 버린다 — 요소를 통째로 떨어뜨리지 않는 001 이래의 규율이다.
-  const orthoSplit = optionalFiniteNumber(e.ortho_split);
+  // 019 는 수 하나였고 021 이 **구간과 나란한 목록**으로 넓혔다. 019 가 적은 수 하나도
+  // 그대로 읽는다(`[그 수]`) — 갈래가 하나뿐이면 목록의 첫 자리가 곧 그 수다.
+  const orthoSplit = parseOrthoSplits(e.ortho_split);
 
   return {
     id,

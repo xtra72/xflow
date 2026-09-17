@@ -76,6 +76,7 @@ import {
 import type { ConnectorRouting } from './connectorObstacles';
 import { FLATTEN_TOLERANCE_PX, flattenPath } from '../shapes/pathFlatten';
 import { connectorDrawn } from './connectorPath';
+import { splitInserted, splitRemoved, type OrthoSplit } from './orthoSplits';
 import { routeHosting, type ConnectorElement, type ConnectorRoute } from './connectorTypes';
 
 // --- 한 누름이 뜻하는 것 ---------------------------------------------------
@@ -350,6 +351,24 @@ function nearestSlot(
  * 무엇으로 올라가는지는 여기서 정하지 않는다 — `routeHosting` 한 자리이며, 만드는 쪽과
  * 읽어 들이는 쪽이 지나는 그 함수다(`connectorTypes.ts`).
  */
+/**
+ * 고정값 목록을 싣거나 **키째 지운 새 연결선**.
+ *
+ * `undefined` 는 "전부 자동" 이고, 그때는 키를 남기지 않는다 — `ortho_split: undefined`
+ * 를 실으면 키는 그대로 있고 값만 비어, `'ortho_split' in node` 가 여전히 참이다. 빈 키를
+ * 남기지 않는 것은 019 가 수 하나에 대해 지킨 그 규율이다.
+ */
+function withSplits(
+  connector: ConnectorElement,
+  splits: readonly OrthoSplit[] | undefined,
+): ConnectorElement {
+  if (splits !== undefined) return { ...connector, ortho_split: splits };
+  if (connector.ortho_split === undefined) return connector;
+  const { ortho_split: _dropped, ...rest } = connector;
+  void _dropped;
+  return rest;
+}
+
 export function insertPointAt(
   connector: ConnectorElement,
   index: number,
@@ -359,7 +378,14 @@ export function insertPointAt(
   if (index < 0 || index > points.length) return connector;
   const inserted: PointGeometry = { x: coordinate(at.x, 0), y: coordinate(at.y, 0) };
   const next = [...points.slice(0, index), inserted, ...points.slice(index)];
-  return { ...connector, route: routeHosting(connector.route, next.length), points: next };
+  // **고정값 목록도 함께 옮긴다**(SPEC-CANVAS-021 K1). 그 목록의 자리는 좌표가 아니라
+  // **구간 번호**이고, 점을 끼우면 구간 `index` 가 둘로 갈린다 — 여기서 함께 옮기지
+  // 않으면 옆 구간의 고정값이 이 구간의 것으로 읽히고, 사용자가 만지지 않은 선이 꺾인다.
+  const splits = splitInserted(connector.ortho_split, index);
+  return withSplits(
+    { ...connector, route: routeHosting(connector.route, next.length), points: next },
+    splits,
+  );
 }
 
 /**
@@ -383,9 +409,12 @@ export function removePointAt(connector: ConnectorElement, index: number): Conne
   if (points === undefined) return connector;
   if (index < 0 || index >= points.length) return connector;
   const kept = points.filter((_point, i) => i !== index);
+  // 점 `index` 를 빼면 구간 `index` 와 `index + 1` 이 **하나로 합쳐진다**(021 K1).
+  const splits = splitRemoved(connector.ortho_split, index);
   if (kept.length === 0) {
     const { points: _dropped, ...rest } = connector;
-    return rest;
+    void _dropped;
+    return withSplits(rest, splits);
   }
-  return { ...connector, points: kept };
+  return withSplits({ ...connector, points: kept }, splits);
 }

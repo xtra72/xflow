@@ -1323,7 +1323,8 @@
         "transformRotateRight": "Rotate 90° right",
         "rotateHandle": "Rotate — hold Shift for 15° steps",
         "toolOrtho": "Connect with right angles",
-        "orthoSplitHandle": "Move the middle segment — drag to move, click to reset"
+        "orthoSplitHandle": "Move the middle segment — drag to move, click to reset",
+        "removeBendPoint": "Remove this bend point"
       },
       "elements": {
         "listTitle": "Elements",

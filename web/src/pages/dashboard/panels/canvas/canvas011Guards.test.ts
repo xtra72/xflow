@@ -259,9 +259,9 @@ describe('점–선분의 가장 가까운 자리가 **한 함수**다 (위험 R
     expect(countOf(text, /export function connectorDrawn\b/g)).toBe(1);
     expect(countOf(text, /export function connectorPath\b/g)).toBe(1);
     // 그리고 후자는 전자를 **지나서** 난다. 이 한 줄이 두 함수를 한 길로 묶는다.
-    expect(text.includes('return connectorDrawn(points, route, proj, routing, split).commands;')).toBe(
-      true,
-    );
+    expect(
+      text.includes('return connectorDrawn(points, route, proj, routing, splits).commands;'),
+    ).toBe(true);
   });
 });
 
@@ -780,9 +780,20 @@ describe('직선이 점을 들지 못하게 막는 자리가 하나다 (REQ-04 �
 
   it('승격이 점을 싣는 **그 표현 안**에서 일어난다 — 중간 상태가 없다', () => {
     // 두 줄로 나뉘면 그 사이에 "직선이면서 점을 든" 연결선이 표현 가능해진다.
-    expect(source(EDIT)).toContain(
-      'return { ...connector, route: routeHosting(connector.route, next.length), points: next };',
+    //
+    // **SPEC-CANVAS-021 이 그 표현을 한 겹 감쌌다** — `withSplits(…)` 가 고정값 목록을
+    // 싣거나 키째 지운다. 뜻은 그대로다: `route` 와 `points` 는 여전히 **객체 하나**에서
+    // 함께 정해지고, 감싸는 함수는 `ortho_split` 밖에 만지지 않으므로 그 사이에 중간
+    // 상태가 설 자리가 없다. 감싼 사실까지 **세어서** 적어, 다음 사람이 이 문자열을
+    // 고칠 때 무엇이 보장되고 있었는지 읽을 수 있게 한다.
+    const text = source(EDIT);
+    expect(text).toContain(
+      '{ ...connector, route: routeHosting(connector.route, next.length), points: next },',
     );
+    // 정의 한 번 + 끼우기 한 번 + 빼기 **두 번**(마지막 점을 뺀 갈래와 그 밖의 갈래).
+    // 빼기가 둘인 것은 마지막 하나를 빼면 `points` 키까지 지우기 때문이며, 그 두 갈래가
+    // 모두 이 함수를 지나야 고정값 목록이 한쪽 갈래에서만 옮겨지는 날이 오지 않는다.
+    expect(countOf(text, /withSplits\(/g)).toBe(4);
   });
 
   it('되돌리는 짝(강등)이 없다 — 빼는 쪽은 `route` 를 건드리지 않는다', () => {

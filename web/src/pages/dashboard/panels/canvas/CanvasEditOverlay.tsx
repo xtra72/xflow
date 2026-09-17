@@ -221,7 +221,8 @@ import {
 } from './connector/connectorEdit';
 import { resolveConnector } from './connector/resolveConnector';
 import { connectorObstacles } from './connector/connectorObstacles';
-import { connectorPath, type ConnectorPathCommand } from './connector/connectorPath';
+import { connectorDrawn } from './connector/connectorPath';
+import { withSplit } from './connector/orthoSplits';
 // SPEC-CANVAS-011 M11 — 자유선의 궤적. 받는 일도 줄이는 일도 그 모듈이 하고, 이 층은
 // 포인터가 온 자리를 캔버스 단위로 넘길 뿐이다(허용 오차도 상한도 여기에 적히지 않는다).
 import { freehandPoints, ROUTE_TRACES_TRAIL, takeFreehandSample } from './connector/freehand';
@@ -570,6 +571,13 @@ interface OrthoSplitDrag extends DragCommon {
   mode: 'orthoSplit';
   nodeId: string;
   axis: 'lr' | 'tb';
+  /**
+   * 어느 **논리 구간**의 고정값을 건드리는가 (SPEC-CANVAS-021 REQ-05).
+   *
+   * 그려진 구간의 차례가 아니다 — 그 차례는 모서리가 끼면서 구간과 갈린다(020 이 고친 그
+   * 어긋남이다). 값은 `connectorDrawn` 의 `owner` 에서 오므로 그리는 쪽과 한 길이다.
+   */
+  segment: number;
 }
 
 /** 진행 중인 드래그. `null` 이면 유휴. */
@@ -995,6 +1003,8 @@ const DELETE_KEYS: ReadonlySet<string> = new Set(['Delete', 'Backspace']);
  * 그래서 팬은 **루트가 직접 초점을 든 동안에만** Space 를 가져간다(아래 `handleKeyDown`).
  */
 const SPACE_KEY = ' ';
+/** 닫는 키 — 차림표 하나에만 쓰인다(SPEC-CANVAS-021 REQ-03). */
+const ESCAPE_KEY = 'Escape';
 
 /**
  * Space+방향키 한 번의 팬 이동량(화면 px).
@@ -1662,6 +1672,16 @@ export default function CanvasEditOverlay({
    * 눌려 있는 동안뿐**이며, 그것이 아래 §마키 사각형이 표시 층이 아닌 근거다(불변식 I23).
    */
   const [marquee, setMarquee] = useState<MarqueeState | null>(null);
+  /**
+   * 열려 있는 꺾임점 지움 차림표 (SPEC-CANVAS-021 REQ-01).
+   *
+   * 자리를 **px 로 들고 다닌다.** 열릴 때의 그 자리에 세우면 선이 다시 그려져도 차림표가
+   * 따라 움직이지 않는다 — 손이 이미 그 자리를 겨누고 있으므로 따라 움직이는 쪽이 더
+   * 놀랍다(누르려던 줄이 손가락 밑에서 빠져나간다).
+   */
+  const [pointMenu, setPointMenu] = useState<
+    { nodeId: string; index: number; at: PxPoint } | undefined
+  >(undefined);
 
   /**
    * 진행 중인 긋기(SPEC-CANVAS-011 M8). `null` 이면 미리보기를 그리지 않는다.
@@ -1909,27 +1929,26 @@ export default function CanvasEditOverlay({
         const moved =
           Math.abs(point.x - drag.origin.x) > ENDPOINT_DETACH_SLOP_PX ||
           Math.abs(point.y - drag.origin.y) > ENDPOINT_DETACH_SLOP_PX;
-        if (!moved) {
-          emit(
-            els.map((node) => {
-              if (node.id !== drag.nodeId || !isConnector(node)) return node;
+        //
+        // **그 구간의 고정만 푼다**(021 REQ-06). 다른 구간의 고정값은 남는다 — 사용자가
+        // 만진 것은 이 구간 하나이고, 옆 구간까지 되돌리면 한 번의 누름이 만지지 않은 것을
+        // 바꾼다.
+        const at = drag.axis === 'lr' ? pointer.x : pointer.y;
+        const value = moved ? Math.round(at) : null;
+        emit(
+          els.map((node) => {
+            if (node.id !== drag.nodeId || !isConnector(node)) return node;
+            const next = withSplit(node.ortho_split, drag.segment, value);
+            if (next === undefined) {
+              // **전부 자동이면 키를 지운다** — 부재가 곧 자동이고, 빈 목록을 남기면 저장
+              // 왕복에 없던 키가 생긴다(019 가 수 하나에 대해 지킨 그 규율이다).
               if (node.ortho_split === undefined) return node;
-              // **키를 지운다**(0 을 싣지 않는다) — 부재가 곧 "자동" 의 뜻이다.
               const { ortho_split: _dropped, ...rest } = node;
               void _dropped;
               return rest;
-            }),
-          );
-          return;
-        }
-        // 축 하나만 쓴다 — 다른 축으로는 옮길 자리가 없다(REQ-02).
-        const at = drag.axis === 'lr' ? pointer.x : pointer.y;
-        emit(
-          els.map((node) =>
-            node.id === drag.nodeId && isConnector(node)
-              ? { ...node, ortho_split: Math.round(at) }
-              : node,
-          ),
+            }
+            return { ...node, ortho_split: next };
+          }),
         );
         return;
       }
@@ -2276,6 +2295,15 @@ export default function CanvasEditOverlay({
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+    // **차림표 밖을 누르면 닫힌다**(SPEC-CANVAS-021 REQ-03). 차림표 안쪽의 누름은 제
+    // 뿌리에서 `stopPropagation` 하므로 여기까지 오지 않는다 — "밖" 의 정의를 좌표로 다시
+    // 짓지 않는 것이 요점이다. 좌표로 지으면 차림표가 커지거나 자리를 옮길 때마다 그 셈이
+    // 낡고, 낡은 채로도 아무도 울지 않는다.
+    //
+    // 닫기만 하고 **이벤트는 소비하지 않는다.** 소비하면 차림표를 닫는 누름이 고르기도
+    // 함께 먹어, 다른 것을 고르려면 두 번 눌러야 한다.
+    if (pointMenu !== undefined) setPointMenu(undefined);
+
     if (!enabled) return;
     const host = event.currentTarget;
 
@@ -2662,7 +2690,7 @@ export default function CanvasEditOverlay({
    * 축은 **잡는 순간 얼린다.** 매 프레임 다시 읽으면 손이 비스듬히 움직일 때 축이 흔들린다.
    */
   const startOrthoSplitDrag = (
-    target: { nodeId: string; axis: 'lr' | 'tb' },
+    target: { nodeId: string; axis: 'lr' | 'tb'; segment: number },
     event: React.PointerEvent<HTMLButtonElement>,
   ): void => {
     event.preventDefault();
@@ -2673,6 +2701,7 @@ export default function CanvasEditOverlay({
       mode: 'orthoSplit',
       nodeId: target.nodeId,
       axis: target.axis,
+      segment: target.segment,
       pointerId: event.pointerId,
       origin: stagePoint(event.clientX, event.clientY, frame),
       frame,
@@ -3165,6 +3194,17 @@ export default function CanvasEditOverlay({
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     // `enabled` 를 다시 보지 않는다 — 꺼져 있으면 이 층이 DOM 에 아예 없어 키가 닿을 길이
     // 없다. 검증되지 않는 가드는 읽는 사람에게 "닿을 수도 있다" 고 거짓말한다.
+    // **차림표가 열려 있으면 `Escape` 가 그것을 닫는다**(SPEC-CANVAS-021 REQ-03).
+    //
+    // 조작키 문턱보다 **앞에** 선다. 뒤에 두면 `Ctrl` 을 짚은 채 누른 `Escape` 가 차림표를
+    // 닫지 못하고, 사용자에게는 "가끔 안 닫힌다" 로만 보인다 — 닫는 몸짓은 무엇을 짚고
+    // 있든 닫아야 한다.
+    if (event.key === ESCAPE_KEY && pointMenu !== undefined) {
+      setPointMenu(undefined);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     // **두 갈래가 함께 쓰는 문턱이다.** 끌고 있는 동안에는 손이 이기고(아래 머리말),
     // 고른 것이 없으면 옮길 것도 지울 것도 없다. 갈래마다 따로 두면 한쪽만 고칠 수 있다.
@@ -3627,38 +3667,53 @@ export default function CanvasEditOverlay({
       : resolveConnector(connectorHost, elements, projection, textWidths);
 
   /**
-   * 직각 선의 **가운데 구간 손잡이** (SPEC-CANVAS-019 REQ-01 · §결정 3).
+   * 직각 선의 **구간 손잡이들** (SPEC-CANVAS-021 REQ-04 · 019 §결정 3 을 넓힌다).
    *
    * **판정은 그려진 그림이 한다.** 저술을 보고 "점이 없으니 세 구간일 것이다" 라고 추측하면
-   * 장애물을 돌아간 길에서 그 추측이 깨지고, 손잡이가 있지도 않은 가운데 구간에 선다.
+   * 장애물을 돌아간 길에서 그 추측이 깨지고, 손잡이가 있지도 않은 구간에 선다.
    *
-   * 그래서 그리는 쪽이 낸 **그 명령 목록**을 그대로 읽는다 — 네 점(세 구간)일 때만, 그리고
-   * 가운데 구간이 한 축 위일 때만 손잡이가 있다.
+   * 세우는 자는 하나다: **그 논리 구간이 Z 하나로 그려졌는가**(점 넷 — 시작 · 모서리
+   * 둘 · 끝). 그 Z 의 가운데 구간이 곧 손잡이가 붙는 자리다.
+   *
+   *   - 점 둘이면 이미 한 축 위라 밀 자리가 없다.
+   *   - 다섯 이상이면 라우터가 낸 **계단**이다. 고정값은 구간당 하나인데 계단은 꺾임이
+   *     여럿이라, 옮긴 뒤 무엇이 남는지 말할 수 없다(021 §결정 3).
+   *
+   * **접기 전 목록(`runs`)을 읽는다.** 접힌 그림에서 구간을 되찾을 수는 없다 — 접기는 한
+   * 직선 위의 가운데 점을 지우고, 지워진 것이 논리 꼭짓점이면 그려진 구간 하나가 **두
+   * 논리 구간에 걸친다**. 그때 그 구간의 손잡이는 어느 고정값을 건드리는지 말할 수 없다.
    */
-  const orthoSplitHandle = ((): { nodeId: string; axis: 'lr' | 'tb'; at: PxPoint } | undefined => {
-    if (connectorHost === undefined || connectorHost.route !== 'ortho') return undefined;
-    if (connectorPoints === undefined) return undefined;
-    const cmds = connectorPath(
+  const orthoSplitHandles = ((): readonly {
+    nodeId: string;
+    axis: 'lr' | 'tb';
+    segment: number;
+    at: PxPoint;
+  }[] => {
+    if (connectorHost === undefined || connectorHost.route !== 'ortho') return [];
+    if (connectorPoints === undefined) return [];
+    const { runs } = connectorDrawn(
       connectorPoints,
       connectorHost.route,
       projection,
       connectorObstacles(connectorHost, elements, projection, textWidths),
       connectorHost.ortho_split,
     );
-    if (cmds.length !== 4) return undefined;
-    const pts = cmds.map((c: ConnectorPathCommand) =>
-      c.c === 'C' ? undefined : { x: c.x, y: c.y },
-    );
-    if (pts.some((p: PxPoint | undefined) => p === undefined)) return undefined;
-    const [, b, c] = pts as PxPoint[];
-    if (b === undefined || c === undefined) return undefined;
-    const axis = b.x === c.x ? 'lr' : b.y === c.y ? 'tb' : undefined;
-    if (axis === undefined) return undefined;
-    return {
-      nodeId: connectorHost.id,
-      axis,
-      at: { x: (b.x + c.x) / 2, y: (b.y + c.y) / 2 },
-    };
+    const out: { nodeId: string; axis: 'lr' | 'tb'; segment: number; at: PxPoint }[] = [];
+    runs.forEach((run, segment) => {
+      if (run.length !== 4) return;
+      const a = run[1];
+      const b = run[2];
+      if (a === undefined || b === undefined) return;
+      const axis = a.x === b.x ? 'lr' : a.y === b.y ? 'tb' : undefined;
+      if (axis === undefined) return;
+      out.push({
+        nodeId: connectorHost.id,
+        axis,
+        segment,
+        at: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      });
+    });
+    return out;
   })();
 
   /** 정렬은 **맞출 상대가 있어야** 뜻이 있다 — 하나만 골라 놓고 맞출 곳은 없다. */
@@ -4269,20 +4324,23 @@ export default function CanvasEditOverlay({
           장치에 따라 채워지지 않아 **몸짓이 조용히 죽고**, 011 이 그 의존을 가드로 막아
           두었다. 016 이 끝 손잡이에 대해 세운 "움직이지 않았으면" 규칙을 여기서도 쓴다 —
           끌면 옮기고, 누르기만 하면 되돌린다. */}
-      {orthoSplitHandle !== undefined && (
+      {orthoSplitHandles.map((knob) => (
         <button
+          // **구간 번호로 이름을 짓는다.** 배열 차례로 지으면 옆 구간에 손잡이가 하나 늘고
+          // 줄 때 React 가 다른 손잡이를 같은 것으로 읽어, 끌던 중에 자리가 튄다.
+          key={knob.segment}
           type="button"
-          data-testid="canvas-ortho-split-handle"
+          data-testid={`canvas-ortho-split-handle-${knob.segment}`}
           aria-label={t('dashboard.canvas.edit.orthoSplitHandle')}
           title={t('dashboard.canvas.edit.orthoSplitHandle')}
           className={cn(
             ORTHO_SPLIT_HANDLE_CLASS,
-            orthoSplitHandle.axis === 'lr' ? 'cursor-ew-resize' : 'cursor-ns-resize',
+            knob.axis === 'lr' ? 'cursor-ew-resize' : 'cursor-ns-resize',
           )}
-          style={{ left: orthoSplitHandle.at.x, top: orthoSplitHandle.at.y }}
-          onPointerDown={(event) => startOrthoSplitDrag(orthoSplitHandle, event)}
+          style={{ left: knob.at.x, top: knob.at.y }}
+          onPointerDown={(event) => startOrthoSplitDrag(knob, event)}
         />
-      )}
+      ))}
       {connectorHost !== undefined &&
         connectorPoints?.map((point, index) => {
           const handle = connectorHandleAt(index, connectorPoints.length);
@@ -4306,9 +4364,54 @@ export default function CanvasEditOverlay({
               )}
               style={{ left: px.x, top: px.y }}
               onPointerDown={(event) => startConnectorHandleDrag(connectorHost, handle, event)}
+              // **꺾임점에만 차림표가 열린다**(SPEC-CANVAS-021 REQ-01). 끝점에는 뺄 것이
+              // 없다 — 끝은 앵커에 매여 있고, 그것을 떼는 일은 016 이 따로 정했다.
+              onContextMenu={
+                handle.kind === 'mid'
+                  ? (event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setPointMenu({ nodeId: connectorHost.id, index: handle.index, at: px });
+                    }
+                  : undefined
+              }
             />
           );
         })}
+      {/* **꺾임점 지움 차림표** (SPEC-CANVAS-021 REQ-01 · REQ-02 · §결정 1).
+
+          캔버스 전체에 오른쪽 차림표 틀을 세우지 않는다 — 세우면 "빈 곳에서는", "도형
+          위에서는", "그룹 위에서는" 이 줄줄이 따라오고 그 답은 이 SPEC 에 없다. 꺾임점
+          손잡이 하나가 제 차림표를 든다(`PanelSettingsDialog` 가 배치 칸에 쓰는 그 형상).
+
+          빼는 일은 **`removePointAt` 하나**를 지난다(K3) — 연타가 지나는 그 함수다. 두 문이
+          같은 한 줄을 지나야 "연타로 뺀 것" 과 "차림표로 뺀 것" 이 갈리지 않는다. */}
+      {pointMenu !== undefined && (
+        <div
+          data-testid="canvas-point-menu"
+          role="menu"
+          className="pointer-events-auto absolute z-30 min-w-40 rounded-md border border-(--color-border-default) bg-(--color-bg-primary) p-1 text-left shadow-lg"
+          style={{ left: pointMenu.at.x, top: pointMenu.at.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="canvas-point-menu-remove"
+            className="w-full rounded-sm px-2 py-1 text-left text-xs text-(--color-text-primary) hover:bg-(--color-interactive-hover)"
+            onClick={() => {
+              const host = elements.find((el) => el.id === pointMenu.nodeId);
+              if (host !== undefined && isConnector(host)) {
+                commitConnector(host, removePointAt(host, pointMenu.index));
+              }
+              setPointMenu(undefined);
+            }}
+          >
+            {t('dashboard.canvas.edit.removeBendPoint')}
+          </button>
+        </div>
+      )}
       {/* **마키 사각형** — 지금 감싸고 있는 영역(SPEC-CANVAS-009 결정 5).
 
           **표시 층이 아니다**(불변식 I23). I23 이 막는 결함의 형상은 "**조건 없이** 그려지는

@@ -41,6 +41,7 @@ import type {
   TweenSpec,
 } from '../canvasConfig';
 import type { CanvasNode } from '../group/groupTypes';
+import type { OrthoSplit } from './orthoSplits';
 // SPEC-CANVAS-011 M11 — 중간점 상한을 008 의 명령 상한에서 **파생**시킨다(아래
 // `MAX_CONNECTOR_POINTS`). `shapes/pathTypes` 는 아무것도 들이지 않는 잎이라 이 값
 // 하나를 들여도 고리가 생기지 않는다 — `anchorTypes` 가 격자에서 쓴 그 형상이다.
@@ -253,8 +254,17 @@ export interface ConnectorElement {
    * 그 사이에 꺾임을 끼워 넣어, 사용자는 가운데를 옮겼을 뿐인데 모양이 무너진다.
    *
    * `route` 가 `ortho` 가 아니면 뜻이 없다 — 파서는 그때 키를 만들지 않는다.
+   *
+   * ## 수 하나에서 **구간마다 하나**로 (SPEC-CANVAS-021)
+   *
+   * 019 는 수 하나였다. 논리 구간이 하나뿐일 때는 족했지만, 사용자 점이 `N` 개면 구간은
+   * `N+1` 개이고 직각 갈래는 **구간마다 Z 를 하나씩** 그린다 — 그러니 고정값도 구간마다
+   * 하나다. 목록의 자리는 **구간 번호**이며, 점을 더하거나 뺄 때 `insertPointAt` ·
+   * `removePointAt` 이 함께 옮기므로 낡지 않는다(021 K1).
+   *
+   * `null` 이 자동이다. 019 가 적은 **수 하나도 그대로 읽는다**(`[그 수]`).
    */
-  ortho_split?: number;
+  ortho_split?: readonly OrthoSplit[];
   /** 겉모습 캐스케이드 최하층 — 정적 저술. 001 과 같은 `ElementStyle` 이다. */
   style?: ElementStyle;
   /** 없으면 정적 선(규칙 평가 대상이 아니다). */

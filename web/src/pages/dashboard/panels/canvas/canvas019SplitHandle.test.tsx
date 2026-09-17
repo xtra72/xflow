@@ -108,9 +108,18 @@ function live(): CanvasNode[] {
   return JSON.parse(screen.getByTestId('dump').textContent ?? '[]') as CanvasNode[];
 }
 
+/**
+ * **SPEC-CANVAS-021 이 형상을 넓혔다** — 고정값은 수 하나가 아니라 **구간마다 하나**이고,
+ * 손잡이의 이름에도 그 구간 번호가 붙는다(`…-handle-0`).
+ *
+ * 019 가 다루는 장면은 논리 구간이 하나뿐이므로 목록의 첫 자리가 019 의 그 수다 — 019 가
+ * 물은 질문(서는가 · 끌리는가 · 눌러 되돌아가는가)은 한 글자도 달라지지 않는다.
+ */
 function splitOf(): number | undefined {
   const c = live().find((n) => n.id === 'c1');
-  return c !== undefined && isConnector(c) ? c.ortho_split : undefined;
+  if (c === undefined || !isConnector(c)) return undefined;
+  const first = c.ortho_split?.[0];
+  return typeof first === 'number' ? first : undefined;
 }
 
 const lookup = (tree: unknown, key: string): unknown =>
@@ -131,7 +140,7 @@ afterEach(() => {
 describe('손잡이가 선다 (REQ-01)', () => {
   it('세 구간인 직각 선에 하나 선다', () => {
     show(nodes());
-    expect(screen.getByTestId('canvas-ortho-split-handle')).toBeTruthy();
+    expect(screen.getByTestId('canvas-ortho-split-handle-0')).toBeTruthy();
   });
 
   it('**곧은 선에는 서지 않는다** — 가운데 구간이 없다', () => {
@@ -146,7 +155,7 @@ describe('손잡이가 선다 (REQ-01)', () => {
       ],
     }).elements;
     show(flat);
-    expect(screen.queryByTestId('canvas-ortho-split-handle')).toBeNull();
+    expect(screen.queryByTestId('canvas-ortho-split-handle-0')).toBeNull();
   });
 
   it('**꺾임이 둘을 넘으면 서지 않는다** — 옮길 "가운데" 가 하나가 아니다', () => {
@@ -165,25 +174,25 @@ describe('손잡이가 선다 (REQ-01)', () => {
       ],
     }).elements;
     show(blocked);
-    expect(screen.queryByTestId('canvas-ortho-split-handle')).toBeNull();
+    expect(screen.queryByTestId('canvas-ortho-split-handle-0')).toBeNull();
   });
 
   it('직각이 아니면 서지 않는다', () => {
     show(nodes({ route: 'elbow' }));
-    expect(screen.queryByTestId('canvas-ortho-split-handle')).toBeNull();
+    expect(screen.queryByTestId('canvas-ortho-split-handle-0')).toBeNull();
   });
 
   it('8핸들·연결선 손잡이와 **이름 공간이 다르다**', () => {
     show(nodes());
-    expect(screen.queryByTestId('canvas-handle-ortho-split')).toBeNull();
-    expect(screen.queryByTestId('canvas-connector-handle-ortho-split')).toBeNull();
+    expect(screen.queryByTestId('canvas-handle-ortho-split-0')).toBeNull();
+    expect(screen.queryByTestId('canvas-connector-handle-ortho-split-0')).toBeNull();
   });
 
   it.each(['ko', 'en'] as const)('%s — 이름이 번역된다', (locale) => {
     show(nodes(), locale);
     const label = lookup(locale === 'ko' ? ko : en, 'dashboard.canvas.edit.orthoSplitHandle');
     expect(label).toBeTypeOf('string');
-    expect(screen.getByTestId('canvas-ortho-split-handle').getAttribute('aria-label')).toBe(label);
+    expect(screen.getByTestId('canvas-ortho-split-handle-0').getAttribute('aria-label')).toBe(label);
   });
 });
 
@@ -191,7 +200,7 @@ describe('손잡이가 선다 (REQ-01)', () => {
 
 describe('끌면 가운데 구간이 따라온다 (REQ-02)', () => {
   async function drag(from: { x: number; y: number }, to: { x: number; y: number }): Promise<void> {
-    const knob = screen.getByTestId('canvas-ortho-split-handle');
+    const knob = screen.getByTestId('canvas-ortho-split-handle-0');
     const root = screen.getByTestId('canvas-edit-overlay');
     fireEvent(knob, pointerEvent('pointerdown', from.x, from.y));
     fireEvent(root, pointerEvent('pointermove', to.x, to.y));
@@ -201,7 +210,7 @@ describe('끌면 가운데 구간이 따라온다 (REQ-02)', () => {
 
   it('좌우로 끌면 그 x 가 실린다', async () => {
     show(nodes());
-    const knob = screen.getByTestId('canvas-ortho-split-handle');
+    const knob = screen.getByTestId('canvas-ortho-split-handle-0');
     const from = {
       x: Number.parseFloat(knob.style.left),
       y: Number.parseFloat(knob.style.top),
@@ -213,7 +222,7 @@ describe('끌면 가운데 구간이 따라온다 (REQ-02)', () => {
 
   it('**다른 축은 무시한다** — 세로로만 끌면 x 가 그대로다', async () => {
     show(nodes());
-    const knob = screen.getByTestId('canvas-ortho-split-handle');
+    const knob = screen.getByTestId('canvas-ortho-split-handle-0');
     const from = {
       x: Number.parseFloat(knob.style.left),
       y: Number.parseFloat(knob.style.top),
@@ -233,7 +242,7 @@ describe('누르기만 하면 자동으로 되돌아간다 (REQ-05)', () => {
     // 세운 "움직이지 않았으면" 규칙을 여기서도 쓴다.
     show(nodes({ ortho_split: 190 }));
     expect(splitOf()).toBe(190);
-    const knob = screen.getByTestId('canvas-ortho-split-handle');
+    const knob = screen.getByTestId('canvas-ortho-split-handle-0');
     const root = screen.getByTestId('canvas-edit-overlay');
     const at = { x: Number.parseFloat(knob.style.left), y: Number.parseFloat(knob.style.top) };
     fireEvent(knob, pointerEvent('pointerdown', at.x, at.y));

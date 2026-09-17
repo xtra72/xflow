@@ -85,9 +85,21 @@ function line(nodes: readonly CanvasNode[]): PxPoint[] {
   return out;
 }
 
+/**
+ * **SPEC-CANVAS-021 이 저장 형상을 넓혔다** — 수 하나에서 **구간과 나란한 목록**으로.
+ *
+ * 019 의 단언을 지우지 않고 그대로 두되, 읽는 자리에서 한 겹을 벗긴다. 019 가 다루는
+ * 장면은 논리 구간이 **하나뿐**이므로 목록의 첫 자리가 곧 019 의 그 수다 — 019 가 물은
+ * 질문("왕복하는가 · 0 도 값인가 · 손상되면 버리는가")은 한 글자도 달라지지 않는다.
+ *
+ * 019 가 적은 **수 하나도 그대로 읽힌다**(`parseOrthoSplits` 가 `[그 수]` 로 읽는다) —
+ * 이 파일이 장면을 수 하나로 짓는데도 통과하는 것이 그 사실의 증거다.
+ */
 function splitOf(nodes: readonly CanvasNode[]): number | undefined {
   const c = nodes.find((n) => isConnector(n));
-  return c !== undefined && isConnector(c) ? c.ortho_split : undefined;
+  if (c === undefined || !isConnector(c)) return undefined;
+  const first = c.ortho_split?.[0];
+  return typeof first === 'number' ? first : undefined;
 }
 
 // --- ① 저장 (REQ-06) --------------------------------------------------------

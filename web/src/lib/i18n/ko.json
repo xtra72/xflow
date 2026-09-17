@@ -1323,7 +1323,8 @@
         "transformRotateRight": "오른쪽으로 90도 돌리기",
         "rotateHandle": "돌리기 — Shift 로 15도 눈금",
         "toolOrtho": "직각으로 잇기",
-        "orthoSplitHandle": "가운데 선 옮기기 — 끌면 옮기고, 누르면 자동으로 되돌아갑니다"
+        "orthoSplitHandle": "가운데 선 옮기기 — 끌면 옮기고, 누르면 자동으로 되돌아갑니다",
+        "removeBendPoint": "이 꺾임점 지우기"
       },
       "elements": {
         "listTitle": "요소 목록",
