@@ -168,8 +168,14 @@ describe('한도 문구는 상한을 두 번 말하고 두 자리 모두 바뀐�
 describe('나머지 문구도 진짜 번역으로 뜬다 (REQ-06)', () => {
   it('빈 서랍 안내 · 기기 지역 고지 · 드롭 존 문구', () => {
     render(<Harness />);
+    // **빈 서랍 안내는 이제 둘로 갈린다.** 없다는 **사실**은 빈 자리에 남고(빈 곳을
+    // 메우는 것이 그 자리의 일이다), 어떻게 채우는지는 제목 뒤 `?` 로 갔다. 그래서 전에
+    // 한 줄이 덮던 한 문장을 이제 두 줄이 덮는다 — 옮긴 쪽을 세지 않으면 그 절반이
+    // 화면에서 사라져도 아무도 울지 않는다. 기기 지역 고지도 같은 `?` 안이다
+    // (`components/property/FieldHelp.tsx` §testId 가 그 자리를 잇는다).
     for (const [testid, expected] of [
       ['canvas-scratchpad-empty', ko.dashboard.canvas.edit.scratchpadEmpty],
+      ['canvas-scratchpad-local-hint', ko.dashboard.canvas.edit.scratchpadEmptyHint],
       ['canvas-scratchpad-local-hint', ko.dashboard.canvas.edit.scratchpadLocalOnly],
       ['canvas-scratchpad-dropzone', ko.dashboard.canvas.edit.scratchpadDropHint],
     ] as const) {

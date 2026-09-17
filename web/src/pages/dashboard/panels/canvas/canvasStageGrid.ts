@@ -52,6 +52,22 @@ export interface CanvasStageGrid {
   zoom: number;
   /** 배율을 바꾼다. 표면은 그 배율로 줄인 상자에 격자를 다시 맞춘다. */
   setZoom: (zoom: number) => void;
+  /**
+   * **보기 팬**(화면 px) — 출력 영역이 작업 영역 가운데에서 밀려난 변위
+   * (SPEC-CANVAS-006 영역 · 사용자 신고 2026-09-16).
+   *
+   * `zoom`/`setZoom` 과 **같은 짝이고 같은 근거**다: 배율이 상자의 크기를 정한다면 팬은
+   * 그 상자가 앉는 자리를 정하고, 자리를 정하는 값도 상자의 것이므로 상태를 상자 짓는
+   * 쪽이 들어야 한다. 오버레이가 들고 있으면 상자를 짓는 쪽이 남의 상태를 되물어야 하고
+   * 그 되묻는 자리가 곧 두 번째 출처다(위험 R1 · 불변식 I10).
+   *
+   * **저장되지 않는다** — 배율(가정 A21)과 같은 자리·같은 규율이다. 시야는 문서의 것이
+   * 아니라 편집하는 사람의 것이라, 저장하면 한 사람이 보던 자리가 그 대시보드를 보는 모든
+   * 사람에게 실려 간다.
+   */
+  pan: StageCell;
+  /** 팬을 바꾼다. 죈 값을 넘긴다(`clampWorkspacePan`). */
+  setPan: (pan: StageCell) => void;
   /** 한 칸의 CSS px — 표면이 영역을 맞출 때 쓴 **그 값 그대로**다(다시 나누지 않는다). */
   cell: StageCell;
   /**
@@ -88,7 +104,8 @@ export const CanvasStageGridContext = createContext<CanvasStageGrid | null>(null
  * 그 사실을 알고 제 값으로 폴백해야 한다. 006 이 더한 두 칸의 폴백도 같은 규율을 따른다:
  * 표면이 없으면 작업 영역도 없으므로 `origin = {0,0}` · `box = projection.stage` 로
  * 떨어진다 — 그것이 곧 "상자가 하나뿐이던 시절" 의 값이며 006 이전과 같다. 배율도 같다:
- * 표면이 없으면 지역 상태로 떨어지고 기본값은 `DEFAULT_WORKSPACE_ZOOM` 이다.
+ * 표면이 없으면 지역 상태로 떨어지고 기본값은 `DEFAULT_WORKSPACE_ZOOM` 이다. 팬도 같다:
+ * 지역 상태로 떨어지고 기본값은 `NO_WORKSPACE_PAN` 이다.
  */
 export function useCanvasStageGrid(): CanvasStageGrid | null {
   return useContext(CanvasStageGridContext);

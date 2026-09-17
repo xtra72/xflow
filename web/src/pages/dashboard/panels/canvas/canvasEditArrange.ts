@@ -70,6 +70,12 @@ import {
   type PanelElementBox,
 } from '../charts/panelEditAlign';
 import type { CanvasBox, CanvasDelta, CanvasProjection, PxBox } from './canvasGeometry';
+// SPEC-CANVAS-011 M12 — 지우기가 **참조를 아는 유일한 자리**다(아래
+// `removeNodesWithConnectors`). 들여오는 것은 판별 하나와 이름을 세는 함수 하나뿐이라 이
+// 파일의 DOM 무의존도, 배열 셋의 일반성도 그대로다.
+import { isConnector } from './connector/connectorTypes';
+import { connectorTargets } from './connector/resolveConnector';
+import type { CanvasNode } from './group/groupTypes';
 
 // SPEC-CANVAS-004 M1 — 이 파일의 배열 재정렬 셋(`moveElementTo`·`bringToFront`·
 // `sendToBack`)은 원소의 `id` 밖에 보지 않는다. 004 가 최상위 배열에 그룹 노드를 더하면서
@@ -366,6 +372,10 @@ export function moveElementTo<T extends { readonly id: string }>(
  * 같은 계약이다. 선택에는 이미 지워진 id 가 남아 있을 수 있으므로 이 경우는 실제로 온다.
  *
  * 식별은 언제나 `nodeId` 다(REQ-06) — 배열 위치가 아니다.
+ *
+ * **두 입구는 이 함수를 직접 부르지 않는다**(SPEC-CANVAS-011 M12). 지워지는 요소를
+ * 가리키던 연결선까지 걷어내야 하므로 둘 다 아래 `removeNodesWithConnectors` 를 지나며,
+ * 그 함수가 지울 이름을 넓혀 **이 함수를 한 번** 부른다. 거르는 규칙은 여전히 여기 하나다.
  */
 export function removeNodes<T extends { readonly id: string }>(
   elements: readonly T[],
@@ -376,6 +386,48 @@ export function removeNodes<T extends { readonly id: string }>(
   // 막는 것처럼 읽히는 그런 줄이 다음 사람에게는 "빈 집합은 다르게 다뤄진다" 고 말한다.
   const next = elements.filter((el) => !nodeIds.has(el.id));
   return next.length === elements.length ? elements : next;
+}
+
+/**
+ * 고른 것들을 빼되, **그것을 가리키던 연결선도 함께 걷어낸다** (SPEC-CANVAS-011 REQ-08).
+ *
+ * ## 왜 `removeNodes` 안이 아니라 그 **바깥**인가
+ *
+ * 위 함수는 `<T extends { readonly id: string }>` 다 — 원소의 id 밖에 보지 않는 덕에
+ * 그룹이 최상위 배열에 들어오던 날(004) 한 글자도 바뀌지 않았고, 011 이 연결선을 더한
+ * 날에도 마찬가지였다. 그 일반성 안으로 연결선 지식을 들이면 인자 타입이 `CanvasNode` 로
+ * 좁아져 그 성질이 사라진다. 그래서 **거르는 규칙은 그대로 두고 지울 이름만 넓힌다.**
+ *
+ * ## 같은 참조 계약이 살아 있는 근거 (AC-82)
+ *
+ * 이 함수는 `removeNodes` 를 **한 번** 부르고 그 결과를 그대로 돌려준다. 그러므로 "아무것도
+ * 빠지지 않으면 받은 배열을 그대로(같은 참조) 돌려준다" 가 여기서도 **정의상** 참이다 —
+ * 지울 이름을 넓혀도 걸린 것이 없으면 걸러 낸 길이가 같고, 그때 그 함수가 받은 배열을
+ * 낸다. 여기서 제 손으로 `filter` 를 한 벌 더 돌렸다면 그 계약이 조용히 깨졌을 것이고,
+ * 깨진 자리는 "지울 것이 없는데도 config 가 쓰인다" 는 헛된 프레임으로만 드러났을 것이다.
+ *
+ * ## 어느 끝이든 **한 자리만** 걸리면 간다
+ *
+ * 두 끝 중 하나라도 지워지는 요소를 가리키면 그 선은 설 자리가 없다. 한쪽만 붙은 선을
+ * 남겨 두는 길(남은 끝을 자유 끝점으로 굳히는 길)을 고르지 않는 것은, 그렇게 굳은 좌표가
+ * **사용자가 찍은 적 없는 자리**이기 때문이다 — 그 선은 저술된 적 없는 선이 된다.
+ *
+ * ## 연결선끼리는 옮겨붙지 않는다
+ *
+ * 걸리는지 보는 잣대는 언제나 **받은 집합**(`nodeIds`)이지 넓힌 집합이 아니다. 연결선은
+ * 연결선을 가리킬 수 없으므로(A6) 둘은 오늘 같은 답을 내지만, 넓힌 집합을 보게 적으면
+ * 답이 **배열 순서에 딸리는** 계산이 되고 그런 계산은 언젠가 순서를 바꾼 사람을 문다.
+ */
+export function removeNodesWithConnectors(
+  nodes: readonly CanvasNode[],
+  nodeIds: ReadonlySet<string>,
+): readonly CanvasNode[] {
+  const widened = new Set(nodeIds);
+  for (const node of nodes) {
+    if (!isConnector(node)) continue;
+    if (connectorTargets(node).some((id) => nodeIds.has(id))) widened.add(node.id);
+  }
+  return removeNodes(nodes, widened);
 }
 
 /**

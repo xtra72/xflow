@@ -43,6 +43,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { ChevronDown, ChevronRight, Check, FileUp, X } from 'lucide-react';
 
+import { FieldHelp } from '@/components/property/FieldHelp';
 import { useTranslation } from '@/lib/i18n';
 import { getDashboardLimits, type DashboardLimits } from '@/services/api/dashboardLimitsService';
 
@@ -342,11 +343,25 @@ export function CanvasSvgImport({
       </button>
       {!collapsed && (
         <div id={bodyId} data-testid="canvas-svg-import-group-body" className="flex flex-col gap-1">
+          {/* 파일 고르기 뒤의 `?`. 줄로 깔려 있던 안내 두 문장 — 파일이 이 브라우저를 떠나지
+              않는다는 **고지**와, 그림이 아니라 고칠 수 있는 요소로 들어온다는 **성질** — 이
+              그 뒤로 들어왔다(바로 앞 커밋이 서랍·요소 목록에서 한 그 이사). 고를지 말지를
+              정할 때 한 번 읽는 글이지 매번 읽는 글이 아니고, 도크는 폭이 `w-44` 로 고정이라
+              두 줄짜리 문단 하나가 접힌 묶음 하나만큼을 먹는다.
+
+              **`?` 는 `<label>` 의 형제다.** 안에 넣으면 라벨이 클릭을 삼켜 도움말을 누를
+              때마다 파일 고르기 창이 함께 열린다 — `<input>` 을 품은 라벨의 성질이고, 이
+              자리에서는 형제로 두는 것 말고 피할 길이 없다.
+
+              **문구는 쪼개지 않았다.** 두 문장이 한 키(`importHint`)에 있고 그대로 옮겼으므로
+              번역자가 보던 경계가 그대로다. */}
           {state.phase === 'idle' && (
-            <>
+            <div className="flex items-center gap-1 pr-1">
               {fileInput(false)}
-              <p className={HINT_CLASS}>{t(`${EDIT}.importHint`)}</p>
-            </>
+              <span className="shrink-0">
+                <FieldHelp text={t(`${EDIT}.importHint`)} testId="canvas-svg-import-hint" />
+              </span>
+            </div>
           )}
 
           {state.phase === 'refused' && (

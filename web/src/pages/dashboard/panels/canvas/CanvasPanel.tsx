@@ -47,7 +47,9 @@ import type { VisibilitySource } from '../charts/visiblePolling';
 import { usePanelEditMode } from '../PanelEditToggle';
 import type { CanvasSize } from './canvasConfig';
 import { isNumericElement, parseCanvasConfig } from './canvasConfig';
-import { isGroup, type CanvasNode } from './group/groupTypes';
+import { type CanvasNode } from './group/groupTypes';
+import { isConnectorDrawable, walkDrawables } from './group/frameKey';
+import { bakeStyle } from './group/groupOps';
 import {
   useCanvasLiveSeriesPublisher,
   type CanvasSeriesOption,
@@ -208,6 +210,25 @@ function resolveSeriesReadings(
  *
  * 문구 템플릿은 `ResolvedStyle.text ?? el.text` 다. 규칙 행이 문구 패치를 담았을 때만
  * `text` 가 실리므로, 부재는 "요소의 기본 문구를 쓰라" 는 뜻이다(canvasRules 계약).
+ *
+ * ## 부품도 제 항목을 얻는다 (SPEC-CANVAS-009 M1)
+ *
+ * 004 는 이 자리에서 그룹을 **통째로 건너뛰었고**, 부품의 복합 키 항목을 M9 로 미뤘다.
+ * 그 M9 가 오지 않는 동안 `drawElements` 의 `styles[key] ?? element.style` 폴백이 조용히
+ * 일했다 — 부품은 **제 원본 스타일 그대로** 그려졌고, 그룹의 `style` 은 저장은 되지만
+ * 화면에 닿지 않았다. 그래서 그룹 투명도 편집 칸을 여는 순간(009 REQ-06) 사용자는
+ * "값을 넣었는데 아무 일도 일어나지 않는다" 를 본다.
+ *
+ * 009 는 그 구멍을 **최소로** 메운다. 순회를 `walkDrawables` 로 바꾸고, 부품의 기본
+ * 스타일을 `bakeStyle(그룹 스타일, 부품 스타일)` 로 굽는다 — **풀기가 쓰는 그 함수**이며,
+ * 그래서 "풀었을 때의 겉모습" 과 "묶인 채의 겉모습" 이 갈라질 자리가 없다(`opacity` 곱셈도
+ * 거기 한 자리에만 있다).
+ *
+ * **최상위 경로는 한 글자도 바뀌지 않는다.** `group === undefined` 갈래가 이전과 같은
+ * `{ ...el.style }` 을 내므로 키 집합까지 동일하다(004 불변식 G12).
+ *
+ * **그룹의 `rules` 와 `binding` 상속은 여기 없다.** 그 둘은 004 M8·M9 의 몫이고(그룹
+ * 규칙을 프레임당 1회 평가하는 설계가 함께 와야 한다), 009 는 그것을 앞당기지 않는다.
  */
 function buildCanvasFrame(
   elements: readonly CanvasNode[],
@@ -216,10 +237,25 @@ function buildCanvasFrame(
   const targetStyles: Record<string, ResolvedStyle> = {};
   const texts: Record<string, string | undefined> = {};
 
-  for (const el of elements) {
-    // SPEC-CANVAS-004 M1 — 그룹은 그릴 도형이 없어 제 스타일도 문구도 내지 않는다.
-    // 부품의 복합 키 항목(§프레임 키 표면 1·2)은 M9 가 2단 순회로 더한다.
-    if (isGroup(el)) continue;
+  // **그리는 쪽·잡는 쪽과 같은 순회**다(`walkDrawables`). 순회가 둘이 되면 키 집합이
+  // 갈라지고, 그 어긋남은 "어떤 부품만 스타일이 안 먹는다" 로만 보인다. 그룹 자신은 그릴
+  // 도형이 없어 이 순회에 오지 않으므로, 그룹이 제 스타일도 문구도 내지 않는다는 004 의
+  // 성질은 그대로 남는다.
+  for (const item of walkDrawables(elements)) {
+    // **연결선의 겉모습 캐스케이드는 아직 서지 않았다**(SPEC-CANVAS-011).
+    //
+    // M6 은 연결선을 **그리는 법**까지만 세운다. 그 그림은 `styles[key]` 가 없을 때
+    // `connector.style` 로 떨어지므로(`drawElement.drawResolvedConnector`) 정적 저술은
+    // 화면에 닿는다. 닿지 않는 것은 `binding` · `rules` — 여기서 그 둘을 평가해 목표
+    // 스타일을 내야 닿는다.
+    //
+    // 그 빈자리를 **말로 남긴다**. 004 가 그룹의 `style`/`rules`/`binding` 을 저장만 하고
+    // 렌더에 닿지 않은 채 M7 에서 멈췄을 때, 사용자가 본 것은 "값을 넣었는데 아무 일도
+    // 일어나지 않는다" 였고 그 침묵에는 아무 표시가 없었다. 여기 한 줄을 두어 같은 침묵이
+    // 다시 표시 없이 지나가지 않게 한다 — 011 의 plan·acceptance 어디에도 연결선 규칙
+    // 평가를 세우는 마일스톤이 없다.
+    if (isConnectorDrawable(item)) continue;
+    const { key, element: el, group } = item;
     const reading = el.binding ? readings.get(el.binding.series) : undefined;
     const numeric = isNumericElement(el);
     // 숫자로 읽지 않는 요소에는 **비교할 수가 없다**. 그래서 규칙 평가에 넘기는 값은
@@ -227,13 +263,15 @@ function buildCanvasFrame(
     // — `canvasRules.matchesRule`). 조용히 그렇게 되면 사용자는 "규칙이 고장났다" 로 읽으므로,
     // 편집기가 규칙 표 제목 뒤 `?` 로 그 사실을 말한다(`rulesNonNumericHint`).
     const value = numeric ? (reading?.value ?? null) : null;
-    const style = el.binding
-      ? evaluateRules(value, el.rules, el.style)
-      : { ...el.style };
-    targetStyles[el.id] = style;
+    // 부품의 기본 스타일은 **구워진 것**이다. 최상위 원소는 004 이전과 같은 사본을 받는다 —
+    // `bakeStyle(undefined, …)` 로 통일하지 않는 것에 뜻이 있다: 그 함수는 값이 `undefined`
+    // 인 키를 **지우므로**, 통일하면 키 집합이 001 과 달라져 G12 가 깨진다.
+    const base = group === undefined ? el.style : bakeStyle(group.style, el.style);
+    const style = el.binding ? evaluateRules(value, el.rules, base) : { ...base };
+    targetStyles[key] = style;
 
     const template = style.text ?? el.text;
-    texts[el.id] =
+    texts[key] =
       template === undefined
         ? undefined
         : renderTextTemplate(template, {

@@ -23,8 +23,10 @@ import {
   DEFAULT_STROKE_WIDTH,
   type BoxGeometry,
   type CanvasElement,
+  type PointGeometry,
 } from './canvasConfig';
 import {
+  closestPointOnSegment,
   ellipseParams,
   projectBox,
   projectBoxIn,
@@ -40,8 +42,16 @@ import {
   type PxPoint,
 } from './canvasGeometry';
 import { TEXT_BASELINE } from './drawElement';
+// 각도의 판정과 점 회전은 잎 모듈이, **축**은 윤곽 모듈이 소유한다(SPEC-CANVAS-014 K1) —
+// 그리는 쪽이 부르는 그 함수를 여기서도 부른다.
+import { isRotated, rotatePoint } from './canvasRotation';
+import { rotationPivotIn } from './canvasOutline';
+import { connectorObstacles } from './connector/connectorObstacles';
 import { frameKey } from './group/frameKey';
 import { isGroup, type CanvasNode, type GroupElement } from './group/groupTypes';
+import { connectorPath } from './connector/connectorPath';
+import { isConnector, type ConnectorElement } from './connector/connectorTypes';
+import { resolveConnector } from './connector/resolveConnector';
 import {
   FLATTEN_TOLERANCE_PX,
   flattenPath,
@@ -151,15 +161,29 @@ function hitsEllipse(box: PxBox, point: PxPoint, pad: number): boolean {
   return nx * nx + ny * ny <= 1;
 }
 
-/** 점–선분 거리. 두 끝점이 같은 퇴화 선분은 점 거리로 떨어진다. */
-function distanceToSegment(line: PxLine, point: PxPoint): number {
-  const dx = line.x2 - line.x1;
-  const dy = line.y2 - line.y1;
-  const lengthSq = dx * dx + dy * dy;
-  if (lengthSq === 0) return Math.hypot(point.x - line.x1, point.y - line.y1);
-  const raw = ((point.x - line.x1) * dx + (point.y - line.y1) * dy) / lengthSq;
-  const t = raw < 0 ? 0 : raw > 1 ? 1 : raw;
-  return Math.hypot(point.x - (line.x1 + t * dx), point.y - (line.y1 + t * dy));
+/**
+ * 점–선분 거리. 두 끝점이 같은 퇴화 선분은 점 거리로 떨어진다.
+ *
+ * **자리는 여기서 셈하지 않는다**(SPEC-CANVAS-011 M10). 가장 가까운 자리를 내는 산술은
+ * `canvasGeometry.closestPointOnSegment` 한 곳에 있고, 이 함수는 그 자리까지의 거리를 잴
+ * 뿐이다 — 판정은 이 파일의 것이고 자리는 그 파일의 것이라는 머리말의 그 구분이다. 꺾임을
+ * 끼워 넣는 쪽(M10)이 **같은 자리**를 새 점으로 쓰므로, 잡히는 자리와 점이 놓이는 자리가
+ * 두 벌로 갈라질 수 없다(위험 R1).
+ *
+ * **내보내는 이유**(SPEC-CANVAS-011 M11): 자유선의 간소화가 점을 버릴지 정할 때 재는 것이
+ * 바로 이 양이다. 그쪽이 제 손으로 같은 산술을 적으면 이 저장소에 점–선분 거리가 두 벌이
+ * 되고, 둘이 갈라지는 날 "그은 대로 잡히지 않는" 자리가 열린다 — 머리말이 금지한 두 번째
+ * 측정원이다. `closestPointOnSegment` 를 직접 부르는 자리는 여전히 **이름으로 적은 둘**
+ * 뿐이므로(M10 의 허용목록) 이 문을 여는 값은 거기에 닿지 않는다.
+ *
+ * 인자 이름이 `Px…` 인 것은 **역사이지 제약이 아니다.** 이 산술에는 화면 고유의 것이 한
+ * 줄도 없고(정사영을 구간에 가두는 일이 전부다), 캔버스 단위의 점을 넘겨도 같은 뜻의 값이
+ * 나온다. 다만 두 자료형이 구조적으로 같아 타입이 공간 혼동을 잡아 주지 못하므로, 넘기는
+ * 쪽이 제가 어느 공간에 있는지 주석으로 밝히는 것이 이 문의 대가다.
+ */
+export function distanceToSegment(line: PxLine, point: PxPoint): number {
+  const on = closestPointOnSegment(line, point);
+  return Math.hypot(point.x - on.x, point.y - on.y);
 }
 
 /**
@@ -191,7 +215,23 @@ function hitsPath(
   pad: number,
 ): boolean {
   if (isInsidePath(subpaths, point)) return true;
-  const threshold = Math.max(strokeWidth / 2, pad);
+  return hitsEdges(subpaths, point, Math.max(strokeWidth / 2, pad));
+}
+
+/**
+ * 평탄화한 부분 경로의 **어느 변까지의 거리**가 임계 안인가 — 위 `hitsPath` 의 뒷절반이자,
+ * 연결선(SPEC-CANVAS-011 M7)이 쓰는 판정의 **전부**다.
+ *
+ * 따로 이름을 갖는 까닭은 연결선에 **안쪽이 없기** 때문이다. 연결선은 두 자리를 잇는 열린
+ * 선이라 내부라는 개념이 없고, 그래서 `isInsidePath` 를 지나지 않는다. 그렇다고 변 순회를
+ * 저쪽에 한 벌 더 적으면 이 파일 안에 자가 둘이 생긴다 — 머리말이 금지한 그 "두 번째
+ * 측정원" 이 바깥이 아니라 **안쪽**에 서는 꼴이다. 그러니 나누되 **복사하지 않는다.**
+ */
+function hitsEdges(
+  subpaths: readonly FlatSubpath[],
+  point: PxPoint,
+  threshold: number,
+): boolean {
   for (const sub of subpaths) {
     const { points, closed } = sub;
     if (points.length === 1) {
@@ -239,15 +279,35 @@ function hitsElement(
   // 알지 못하며, 그래서 **그린 자리와 잡히는 자리**가 두 벌로 갈라지지 않는다.
   const pxBox = (geo: BoxGeometry): PxBox =>
     host === undefined ? projectBox(geo, proj) : projectBoxIn(geo, host);
+  const pxPoint = (geo: PointGeometry): PxPoint =>
+    host === undefined ? projectPoint(geo, proj) : projectPointIn(geo, host);
+
+  // **점을 되돌린다 — 도형마다 판정을 다시 쓰지 않는다**(SPEC-CANVAS-014 §결정 3).
+  //
+  // 돌아간 사각형·타원·경로를 잡는 판정을 종류마다 새로 쓰면 다섯 갈래가 열이 된다. 대신
+  // 점을 요소의 **돌지 않은 좌표계**로 되돌린 뒤 아래 다섯을 **그대로** 부른다. 한 줄이
+  // 늘고 다섯이 산다.
+  //
+  // 축은 그리는 쪽이 쓰는 그 상자에서 나온다(`drawElement.rotationPivot` 과 같은 식) —
+  // 그래서 그려진 자리와 잡히는 자리가 **각도 하나**를 함께 본다(K1). 두 자리가 축을 따로
+  // 구하면 그 등식이 깨지고, 그 어긋남은 각도가 0 일 때 보이지 않는다.
+  const deg = 'rotation' in el ? el.rotation : undefined;
+  const at = ((): PxPoint => {
+    if (!isRotated(deg)) return point;
+    const pivot = rotationPivotIn(el, pxBox, pxPoint, resolveMeasuredWidth(textWidths[key]));
+    // 축이 없으면(선) 돌지 않은 것과 같다 — 필드가 서지 않는 종류다.
+    return pivot === undefined ? point : rotatePoint(point, pivot, -(deg as number));
+  })();
+
   switch (el.kind) {
     case 'rect':
-      return hitsBox(pxBox(el.geometry), point, HIT_TOLERANCE_PX);
+      return hitsBox(pxBox(el.geometry), at, HIT_TOLERANCE_PX);
     case 'ellipse':
-      return hitsEllipse(pxBox(el.geometry), point, HIT_TOLERANCE_PX);
+      return hitsEllipse(pxBox(el.geometry), at, HIT_TOLERANCE_PX);
     case 'line':
       return hitsLine(
         host === undefined ? projectLine(el.geometry, proj) : projectLineIn(el.geometry, host),
-        point,
+        at,
         resolveStrokeWidth(el.style.strokeWidth),
         HIT_TOLERANCE_PX,
       );
@@ -268,7 +328,7 @@ function hitsElement(
         w: width,
         h: fontSize,
       };
-      return hitsBox(box, point, HIT_TOLERANCE_PX);
+      return hitsBox(box, at, HIT_TOLERANCE_PX);
     }
     case 'path': {
       // **상자는 여기서 한 번만 잰다.** 그 상자가 곧 `projectPathPoints` 의 입력이며,
@@ -286,7 +346,7 @@ function hitsElement(
       const subpaths = flattenPath(projectPathPoints(el.path, box), FLATTEN_TOLERANCE_PX);
       return hitsPath(
         subpaths,
-        point,
+        at,
         resolveStrokeWidth(el.style.strokeWidth),
         HIT_TOLERANCE_PX,
       );
@@ -330,6 +390,13 @@ export function hitTest(
   // 맞지 않음" 과 구분되지 않으므로, 들어오는 자리에서 한 번에 끊는다.
   if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return undefined;
   for (const node of [...elements].reverse()) {
+    // 연결선은 **잉크와의 거리**로 잡힌다(SPEC-CANVAS-011 REQ-07-b). 갈래가 여기 먼저 서는
+    // 것은 `node.style` 이 **없을 수 있는** 유일한 노드이기 때문이다 — 아래 가시성 판정에
+    // 닿으면 그 자리에서 던진다. 가시성도 두께도 `hitsConnector` 안에서 본다.
+    if (isConnector(node)) {
+      if (hitsConnector(node, point, elements, proj, textWidths)) return { nodeId: node.id };
+      continue;
+    }
     if (isGroup(node)) {
       const hit = hitsGroup(node, point, proj, textWidths);
       if (hit !== undefined) return hit;
@@ -371,13 +438,97 @@ function hitsGroup(
   // 상자는 **그룹마다 한 번만** 잰다. 부품마다 다시 재도 값은 같지만(순수 함수) 부품 수만큼
   // 같은 계산을 되풀이한다.
   const box = projectBox(group.geometry, proj);
+  // **돌아간 그룹은 점을 한 번 더 되돌린다**(SPEC-CANVAS-014 M5).
+  //
+  // 그리는 쪽은 그룹의 각도로 부품 묶음 **전체**를 감싼다(`drawElements` §돌아간 그룹).
+  // 그래서 잡는 쪽도 부품을 보기 **전에** 그 각도를 되돌려야 하고, 축은 그리는 쪽이 쓰는
+  // 그 상자의 가운데다 — 상자를 여기서 한 번만 재는 성질이 그 등식을 그대로 살린다.
+  //
+  // 부품 자신의 각도는 아래 `hitsElement` 가 제 축으로 다시 되돌린다. 두 겹이 **합성될 뿐
+  // 섞이지 않는 것**은 그리는 쪽의 두 `save` 가 겹치는 것과 같은 모양이다.
+  const at = isRotated(group.rotation)
+    ? rotatePoint(
+        point,
+        { x: box.x + box.w / 2, y: box.y + box.h / 2 },
+        -(group.rotation as number),
+      )
+    : point;
   for (const part of [...group.parts].reverse()) {
     if (part.style.visible === false) continue;
-    if (hitsElement(part, point, proj, textWidths, frameKey(group.id, part.id), box)) {
+    if (hitsElement(part, at, proj, textWidths, frameKey(group.id, part.id), box)) {
       // **선택 키는 여전히 `nodeId` 하나다**(002 의 규칙 불변). `partId` 는 목록 편집기가
       // 그 부품 행을 먼저 펼치는 데에만 쓰인다.
       return { nodeId: group.id, partId: part.id };
     }
   }
   return undefined;
+}
+
+// --- 연결선 판정 (SPEC-CANVAS-011 M7) -------------------------------------
+
+/**
+ * 연결선에 점이 드는가 — **잉크와의 거리**다(REQ-07-b · AC-53).
+ *
+ * ## 상자 판정이 **한 줄도 없다**
+ *
+ * 빠른 걸러내기로도 두지 않는다. 크게 꺾인 연결선의 윤곽 상자는 **거의 전부 빈 공간**이라
+ * (AC-54 가 재는 그 자리) 걸러내기가 실제로 걸러 주는 것이 거의 없고, 대신 다음 사람에게
+ * "여기 상자 판정이 이미 있다" 는 발판을 남긴다. 그 발판 위에서 걸러내기가 판정으로 자라는
+ * 것이 이 파일이 `hitsEllipse`·`hitsPath`·`hitsGroup` 세 자리에 걸쳐 막아 온 그 결함이다.
+ *
+ * ## 그린 곡선과 **같은 곡선**을 잡는다
+ *
+ * 점 목록은 M5 의 `resolveConnector` 에서, 그 점들이 이루는 모양은 M6 과 **같은**
+ * `connectorPath` 에서 온다. 잡는 쪽이 제 손으로 참조를 풀거나 제 손으로 곡선을 지으면
+ * "그려진 자리와 잡히는 자리가 다르다" 가 시작된다(002 위험 R1). 곡선은 008 의
+ * `flattenPath` 로 폴리라인이 되고 그 다음은 요소가 쓰는 그 변 거리 판정을 그대로 지난다 —
+ * **베지어 거리 산술을 새로 적지 않는다**(AC-55).
+ *
+ * `isInsidePath` 는 부르지 않는다. 연결선은 열린 선이라 안쪽이라는 개념이 없고,
+ * `flattenPath` 도 `closed:false` 로 낸다 — 불러도 늘 거짓인 판정을 두느니 갈래를 두지
+ * 않는다(위 `hitsEdges` 가 그래서 따로 섰다).
+ *
+ * ## 끊긴 연결은 **잡히지 않는다** (AC-56)
+ *
+ * `resolveConnector` 가 `undefined` 를 내면 그대로 거짓이다. 그리는 쪽이 아무것도 그리지
+ * 않았으므로(AC-52) 잡을 잉크도 없다 — 없는 선이 잡히면 사용자는 **보이지 않는 것**을
+ * 손에 쥔다. 던지지도 않는다.
+ *
+ * ## `visible:false` 와 두께는 **저술된 값**으로 본다
+ *
+ * 그리지 않는 것은 잡히지 않는다 — 요소가 `node.style.visible` 로 지켜 온 그 규율이고,
+ * `drawConnector` 가 그 값에서 바로 되돌아가는 그 값이다. 규칙 캐스케이드가 덮은 결과가
+ * 아니라 **저술된** 값을 보는 것도 요소와 같다: 이 모듈은 스타일 맵을 받지 않으며, 받게
+ * 두면 히트가 프레임마다 달라져 "가끔 안 잡힌다" 가 된다.
+ *
+ * 두께의 임계도 `line` 과 **같은 식**이다(`max(두께/2, 여유)`) — 같은 두께인데 종류에 따라
+ * 다르게 잡히면 손과 그림이 어긋난다.
+ */
+function hitsConnector(
+  connector: ConnectorElement,
+  point: PxPoint,
+  nodes: readonly CanvasNode[],
+  proj: CanvasProjection,
+  textWidths: Readonly<Record<string, number>>,
+): boolean {
+  if (connector.style?.visible === false) return false;
+  const points = resolveConnector(connector, nodes, proj, textWidths);
+  if (points === undefined) return false;
+  // **그리는 쪽과 같은 장애물 목록을 본다**(017 REQ-04 · K4). 한 함수가 내므로 두 자리가
+  // 저마다 거를 수 없고, 그래서 "그려진 선과 잡히는 선이 다르다" 가 표현 불가능하다.
+  const subpaths = flattenPath(
+    connectorPath(
+      points,
+      connector.route,
+      proj,
+      connectorObstacles(connector, nodes, proj, textWidths),
+      connector.ortho_split,
+    ),
+    FLATTEN_TOLERANCE_PX,
+  );
+  const threshold = Math.max(
+    resolveStrokeWidth(connector.style?.strokeWidth) / 2,
+    HIT_TOLERANCE_PX,
+  );
+  return hitsEdges(subpaths, point, threshold);
 }

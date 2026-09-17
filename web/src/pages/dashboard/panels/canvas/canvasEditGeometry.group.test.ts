@@ -14,7 +14,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { MIN_ELEMENT_EXTENT, type CanvasElement } from './canvasConfig';
+import { MIN_ELEMENT_EXTENT, type CanvasElement, type Geometry } from './canvasConfig';
+import { isConnector } from './connector/connectorTypes';
 import {
   BOX_HANDLE_IDS,
   handlePositions,
@@ -23,7 +24,7 @@ import {
   type CanvasHandleId,
 } from './canvasEditGeometry';
 import { projectBox, type CanvasProjection } from './canvasGeometry';
-import type { CanvasNode, CanvasNodeKind, GroupElement } from './group/groupTypes';
+import type { CanvasNode, GroupElement, OutlinedNodeKind } from './group/groupTypes';
 
 const PROJ: CanvasProjection = {
   stage: { width: 400, height: 200 },
@@ -54,8 +55,13 @@ describe('handlesFor — 그룹은 제 상자에 여덟 손잡이를 갖는다',
     expect(handlesFor('group')).toHaveLength(8);
   });
 
-  it('여섯 종류 전부에 답한다 — 답하지 못하는 종류가 없다', () => {
-    const kinds: Record<CanvasNodeKind, true> = {
+  it('상자를 가진 여섯 종류 전부에 답한다 — 답하지 못하는 종류가 없다', () => {
+    // SPEC-CANVAS-011 M4 — 표의 이름이 `CanvasNodeKind` 에서 `OutlinedNodeKind` 로
+    // 좁아졌다. 최상위 종류는 일곱이 되었지만 `handlesFor` 의 **범위**는 여섯 그대로다:
+    // 연결선에는 늘릴 상자가 없어 8핸들이 서지 않고(REQ-07), 그래서 인자 타입이 애초에
+    // 그것을 받지 않는다. 총망라 판정은 그대로 살아 있다 — **상자를 가진** 일곱째 종류가
+    // 들어오면 이 `Record` 가 컴파일에서 운다.
+    const kinds: Record<OutlinedNodeKind, true> = {
       rect: true,
       ellipse: true,
       line: true,
@@ -63,7 +69,7 @@ describe('handlesFor — 그룹은 제 상자에 여덟 손잡이를 갖는다',
       path: true,
       group: true,
     };
-    for (const kind of Object.keys(kinds) as CanvasNodeKind[]) {
+    for (const kind of Object.keys(kinds) as OutlinedNodeKind[]) {
       expect(handlesFor(kind).length, kind).toBeGreaterThan(0);
     }
   });
@@ -90,6 +96,15 @@ describe('handlesFor — 그룹은 제 상자에 여덟 손잡이를 갖는다',
 
 // --- 기하 쓰기 통로 (불변식 G3 · A17) -------------------------------------
 
+/**
+ * 배열의 한 자리에서 기하를 읽는다. 연결선에는 기하가 없으므로(SPEC-CANVAS-011 M4) 좁혀
+ * 읽고, 좁히기가 실패하면 `undefined` 라 단언이 조용히 통과하지 않는다.
+ */
+function geometryAt(nodes: readonly CanvasNode[], idx: number): Geometry | undefined {
+  const node = nodes[idx];
+  return node !== undefined && !isConnector(node) ? node.geometry : undefined;
+}
+
 describe('patchNodeGeometry — 그룹 갈래 하나 (G3)', () => {
   const nodes: readonly CanvasNode[] = [
     { id: 'r1', kind: 'rect', style: {}, geometry: { x: 0, y: 0, w: 10, h: 10 } },
@@ -100,7 +115,7 @@ describe('patchNodeGeometry — 그룹 갈래 하나 (G3)', () => {
   it('그룹 상자를 실제로 쓴다 — 그대로 돌려주지 않는다', () => {
     const out = patchNodeGeometry(nodes, 'grp-1', { x: 100, y: 200, w: 300, h: 400 });
     expect(out[1]).not.toBe(nodes[1]);
-    expect(out[1]?.geometry).toEqual({ x: 100, y: 200, w: 300, h: 400 });
+    expect(geometryAt(out, 1)).toEqual({ x: 100, y: 200, w: 300, h: 400 });
   });
 
   it('**부품의 저장 좌표는 한 자리도 바뀌지 않는다** (A17 · J2 와 같은 자리)', () => {
@@ -119,9 +134,9 @@ describe('patchNodeGeometry — 그룹 갈래 하나 (G3)', () => {
     // 반올림 · 음수 크기의 절대값 · 최소 크기 보장이 전부 그 함수의 규율이고, 004 는
     // 그것을 한 글자도 다시 적지 않는다.
     const out = patchNodeGeometry(nodes, 'grp-1', { x: 10.6, y: 20.4, w: 0, h: -5 });
-    expect(out[1]?.geometry).toEqual({ x: 11, y: 20, w: MIN_ELEMENT_EXTENT, h: 5 });
+    expect(geometryAt(out, 1)).toEqual({ x: 11, y: 20, w: MIN_ELEMENT_EXTENT, h: 5 });
     const rectOut = patchNodeGeometry(nodes, 'r1', { x: 10.6, y: 20.4, w: 0, h: -5 });
-    expect(out[1]?.geometry).toEqual(rectOut[0]?.geometry);
+    expect(geometryAt(out, 1)).toEqual(geometryAt(rectOut, 0));
   });
 
   it('형상이 맞지 않으면 그룹을 그대로 둔다(선·점 기하)', () => {

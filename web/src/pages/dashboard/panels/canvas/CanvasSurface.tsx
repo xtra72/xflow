@@ -81,14 +81,20 @@ import { CANVAS_GRID_STEP_UNITS } from './canvasEditArrange';
 import {
   computeBackingSize,
   type CanvasProjection,
+  type StageCell,
   type StageSize,
 } from './canvasGeometry';
 import type { ResolvedStyle } from './canvasRules';
 import { CanvasStageGridContext, type CanvasStageGrid } from './canvasStageGrid';
 import { beginTween, retargetTween, sampleTween, type TweenState } from './canvasTween';
-import { DEFAULT_WORKSPACE_ZOOM, workspaceBox } from './canvasWorkspace';
+import {
+  DEFAULT_WORKSPACE_ZOOM,
+  NO_WORKSPACE_PAN,
+  clampWorkspacePan,
+  workspaceBox,
+} from './canvasWorkspace';
 import { clearSurface, drawElements, type DrawContext2D } from './drawElement';
-import { walkDrawables } from './group/frameKey';
+import { isConnectorDrawable, walkDrawables } from './group/frameKey';
 import type { CanvasNode } from './group/groupTypes';
 
 // --- 주입 지점 -----------------------------------------------------------
@@ -285,6 +291,23 @@ export default function CanvasSurface({
   const [zoom, setZoom] = useState<number>(DEFAULT_WORKSPACE_ZOOM);
 
   /**
+   * 보기 팬(화면 px) — 출력 영역이 작업 영역 가운데에서 밀려난 변위
+   * (사용자 신고 2026-09-16 · `canvasWorkspace` §보기 팬).
+   *
+   * 주인이 표면인 근거는 위 `zoom` 과 **한 글자도 다르지 않다**: 이 값이 그리는 상자의
+   * 자리를 정하고 그 상자는 표면의 것이다. 저장하지 않는 표시 상태라는 것도, 범위가
+   * 표면 하나·마운트 하나라는 것도 같다.
+   *
+   * 팬을 바꾸면 상자의 자리가 실제로 달라지므로 프레임이 **한 장** 필요하다 — 아래
+   * `geometry` 의 의존성을 지나는 **종전의 경로 그대로**이며(배율 변경과 같은 부류) 새
+   * 깨우기 경로가 아니다(REQ-05 · AC-E4).
+   */
+  const [pan, setPan] = useState<StageCell>(NO_WORKSPACE_PAN);
+  // 효과·메모가 상자가 아니라 **두 수**를 보게 한다 — 상태 객체를 의존성에 그대로 넣으면
+  // 아래 메모의 규율(다섯 수치로 적는다)이 이 한 칸에서만 깨진다(`previewPan` 과 같은 관용구).
+  const { x: panX, y: panY } = pan;
+
+  /**
    * 바깥 상자에서 파생한 상자 한 벌(`canvasWorkspace.workspaceBox`). **투영·상자·격자가
    * 함께 보는 단 한 벌**이다.
    *
@@ -300,8 +323,13 @@ export default function CanvasSurface({
         gridStep,
         workspace,
         zoom,
+        // **그릴 때마다 죈다.** 끄는 쪽(오버레이)도 같은 함수로 죄지만 그 값은 끌던 **그때**의
+        // 상자에 대한 것이라, 패널이 작아지면 옛 이동량이 새 상자의 범위를 넘는다. 상한은
+        // 배율과 무관하므로(`clampWorkspacePan`) 여기서 줄어드는 경우는 **리사이즈 하나**뿐이고,
+        // 죈 값을 상태로 되쓰지 않는 것도 그래서다 — 상자가 돌아오면 보던 자리도 돌아온다.
+        clampWorkspacePan({ x: panX, y: panY }, { width: outer.width, height: outer.height }),
       ),
-    [outer.width, outer.height, canvas.width, canvas.height, gridStep, workspace, zoom],
+    [outer.width, outer.height, canvas.width, canvas.height, gridStep, workspace, zoom, panX, panY],
   );
   /**
    * **패널 출력 영역**. 이 아래에서 "스테이지" 는 언제나 이 값이며, 그 뜻은 006 전후로
@@ -325,11 +353,13 @@ export default function CanvasSurface({
       setStep: setGridStep,
       zoom,
       setZoom,
+      pan,
+      setPan,
       cell: geometry.cell,
       origin: geometry.origin,
       box: geometry.box,
     }),
-    [gridStep, zoom, geometry],
+    [gridStep, zoom, pan, geometry],
   );
 
   /**
@@ -404,7 +434,18 @@ export default function CanvasSurface({
 
       // **그리는 쪽과 같은 순회**를 쓴다(`walkDrawables`). 순회가 둘이 되면 키 집합이
       // 갈라지고, 그 어긋남은 "어떤 부품만 트윈되지 않는다" 로만 보인다.
-      for (const { key, element: el } of walkDrawables(current.elements)) {
+      for (const item of walkDrawables(current.elements)) {
+        // **연결선은 아직 트윈되지 않는다**(SPEC-CANVAS-011).
+        //
+        // 트윈은 목표 스타일이 있어야 뜻이 있고, 연결선의 목표 스타일은
+        // `buildCanvasFrame` 이 아직 내지 않는다(그쪽의 같은 자리 주석 참조). 없는 목표를
+        // 향해 트윈하면 매 프레임 `el.style` 을 목표로 삼아 **첫 등장 갈래**만 반복하게
+        // 되고, 그것은 트윈이 아니라 장부만 늘리는 일이다.
+        //
+        // 여기서 건너뛰므로 `seen` 에도 들지 않고, 아래 정리 고리가 연결선 키를 남기지
+        // 않는다 — 장부에 죽은 키가 쌓이지 않는다.
+        if (isConnectorDrawable(item)) continue;
+        const { key, element: el } = item;
         seen.add(key);
         const target = current.targetStyles[key] ?? el.style;
         const live = tweens.get(key);
@@ -494,7 +535,19 @@ export default function CanvasSurface({
       );
       // 반환값은 이 프레임이 잰 글자 폭이다 — 재는 곳이 늘어난 것이 아니라, 원래 재던
       // 값을 오버레이 쪽으로 흘려보낼 뿐이다(측정은 여전히 프레임당 1회).
-      textWidthsRef.current = drawElements(ctx, els, styles, labels, { stage: size, canvas: units });
+      //
+      // 여섯째 인자는 **직전 프레임**의 그 장부다(011 M6). 연결선의 끝점을 푸는 데 문구
+      // 상자의 폭이 필요한데, 이번 프레임이 쌓는 중인 장부를 쓰면 같은 선이 배열의 어디에
+      // 있느냐에 따라 끝점이 달라진다. 잡는 쪽·오버레이가 이미 보고 있는 값과 **같은 값**을
+      // 그리기도 보므로 그려진 자리와 잡히는 자리가 갈라지지 않는다.
+      textWidthsRef.current = drawElements(
+        ctx,
+        els,
+        styles,
+        labels,
+        { stage: size, canvas: units },
+        textWidthsRef.current,
+      );
       return allDone;
     },
     [advance],

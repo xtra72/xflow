@@ -456,27 +456,56 @@ describe('캔버스 편집이 가져간 몸짓은 팬이 받지 않는다 (층�
     expect(liveElements()[0]?.geometry).not.toEqual(CENTER_RECT.geometry);
   });
 
-  it('빈 자리의 주 버튼 끌기는 **캔버스가 가져간다** — 사각형이 서고 화면은 그대로다', () => {
+  it('빈 자리의 **Ctrl** 끌기는 캔버스가 가져간다 — 사각형이 서고 이 층의 화면은 그대로다', () => {
     // SPEC-CANVAS-010 이전에는 이 몸짓이 팬이었다. 오버레이가 빈 자리의 주 버튼 누름을
     // 영역 선택에 내주면서 그 몸짓의 임자가 바뀌었다.
     //
+    // **011 이 그 안에서 한 번 더 갈랐다.** 종전 제목은 "빈 자리의 **주 버튼** 끌기는
+    // 캔버스가 가져간다" 였고 몸짓은 맨손이었다. 011 에서 맨손은 **캔버스 제 팬**이 되었고
+    // 사각형은 Ctrl/Cmd 로 옮겨 앉았다 — 그래서 이 시험은 조작키를 짚고, 맨손 갈래는 바로
+    // 아래 시험이 따로 잰다. 둘 다 아래층이 가져가므로 **이 층의 결론은 같다**.
+    //
     // **이 층의 규칙은 한 글자도 바뀌지 않았다.** 팬은 여전히 "아무도 가져가지 않은 몸짓만"
-    // 받으며(`if (event.defaultPrevented) return;`), 달라진 것은 아래층이 그 몸짓을 이제
-    // 가져간다는 사실 하나다. 바로 아래 두 시험이 캔버스 안에 남은 두 길 — 가운데 버튼과
-    // 고른 것 없는 방향키 — 을 각각 잰다.
+    // 받으며(`if (event.defaultPrevented) return;`), 달라진 것은 아래층이 그 몸짓으로
+    // 무엇을 하느냐 하나다.
     render(<CanvasPanHarness elements={[CENTER_RECT]} />);
     stubOverlayRect();
 
     // 스테이지 (40, 40) 은 사각형 밖이다(px 상자는 320..480 × 160..240 — 축척 1.6 · 1).
     // 끝점 (500, 250) 은 그 상자를 **온전히** 감싼다 — 감싸지 못하는 사각형은 아무것도
     // 고르지 않아, 이 시험이 "가져갔다" 를 삼킴과 구별하지 못하게 된다.
-    sendAt(overlay(), 'pointerdown', 40, 40);
-    sendAt(overlay(), 'pointermove', 500, 250);
-    sendAt(overlay(), 'pointerup', 500, 250);
+    sendAt(overlay(), 'pointerdown', 40, 40, { ctrlKey: true });
+    sendAt(overlay(), 'pointermove', 500, 250, { ctrlKey: true });
+    sendAt(overlay(), 'pointerup', 500, 250, { ctrlKey: true });
 
     expect(stageOffset()).toEqual({ x: 0, y: 0 });
     // 몸짓을 삼키기만 한 것이 아니라 **제 일을 했다**.
     expect(screen.getByTestId('selection').textContent).toBe('a');
+    expect(liveElements()[0]?.geometry).toEqual(CENTER_RECT.geometry);
+  });
+
+  it('빈 자리의 **맨손** 끌기도 캔버스가 가져간다 — 이 층의 팬은 물러선다 (011)', () => {
+    // 010 에서 이 자리의 몸짓이 사각형을 세웠다(위 시험의 종전 형태). 011 에서 맨손
+    // 끌기는 **캔버스 제 작업 영역 팬**이며, 그것 역시 아래층이 누름을 소비하므로 이
+    // 층의 화면은 움직이지 않는다 — 두 팬이 겹쳐 그림이 두 배로 가는 일이 없다는 것이
+    // 이 시험의 값이다.
+    render(<CanvasPanHarness elements={[CENTER_RECT]} />);
+    stubOverlayRect();
+
+    const down = new MouseEvent('pointerdown', {
+      clientX: 40,
+      clientY: 40,
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(overlay(), down);
+    sendAt(overlay(), 'pointermove', 500, 250);
+    sendAt(overlay(), 'pointerup', 500, 250);
+
+    expect(down.defaultPrevented).toBe(true);
+    expect(stageOffset()).toEqual({ x: 0, y: 0 });
+    // 팬은 고르지도 옮기지도 않는다.
+    expect(screen.getByTestId('selection').textContent).toBe('');
     expect(liveElements()[0]?.geometry).toEqual(CENTER_RECT.geometry);
   });
 

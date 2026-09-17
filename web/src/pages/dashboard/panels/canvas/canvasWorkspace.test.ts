@@ -36,7 +36,9 @@ import {
   DEFAULT_WORKSPACE_ZOOM,
   MAX_WORKSPACE_ZOOM,
   MIN_WORKSPACE_ZOOM,
+  NO_WORKSPACE_PAN,
   WORKSPACE_ZOOM_CHOICES,
+  clampWorkspacePan,
   clampWorkspaceZoom,
   derivedCanvasSize,
   workspaceBox,
@@ -616,5 +618,191 @@ describe('canvasWorkspace — 배율은 크기 유도에 닿지 않는다 (AC-09
         height: 796,
       });
     }
+  });
+});
+
+// --- 보기 팬 (사용자 신고 2026-09-16 · 006 영역) -------------------------
+//
+// 고정 입력은 위 배율 절의 그것을 그대로 쓴다(`FIXED_CANVAS` — 캔버스 = 잰 상자). 팬이
+// 답하는 물음이 **"캔버스 밖에 놓은 것에 닿을 수 있는가"** 인데, 그 물음은 캔버스 단위로만
+// 물을 수 있고 그 환산에는 축척이 필요하기 때문이다.
+
+/**
+ * 작업 영역이 실제로 보여 주는 **캔버스 좌표** 범위(가로).
+ *
+ * 상자 밖은 표면 컨테이너의 `overflow-hidden` 에 잘리므로, 이 범위 밖의 요소는 저술은
+ * 되지만 **화면에 없다.** 시험이 "닿는다/닿지 않는다" 를 재는 자리가 여기 하나다.
+ */
+function visibleCanvasX(
+  ws: ReturnType<typeof workspaceBox>,
+  canvas: CanvasSize,
+): { from: number; to: number } {
+  const scale = ws.stage.width / canvas.width;
+  return { from: -ws.origin.x / scale, to: (ws.box.width - ws.origin.x) / scale };
+}
+
+describe('canvasWorkspace — 팬이 출력 영역 밖을 가져온다', () => {
+  it('배율 1 에서 캔버스 왼쪽 밖 100 단위가 화면에 **든다** — 팬이 없으면 그 자리는 잘린 채다', () => {
+    // **이 시험이 이 기능의 존재 이유 전부다.** 배율 1 에서는 출력 영역이 잰 상자를 가득
+    // 채우므로 저술 여백이 **0** 이고, 좌표를 죄지 않는 파서가 허용한 캔버스 밖 저술
+    // (가정 A5)에 닿을 길이 한 뼘도 없다. 팬을 넘기지 않은 아래 형제가 그 사실을 잰다.
+    const panned = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, MAX_WORKSPACE_ZOOM, {
+      x: 300,
+      y: 0,
+    });
+
+    expect(visibleCanvasX(panned, FIXED_CANVAS).from).toBeLessThanOrEqual(-100);
+  });
+
+  it('같은 배율에서 팬이 쉬면 캔버스 **딱 그만큼**만 보인다 — 고친 것이 무엇인지 여기서 갈린다', () => {
+    const still = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, MAX_WORKSPACE_ZOOM);
+
+    // 왼쪽 밖 1 단위조차 들어오지 않는다. 이 수가 0 이 아닌 값으로 바뀌면 그때는 팬이
+    // 아니라 **배율이나 상자**가 달라진 것이다.
+    // `-0` 과 `0` 을 가르지 않는다 — 원점이 0 이면 나눗셈이 `-0` 을 내는데, 그 부호는
+    // 이 시험이 묻는 것("캔버스 밖이 한 뼘도 보이지 않는다")과 아무 상관이 없다.
+    const seen = visibleCanvasX(still, FIXED_CANVAS);
+    expect(seen.from + 0).toBe(0);
+    expect(seen.to).toBe(FIXED_CANVAS.width);
+  });
+
+  it('팬을 넘기지 않은 호출은 상자 넷이 **한 픽셀도** 다르지 않다 (덧붙임의 기본값이 종전 동작이다)', () => {
+    for (const z of [MIN_WORKSPACE_ZOOM, 0.5, DEFAULT_WORKSPACE_ZOOM, MAX_WORKSPACE_ZOOM]) {
+      expect(workspaceBox(OUTER, FIXED_CANVAS, STEP, true, z, NO_WORKSPACE_PAN), `z=${z}`).toEqual(
+        workspaceBox(OUTER, FIXED_CANVAS, STEP, true, z),
+      );
+    }
+  });
+
+  it('꺼진 갈래는 팬을 **보지 않는다** — 편집이 꺼진 자리에는 시야를 고를 사람이 없다', () => {
+    const panned = workspaceBox(OUTER, CANVAS, STEP, false, DEFAULT_WORKSPACE_ZOOM, {
+      x: 400,
+      y: -200,
+    });
+
+    // 배율에 대해 세운 그 성질 그대로다 — 값이 0.9.0 이 못박은 수 그대로여야 한다.
+    expect(panned.origin).toEqual({ x: 0, y: 0 });
+    expect(panned.stage).toEqual({ width: 980, height: 784 });
+    expect(panned.box).toEqual(panned.stage);
+  });
+
+  it('팬이 붙어도 작업 영역은 여전히 잰 상자 **그 자체**다 (불변식 I22)', () => {
+    // 팬을 상자를 키워 구현하면 이 시험이 걸린다 — 키운 자리는 컨테이너의
+    // `overflow-hidden` 이 그대로 잘라 내므로 그 구현은 아무것도 가져오지 못한다.
+    for (const pan of [
+      { x: 0, y: 0 },
+      { x: 300, y: -120 },
+      { x: -874, y: 398 },
+    ]) {
+      const ws = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, 0.5, clampWorkspacePan(pan, OUTER));
+      expect(ws.box, JSON.stringify(pan)).toEqual({ width: OUTER.width, height: OUTER.height });
+      expect(ws.offset, JSON.stringify(pan)).toEqual({ x: 0, y: 0 });
+    }
+  });
+
+  it('팬이 축척을 바꾸지 않는다 — 칸도 출력 영역도 팬과 무관하다', () => {
+    // 팬이 `stageLattice` 에 닿으면(줄인 상자를 팬으로 고치면) 시야가 아니라 **배율**이
+    // 달라진다. 그것은 팬이 아니라 조용한 배율이고, 격자가 함께 흔들린다.
+    const still = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, 0.5);
+    const moved = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, 0.5, { x: 217, y: -99 });
+
+    expect(moved.cell).toEqual(still.cell);
+    expect(moved.stage).toEqual(still.stage);
+    // 옮긴 것은 자리 하나뿐이고, 그 자리는 정확히 팬만큼 옮겨졌다.
+    expect(moved.origin).toEqual({ x: still.origin.x + 217, y: still.origin.y - 99 });
+  });
+
+  it('어떤 팬에서도 원점이 **정수**다 — 팬은 `floor` 바깥이 아니라 안쪽에 들어간다 (불변식 I5)', () => {
+    // 소수 팬이 실제로 일어난다 — 포인터 좌표는 소수일 수 있고 `clientX` 의 차이도 그렇다.
+    // 원점이 소수가 되면 격자선이 두 장치 픽셀에 걸치고, 그것이 사용자가 세 번 돌려보낸
+    // "격자가 일정하지 않음" 의 네 번째 얼굴이다.
+    for (const pan of [
+      { x: 0.5, y: -0.5 },
+      { x: 12.25, y: 99.75 },
+      { x: -7.125, y: -0.001 },
+    ]) {
+      const ws = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, DEFAULT_WORKSPACE_ZOOM, pan);
+      expect(Number.isInteger(ws.origin.x), JSON.stringify(pan)).toBe(true);
+      expect(Number.isInteger(ws.origin.y), JSON.stringify(pan)).toBe(true);
+    }
+  });
+});
+
+describe('canvasWorkspace — 팬의 범위는 출력 영역의 중심이 정한다 (`clampWorkspacePan`)', () => {
+  /** 상자 좌표에서 출력 영역의 중심. 죔이 지키는 것이 이 점 하나다. */
+  const stageCentre = (ws: ReturnType<typeof workspaceBox>) => ({
+    x: ws.origin.x + ws.stage.width / 2,
+    y: ws.origin.y + ws.stage.height / 2,
+  });
+
+  it('상한은 상자의 절반이다 — 넘겨 적은 값이 그 자리에서 멈춘다', () => {
+    expect(clampWorkspacePan({ x: 99999, y: 99999 }, OUTER)).toEqual({
+      x: OUTER.width / 2,
+      y: OUTER.height / 2,
+    });
+    expect(clampWorkspacePan({ x: -99999, y: -99999 }, OUTER)).toEqual({
+      x: -OUTER.width / 2,
+      y: -OUTER.height / 2,
+    });
+  });
+
+  it('범위 안의 값은 **그대로** 지난다 — 죔이 손짓을 몰래 고치지 않는다', () => {
+    expect(clampWorkspacePan({ x: 300, y: -120 }, OUTER)).toEqual({ x: 300, y: -120 });
+  });
+
+  it('**상한이 배율과 무관하다** — 배율을 바꿔도 팬이 범위를 벗어나 튀지 않는다', () => {
+    // `previewPan` 은 줌을 낮출 때마다 옛 이동량을 되죄어야 한다(상한이 줌에 딸려 있다).
+    // 여기서 `stage` 가 식에서 사라지는 것이 그 일을 통째로 없앤다.
+    const far = clampWorkspacePan({ x: 874, y: 398 }, OUTER);
+    for (const z of [MIN_WORKSPACE_ZOOM, 0.5, DEFAULT_WORKSPACE_ZOOM, MAX_WORKSPACE_ZOOM]) {
+      const ws = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, z, far);
+      const centre = stageCentre(ws);
+      // 중심이 상자 안이다 — `floor` 가 원점을 최대 1px 내리므로 그만큼의 여유를 둔다.
+      expect(centre.x, `z=${z}`).toBeGreaterThanOrEqual(-1);
+      expect(centre.x, `z=${z}`).toBeLessThanOrEqual(ws.box.width);
+      expect(centre.y, `z=${z}`).toBeGreaterThanOrEqual(-1);
+      expect(centre.y, `z=${z}`).toBeLessThanOrEqual(ws.box.height);
+    }
+  });
+
+  it('상한에서도 출력 영역의 **절반이 남는다** — 어디를 보고 있는지 잃지 않는다', () => {
+    const ws = workspaceBox(
+      OUTER,
+      FIXED_CANVAS,
+      STEP,
+      true,
+      MAX_WORKSPACE_ZOOM,
+      clampWorkspacePan({ x: 99999, y: 0 }, OUTER),
+    );
+
+    // 상자 안에 남은 출력 영역의 폭 = `box.width - origin.x` 이고, 그것이 절반 이상이다.
+    expect(ws.box.width - ws.origin.x).toBeGreaterThanOrEqual(ws.stage.width / 2 - 1);
+  });
+
+  it('잴 수 없는 값과 퇴화한 상자는 **쉬는 자리**로 떨어진다 (NaN 이 상자 산술로 번지지 않는다)', () => {
+    expect(clampWorkspacePan({ x: Number.NaN, y: Number.POSITIVE_INFINITY }, OUTER)).toEqual({
+      x: 0,
+      y: 0,
+    });
+    // 아직 재지 못한 상자(0)에는 옮길 곳이 없다 — `previewPan.axisBound` 가 0 을 그렇게 읽는다.
+    expect(clampWorkspacePan({ x: 300, y: 300 }, { width: 0, height: 0 })).toEqual({ x: 0, y: 0 });
+    expect(
+      clampWorkspacePan({ x: 300, y: 300 }, { width: Number.NaN, height: -10 }),
+    ).toEqual({ x: 0, y: 0 });
+  });
+
+  it('배율을 낮추면 **더 멀리** 닿는다 — 팬과 배율이 같은 방향으로 겹친다', () => {
+    const reach = (z: number) => {
+      const ws = workspaceBox(OUTER, FIXED_CANVAS, STEP, true, z, clampWorkspacePan({ x: 99999, y: 0 }, OUTER));
+      return visibleCanvasX(ws, FIXED_CANVAS).from;
+    };
+
+    // 상한까지 민 상태에서 왼쪽으로 닿는 거리. 배율이 낮을수록 캔버스 단위로 더 멀다.
+    expect(reach(0.5)).toBeLessThan(reach(MAX_WORKSPACE_ZOOM));
+    expect(reach(MIN_WORKSPACE_ZOOM)).toBeLessThan(reach(0.5));
+    // 어느 배율에서도 캔버스 **반 변**은 넘어간다(상한이 `box/2` 이고 축척이 1 이하다).
+    // `floor` 가 원점을 최대 1px 내리므로 그 한 칸만큼 여유를 둔다 — 여유를 두지 않으면
+    // 상자 폭이 홀수일 때만 빨개지는 시험이 되고, 그 빨강은 결함이 아니라 반올림이다.
+    expect(reach(MAX_WORKSPACE_ZOOM)).toBeLessThanOrEqual(-FIXED_CANVAS.width / 2 + 1);
   });
 });

@@ -21,6 +21,7 @@ import {
   type PathElement,
 } from './canvasConfig';
 import type { CanvasNode } from './group/groupTypes';
+import { isConnector } from './connector/connectorTypes';
 import { DEFAULT_PATH, MAX_PATH_COMMANDS, PATH_LOCAL_EXTENT } from './shapes/pathTypes';
 
 /** 비대칭·네 명령 전부. 대칭 도형은 전치 결함을 감춘다(D2). */
@@ -56,7 +57,10 @@ function rawConfig(elements: readonly unknown[]): Record<string, unknown> {
  * 넓어졌다). 이 파일은 경로 요소만 넣으므로 좁히기는 타입을 맞추는 일 하나뿐이다.
  */
 function asElement(node: CanvasNode | undefined): CanvasElement | undefined {
-  return node === undefined || node.kind === 'group' ? undefined : node;
+  // SPEC-CANVAS-011 M4 — 최상위 노드에 연결선이 더해졌다. 요소가 아닌 갈래가 둘이 되었을
+  // 뿐 이 파일의 단언은 한 글자도 바뀌지 않는다(004 가 그룹에 대해 한 그대로다).
+  if (node === undefined || node.kind === 'group' || isConnector(node)) return undefined;
+  return node;
 }
 
 /** 파싱된 config 에서 경로 요소 하나를 꺼낸다. 없으면 시험이 그 자리에서 죽는다. */

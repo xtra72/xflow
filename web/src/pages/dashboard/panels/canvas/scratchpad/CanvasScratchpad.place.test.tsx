@@ -93,6 +93,11 @@ function Harness() {
     setStep,
     zoom: 0.8,
     setZoom: () => {},
+    // 팬은 이 시험의 관심사가 아니다 — 쉬는 자리에 둔다(그때 `origin` 이 종전 그대로다).
+    // 그럼에도 **적어야 하는** 것은 컨텍스트가 선택 필드를 두지 않기 때문이고, 그것이
+    // 곧 "표면이 내려보내는 값을 오버레이가 다시 파생하지 않는다" 를 형상으로 지키는 값이다.
+    pan: { x: 0, y: 0 },
+    setPan: () => {},
     cell: { x: 10, y: 6.25 },
     origin: { ...WORKSPACE_ORIGIN },
     box: { width: 260, height: 136 },

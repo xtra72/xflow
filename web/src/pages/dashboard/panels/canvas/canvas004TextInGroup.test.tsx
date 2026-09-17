@@ -8,7 +8,19 @@ import { describe, expect, it } from 'vitest';
 
 import type { TextElement } from './canvasConfig';
 import type { GroupElement } from './group/groupTypes';
-import { frameKey, walkDrawables } from './group/frameKey';
+import { frameKey, walkDrawables, type FrameElementDrawable } from './group/frameKey';
+
+/**
+ * 요소 갈래만 걸러 낸다(SPEC-CANVAS-011 M6).
+ *
+ * 순회가 판별 합집합을 내게 되면서 `d.element` 를 바로 읽는 것이 **컴파일되지 않는다**.
+ * 이 파일이 재는 것은 문구 부품의 키이므로, 요소 갈래로 좁힌 뒤 종전의 단언을 그대로 쓴다.
+ */
+function elementsOf(nodes: Parameters<typeof walkDrawables>[0]): FrameElementDrawable[] {
+  return [...walkDrawables(nodes)].filter(
+    (d): d is FrameElementDrawable => d.kind === 'element',
+  );
+}
 
 describe('그룹 안 텍스트 키 매칭 (defect B)', () => {
   it('walkDrawables 는 최상위 요소에 평평한 키를 낸다', () => {
@@ -21,7 +33,7 @@ describe('그룹 안 텍스트 키 매칭 (defect B)', () => {
       style: { fill: '#000' },
     };
 
-    const drawables = Array.from(walkDrawables([txt]));
+    const drawables = elementsOf([txt]);
     expect(drawables).toHaveLength(1);
     expect(drawables[0]?.key).toBe('txt-1');
     expect(drawables[0]?.element.id).toBe('txt-1');
@@ -44,7 +56,7 @@ describe('그룹 안 텍스트 키 매칭 (defect B)', () => {
       ],
     };
 
-    const drawables = Array.from(walkDrawables([grp]));
+    const drawables = elementsOf([grp]);
     expect(drawables).toHaveLength(1);
     // walkDrawables 는 복합 키를 낸다
     expect(drawables[0]?.key).toBe(frameKey('grp-1', 'label'));
@@ -72,7 +84,7 @@ describe('그룹 안 텍스트 키 매칭 (defect B)', () => {
     const texts = { [compositeKey]: 'Modified Label' };
 
     // walkDrawables 가 낸 키로 조회하면 찾을 수 있다
-    const drawables = Array.from(walkDrawables([grp]));
+    const drawables = elementsOf([grp]);
     const drawable = drawables[0]!;
     expect(texts[drawable.key]).toBe('Modified Label');
   });
@@ -97,7 +109,7 @@ describe('그룹 안 텍스트 키 매칭 (defect B)', () => {
     const texts: Record<string, string> = { 'label': 'This Will Not Show' };
 
     // walkDrawables 는 'grp-1/label' 을 낸다
-    const drawables = Array.from(walkDrawables([grp]));
+    const drawables = elementsOf([grp]);
     const drawable = drawables[0]!;
     expect(drawable.key).toBe('grp-1/label');
 

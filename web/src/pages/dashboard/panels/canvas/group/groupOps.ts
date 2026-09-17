@@ -26,10 +26,16 @@
 //
 // @spec SPEC-CANVAS-004 REQ-07
 
-import { MIN_ELEMENT_EXTENT, type CanvasElement, type ElementStyle } from '../canvasConfig';
+import {
+  MIN_ELEMENT_EXTENT,
+  type CanvasElement,
+  type ElementStyle,
+  type Geometry,
+} from '../canvasConfig';
 import { nextElementId } from '../canvasElementFactory';
 import type { CanvasBox } from '../canvasGeometry';
 import { elementsBounds } from '../scratchpad/scratchpadTypes';
+import { frameKey } from './frameKey';
 import { toAbsoluteGeometry, toLocalGeometry, widenDegenerateBox } from './groupCoords';
 import { isGroup, type CanvasNode, type GroupElement } from './groupTypes';
 
@@ -149,21 +155,37 @@ export function rulesLostByUngroup(node: CanvasNode | undefined): number {
  * 컴파일러가 더는 잡지 못한다(가정 A6 이 적은 그 자리다).
  *
  * `default:` 를 두지 않는다 — 여섯 번째 기하 형상이 생기면 컴파일러가 이 자리를 가리킨다.
+ *
+ * ## 변환할 기하를 **밖에서 줄 수 있다** (SPEC-CANVAS-009 M4)
+ *
+ * `source` 는 기본값이 `el.geometry` 라 묶기·풀기의 호출은 한 글자도 바뀌지 않는다.
+ * 부품 기하 쓰기(`patchPartGeometry`)만 **캔버스 단위의 새 기하**를 실어 보낸다.
+ *
+ * **두 번째 역투영을 짓지 않는 것이 요점이다**(불변식 G2). 부품 편집이 제 나름의 역투영을
+ * 적으면 풀기와 편집이 반올림·퇴화 처리에서 갈라질 수 있고, 그 갈라짐은 "풀었을 때와
+ * 편집했을 때 좌표가 1 다르다" 로만 보인다. 같은 함수를 지나면 그 어긋남이 표현 불가능하다.
+ *
+ * 형상이 맞지 않으면(선 기하를 사각형 부품에 주는 따위) **받은 요소를 그대로** 돌려준다.
+ * 그 조합은 호출부의 실수이지 관용할 입력이 아니고, 그때 기하를 갈아 끼우면 선 기하가
+ * 상자 자리에 앉는다 — 예외를 내지 않는 것은 REQ-07 의 규율이다.
  */
 function withGeometry(
   el: CanvasElement,
   box: CanvasBox,
   convert: typeof toLocalGeometry | typeof toAbsoluteGeometry,
+  source: Geometry = el.geometry,
 ): CanvasElement {
   switch (el.kind) {
     case 'rect':
     case 'ellipse':
     case 'path':
-      return { ...el, geometry: convert(el.geometry, box) };
+      return 'w' in source ? { ...el, geometry: convert(source, box) } : el;
     case 'line':
-      return { ...el, geometry: convert(el.geometry, box) };
+      return 'x1' in source ? { ...el, geometry: convert(source, box) } : el;
     case 'text':
-      return { ...el, geometry: convert(el.geometry, box) };
+      return !('w' in source) && !('x1' in source)
+        ? { ...el, geometry: convert(source, box) }
+        : el;
   }
 }
 
@@ -269,6 +291,228 @@ export function ungroupNode(nodes: readonly CanvasNode[], groupId: string): Ungr
     nodes: [...head, ...lifted, ...tail],
     liftedIds: lifted.map((el) => el.id),
   };
+}
+
+// --- 부품 찾기와 캔버스 단위 읽기 (SPEC-CANVAS-009 M3 · M4 · M5) ------------
+
+/** 그룹 안에서 부품 하나를 찾은 결과. 그룹도 함께 내는 것은 상자가 거기 있기 때문이다. */
+export interface PartLocation {
+  group: GroupElement;
+  part: CanvasElement;
+  /** 최상위 배열에서 그룹의 자리. 분리가 "그룹 바로 뒤" 를 계산하는 데 쓴다. */
+  groupIndex: number;
+  /** `parts` 안에서 부품의 자리. */
+  partIndex: number;
+}
+
+/**
+ * 부품 하나를 찾는다. **찾기의 유일한 자리**다.
+ *
+ * 없는 그룹 · 그룹이 아닌 노드 · 없는 부품 전부 `undefined` 이며 예외를 내지 않는다
+ * (REQ-07). 소비 측이 저마다 `nodes.find(...)` + `parts.find(...)` 를 적으면 그 판정이
+ * 여럿이 되고, 그중 하나가 `isGroup` 확인을 빠뜨리는 날 최상위 요소의 `parts` 를 읽으려
+ * 든다.
+ */
+export function findPart(
+  nodes: readonly CanvasNode[],
+  groupId: string,
+  partId: string,
+): PartLocation | undefined {
+  const groupIndex = nodes.findIndex((n) => n.id === groupId);
+  const group = groupIndex < 0 ? undefined : nodes[groupIndex];
+  if (group === undefined || !isGroup(group)) return undefined;
+  const partIndex = group.parts.findIndex((p) => p.id === partId);
+  const part = partIndex < 0 ? undefined : group.parts[partIndex];
+  if (part === undefined) return undefined;
+  return { group, part, groupIndex, partIndex };
+}
+
+/**
+ * 부품을 **캔버스 단위 좌표를 가진 요소**로 본 사본 — 선택 · 윤곽 · 8핸들 · 목록 수치 칸이
+ * 모두 이것 하나를 본다(SPEC-CANVAS-009 M3 · M5).
+ *
+ * ## 왜 id 가 복합 키인가
+ *
+ * 오버레이의 네 통로(윤곽 상자 · 핸들 자리 · 드래그 상태 · 글자 폭 조회)는 전부 `el.id` 로
+ * 프레임 상태를 뒤진다. 부품의 원래 id(`body`)를 실어 보내면 그 조회가 최상위 요소 `body`
+ * 를 만나거나 아무것도 만나지 못하고, **문구 부품의 폭이 폴백으로 내려앉아** "글자를
+ * 클릭하면 가끔 안 잡힌다" 가 된다(`frameKey` 머리말이 적은 그 부류다). 복합 키를 실으면
+ * 그 넷이 한 글자도 바뀌지 않고 부품에 걸린다.
+ *
+ * **의사 노드이지 저장되는 값이 아니다.** 이 사본은 화면이 재고 그리는 데만 쓰이며, 저장
+ * 좌표를 고치는 길은 아래 `patchPartGeometry` 하나뿐이다.
+ */
+export function partInCanvasUnits(
+  nodes: readonly CanvasNode[],
+  groupId: string,
+  partId: string,
+): CanvasElement | undefined {
+  const found = findPart(nodes, groupId, partId);
+  if (found === undefined) return undefined;
+  const el = withGeometry(found.part, found.group.geometry, toAbsoluteGeometry);
+  return { ...el, id: frameKey(groupId, partId) };
+}
+
+// --- 부품 쓰기 (SPEC-CANVAS-009 M4) ----------------------------------------
+
+/**
+ * 부품 하나를 갈아 끼운다 — **부품 쓰기의 유일한 문**이다.
+ *
+ * 기하든 겉모습이든 부품이 바뀌는 길은 이 함수 하나이며, 그래서 형제 노드·형제 부품의
+ * 참조 유지 규율(004 `patchNodeGeometry` 의 그것)이 한 자리에만 적힌다. 두 벌이 되면
+ * "기하를 고칠 때는 형제가 유지되는데 색을 고칠 때는 전부 새로 난다" 가 표현 가능해지고,
+ * 그 차이는 리렌더 폭으로만 드러난다.
+ *
+ * 바꿀 것이 없으면(찾지 못했거나 같은 참조를 되돌려 준 경우) **받은 배열 그 참조**를
+ * 돌려준다.
+ */
+export function replacePart(
+  nodes: readonly CanvasNode[],
+  groupId: string,
+  partId: string,
+  next: CanvasElement,
+): readonly CanvasNode[] {
+  const found = findPart(nodes, groupId, partId);
+  if (found === undefined || next === found.part) return nodes;
+  const parts = found.group.parts.map((p, i) => (i === found.partIndex ? next : p));
+  const group: GroupElement = { ...found.group, parts };
+  return nodes.map((n, i) => (i === found.groupIndex ? group : n));
+}
+
+// --- 부품 기하 쓰기 (SPEC-CANVAS-009 M4) -----------------------------------
+
+/**
+ * 부품 하나의 **저장 좌표**를 캔버스 단위 기하로부터 갱신한다.
+ *
+ * ## 이 함수가 **하지 않는** 것 셋
+ *
+ *   1. **그룹 상자를 건드리지 않는다.** 상자는 저장된 값이지 부품에서 파생되는 값이
+ *      아니다(004 가정 A16 · 009 REQ-03-a). 부품을 옮겼다고 상자가 따라 자라면 8핸들로
+ *      늘린 크기가 그 다음 부품 이동에서 되돌아간다.
+ *   2. **상자 밖으로 나가는 것을 막지 않는다**(REQ-03-b). 004 가 이미 "부품을 상자 밖으로
+ *      밀어내면 그림이 상자를 넘친다" 를 대가로 받아들였고, 여기서 clamp 하면 그 대가만
+ *      숨긴 채 사용자의 손이 벽에 걸린다.
+ *   3. **새 역투영을 짓지 않는다.** 위 `withGeometry` 의 **두 번째 호출자**가 될 뿐이다
+ *      (불변식 G2 — 좌표 공간을 넘는 자리를 넷으로 늘리지 않는다).
+ *
+ * 형제 노드와 형제 부품은 **참조 그대로** 실려 가고 새 배열이 나온다(004
+ * `patchNodeGeometry` 의 규율). 바꿀 것이 없으면 **받은 배열 그 참조**를 돌려주므로,
+ * 호출부가 `===` 하나로 "쓸 일이 없다" 를 안다.
+ */
+export function patchPartGeometry(
+  nodes: readonly CanvasNode[],
+  groupId: string,
+  partId: string,
+  nextAbsolute: Geometry,
+): readonly CanvasNode[] {
+  const found = findPart(nodes, groupId, partId);
+  if (found === undefined) return nodes;
+  // 형상이 맞지 않으면 `withGeometry` 가 **받은 요소를 그대로** 돌려주고, 그 참조가
+  // `replacePart` 에서 곧 "쓸 일이 없다" 로 읽힌다 — 판정이 한 자리에 남는다.
+  return replacePart(
+    nodes,
+    groupId,
+    partId,
+    withGeometry(found.part, found.group.geometry, toLocalGeometry, nextAbsolute),
+  );
+}
+
+/**
+ * `partInCanvasUnits` 의 **역**: 캔버스 단위로 고친 부품을 저장 형상으로 되돌려 쓴다
+ * (SPEC-CANVAS-009 M5).
+ *
+ * 목록의 부품 카드는 캔버스 단위 의사 노드를 보고 고친다. 그 결과에는 기하만이 아니라
+ * 겉모습 · 문구 · 바인딩 · **종류**까지 실려 오므로, 되돌릴 때 기하만 따로 빼내지 않고
+ * **받은 요소 전체**를 한 번에 변환해 쓴다 — `withGeometry` 가 `edited.kind` 로 갈래를
+ * 고르기 때문에 종류가 바뀌어도 새 기하 형상에 맞는 변환이 걸린다.
+ *
+ * **id 는 부품 id 로 되돌린다.** 읽는 쪽이 복합 키를 실어 보냈으므로(오버레이의 네 통로가
+ * 그 키로 프레임 상태를 뒤진다), 그대로 저장하면 부품 id 가 `그룹id/부품id` 로 바뀌어
+ * 다음 조회가 `그룹id/그룹id/부품id` 를 찾게 된다.
+ */
+export function writePartFromCanvasUnits(
+  nodes: readonly CanvasNode[],
+  groupId: string,
+  partId: string,
+  edited: CanvasElement,
+): readonly CanvasNode[] {
+  const found = findPart(nodes, groupId, partId);
+  if (found === undefined) return nodes;
+  const local = withGeometry(edited, found.group.geometry, toLocalGeometry);
+  return replacePart(nodes, groupId, partId, { ...local, id: partId });
+}
+
+// --- 부품 분리 (SPEC-CANVAS-009 M6) ----------------------------------------
+
+/**
+ * 분리가 **버리는** 그룹 규칙 행의 수. 화면은 이 수가 0 보다 클 때만 확인을 묻는다.
+ *
+ * **판정을 화면이 다시 짓지 않는다**(REQ-05-c — 004 REQ-07 의 규율 그대로). 같은 판정이
+ * 둘이 되면 "안내는 떴는데 실제로는 안 버렸다" 와 그 반대가 함께 가능해진다.
+ *
+ * 부품이 셋 이상이라 그룹이 살아남는 경우에도 **0 이 아니다**. 규칙 행이 표에서 지워지는
+ * 것은 아니지만, 나간 부품에게는 그 N 행이 더는 걸리지 않는다 — 잃는 쪽은 그룹이 아니라
+ * **그 부품**이고, 사용자가 분리 전에 알아야 하는 것은 그쪽이다.
+ */
+export function rulesLostByDetach(
+  nodes: readonly CanvasNode[],
+  groupId: string,
+  partId: string,
+): number {
+  const found = findPart(nodes, groupId, partId);
+  if (found === undefined) return 0;
+  return rulesLostByUngroup(found.group);
+}
+
+/**
+ * 부품 **하나**를 그룹 밖으로 빼낸다 — 풀기의 부분 적용이다(REQ-05).
+ *
+ * ## 부품이 둘 이하면 그대로 **푼다**
+ *
+ * 004 는 부품 하나짜리 그룹을 **읽기는** 허용하되 **만드는 것**은 거절한다(`tooFew`).
+ * 분리가 그 금지된 상태를 새로 만들면 안 되므로(가정 A5), 남을 부품이 1 개 이하면
+ * `ungroupNode` 를 그대로 부른다 — 조건만 여기서 가르고 **일은 그 함수가 한다.**
+ *
+ * 이것이 "같은 함수를 쓴다"(REQ-05 · AC-33)의 절반이고, 나머지 절반은 아래 ≥ 3 갈래가
+ * `withGeometry` · `bakeStyle` · `nextElementId` 라는 **바로 그 셋**을 부르는 것이다.
+ * 좌표 환산도 스타일 굽기도 새로 적지 않는다.
+ *
+ * ## 올라온 부품은 **그룹 바로 뒤**에 선다
+ *
+ * 그룹의 부품은 그룹 자리에서 연달아 그려지므로(`walkDrawables` 의 2단 순서), 그룹 바로
+ * 뒤가 곧 그 부품이 있던 그리기 순서다. 맨 뒤에 붙이면 분리한 순간 그림이 다른 요소
+ * 위로 튀어 오른다.
+ *
+ * 거절(`notGroup`)이면 `nodes` 가 **입력 배열 그 참조**다(묶기·풀기와 같은 규율).
+ */
+export function detachPart(
+  nodes: readonly CanvasNode[],
+  groupId: string,
+  partId: string,
+): UngroupOutcome {
+  const found = findPart(nodes, groupId, partId);
+  if (found === undefined) return { nodes, liftedIds: [], refusal: 'notGroup' };
+
+  // 남을 부품이 1 개 이하 → 그룹을 남겨 둘 이유가 없다. 004 가 만들기를 거절하는 그
+  // 상태(부품 1개 그룹)를 분리가 새로 지어서는 안 된다(A5 · REQ-05-a · REQ-05-b).
+  if (found.group.parts.length <= 2) return ungroupNode(nodes, groupId);
+
+  const box: CanvasBox = found.group.geometry;
+  const el: CanvasElement = withGeometry(found.part, box, toAbsoluteGeometry);
+  el.id = nextElementId(nodes);
+  el.style = bakeStyle(found.group.style, found.part.style);
+  if (el.binding === undefined && found.group.binding !== undefined) el.binding = found.group.binding;
+  if (el.tween === undefined && found.group.tween !== undefined) el.tween = found.group.tween;
+
+  const group: GroupElement = {
+    ...found.group,
+    parts: found.group.parts.filter((_, i) => i !== found.partIndex),
+  };
+
+  const next: CanvasNode[] = [...nodes];
+  next[found.groupIndex] = group;
+  next.splice(found.groupIndex + 1, 0, el);
+  return { nodes: next, liftedIds: [el.id] };
 }
 
 // --- 최소 크기 재수출 ------------------------------------------------------

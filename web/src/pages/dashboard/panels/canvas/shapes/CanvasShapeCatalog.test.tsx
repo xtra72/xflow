@@ -89,9 +89,20 @@ function selection(): string {
   return screen.getByTestId('selection').textContent ?? '';
 }
 
-/** 묶음 하나를 편다(또는 접는다). */
+/** 묶음 하나의 접힘을 **뒤집는다**. */
 function toggleGroup(id: string): void {
   fireEvent.click(screen.getByTestId(`canvas-palette-group-${id}`));
+}
+
+/**
+ * 묶음 하나를 **편다**. 이미 펴져 있으면 아무 일도 하지 않는다.
+ *
+ * 011 이 `기본` 을 펼친 채로 태어나게 했으므로(REQ-01) 무조건 누르는 몸짓은 그 묶음을
+ * **닫는다**. "열고 잰다" 는 뜻을 몸짓이 아니라 결과로 적는다.
+ */
+function openGroup(id: string): void {
+  const head = screen.getByTestId(`canvas-palette-group-${id}`);
+  if (head.getAttribute('aria-expanded') === 'false') fireEvent.click(head);
 }
 
 // --- 미리보기 기록 스텁 --------------------------------------------------
@@ -112,8 +123,15 @@ function makeRecorder(): Recorder {
     beginPath() {
       calls.push(['beginPath']);
     },
-    rect() {},
-    ellipse() {},
+    // 011 이 이 셋을 **무동작에서 기록으로** 바꿨다. 카탈로그 30종은 전부 `kind:'path'` 라
+    // 세 함수를 한 번도 부르지 않으므로 기존 카탈로그 단언은 한 자도 달라지지 않고, 새로
+    // 들어온 원시형 넷(rect·ellipse·text)은 이 셋을 지나지 않으면 잴 수가 없다.
+    rect(x, y, w, h) {
+      calls.push(['rect', x, y, w, h]);
+    },
+    ellipse(cx, cy, rx, ry) {
+      calls.push(['ellipse', cx, cy, rx, ry]);
+    },
     moveTo(x, y) {
       calls.push(['moveTo', x, y]);
     },
@@ -132,7 +150,9 @@ function makeRecorder(): Recorder {
     fill() {
       calls.push(['fill']);
     },
-    fillText() {},
+    fillText(text, x, y) {
+      calls.push(['fillText', text, x, y]);
+    },
     measureText(text: string) {
       return { width: text.length * 10 };
     },
@@ -156,7 +176,11 @@ function stubPreviewContexts(): Map<string, Recorder> {
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (
     this: HTMLCanvasElement,
   ) {
-    const id = (this.dataset.testid ?? '').replace('canvas-catalog-preview-', '');
+    // 두 접두사를 모두 벗긴다 — 011 이후 원시형 넷도 같은 미리보기 부품을 쓰므로
+    // (`canvas-palette-preview-*`), 카탈로그만 벗기면 넷의 기록을 집을 수 없다.
+    const id = (this.dataset.testid ?? '')
+      .replace('canvas-catalog-preview-', '')
+      .replace('canvas-palette-preview-', '');
     const recorder = makeRecorder();
     byId.set(id, recorder);
     return recorder as unknown as CanvasRenderingContext2D;
@@ -180,8 +204,8 @@ afterEach(() => {
 
 // --- 오늘의 팔레트가 그대로 있다 -----------------------------------------
 
-describe('팔레트의 오늘이 그대로 있다 (AC-E10 · 회귀)', () => {
-  it('원시형 넷은 같은 이름 · 같은 차례로 펼쳐져 있고 카탈로그 셋은 접혀 있다', () => {
+describe('팔레트의 오늘이 그대로 있다 (AC-E10 · 회귀 · SPEC-CANVAS-011 REQ-01)', () => {
+  it('원시형 넷은 같은 이름 · 같은 차례로 `기본` 묶음 맨 앞에 서고 나머지 둘은 접혀 있다', () => {
     render(<Harness initial={[]} />);
 
     // 이름과 **차례**를 함께 잰다. 이름만 재면 순서가 뒤바뀌어도 통과한다.
@@ -191,31 +215,137 @@ describe('팔레트의 오늘이 그대로 있다 (AC-E10 · 회귀)', () => {
     const all = [...dock.querySelectorAll('[data-testid^="canvas-palette-add-"]')];
     expect(all).toEqual(buttons);
 
-    // 카탈로그 묶음 셋의 머리는 있고 몸은 없다 — 접힘의 관측 가능한 정의다.
-    for (const group of SHAPE_GROUPS) {
+    // **뒤집힌 단언 (SPEC-CANVAS-011 REQ-01 · AC-01).** 008 에서는 카탈로그 묶음 셋이 모두 접혀 있었다.
+    // 011 이 원시형 넷을 `기본` 으로 옮기면서 그 묶음이 펼쳐진 채로 태어난다 — 008 이 위험
+    // R10 의 답으로 세운 "자주 쓰는 넷이 열자마자 보인다" 를 자리만 옮겨 지키는 것이다.
+    expect(screen.getByTestId('canvas-palette-group-basic').getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+    for (const group of SHAPE_GROUPS.filter((g) => g.id !== 'basic')) {
       expect(screen.getByTestId(`canvas-palette-group-${group.id}`)).toBeTruthy();
       expect(screen.queryByTestId(`canvas-palette-group-body-${group.id}`)).toBeNull();
       expect(
         screen.getByTestId(`canvas-palette-group-${group.id}`).getAttribute('aria-expanded'),
       ).toBe('false');
     }
-    // 원시형 묶음은 펼쳐져 있다.
-    expect(screen.getByTestId('canvas-palette-group-primitive').getAttribute('aria-expanded')).toBe(
-      'true',
-    );
+    // **뒤집힌 단언 (SPEC-CANVAS-011 REQ-01 · AC-01).** 008 의 `원시형` 묶음은 **없다.**
+    expect(screen.queryByTestId('canvas-palette-group-primitive')).toBeNull();
 
-    // 접힌 묶음은 자식을 **아예 그리지 않는다** — 도크가 열릴 때 만들어지는 미리보기가 0개다.
-    expect(screen.queryAllByTestId(/^canvas-catalog-add-/)).toHaveLength(0);
-    expect(document.querySelectorAll('[data-testid^="canvas-catalog-preview-"]')).toHaveLength(0);
+    // 접힌 묶음은 자식을 **아예 그리지 않는다** — 열릴 때 만들어지는 미리보기가 `기본` 몫뿐이다.
+    const basicCells = SHAPE_GROUPS.find((g) => g.id === 'basic')?.entries.length ?? 0;
+    expect(screen.queryAllByTestId(/^canvas-catalog-add-/)).toHaveLength(basicCells);
+    expect(document.querySelectorAll('[data-testid^="canvas-catalog-preview-"]')).toHaveLength(
+      basicCells,
+    );
   });
 
-  it('원시형 묶음을 접으면 넷이 사라지고, 다시 펴면 넷이 돌아온다', () => {
+  it('`기본` 묶음 몸통의 **첫 네 칸**이 사각형 · 타원 · 선 · 텍스트다 (011 AC-02)', () => {
     render(<Harness initial={[]} />);
 
-    toggleGroup('primitive');
+    // 몸통 안에서 잰다 — 도크 전체로 재면 넷이 `기본` 밖에 서 있어도 통과한다.
+    const body = screen.getByTestId('canvas-palette-group-body-basic');
+    const ids = [
+      ...body.querySelectorAll<HTMLElement>(
+        '[data-testid^="canvas-palette-add-"],[data-testid^="canvas-catalog-add-"]',
+      ),
+    ].map((node) => node.dataset.testid ?? '');
+
+    expect(ids.slice(0, 4)).toEqual([
+      'canvas-palette-add-rect',
+      'canvas-palette-add-ellipse',
+      'canvas-palette-add-line',
+      'canvas-palette-add-text',
+    ]);
+    // 그 뒤로 카탈로그 12종이 이어진다 — 넷은 격자 **위**가 아니라 격자의 첫 칸들이다.
+    expect(ids).toHaveLength(4 + (SHAPE_GROUPS.find((g) => g.id === 'basic')?.entries.length ?? 0));
+    expect(ids[4]).toBe('canvas-catalog-add-triangle');
+  });
+
+  it('그 네 칸이 카탈로그 칸과 **같은 격자의 자식**이다 — 한 묶음에 배치는 하나다', () => {
+    render(<Harness initial={[]} />);
+
+    // 차례만 재면 넷이 제 상자에 세로로 쌓여 있어도 통과한다 — 실제로 배달된 결함이 그것
+    // 이었다(줄 버튼 넷 위, 2열 격자 서른 아래). 여기서 재는 것은 **부모가 하나**라는 사실이다.
+    const body = screen.getByTestId('canvas-palette-group-body-basic');
+    const cells = [
+      ...body.querySelectorAll<HTMLElement>(
+        '[data-testid^="canvas-palette-add-"],[data-testid^="canvas-catalog-add-"]',
+      ),
+    ];
+    const parents = new Set(cells.map((node) => node.parentElement));
+    expect(parents.size, '칸들의 부모가 둘 이상이다 — 격자가 갈라졌다').toBe(1);
+
+    // 그 하나가 실제로 2열 격자다. 부모가 하나여도 그것이 세로 상자면 눈에는 여전히 줄이다.
+    const grid = cells[0]?.parentElement;
+    expect(grid?.className).toContain('grid-cols-2');
+
+    // 겉모습도 한 벌이다 — 원시형 칸과 카탈로그 칸이 같은 클래스를 든다(`CELL_CLASS` 공유).
+    const primitive = screen.getByTestId('canvas-palette-add-rect');
+    const catalog = screen.getByTestId('canvas-catalog-add-triangle');
+    expect(primitive.className).toBe(catalog.className);
+  });
+
+  it('네 칸도 카탈로그 칸과 **같은 미리보기 캔버스**를 든다 — glyph 가 아니다 (011)', () => {
+    render(<Harness initial={[]} />);
+
+    const catalogCanvas = screen
+      .getByTestId('canvas-catalog-add-triangle')
+      .querySelector('canvas');
+    expect(catalogCanvas, '카탈로그 칸에 미리보기가 없다').not.toBeNull();
+
+    for (const kind of ['rect', 'ellipse', 'line', 'text']) {
+      const cell = screen.getByTestId(`canvas-palette-add-${kind}`);
+
+      // ① 그림이 `<canvas>` 다. 011 이전에는 lucide `<svg>` 였고, 그래서 한 격자 안에
+      //    윤곽선 글리프와 파란 도형이라는 두 벌의 잉크가 서 있었다.
+      const canvas = cell.querySelector('canvas');
+      expect(canvas, `${kind}: 미리보기 캔버스가 없다`).not.toBeNull();
+      expect(cell.querySelector('svg'), `${kind}: glyph 가 남아 있다`).toBeNull();
+
+      // ② 그 캔버스가 카탈로그의 것과 **같은 자리**다 — 뒷면 크기도 CSS 크기도.
+      expect(canvas?.getAttribute('width'), kind).toBe(catalogCanvas?.getAttribute('width'));
+      expect(canvas?.getAttribute('height'), kind).toBe(catalogCanvas?.getAttribute('height'));
+      expect(canvas?.getAttribute('style'), kind).toBe(catalogCanvas?.getAttribute('style'));
+
+      // ③ 장식은 이름을 나르지 않는다 — 008 의 a11y 가드가 훑는 그 속성이다.
+      expect(canvas?.getAttribute('aria-hidden'), kind).toBe('true');
+      expect(canvas?.getAttribute('data-testid'), kind).toBe(`canvas-palette-preview-${kind}`);
+    }
+  });
+
+  it('그 넷이 실제로 **무엇을 그린다** — 빈 캔버스가 아니다 (011 · 시험 규율 셋)', () => {
+    // 캔버스가 있다는 것만 재면 텅 빈 채로도 초록이다(이 파일 머리말의 함정 셋). 종류마다
+    // 제 그리기 갈래를 지났는지 **기록으로** 잰다.
+    const byId = stubPreviewContexts();
+    render(<Harness initial={[]} />);
+
+    const expected: Record<string, string> = {
+      rect: 'rect',
+      ellipse: 'ellipse',
+      line: 'lineTo',
+      text: 'fillText',
+    };
+    for (const [kind, call] of Object.entries(expected)) {
+      const rec = byId.get(kind);
+      expect(rec, `${kind} 미리보기가 그리지 않았다`).toBeDefined();
+      if (rec === undefined) continue;
+      const names = rec.calls.map((c) => c[0]);
+      expect(names, `${kind} 의 그리기 갈래`).toContain(call);
+    }
+
+    // 문구 칸은 `T` 하나를 칸 한가운데에 놓는다 — 로케일과 무관한 그림이다(011 사용자 결정).
+    const text = byId.get('text');
+    const fillText = text?.calls.find((c) => c[0] === 'fillText');
+    expect(fillText?.[1], '문구 미리보기가 그린 글자').toBe('T');
+  });
+
+  it('`기본` 묶음을 접으면 원시형 넷이 사라지고, 다시 펴면 넷이 돌아온다', () => {
+    render(<Harness initial={[]} />);
+
+    toggleGroup('basic');
     expect(screen.queryByTestId('canvas-palette-add-rect')).toBeNull();
 
-    toggleGroup('primitive');
+    toggleGroup('basic');
     expect(screen.getByTestId('canvas-palette-add-rect')).toBeTruthy();
   });
 });
@@ -227,7 +357,7 @@ describe('카탈로그 묶음을 펴면 30칸이 선다 (REQ-02)', () => {
     render(<Harness initial={[]} />);
 
     for (const group of SHAPE_GROUPS) {
-      toggleGroup(group.id);
+      openGroup(group.id);
       const body = screen.getByTestId(`canvas-palette-group-body-${group.id}`);
       const cells = body.querySelectorAll('[data-testid^="canvas-catalog-add-"]');
       expect(cells.length, `${group.id} 묶음의 칸 수`).toBe(group.entries.length);
@@ -243,14 +373,18 @@ describe('카탈로그 묶음을 펴면 30칸이 선다 (REQ-02)', () => {
   it('접힘 상태는 기기 지역에 남고 다음 렌더가 그것을 읽는다 (REQ-06)', () => {
     render(<Harness initial={[]} />);
     toggleGroup('general');
-    toggleGroup('primitive');
+    // **뒤집힌 단언 (SPEC-CANVAS-011 REQ-01).** 008 에서는 `primitive` 를 접었다. 그 묶음이
+    // 없어졌으므로 원시형 넷을 품은 `기본` 을 접는다 — 재는 것(펴고 접은 둘이 그대로 돌아
+    // 온다)은 같다.
+    toggleGroup('basic');
 
     const stored = JSON.parse(localStorage.getItem(PALETTE_STORAGE_KEY) ?? '{}') as Record<
       string,
       boolean
     >;
     expect(stored.general).toBe(false);
-    expect(stored.primitive).toBe(true);
+    expect(stored.basic).toBe(true);
+    expect(stored.primitive).toBeUndefined();
 
     cleanup();
     render(<Harness initial={[]} />);
@@ -271,8 +405,9 @@ describe('카탈로그 묶음을 펴면 30칸이 선다 (REQ-02)', () => {
 
     render(<Harness initial={[]} />);
     expect(screen.getByTestId('canvas-palette-add-rect')).toBeTruthy();
-    toggleGroup('basic');
-    expect(screen.getByTestId('canvas-palette-group-body-basic')).toBeTruthy();
+    // 접힌 채 태어나는 묶음으로 잰다 — `기본` 은 011 이후 이미 펴져 있어 여는 몸짓이 없다.
+    toggleGroup('general');
+    expect(screen.getByTestId('canvas-palette-group-body-general')).toBeTruthy();
   });
 });
 
@@ -281,7 +416,7 @@ describe('카탈로그 묶음을 펴면 30칸이 선다 (REQ-02)', () => {
 describe('카탈로그에서 놓은 도형은 일반 요소와 구별되지 않는다 (AC-03)', () => {
   it('배열 끝에 경로 요소가 붙고, id · 계단 · 씨앗 스타일이 원시형의 그 규칙이다', () => {
     render(<Harness initial={[rect('el-1')]} />);
-    toggleGroup('basic');
+    openGroup('basic');
     fireEvent.click(screen.getByTestId('canvas-catalog-add-star5'));
 
     const elements = liveElements();
@@ -301,7 +436,7 @@ describe('카탈로그에서 놓은 도형은 일반 요소와 구별되지 않�
 
   it('명령 목록은 카탈로그의 값이되 **그 배열이 아니다** — 값이지 참조가 아니다', () => {
     render(<Harness initial={[]} />);
-    toggleGroup('arrow');
+    openGroup('arrow');
     fireEvent.click(screen.getByTestId('canvas-catalog-add-arrowRight'));
 
     const created = liveElements()[0] as PathElement;
@@ -318,7 +453,7 @@ describe('카탈로그에서 놓은 도형은 일반 요소와 구별되지 않�
 
   it('열린 도형은 선만 심고 채우지 않는다 — 채우면 저술한 적 없는 변이 생긴다', () => {
     render(<Harness initial={[]} />);
-    toggleGroup('arrow');
+    openGroup('arrow');
     fireEvent.click(screen.getByTestId('canvas-catalog-add-arrowCurved'));
 
     const created = liveElements()[0] as PathElement;
@@ -329,7 +464,7 @@ describe('카탈로그에서 놓은 도형은 일반 요소와 구별되지 않�
 
   it('연달아 놓으면 id 도 자리도 겹치지 않는다', () => {
     render(<Harness initial={[]} />);
-    toggleGroup('basic');
+    openGroup('basic');
     fireEvent.click(screen.getByTestId('canvas-catalog-add-triangle'));
     fireEvent.click(screen.getByTestId('canvas-catalog-add-hexagon'));
 
@@ -345,7 +480,7 @@ describe('미리보기는 실제 렌더 경로다 (REQ-06)', () => {
   it('칸의 캔버스가 그 도형의 명령을 그대로 그린다', () => {
     const byId = stubPreviewContexts();
     render(<Harness initial={[]} />);
-    toggleGroup('basic');
+    openGroup('basic');
 
     const star = byId.get('star5');
     expect(star, 'star5 미리보기가 그리지 않았다').toBeDefined();
@@ -380,8 +515,8 @@ describe('미리보기는 실제 렌더 경로다 (REQ-06)', () => {
   it('곡선 도형은 미리보기에서도 곡선이고, 열린 도형은 선으로만 그려진다 (D4)', () => {
     const byId = stubPreviewContexts();
     render(<Harness initial={[]} />);
-    toggleGroup('general');
-    toggleGroup('arrow');
+    openGroup('general');
+    openGroup('arrow');
 
     const rounded = byId.get('roundedRect');
     expect(rounded).toBeDefined();
@@ -406,7 +541,7 @@ describe('미리보기는 실제 렌더 경로다 (REQ-06)', () => {
   it('2D context 를 얻지 못해도 팔레트는 선다', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
     render(<Harness initial={[]} />);
-    toggleGroup('basic');
+    openGroup('basic');
     expect(screen.getByTestId('canvas-catalog-add-star5')).toBeTruthy();
   });
 });
@@ -416,7 +551,7 @@ describe('미리보기는 실제 렌더 경로다 (REQ-06)', () => {
 describe('이름은 진짜 번역으로 붙는다 (REQ-06 · 시험 규율 D7)', () => {
   it('치환자를 두 번 말하는 문구가 **두 자리 모두** 바뀐다', () => {
     render(<Harness initial={[]} />);
-    toggleGroup('basic');
+    openGroup('basic');
 
     const template = ko.dashboard.canvas.edit.paletteShapeAria;
     // 고정 입력이 스스로 무엇을 재는지 먼저 단언한다 — 문구에서 치환자가 하나로 줄면
@@ -435,10 +570,11 @@ describe('이름은 진짜 번역으로 붙는다 (REQ-06 · 시험 규율 D7)',
 
   it('묶음 머리는 번역된 제목을 보이고 화면에 원문 키가 뜨지 않는다', () => {
     render(<Harness initial={[]} />);
+    // **뒤집힌 단언 (SPEC-CANVAS-011 REQ-01 · AC-01).** 008 의 `원시형` 머리는 없다.
+    // 그 i18n 키(`paletteGroupPrimitive`)는 로케일 파일에 **남겨 두었다** — 소비처만 지운다.
     const titles = {
-      primitive: ko.dashboard.canvas.edit.paletteGroupPrimitive,
-      general: ko.dashboard.canvas.edit.paletteGroupGeneral,
       basic: ko.dashboard.canvas.edit.paletteGroupBasic,
+      general: ko.dashboard.canvas.edit.paletteGroupGeneral,
       arrow: ko.dashboard.canvas.edit.paletteGroupArrow,
     };
     for (const [id, title] of Object.entries(titles)) {
@@ -459,7 +595,7 @@ describe('그려지는 자리에 손잡이가 닿는다 (AC-E9 · 불변식 I23 
       render(<Harness initial={[rect('el-1')]} docked={docked} />);
       // 카탈로그를 열어 둔다 — 접힌 채로 재면 "칸이 없다" 가 두 표면에서 똑같이 참이라
       // 이 시험이 아무것도 재지 못한다.
-      if (docked) toggleGroup('basic');
+      if (docked) openGroup('basic');
 
       const added = [
         ...document.querySelectorAll<HTMLElement>(
@@ -485,7 +621,7 @@ describe('그려지는 자리에 손잡이가 닿는다 (AC-E9 · 불변식 I23 
   it('대시보드 표면에는 묶음 머리도 · 칸도 · 미리보기도 없다', () => {
     render(<Harness initial={[rect('el-1')]} docked={false} />);
 
-    for (const group of ['primitive', ...SHAPE_GROUPS.map((g) => g.id)]) {
+    for (const group of SHAPE_GROUPS.map((g) => g.id)) {
       expect(screen.queryByTestId(`canvas-palette-group-${group}`), group).toBeNull();
     }
     expect(screen.queryAllByTestId(/^canvas-catalog-/)).toHaveLength(0);

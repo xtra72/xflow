@@ -40,6 +40,7 @@ import {
   unprojectBox,
   unprojectPoint,
   type CanvasBox,
+  type CanvasPoint,
 } from '../canvasGeometry';
 
 /** 좌표 하나를 정수로 죈다. 001 의 `coordinate` 를 그대로 쓴다 — 반올림 규율은 하나다. */
@@ -95,10 +96,41 @@ export function toAbsoluteLine(geo: LineGeometry, box: CanvasBox): LineGeometry 
   return { x1: round(abs.x1), y1: round(abs.y1), x2: round(abs.x2), y2: round(abs.y2) };
 }
 
-/** 그룹 로컬 기준점을 캔버스 단위 정수로 되돌린다. */
-export function toAbsolutePoint(geo: PointGeometry, box: CanvasBox): PointGeometry {
+// --- 되돌림 한 쌍: 저장할 것인가, 그릴 것인가 -------------------------------
+//
+// 아래 둘은 **같은 산술**을 지나고 마지막 한 가지에서만 갈린다 — 정수화 여부다. 둘이
+// 존재하는 까닭은 되돌린 값을 **누가 받느냐**가 다르기 때문이다.
+//
+//   - `toAbsolutePointRounded` → **저장되는 기하**로 간다(그룹 풀기 · 부품 분리). 캔버스
+//     좌표계가 정수라 소수 자리를 담을 곳이 없고, 남겨 두면 격자·붙임·수치 칸이 저마다
+//     다른 반올림을 하게 된다(001 `coordinate()` 의 근거 그대로).
+//   - `toAbsolutePointExact` → **파생되는 자리**로 간다(앵커 · 연결선 끝점). 저장되지
+//     않으므로 담을 곳의 제약이 없고, 정수화하면 그 자리가 **그려지는 자리에서 밀린다.**
+//
+// **반올림은 산술의 성질이 아니라 쓰는 쪽의 성질이다.** 그 사실을 이름에 적어 두지 않으면
+// 호출부에서 구분이 서지 않는다 — 011 이 실제로 그 함정을 밟았고, 재어 보니 별의 꼭지점에
+// 붙인 앵커가 그려지는 꼭지점에서 **축마다 최대 0.5 캔버스 단위**(기본 축척에서 화면
+// 1 px) 밀렸다. 산술은 정확했고(잔차 2.8e-14) 어긋남은 전부 정수화였다.
+//
+// 반환 타입이 갈리는 것도 같은 말이다. 정수 쪽은 `PointGeometry`(기하)를, 정확 쪽은
+// `CanvasPoint`(자리)를 낸다 — `canvasGeometry` 가 그 둘을 "형상은 같고 뜻이 다르다
+// (자리 vs 기하)" 로 갈라 둔 그 구분이며, 그래서 파생값을 기하 쓰기 통로에 잘못 흘리면
+// 타입이 먼저 운다.
+//
+// 되돌림의 **반대 방향은 한 벌뿐이다.** `toLocalPoint` 는 정수화를 유지한다 — 로컬 좌표는
+// 저장되는 값이고(008 이 JSON 크기로 그 정수 격자를 고른 근거가 그대로 선다), 꼭지점
+// 붙임의 "정확히" 는 환산이 아니라 **경로 명령의 좌표를 그대로 저장하는 데서** 나온다.
+
+/** 그룹 로컬 기준점을 캔버스 단위 **정수 기하**로 되돌린다(저장되는 값). */
+export function toAbsolutePointRounded(geo: PointGeometry, box: CanvasBox): PointGeometry {
   const abs = projectPointIn(geo, box);
   return { x: round(abs.x), y: round(abs.y) };
+}
+
+/** 로컬 기준점을 캔버스 단위 **자리**로 되돌린다 — 정수화하지 않는다(파생되는 값). */
+export function toAbsolutePointExact(geo: PointGeometry, box: CanvasBox): CanvasPoint {
+  const abs = projectPointIn(geo, box);
+  return { x: abs.x, y: abs.y };
 }
 
 // --- 기하 형상별 갈래 ------------------------------------------------------
@@ -123,7 +155,7 @@ export function toAbsoluteGeometry(geo: Geometry, box: CanvasBox): Geometry;
 export function toAbsoluteGeometry(geo: Geometry, box: CanvasBox): Geometry {
   if ('w' in geo) return toAbsoluteBox(geo, box);
   if ('x1' in geo) return toAbsoluteLine(geo, box);
-  return toAbsolutePoint(geo, box);
+  return toAbsolutePointRounded(geo, box);
 }
 
 // --- 퇴화 상자 넓히기 ------------------------------------------------------

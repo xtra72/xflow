@@ -69,8 +69,12 @@ describe('GROUP_LOCAL_EXTENT — 008 의 격자에서 파생한다 (A14)', () =>
 // --- ② 종류 이름은 셋이다 --------------------------------------------------
 
 /**
- * 여섯 전부를 키로 갖는 표. **`Record` 라서 총망라를 요구한다** — `CanvasNodeKind` 에
- * 일곱째가 들어오면 이 선언이 컴파일에서 운다(`canvasElementKind.test.tsx` 와 같은 규율).
+ * 일곱 전부를 키로 갖는 표. **`Record` 라서 총망라를 요구한다** — `CanvasNodeKind` 에
+ * 여덟째가 들어오면 이 선언이 컴파일에서 운다(`canvasElementKind.test.tsx` 와 같은 규율).
+ *
+ * SPEC-CANVAS-011 M4 가 일곱째(`connector`)를 더했다. 이 표는 **삭제하지 않고 넓힌다** —
+ * 004 가 겨눈 것은 "몇 개인가" 가 아니라 "표와 타입이 갈라지지 않는가" 이고, 그 성질은
+ * 원소가 늘어도 그대로 살아 있다(009 가 004 의 두 단언에 대해 한 그대로다).
  */
 const ALL_NODE_KINDS: Record<CanvasNodeKind, true> = {
   rect: true,
@@ -79,11 +83,13 @@ const ALL_NODE_KINDS: Record<CanvasNodeKind, true> = {
   text: true,
   path: true,
   group: true,
+  connector: true,
 };
 
 describe('종류 이름 셋 — 앞의 둘을 넓히지 않고 셋째를 더했다 (A22)', () => {
-  it('최상위 노드 종류는 **여섯**이다', () => {
+  it('최상위 노드 종류는 **일곱**이다 (SPEC-CANVAS-011 M4 가 하나를 더했다)', () => {
     expect(Object.keys(ALL_NODE_KINDS).sort()).toEqual([
+      'connector',
       'ellipse',
       'group',
       'line',
@@ -111,10 +117,11 @@ describe('종류 이름 셋 — 앞의 둘을 넓히지 않고 셋째를 더했�
     };
     expect(Object.keys(elementKinds)).toHaveLength(5);
     expect(Object.keys(primitiveKinds)).toHaveLength(4);
-    // 차이는 정확히 `group` 하나다.
+    // 차이는 정확히 `group` 과 `connector` 둘이다 — 둘 다 **요소가 아닌** 최상위 노드다.
+    // 앞의 두 이름이 한 글자도 넓어지지 않았다는 사실이 이 줄에 그대로 남아 있다.
     expect(
       Object.keys(ALL_NODE_KINDS).filter((k) => !(k in elementKinds)),
-    ).toEqual(['group']);
+    ).toEqual(['group', 'connector']);
   });
 
   it('셋째 이름은 `canvasConfig.ts` 바깥에 산다 — 그 파일의 소스 텍스트를 읽는 가드가 있다', () => {
@@ -122,7 +129,15 @@ describe('종류 이름 셋 — 앞의 둘을 넓히지 않고 셋째를 더했�
     // 정규식으로 읽어 원소가 정확히 둘임을 단언한다. 셋째 이름을 그 파일에 두면 그
     // 가드가 우는 것은 아니지만, 두 이름이 한 파일에서 붙어 자라는 것을 막아 둔다.
     expect(source('../canvasConfig.ts')).not.toContain('CanvasNodeKind =');
-    expect(source('groupTypes.ts')).toContain("export type CanvasNodeKind = CanvasElementKind | 'group';");
+    // SPEC-CANVAS-011 M4 — 유니온이 `OutlinedNodeKind` 와 연결선 종류의 합으로 적힌다.
+    // 연결선 이름을 리터럴로 적지 않고 **그 자료형에서 파생**시키는 것이 AC-39 의 요구다
+    // (그 문자열이 적히는 자리는 `connector/connectorTypes.ts` 하나뿐이다).
+    expect(source('groupTypes.ts')).toContain(
+      "export type CanvasNodeKind = OutlinedNodeKind | ConnectorElement['kind'];",
+    );
+    expect(source('groupTypes.ts')).toContain(
+      "export type OutlinedNodeKind = CanvasElementKind | 'group';",
+    );
   });
 });
 

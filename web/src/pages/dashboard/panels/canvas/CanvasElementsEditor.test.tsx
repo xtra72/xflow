@@ -63,6 +63,7 @@ vi.mock('@/lib/i18n', () => ({
 import type { StoreSourceConfig } from '../charts/chartChannelTypes';
 import type { CanvasElement, CanvasElementKind, CanvasPanelConfig } from './canvasConfig';
 import { DEFAULT_CANVAS_SIZE, parseCanvasConfig } from './canvasConfig';
+import { isConnector } from './connector/connectorTypes';
 import type { CanvasProjection } from './canvasGeometry';
 import { renderTextTemplate } from './canvasText';
 import { drawElements, type DrawContext2D } from './drawElement';
@@ -283,8 +284,15 @@ describe('CanvasElementsEditor — 요소 목록', () => {
   });
 
   it('배열 순서가 곧 앞뒤 순서라는 사실을 화면에 적는다', () => {
+    // **재는 것은 그대로 "그 설명이 렌더된다" 다.** 자리만 인라인 줄에서 목록 제목 뒤
+    // `?` 의 sr-only 설명으로 옮겼으므로 집는 법이 `getByText` 에서 `testId` 로 바뀐다
+    // (`components/property/FieldHelp.tsx` §testId — 팝오버를 열지 않아도 그 span 이
+    // 언제나 DOM 에 있어 "설명이 있다" 의 자리가 된다). 한 팝오버가 두 문장을 들므로
+    // 같음이 아니라 **포함**으로 잰다.
     setup(cfg([]));
-    expect(screen.getByText('dashboard.canvas.elements.orderHint')).toBeTruthy();
+    expect(testid('canvas-element-list-hint').textContent).toContain(
+      'dashboard.canvas.elements.orderHint',
+    );
   });
 
   it('목록에는 종류별 추가 버튼이 없다 — 만드는 자리는 도크 팔레트 하나다', () => {
@@ -441,7 +449,10 @@ describe('CanvasElementsEditor — 기하 칸은 정수 칸이다', () => {
     const spy = setup(cfg([rect()]), { tab: 'arrange' });
     fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '10.4' } });
     const written = lastElements(spy)[0]!.geometry;
-    const reparsed = parseCanvasConfig(cfg(lastElements(spy))).elements[0]!.geometry;
+    // 넣은 것이 사각형 하나뿐이라 연결선이 나올 수 없다(SPEC-CANVAS-011 M4).
+    const reparsedNode = parseCanvasConfig(cfg(lastElements(spy))).elements[0]!;
+    if (isConnector(reparsedNode)) throw new Error('연결선이 나올 수 없다');
+    const reparsed = reparsedNode.geometry;
     expect(reparsed).toEqual(written);
   });
 
@@ -525,12 +536,18 @@ describe('CanvasElementsEditor — 캔버스 크기 (모든 좌표의 분모)', 
     // 보는 이유가 그것이다.
   });
 
-  it('한 줄이 그 값의 규칙을 말한다 — 왜 손댈 수 없는지 화면이 답한다', () => {
-    // 문구는 "편집 중에는 **패널 크기**를 따라갑니다" 다. 0.4.0 이 적었던 "패널 **출력
+  it('그 값의 규칙을 화면이 말한다 — 이제 제목 뒤 `?` 안이다', () => {
+    // 텍스트는 "편집 중에는 **패널 크기**를 따라갑니다" 다. 0.4.0 이 적었던 "패널 **출력
     // 영역** 크기" 는 틀렸다 — 유도값은 출력 영역이 아니라 패널 몸통이고, 출력 영역은
     // 그것을 축척 R 로 물러나 그린 사각형이다.
+    //
+    // **이 단언은 뜻이 바뀌었다.** 전에는 전용 줄(`canvas-panel-size-derived`)에 그 글자
+    // **하나만** 있음을 보았다 — 자리 단언이었다. 그 줄을 걷어 `캔버스 크기` 제목의
+    // 물음표(한 제목에 하나)로 합쳤으므로 그 자리는 이제 없고, 남은 뜻은 "그 설명이
+    // 렌더된다" 다. 그래서 같음이 아니라 **포함**으로, 합쳐진 팝오버에서 잰다. 지우지
+    // 않고 뒤집는 이유는 지우면 그 글자가 사라져도 아무도 울지 않기 때문이다.
     setup(cfg([rect()]));
-    expect(testid('canvas-panel-size-derived').textContent).toBe(
+    expect(testid('canvas-panel-size-hint').textContent).toContain(
       'dashboard.canvas.elements.panelSizeDerived',
     );
   });
@@ -860,10 +877,11 @@ describe('CanvasElementsEditor — 빈 칸은 부재다', () => {
     fireEvent.change(testid('canvas-element-stroke-width-0'), { target: { value: '-4' } });
     expect(lastElements(spy)[0]!.style.strokeWidth).toBe(0);
 
-    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '3' } });
+    // 012 M5 — 칸이 백분율이므로 범위 밖도 백분율로 적는다. **죄는 뜻은 그대로다.**
+    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '300' } });
     expect(lastElements(spy)[0]!.style.opacity).toBe(1);
 
-    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '-1' } });
+    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '-100' } });
     expect(lastElements(spy)[0]!.style.opacity).toBe(0);
 
     openTab('text');
@@ -903,9 +921,9 @@ describe('CanvasElementsEditor — 빈 칸은 부재다', () => {
     expect(lastElements(spy)[0]!.style.visible).toBe(false);
   });
 
-  it('범위 안의 불투명도는 그대로 실린다', () => {
+  it('범위 안의 불투명도는 그대로 실린다 — 칸은 %, 저장은 0..1 (012 M5)', () => {
     const spy = setup(cfg([rect()]));
-    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '0.4' } });
+    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '40' } });
     expect(lastElements(spy)[0]!.style.opacity).toBe(0.4);
   });
 
@@ -1116,7 +1134,7 @@ describe('CanvasElementsEditor — parseCanvasConfig 왕복', () => {
   it('죄인 극단값이 누적된 뒤에도 왕복에서 바뀌지 않는다', () => {
     const live = setupStateful(cfg([rect()]));
 
-    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '9' } });
+    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '900' } });
     fireEvent.change(testid('canvas-element-stroke-width-0'), { target: { value: '-3' } });
     openTab('text');
     fireEvent.change(testid('canvas-element-font-size-0'), { target: { value: '-8' } });
@@ -1157,7 +1175,7 @@ describe('CanvasElementsEditor — parseCanvasConfig 왕복', () => {
     expect(live.elements.map((e) => e.kind)).toEqual(['rect', 'ellipse', 'line', 'text']);
 
     expandAllRows();
-    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '0.5' } });
+    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '50' } });
 
     expect(live.elements[0]!.style.opacity).toBe(0.5);
     expectRoundTrip(cfg(live.elements));
@@ -1867,12 +1885,22 @@ describe('순서 이동 규칙은 한 곳에만 있다 (REQ-04)', () => {
     // 지어져 있다 — 그래서 네 동작이 지나는 규칙은 여전히 하나다.
     //
     // SPEC-CANVAS-010 이 **지우기**를 같은 모듈로 올리면서 이름이 넷이 됐다. 캔버스의
-    // Delete·Backspace 가 같은 `removeNodes` 를 지나므로, 순서 이동에 대해 세운 이 규율이
-    // 지우기에도 그대로 걸린다.
+    // Delete·Backspace 가 같은 함수를 지나므로, 순서 이동에 대해 세운 이 규율이 지우기에도
+    // 그대로 걸린다.
+    //
+    // SPEC-CANVAS-011 M12 가 그 넷째 이름을 `removeNodesWithConnectors` 로 옮겼다(지워지는
+    // 요소를 가리키던 연결선까지 걷어낸다). 이름이 길어져 한 줄에 들지 않으므로 **줄 수에
+    // 기대지 않고** 이름 넷을 각각 센다 — 재는 성질("넷이 다 이 모듈에서 온다")은 그대로다.
     const source = readFileSync(join(__dirname, 'CanvasElementsEditor.tsx'), 'utf-8');
-    expect(source).toMatch(
-      /import \{ bringToFront, moveElementTo, removeNodes, sendToBack \} from '\.\/canvasEditArrange'/,
-    );
+    const importBlock =
+      /import \{([^}]*)\} from '\.\/canvasEditArrange';/.exec(source)?.[1] ?? '';
+    expect(
+      importBlock
+        .split(',')
+        .map((name) => name.trim())
+        .filter((name) => name !== '')
+        .sort(),
+    ).toEqual(['bringToFront', 'moveElementTo', 'removeNodesWithConnectors', 'sendToBack']);
     // 배열을 여기서 직접 자르지 않는다 — 두 번째 정렬 규칙이 생기는 자리가 그것이다.
     expect(source).not.toMatch(/\.splice\(/);
     // 같은 이유로 **직접 걸러 내지도 않는다** — 두 번째 지우기 규칙이 생기는 자리다.
@@ -2655,14 +2683,15 @@ describe('CanvasElementsEditor — 요소 카드의 탭', () => {
     // 돌아온 순간 칸이 원래 값으로 되돌아간다.
     setupStateful(cfg([rect()]));
 
-    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '0.25' } });
+    fireEvent.change(testid('canvas-element-opacity-0'), { target: { value: '25' } });
     openTab('text');
     fireEvent.change(testid('canvas-element-font-size-0'), { target: { value: '19' } });
     openTab('arrange');
     fireEvent.change(testid('canvas-element-geo-x-0'), { target: { value: '123' } });
 
     openTab('style');
-    expect((testid('canvas-element-opacity-0') as HTMLInputElement).value).toBe('0.25');
+    // 저장은 0.25 이고 칸은 백분율로 25 를 보인다(012 M5).
+    expect((testid('canvas-element-opacity-0') as HTMLInputElement).value).toBe('25');
     openTab('text');
     expect((testid('canvas-element-font-size-0') as HTMLInputElement).value).toBe('19');
     openTab('arrange');
