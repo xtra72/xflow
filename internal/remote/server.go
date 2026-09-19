@@ -427,6 +427,13 @@ func (s *Server) handleHandshakeMessage(ctx context.Context, conn Conn, cancel c
 			_ = conn.Close()
 			return "", nil, true
 		}
+		// 등록 게이트(@SPEC:SPEC-REMOTE-HELLO-GATE-001): 미등록·비승인 instance 의
+		// hello 는 online 으로 받지 않는다. 사유를 돌려주어 노드가 토큰을 버리고
+		// register 로 되돌아가게 한다(자가 복구). 상세는 admitHello 주석.
+		if reason, ok := s.admitHello(ctx, hello.InstanceID); !ok {
+			s.rejectHello(conn, hello.InstanceID, reason)
+			return "", nil, true
+		}
 		s.markOnline(hello)
 		owned := s.registerConn(hello.InstanceID, conn, cancel)
 		s.logger.Info("관리 노드 online", "instance_id", hello.InstanceID,

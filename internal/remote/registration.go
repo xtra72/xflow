@@ -207,6 +207,57 @@ func (s *Server) persistOnline(instanceID string, online bool, at time.Time) {
 	}
 }
 
+// admitHello 는 hello 를 받아들일지 판정한다(@SPEC:SPEC-REMOTE-HELLO-GATE-001).
+//
+// # 문지기가 없던 자리
+//
+// hello 경로의 문지기(`bootstrapAuthenticator`)는 M1 스텁이라 **무엇이든 수락**했다.
+// 그래서 등록 항목이 없는 instance 가 hello 를 보내면 online 으로 로그를 남기고
+// 인벤토리까지 미러에 쌓지만, `ListNodes` 는 DB만 읽으므로 그 노드를 0건으로 본다 —
+// 로그에는 붙어 있고 화면에는 없는 유령이 된다(사용자 신고 2026-09-17).
+//
+// 그 자리를 여기서 막는다. repo 가 있는(=server 모드) 서버는 등록 항목이 없거나
+// 승인 상태가 아닌 hello 를 거부한다. 거부는 조용히 끊지 않고 `hello_nack` 으로
+// **사유를 돌려준다** — 노드가 그 신호로 무효한 토큰을 버리고 register 로 되돌아가
+// 스스로 풀려나기 때문이다(조용한 종료는 재접속 루프만 만든다).
+//
+// repo 가 없는 M1 모드는 판정 근거 자체가 없으므로 종전처럼 수락한다(하위 호환).
+func (s *Server) admitHello(ctx context.Context, instanceID string) (string, bool) {
+	if s.repo == nil {
+		return "", true // M1 모드 — 등록 개념 없음.
+	}
+	node, err := s.repo.Get(ctx, instanceID)
+	if err != nil {
+		return HelloNackUnregistered, false
+	}
+	if node.Status != RegStatusApproved {
+		return HelloNackNotApproved, false
+	}
+	return "", true
+}
+
+// rejectHello 는 hello 를 거부하고 사유를 노드에 통지한 뒤 연결을 닫는다
+// (@SPEC:SPEC-REMOTE-HELLO-GATE-001).
+func (s *Server) rejectHello(conn Conn, instanceID, reason string) {
+	s.logger.Warn("hello 거부 — 등록 경로로 되돌림",
+		"instance_id", instanceID, "reason", reason)
+	s.sendHelloNack(conn, reason)
+	_ = conn.Close()
+}
+
+// sendHelloNack 는 hello_nack 을 전송한다(전송 실패는 치명적이지 않다 — 연결이 이미
+// 끊긴 경우이며, 어느 쪽이든 노드는 재접속한다).
+func (s *Server) sendHelloNack(conn Conn, reason string) {
+	msg, err := NewHelloNackMessage(HelloNackPayload{Reason: reason})
+	if err != nil {
+		s.logger.Error("hello_nack 인코딩 실패", "error", err)
+		return
+	}
+	if err := writeEnvelope(conn, msg); err != nil {
+		s.logger.Debug("hello_nack 전송 실패", "error", err)
+	}
+}
+
 // handleRegister 는 register 메시지를 처리한다(REQ-C01/C02/C08, spec §5.6).
 //
 // 반환: (instanceID, owned, handled). 정상 등록 시 instanceID 와 owned(이번 연결의
@@ -409,11 +460,16 @@ func (s *Server) restoreSession(_ context.Context, conn Conn, cancel context.Can
 	node, err := s.repo.Get(context.Background(), instanceID)
 	if err != nil {
 		s.logger.Warn("재접속 노드 미등록 — 세션 복원 거부", "instance_id", instanceID)
+		// 토큰은 유효했으나 항목이 없다 — 노드가 토큰을 버리고 다시 등록해야 풀린다
+		// (@SPEC:SPEC-REMOTE-HELLO-GATE-001 자가 복구). 사유 없이 끊으면 노드는
+		// 같은 토큰으로 영원히 재접속만 되풀이한다.
+		s.sendHelloNack(conn, HelloNackUnregistered)
 		return nil, false
 	}
 	if node.Status != RegStatusApproved {
 		s.logger.Warn("재접속 노드 비승인 — 세션 복원 거부",
 			"instance_id", instanceID, "status", node.Status)
+		s.sendHelloNack(conn, HelloNackNotApproved)
 		return nil, false
 	}
 	now := time.Now()
