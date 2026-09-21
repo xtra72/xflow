@@ -55,6 +55,11 @@ var ErrCommandFailed = errors.New("remote: command failed on node")
 //   - ErrCommandFailed: 클라이언트 적용 실패(REQ-D09).
 //   - ctx.Err(): 호출자 컨텍스트 취소.
 func (s *Server) Dispatch(ctx context.Context, instanceID, domain, action string, args json.RawMessage) (json.RawMessage, error) {
+	// 0) 명령을 보낸 것도 그 노드에 들어온 것이다(@SPEC:SPEC-REMOTE-LOG-001).
+	//    게이트보다 먼저 기록한다 — 거절된 시도도 "누가 건드렸다" 에는 해당한다.
+	//    actor 가 없는 내부 호출은 TouchAccess 가 스스로 걸러 낸다.
+	s.TouchAccess(ctx, instanceID, actorFromContext(ctx))
+
 	// 1) 승인+온라인 게이트(M2 IsManaged 재사용 — REQ-D01/D08).
 	if !s.IsManaged(instanceID) {
 		s.logger.Warn("원격 명령 거절 — 대상 노드 미관리",

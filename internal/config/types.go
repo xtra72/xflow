@@ -180,6 +180,10 @@ type RemoteManagementConfig struct {
 	// HeartbeatInterval 은 heartbeat 주기 (안전 기본값, REQ-A05).
 	HeartbeatInterval time.Duration
 
+	// AuditRetention 은 원격 관리 로그 보존 기간이다(@SPEC:SPEC-REMOTE-LOG-001).
+	// 이보다 오래된 감사 기록은 주기적으로 삭제된다. 0 이면 삭제하지 않는다.
+	AuditRetention time.Duration
+
 	// BootstrapSecret 은 (선택) enrollment 사전 공유 시크릿 (REQ-C08).
 	// 시크릿이므로 redaction·비커밋 대상 (REQ-F06).
 	BootstrapSecret string

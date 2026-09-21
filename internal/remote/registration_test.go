@@ -195,6 +195,21 @@ func (m *memManagedNodeRepo) SetSystemInfo(_ context.Context, instanceID, osName
 	return nil
 }
 
+// SetLastAccess 는 관리자 원격 관리 접근 시각/주체를 기록한다
+// (@SPEC:SPEC-REMOTE-LOG-001). 노드 보고값과 달리 관리자 소유 필드이다.
+func (m *memManagedNodeRepo) SetLastAccess(_ context.Context, instanceID, actor string, atMs int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.nodes[instanceID]
+	if !ok {
+		return storage.ErrManagedNodeNotFound
+	}
+	n.LastAccessAt = atMs
+	n.LastAccessBy = actor
+	m.nodes[instanceID] = n
+	return nil
+}
+
 // SetNodeDisplayOverride 는 관리자 해상도 오버라이드를 설정/해제한다(v1.6 M11 확장).
 // width<=0 또는 height<=0 이면 0,0 으로 해제한다(저장소 계약 일관).
 func (m *memManagedNodeRepo) SetNodeDisplayOverride(_ context.Context, instanceID string, width, height int) error {

@@ -15,14 +15,16 @@
 
 import { lazy, Suspense, useMemo } from 'react';
 import { useSearchParams } from 'react-router';
-import { Bot, Cpu, Gauge, HardDrive, LayoutDashboard, Workflow } from 'lucide-react';
+import { Bot, Cpu, Gauge, HardDrive, LayoutDashboard, ScrollText, Workflow } from 'lucide-react';
 
 import { FixedCanvasScaler } from '@/components/remote/FixedCanvasScaler';
+import RemoteLogTable from '@/components/remote/RemoteLogTable';
 import { NodeDisplayResolutionSection } from '@/components/remote/NodeDisplayResolutionSection';
 import { NodeOnlineIndicator } from '@/components/remote/NodeOnlineIndicator';
 import { NodeStatusBadge } from '@/components/remote/NodeStatusBadge';
 import { VersionManagementSection } from '@/components/remote/VersionManagementSection';
 import { useRemoteNodeDetail } from '@/hooks/useRemote';
+import { useRemoteLogs } from '@/hooks/useRemoteLogs';
 import { useTranslation } from '@/lib/i18n';
 import type { ResourceTarget } from '@/lib/remote/target';
 import { useUIStore } from '@/stores/uiStore';
@@ -42,7 +44,7 @@ const DeviceListPage = lazy(() => import('@/pages/devices/DeviceListPage'));
 const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage'));
 
 /** 대시보드 서브탭 식별자. */
-type DashboardTab = 'overview' | 'flows' | 'agents' | 'devices' | 'dashboard';
+type DashboardTab = 'overview' | 'flows' | 'agents' | 'devices' | 'dashboard' | 'logs';
 
 /** 유효한 서브탭 식별자 집합(URL 파라미터 검증용). */
 const DASHBOARD_TABS: readonly DashboardTab[] = [
@@ -51,6 +53,7 @@ const DASHBOARD_TABS: readonly DashboardTab[] = [
   'agents',
   'devices',
   'dashboard',
+  'logs',
 ];
 
 /** URL `?tab=` 원시 값을 DashboardTab 으로 파싱한다(미지정/무효 → overview). */
@@ -118,6 +121,7 @@ export function NodeDashboard({
     { id: 'flows', labelKey: 'remote.dashboard.tab.flows', Icon: Workflow },
     { id: 'agents', labelKey: 'remote.dashboard.tab.agents', Icon: Bot },
     { id: 'devices', labelKey: 'remote.dashboard.tab.devices', Icon: HardDrive },
+    { id: 'logs', labelKey: 'remote.log.tab', Icon: ScrollText },
   ];
 
   // 관리자 뷰(상단 바)에서는 콘텐츠가 풀폭/풀하이트 영역을 채워야 하므로
@@ -186,9 +190,35 @@ export function NodeDashboard({
             {tab === 'dashboard' && (
               <DashboardCanvas instanceId={instanceId} enabled={enabled} target={target} />
             )}
+            {/* 로그 서브탭: 이 노드의 사건만 본다(@SPEC:SPEC-REMOTE-LOG-001).
+                전체 로그 페이지와 같은 표를 공유하되 노드 칸은 접는다 — 한 노드만
+                보는 자리에서 같은 값이 모든 줄에 반복되면 읽을 것이 줄어든다. */}
+            {tab === 'logs' && <NodeLogTab instanceId={instanceId} enabled={enabled} />}
           </Suspense>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---- 노드 로그 탭 (@SPEC:SPEC-REMOTE-LOG-001) ----
+
+interface NodeLogTabProps {
+  instanceId: string;
+  enabled: boolean;
+}
+
+/** 이 노드의 사건만 시간순으로 보여준다. 표는 전체 로그 페이지와 공유한다. */
+function NodeLogTab({ instanceId, enabled }: NodeLogTabProps) {
+  const { data, isLoading, isError } = useRemoteLogs({ instanceId }, enabled);
+  return (
+    <div className="rounded-lg bg-(--color-bg-surface) shadow">
+      <RemoteLogTable
+        entries={data?.entries ?? []}
+        isLoading={isLoading}
+        isError={isError}
+        showNode={false}
+      />
     </div>
   );
 }
@@ -290,6 +320,14 @@ function NodeOverview({ instanceId, enabled }: NodeOverviewProps): React.JSX.Ele
       : formatDuration(Math.floor(detail.uptime / 1000));
   const lastSeenLabel =
     detail.last_seen > 0 ? formatDate(new Date(detail.last_seen), 'long') : '-';
+  // 마지막 접속은 **사람이 들여다본** 시각이다(@SPEC:SPEC-REMOTE-LOG-001). 노드가
+  // 보낸 신호인 마지막 수신과 뜻이 다르므로 칸을 따로 둔다. 누가 들어왔는지도
+  // 함께 적는다 — 시각만으로는 "누가" 를 물어볼 자리가 없다.
+  const lastAccessAt = detail.last_access_at ?? 0;
+  const lastAccessLabel =
+    lastAccessAt > 0
+      ? `${formatDate(new Date(lastAccessAt), 'long')}${detail.last_access_by ? ` (${detail.last_access_by})` : ''}`
+      : '-';
   const groupLabel = detail.group_name || t('remote.group.all');
 
   return (
@@ -332,6 +370,7 @@ function NodeOverview({ instanceId, enabled }: NodeOverviewProps): React.JSX.Ele
             </dd>
           </div>
           <InfoItem label={t('remote.col.lastSeen')} value={lastSeenLabel} />
+          <InfoItem label={t('remote.col.lastAccess')} value={lastAccessLabel} />
         </dl>
       </section>
 

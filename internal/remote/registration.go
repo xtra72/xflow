@@ -330,6 +330,7 @@ func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.C
 		owned := s.registerConn(p.InstanceID, conn, cancel)
 		s.sendRegisterAck(conn, RegisterAckPayload{Status: RegStatusPending})
 		s.logger.Info("관리 노드 등록 요청 → pending", "instance_id", p.InstanceID)
+		s.recordLifecycleAudit(ctx, p.InstanceID, storage.AuditActionRegister, RegStatusPending)
 		return p.InstanceID, owned, true
 
 	case err != nil:
@@ -486,6 +487,7 @@ func (s *Server) restoreSession(_ context.Context, conn Conn, cancel context.Can
 	s.mu.Unlock()
 	s.persistOnline(instanceID, true, now)
 	s.logger.Info("승인 노드 재접속 — 세션 복원", "instance_id", instanceID)
+	s.recordLifecycleAudit(context.Background(), instanceID, storage.AuditActionConnect, "restore")
 	return owned, true
 }
 

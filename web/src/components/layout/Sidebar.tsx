@@ -20,6 +20,7 @@ import {
   LayoutDashboard,
   Network,
   Package,
+  ScrollText,
   Settings,
   SlidersHorizontal,
   UserPlus,
@@ -192,6 +193,14 @@ const NAV_ENTRIES: NavEntry[] = [
         labelKey: 'nav.releaseStore',
         path: '/admin/remote/releases',
         icon: Package,
+        permission: 'remote.read',
+
+        navPermission: 'nav.remote',
+      },
+      {
+        labelKey: 'nav.remoteLogs',
+        path: '/admin/remote/logs',
+        icon: ScrollText,
         permission: 'remote.read',
 
         navPermission: 'nav.remote',

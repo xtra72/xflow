@@ -24,7 +24,8 @@
     "enrollmentManagement": "등록 관리",
     "groupManagement": "그룹 관리",
     "releaseStore": "릴리스 저장소",
-    "users": "사용자 관리"
+    "users": "사용자 관리",
+    "remoteLogs": "원격 관리 로그"
   },
   "auth": {
     "login": "로그인",
@@ -3703,7 +3704,8 @@
       "online": "연결",
       "status": "상태",
       "lastSeen": "마지막 수신",
-      "actions": "액션"
+      "actions": "액션",
+      "lastAccess": "마지막 접속"
     },
     "action": {
       "approve": "승인",
@@ -4096,6 +4098,36 @@
       "deleteFailed": "삭제에 실패했습니다",
       "notServer": "원격 관리(server 모드)에서만 사용할 수 있습니다.",
       "loadError": "릴리스 목록을 불러오지 못했습니다"
+    },
+    "log": {
+      "title": "원격 관리 로그",
+      "empty": "기록된 로그가 없습니다.",
+      "col": {
+        "time": "시각",
+        "node": "노드",
+        "action": "사건",
+        "actor": "수행",
+        "detail": "상세"
+      },
+      "action": {
+        "register": "등록 요청",
+        "delete": "노드 삭제",
+        "connect": "연결",
+        "disconnect": "끊어짐",
+        "access": "원격 접속",
+        "approve": "승인",
+        "reject": "거부",
+        "revoke": "폐기",
+        "command": "명령",
+        "version_update": "버전 변경",
+        "imageUpdate": "이미지 업데이트"
+      },
+      "tab": "로그",
+      "allNodes": "전체 노드",
+      "allActions": "모든 사건",
+      "allActors": "모든 수행",
+      "showIds": "ID 로 보기",
+      "showNames": "이름으로 보기"
     }
   },
   "flowPicker": {

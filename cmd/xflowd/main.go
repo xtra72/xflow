@@ -1346,6 +1346,11 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			remoteServer.StartSweeper(ctx)
 			logger.Info("원격 관리 online/offline 추적 시작")
 		}
+		// 원격 관리 로그 보존 집행(@SPEC:SPEC-REMOTE-LOG-001). 설정 기간보다 오래된
+		// 감사 기록을 주기적으로 지운다. 기간 0 이면 시작하지 않는다(무제한 보존).
+		// sweeper 와 같은 ctx 를 쓰므로 종료 시그널에 함께 정리된다.
+		remote.StartAuditRetention(ctx, remoteAuditRepo, rmCfg.AuditRetention,
+			obs.Loggers.NewLogger("remote.audit_retention").Logger())
 	case "client":
 		// 영속 instance_id 해석(config override 우선, 없으면 데이터 디렉토리에
 		// 생성·영속 — REQ-A03). 데이터 디렉토리는 SQLite 경로의 부모를 재사용한다.

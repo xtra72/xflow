@@ -98,6 +98,10 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("remote_management.auto_register", true)
 	v.SetDefault("remote_management.heartbeat_interval", "30s")
 	v.SetDefault("remote_management.bootstrap_secret", "")
+	// 원격 관리 로그 보존 기간(@SPEC:SPEC-REMOTE-LOG-001). 이보다 오래된 감사 기록은
+	// 주기적으로 지운다. 연결/끊어짐까지 남기므로 상한이 없으면 표가 계속 자란다.
+	// 빈 값/0 이면 정리하지 않는다(무제한 보존 — 명시적 선택).
+	v.SetDefault("remote_management.audit_retention", "720h") // 30일
 	// enrollment_token 기본 빈 값 — 설정 시 client register 가 가입 토큰을 운반한다(v1.1 H).
 	v.SetDefault("remote_management.enrollment_token", "")
 	v.SetDefault("remote_management.exposure.flows", "none")

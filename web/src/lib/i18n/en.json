@@ -24,7 +24,8 @@
     "enrollmentManagement": "Enrollment",
     "groupManagement": "Group Management",
     "releaseStore": "Release Store",
-    "users": "Users"
+    "users": "Users",
+    "remoteLogs": "Remote logs"
   },
   "auth": {
     "login": "Login",
@@ -3703,7 +3704,8 @@
       "online": "Connection",
       "status": "Status",
       "lastSeen": "Last Seen",
-      "actions": "Actions"
+      "actions": "Actions",
+      "lastAccess": "Last access"
     },
     "action": {
       "approve": "Approve",
@@ -4096,6 +4098,36 @@
       "noMembers": "No nodes in this group.",
       "ungroupedDesc": "Nodes not in any group (default — cannot delete)",
       "notServer": "Available only in remote management (server mode)."
+    },
+    "log": {
+      "title": "Remote management log",
+      "empty": "No log entries.",
+      "col": {
+        "time": "Time",
+        "node": "Node",
+        "action": "Event",
+        "actor": "By",
+        "detail": "Detail"
+      },
+      "action": {
+        "register": "Registration request",
+        "delete": "Node deleted",
+        "connect": "Connected",
+        "disconnect": "Disconnected",
+        "access": "Remote access",
+        "approve": "Approved",
+        "reject": "Rejected",
+        "revoke": "Revoked",
+        "command": "Command",
+        "version_update": "Version changed",
+        "imageUpdate": "Image update"
+      },
+      "tab": "Log",
+      "allNodes": "All nodes",
+      "allActions": "All events",
+      "allActors": "All actors",
+      "showIds": "Show IDs",
+      "showNames": "Show names"
     }
   },
   "flowPicker": {

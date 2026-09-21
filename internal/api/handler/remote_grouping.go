@@ -43,6 +43,10 @@ type NodeGroupingService interface {
 	// NodeDetail 은 노드 메타 + 시스템 정보 + uptime + 운영 요약을 반환한다(REQ-K08/K10).
 	// 미존재 시 storage.ErrManagedNodeNotFound.
 	NodeDetail(ctx context.Context, instanceID string) (remote.NodeDetail, error)
+	// TouchAccess 는 관리자의 원격 관리 접근을 기록한다(@SPEC:SPEC-REMOTE-LOG-001).
+	// 시각 갱신과 감사 1줄을 각자의 창(window)으로 묶는다 — 상세 조회가 5초마다
+	// 폴링돼도 로그가 폭주하지 않는다.
+	TouchAccess(ctx context.Context, instanceID, actor string)
 	// SetNodeDisplayOverride 는 관리자 해상도 오버라이드를 설정한다(v1.6 M11 확장).
 	// width/height 가 양수여야 하며(핸들러가 검증), 그룹 배정과 동일하게 노드로 명령을
 	// 전파하지 않는다(A13). 미존재 시 storage.ErrManagedNodeNotFound.
@@ -129,10 +133,12 @@ type NodeDetailDTO struct {
 	DisplayOverrideHeight int `json:"display_override_height"` // 관리자 오버라이드 세로 px (0=없음)
 	// DisplayReported* 는 노드가 보고한 원본 해상도이다(v1.6 M11). 0 은 미보고이다.
 	// UI 가 "노드 보고" 소스 표시 + 오버라이드와의 비교에 사용한다.
-	DisplayReportedWidth  int            `json:"display_reported_width"`  // 노드 보고 가로 px (0=미보고)
-	DisplayReportedHeight int            `json:"display_reported_height"` // 노드 보고 세로 px (0=미보고)
-	LastSeen              int64          `json:"last_seen"`               // epoch ms
-	Summary               NodeSummaryDTO `json:"summary"`                 // 운영 요약(미러 파생)
+	DisplayReportedWidth  int            `json:"display_reported_width"`   // 노드 보고 가로 px (0=미보고)
+	DisplayReportedHeight int            `json:"display_reported_height"`  // 노드 보고 세로 px (0=미보고)
+	LastSeen              int64          `json:"last_seen"`                // keep-alive 마지막 수신(epoch ms)
+	LastAccessAt          int64          `json:"last_access_at"`           // 마지막 원격 관리 접속(epoch ms, 0=없음)
+	LastAccessBy          string         `json:"last_access_by,omitempty"` // 그때의 관리자
+	Summary               NodeSummaryDTO `json:"summary"`                  // 운영 요약(미러 파생)
 }
 
 // RemoteGroupingHandler 는 노드 그룹핑 + 상세 엔드포인트를 처리한다.
@@ -506,6 +512,9 @@ func (h *RemoteGroupingHandler) NodeDetail(ctx api.Context) error {
 	if err != nil {
 		return mapRemoteAdminError(err) // ErrManagedNodeNotFound → 404.
 	}
+	// 노드 상세를 열었다 = 그 노드를 관리하려고 들어왔다. 조회에 성공한 뒤에만
+	// 기록한다 — 없는 노드를 찔러 본 것은 접속이 아니다.
+	h.svc.TouchAccess(ctx.Context(), id, ctx.UserID())
 	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(toNodeDetailDTO(detail)))
 }
 
@@ -541,6 +550,8 @@ func toNodeDetailDTO(d remote.NodeDetail) NodeDetailDTO {
 		DisplayReportedWidth:  d.Node.DisplayWidth,
 		DisplayReportedHeight: d.Node.DisplayHeight,
 		LastSeen:              d.Node.LastSeen,
+		LastAccessAt:          d.Node.LastAccessAt,
+		LastAccessBy:          d.Node.LastAccessBy,
 	}
 	if d.HasUptime {
 		up := d.UptimeMs
