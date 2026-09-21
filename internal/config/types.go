@@ -180,6 +180,13 @@ type RemoteManagementConfig struct {
 	// HeartbeatInterval 은 heartbeat 주기 (안전 기본값, REQ-A05).
 	HeartbeatInterval time.Duration
 
+	// ReconnectInitial/ReconnectMax 는 클라이언트 재연결 간격의 하한/상한이다
+	// (@SPEC:SPEC-REMOTE-RECONNECT-001). 끊어진 직후에는 하한으로 빨리 시도하고,
+	// 실패가 이어지면 2배씩 늘려 상한에서 멈춘다. 상한이 하한보다 작으면 하한으로
+	// 맞춘다(둘을 뒤집어 적은 설정이 재연결을 영영 멈추게 두지 않는다).
+	ReconnectInitial time.Duration
+	ReconnectMax     time.Duration
+
 	// AuditRetention 은 원격 관리 로그 보존 기간이다(@SPEC:SPEC-REMOTE-LOG-001).
 	// 이보다 오래된 감사 기록은 주기적으로 삭제된다. 0 이면 삭제하지 않는다.
 	AuditRetention time.Duration

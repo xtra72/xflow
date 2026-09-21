@@ -42,6 +42,11 @@ const (
 	// DefaultReconnectMax 는 재연결 백오프의 상한이다(폭주 방지 — 위험표 "재연결 폭주").
 	DefaultReconnectMax = 60 * time.Second
 
+	// stableSessionThreshold 는 "제대로 붙었던 세션" 으로 세는 최소 지속 시간이다
+	// (@SPEC:SPEC-REMOTE-RECONNECT-001). 이보다 짧게 끝난 세션은 연결 실패로 세어
+	// 재연결 간격을 늘린다 — 붙자마자 끊기는 상태를 최소 간격으로 두드리지 않기 위해서다.
+	stableSessionThreshold = 30 * time.Second
+
 	// DefaultInventoryPollInterval 은 인벤토리 poll+diff 델타 소스의 기본 주기이다
 	// (M4, REQ-E02). 데몬에 구독 가능한 변경 이벤트 소스가 없어 poll 기반으로 델타를
 	// 도출한다(inventory.go 델타 소스 결정 주석 참조).
@@ -254,6 +259,12 @@ func NewClient(cfg ClientConfig, dialer Dialer) *Client {
 	if cfg.ReconnectMax <= 0 {
 		cfg.ReconnectMax = DefaultReconnectMax
 	}
+	if cfg.ReconnectMax < cfg.ReconnectInitial {
+		// 둘을 뒤집어 적은 설정(최소 60s, 최대 1s)을 그대로 두면 상한이 하한을 잘라
+		// 첫 시도부터 1s 가 된다 — 설정한 사람의 뜻과 반대다. 상한을 하한까지 올려
+		// "간격 고정" 으로 읽는다. 재연결이 멈추는 쪽으로 해석하지는 않는다.
+		cfg.ReconnectMax = cfg.ReconnectInitial
+	}
 	if cfg.InventoryPollInterval <= 0 {
 		cfg.InventoryPollInterval = DefaultInventoryPollInterval
 	}
@@ -357,15 +368,29 @@ func (c *Client) runLoop(ctx context.Context) {
 			"instance_id", c.cfg.InstanceID, "server_url", c.cfg.ServerURL)
 
 		// 세션 실행(연결 종료 또는 ctx 취소 시 반환).
+		sessionStart := time.Now()
 		c.runSession(ctx, conn)
+		sessionLasted := time.Since(sessionStart)
 
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			// 연결이 끊김 → 재연결 시도. 성공 세션 직후이므로 백오프 카운터를
-			// 1 로 리셋해 첫 재시도를 빠르게 한다(지수 백오프는 연속 실패에서만 증가).
-			attempt = 1
+			// 연결이 끊김 → 재연결 시도.
+			//
+			// 오래 붙어 있던 세션이 끊긴 것은 "잠깐 끊겼다" 이므로 백오프를 1 로
+			// 되돌려 곧바로(최소 간격) 다시 붙는다 — 사용자가 말한 "끊어진 직후에는
+			// 간격이 짧게" 가 이 자리다.
+			//
+			// 그러나 붙자마자 죽는 세션까지 되돌리면 안 된다. dial 은 성공하는데
+			// 서버가 곧장 닫는 상태(포트는 열렸으나 준비되지 않은 서버, 거부되는
+			// 핸드셰이크)에서는 "연결이 안 되는" 것과 다르지 않은데, 되돌리면 최소
+			// 간격으로 영원히 두드리게 된다. 그런 세션은 실패로 세어 간격을 늘린다.
+			if sessionLasted >= stableSessionThreshold {
+				attempt = 1
+			} else {
+				attempt++
+			}
 		}
 	}
 }

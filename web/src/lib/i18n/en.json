@@ -2246,7 +2246,10 @@
       "saved": "Saved",
       "savedRestart": "Saved. {n} item(s) will take effect after a restart.",
       "saveError": "Failed to save",
-      "noChanges": "No changes"
+      "noChanges": "No changes",
+      "reconnectInitial": "Reconnect min interval",
+      "reconnectMax": "Reconnect max interval",
+      "reconnectHint": "Retries at the minimum interval right after a drop, then doubles up to the maximum. Retrying never stops."
     },
     "scheduleLog": {
       "title": "Schedule Log Storage",

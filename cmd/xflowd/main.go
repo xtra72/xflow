@@ -1446,9 +1446,13 @@ func runServer(configFile, host string, port int, logLevel, logOutput string) er
 			DisplayWidth:      rmCfg.Display.Width,
 			DisplayHeight:     rmCfg.Display.Height,
 			HeartbeatInterval: rmCfg.HeartbeatInterval,
-			BootstrapSecret:   rmCfg.BootstrapSecret,
-			EnrollmentToken:   rmCfg.EnrollmentToken,
-			DataDir:           dataDir,
+			// 재연결 간격(@SPEC:SPEC-REMOTE-RECONNECT-001). 0 이면 NewClient 가 기본값
+			// (1s/60s)으로 채운다 — 설정을 비워 둔 기존 배치가 그대로 동작한다.
+			ReconnectInitial: rmCfg.ReconnectInitial,
+			ReconnectMax:     rmCfg.ReconnectMax,
+			BootstrapSecret:  rmCfg.BootstrapSecret,
+			EnrollmentToken:  rmCfg.EnrollmentToken,
+			DataDir:          dataDir,
 			Exposure: remote.ExposureSummary{
 				Flows:   rmCfg.Exposure.Flows,
 				Agents:  rmCfg.Exposure.Agents,

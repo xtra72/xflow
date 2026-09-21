@@ -546,6 +546,8 @@ func (c *viperConfig) RemoteManagement() RemoteManagementConfig {
 		InstanceID:        c.v.GetString("remote_management.instance_id"),
 		AutoRegister:      c.v.GetBool("remote_management.auto_register"),
 		HeartbeatInterval: heartbeat,
+		ReconnectInitial:  c.v.GetDuration("remote_management.reconnect_initial"),
+		ReconnectMax:      c.v.GetDuration("remote_management.reconnect_max"),
 		AuditRetention:    c.v.GetDuration("remote_management.audit_retention"),
 		BootstrapSecret:   c.v.GetString("remote_management.bootstrap_secret"),
 		EnrollmentToken:   c.v.GetString("remote_management.enrollment_token"),

@@ -46,6 +46,8 @@ const (
 	keyInstanceID      = "remote_management.instance_id"
 	keyAutoRegister    = "remote_management.auto_register"
 	keyHeartbeat       = "remote_management.heartbeat_interval"
+	keyReconnectInit   = "remote_management.reconnect_initial"
+	keyReconnectMax    = "remote_management.reconnect_max"
 	keyEnrollmentToken = "remote_management.enrollment_token"
 	keyBootstrapSecret = "remote_management.bootstrap_secret"
 	keyExposureFlows   = "remote_management.exposure.flows"
@@ -61,6 +63,7 @@ const (
 func restartRequiredKeys() []string {
 	all := []string{
 		keyMode, keyServerURL, keyInstanceID, keyAutoRegister, keyHeartbeat,
+		keyReconnectInit, keyReconnectMax,
 		keyEnrollmentToken, keyBootstrapSecret, keyExposureFlows, keyExposureAgents,
 		keyExposureDevices, keyRequireSecure, keyInsecureSkip, keyDisplayWidth, keyDisplayHeight,
 	}
@@ -85,6 +88,8 @@ func (h *RemoteConfigHandler) Get(ctx api.Context) error {
 		InstanceID:         rm.InstanceID,
 		AutoRegister:       rm.AutoRegister,
 		HeartbeatInterval:  rm.HeartbeatInterval.String(),
+		ReconnectInitial:   rm.ReconnectInitial.String(),
+		ReconnectMax:       rm.ReconnectMax.String(),
 		EnrollmentTokenSet: rm.EnrollmentToken != "",
 		BootstrapSecretSet: rm.BootstrapSecret != "",
 		Exposure: dto.RemoteClientExposureDTO{
@@ -124,6 +129,28 @@ func (h *RemoteConfigHandler) Put(ctx api.Context) error {
 			return api.ErrValidationFailed.WithMessage("heartbeat_interval 은 Go duration 형식이어야 합니다 (예: 30s)")
 		}
 	}
+	// 재연결 간격(@SPEC:SPEC-REMOTE-RECONNECT-001): 형식과 양수 여부를 본다.
+	// 0 이나 음수를 저장하면 클라이언트가 기본값으로 되돌려 버려, 설정한 사람은
+	// 저장은 됐는데 값이 안 먹는 상태를 보게 된다 — 여기서 거절하는 편이 친절하다.
+	for _, f := range []struct {
+		name string
+		val  *string
+	}{
+		{"reconnect_initial", req.ReconnectInitial},
+		{"reconnect_max", req.ReconnectMax},
+	} {
+		if f.val == nil || *f.val == "" {
+			continue
+		}
+		d, err := time.ParseDuration(*f.val)
+		if err != nil {
+			return api.ErrValidationFailed.WithMessage(
+				f.name + " 은 Go duration 형식이어야 합니다 (예: 1s)")
+		}
+		if d <= 0 {
+			return api.ErrValidationFailed.WithMessage(f.name + " 은 0보다 커야 합니다")
+		}
+	}
 
 	// 필드 → 키 매핑을 순회하며 non-nil 값만 영속화한다.
 	// 시크릿은 nil=유지이므로 이미 non-nil 여부로 처리된다(빈 문자열=해제).
@@ -138,6 +165,8 @@ func (h *RemoteConfigHandler) Put(ctx api.Context) error {
 		{keyInstanceID, deref(req.InstanceID), req.InstanceID != nil},
 		{keyAutoRegister, derefBool(req.AutoRegister), req.AutoRegister != nil},
 		{keyHeartbeat, deref(req.HeartbeatInterval), req.HeartbeatInterval != nil},
+		{keyReconnectInit, deref(req.ReconnectInitial), req.ReconnectInitial != nil},
+		{keyReconnectMax, deref(req.ReconnectMax), req.ReconnectMax != nil},
 		{keyEnrollmentToken, deref(req.EnrollmentToken), req.EnrollmentToken != nil},
 		{keyBootstrapSecret, deref(req.BootstrapSecret), req.BootstrapSecret != nil},
 		{keyExposureFlows, deref(req.ExposureFlows), req.ExposureFlows != nil},

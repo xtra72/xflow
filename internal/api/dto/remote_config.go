@@ -20,11 +20,15 @@ type RemoteClientExposureDTO struct {
 // RemoteClientConfigResponse 는 GET /system/remote-config 응답 페이로드이다.
 // 시크릿은 값 대신 *Set(bool) 로만 노출한다.
 type RemoteClientConfigResponse struct {
-	Mode               string                  `json:"mode"` // disabled | client | server
-	ServerURL          string                  `json:"server_url"`
-	InstanceID         string                  `json:"instance_id"`
-	AutoRegister       bool                    `json:"auto_register"`
-	HeartbeatInterval  string                  `json:"heartbeat_interval"` // Go duration 문자열 (예: "30s")
+	Mode              string `json:"mode"` // disabled | client | server
+	ServerURL         string `json:"server_url"`
+	InstanceID        string `json:"instance_id"`
+	AutoRegister      bool   `json:"auto_register"`
+	HeartbeatInterval string `json:"heartbeat_interval"` // Go duration 문자열 (예: "30s")
+	// ReconnectInitial/ReconnectMax 는 재연결 간격의 하한/상한이다
+	// (@SPEC:SPEC-REMOTE-RECONNECT-001). Go duration 문자열(예: "1s", "60s").
+	ReconnectInitial   string                  `json:"reconnect_initial"`
+	ReconnectMax       string                  `json:"reconnect_max"`
 	EnrollmentTokenSet bool                    `json:"enrollment_token_set"`
 	BootstrapSecretSet bool                    `json:"bootstrap_secret_set"`
 	Exposure           RemoteClientExposureDTO `json:"exposure"`
@@ -46,6 +50,8 @@ type RemoteClientConfigUpdate struct {
 	InstanceID         *string `json:"instance_id"`
 	AutoRegister       *bool   `json:"auto_register"`
 	HeartbeatInterval  *string `json:"heartbeat_interval"`
+	ReconnectInitial   *string `json:"reconnect_initial"`
+	ReconnectMax       *string `json:"reconnect_max"`
 	EnrollmentToken    *string `json:"enrollment_token"` // nil=유지, ""=해제, 그 외=갱신
 	BootstrapSecret    *string `json:"bootstrap_secret"`
 	ExposureFlows      *string `json:"exposure_flows"`
