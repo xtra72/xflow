@@ -52,7 +52,12 @@
     "currentPasswordWrong": "현재 비밀번호가 올바르지 않습니다",
     "permissionDenied": "이 화면에 접근할 권한이 없습니다. 관리자에게 권한을 요청하세요.",
     "permissionUnavailable": "권한 정보를 불러오지 못했습니다. 잠시 후 다시 시도하세요.",
-    "userMenu": "사용자 메뉴"
+    "userMenu": "사용자 메뉴",
+    "idleLogout": {
+      "warningTitle": "곧 자동 로그아웃됩니다",
+      "warningBody": "{minutes}분 동안 사용이 없어 {remaining} 후 로그아웃됩니다. 계속 사용하려면 아래를 누르세요.",
+      "continue": "계속 사용"
+    }
   },
   "dashboard": {
     "title": "대시보드",
@@ -2371,7 +2376,16 @@
     "themeNightDesc": "어두운 테마를 사용합니다",
     "themeSystemDesc": "시스템 설정을 따릅니다",
     "languageTitle": "언어 설정",
-    "languageSubtitle": "인터페이스 표시 언어를 선택합니다"
+    "languageSubtitle": "인터페이스 표시 언어를 선택합니다",
+    "idleLogout": {
+      "title": "자동 로그아웃",
+      "desc": "설정한 시간 동안 사용이 없으면 자동으로 로그아웃합니다. 모든 사용자에게 적용되는 서버 설정입니다.",
+      "enabledLabel": "자동 로그아웃 사용",
+      "minutesLabel": "유휴 시간(분)",
+      "minutesHint": "{min}~{max}분 사이로 정합니다. 로그아웃 1분 전(짧게 설정하면 그보다 일찍) 안내가 뜹니다.",
+      "saved": "자동 로그아웃 설정을 저장했습니다.",
+      "saveFailed": "자동 로그아웃 설정을 저장하지 못했습니다."
+    }
   },
   "agents": {
     "title": "에이전트 관리",

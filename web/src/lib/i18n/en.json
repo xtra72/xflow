@@ -52,7 +52,12 @@
     "currentPasswordWrong": "Current password is incorrect",
     "permissionDenied": "You do not have permission to access this page. Ask an administrator for access.",
     "permissionUnavailable": "Could not load your permissions. Please try again shortly.",
-    "userMenu": "User menu"
+    "userMenu": "User menu",
+    "idleLogout": {
+      "warningTitle": "You will be signed out soon",
+      "warningBody": "No activity for {minutes} minutes. You will be signed out in {remaining}. Press below to stay signed in.",
+      "continue": "Stay signed in"
+    }
   },
   "dashboard": {
     "title": "Dashboard",
@@ -2371,7 +2376,16 @@
     "themeNightDesc": "Use the dark theme",
     "themeSystemDesc": "Follow the system setting",
     "languageTitle": "Language Settings",
-    "languageSubtitle": "Choose the interface display language"
+    "languageSubtitle": "Choose the interface display language",
+    "idleLogout": {
+      "title": "Automatic sign-out",
+      "desc": "Signs the user out after a period of inactivity. This is a server-wide setting and applies to every user.",
+      "enabledLabel": "Enable automatic sign-out",
+      "minutesLabel": "Idle timeout (minutes)",
+      "minutesHint": "Between {min} and {max} minutes. A warning appears one minute before sign-out (earlier for short timeouts).",
+      "saved": "Automatic sign-out setting saved.",
+      "saveFailed": "Could not save the automatic sign-out setting."
+    }
   },
   "agents": {
     "title": "Agent Management",
