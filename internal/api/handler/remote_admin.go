@@ -78,7 +78,11 @@ type ManagedNodeDTO struct {
 	Status     string `json:"status"`
 	Online     bool   `json:"online"`
 	GroupName  string `json:"group_name"` // 단일 그룹 라벨(빈값=전체 — REQ-K01/K04)
-	LastSeen   int64  `json:"last_seen"`  // epoch ms
+	LastSeen   int64  `json:"last_seen"`  // keep-alive 마지막 수신(epoch ms)
+	// LastAccessAt/LastAccessBy 는 **관리자가 이 노드를 원격 관리한** 마지막 시각과
+	// 그 사람이다(@SPEC:SPEC-REMOTE-LOG-001). 노드가 보낸 신호(last_seen)와 다른 뜻이다.
+	LastAccessAt int64  `json:"last_access_at"`           // 마지막 원격 접속(epoch ms, 0=없음)
+	LastAccessBy string `json:"last_access_by,omitempty"` // 그때의 관리자
 	// Outdated 는 관리자 지정 목표 버전 대비 이 노드가 구버전인지 여부이다(버전 관리
 	// Phase 1). 목표 버전 미설정이거나 버전 문자열이 semver 가 아니면 false.
 	Outdated bool `json:"outdated"`
@@ -341,15 +345,38 @@ func (h *RemoteAdminHandler) Audit(ctx api.Context) error {
 	if h.audit == nil {
 		return ctx.JSON(http.StatusOK, dto.NewSuccessResponse([]RemoteAuditDTO{}))
 	}
-	instanceID := ctx.Query("instance_id")
 	limit := parsePositiveInt(ctx.Query("limit"), 100)
 	offset := parsePositiveInt(ctx.Query("offset"), 0)
+	q := storage.RemoteAuditQuery{
+		InstanceID: ctx.Query("instance_id"),
+		Action:     ctx.Query("action"),
+		Actor:      ctx.Query("actor"),
+		SortField:  ctx.Query("sort"),
+		// 기본은 최신순이다. 오름차순은 명시할 때만 — 로그를 여는 사람이 가장 먼저
+		// 보고 싶은 것은 방금 일어난 일이다.
+		SortAsc: ctx.Query("order") == "asc",
+		Limit:   limit,
+		Offset:  offset,
+	}
 
-	records, err := h.audit.List(ctx.Context(), instanceID, limit, offset)
+	records, total, err := h.audit.List(ctx.Context(), q)
 	if err != nil {
 		return api.ErrInternalServer.WithMessage(err.Error())
 	}
-	return ctx.JSON(http.StatusOK, dto.NewSuccessResponse(toRemoteAuditDTOs(records)))
+	// 화면이 쪽 수를 그리려면 전체 건수가 필요하다(@SPEC:SPEC-REMOTE-LOG-001).
+	page := 1
+	if limit > 0 {
+		page = offset/limit + 1
+	}
+	totalPages := 1
+	if limit > 0 && total > 0 {
+		totalPages = int((total + int64(limit) - 1) / int64(limit))
+	}
+	meta := &dto.Meta{Pagination: &dto.PaginationMeta{
+		Page: page, Size: limit, Total: total, TotalPages: totalPages,
+	}}
+	return ctx.JSON(http.StatusOK,
+		dto.NewSuccessResponseWithMeta(toRemoteAuditDTOs(records), meta))
 }
 
 // parsePositiveInt 는 쿼리 문자열을 음이 아닌 정수로 파싱한다. 빈 값/오류/음수는
@@ -490,14 +517,16 @@ func toManagedNodeDTOsWithTarget(nodes []storage.ManagedNode, target string) []M
 	out := make([]ManagedNodeDTO, 0, len(nodes))
 	for _, n := range nodes {
 		out = append(out, ManagedNodeDTO{
-			InstanceID: n.InstanceID,
-			Hostname:   n.Hostname,
-			Version:    n.Version,
-			Status:     n.Status,
-			Online:     n.Online,
-			GroupName:  n.GroupName,
-			LastSeen:   n.LastSeen,
-			Outdated:   isOutdated(n.Version, target),
+			InstanceID:   n.InstanceID,
+			Hostname:     n.Hostname,
+			Version:      n.Version,
+			Status:       n.Status,
+			Online:       n.Online,
+			GroupName:    n.GroupName,
+			LastSeen:     n.LastSeen,
+			LastAccessAt: n.LastAccessAt,
+			LastAccessBy: n.LastAccessBy,
+			Outdated:     isOutdated(n.Version, target),
 		})
 	}
 	return out

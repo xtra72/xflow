@@ -97,7 +97,16 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("remote_management.instance_id", "")
 	v.SetDefault("remote_management.auto_register", true)
 	v.SetDefault("remote_management.heartbeat_interval", "30s")
+	// 재연결 간격(@SPEC:SPEC-REMOTE-RECONNECT-001). 끊어진 직후에는 최소 간격으로
+	// 빨리 붙어 보고, 실패가 이어지면 2배씩 늘려 최대 간격에서 멈춘다(지터 ±20%).
+	// 시도는 멈추지 않는다 — 관리 서버가 몇 시간 뒤 돌아와도 노드가 스스로 붙는다.
+	v.SetDefault("remote_management.reconnect_initial", "1s")
+	v.SetDefault("remote_management.reconnect_max", "60s")
 	v.SetDefault("remote_management.bootstrap_secret", "")
+	// 원격 관리 로그 보존 기간(@SPEC:SPEC-REMOTE-LOG-001). 이보다 오래된 감사 기록은
+	// 주기적으로 지운다. 연결/끊어짐까지 남기므로 상한이 없으면 표가 계속 자란다.
+	// 빈 값/0 이면 정리하지 않는다(무제한 보존 — 명시적 선택).
+	v.SetDefault("remote_management.audit_retention", "720h") // 30일
 	// enrollment_token 기본 빈 값 — 설정 시 client register 가 가입 토큰을 운반한다(v1.1 H).
 	v.SetDefault("remote_management.enrollment_token", "")
 	v.SetDefault("remote_management.exposure.flows", "none")

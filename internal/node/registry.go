@@ -1,6 +1,7 @@
 package node
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 
@@ -260,14 +261,25 @@ func (r *Registry) AllTypeMeta() []NodeTypeMeta {
 }
 
 // Create 는 NodeDef의 Type에 해당하는 팩토리를 찾아 노드를 생성한다.
-// 등록되지 않은 타입이면 ErrNodeTypeNotFound를 반환한다.
+// 등록되지 않은 타입이면 ErrNodeTypeNotFound를 감싼 에러를 반환한다.
+//
+// # 없는 타입의 **이름**을 함께 싣는다
+//
+// 종전에는 `node: type not found` 만 반환했다. 호출자(엔진)는 여기에 노드 이름을
+// 덧붙이므로 운영 로그는 `failed to create node "Temperature": node: type not found`
+// 가 되는데, 이것으로는 **어느 타입이 없는지** 알 수 없다. 사용자는 플로우 JSON 을
+// 열어 그 노드를 찾아야 했다(실제 신고 2026-09-21). 타입 이름은 시크릿이 아니므로
+// 에러에 실어 로그만 보고도 원인을 짚게 한다.
+//
+// %w 로 감싸므로 errors.Is(err, ErrNodeTypeNotFound) 는 그대로 참이다 — API 계층의
+// 404 매핑(internal/api/errors.go)이 깨지지 않는다.
 func (r *Registry) Create(def flow.NodeDef, opts ...NodeOption) (Node, error) {
 	r.mu.RLock()
 	factory, exists := r.factories[def.Type]
 	r.mu.RUnlock()
 
 	if !exists {
-		return nil, ErrNodeTypeNotFound
+		return nil, fmt.Errorf("%w: %q", ErrNodeTypeNotFound, def.Type)
 	}
 	return factory(def, opts...)
 }

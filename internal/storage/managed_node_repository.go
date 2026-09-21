@@ -52,10 +52,17 @@ type ManagedNode struct {
 	// group_name 과 동일하게 관리자 소유(admin-owned)이므로 register/heartbeat upsert·
 	// SetSystemInfo(노드 보고)가 절대 덮어쓰지 않으며, SetNodeDisplayOverride 로만 변경한다.
 	// 0,0 은 오버라이드 없음을 의미하며, 이때 effective 해상도는 노드 보고값으로 폴백한다.
-	DisplayOverrideWidth  int   // 관리자 강제 가로 px(0=오버라이드 없음 — effective 폴백)
-	DisplayOverrideHeight int   // 관리자 강제 세로 px(0=오버라이드 없음 — effective 폴백)
-	CreatedAt             int64 // 최초 등록 시각(epoch ms)
-	UpdatedAt             int64 // 마지막 갱신 시각(epoch ms)
+	DisplayOverrideWidth  int // 관리자 강제 가로 px(0=오버라이드 없음 — effective 폴백)
+	DisplayOverrideHeight int // 관리자 강제 세로 px(0=오버라이드 없음 — effective 폴백)
+	// LastAccessAt/LastAccessBy 는 **관리자가 이 노드를 원격 관리한** 마지막 시각과
+	// 그 사람이다(@SPEC:SPEC-REMOTE-LOG-001). 노드가 보낸 keep-alive 시각(LastSeen)과
+	// 뜻이 다르다 — 하나는 "노드가 살아 있다", 다른 하나는 "사람이 들여다봤다". 두
+	// 값을 한 칸에 섞으면 어느 쪽 질문에도 답하지 못한다. group_name 과 같은 관리자
+	// 소유 메타데이터이므로 노드의 register/heartbeat 가 덮어쓰지 않는다.
+	LastAccessAt int64  // 마지막 원격 관리 접속 시각(epoch ms, 0=없음)
+	LastAccessBy string // 그때의 관리자 username(빈값=없음/미상)
+	CreatedAt    int64  // 최초 등록 시각(epoch ms)
+	UpdatedAt    int64  // 마지막 갱신 시각(epoch ms)
 }
 
 // NodeGroupCount 는 distinct 그룹 라벨과 그 노드 수이다(REQ-K03).
@@ -121,6 +128,10 @@ type ManagedNodeRepository interface {
 
 	// Delete 는 instance_id 로 노드를 삭제한다. 없으면 ErrManagedNodeNotFound.
 	Delete(ctx context.Context, instanceID string) error
+	// SetLastAccess 는 관리자의 원격 관리 접속 시각/주체를 기록한다
+	// (@SPEC:SPEC-REMOTE-LOG-001). 없으면 ErrManagedNodeNotFound.
+	SetLastAccess(ctx context.Context, instanceID, actor string, atMs int64) error
+
 	// Close 는 저장소 리소스를 정리한다.
 	Close() error
 }

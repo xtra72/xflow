@@ -34,24 +34,49 @@ func (m *memAudit) Append(_ context.Context, rec storage.RemoteAuditRecord) erro
 	return nil
 }
 
-func (m *memAudit) List(_ context.Context, instanceID string, limit, offset int) ([]storage.RemoteAuditRecord, error) {
+func (m *memAudit) List(_ context.Context, q storage.RemoteAuditQuery) ([]storage.RemoteAuditRecord, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	filtered := make([]storage.RemoteAuditRecord, 0)
 	for i := len(m.records) - 1; i >= 0; i-- { // 최신순.
 		r := m.records[i]
-		if instanceID == "" || r.InstanceID == instanceID {
-			filtered = append(filtered, r)
+		if q.InstanceID != "" && r.InstanceID != q.InstanceID {
+			continue
 		}
+		if q.Action != "" && r.Action != q.Action {
+			continue
+		}
+		if q.Actor != "" && r.Actor != q.Actor {
+			continue
+		}
+		filtered = append(filtered, r)
 	}
-	if offset > len(filtered) {
-		return nil, nil
+	total := int64(len(filtered))
+	if q.Offset > len(filtered) {
+		return nil, total, nil
 	}
-	filtered = filtered[offset:]
-	if limit > 0 && limit < len(filtered) {
-		filtered = filtered[:limit]
+	filtered = filtered[q.Offset:]
+	if q.Limit > 0 && q.Limit < len(filtered) {
+		filtered = filtered[:q.Limit]
 	}
-	return filtered, nil
+	return filtered, total, nil
+}
+
+// DeleteOlderThan 은 beforeMs 보다 오래된 레코드를 지운다(보존 정책 — 메모리 구현).
+func (m *memAudit) DeleteOlderThan(_ context.Context, beforeMs int64) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.records[:0]
+	var removed int64
+	for _, r := range m.records {
+		if r.Timestamp < beforeMs {
+			removed++
+			continue
+		}
+		kept = append(kept, r)
+	}
+	m.records = kept
+	return removed, nil
 }
 
 func (m *memAudit) Close() error { return nil }

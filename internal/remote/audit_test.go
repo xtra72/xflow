@@ -36,19 +36,40 @@ func (m *memAuditRepo) Append(_ context.Context, rec storage.RemoteAuditRecord) 
 	return nil
 }
 
-func (m *memAuditRepo) List(_ context.Context, instanceID string, limit, _ int) ([]storage.RemoteAuditRecord, error) {
+func (m *memAuditRepo) List(_ context.Context, q storage.RemoteAuditQuery) ([]storage.RemoteAuditRecord, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]storage.RemoteAuditRecord, 0)
 	for _, r := range m.records {
-		if instanceID == "" || r.InstanceID == instanceID {
-			out = append(out, r)
+		if q.InstanceID != "" && r.InstanceID != q.InstanceID {
+			continue
 		}
-		if len(out) >= limit && limit > 0 {
+		if q.Action != "" && r.Action != q.Action {
+			continue
+		}
+		out = append(out, r)
+		if q.Limit > 0 && len(out) >= q.Limit {
 			break
 		}
 	}
-	return out, nil
+	return out, int64(len(out)), nil
+}
+
+// DeleteOlderThan 은 beforeMs 보다 오래된 레코드를 지운다(보존 정책 — 메모리 구현).
+func (m *memAuditRepo) DeleteOlderThan(_ context.Context, beforeMs int64) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.records[:0]
+	var removed int64
+	for _, r := range m.records {
+		if r.Timestamp < beforeMs {
+			removed++
+			continue
+		}
+		kept = append(kept, r)
+	}
+	m.records = kept
+	return removed, nil
 }
 
 func (m *memAuditRepo) Close() error { return nil }
@@ -57,6 +78,23 @@ func (m *memAuditRepo) all() []storage.RemoteAuditRecord {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return append([]storage.RemoteAuditRecord(nil), m.records...)
+}
+
+// commands 는 명령 레코드만 고른다.
+//
+// @SPEC:SPEC-REMOTE-LOG-001 이후 같은 표에 연결·원격 접속 같은 운영 사건도 함께
+// 쌓인다. 이 시험들이 고정하려는 것은 "명령 하나에 명령 기록 한 줄" 이므로, 전체
+// 건수를 세는 대신 액션으로 걸러 그 뜻만 남긴다.
+func (m *memAuditRepo) commands() []storage.RemoteAuditRecord {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]storage.RemoteAuditRecord, 0, len(m.records))
+	for _, r := range m.records {
+		if r.Action == storage.AuditActionCommand {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // dispatchTestServer 는 audit 저장소가 주입된 서버 + 승인+온라인 노드 연결을 구성한다.
@@ -102,7 +140,7 @@ func TestDispatch_AuditSuccess(t *testing.T) {
 	_, err := srv.Dispatch(ctx, "node-a", "flow", "deploy", args)
 	require.NoError(t, err)
 
-	recs := audit.all()
+	recs := audit.commands()
 	require.Len(t, recs, 1)
 	r := recs[0]
 	assert.Equal(t, "node-a", r.InstanceID)
@@ -135,7 +173,7 @@ func TestDispatch_AuditFailure(t *testing.T) {
 	_, err := srv.Dispatch(ctx, "node-a", "agent", "start", json.RawMessage(`{"api_key":"secret"}`))
 	require.Error(t, err)
 
-	recs := audit.all()
+	recs := audit.commands()
 	require.Len(t, recs, 1)
 	assert.Equal(t, storage.AuditResultError, recs[0].Result)
 	assert.Equal(t, "agent", recs[0].Domain)
@@ -163,7 +201,7 @@ func TestDispatch_AuditTimeout(t *testing.T) {
 	_, err := srv.Dispatch(dctx, "node-t", "device", "set", json.RawMessage(`{"secret":"x"}`))
 	require.ErrorIs(t, err, ErrCommandTimeout)
 
-	recs := audit.all()
+	recs := audit.commands()
 	require.Len(t, recs, 1)
 	assert.Equal(t, storage.AuditResultError, recs[0].Result)
 	assertNoSecret(t, recs[0])
@@ -183,9 +221,11 @@ type failingAudit struct{}
 func (failingAudit) Append(context.Context, storage.RemoteAuditRecord) error {
 	return errors.New("audit append failed")
 }
-func (failingAudit) List(context.Context, string, int, int) ([]storage.RemoteAuditRecord, error) {
-	return nil, nil
+func (failingAudit) List(context.Context, storage.RemoteAuditQuery) ([]storage.RemoteAuditRecord, int64, error) {
+	return nil, 0, nil
 }
+func (failingAudit) DeleteOlderThan(context.Context, int64) (int64, error) { return 0, nil }
+
 func (failingAudit) Close() error { return nil }
 
 // TestRecordCommandAudit_AppendErrorTolerated 는 감사 기록 실패가 명령 경로를 막지

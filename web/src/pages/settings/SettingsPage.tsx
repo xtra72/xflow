@@ -37,6 +37,7 @@ import type { LogLevelInfo, LogStyle } from '@/services/api/monitorService';
 import { SystemInfoCard } from '@/components/system/SystemInfoCard';
 import { SystemRuntimeCard } from '@/components/system/SystemRuntimeCard';
 import RemoteManagementTab from '@/pages/settings/RemoteManagementTab';
+import { IdleLogoutCard } from '@/pages/settings/IdleLogoutCard';
 import { ScheduleLogStorageCard } from '@/pages/settings/ScheduleLogStorageCard';
 import { ThemePaletteEditor } from '@/components/theme/ThemePaletteEditor';
 import { cn } from '@/lib/utils/cn';
@@ -572,6 +573,9 @@ function SystemTab() {
 
       {/* 스케줄 로그 저장 방식 카드 (시스템 설정 쓰기 권한 없으면 비활성화) */}
       <ScheduleLogStorageCard isViewer={isReadOnly} />
+
+      {/* 유휴 로그아웃 카드 — 서버 전역 1벌 정책 (@SPEC:SPEC-AUTH-IDLE-001) */}
+      <IdleLogoutCard isReadOnly={isReadOnly} />
 
       {/* API 서버 정보 카드 */}
       <div className="rounded-lg bg-(--color-bg-surface) p-6 shadow">

@@ -28,6 +28,8 @@ interface Draft {
   instance_id: string;
   auto_register: boolean;
   heartbeat_interval: string;
+  reconnect_initial: string;
+  reconnect_max: string;
   enrollment_token: string; // 새 값 입력용(빈 값이면 미변경)
   bootstrap_secret: string;
   exposure_flows: string;
@@ -56,6 +58,8 @@ export default function RemoteManagementTab() {
       instance_id: data.instance_id,
       auto_register: data.auto_register,
       heartbeat_interval: data.heartbeat_interval,
+      reconnect_initial: data.reconnect_initial ?? '',
+      reconnect_max: data.reconnect_max ?? '',
       enrollment_token: '',
       bootstrap_secret: '',
       exposure_flows: data.exposure.flows,
@@ -111,6 +115,9 @@ export default function RemoteManagementTab() {
     if (draft.auto_register !== data.auto_register) req.auto_register = draft.auto_register;
     if (draft.heartbeat_interval !== data.heartbeat_interval)
       req.heartbeat_interval = draft.heartbeat_interval;
+    if (draft.reconnect_initial !== data.reconnect_initial)
+      req.reconnect_initial = draft.reconnect_initial;
+    if (draft.reconnect_max !== data.reconnect_max) req.reconnect_max = draft.reconnect_max;
     if (draft.enrollment_token !== '') req.enrollment_token = draft.enrollment_token;
     if (draft.bootstrap_secret !== '') req.bootstrap_secret = draft.bootstrap_secret;
     if (draft.exposure_flows !== data.exposure.flows) req.exposure_flows = draft.exposure_flows;
@@ -214,6 +221,35 @@ export default function RemoteManagementTab() {
             placeholder="30s"
             value={draft.heartbeat_interval}
             onChange={(e) => set('heartbeat_interval', e.target.value)}
+          />
+        </Field>
+        {/* 재연결 간격(@SPEC:SPEC-REMOTE-RECONNECT-001). 끊어진 직후에는 하한으로
+            빨리 붙어 보고, 실패가 이어지면 2배씩 늘려 상한에서 멈춘다. */}
+        <Field
+          label={t('settings.remote.reconnectInitial')}
+          badge={restartBadge('remote_management.reconnect_initial')}
+          hint={t('settings.remote.reconnectHint')}
+        >
+          <input
+            type="text"
+            className={INPUT_CLASS}
+            placeholder="1s"
+            value={draft.reconnect_initial}
+            onChange={(e) => set('reconnect_initial', e.target.value)}
+            data-testid="remote-reconnect-initial"
+          />
+        </Field>
+        <Field
+          label={t('settings.remote.reconnectMax')}
+          badge={restartBadge('remote_management.reconnect_max')}
+        >
+          <input
+            type="text"
+            className={INPUT_CLASS}
+            placeholder="60s"
+            value={draft.reconnect_max}
+            onChange={(e) => set('reconnect_max', e.target.value)}
+            data-testid="remote-reconnect-max"
           />
         </Field>
         <Field

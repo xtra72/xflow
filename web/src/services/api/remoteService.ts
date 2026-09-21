@@ -45,10 +45,13 @@ import type {
   RemoteResourceResult,
   TargetVersion,
   UpdateSource,
+  RemoteLogEntry,
+  RemoteLogPage,
+  RemoteLogQuery,
 } from '@/types/remote';
 
 import { apiClient } from './client';
-import { del, delWith, get, patch, post, put } from './client';
+import { del, delWith, get, getList, patch, post, put } from './client';
 
 /** instance_id 를 URL 경로에 안전하게 인코딩한다. */
 function encodeId(instanceID: string): string {
@@ -74,6 +77,27 @@ export async function getRemoteMode(): Promise<RemoteModeResponse> {
  */
 export async function listNodes(): Promise<ManagedNode[]> {
   return get<ManagedNode[]>('/remote/nodes');
+}
+
+/**
+ * 원격 관리 로그를 최신순으로 조회한다. GET /remote/audit
+ * (@SPEC:SPEC-REMOTE-LOG-001)
+ *
+ * instanceId 를 주면 그 노드로 좁힌다. admin 전용 엔드포인트이다.
+ */
+export async function listRemoteLogs(query: RemoteLogQuery = {}): Promise<RemoteLogPage> {
+  const params = new URLSearchParams();
+  if (query.instanceId) params.set('instance_id', query.instanceId);
+  if (query.action) params.set('action', query.action);
+  if (query.actor) params.set('actor', query.actor);
+  if (query.sort) params.set('sort', query.sort);
+  if (query.asc) params.set('order', 'asc');
+  if (query.limit !== undefined) params.set('limit', String(query.limit));
+  if (query.offset !== undefined) params.set('offset', String(query.offset));
+  const qs = params.toString();
+  // getList 는 봉투의 meta.pagination.total 을 함께 꺼낸다 — 쪽 수를 그리려면 필요하다.
+  const { data, total } = await getList<RemoteLogEntry>(`/remote/audit${qs ? `?${qs}` : ''}`);
+  return { entries: data, total };
 }
 
 /**

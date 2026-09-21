@@ -22,6 +22,7 @@ import { useMemo } from 'react';
 import { Outlet } from 'react-router';
 
 import Header from '@/components/layout/Header';
+import IdleLogoutGuard from '@/components/layout/IdleLogoutGuard';
 import { NotificationToast } from '@/components/layout/NotificationToast';
 import Sidebar from '@/components/layout/Sidebar';
 import { DashboardSyncContext } from '@/contexts/DashboardSyncContext';
@@ -49,6 +50,9 @@ export default function AppLayout() {
     <div className="flex h-screen overflow-hidden bg-(--color-bg-primary)">
       {/* 알림 토스트 */}
       <NotificationToast />
+
+      {/* 유휴 로그아웃 감시 — 인증을 통과한 뒤에만 도는 자리다 (@SPEC:SPEC-AUTH-IDLE-001) */}
+      <IdleLogoutGuard />
 
       {/* 사이드바 */}
       <Sidebar />

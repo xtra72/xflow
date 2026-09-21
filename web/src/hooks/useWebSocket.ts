@@ -11,6 +11,8 @@ import type { ReactNode } from 'react';
 import { createElement } from 'react';
 
 import { useAuthStore } from '@/stores/authStore';
+import { getCurrentUser } from '@/services/api/authService';
+import { APIError } from '@/types/api';
 import { type ConnectionState, type WSClient, createWSClient } from '@/services/ws/wsClient';
 
 interface WebSocketContextValue {
@@ -60,6 +62,38 @@ export function evaluateGate(
 }
 
 /**
+ * WS 가 인증 실패로 끊긴 것 같을 때, 정말 세션이 끝났는지 REST 로 확인한다.
+ *
+ * # 왜 확인이 필요한가
+ *
+ * wsClient 의 인증 실패 판정은 `code 1006 + 비정상 종료 + onopen 미발생` 이라는
+ * **정황**이다. 같은 정황은 서버 다운 · 프록시 거부 · 오프라인에서도 만들어진다.
+ * 그 정황만 믿고 로그아웃하면 네트워크가 잠깐 끊긴 사용자를 로그인 화면으로
+ * 내쫓는다 — 고치려는 것보다 나쁜 결함이다.
+ *
+ * 그래서 `/auth/me` 를 한 번 물어 답을 받는다. 이 요청은 갱신 인터셉터를 지나므로
+ * 세 갈래가 각자 옳게 끝난다.
+ *   - 토큰만 만료 + 갱신 가능 → 인터셉터가 조용히 갱신한다. 새 토큰이 스토어에
+ *     들어가면 게이트가 토큰 회전으로 보고 WS 를 다시 붙인다.
+ *   - 세션이 정말 끝남(401, 갱신 불가) → 인터셉터가 이미 logout 했다. 여기서
+ *     한 번 더 부르는 것은 멱등이며, 인터셉터가 닿지 못한 경로를 덮는다.
+ *   - 네트워크/서버 문제(401 아님) → 아무것도 하지 않는다. 세션은 건드리지 않는다.
+ *
+ * WS 자체의 재연결은 여기서 손대지 않는다 — 인증 실패 정황 뒤의 재연결 정책은
+ * 이 결함과 별개의 문제이고, 섣불리 다시 붙이면 연결 실패 루프가 된다.
+ */
+async function verifySessionAfterSuspectedAuthFailure(): Promise<void> {
+  try {
+    await getCurrentUser();
+  } catch (err) {
+    if (err instanceof APIError && err.status === 401) {
+      useAuthStore.getState().logout();
+    }
+    // 그 밖의 실패는 세션 판정의 근거가 되지 못한다 — 그대로 둔다.
+  }
+}
+
+/**
  * WebSocketProvider: 컴포넌트 트리 전체에 단일 WSClient 인스턴스를 공유한다.
  * StrictMode 이중 마운트에도 안전하게 동작한다.
  *
@@ -87,6 +121,10 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       });
       wsRef.current.onStateChange((next) => {
         setState(next);
+        // 인증 실패 정황으로 끊긴 경우에만 확인한다(정황 → 확인 → 판정).
+        if (next === 'disconnected' && wsRef.current?.getLastFailureWasAuth()) {
+          void verifySessionAfterSuspectedAuthFailure();
+        }
       });
     }
     const ws = wsRef.current;

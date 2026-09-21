@@ -101,6 +101,10 @@ func (s *Server) RemoveNode(ctx context.Context, instanceID string) error {
 	}
 	s.dropNodeState(instanceID)
 	s.logger.Info("관리 노드 삭제", "instance_id", instanceID)
+	// 삭제는 행 자체가 사라지는 유일한 사건이므로 기록이 없으면 흔적도 없다
+	// (@SPEC:SPEC-REMOTE-LOG-001). 감사 행은 노드 행과 독립이라 남는다.
+	// actor 는 ctx 에 실려 온 관리자다(핸들러가 ContextWithActor 로 넣는다).
+	s.recordActorAudit(ctx, instanceID, storage.AuditActionDelete, node.Hostname)
 	return nil
 }
 

@@ -40,9 +40,12 @@ func (m *mockAuditRepo) Append(_ context.Context, rec storage.RemoteAuditRecord)
 	return nil
 }
 
-func (m *mockAuditRepo) List(_ context.Context, _ string, _, _ int) ([]storage.RemoteAuditRecord, error) {
-	return m.records(), nil
+func (m *mockAuditRepo) List(_ context.Context, _ storage.RemoteAuditQuery) ([]storage.RemoteAuditRecord, int64, error) {
+	recs := m.records()
+	return recs, int64(len(recs)), nil
 }
+
+func (m *mockAuditRepo) DeleteOlderThan(context.Context, int64) (int64, error) { return 0, nil }
 
 func (m *mockAuditRepo) Close() error { return nil }
 

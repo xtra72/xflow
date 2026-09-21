@@ -69,8 +69,17 @@ export interface ManagedNode {
    * "전체"(All) 버킷을 의미한다. 구버전 백엔드 응답에는 없을 수 있으므로 선택적.
    */
   group_name?: string;
-  /** 마지막 수신 시각 (epoch ms, 0 = 미수신). */
+  /** keep-alive 를 마지막으로 받은 시각 (epoch ms, 0 = 미수신). */
   last_seen: number;
+  /**
+   * 관리자가 이 노드를 원격 관리한 마지막 시각 (epoch ms, 0 = 없음).
+   *
+   * 노드가 보낸 신호인 `last_seen` 과 뜻이 다르다 — 하나는 "노드가 살아 있다",
+   * 다른 하나는 "사람이 들여다봤다" 이다. 구버전 백엔드 응답에는 없을 수 있다.
+   */
+  last_access_at?: number;
+  /** 그때의 관리자 username. 없으면 미상/없음. */
+  last_access_by?: string;
   /**
    * 관리자 지정 목표 버전 대비 구버전 여부 (버전 관리 Phase 1). 목표 버전 미설정/
    * 비-semver 면 false. 구버전 백엔드 응답에는 없을 수 있으므로 선택적.
@@ -285,8 +294,12 @@ export interface NodeDetail {
   started_at: number;
   /** uptime (ms). started_at > 0 일 때만, 미보고 시 null. */
   uptime: number | null;
-  /** 마지막 수신 시각 (epoch ms). */
+  /** keep-alive 를 마지막으로 받은 시각 (epoch ms). */
   last_seen: number;
+  /** 관리자가 이 노드를 원격 관리한 마지막 시각 (epoch ms, 0 = 없음). */
+  last_access_at?: number;
+  /** 그때의 관리자 username. */
+  last_access_by?: string;
   /**
    * EFFECTIVE 가로 해상도 (px, v1.6 M11/M12, REQ-M01/M02). 관리자 오버라이드가
    * 설정되어 있으면 그 값, 아니면 노드 보고값이다(둘 다 없으면 0 = 미보고/미설정).
@@ -552,4 +565,67 @@ export interface RemoteAgentUpdateRequest {
   name?: string;
   /** 로그 레벨 (선택적, debug/info/warn/error). */
   log_level?: string;
+}
+
+// ---- 원격 관리 로그 (@SPEC:SPEC-REMOTE-LOG-001) ----
+
+/**
+ * 원격 관리 로그 한 줄. Go `RemoteAuditDTO` 와 1:1 매핑된다.
+ *
+ * 관리자가 바꾼 것(승인·거부·폐기·명령)과 노드에 일어난 일(등록·연결·끊어짐·
+ * 원격 접속)이 한 표에 함께 쌓인다. 둘을 나눠 두면 "언제 끊겼고 그때 누가 무엇을
+ * 했는가" 를 읽으려고 두 목록을 손으로 맞춰 봐야 한다.
+ */
+export interface RemoteLogEntry {
+  /** 자동 증가 식별자. */
+  id: number;
+  /** 대상 노드 instance_id. */
+  instance_id: string;
+  /** 수행 주체. 사람이 아닌 서버 관측은 "system". */
+  actor: string;
+  /** 사건 종류. 알 수 없는 값이 올 수 있으므로 string 으로 받는다. */
+  action: string;
+  /** command 일 때의 도메인(flow/agent/device/system). */
+  domain?: string;
+  /** command 일 때의 도메인 액션(deploy/start/update ...). */
+  command_action?: string;
+  /** ok | error. */
+  result: string;
+  /** 비밀이 아닌 짧은 사유/분류. */
+  reason?: string;
+  /** 발생 시각 (epoch ms). */
+  timestamp: number;
+}
+
+/** 로그 정렬 기준. 서버 화이트리스트와 같은 값이다(그 밖은 서버가 ts 로 읽는다). */
+export type RemoteLogSortField = 'ts' | 'instance_id' | 'actor' | 'action';
+
+/**
+ * 원격 관리 로그 조회 조건.
+ *
+ * 정렬·필터를 서버로 내린다 — 받아 온 쪽 안에서만 정렬하면 "수행자 오름차순" 같은
+ * 결과가 전체가 아니라 그 쪽에만 적용되어 읽는 사람을 속인다.
+ */
+export interface RemoteLogQuery {
+  /** 노드로 좁힌다. 비우면 전체. */
+  instanceId?: string;
+  /** 사건 종류로 좁힌다. 비우면 전체. */
+  action?: string;
+  /** 수행 주체로 좁힌다. 비우면 전체. */
+  actor?: string;
+  /** 정렬 기준. 기본 ts. */
+  sort?: RemoteLogSortField;
+  /** 오름차순 여부. 기본은 최신순(false). */
+  asc?: boolean;
+  /** 한 번에 가져올 건수. */
+  limit?: number;
+  /** 건너뛸 건수(페이지네이션). */
+  offset?: number;
+}
+
+/** 로그 조회 결과 — 목록과 필터 적용 전체 건수. */
+export interface RemoteLogPage {
+  entries: RemoteLogEntry[];
+  /** 필터를 적용한 전체 건수(쪽 수 계산 근거). */
+  total: number;
 }

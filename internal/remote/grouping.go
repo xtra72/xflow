@@ -265,11 +265,12 @@ func (s *Server) NodeDetail(ctx context.Context, instanceID string) (NodeDetail,
 		return NodeDetail{}, err // ErrManagedNodeNotFound 포함.
 	}
 
-	// 라이브 online 추적값을 우선 적용한다(repo online 은 영속 시점 — 라이브가 권위).
-	online := node.Online
-	if st, ok := s.NodeState(instanceID); ok {
-		online = st.Online
-	}
+	// **판정은 한 함수를 지난다**(@SPEC:SPEC-REMOTE-ONLINE-001 REQ-03, K1).
+	//
+	// 종전에는 여기에 `ListNodes` 와 **같은 조건부 오버레이의 사본**이 있었다 — 항목이
+	// 있으면 라이브값, 없으면 영속값. 그래서 재시작 이후 붙지 않은 노드는 목록에서도
+	// 상세에서도 online 으로 보고되었고, 한쪽만 고치면 다른 쪽이 조용히 낡았다.
+	online := s.OnlineOf(node, time.Now())
 	node.Online = online
 
 	detail := NodeDetail{Node: node, Online: online}
