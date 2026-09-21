@@ -4,7 +4,7 @@
 // 내보내야 Fast Refresh 가 동작하기 때문이다(react-refresh/only-export-components).
 
 /** 관리자 뷰 서브탭 식별자(NodeDashboard 와 동일 집합). */
-export type ManagerViewTab = 'overview' | 'flows' | 'agents' | 'devices' | 'dashboard';
+export type ManagerViewTab = 'overview' | 'flows' | 'agents' | 'devices' | 'dashboard' | 'logs';
 
 /** 유효한 서브탭 식별자 집합(URL 파라미터 검증용). */
 export const MANAGER_VIEW_TABS: readonly ManagerViewTab[] = [
@@ -13,6 +13,8 @@ export const MANAGER_VIEW_TABS: readonly ManagerViewTab[] = [
   'agents',
   'devices',
   'dashboard',
+  // 이 노드에 일어난 일을 시간순으로 본다(@SPEC:SPEC-REMOTE-LOG-001).
+  'logs',
 ];
 
 /** URL `?tab=` 원시 값을 ManagerViewTab 으로 파싱한다(미지정/무효 → overview). */

@@ -90,6 +90,11 @@ func (a *bootstrapAuthenticator) Authenticate(_ HelloPayload) error {
 	return nil
 }
 
+// keepAlivePersistInterval 은 keep-alive 수신 시각을 DB 에 쓰는 최소 간격이다
+// (@SPEC:SPEC-REMOTE-LOG-001). 화면은 "마지막 수신" 을 분 단위로 읽으므로 이보다
+// 촘촘한 정밀도는 쓰기 비용만 늘린다.
+const keepAlivePersistInterval = 15 * time.Second
+
 // NodeState 는 한 관리 노드의 런타임 상태 스냅샷이다.
 type NodeState struct {
 	InstanceID string
@@ -180,6 +185,14 @@ type Server struct {
 	mu    sync.RWMutex
 	nodes map[string]*NodeState
 	conns map[string]*nodeConn // instance_id -> 라이브 연결(M2)
+	// lastAccessTouch / lastAccessAudit 는 관리자 접근 기록의 두 창(window)이다
+	// (@SPEC:SPEC-REMOTE-LOG-001, access.go 참조). s.mu 가 보호한다.
+	lastAccessTouch map[string]time.Time
+	lastAccessAudit map[string]time.Time
+	// lastKeepAlivePersist 는 노드별 keep-alive 영속 시각이다
+	// (@SPEC:SPEC-REMOTE-LOG-001). 하트비트마다 DB 를 때리지 않도록 간격을 둔다.
+	// s.mu 가 보호한다.
+	lastKeepAlivePersist map[string]time.Time
 
 	cmdTimeout time.Duration
 	pendingMu  sync.Mutex
@@ -222,22 +235,25 @@ func NewServer(cfg ServerConfig, auth Authenticator) *Server {
 		auth = NewBootstrapAuthenticator("")
 	}
 	s := &Server{
-		cfg:          cfg,
-		auth:         auth,
-		repo:         cfg.Repo,
-		mirror:       cfg.Mirror,
-		tokens:       cfg.TokenIssuer,
-		audit:        cfg.Audit,
-		enroll:       cfg.Enrollment,
-		verHist:      cfg.VersionHistory,
-		logger:       logger,
-		nodes:        make(map[string]*NodeState),
-		conns:        make(map[string]*nodeConn),
-		cmdTimeout:   cfg.CommandTimeout,
-		pending:      make(map[string]chan CommandResultPayload),
-		queryTimeout: cfg.QueryTimeout,
-		pendingQuery: make(map[string]chan QueryResultPayload),
-		queryCache:   newQueryCache(cfg.QueryCacheTTL, DefaultQueryCacheMaxEntries),
+		cfg:                  cfg,
+		auth:                 auth,
+		repo:                 cfg.Repo,
+		mirror:               cfg.Mirror,
+		tokens:               cfg.TokenIssuer,
+		audit:                cfg.Audit,
+		enroll:               cfg.Enrollment,
+		verHist:              cfg.VersionHistory,
+		logger:               logger,
+		nodes:                make(map[string]*NodeState),
+		conns:                make(map[string]*nodeConn),
+		lastKeepAlivePersist: make(map[string]time.Time),
+		lastAccessTouch:      make(map[string]time.Time),
+		lastAccessAudit:      make(map[string]time.Time),
+		cmdTimeout:           cfg.CommandTimeout,
+		pending:              make(map[string]chan CommandResultPayload),
+		queryTimeout:         cfg.QueryTimeout,
+		pendingQuery:         make(map[string]chan QueryResultPayload),
+		queryCache:           newQueryCache(cfg.QueryCacheTTL, DefaultQueryCacheMaxEntries),
 
 		bridgeOpenTimeout: bridgeOpenTimeout,
 		pendingBridge:     make(map[string]chan BridgeOpenAckPayload),
@@ -361,6 +377,12 @@ func (s *Server) handleConnection(ctx context.Context, conn Conn, authedInstance
 			// 생존성 갱신 + BASIC 시스템 정보 갱신(v1.4 M9, REQ-K07/K08). 시스템 정보는
 			// 제공된 필드만 갱신하고 미제공은 보존한다(구버전 노드 하위 호환 — REQ-K09).
 			s.touch(instanceID)
+			// keep-alive 를 **영속**한다(@SPEC:SPEC-REMOTE-LOG-001). `touch` 는 메모리만
+			// 고치므로, 이 한 줄이 없으면 화면의 "마지막 수신" 은 마지막 연결 시각에
+			// 굳은 채 남는다 — 30초마다 하트비트를 보내는 멀쩡한 노드가 "3일째 무소식"
+			// 으로 보이던 자리다. 영속은 하트비트에서만 한다: 다른 메시지(스트림 데이터
+			// 등)는 초당 여러 번 올 수 있어 그 자리에서 DB 를 때리면 쓰기가 폭주한다.
+			s.persistKeepAlive(instanceID)
 			s.handleHeartbeat(connCtx, instanceID, msg.Payload)
 		case TypeStatus:
 			s.touch(instanceID)
@@ -427,10 +449,18 @@ func (s *Server) handleHandshakeMessage(ctx context.Context, conn Conn, cancel c
 			_ = conn.Close()
 			return "", nil, true
 		}
+		// 등록 게이트(@SPEC:SPEC-REMOTE-HELLO-GATE-001): 미등록·비승인 instance 의
+		// hello 는 online 으로 받지 않는다. 사유를 돌려주어 노드가 토큰을 버리고
+		// register 로 되돌아가게 한다(자가 복구). 상세는 admitHello 주석.
+		if reason, ok := s.admitHello(ctx, hello.InstanceID); !ok {
+			s.rejectHello(conn, hello.InstanceID, reason)
+			return "", nil, true
+		}
 		s.markOnline(hello)
 		owned := s.registerConn(hello.InstanceID, conn, cancel)
 		s.logger.Info("관리 노드 online", "instance_id", hello.InstanceID,
 			"hostname", hello.Hostname, "version", hello.Version)
+		s.recordLifecycleAudit(ctx, hello.InstanceID, storage.AuditActionConnect, "hello")
 		return hello.InstanceID, owned, true
 
 	case TypeRegister:
@@ -489,6 +519,26 @@ func (s *Server) touch(instanceID string) {
 	}
 }
 
+// persistKeepAlive 는 keep-alive 수신 시각을 DB 에 남긴다
+// (@SPEC:SPEC-REMOTE-LOG-001).
+//
+// 하트비트 주기(기본 30초)보다 촘촘히 쓰지 않도록 노드별로 간격을 둔다. 주기가 아주
+// 짧게 설정된 배치에서도 쓰기량이 주기에 비례해 폭주하지 않게 하는 안전판이다.
+func (s *Server) persistKeepAlive(instanceID string) {
+	now := time.Now()
+	s.mu.Lock()
+	last := s.lastKeepAlivePersist[instanceID]
+	if !last.IsZero() && now.Sub(last) < keepAlivePersistInterval {
+		s.mu.Unlock()
+		return
+	}
+	s.lastKeepAlivePersist[instanceID] = now
+	s.mu.Unlock()
+
+	// 락 밖에서 DB 를 지난다(persistOnline 규약 — 데드락 방지).
+	s.persistOnline(instanceID, true, now)
+}
+
 // markOffline 은 노드를 offline 으로 표시한다(레지스트리에서 삭제하지 않음 —
 // last-known 보존, REQ-B06).
 func (s *Server) markOffline(instanceID string) {
@@ -502,6 +552,9 @@ func (s *Server) markOffline(instanceID string) {
 	if wasOnline {
 		s.logger.Info("관리 노드 offline", "instance_id", instanceID)
 		s.persistOnline(instanceID, false, time.Now())
+		// 연결 컨텍스트는 이미 취소된 뒤이므로 기록에는 쓸 수 없다 — 끊김을 남기려고
+		// 부르는 자리에서 취소된 ctx 를 쓰면 그 기록만 조용히 사라진다.
+		s.recordLifecycleAudit(context.Background(), instanceID, storage.AuditActionDisconnect, "")
 	}
 }
 
@@ -536,14 +589,31 @@ func (s *Server) NodeCount() int {
 
 // sweepOnce 는 now 기준으로 heartbeat 타임아웃을 넘긴 online 노드를 offline 으로
 // 표시한다(REQ-B05). StartSweeper 가 주기적으로 호출한다.
+// # 뒤집은 것을 **영속한다** (@SPEC:SPEC-REMOTE-ONLINE-001 REQ-01, K4)
+//
+// 종전에는 메모리만 뒤집고 DB 에 `online=1` 을 남겼다. 프로세스가 사는 동안은 읽는 쪽의
+// 오버레이가 그 거짓을 가려 주지만, **다음 재시작에 그대로 드러난다** — 그때는 메모리
+// 항목이 없어 오버레이가 건너뛰어지고, 청소기도 항목이 없어 그 노드를 보지 못한다.
+//
+// 끊김을 감지하는 `markOffline` 은 이미 `persistOnline` 을 지난다. 여기에 그 한 줄이
+// 없던 것이 결함이었다 — 같은 사실을 두 경로가 다르게 다루면 한쪽이 조용히 낡는다.
+//
+// 영속은 **락 밖에서** 한다. `persistOnline` 은 DB 를 지나므로 `s.mu` 를 잡은 채 부르면
+// 그 잠금이 디스크 왕복만큼 길어진다 — `markOffline` 이 `wasOnline` 을 들고 락을 나선 뒤
+// 부르는 그 관용구와 같다.
 func (s *Server) sweepOnce(now time.Time) {
+	var timedOut []string
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for id, st := range s.nodes {
 		if st.Online && now.Sub(st.LastSeen) > s.cfg.HeartbeatTimeout {
 			st.Online = false
-			s.logger.Info("관리 노드 heartbeat 타임아웃 → offline", "instance_id", id)
+			timedOut = append(timedOut, id)
 		}
+	}
+	s.mu.Unlock()
+	for _, id := range timedOut {
+		s.logger.Info("관리 노드 heartbeat 타임아웃 → offline", "instance_id", id)
+		s.persistOnline(id, false, now)
 	}
 }
 

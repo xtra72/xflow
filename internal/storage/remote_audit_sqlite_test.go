@@ -43,7 +43,7 @@ func TestRemoteAudit_AppendAndList(t *testing.T) {
 	}))
 
 	// 전체 조회(instance_id="" 필터 없음) — ts 내림차순(최신 우선).
-	all, err := repo.List(ctx, "", 100, 0)
+	all, _, err := repo.List(ctx, RemoteAuditQuery{Limit: 100})
 	require.NoError(t, err)
 	require.Len(t, all, 3)
 	assert.Equal(t, int64(2000), all[0].Timestamp, "최신 레코드가 먼저 와야 함")
@@ -52,7 +52,7 @@ func TestRemoteAudit_AppendAndList(t *testing.T) {
 	assert.Equal(t, "deploy", all[0].CommandAction)
 
 	// 노드별 필터.
-	n1, err := repo.List(ctx, "node-1", 100, 0)
+	n1, _, err := repo.List(ctx, RemoteAuditQuery{InstanceID: "node-1", Limit: 100})
 	require.NoError(t, err)
 	require.Len(t, n1, 2)
 	for _, r := range n1 {
@@ -70,13 +70,13 @@ func TestRemoteAudit_Pagination(t *testing.T) {
 		}))
 	}
 
-	page1, err := repo.List(ctx, "", 2, 0)
+	page1, _, err := repo.List(ctx, RemoteAuditQuery{Limit: 2})
 	require.NoError(t, err)
 	require.Len(t, page1, 2)
 	assert.Equal(t, int64(500), page1[0].Timestamp)
 	assert.Equal(t, int64(400), page1[1].Timestamp)
 
-	page2, err := repo.List(ctx, "", 2, 2)
+	page2, _, err := repo.List(ctx, RemoteAuditQuery{Limit: 2, Offset: 2})
 	require.NoError(t, err)
 	require.Len(t, page2, 2)
 	assert.Equal(t, int64(300), page2[0].Timestamp)
@@ -90,7 +90,7 @@ func TestRemoteAudit_AppendOnly(t *testing.T) {
 	require.NoError(t, repo.Append(ctx, RemoteAuditRecord{InstanceID: "n", Actor: "a", Action: "approve", Result: "ok", Timestamp: 1}))
 	require.NoError(t, repo.Append(ctx, RemoteAuditRecord{InstanceID: "n", Actor: "a", Action: "reject", Result: "ok", Timestamp: 2}))
 
-	recs, err := repo.List(ctx, "", 10, 0)
+	recs, _, err := repo.List(ctx, RemoteAuditQuery{Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, recs, 2)
 	// id 가 부여되고 서로 달라야 한다.
@@ -117,12 +117,109 @@ func TestRemoteAudit_FactoryConstruction(t *testing.T) {
 // TestRemoteAudit_EmptyResult 는 빈 저장소 조회가 nil/빈 결과를 반환하는지 확인한다.
 func TestRemoteAudit_EmptyResult(t *testing.T) {
 	repo := newTestAuditRepo(t)
-	recs, err := repo.List(context.Background(), "missing", 10, 0)
+	recs, _, err := repo.List(context.Background(), RemoteAuditQuery{InstanceID: "missing", Limit: 10})
 	require.NoError(t, err)
 	assert.Empty(t, recs)
 
 	// limit<=0/offset<0 은 보정되어 에러 없이 동작한다.
-	recs, err = repo.List(context.Background(), "", 0, -5)
+	recs, _, err = repo.List(context.Background(), RemoteAuditQuery{Limit: 0, Offset: -5})
 	require.NoError(t, err)
 	assert.Empty(t, recs)
+}
+
+// --- 정렬·필터·전체 건수 (@SPEC:SPEC-REMOTE-LOG-001) ---
+//
+// 화면이 받아 온 쪽 안에서만 정렬하면 그 결과가 전체를 대표하지 않는다. 그래서
+// 정렬·필터를 SQL 로 내렸고, 아래 시험이 그 계약을 고정한다.
+
+/** 조회용 레코드를 만든다. ts 는 인자 그대로 쓴다(정렬 검증에 필요). */
+func auditRec(instance, actor, action string, ts int64) RemoteAuditRecord {
+	return RemoteAuditRecord{
+		InstanceID: instance, Actor: actor, Action: action,
+		Result: AuditResultOK, Timestamp: ts,
+	}
+}
+
+func TestRemoteAudit_FilterByActionAndActor(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAuditRepo(t)
+
+	require.NoError(t, repo.Append(ctx, auditRec("n1", "admin", AuditActionConnect, 100)))
+	require.NoError(t, repo.Append(ctx, auditRec("n1", "bob", AuditActionAccess, 200)))
+	require.NoError(t, repo.Append(ctx, auditRec("n2", "admin", AuditActionAccess, 300)))
+
+	byAction, total, err := repo.List(ctx, RemoteAuditQuery{Action: AuditActionAccess, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, byAction, 2)
+	require.Equal(t, int64(2), total, "전체 건수는 필터를 적용한 값이어야 한다")
+
+	byActor, total, err := repo.List(ctx, RemoteAuditQuery{Actor: "admin", Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, byActor, 2)
+	require.Equal(t, int64(2), total)
+
+	both, total, err := repo.List(ctx,
+		RemoteAuditQuery{Actor: "admin", Action: AuditActionAccess, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, both, 1)
+	require.Equal(t, int64(1), total)
+	require.Equal(t, "n2", both[0].InstanceID)
+}
+
+func TestRemoteAudit_SortFieldAndDirection(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAuditRepo(t)
+
+	require.NoError(t, repo.Append(ctx, auditRec("n-c", "carol", AuditActionConnect, 100)))
+	require.NoError(t, repo.Append(ctx, auditRec("n-a", "alice", AuditActionAccess, 200)))
+	require.NoError(t, repo.Append(ctx, auditRec("n-b", "bob", AuditActionDelete, 300)))
+
+	// 기본: 최신순.
+	latest, _, err := repo.List(ctx, RemoteAuditQuery{Limit: 10})
+	require.NoError(t, err)
+	require.Equal(t, int64(300), latest[0].Timestamp)
+
+	// 시각 오름차순.
+	oldest, _, err := repo.List(ctx, RemoteAuditQuery{Limit: 10, SortAsc: true})
+	require.NoError(t, err)
+	require.Equal(t, int64(100), oldest[0].Timestamp)
+
+	// 수행자 오름차순.
+	byActor, _, err := repo.List(ctx,
+		RemoteAuditQuery{Limit: 10, SortField: AuditSortActor, SortAsc: true})
+	require.NoError(t, err)
+	require.Equal(t, "alice", byActor[0].Actor)
+
+	// 노드 내림차순.
+	byNode, _, err := repo.List(ctx, RemoteAuditQuery{Limit: 10, SortField: AuditSortInstance})
+	require.NoError(t, err)
+	require.Equal(t, "n-c", byNode[0].InstanceID)
+}
+
+func TestRemoteAudit_UnknownSortFieldFallsBackToTime(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAuditRepo(t)
+	require.NoError(t, repo.Append(ctx, auditRec("n1", "a", AuditActionConnect, 100)))
+	require.NoError(t, repo.Append(ctx, auditRec("n2", "b", AuditActionConnect, 200)))
+
+	// 화이트리스트 밖(주입 시도 포함)은 기본 정렬로 떨어진다 — 목록이 비거나 터지지 않는다.
+	recs, total, err := repo.List(ctx,
+		RemoteAuditQuery{Limit: 10, SortField: "ts; DROP TABLE remote_audit--"})
+	require.NoError(t, err)
+	require.Len(t, recs, 2)
+	require.Equal(t, int64(2), total)
+	require.Equal(t, int64(200), recs[0].Timestamp, "기본은 최신순이다")
+}
+
+func TestRemoteAudit_TotalIgnoresPaging(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAuditRepo(t)
+	for i := 0; i < 5; i++ {
+		require.NoError(t, repo.Append(ctx, auditRec("n1", "a", AuditActionConnect, int64(i+1))))
+	}
+
+	page, total, err := repo.List(ctx, RemoteAuditQuery{Limit: 2, Offset: 2})
+	require.NoError(t, err)
+	require.Len(t, page, 2, "쪽은 요청한 크기만큼")
+	require.Equal(t, int64(5), total, "전체 건수는 쪽 크기와 무관해야 한다 — 쪽 수 계산의 근거다")
 }

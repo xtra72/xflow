@@ -29,6 +29,14 @@ const (
 	// 등록 자체는 TypeRegister 가 담당한다(현재는 seam).
 	TypeHello = "hello"
 
+	// TypeHelloNack 는 hello 거부 신호이다(server→client, @SPEC:SPEC-REMOTE-HELLO-GATE-001).
+	//
+	// 서버가 hello 를 받았으나 그 instance_id 가 등록되어 있지 않거나 승인 상태가
+	// 아닐 때 보낸다. 노드는 이 신호를 받으면 **쥐고 있던 노드 토큰을 버리고**
+	// 등록 경로(register)로 되돌아간다 — 이것이 없으면 노드는 무효한 토큰을 들고
+	// hello 만 되풀이하며 스스로 빠져나오지 못한다(§ 자가 복구).
+	TypeHelloNack = "hello_nack"
+
 	// TypeRegister 는 등록 요청이다(client→server, REQ-C01, M2).
 	TypeRegister = "register"
 	// TypeRegisterAck 는 등록 응답·토큰 발급이다(server→client, REQ-C03/C04, M2).
@@ -364,6 +372,24 @@ type HelloPayload struct {
 	DisplayHeight int `json:"display_height,omitempty"` // 장비 화면 세로 px (REQ-M01)
 }
 
+// HelloNackReason 값 — hello 가 거부된 사유이다(server→client, 진단/로그용).
+// 노드의 복구 동작은 사유와 무관하게 동일하다(토큰 버리고 register).
+const (
+	// HelloNackUnregistered 는 그 instance_id 의 등록 항목이 없다는 뜻이다.
+	// 관리자가 노드를 삭제했거나 서버 저장소가 새로 만들어진 경우다.
+	HelloNackUnregistered = "unregistered"
+	// HelloNackNotApproved 는 항목은 있으나 승인 상태가 아니라는 뜻이다
+	// (pending/rejected/revoked).
+	HelloNackNotApproved = "not_approved"
+)
+
+// HelloNackPayload 는 hello 거부 페이로드이다(server→client).
+//
+// Reason 은 진단용이며 노드의 복구 동작을 가르지 않는다. 시크릿을 담지 않는다(REQ-F06).
+type HelloNackPayload struct {
+	Reason string `json:"reason,omitempty"`
+}
+
 // ExposureSummary 는 register 요청에 실리는 노출 범위 요약이다(REQ-C01, REQ-A04).
 // 각 필드는 노출 정책 문자열("all" | "none" | 목록)이며, 실제 미러링 평가는 M4 에서
 // 수행한다. M2 는 등록 요청에 요약을 운반하는 용도로만 사용한다.
@@ -519,6 +545,12 @@ type StatusPayload struct {
 // NewHelloMessage 는 HelloPayload 를 ws.Message 봉투로 인코딩한다.
 func NewHelloMessage(p HelloPayload) (*ws.Message, error) {
 	return ws.NewMessage(TypeHello, p)
+}
+
+// NewHelloNackMessage 는 HelloNackPayload 를 ws.Message 봉투로 인코딩한다
+// (@SPEC:SPEC-REMOTE-HELLO-GATE-001).
+func NewHelloNackMessage(p HelloNackPayload) (*ws.Message, error) {
+	return ws.NewMessage(TypeHelloNack, p)
 }
 
 // NewHeartbeatMessage 는 instance_id 에 대한 heartbeat 메시지를 생성한다.

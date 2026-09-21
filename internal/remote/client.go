@@ -42,6 +42,11 @@ const (
 	// DefaultReconnectMax 는 재연결 백오프의 상한이다(폭주 방지 — 위험표 "재연결 폭주").
 	DefaultReconnectMax = 60 * time.Second
 
+	// stableSessionThreshold 는 "제대로 붙었던 세션" 으로 세는 최소 지속 시간이다
+	// (@SPEC:SPEC-REMOTE-RECONNECT-001). 이보다 짧게 끝난 세션은 연결 실패로 세어
+	// 재연결 간격을 늘린다 — 붙자마자 끊기는 상태를 최소 간격으로 두드리지 않기 위해서다.
+	stableSessionThreshold = 30 * time.Second
+
 	// DefaultInventoryPollInterval 은 인벤토리 poll+diff 델타 소스의 기본 주기이다
 	// (M4, REQ-E02). 데몬에 구독 가능한 변경 이벤트 소스가 없어 poll 기반으로 델타를
 	// 도출한다(inventory.go 델타 소스 결정 주석 참조).
@@ -254,6 +259,12 @@ func NewClient(cfg ClientConfig, dialer Dialer) *Client {
 	if cfg.ReconnectMax <= 0 {
 		cfg.ReconnectMax = DefaultReconnectMax
 	}
+	if cfg.ReconnectMax < cfg.ReconnectInitial {
+		// 둘을 뒤집어 적은 설정(최소 60s, 최대 1s)을 그대로 두면 상한이 하한을 잘라
+		// 첫 시도부터 1s 가 된다 — 설정한 사람의 뜻과 반대다. 상한을 하한까지 올려
+		// "간격 고정" 으로 읽는다. 재연결이 멈추는 쪽으로 해석하지는 않는다.
+		cfg.ReconnectMax = cfg.ReconnectInitial
+	}
 	if cfg.InventoryPollInterval <= 0 {
 		cfg.InventoryPollInterval = DefaultInventoryPollInterval
 	}
@@ -357,15 +368,29 @@ func (c *Client) runLoop(ctx context.Context) {
 			"instance_id", c.cfg.InstanceID, "server_url", c.cfg.ServerURL)
 
 		// 세션 실행(연결 종료 또는 ctx 취소 시 반환).
+		sessionStart := time.Now()
 		c.runSession(ctx, conn)
+		sessionLasted := time.Since(sessionStart)
 
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			// 연결이 끊김 → 재연결 시도. 성공 세션 직후이므로 백오프 카운터를
-			// 1 로 리셋해 첫 재시도를 빠르게 한다(지수 백오프는 연속 실패에서만 증가).
-			attempt = 1
+			// 연결이 끊김 → 재연결 시도.
+			//
+			// 오래 붙어 있던 세션이 끊긴 것은 "잠깐 끊겼다" 이므로 백오프를 1 로
+			// 되돌려 곧바로(최소 간격) 다시 붙는다 — 사용자가 말한 "끊어진 직후에는
+			// 간격이 짧게" 가 이 자리다.
+			//
+			// 그러나 붙자마자 죽는 세션까지 되돌리면 안 된다. dial 은 성공하는데
+			// 서버가 곧장 닫는 상태(포트는 열렸으나 준비되지 않은 서버, 거부되는
+			// 핸드셰이크)에서는 "연결이 안 되는" 것과 다르지 않은데, 되돌리면 최소
+			// 간격으로 영원히 두드리게 된다. 그런 세션은 실패로 세어 간격을 늘린다.
+			if sessionLasted >= stableSessionThreshold {
+				attempt = 1
+			} else {
+				attempt++
+			}
 		}
 	}
 }
@@ -515,6 +540,11 @@ func (c *Client) handleServerMessage(ctx context.Context, conn Conn, wg *sync.Wa
 		// 서버 heartbeat — 무시(생존성은 연결 자체로 확인).
 	case TypeRegisterAck:
 		c.handleRegisterAck(msg.Payload)
+	case TypeHelloNack:
+		// 서버가 hello 를 거부했다 — 쥐고 있는 토큰이 서버의 진실과 맞지 않는다.
+		// 토큰을 버리고 세션을 끊으면, 재연결 루프가 토큰 없이 dial 하므로 다음
+		// 핸드셰이크는 register 가 된다(@SPEC:SPEC-REMOTE-HELLO-GATE-001 자가 복구).
+		c.handleHelloNack(msg.Payload)
 	case TypeCommand:
 		wg.Add(1)
 		go func() {
@@ -698,6 +728,45 @@ func (c *Client) handleRegisterAck(payload []byte) {
 		c.logger.Error("원격 등록 거부됨", "instance_id", c.cfg.InstanceID, "reason", ack.Reason)
 	default:
 		c.logger.Warn("알 수 없는 register_ack 상태", "status", ack.Status)
+	}
+}
+
+// handleHelloNack 는 hello 거부 신호를 처리한다(@SPEC:SPEC-REMOTE-HELLO-GATE-001).
+//
+// # 토큰을 버리는 것이 유일한 출구다
+//
+// 노드 토큰은 24시간 access 토큰이고 서명 키는 서버 재시작마다 바뀔 수 있다. 그래서
+// 토큰이 무효해지는 일은 예외가 아니라 일상이다. 그런데 `sendHandshake` 는 토큰을
+// **가지고 있다는 사실만으로** hello 를 고르므로, 무효한 토큰을 버리지 않는 한 노드는
+// hello 만 되풀이하며 등록 경로로 돌아가지 못한다 — 스스로 풀리지 않는 상태였다.
+//
+// 그래서 여기서 토큰을 메모리와 디스크에서 모두 지운다. `rejected` 는 세우지 않는다 —
+// 그것은 관리자가 명시적으로 거부한 경우의 영구 정지 신호이고, 이쪽은 되돌아가서
+// 다시 등록해야 하는 경우다. 연결을 닫으면 재연결 루프가 토큰 없이 dial 하고,
+// 다음 핸드셰이크는 register 가 되어 서버가 pending 항목을 만든다(또는 이미 승인된
+// 항목이면 새 토큰을 내려준다).
+func (c *Client) handleHelloNack(payload []byte) {
+	var p HelloNackPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		// 사유를 못 읽어도 복구 동작은 같다 — 사유는 진단용일 뿐이다.
+		c.logger.Debug("hello_nack 디코드 실패", "error", err)
+	}
+	c.clearToken()
+	c.logger.Warn("서버가 hello 를 거부 — 노드 토큰 폐기 후 재등록으로 전환",
+		"instance_id", c.cfg.InstanceID, "reason", p.Reason)
+	// 세션을 끊어 재연결 루프로 되돌린다(다음 dial 은 토큰 없이 → register).
+	c.closeConn()
+}
+
+// clearToken 은 노드 토큰을 메모리와 디스크에서 지운다(토큰 값은 로깅하지 않음 — REQ-F06).
+func (c *Client) clearToken() {
+	c.mu.Lock()
+	c.nodeToken = ""
+	c.mu.Unlock()
+	if c.cfg.DataDir != "" {
+		if err := ClearNodeToken(c.cfg.DataDir); err != nil {
+			c.logger.Warn("노드 토큰 삭제 실패", "error", err)
+		}
 	}
 }
 

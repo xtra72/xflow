@@ -23,6 +23,14 @@ export interface RemoteClientConfig {
   instance_id: string;
   auto_register: boolean;
   heartbeat_interval: string; // Go duration 문자열 (예: "30s")
+  /**
+   * 재연결 간격의 하한/상한 (@SPEC:SPEC-REMOTE-RECONNECT-001).
+   *
+   * 끊어진 직후에는 하한으로 빨리 붙어 보고, 실패가 이어지면 2배씩 늘려 상한에서
+   * 멈춘다. 시도 자체는 멈추지 않는다.
+   */
+  reconnect_initial: string;
+  reconnect_max: string;
   enrollment_token_set: boolean;
   bootstrap_secret_set: boolean;
   exposure: RemoteClientExposure;
@@ -42,6 +50,8 @@ export interface RemoteClientConfigUpdate {
   instance_id?: string;
   auto_register?: boolean;
   heartbeat_interval?: string;
+  reconnect_initial?: string;
+  reconnect_max?: string;
   enrollment_token?: string;
   bootstrap_secret?: string;
   exposure_flows?: string;

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite" // Pure Go SQLite 드라이버 등록
 )
@@ -96,32 +97,42 @@ func (r *RemoteAuditSQLiteRepository) Append(ctx context.Context, rec RemoteAudi
 	return nil
 }
 
-// List 는 감사 레코드를 최신순(ts 내림차순, 동률은 id 내림차순)으로 반환한다.
-// instanceID 가 비어 있지 않으면 해당 노드로 필터한다. limit<=0 이면 100 으로 보정한다.
-func (r *RemoteAuditSQLiteRepository) List(ctx context.Context, instanceID string, limit, offset int) ([]RemoteAuditRecord, error) {
+// List 는 조건에 맞는 감사 레코드와 필터 적용 전체 건수를 반환한다
+// (@SPEC:SPEC-REMOTE-LOG-001).
+//
+// 정렬·필터를 SQL 로 내리는 이유는 화면이 받아 온 쪽 안에서만 정렬하면 그 결과가
+// 전체를 대표하지 않기 때문이다. 정렬 기준은 화이트리스트를 지나며, 그 밖의 값은
+// 기본(ts)으로 떨어진다.
+//
+// 2차 정렬로 항상 id 를 붙인다. 같은 밀리초에 여러 사건이 생기면(연결 직후 인벤토리
+// 수신 등) 순서가 요청마다 달라져, 쪽을 넘길 때 같은 줄이 두 번 보이거나 한 줄이
+// 통째로 건너뛰어진다.
+func (r *RemoteAuditSQLiteRepository) List(ctx context.Context, q RemoteAuditQuery) ([]RemoteAuditRecord, int64, error) {
+	limit := q.Limit
 	if limit <= 0 {
 		limit = 100
 	}
+	offset := q.Offset
 	if offset < 0 {
 		offset = 0
 	}
 
-	var (
-		rows *sql.Rows
-		err  error
-	)
-	const cols = `id, instance_id, actor, action, domain, command_action, result, reason, ts`
-	if instanceID != "" {
-		rows, err = r.db.QueryContext(ctx,
-			`SELECT `+cols+` FROM remote_audit WHERE instance_id = ?
-				ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`, instanceID, limit, offset)
-	} else {
-		rows, err = r.db.QueryContext(ctx,
-			`SELECT `+cols+` FROM remote_audit
-				ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`, limit, offset)
+	where, args := auditWhere(q)
+	order := auditOrder(q)
+
+	var total int64
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM remote_audit`+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count remote audit: %w", err)
 	}
+
+	const cols = `id, instance_id, actor, action, domain, command_action, result, reason, ts`
+	pageArgs := append(append([]any(nil), args...), limit, offset)
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+cols+` FROM remote_audit`+where+` ORDER BY `+order+` LIMIT ? OFFSET ?`,
+		pageArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("list remote audit: %w", err)
+		return nil, 0, fmt.Errorf("list remote audit: %w", err)
 	}
 	defer rows.Close()
 
@@ -130,14 +141,71 @@ func (r *RemoteAuditSQLiteRepository) List(ctx context.Context, instanceID strin
 		var rec RemoteAuditRecord
 		if err := rows.Scan(&rec.ID, &rec.InstanceID, &rec.Actor, &rec.Action,
 			&rec.Domain, &rec.CommandAction, &rec.Result, &rec.Reason, &rec.Timestamp); err != nil {
-			return nil, fmt.Errorf("scan remote audit row: %w", err)
+			return nil, 0, fmt.Errorf("scan remote audit row: %w", err)
 		}
 		out = append(out, rec)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate remote audit rows: %w", err)
+		return nil, 0, fmt.Errorf("iterate remote audit rows: %w", err)
 	}
-	return out, nil
+	return out, total, nil
+}
+
+// auditWhere 는 필터 절과 인자를 만든다. 빈 필드는 거르지 않는다.
+func auditWhere(q RemoteAuditQuery) (string, []any) {
+	clauses := make([]string, 0, 3)
+	args := make([]any, 0, 3)
+	if q.InstanceID != "" {
+		clauses = append(clauses, "instance_id = ?")
+		args = append(args, q.InstanceID)
+	}
+	if q.Action != "" {
+		clauses = append(clauses, "action = ?")
+		args = append(args, q.Action)
+	}
+	if q.Actor != "" {
+		clauses = append(clauses, "actor = ?")
+		args = append(args, q.Actor)
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+// auditOrder 는 ORDER BY 절을 만든다. 정렬 기준은 화이트리스트를 지난 컬럼명만 쓴다.
+func auditOrder(q RemoteAuditQuery) string {
+	field := AuditSortTime
+	switch q.SortField {
+	case AuditSortInstance, AuditSortActor, AuditSortAction:
+		field = q.SortField
+	}
+	dir := "DESC"
+	if q.SortAsc {
+		dir = "ASC"
+	}
+	// id 2차 정렬로 동률의 순서를 고정한다(쪽 넘김 안정성).
+	return field + " " + dir + ", id " + dir
+}
+
+// DeleteOlderThan 은 beforeMs 보다 오래된 감사 레코드를 지우고 지운 건수를 반환한다
+// (@SPEC:SPEC-REMOTE-LOG-001 보존 정책).
+//
+// beforeMs 가 0 이하면 아무것도 지우지 않는다 — "보존 기간 미설정" 을 "전부 삭제" 로
+// 읽으면 한 번의 설정 실수가 감사 기록을 통째로 날린다.
+func (r *RemoteAuditSQLiteRepository) DeleteOlderThan(ctx context.Context, beforeMs int64) (int64, error) {
+	if beforeMs <= 0 {
+		return 0, nil
+	}
+	res, err := r.db.ExecContext(ctx, `DELETE FROM remote_audit WHERE ts < ?`, beforeMs)
+	if err != nil {
+		return 0, fmt.Errorf("delete old remote audit records: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, nil // 건수를 못 읽어도 삭제 자체는 성공했다.
+	}
+	return affected, nil
 }
 
 // Close 는 데이터베이스 연결을 닫는다.

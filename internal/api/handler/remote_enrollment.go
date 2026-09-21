@@ -193,7 +193,9 @@ func (h *RemoteEnrollmentHandler) DeleteNode(ctx api.Context) error {
 		return err
 	}
 	id := ctx.Param("instance_id")
-	if err := h.preReg.RemoveNode(ctx.Context(), id); err != nil {
+	// 삭제를 누가 했는지 감사에 남기려면 actor 가 ctx 를 타고 내려가야 한다.
+	delCtx := remote.ContextWithActor(ctx.Context(), ctx.UserID())
+	if err := h.preReg.RemoveNode(delCtx, id); err != nil {
 		return mapEnrollmentError(err)
 	}
 	h.logger.Info("관리 노드 삭제", "instance_id", id, "actor", ctx.UserID())

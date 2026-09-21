@@ -107,6 +107,12 @@ func addManagedNodeColumns(ctx context.Context, db *sql.DB) error {
 		// (오버라이드 없음 → effective=노드 보고값). group_name 과 동일하게 admin-owned.
 		{"display_override_width", "display_override_width INTEGER NOT NULL DEFAULT 0"},
 		{"display_override_height", "display_override_height INTEGER NOT NULL DEFAULT 0"},
+		// 관리자가 이 노드를 원격 관리한 마지막 시각과 그 사람이다
+		// (@SPEC:SPEC-REMOTE-LOG-001). 노드가 보낸 신호(last_seen)와 뜻이 다르므로
+		// 칸을 나눈다 — 하나는 "노드가 살아 있다", 하나는 "사람이 들여다봤다".
+		// 기존 행은 0/빈 문자열(접근 기록 없음)로 남는다.
+		{"last_access_at", "last_access_at INTEGER NOT NULL DEFAULT 0"},
+		{"last_access_by", "last_access_by TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, col := range additions {
 		if _, ok := existing[col.name]; ok {
@@ -179,8 +185,8 @@ func (r *ManagedNodeSQLiteRepository) Upsert(ctx context.Context, node ManagedNo
 	}
 
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO managed_nodes (instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, display_width, display_height, display_override_width, display_override_height, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO managed_nodes (instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, display_width, display_height, display_override_width, display_override_height, last_access_at, last_access_by, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(instance_id) DO UPDATE SET
 			hostname   = excluded.hostname,
 			version    = excluded.version,
@@ -192,7 +198,7 @@ func (r *ManagedNodeSQLiteRepository) Upsert(ctx context.Context, node ManagedNo
 	`, node.InstanceID, node.Hostname, node.Version, status, node.TokenID,
 		node.LastSeen, online, node.GroupName, node.OS, node.Arch, node.StartedAt,
 		node.DisplayWidth, node.DisplayHeight, node.DisplayOverrideWidth, node.DisplayOverrideHeight,
-		createdAt, now)
+		node.LastAccessAt, node.LastAccessBy, createdAt, now)
 	if err != nil {
 		return fmt.Errorf("upsert managed node: %w", err)
 	}
@@ -206,12 +212,13 @@ func (r *ManagedNodeSQLiteRepository) Get(ctx context.Context, instanceID string
 		online int
 	)
 	err := r.db.QueryRowContext(ctx, `
-		SELECT instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, display_width, display_height, display_override_width, display_override_height, created_at, updated_at
+		SELECT instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, display_width, display_height, display_override_width, display_override_height, last_access_at, last_access_by, created_at, updated_at
 		FROM managed_nodes WHERE instance_id = ?
 	`, instanceID).Scan(&node.InstanceID, &node.Hostname, &node.Version, &node.Status,
 		&node.TokenID, &node.LastSeen, &online, &node.GroupName, &node.OS, &node.Arch,
 		&node.StartedAt, &node.DisplayWidth, &node.DisplayHeight,
-		&node.DisplayOverrideWidth, &node.DisplayOverrideHeight, &node.CreatedAt, &node.UpdatedAt)
+		&node.DisplayOverrideWidth, &node.DisplayOverrideHeight,
+		&node.LastAccessAt, &node.LastAccessBy, &node.CreatedAt, &node.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ManagedNode{}, ErrManagedNodeNotFound
 	}
@@ -225,7 +232,7 @@ func (r *ManagedNodeSQLiteRepository) Get(ctx context.Context, instanceID string
 // List 는 모든 관리 노드를 created_at 순서로 반환한다.
 func (r *ManagedNodeSQLiteRepository) List(ctx context.Context) ([]ManagedNode, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, display_width, display_height, display_override_width, display_override_height, created_at, updated_at
+		SELECT instance_id, hostname, version, status, token_id, last_seen, online, group_name, os, arch, started_at, display_width, display_height, display_override_width, display_override_height, last_access_at, last_access_by, created_at, updated_at
 		FROM managed_nodes ORDER BY created_at
 	`)
 	if err != nil {
@@ -242,7 +249,8 @@ func (r *ManagedNodeSQLiteRepository) List(ctx context.Context) ([]ManagedNode, 
 		if err := rows.Scan(&node.InstanceID, &node.Hostname, &node.Version, &node.Status,
 			&node.TokenID, &node.LastSeen, &online, &node.GroupName, &node.OS, &node.Arch,
 			&node.StartedAt, &node.DisplayWidth, &node.DisplayHeight,
-			&node.DisplayOverrideWidth, &node.DisplayOverrideHeight, &node.CreatedAt, &node.UpdatedAt); err != nil {
+			&node.DisplayOverrideWidth, &node.DisplayOverrideHeight,
+			&node.LastAccessAt, &node.LastAccessBy, &node.CreatedAt, &node.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan managed node row: %w", err)
 		}
 		node.Online = online != 0
@@ -358,6 +366,22 @@ func (r *ManagedNodeSQLiteRepository) ListGroups(ctx context.Context) ([]NodeGro
 	out = append(out, NodeGroupCount{GroupName: "", NodeCount: ungrouped})
 	out = append(out, named...)
 	return out, nil
+}
+
+// SetLastAccess 는 관리자가 이 노드를 원격 관리한 시각과 그 사람을 기록한다
+// (@SPEC:SPEC-REMOTE-LOG-001).
+//
+// group_name·display_override 와 같은 관리자 소유(admin-owned) 메타데이터이므로
+// 노드가 보내는 register/heartbeat upsert 가 절대 덮어쓰지 않는다 — Upsert 의
+// ON CONFLICT 갱신 목록에 이 두 컬럼이 없는 것이 그 보장이다.
+//
+// 없는 노드에 대한 호출은 ErrManagedNodeNotFound 이다.
+func (r *ManagedNodeSQLiteRepository) SetLastAccess(ctx context.Context, instanceID, actor string, atMs int64) error {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE managed_nodes SET last_access_at = ?, last_access_by = ?, updated_at = ?
+		WHERE instance_id = ?
+	`, atMs, actor, time.Now().UnixMilli(), instanceID)
+	return checkAffected(res, err, "set managed node last access")
 }
 
 // SetSystemInfo 는 노드가 보고한 BASIC 시스템 정보(os/arch/started_at) + 노드 해상도

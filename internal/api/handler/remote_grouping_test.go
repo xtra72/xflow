@@ -35,6 +35,9 @@ type fakeGrouping struct {
 	updatedGroup string                       // 마지막 DispatchGroupUpdate 대상 그룹
 	lastPlan     remote.GroupUpdatePlan       // 마지막 DispatchGroupUpdate plan(업데이트 경로)
 	dispatchRes  []remote.GroupDispatchResult // DispatchGroup/Update 반환값
+	touchedID    string                       // 마지막 TouchAccess 대상(@SPEC:SPEC-REMOTE-LOG-001)
+	touchedActor string                       // 마지막 TouchAccess 주체
+	touchCount   int                          // TouchAccess 호출 횟수
 	groupErr     error                        // rename/delete/dispatch 공통 에러 주입
 }
 
@@ -123,6 +126,14 @@ func (f *fakeGrouping) ListGroups(_ context.Context) ([]storage.NodeGroupCount, 
 		out = append(out, storage.NodeGroupCount{GroupName: g, NodeCount: c})
 	}
 	return out, nil
+}
+
+// TouchAccess 는 관리자 원격 접근 기록 호출을 관찰한다
+// (@SPEC:SPEC-REMOTE-LOG-001). 인자를 그대로 보관해 시험이 검증한다.
+func (f *fakeGrouping) TouchAccess(_ context.Context, instanceID, actor string) {
+	f.touchedID = instanceID
+	f.touchedActor = actor
+	f.touchCount++
 }
 
 func (f *fakeGrouping) NodeDetail(_ context.Context, _ string) (remote.NodeDetail, error) {
@@ -371,6 +382,8 @@ func (erroringGrouping) ClearNodeGroup(context.Context, string) error { return e
 func (erroringGrouping) ListGroups(context.Context) ([]storage.NodeGroupCount, error) {
 	return nil, errors.New("boom")
 }
+func (erroringGrouping) TouchAccess(context.Context, string, string) {}
+
 func (erroringGrouping) NodeDetail(context.Context, string) (remote.NodeDetail, error) {
 	return remote.NodeDetail{}, errors.New("boom")
 }

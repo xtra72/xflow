@@ -52,6 +52,10 @@ var ErrQueryFailed = errors.New("remote: query failed on node")
 //   - ErrQueryFailed: 노드 질의 실패(REQ-J07 → 502).
 //   - ctx.Err(): 호출자 컨텍스트 취소.
 func (s *Server) DispatchQuery(ctx context.Context, instanceID, domain, queryAction string, args json.RawMessage) (json.RawMessage, error) {
+	// 0) 질의 프록시도 그 노드를 들여다보는 행위다(@SPEC:SPEC-REMOTE-LOG-001).
+	//    창(window)으로 묶이므로 화면이 폴링해도 로그가 늘어나지 않는다.
+	s.TouchAccess(ctx, instanceID, actorFromContext(ctx))
+
 	// 1) 최종 게이트(REQ-J05 — 호출자 선평가 + 최종 방어선). 미관리 노드 누출 방지.
 	if !s.IsManaged(instanceID) {
 		return nil, ErrNodeNotManaged

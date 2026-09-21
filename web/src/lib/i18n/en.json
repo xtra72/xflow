@@ -24,7 +24,8 @@
     "enrollmentManagement": "Enrollment",
     "groupManagement": "Group Management",
     "releaseStore": "Release Store",
-    "users": "Users"
+    "users": "Users",
+    "remoteLogs": "Remote logs"
   },
   "auth": {
     "login": "Login",
@@ -52,7 +53,12 @@
     "currentPasswordWrong": "Current password is incorrect",
     "permissionDenied": "You do not have permission to access this page. Ask an administrator for access.",
     "permissionUnavailable": "Could not load your permissions. Please try again shortly.",
-    "userMenu": "User menu"
+    "userMenu": "User menu",
+    "idleLogout": {
+      "warningTitle": "You will be signed out soon",
+      "warningBody": "No activity for {minutes} minutes. You will be signed out in {remaining}. Press below to stay signed in.",
+      "continue": "Stay signed in"
+    }
   },
   "dashboard": {
     "title": "Dashboard",
@@ -2240,7 +2246,10 @@
       "saved": "Saved",
       "savedRestart": "Saved. {n} item(s) will take effect after a restart.",
       "saveError": "Failed to save",
-      "noChanges": "No changes"
+      "noChanges": "No changes",
+      "reconnectInitial": "Reconnect min interval",
+      "reconnectMax": "Reconnect max interval",
+      "reconnectHint": "Retries at the minimum interval right after a drop, then doubles up to the maximum. Retrying never stops."
     },
     "scheduleLog": {
       "title": "Schedule Log Storage",
@@ -2371,7 +2380,16 @@
     "themeNightDesc": "Use the dark theme",
     "themeSystemDesc": "Follow the system setting",
     "languageTitle": "Language Settings",
-    "languageSubtitle": "Choose the interface display language"
+    "languageSubtitle": "Choose the interface display language",
+    "idleLogout": {
+      "title": "Automatic sign-out",
+      "desc": "Signs the user out after a period of inactivity. This is a server-wide setting and applies to every user.",
+      "enabledLabel": "Enable automatic sign-out",
+      "minutesLabel": "Idle timeout (minutes)",
+      "minutesHint": "Between {min} and {max} minutes. A warning appears one minute before sign-out (earlier for short timeouts).",
+      "saved": "Automatic sign-out setting saved.",
+      "saveFailed": "Could not save the automatic sign-out setting."
+    }
   },
   "agents": {
     "title": "Agent Management",
@@ -3689,7 +3707,8 @@
       "online": "Connection",
       "status": "Status",
       "lastSeen": "Last Seen",
-      "actions": "Actions"
+      "actions": "Actions",
+      "lastAccess": "Last access"
     },
     "action": {
       "approve": "Approve",
@@ -4082,6 +4101,36 @@
       "noMembers": "No nodes in this group.",
       "ungroupedDesc": "Nodes not in any group (default — cannot delete)",
       "notServer": "Available only in remote management (server mode)."
+    },
+    "log": {
+      "title": "Remote management log",
+      "empty": "No log entries.",
+      "col": {
+        "time": "Time",
+        "node": "Node",
+        "action": "Event",
+        "actor": "By",
+        "detail": "Detail"
+      },
+      "action": {
+        "register": "Registration request",
+        "delete": "Node deleted",
+        "connect": "Connected",
+        "disconnect": "Disconnected",
+        "access": "Remote access",
+        "approve": "Approved",
+        "reject": "Rejected",
+        "revoke": "Revoked",
+        "command": "Command",
+        "version_update": "Version changed",
+        "imageUpdate": "Image update"
+      },
+      "tab": "Log",
+      "allNodes": "All nodes",
+      "allActions": "All events",
+      "allActors": "All actors",
+      "showIds": "Show IDs",
+      "showNames": "Show names"
     }
   },
   "flowPicker": {

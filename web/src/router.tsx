@@ -59,6 +59,7 @@ const EnrollmentManagementPage = lazy(
 );
 // 릴리스 저장소(관리 서버 호스팅 프로그램 이미지): 아키텍처별 xflowd 이미지 관리.
 const ReleaseStorePage = lazy(() => import('@/pages/remote/ReleaseStorePage'));
+const RemoteLogPage = lazy(() => import('@/pages/remote/RemoteLogPage'));
 // SPEC-AUTH-006 M3.4: 사용자 관리. 역할 관리는 별도 화면이 아니라 이 화면의
 //   '역할' 탭이다(`/admin/users?tab=roles`). 구 `/admin/roles` 는 북마크 보존용
 //   리다이렉트로만 남는다.
@@ -264,6 +265,16 @@ export const appRoutes: RouteObject[] = [
                     element: (
                       <SuspenseWrapper>
                         <ReleaseStorePage />
+                      </SuspenseWrapper>
+                    ),
+                  },
+                  // 원격 관리 로그(@SPEC:SPEC-REMOTE-LOG-001): 노드 등록·삭제·연결·
+                  //   끊어짐·원격 접속·명령을 한 시간축에서 본다.
+                  {
+                    path: 'remote/logs',
+                    element: (
+                      <SuspenseWrapper>
+                        <RemoteLogPage />
                       </SuspenseWrapper>
                     ),
                   },

@@ -86,16 +86,56 @@ func (s *Server) ListNodes(ctx context.Context) ([]storage.ManagedNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	// in-memory online 상태를 반영한다(repo 의 online 은 영속 시점 기준이므로 라이브
-	// 연결 상태를 우선 적용 — 라이브 추적이 권위).
+	// online 판정은 아래 한 함수를 지난다(@SPEC:SPEC-REMOTE-ONLINE-001 REQ-03, K1).
+	now := time.Now()
 	s.mu.RLock()
 	for i := range nodes {
-		if st, ok := s.nodes[nodes[i].InstanceID]; ok {
-			nodes[i].Online = st.Online
-		}
+		nodes[i].Online = s.onlineLocked(nodes[i], now)
 	}
 	s.mu.RUnlock()
 	return nodes, nil
+}
+
+// onlineLocked 는 노드가 지금 붙어 있는가를 판정한다
+// (@SPEC:SPEC-REMOTE-ONLINE-001 REQ-02, K1/K3). s.mu 를 잡은 채 호출한다.
+//
+// # 권위는 keep-alive 이지 항목의 유무가 아니다
+//
+// 종전에는 메모리 항목이 있을 때만 그 값을 덮어썼고, 없으면 **영속값이 그대로 나갔다.**
+// 항목은 register/hello 에서만 생기고 노드 삭제에서만 지워지므로, "항목 없음" 은
+// "연결 없음" 이 아니라 **"이번 부팅 이후 붙지 않았음"** 이다. 그 둘을 같은 것으로 쓰면
+// 재시작이 진실을 지운다 — 서버가 죽을 때 online=1 이던 행이 영원히 online 으로
+// 보고되고, 청소기는 항목이 없어 그 노드를 보지도 못한다(사용자 신고 2026-09-17:
+// "xagent04 는 연결도 안되어 있는데 online 으로 표시됨").
+//
+// 그래서 항목이 없을 때는 **keep-alive 가 최근에 왔는가**로 가른다. 하트비트는 재시작
+// 경계를 지나 살아남는 유일한 신호다.
+//
+// `last_seen == 0` 은 "본 적 없음" 이므로 오래된 것으로 읽힌다(offline). 미래 값(시계
+// 왜곡)은 `Sub` 이 음수를 내므로 최근으로 읽힌다 — 어느 쪽도 패닉이 아니다(REQ-04).
+func (s *Server) onlineLocked(node storage.ManagedNode, now time.Time) bool {
+	// 항목이 있으면 라이브 추적이 답한다 — 하트비트가 `touch` 로 갱신하는 그 값이다.
+	if st, ok := s.nodes[node.InstanceID]; ok {
+		return st.Online
+	}
+	// 영속값이 이미 offline 이면 최근성을 묻지 않는다.
+	if !node.Online {
+		return false
+	}
+	return now.Sub(time.UnixMilli(node.LastSeen)) <= s.cfg.HeartbeatTimeout
+}
+
+// OnlineOf 는 `onlineLocked` 의 락을 잡는 겉면이다
+// (@SPEC:SPEC-REMOTE-ONLINE-001 REQ-03, K1).
+//
+// 판정을 **두 벌로 두지 않기 위해** 있다. `ListNodes` 는 목록을 한 번의 RLock 안에서
+// 돌므로 `onlineLocked` 를 직접 쓰고, 한 건만 묻는 자리(`NodeDetail`)는 이 겉면을 쓴다.
+// 두 자리가 각자 `s.nodes[id]` 를 들여다보면 둘 중 하나만 고쳐지는 날이 온다 — 실제로
+// 그런 날이 있었고, 그것이 이 SPEC 이 고친 결함의 둘째 사본이다.
+func (s *Server) OnlineOf(node storage.ManagedNode, now time.Time) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.onlineLocked(node, now)
 }
 
 // registerConn 은 라이브 연결을 추적한다(approve ack push / revoke 종료용).
@@ -164,6 +204,57 @@ func (s *Server) persistOnline(instanceID string, online bool, at time.Time) {
 	if err := s.repo.SetOnline(context.Background(), instanceID, online, at.UnixMilli()); err != nil {
 		// 미등록 노드(hello-only M1 경로)는 repo 에 없을 수 있다 — 디버그만.
 		s.logger.Debug("online 영속 생략", "instance_id", instanceID, "error", err)
+	}
+}
+
+// admitHello 는 hello 를 받아들일지 판정한다(@SPEC:SPEC-REMOTE-HELLO-GATE-001).
+//
+// # 문지기가 없던 자리
+//
+// hello 경로의 문지기(`bootstrapAuthenticator`)는 M1 스텁이라 **무엇이든 수락**했다.
+// 그래서 등록 항목이 없는 instance 가 hello 를 보내면 online 으로 로그를 남기고
+// 인벤토리까지 미러에 쌓지만, `ListNodes` 는 DB만 읽으므로 그 노드를 0건으로 본다 —
+// 로그에는 붙어 있고 화면에는 없는 유령이 된다(사용자 신고 2026-09-17).
+//
+// 그 자리를 여기서 막는다. repo 가 있는(=server 모드) 서버는 등록 항목이 없거나
+// 승인 상태가 아닌 hello 를 거부한다. 거부는 조용히 끊지 않고 `hello_nack` 으로
+// **사유를 돌려준다** — 노드가 그 신호로 무효한 토큰을 버리고 register 로 되돌아가
+// 스스로 풀려나기 때문이다(조용한 종료는 재접속 루프만 만든다).
+//
+// repo 가 없는 M1 모드는 판정 근거 자체가 없으므로 종전처럼 수락한다(하위 호환).
+func (s *Server) admitHello(ctx context.Context, instanceID string) (string, bool) {
+	if s.repo == nil {
+		return "", true // M1 모드 — 등록 개념 없음.
+	}
+	node, err := s.repo.Get(ctx, instanceID)
+	if err != nil {
+		return HelloNackUnregistered, false
+	}
+	if node.Status != RegStatusApproved {
+		return HelloNackNotApproved, false
+	}
+	return "", true
+}
+
+// rejectHello 는 hello 를 거부하고 사유를 노드에 통지한 뒤 연결을 닫는다
+// (@SPEC:SPEC-REMOTE-HELLO-GATE-001).
+func (s *Server) rejectHello(conn Conn, instanceID, reason string) {
+	s.logger.Warn("hello 거부 — 등록 경로로 되돌림",
+		"instance_id", instanceID, "reason", reason)
+	s.sendHelloNack(conn, reason)
+	_ = conn.Close()
+}
+
+// sendHelloNack 는 hello_nack 을 전송한다(전송 실패는 치명적이지 않다 — 연결이 이미
+// 끊긴 경우이며, 어느 쪽이든 노드는 재접속한다).
+func (s *Server) sendHelloNack(conn Conn, reason string) {
+	msg, err := NewHelloNackMessage(HelloNackPayload{Reason: reason})
+	if err != nil {
+		s.logger.Error("hello_nack 인코딩 실패", "error", err)
+		return
+	}
+	if err := writeEnvelope(conn, msg); err != nil {
+		s.logger.Debug("hello_nack 전송 실패", "error", err)
 	}
 }
 
@@ -239,6 +330,7 @@ func (s *Server) handleRegister(ctx context.Context, conn Conn, cancel context.C
 		owned := s.registerConn(p.InstanceID, conn, cancel)
 		s.sendRegisterAck(conn, RegisterAckPayload{Status: RegStatusPending})
 		s.logger.Info("관리 노드 등록 요청 → pending", "instance_id", p.InstanceID)
+		s.recordLifecycleAudit(ctx, p.InstanceID, storage.AuditActionRegister, RegStatusPending)
 		return p.InstanceID, owned, true
 
 	case err != nil:
@@ -369,11 +461,16 @@ func (s *Server) restoreSession(_ context.Context, conn Conn, cancel context.Can
 	node, err := s.repo.Get(context.Background(), instanceID)
 	if err != nil {
 		s.logger.Warn("재접속 노드 미등록 — 세션 복원 거부", "instance_id", instanceID)
+		// 토큰은 유효했으나 항목이 없다 — 노드가 토큰을 버리고 다시 등록해야 풀린다
+		// (@SPEC:SPEC-REMOTE-HELLO-GATE-001 자가 복구). 사유 없이 끊으면 노드는
+		// 같은 토큰으로 영원히 재접속만 되풀이한다.
+		s.sendHelloNack(conn, HelloNackUnregistered)
 		return nil, false
 	}
 	if node.Status != RegStatusApproved {
 		s.logger.Warn("재접속 노드 비승인 — 세션 복원 거부",
 			"instance_id", instanceID, "status", node.Status)
+		s.sendHelloNack(conn, HelloNackNotApproved)
 		return nil, false
 	}
 	now := time.Now()
@@ -390,6 +487,7 @@ func (s *Server) restoreSession(_ context.Context, conn Conn, cancel context.Can
 	s.mu.Unlock()
 	s.persistOnline(instanceID, true, now)
 	s.logger.Info("승인 노드 재접속 — 세션 복원", "instance_id", instanceID)
+	s.recordLifecycleAudit(context.Background(), instanceID, storage.AuditActionConnect, "restore")
 	return owned, true
 }
 

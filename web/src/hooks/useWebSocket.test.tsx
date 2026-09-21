@@ -3,10 +3,20 @@
 
 import React, { StrictMode } from 'react';
 import { act, cleanup, render } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/stores/authStore';
+import { APIError } from '@/types/api';
 import type { WSClient } from '@/services/ws/wsClient';
+
+// WS 인증 실패 확인 경로가 부르는 REST 호출을 가로챈다(@SPEC:SPEC-AUTH-EXPIRY-001).
+const getCurrentUserMock = vi.hoisted(() => vi.fn());
+vi.mock('@/services/api/authService', () => ({
+  getCurrentUser: getCurrentUserMock,
+  getAuthStatus: vi.fn(),
+  login: vi.fn(),
+  logout: vi.fn(),
+}));
 
 import { WebSocketProvider, useWebSocket, evaluateGate } from './useWebSocket';
 
@@ -73,6 +83,8 @@ let originalWebSocket: typeof globalThis.WebSocket | undefined;
 const initialAuthState = useAuthStore.getState();
 
 beforeEach(() => {
+  getCurrentUserMock.mockReset();
+  getCurrentUserMock.mockResolvedValue({ name: 'u', role: 'admin' });
   MockWebSocket.reset();
   originalWebSocket = globalThis.WebSocket;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -311,5 +323,83 @@ describe('WebSocketProvider — StrictMode 이중 마운트 안전성 (회귀 �
     // Then: 활성 (CONNECTING 또는 OPEN) WebSocket 정확히 1개.
     // StrictMode 이중 마운트로 인스턴스가 생성되더라도 첫 인스턴스는 cleanup 단계에서 close 됨.
     expect(MockWebSocket.aliveCount()).toBe(1);
+  });
+});
+
+// --- WS 인증 실패 → 세션 확인 (@SPEC:SPEC-AUTH-EXPIRY-001) ---
+//
+// wsClient 의 인증 실패 판정은 정황(1006 + 비정상 종료 + onopen 미발생)이다. 같은
+// 정황이 서버 다운·오프라인에서도 만들어지므로, 그 정황만으로 로그아웃하면 멀쩡한
+// 세션이 끊긴다. 아래 시험은 "정황 → REST 확인 → 판정" 의 세 갈래를 고정한다.
+describe('WebSocketProvider — WS 인증 실패 시 세션 확인', () => {
+  /** 인증된 상태로 Provider 를 띄우고, 열리기 전에 1006 으로 끊는다. */
+  async function mountAndFailAuth(): Promise<void> {
+    useAuthStore.setState({
+      authEnabled: true,
+      isAuthenticated: true,
+      tokens: { access_token: 'JWT', refresh_token: 'R', expires_at: 1 },
+    });
+    render(
+      <WebSocketProvider>
+        <div />
+      </WebSocketProvider>,
+    );
+    const ws = MockWebSocket.instances[0];
+    if (!ws) throw new Error('WS 인스턴스가 만들어지지 않았다');
+    await act(async () => {
+      ws._simulateClose(1006, '', false); // onopen 없이 종료 = 인증 실패 정황
+      await Promise.resolve();
+    });
+  }
+
+  it('세션이 정말 끝났으면(401) 로그아웃한다 — AuthGuard 가 로그인 화면으로 보낸다', async () => {
+    getCurrentUserMock.mockRejectedValue(new APIError('UNAUTHORIZED', '만료', 401));
+    await mountAndFailAuth();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(getCurrentUserMock).toHaveBeenCalled();
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+  });
+
+  it('확인 결과 세션이 멀쩡하면 로그아웃하지 않는다', async () => {
+    getCurrentUserMock.mockResolvedValue({ name: 'u', role: 'admin' });
+    await mountAndFailAuth();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(getCurrentUserMock).toHaveBeenCalled();
+    expect(useAuthStore.getState().isAuthenticated).toBe(true);
+  });
+
+  it('401 이 아닌 실패(서버 다운/오프라인)로는 세션을 끊지 않는다', async () => {
+    getCurrentUserMock.mockRejectedValue(new Error('Network Error'));
+    await mountAndFailAuth();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(useAuthStore.getState().isAuthenticated).toBe(true);
+  });
+
+  it('정상 종료(인증 실패 정황 아님)에는 확인하지 않는다', async () => {
+    useAuthStore.setState({
+      authEnabled: true,
+      isAuthenticated: true,
+      tokens: { access_token: 'JWT', refresh_token: 'R', expires_at: 1 },
+    });
+    render(
+      <WebSocketProvider>
+        <div />
+      </WebSocketProvider>,
+    );
+    const ws = MockWebSocket.instances[0];
+    if (!ws) throw new Error('WS 인스턴스가 만들어지지 않았다');
+    await act(async () => {
+      ws._simulateOpen(); // 연결이 한 번 열렸다 → 이후 종료는 인증 실패가 아니다
+      ws._simulateClose(1006, '', false);
+      await Promise.resolve();
+    });
+    expect(getCurrentUserMock).not.toHaveBeenCalled();
+    expect(useAuthStore.getState().isAuthenticated).toBe(true);
   });
 });

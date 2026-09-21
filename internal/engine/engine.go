@@ -108,6 +108,17 @@ func (e *Engine) DeployFlow(ctx context.Context, f flow.Flow) error {
 		}
 	}
 
+	// 1.6. 등록되지 않은 노드 타입을 **먼저 한꺼번에** 모아 보고한다
+	//      (@SPEC:SPEC-FLOW-NODETYPE-001).
+	//
+	//      종전에는 노드를 만들다 첫 번째 미등록 타입에서 멈췄다. 플로우에 그런
+	//      노드가 셋이면 하나를 고쳐 다시 시작하고 또 멈추기를 세 번 되풀이해야
+	//      했고, 그 사이 이미 만든 노드를 닫는 일도 매번 일어났다. 만들기 전에
+	//      전부 세어 한 줄로 알린다.
+	if err := e.validateNodeTypes(f); err != nil {
+		return err
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -655,6 +666,11 @@ func (e *Engine) GetFlowStatus(flowID string) (FlowStatus, error) {
 	return status, nil
 }
 
+// internalConfigKeyPrefix 는 노드 옵션이 의존성을 주입할 때 쓰는 config 키 접두사이다
+// (@SPEC:SPEC-FLOW-NODECONFIG-001). 이 접두사의 값은 함수·인터페이스일 수 있어
+// JSON 으로 나갈 수 없고, 나갈 이유도 없다.
+const internalConfigKeyPrefix = "_"
+
 // GetFlowNodes 는 배포된 Flow의 모든 노드 인스턴스 정보를 반환한다.
 func (e *Engine) GetFlowNodes(flowID string) ([]NodeInstanceInfo, error) {
 	e.mu.RLock()
@@ -823,12 +839,12 @@ func buildNodeInstanceInfo(n node.Node, nc *nodeCounter) NodeInstanceInfo {
 		info.State = string(sq.CurrentState())
 	}
 
-	// 설정 조회 (BaseNode.GetConfig)
+	// 설정 조회 (BaseNode.GetConfig). 내부 주입 키는 걸러 낸다 — 아래 함수 주석 참조.
 	type configQuerier interface {
 		GetConfig() map[string]any
 	}
 	if cq, ok := n.(configQuerier); ok {
-		info.Config = cq.GetConfig()
+		info.Config = publicNodeConfig(cq.GetConfig())
 	}
 
 	// 포트 정보 조회 (포트별 통계 포함)
@@ -1908,4 +1924,73 @@ func resolveNodeLogLevel(nd flow.NodeDef, flowCfg flow.FlowConfig, daemonDefault
 
 	// 3. 데몬 기본값 사용 (LevelManager 기본값이 이미 적용됨)
 	return daemonDefault, false
+}
+
+// validateNodeTypes 는 플로우가 쓰는 노드 타입 중 등록되지 않은 것을 모두 모아
+// 하나의 에러로 반환한다(@SPEC:SPEC-FLOW-NODETYPE-001).
+//
+// 메시지에는 **없는 타입과 그 타입을 쓰는 노드 이름**을 함께 싣는다. 운영자가 보는
+// 것은 로그 한 줄뿐이므로, 거기에 "무엇이 없는지" 와 "어디를 고쳐야 하는지" 가 둘 다
+// 있어야 한다. 등록된 타입 목록은 싣지 않는다 — 60종이 넘어 로그를 덮는다
+// (`GET /api/v1/nodes` 로 조회한다).
+//
+// 같은 타입을 여러 노드가 쓰면 타입은 한 번만 적고 노드 이름을 모아 적는다.
+// 노드 순서를 그대로 따르므로 로그가 실행마다 흔들리지 않는다.
+func (e *Engine) validateNodeTypes(f flow.Flow) error {
+	if e.nodeRegistry == nil {
+		return nil
+	}
+	missing := make(map[string][]string)
+	order := make([]string, 0)
+	for _, nd := range f.Nodes() {
+		if e.nodeRegistry.Has(nd.Type) {
+			continue
+		}
+		if _, seen := missing[nd.Type]; !seen {
+			order = append(order, nd.Type)
+		}
+		missing[nd.Type] = append(missing[nd.Type], nd.Name)
+	}
+	if len(order) == 0 {
+		return nil
+	}
+
+	parts := make([]string, 0, len(order))
+	for _, typ := range order {
+		parts = append(parts, fmt.Sprintf("%q (노드: %s)", typ, strings.Join(missing[typ], ", ")))
+	}
+	return fmt.Errorf("engine: 등록되지 않은 노드 타입 %d종: %s: %w",
+		len(order), strings.Join(parts, "; "), node.ErrNodeTypeNotFound)
+}
+
+// publicNodeConfig 는 노드 설정에서 **내부 주입 키**를 걷어 낸 사본을 돌려준다
+// (@SPEC:SPEC-FLOW-NODECONFIG-001).
+//
+// # 함수가 JSON 으로 나가려다 목록 전체가 죽었다
+//
+// 노드 옵션(WithAgentResolver, WithAgentInfoLookup, WithScriptFactory, inventory
+// 리졸버 등)은 값을 `_` 로 시작하는 config 키에 넣는다 — 노드가 자기 의존성을
+// 읽어 가는 통로다. 그런데 `NodeInstanceInfo.Config` 는 그 map 을 그대로 실어
+// API 로 나가고, 그 안에는 **함수와 인터페이스**가 들어 있다. encoding/json 은
+// 함수를 직렬화하지 못하므로 요청 하나가 통째로 500 이 된다(사용자 신고
+// 2026-09-21: `json: unsupported type: node.AgentLookupFunc`). 노드 하나가 아니라
+// **목록 전체**가 죽는다 — 직렬화는 전부 아니면 전무다.
+//
+// 이 키들은 애초에 밖에 나갈 것이 아니다. 사용자가 편집기에서 만든 설정이 아니라
+// 데몬이 배선한 의존성이며, 화면이 쓸 일도 없다. 그래서 노출 경계에서 건다.
+//
+// `GetConfig` 자체는 건드리지 않는다 — 노드가 자기 의존성을 읽는 자리이므로 거기서
+// 걸러 내면 주입이 통째로 무의미해진다.
+func publicNodeConfig(cfg map[string]any) map[string]any {
+	if cfg == nil {
+		return nil
+	}
+	out := make(map[string]any, len(cfg))
+	for k, v := range cfg {
+		if strings.HasPrefix(k, internalConfigKeyPrefix) {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }

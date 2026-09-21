@@ -11,7 +11,7 @@
 // 서브탭 상태의 단일 출처는 URL(`?tab=`)이다 — 상단 바와 NodeDashboard 콘텐츠가
 // 각자 `?tab=` 을 읽어 동기화된다(프롭 드릴링 없이 일관).
 
-import { Bot, Gauge, HardDrive, LayoutDashboard, LogOut, Workflow } from 'lucide-react';
+import { Bot, Gauge, HardDrive, LayoutDashboard, LogOut, ScrollText, Workflow } from 'lucide-react';
 
 import { NodeGroupMenu } from '@/components/remote/NodeGroupMenu';
 import { NodePicker } from '@/components/remote/NodePicker';
@@ -26,6 +26,7 @@ const TABS: { id: ManagerViewTab; labelKey: string; Icon: typeof Workflow }[] = 
   { id: 'flows', labelKey: 'remote.dashboard.tab.flows', Icon: Workflow },
   { id: 'agents', labelKey: 'remote.dashboard.tab.agents', Icon: Bot },
   { id: 'devices', labelKey: 'remote.dashboard.tab.devices', Icon: HardDrive },
+  { id: 'logs', labelKey: 'remote.log.tab', Icon: ScrollText },
 ];
 
 interface ManagerViewTopBarProps {
